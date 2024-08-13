@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WB_MGE</title>
+</head>
+
+<body>
+    <br>
+    <button id="get">get uart_settings</button>
+    <br>
+    <button id="post">post uart_settings</button>
+
+    <script>
+        const baseUrl = window.location.href
+
+        document.querySelector('#get').onclick = function () {
+            let url = new URL('uart_settings', baseUrl)
+            requestMethod(url)
+        }
+
+        document.querySelector('#post').onclick = function () {
+            let url = new URL('uart_settings', baseUrl)
+            requestMethod(url, 'POST',
+                JSON.stringify({
+                    "baudrate": 115200,
+                    "parity": "none",
+                    "stopbits": 1,
+                    "datasize": 8
+                }))
+        }
+
+        function requestMethod(url, method = 'GET', data = null) {
+
+            let xhr = new XMLHttpRequest()
+            xhr.open(method, url)
+            xhr.send(data)
+
+            xhr.onload = function () {
+                if (xhr.status != 200) {
+                    console.log(`Ошибка ${xhr.status}: ${xhr.statusText}`)
+                } else {
+                    responseHandler(xhr.response)
+                }
+            }
+            xhr.onerror = function () {
+                console.log("Запрос не удался")
+            }
+        }
+
+        function responseHandler(resp) {
+            let obj = JSON.parse(resp)
+            console.log("request:", obj)
+        }
+    </script>
+</body>
+
+</html>

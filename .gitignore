@@ -1,0 +1,7 @@
+# VS Code Settings
+.vscode/
+
+# Build
+build/**
+sdkconfig**
+dependencies.lock
