@@ -68,7 +68,7 @@ static void tcp_client_task(void *pvParameters)
     }
 }
 
-esp_err_t tcp_client_init(int host_port, char *host_ip, tcpc_receive_handler_t tcpc_receive_handler)
+esp_err_t tcp_client_init(char *host_ip, int host_port, tcpc_receive_handler_t tcpc_receive_handler)
 {
     if (tcpc_receive_handler == NULL) {
         ESP_LOGE(TAG, "tcpc_receive_handler is NULL");

@@ -5,7 +5,9 @@ idf_component_register(SRCS "main.c"
                             "serial.c"
                             "http_server.c"
                             "nv_storage.c"
+                            "ssdp.c"
                         INCLUDE_DIRS "."
                         EMBED_TXTFILES
                         frontend/index.html
+                        frontend/favicon.ico
 )

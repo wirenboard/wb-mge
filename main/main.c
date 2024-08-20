@@ -48,8 +48,12 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(wifi_init_apsta("WB-MGE", "12345678", "TP-LINK", "paroltplink"));
     ESP_ERROR_CHECK(tcp_server_init(3333, tcps_receive_handler));
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    ESP_ERROR_CHECK(tcp_client_init(1234, "192.168.55.106", tcpc_receive_handler));
+    // vTaskDelay(5000 / portTICK_PERIOD_MS);
+    ESP_ERROR_CHECK(tcp_client_init("192.168.55.106", 1234, tcpc_receive_handler));
 
-    ESP_ERROR_CHECK(http_server_init());
+    ssdp_config_t ssdp_config = SDDP_DEFAULT_CONFIG();
+    ssdp_config.model_url = "https://wirenboard.com/ru/product/WB-MGE";
+    ssdp_config.friendly_name = "WB-MGE";
+    ssdp_config.model_name = "WB-MGE v.3";
+    ESP_ERROR_CHECK(http_server_init(&ssdp_config));
 }
