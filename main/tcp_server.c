@@ -11,7 +11,7 @@
 #define TCP_SERVER_TASK_STACK_SIZE 4096
 #define TCP_SERVER_TASK_PRIORITY 5
 
-static const char *TAG = "tcp_server";
+static const char *TAG = "tcp-server";
 
 tcps_receive_handler_t tcp_server_receive_handler = NULL;
 static int sock = -1;

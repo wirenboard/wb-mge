@@ -1,6 +1,7 @@
 idf_component_register(SRCS "main.c"
                             "wifi_apsta.c"
                             "tcp_server.c"
+                            "tcp_client.c"
                             "serial.c"
                             "http_server.c"
                             "nv_storage.c"
