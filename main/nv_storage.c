@@ -1,7 +1,9 @@
-#include <string.h>
 #include "nv_storage.h"
-#include "nvs_flash.h"
+
+#include <string.h>
+
 #include "nvs.h"
+#include "nvs_flash.h"
 
 esp_err_t nvs_init(void)
 {

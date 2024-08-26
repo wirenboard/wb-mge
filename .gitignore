@@ -5,3 +5,6 @@
 build/**
 sdkconfig**
 dependencies.lock
+
+# Dependencies
+managed_components/

@@ -1,8 +1,11 @@
 
-#include <esp_http_server.h>
 #include "http_server.h"
+
+#include <esp_http_server.h>
+
 #include "cJSON.h"
 #include "esp_log.h"
+#include "lwip/ip4_addr.h"
 #include "ssdp.h"
 
 static const char *TAG = "http_server";
@@ -41,12 +44,12 @@ static esp_err_t parse_json_string(cJSON *json, const char *key, char **value, h
     }
 }
 
-static esp_err_t ssdp_schema_get_handler(httpd_req_t* req)
+static esp_err_t ssdp_schema_get_handler(httpd_req_t *req)
 {
-  httpd_resp_set_type(req, "text/xml");
-  const char* response = get_ssdp_schema_str();
-  httpd_resp_send(req, response, strlen(response));
-  return ESP_OK;
+    httpd_resp_set_type(req, "text/xml");
+    const char *response = get_ssdp_schema_str();
+    httpd_resp_send(req, response, strlen(response));
+    return ESP_OK;
 }
 
 static esp_err_t index_get_handler(httpd_req_t *req)
@@ -57,8 +60,8 @@ static esp_err_t index_get_handler(httpd_req_t *req)
 
 esp_err_t favicon_get_handler(httpd_req_t *req)
 {
-	httpd_resp_send(req, (const char *) favicon_ico_start, favicon_ico_end - favicon_ico_start);
-	return ESP_OK;
+    httpd_resp_send(req, (const char *)favicon_ico_start, favicon_ico_end - favicon_ico_start);
+    return ESP_OK;
 }
 
 static esp_err_t uart_settings_get_handler(httpd_req_t *req)
@@ -127,13 +130,38 @@ esp_err_t uart_settings_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static const httpd_uri_t ssdp_schema = {.uri = "/description.xml", .method = HTTP_GET, .handler = ssdp_schema_get_handler};
-static const httpd_uri_t index_get = {.uri = "/", .method = HTTP_GET, .handler = index_get_handler, .user_ctx = NULL};
-static const httpd_uri_t favicon_get = {.uri = "/favicon.ico", .method   = HTTP_GET, .handler  = favicon_get_handler, .user_ctx = NULL};
-static const httpd_uri_t uart_settings_get = {.uri = "/uart_settings", .method = HTTP_GET, .handler = uart_settings_get_handler, .user_ctx = NULL};
-static const httpd_uri_t uart_settings_post = {.uri = "/uart_settings", .method = HTTP_POST, .handler = uart_settings_post_handler, .user_ctx = NULL};
+static const httpd_uri_t ssdp_schema = {
+    .uri = "/description.xml",
+    .method = HTTP_GET,
+    .handler = ssdp_schema_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t index_get = {
+    .uri = "/",
+    .method = HTTP_GET,
+    .handler = index_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t favicon_get = {
+    .uri = "/favicon.ico",
+    .method = HTTP_GET,
+    .handler = favicon_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t uart_settings_get = {
+    .uri = "/uart_settings",
+    .method = HTTP_GET,
+    .handler = uart_settings_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t uart_settings_post = {
+    .uri = "/uart_settings",
+    .method = HTTP_POST,
+    .handler = uart_settings_post_handler,
+    .user_ctx = NULL,
+};
 
-esp_err_t http_server_init(ssdp_config_t* ssdp_config)
+esp_err_t http_server_init(ssdp_config_t *ssdp_config)
 {
     static httpd_handle_t http_server = NULL;
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
@@ -157,8 +185,8 @@ esp_err_t http_server_init(ssdp_config_t* ssdp_config)
     ESP_LOGI(TAG, "Starting ssdp service");
     err = ssdp_start(ssdp_config);
     if (err != ESP_OK) {
-      ESP_LOGE(TAG, "Failed to start ssdp: %s", esp_err_to_name(err));
-      ssdp_stop();
+        ESP_LOGE(TAG, "Failed to start ssdp: %s", esp_err_to_name(err));
+        ssdp_stop();
     }
     return ESP_OK;
 }
