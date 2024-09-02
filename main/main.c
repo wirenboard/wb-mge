@@ -2,7 +2,6 @@
 
 #include "esp_event.h"
 #include "esp_log.h"
-#include "esp_wifi.h"
 #include "ethernet.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -11,11 +10,10 @@
 #include "mdns.h"
 #include "nv_storage.h"
 #include "serial.h"
+#include "setting_items.h"
 #include "tcp_client.h"
 #include "tcp_server.h"
 #include "wifi_apsta.h"
-
-#define MDNS_HOSTNAME "wb-mge"
 
 static const char *TAG = "main";
 
@@ -40,11 +38,9 @@ void serial_receive_handler(uint8_t *data, uint8_t len)
     tcp_server_send(data, len);
 }
 
-/** Event handler for Ethernet events */
 static void eth_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     uint8_t mac_addr[6] = {0};
-    /* we can get the ethernet driver handle from event data */
     esp_eth_handle_t eth_handle = *(esp_eth_handle_t *)event_data;
 
     switch (event_id) {
@@ -70,19 +66,37 @@ static void eth_event(void *arg, esp_event_base_t event_base, int32_t event_id, 
 
 void app_main(void)
 {
-    uart_config_t uart_config = {
-        .baud_rate = 9600,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .source_clk = UART_SCLK_DEFAULT,
-    };
-    ESP_ERROR_CHECK(serial_init(&uart_config, serial_receive_handler));
     ESP_ERROR_CHECK(nvs_init());
+    setting_item_iface_t setting_item_iface = {
+        .save_num = nvs_write_u32,
+        .save_str = nvs_write_str,
+        .save_bool = nvs_write_u8,
+        .read_num = nvs_read_u32,
+        .read_str = nvs_read_str,
+        .read_bool = nvs_read_u8,
+    };
+    setting_items_init(&setting_item_iface);
+
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    // Если нет ячейки с именем хоста, то устанавливаем дефолтные значения
+    if (setting_items_read_raw("hostname", hostname, SETTING_ITEM_TYPE_STR) != 0) {
+        ESP_ERROR_CHECK(setting_items_set_defaults());
+    } else {
+        ESP_LOGI(TAG, "hostname: %s", hostname);
+    }
+
+    serial_config_t serial_config = {0};
+    setting_items_read_raw("baudrate", &serial_config.baudrate, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw("databits", &serial_config.databits, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw("parity", &serial_config.parity, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw("stopbits", &serial_config.stopbits, SETTING_ITEM_TYPE_NUM);
+
+    ESP_ERROR_CHECK(serial_init(&serial_config, serial_receive_handler));
+
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(mdns_init());
-    ESP_ERROR_CHECK(mdns_hostname_set(MDNS_HOSTNAME));
-    ESP_LOGI(TAG, "mdns hostname set to: [%s]", MDNS_HOSTNAME);
+    ESP_ERROR_CHECK(mdns_hostname_set(hostname));
+    ESP_LOGI(TAG, "mdns hostname set to: [%s]", hostname);
 
     esp_netif_ip_info_t ap_ip_info;
     ap_ip_info.ip.addr = ipaddr_addr("192.168.33.33");
@@ -96,12 +110,13 @@ void app_main(void)
         .sta_pass = "paroltplink",
         .wifi_mode = WIFI_MODE_APSTA,
     };
+
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg));
 
-    esp_netif_ip_info_t static_ip;
-    static_ip.ip.addr = ipaddr_addr("192.168.33.33");
-    static_ip.netmask.addr = ipaddr_addr("255.255.255.0");
-    static_ip.gw.addr = ipaddr_addr("192.168.33.1");
+    // esp_netif_ip_info_t static_ip;
+    // static_ip.ip.addr = ipaddr_addr("192.168.33.33");
+    // static_ip.netmask.addr = ipaddr_addr("255.255.255.0");
+    // static_ip.gw.addr = ipaddr_addr("192.168.33.1");
     ESP_ERROR_CHECK(ethernet_init(&eth_event, NULL, NULL));
 
     ESP_ERROR_CHECK(tcp_server_init(3333, tcps_receive_handler));

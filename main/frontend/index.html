@@ -10,26 +10,27 @@
 
 <body>
     <br>
-    <button id="get">get uart_settings</button>
+    <button id="get">get settings</button>
     <br>
-    <button id="post">post uart_settings</button>
+    <button id="post">post settings</button>
 
     <script>
         const baseUrl = window.location.href
 
         document.querySelector('#get').onclick = function () {
-            let url = new URL('uart_settings', baseUrl)
+            let url = new URL('settings', baseUrl)
             requestMethod(url)
         }
 
         document.querySelector('#post').onclick = function () {
-            let url = new URL('uart_settings', baseUrl)
+            let url = new URL('settings', baseUrl)
             requestMethod(url, 'POST',
                 JSON.stringify({
-                    "baudrate": 115200,
+                    "baudrate": 200,
                     "parity": "none",
-                    "stopbits": 1,
-                    "datasize": 8
+                    "stopbits": "1.5-bit",
+                    "databits": "8-bit",
+                    "enable": true
                 }))
         }
 

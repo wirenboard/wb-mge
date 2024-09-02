@@ -1,15 +1,16 @@
 #include "serial.h"
 
-#include <string.h>
 #include <stdint.h>
 #include <stdio.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "driver/uart.h"
+#include <string.h>
+
 #include "driver/gpio.h"
-#include "esp_log.h"
+#include "driver/uart.h"
 #include "esp_err.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 
 static const char *TAG = "serial";
 
@@ -25,7 +26,7 @@ static const char *TAG = "serial";
 #endif
 
 #define SERIAL_BUF_SIZE (1000)
-#define ECHO_READ_TOUT (30) // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
+#define ECHO_READ_TOUT (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
 
 serial_receive_handler_t receive_handler = NULL;
 static QueueHandle_t uart_queue = NULL;
@@ -36,42 +37,39 @@ static void uart_event_task(void *pvParameters)
     uint8_t *dtmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
     uart_flush_input(SERIAL_PORT_NUM);
 
-    for (;;)
-    {
-        if (xQueueReceive(uart_queue, (void *)&event, (TickType_t)portMAX_DELAY))
-        {
+    for (;;) {
+        if (xQueueReceive(uart_queue, (void *)&event, (TickType_t)portMAX_DELAY)) {
             bzero(dtmp, SERIAL_BUF_SIZE);
             ESP_LOGD(TAG, "uart[%d] event:", SERIAL_PORT_NUM);
-            switch (event.type)
-            {
-            case UART_DATA:
-                ESP_LOGD(TAG, "[UART DATA]: %d", event.size);
-                uart_read_bytes(SERIAL_PORT_NUM, dtmp, event.size, portMAX_DELAY);
-                ESP_LOG_BUFFER_HEX_LEVEL(TAG, dtmp, event.size, ESP_LOG_DEBUG);
-                receive_handler(dtmp, event.size);
-                break;
-            case UART_FIFO_OVF:
-                ESP_LOGD(TAG, "hw fifo overflow");
-                uart_flush_input(SERIAL_PORT_NUM);
-                xQueueReset(uart_queue);
-                break;
-            case UART_BUFFER_FULL:
-                ESP_LOGD(TAG, "ring buffer full");
-                uart_flush_input(SERIAL_PORT_NUM);
-                xQueueReset(uart_queue);
-                break;
-            case UART_BREAK:
-                ESP_LOGD(TAG, "uart rx break");
-                break;
-            case UART_PARITY_ERR:
-                ESP_LOGD(TAG, "uart parity error");
-                break;
-            case UART_FRAME_ERR:
-                ESP_LOGD(TAG, "uart frame error");
-                break;
-            default:
-                ESP_LOGD(TAG, "uart event type: %d", event.type);
-                break;
+            switch (event.type) {
+                case UART_DATA:
+                    ESP_LOGD(TAG, "[UART DATA]: %d", event.size);
+                    uart_read_bytes(SERIAL_PORT_NUM, dtmp, event.size, portMAX_DELAY);
+                    ESP_LOG_BUFFER_HEX_LEVEL(TAG, dtmp, event.size, ESP_LOG_DEBUG);
+                    receive_handler(dtmp, event.size);
+                    break;
+                case UART_FIFO_OVF:
+                    ESP_LOGD(TAG, "hw fifo overflow");
+                    uart_flush_input(SERIAL_PORT_NUM);
+                    xQueueReset(uart_queue);
+                    break;
+                case UART_BUFFER_FULL:
+                    ESP_LOGD(TAG, "ring buffer full");
+                    uart_flush_input(SERIAL_PORT_NUM);
+                    xQueueReset(uart_queue);
+                    break;
+                case UART_BREAK:
+                    ESP_LOGD(TAG, "uart rx break");
+                    break;
+                case UART_PARITY_ERR:
+                    ESP_LOGD(TAG, "uart parity error");
+                    break;
+                case UART_FRAME_ERR:
+                    ESP_LOGD(TAG, "uart frame error");
+                    break;
+                default:
+                    ESP_LOGD(TAG, "uart event type: %d", event.type);
+                    break;
             }
         }
     }
@@ -80,11 +78,10 @@ static void uart_event_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-esp_err_t serial_init(uart_config_t *uart_config, serial_receive_handler_t serial_receive_handler)
+esp_err_t serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
 {
     esp_err_t err = ESP_OK;
-    if (serial_receive_handler == NULL)
-    {
+    if (serial_receive_handler == NULL) {
         ESP_LOGE(TAG, "Serial receive handler is NULL");
         return ESP_ERR_INVALID_ARG;
     }
@@ -94,7 +91,16 @@ esp_err_t serial_init(uart_config_t *uart_config, serial_receive_handler_t seria
     if (err != ESP_OK) {
         return err;
     }
-    err = uart_param_config(SERIAL_PORT_NUM, uart_config);
+
+    uart_config_t uart_config = {
+        .baud_rate = serial_config->baudrate,
+        .data_bits = serial_config->databits,
+        .parity = serial_config->parity,
+        .stop_bits = serial_config->stopbits,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    err = uart_param_config(SERIAL_PORT_NUM, &uart_config);
     if (err != ESP_OK) {
         return err;
     }
@@ -116,6 +122,4 @@ esp_err_t serial_init(uart_config_t *uart_config, serial_receive_handler_t seria
     return err;
 }
 
-esp_err_t serial_send(uint8_t *data, uint8_t len){
-    return uart_write_bytes(SERIAL_PORT_NUM, (const char*) data, len);
-}
+esp_err_t serial_send(uint8_t *data, uint8_t len) { return uart_write_bytes(SERIAL_PORT_NUM, (const char *)data, len); }
