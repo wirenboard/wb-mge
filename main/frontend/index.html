@@ -13,6 +13,15 @@
     <button id="get">get settings</button>
     <br>
     <button id="post">post settings</button>
+    <br>
+    <br>
+    <label>Обновление прошивки</label>
+    <div>
+        <input accept=".bin" type="file" class="btn" id="otafile" name="otafile" />
+        <button id="upload" class="btn" onclick="startUpload()">ЗАГРУЗИТЬ</button>
+        <p></p>
+    </div>
+    <div id="progress"> </div>
 
     <script>
         const baseUrl = window.location.href
@@ -55,6 +64,41 @@
         function responseHandler(resp) {
             let obj = JSON.parse(resp)
             console.log("request:", obj)
+        }
+
+        function startUpload() {
+            var otafile = document.getElementById("otafile").files;
+
+            if (otafile.length == 0) {
+                alert("No file selected!");
+            } else {
+                document.getElementById("otafile").disabled = true;
+                document.getElementById("upload").disabled = true;
+
+                var file = otafile[0];
+                var xhr = new XMLHttpRequest();
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState == 4) {
+                        if (xhr.status == 200) {
+                            document.open();
+                            document.write(xhr.responseText);
+                            document.close();
+                        } else if (xhr.status == 0) {
+                            alert("Server closed the connection abruptly!");
+                            location.reload()
+                        } else {
+                            alert(xhr.status + " Error!\n" + xhr.responseText);
+                            location.reload()
+                        }
+                    }
+                };
+                xhr.upload.onprogress = function (e) {
+                    var progress = document.getElementById("progress");
+                    progress.textContent = "Progress: " + (e.loaded / e.total * 100).toFixed(0) + "%";
+                };
+                xhr.open("POST", "/update", true);
+                xhr.send(file);
+            }
         }
     </script>
 </body>
