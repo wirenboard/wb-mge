@@ -77,7 +77,7 @@ esp_err_t tcp_client_init(char *host_ip, int host_port, tcpc_receive_handler_t t
     port = host_port;
     strcpy(ip, host_ip);
     tcp_client_receive_handler = tcpc_receive_handler;
-    xTaskCreate(tcp_client_task, "tcp_client", TCP_CLIENT_TASK_STACK_SIZE, NULL, TCP_CLIENT_TASK_PRIORITY, NULL);
+    xTaskCreate(tcp_client_task, "tcp_client", TCP_CLIENT_TASK_STACK_SIZE, NULL, TCP_CLIENT_TASK_PRIORITY, NULL); // TODO: check stack size
     return ESP_OK;
 }
 

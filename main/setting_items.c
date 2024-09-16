@@ -3,15 +3,62 @@
 #include "stdint.h"
 #include "stdbool.h"
 #include "string.h"
+#include "driver/uart.h"
+#include "esp_wifi_types_generic.h"
+#include "esp_mac.h"
 
 #define UART_BAUD_RATE_MIN 300
 #define UART_BAUD_RATE_MAX 460800
 #define IP_ADDR_NUM 4
 #define IP_ADDR_STR_LEN 16
 
-
 setting_item_iface_t iface;
 const setting_item_t setting_items[SETTING_ITEM_NUM_MAX];
+
+char default_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+const int default_baudrate = 9600;
+const bool default_eth_dhcpc = true;
+const int default_bridge_port = 1234;
+const bool default_bridge_mb = false;
+
+static bool string2wifi_mode(const char *str, wifi_mode_t *mode)
+{
+    if (strcmp(str, "ap") == 0) {
+        *mode = WIFI_MODE_AP;
+        return true;
+    } else if (strcmp(str, "sta") == 0) {
+        *mode = WIFI_MODE_STA;
+        return true;
+    } else if (strcmp(str, "apsta") == 0) {
+        *mode = WIFI_MODE_APSTA;
+        return true;
+    } else if (strcmp(str, "none") == 0) {
+        *mode = WIFI_MODE_NULL;
+        return true;
+    }
+    return false;
+}
+
+static bool wifi_mode2string(wifi_mode_t mode, char *str)
+{
+    switch (mode) {
+        case WIFI_MODE_AP:
+            strcpy(str, "ap");
+            return true;
+        case WIFI_MODE_STA:
+            strcpy(str, "sta");
+            return true;
+        case WIFI_MODE_APSTA:
+            strcpy(str, "apsta");
+            return true;
+        case WIFI_MODE_NULL:
+            strcpy(str, "none");
+            return true;
+        default:
+            return false;
+    }
+    return false;
+}
 
 static bool string2stopbits(const char *str, uint32_t *stopbits)
 {
@@ -148,6 +195,30 @@ static bool string2ip(const char *str, uint32_t *ip)
     }
 }
 
+static bool save_wifi_mode(const char *key, const void *value)
+{
+    wifi_mode_t mode;
+    if (string2wifi_mode(value, &mode)) {
+        if (iface.save_num(key, (uint32_t)mode) != 0) {
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool read_wifi_mode(const char *key, void *value)
+{
+    uint32_t mode = 0;
+    if (iface.read_num(key, &mode) != 0) {
+        return false;
+    }
+    if (wifi_mode2string((wifi_mode_t)mode, value) == false) {
+        return false;
+    }
+    return true;
+}
+
 static bool save_boudrate(const char *key, const void *value)
 {
     uint32_t baudrate = *(uint32_t *)value;
@@ -266,6 +337,28 @@ static bool read_parity(const char *key, void *value)
     return true;
 }
 
+static bool save_bridge_port(const char *key, const void *value)
+{
+    uint32_t bridge_port = *(uint32_t *)value;
+    if (bridge_port < 1024) {
+        return false;
+    }
+    if (iface.save_num(key, bridge_port) != 0) {
+        return false;
+    }
+    return true;
+}
+
+static bool read_bridge_port(const char *key, void *value)
+{
+    uint32_t bridge_port = 0;
+    if (iface.read_num(key, &bridge_port) != 0) {
+        return false;
+    }
+    *(uint32_t *)value = bridge_port;
+    return true;
+}
+
 static bool save_string_value(const char *key, const void *value)
 {
     char *str = (char *)value;
@@ -339,7 +432,7 @@ static bool read_raw_value(const char *key, void *value, setting_item_type_t typ
     }
 }
 
-int setting_items_init(setting_item_iface_t *setting_item_iface)
+int setting_items_init(char *def_hostname, setting_item_iface_t *setting_item_iface)
 {
     if (setting_item_iface == NULL) {
         return -1;
@@ -354,6 +447,10 @@ int setting_items_init(setting_item_iface_t *setting_item_iface)
     iface.read_bool = setting_item_iface->read_bool;
     iface.read_num = setting_item_iface->read_num;
     iface.read_str = setting_item_iface->read_str;
+
+    if (def_hostname != NULL) {
+        strncpy(default_hostname, def_hostname, SETTING_ITEM_MAX_STR_LEN);
+    }
     return 0;
 }
 
@@ -455,17 +552,32 @@ int setting_items_save(const char *key, void *value)
     return 0;
 }
 
-const int default_baudrate = 9600;
-const bool default_eth_dhcpc = true;
-
 const setting_item_t setting_items[] = {
     {
         .key = "hostname",
-        .default_value = "WB-MGE",
+        .default_value = default_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,
         .read_from_storage = read_string_value,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "login",
+        .default_value = "admin",
+        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_string_value,
+        .read_from_storage = NULL,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "pass",
+        .default_value = "admin",
+        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_string_value,
+        .read_from_storage = NULL,
         .read_from_storage_raw = read_raw_value,
     },
     {
@@ -505,7 +617,25 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "eth_ip",
+        .key = "eth_ip_static",
+        .default_value = "192.168.5.1",
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_ip,
+        .read_from_storage = read_ip,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "eth_mask_static",
+        .default_value = "255.255.255.0",
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_ip,
+        .read_from_storage = read_ip,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "eth_gw_static",
         .default_value = "192.168.5.1",
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
@@ -516,6 +646,114 @@ const setting_item_t setting_items[] = {
     {
         .key = "eth_dhcpc",
         .default_value = &default_eth_dhcpc,
+        .type_in_storage = SETTING_ITEM_TYPE_BOOL,
+        .type_in_json = SETTING_ITEM_TYPE_BOOL,
+        .save_to_storage = save_bool_value,
+        .read_from_storage = read_bool_value,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "wifi_mode",
+        .default_value = "ap",
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_wifi_mode,
+        .read_from_storage = read_wifi_mode,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "ap_ip_static",
+        .default_value = "192.168.4.1",
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_ip,
+        .read_from_storage = read_ip,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "ap_mask_static",
+        .default_value = "255.255.255.0",
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_ip,
+        .read_from_storage = read_ip,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "ap_gw_static",
+        .default_value = "192.168.4.1",
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_ip,
+        .read_from_storage = read_ip,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "ap_ssid",
+        .default_value = default_hostname,
+        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_string_value,
+        .read_from_storage = read_string_value,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "ap_pass",
+        .default_value = "",
+        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_string_value,
+        .read_from_storage = NULL,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "sta_ssid",
+        .default_value = "",
+        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_string_value,
+        .read_from_storage = read_string_value,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "sta_pass",
+        .default_value = "",
+        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_string_value,
+        .read_from_storage = NULL,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "bridge_mode",  // TODO: сделать валидатор для режима моста
+        .default_value = "tcps-serial",
+        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_string_value,
+        .read_from_storage = read_string_value,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "bridge_port",
+        .default_value = &default_bridge_port,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_NUM,
+        .save_to_storage = save_bridge_port,
+        .read_from_storage = read_bridge_port,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "bridge_ip",
+        .default_value = "192.168.4.2",
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_ip,
+        .read_from_storage = read_ip,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = "bridge_mb",
+        .default_value = &default_bridge_mb,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
         .save_to_storage = save_bool_value,

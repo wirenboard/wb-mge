@@ -13,6 +13,8 @@
 #define WIFI_CHAN_AP 1
 #define MAX_STA_CONN 5
 #define STA_ESP_MAXIMUM_RETRY 10
+#define WIFI_WAITING_EVENTS_STACK_SIZE (1024 * 6)
+#define WIFI_WAITING_EVENTS_PRIORITY 1
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
@@ -157,7 +159,7 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
 
     ESP_RETURN_ON_FALSE(esp_wifi_start() == ESP_OK, ESP_FAIL, TAG, "esp_wifi_start failed");
 
-    xTaskCreate(&wifi_waiting_events, "wifi_init_apsta", 6144 * 3, NULL, 1, NULL);
+    xTaskCreate(&wifi_waiting_events, "wifi_init_apsta", WIFI_WAITING_EVENTS_STACK_SIZE, NULL, WIFI_WAITING_EVENTS_PRIORITY, NULL); // TODO: check stack size
 
     return ESP_OK;
 }

@@ -27,6 +27,7 @@ static const char *TAG = "serial";
 
 #define SERIAL_BUF_SIZE (1000)
 #define ECHO_READ_TOUT (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
+#define UART_TASK_STACK_SIZE (1024 * 4)
 
 serial_receive_handler_t receive_handler = NULL;
 static QueueHandle_t uart_queue = NULL;
@@ -117,7 +118,7 @@ esp_err_t serial_init(serial_config_t *serial_config, serial_receive_handler_t s
         return err;
     }
 
-    xTaskCreate(uart_event_task, "uart_event_task", 1024 * 4, NULL, 12, NULL);
+    xTaskCreate(uart_event_task, "uart_event_task", UART_TASK_STACK_SIZE, NULL, 12, NULL); //TODO: check stack size
 
     return err;
 }

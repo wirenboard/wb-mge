@@ -1,6 +1,5 @@
 #pragma once
 
-#include <driver/uart.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -43,7 +42,7 @@ typedef struct {
     read_from_storage_raw read_from_storage_raw;
 } setting_item_t;
 
-int setting_items_init(setting_item_iface_t *setting_item_iface);
+int setting_items_init(char * def_hostname, setting_item_iface_t *setting_item_iface);
 int setting_items_set_defaults();
 // Чтение данных из хранилища, без преобразования
 int setting_items_read_raw(const char *key, void *value, setting_item_type_t type_in_storage);

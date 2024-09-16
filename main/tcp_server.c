@@ -109,7 +109,7 @@ esp_err_t tcp_server_init(int port, tcps_receive_handler_t tcps_receive_handler)
     }
     ESP_LOGD(TAG, "Socket listening");
 
-    xTaskCreate(tcp_server_task, "tcp_server", TCP_SERVER_TASK_STACK_SIZE, &listen_sock, TCP_SERVER_TASK_PRIORITY, NULL);
+    xTaskCreate(tcp_server_task, "tcp_server", TCP_SERVER_TASK_STACK_SIZE, &listen_sock, TCP_SERVER_TASK_PRIORITY, NULL); // TODO: check stack size
     return ESP_OK;
 }
 

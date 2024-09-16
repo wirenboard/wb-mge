@@ -43,7 +43,7 @@ typedef struct {
     .mx_max_delay = 10000, .uuid_root = NULL, .uuid = NULL,                 \
     .schema_url = "description.xml", .device_type = "Basic",                \
     .friendly_name = NULL, .serial_number = NULL,                       \
-    .presentation_url = "/", .manufacturer_name = "Espressif Systems",      \
+    .presentation_url = "/", .manufacturer_name = "Wiren Board",      \
     .manufacturer_url = "https://wirenboard.com", .model_name = NULL,   \
     .model_url = NULL, .model_number = NULL,                                \
     .model_description = NULL, .server_name = "SSDPServer/1.0",             \
