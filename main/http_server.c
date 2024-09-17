@@ -23,9 +23,6 @@ extern const uint8_t favicon_ico_end[] asm("_binary_favicon_ico_end");
 
 static esp_err_t ssdp_schema_get_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/xml");
-    const char *response = get_ssdp_schema_str();
-    httpd_resp_send(req, response, strlen(response));
     return ESP_OK;
 }
 
@@ -238,16 +235,5 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
         return ESP_FAIL;
     }
 
-    esp_err_t err = ssdp_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to init ssdp: %s", esp_err_to_name(err));
-    }
-
-    ESP_LOGI(TAG, "Starting ssdp service");
-    err = ssdp_start(ssdp_config);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start ssdp: %s", esp_err_to_name(err));
-        ssdp_stop();
-    }
     return ESP_OK;
 }

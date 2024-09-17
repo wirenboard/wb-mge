@@ -104,9 +104,6 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ethernet_init(&eth_event, NULL, eth_ip_info));
 
-    ssdp_config_t ssdp_config = SDDP_DEFAULT_CONFIG();
-    ssdp_config.model_url = "https://wirenboard.com/ru/product/WB-MGE";
-    ssdp_config.friendly_name = "WB-MGE";
-    ssdp_config.model_name = "WB-MGE v.3";
+    ssdp_config_t ssdp_config = NULL;
     ESP_ERROR_CHECK(http_server_init(&ssdp_config));
 }
