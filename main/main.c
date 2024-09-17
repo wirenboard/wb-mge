@@ -29,7 +29,7 @@ static void eth_event(void *arg, esp_event_base_t event_base, int32_t event_id, 
         case ETHERNET_EVENT_CONNECTED:
             esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
             ESP_LOGI(TAG, "Ethernet Link Up");
-            ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",  //
+            ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
                      mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
             break;
         case ETHERNET_EVENT_DISCONNECTED:

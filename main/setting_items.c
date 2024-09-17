@@ -1,17 +1,17 @@
 #include "setting_items.h"
 
-#include "stdio.h"
-#include "stdint.h"
-#include "stdbool.h"
-#include "string.h"
 #include "driver/uart.h"
-#include "esp_wifi_types_generic.h"
 #include "esp_mac.h"
+#include "esp_wifi_types_generic.h"
+#include "stdbool.h"
+#include "stdint.h"
+#include "stdio.h"
+#include "string.h"
 
 #define UART_BAUD_RATE_MIN 300
 #define UART_BAUD_RATE_MAX 460800
-#define IP_ADDR_NUM 4
-#define IP_ADDR_STR_LEN 16
+#define IP_ADDR_NUM        4
+#define IP_ADDR_STR_LEN    16
 
 setting_item_iface_t iface;
 const setting_item_t setting_items[SETTING_ITEM_NUM_MAX];
@@ -170,7 +170,8 @@ static bool parity2string(uint32_t parity, char *str)
 
 static bool ip2string(uint32_t ip, char *str)
 {
-    int ret = snprintf(str, IP_ADDR_STR_LEN, "%lu.%lu.%lu.%lu", ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
+    int ret = snprintf(str, IP_ADDR_STR_LEN, "%lu.%lu.%lu.%lu", ip & 0xFF, (ip >> 8) & 0xFF,
+                       (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
     if ((ret < 0) || (ret >= IP_ADDR_STR_LEN)) {
         return false;
     }
@@ -179,16 +180,20 @@ static bool ip2string(uint32_t ip, char *str)
 
 static bool string2ip(const char *str, uint32_t *ip)
 {
+    // Дополнительная ячейка нужна для проверки наличия лишнего байта ip адреса
     int ip_arr[IP_ADDR_NUM + 1] = {0};
-    if (sscanf(str, "%d.%d.%d.%d.%d", &ip_arr[3], &ip_arr[2], &ip_arr[1], &ip_arr[0], &ip_arr[4]) == IP_ADDR_NUM) {
+    if (sscanf(str, "%d.%d.%d.%d.%d", &ip_arr[3], &ip_arr[2], &ip_arr[1], &ip_arr[0], &ip_arr[4]) ==
+        IP_ADDR_NUM) {
         for (int i = 0; i < IP_ADDR_NUM; i++) {
             if (ip_arr[i] < 0 || ip_arr[i] > 255) {
                 return false;
             }
         }
         if (ip != NULL) {
-            *ip = ((uint32_t)((ip_arr[0]) & 0xff) << 24) | ((uint32_t)((ip_arr[1]) & 0xff) << 16) | ((uint32_t)((ip_arr[2]) & 0xff) << 8) |
-                  (uint32_t)((ip_arr[3]) & 0xff);
+            *ip = ((uint32_t)((ip_arr[0]) & 0xff) << 24) |  // 1st octet
+                  ((uint32_t)((ip_arr[1]) & 0xff) << 16) |  // 2nd octet
+                  ((uint32_t)((ip_arr[2]) & 0xff) << 8) |   // 3rd octet
+                  (uint32_t)((ip_arr[3]) & 0xff);           // 4th octet
         }
         return true;
     } else {
@@ -438,8 +443,10 @@ int setting_items_init(char *def_hostname, setting_item_iface_t *setting_item_if
     if (setting_item_iface == NULL) {
         return -1;
     }
-    if (setting_item_iface->save_bool == NULL || setting_item_iface->save_num == NULL || setting_item_iface->save_str == NULL ||
-        setting_item_iface->read_bool == NULL || setting_item_iface->read_num == NULL || setting_item_iface->read_str == NULL) {
+    if (setting_item_iface->save_bool == NULL || setting_item_iface->save_num == NULL ||
+        setting_item_iface->save_str == NULL || setting_item_iface->read_bool == NULL ||
+        setting_item_iface->read_num == NULL || setting_item_iface->read_str == NULL)
+    {
         return -1;
     }
     iface.save_bool = setting_item_iface->save_bool;
@@ -487,7 +494,8 @@ int setting_items_set_defaults(void)
 {
     for (int i = 0; i < sizeof(setting_items) / sizeof(setting_items[0]); i++) {
         if (setting_items[i].save_to_storage != NULL) {
-            bool ret = setting_items[i].save_to_storage(setting_items[i].key, setting_items[i].default_value);
+            bool ret = setting_items[i].save_to_storage(setting_items[i].key,
+                                                        setting_items[i].default_value);
             if (ret != true) {
                 return -1;
             }

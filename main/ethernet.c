@@ -1,21 +1,22 @@
 #include "ethernet.h"
-#include "esp_netif.h"
-#include "esp_netif_types.h"
+
+#include "driver/gpio.h"
+#include "esp_check.h"
 #include "esp_eth.h"
-#include "esp_mac.h"
 #include "esp_event.h"
 #include "esp_log.h"
-#include "esp_check.h"
-#include "driver/gpio.h"
+#include "esp_mac.h"
+#include "esp_netif.h"
+#include "esp_netif_types.h"
 
-#define ETH_PHY_LAN87XX 1
-#define ETH_MDC_GPIO GPIO_NUM_23
-#define ETH_MDIO_GPIO GPIO_NUM_18
+#define ETH_PHY_LAN87XX  1
+#define ETH_MDC_GPIO     GPIO_NUM_23
+#define ETH_MDIO_GPIO    GPIO_NUM_18
 #define ETH_PHY_RST_GPIO -1
-#define ETH_PHY_ADDR 1
-#define CLK_ENABLE_GPIO GPIO_NUM_16
+#define ETH_PHY_ADDR     1
+#define CLK_ENABLE_GPIO  GPIO_NUM_16
 
-esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_event_handler_t got_ip_event_handler, esp_netif_ip_info_t* static_ip)
+esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_event_handler_t got_ip_event_handler, esp_netif_ip_info_t *static_ip)
 {
     esp_err_t err = ESP_OK;
 
@@ -50,7 +51,7 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_event_handler
     esp_eth_handle_t eth_handle = NULL;
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
     err = esp_eth_driver_install(&config, &eth_handle);
-    if (err != ESP_OK){
+    if (err != ESP_OK) {
         if (eth_handle != NULL) {
             esp_eth_driver_uninstall(eth_handle);
         }

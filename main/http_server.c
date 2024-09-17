@@ -2,14 +2,14 @@
 #include "http_server.h"
 
 #include <esp_http_server.h>
+#include <esp_ota_ops.h>
+#include <sys/param.h>
 
 #include "cJSON.h"
 #include "esp_log.h"
 #include "lwip/ip4_addr.h"
 #include "setting_items.h"
 #include "ssdp.h"
-#include <esp_ota_ops.h>
-#include <sys/param.h>
 
 #define REQ_RECV_BUF_SIZE 1024
 
@@ -74,12 +74,10 @@ esp_err_t update_post_handler(httpd_req_t *req)
     while (remaining > 0) {
         int recv_len = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)));
 
-        // Timeout Error: Just retry
-        if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {
+        if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {  // Timeout Error: Just retry
             continue;
 
-            // Serious Error: Abort OTA
-        } else if (recv_len <= 0) {
+        } else if (recv_len <= 0) {  // Serious Error: Abort OTA
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Protocol Error");
             return ESP_FAIL;
         }
@@ -94,7 +92,7 @@ esp_err_t update_post_handler(httpd_req_t *req)
     }
 
     // Validate and switch to new OTA image and reboot
-    if (esp_ota_end(ota_handle) != ESP_OK || esp_ota_set_boot_partition(ota_partition) != ESP_OK) {
+    if ((esp_ota_end(ota_handle) != ESP_OK) || (esp_ota_set_boot_partition(ota_partition) != ESP_OK)) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Validation / Activation Error");
         return ESP_FAIL;
     }
