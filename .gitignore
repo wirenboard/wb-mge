@@ -3,7 +3,8 @@
 
 # Build
 build/**
-sdkconfig**
+sdkconfig
+sdkconfig.old
 dependencies.lock
 
 # Dependencies

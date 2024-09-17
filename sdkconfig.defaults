@@ -1,0 +1,10 @@
+#
+# Partition Table
+#
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
+
+#
+# HTTP Server
+#
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
