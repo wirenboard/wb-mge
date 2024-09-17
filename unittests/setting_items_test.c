@@ -14,7 +14,7 @@ int baudrate_test(void)
     for (int i = 0; i < sizeof(valid_test_baudrate) / sizeof(valid_test_baudrate[0]); i++) {
         uint32_t expected_baudrate = valid_test_baudrate[i];
         if (setting_items_save("baudrate", &expected_baudrate) != 0) {
-            TEST_FAILED("Failed to save baudrate %d", expected_baudrate);
+            TEST_FAILED("Failed to save baudrate %u", expected_baudrate);
             return TEST_ERR;
         }
         uint32_t got_baudrate = 0;
@@ -23,7 +23,7 @@ int baudrate_test(void)
             return TEST_ERR;
         }
         if (expected_baudrate != got_baudrate) {
-            TEST_FAILED("Expected %d, got %d", expected_baudrate, got_baudrate);
+            TEST_FAILED("Expected %u, got %u", expected_baudrate, got_baudrate);
             return TEST_ERR;
         }
     }
@@ -31,7 +31,7 @@ int baudrate_test(void)
     for (int i = 0; i < sizeof(invalid_test_baudrate) / sizeof(invalid_test_baudrate[0]); i++) {
         uint32_t invalid_baudrate = invalid_test_baudrate[i];
         if (setting_items_save("baudrate", &invalid_baudrate) == 0) {
-            TEST_FAILED("Saved invalid baudrate %d", invalid_baudrate);
+            TEST_FAILED("Saved invalid baudrate %u", invalid_baudrate);
             return TEST_ERR;
         }
     }
