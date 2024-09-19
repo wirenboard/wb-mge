@@ -182,6 +182,7 @@ static bool string2ip(const char *str, uint32_t *ip)
 {
     // Дополнительная ячейка нужна для проверки наличия лишнего байта ip адреса
     int ip_arr[IP_ADDR_NUM + 1] = {0};
+    // Строка преобразуется в сетевом порядке байтов
     if (sscanf(str, "%d.%d.%d.%d.%d", &ip_arr[3], &ip_arr[2], &ip_arr[1], &ip_arr[0], &ip_arr[4]) ==
         IP_ADDR_NUM) {
         for (int i = 0; i < IP_ADDR_NUM; i++) {
@@ -199,6 +200,31 @@ static bool string2ip(const char *str, uint32_t *ip)
     } else {
         return false;
     }
+}
+
+static bool bridge_mode2string(bridge_mode_t mode, char *str)
+{
+    switch (mode) {
+        case BRIDGE_MODE_SERVER:
+            strcpy(str, "tcps-serial");
+            return true;
+        case BRIDGE_MODE_CLIENT:
+            strcpy(str, "tcpc-serial");
+            return true;
+    }
+    return false;
+}
+
+static bool string2bridge_mode(const char *str, bridge_mode_t *mode)
+{
+    if (strcmp(str, "tcps-serial") == 0) {
+        *mode = BRIDGE_MODE_SERVER;
+        return true;
+    } else if (strcmp(str, "tcpc-serial") == 0) {
+        *mode = BRIDGE_MODE_CLIENT;
+        return true;
+    }
+    return false;
 }
 
 static bool save_wifi_mode(const char *key, const void *value)
@@ -338,6 +364,30 @@ static bool read_parity(const char *key, void *value)
         return false;
     }
     if (parity2string(parity, value) == false) {
+        return false;
+    }
+    return true;
+}
+
+static bool save_bridge_mode(const char *key, const void *value)
+{
+    bridge_mode_t mode;
+    if (string2bridge_mode(value, &mode)) {
+        if (iface.save_num(key, (uint32_t)mode) != 0) {
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool read_bridge_mode(const char *key, void *value)
+{
+    uint32_t mode = 0;
+    if (iface.read_num(key, &mode) != 0) {
+        return false;
+    }
+    if (bridge_mode2string((bridge_mode_t)mode, value) == false) {
         return false;
     }
     return true;
@@ -734,12 +784,12 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "bridge_mode",  // TODO: сделать валидатор для режима моста
+        .key = "bridge_mode",
         .default_value = "tcps-serial",
-        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
-        .read_from_storage = read_string_value,
+        .save_to_storage = save_bridge_mode,
+        .read_from_storage = read_bridge_mode,
         .read_from_storage_raw = read_raw_value,
     },
     {

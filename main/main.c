@@ -1,5 +1,6 @@
 #include <string.h>
 
+#include "bridge.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -62,7 +63,8 @@ void app_main(void)
     char default_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_ETH);
-    snprintf(default_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3], mac[4], mac[5]);
+    snprintf(default_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
+             mac[4], mac[5]);
     ESP_ERROR_CHECK(setting_items_init(default_hostname, &setting_item_iface));
 
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -107,4 +109,6 @@ void app_main(void)
 
     ssdp_config_t ssdp_config = NULL;
     ESP_ERROR_CHECK(http_server_init(&ssdp_config));
+
+    ESP_ERROR_CHECK(bridge_init());
 }

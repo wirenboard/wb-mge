@@ -42,6 +42,11 @@ typedef struct {
     read_from_storage_raw read_from_storage_raw;
 } setting_item_t;
 
+typedef enum {
+    BRIDGE_MODE_SERVER = 1,
+    BRIDGE_MODE_CLIENT,
+} bridge_mode_t;
+
 int setting_items_init(char * def_hostname, setting_item_iface_t *setting_item_iface);
 int setting_items_set_defaults();
 // Чтение данных из хранилища, без преобразования

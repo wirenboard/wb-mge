@@ -8,6 +8,7 @@ idf_component_register(SRCS "main.c"
                             "nv_storage.c"
                             "ssdp.c"
                             "setting_items.c"
+                            "bridge.c"
                         INCLUDE_DIRS "."
                         EMBED_TXTFILES
                         frontend/index.html
