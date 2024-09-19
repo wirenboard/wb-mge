@@ -176,6 +176,40 @@ int ip_test(void)
     return TEST_OK;
 }
 
+int bridge_test(void)
+{
+    char* valid_test_bridge_mode[] = {"tcps-serial", "tcpc-serial"};
+    char* invalid_test_bridge_mode[] = {"tcps", "tcpc", "serial", "tcps-serial-serial", "tcpc-serial-serial"};
+
+    for (int i = 0; i < sizeof(valid_test_bridge_mode) / sizeof(valid_test_bridge_mode[0]); i++) {
+        char* expected_str = valid_test_bridge_mode[i];
+        if (setting_items_save("bridge_mode", expected_str) != 0) {
+            TEST_FAILED("Failed to save bridge_mode \"%s\"", expected_str);
+            return TEST_ERR;
+        }
+        char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+        if (setting_items_read("bridge_mode", got_str)) {
+            TEST_FAILED("Failed to read bridge_mode");
+            return TEST_ERR;
+        }
+        if (strcmp(expected_str, got_str) != 0) {
+            TEST_FAILED("Expected %s, got %s", expected_str, got_str);
+            return TEST_ERR;
+        }
+    }
+
+    for (int i = 0; i < sizeof(invalid_test_bridge_mode) / sizeof(invalid_test_bridge_mode[0]); i++) {
+        char* invalid_str = invalid_test_bridge_mode[i];
+        if (setting_items_save("bridge_mode", invalid_str) == 0) {
+            TEST_FAILED("Saved invalid bridge_mode \"%s\"", invalid_str);
+            return TEST_ERR;
+        }
+    }
+
+    TEST_PASSED();
+    return TEST_OK;
+}
+
 int main(void)
 {
     rams_init();
@@ -210,6 +244,9 @@ int main(void)
         return -1;
     }
     if (ip_test() != 0) {
+        return -1;
+    }
+    if (bridge_test() != 0) {
         return -1;
     }
 
