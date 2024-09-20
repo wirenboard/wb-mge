@@ -46,7 +46,7 @@ int parity_test(void)
                                        UART_PARITY_ODD_STR};
     const char* invalid_test_parity[] = {"n", "e", "o", "nonee", "evenn", "oddd"};
 
-    for (int i = 0; (i < (sizeof(valid_test_parity) / sizeof(valid_test_parity[0]))); i++) {
+    for (int i = 0; i < (sizeof(valid_test_parity) / sizeof(valid_test_parity[0])); i++) {
         const char* expected_str = valid_test_parity[i];
         if (setting_items_save("parity", expected_str) != 0) {
             TEST_FAILED("Failed to save parity \"%s\"", expected_str);
