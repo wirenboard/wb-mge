@@ -1,25 +1,25 @@
+#include "ram_storage.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include "ram_storage.h"
 
-#define SETTING_ITEM_NUM_MAX 100
-#define MAX_KEY_LEN 32
-#define MAX_STR_LEN 128
+#define SETTING_ITEM_NUM_MAX    100
+#define MAX_KEY_LEN             32
+#define MAX_STR_LEN             128
 
 typedef enum {
     TYPE_STR,
     TYPE_U8,
     TYPE_U16,
-    TYPE_U32
+    TYPE_U32,
 } value_type_t;
 
 enum {
     ESP_OK = 0,
     ESP_ERR_NOT_FOUND,
     ESP_ERR_NO_MEM,
-    ESP_ERR_INVALID_ARG
+    ESP_ERR_INVALID_ARG,
 };
 
 typedef struct {
@@ -35,15 +35,17 @@ typedef struct {
 
 storage_item_t storage[SETTING_ITEM_NUM_MAX];
 
-void rams_init() {
+void rams_init()
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
         storage[i].key[0] = '\0';
     }
 }
 
-int rams_write_str(const char* key, const char* value) {
+int rams_write_str(const char* key, const char* value)
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
-        if (storage[i].key[0] == '\0' || strcmp(storage[i].key, key) == 0) {
+        if ((storage[i].key[0] == '\0') || (strcmp(storage[i].key, key) == 0)) {
             strncpy(storage[i].key, key, MAX_KEY_LEN);
             storage[i].type = TYPE_STR;
             strncpy(storage[i].value.str_val, value, MAX_STR_LEN);
@@ -53,9 +55,10 @@ int rams_write_str(const char* key, const char* value) {
     return ESP_ERR_NO_MEM;
 }
 
-int rams_read_str(const char* key, char* value) {
+int rams_read_str(const char* key, char* value)
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
-        if (strcmp(storage[i].key, key) == 0 && storage[i].type == TYPE_STR) {
+        if ((strcmp(storage[i].key, key) == 0) && (storage[i].type == TYPE_STR)) {
             strncpy(value, storage[i].value.str_val, MAX_STR_LEN);
             return ESP_OK;
         }
@@ -63,9 +66,10 @@ int rams_read_str(const char* key, char* value) {
     return ESP_ERR_NOT_FOUND;
 }
 
-int rams_write_u8(const char* key, uint8_t value) {
+int rams_write_u8(const char* key, uint8_t value)
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
-        if (storage[i].key[0] == '\0' || strcmp(storage[i].key, key) == 0) {
+        if ((storage[i].key[0] == '\0') || (strcmp(storage[i].key, key) == 0)) {
             strncpy(storage[i].key, key, MAX_KEY_LEN);
             storage[i].type = TYPE_U8;
             storage[i].value.u8_val = value;
@@ -75,9 +79,10 @@ int rams_write_u8(const char* key, uint8_t value) {
     return ESP_ERR_NO_MEM;
 }
 
-int rams_read_u8(const char* key, uint8_t* value) {
+int rams_read_u8(const char* key, uint8_t* value)
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
-        if (strcmp(storage[i].key, key) == 0 && storage[i].type == TYPE_U8) {
+        if ((strcmp(storage[i].key, key) == 0) && (storage[i].type == TYPE_U8)) {
             *value = storage[i].value.u8_val;
             return ESP_OK;
         }
@@ -85,9 +90,10 @@ int rams_read_u8(const char* key, uint8_t* value) {
     return ESP_ERR_NOT_FOUND;
 }
 
-int rams_write_u16(const char* key, uint16_t value) {
+int rams_write_u16(const char* key, uint16_t value)
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
-        if (storage[i].key[0] == '\0' || strcmp(storage[i].key, key) == 0) {
+        if ((storage[i].key[0] == '\0') || (strcmp(storage[i].key, key) == 0)) {
             strncpy(storage[i].key, key, MAX_KEY_LEN);
             storage[i].type = TYPE_U16;
             storage[i].value.u16_val = value;
@@ -97,9 +103,10 @@ int rams_write_u16(const char* key, uint16_t value) {
     return ESP_ERR_NO_MEM;
 }
 
-int rams_read_u16(const char* key, uint16_t* value) {
+int rams_read_u16(const char* key, uint16_t* value)
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
-        if (strcmp(storage[i].key, key) == 0 && storage[i].type == TYPE_U16) {
+        if ((strcmp(storage[i].key, key) == 0) && (storage[i].type == TYPE_U16)) {
             *value = storage[i].value.u16_val;
             return ESP_OK;
         }
@@ -107,9 +114,10 @@ int rams_read_u16(const char* key, uint16_t* value) {
     return ESP_ERR_NOT_FOUND;
 }
 
-int rams_write_u32(const char* key, uint32_t value) {
+int rams_write_u32(const char* key, uint32_t value)
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
-        if (storage[i].key[0] == '\0' || strcmp(storage[i].key, key) == 0) {
+        if ((storage[i].key[0] == '\0') || (strcmp(storage[i].key, key) == 0)) {
             strncpy(storage[i].key, key, MAX_KEY_LEN);
             storage[i].type = TYPE_U32;
             storage[i].value.u32_val = value;
@@ -119,9 +127,10 @@ int rams_write_u32(const char* key, uint32_t value) {
     return ESP_ERR_NO_MEM;
 }
 
-int rams_read_u32(const char* key, uint32_t* value) {
+int rams_read_u32(const char* key, uint32_t* value)
+{
     for (int i = 0; i < SETTING_ITEM_NUM_MAX; i++) {
-        if (strcmp(storage[i].key, key) == 0 && storage[i].type == TYPE_U32) {
+        if ((strcmp(storage[i].key, key) == 0) && (storage[i].type == TYPE_U32)) {
             *value = storage[i].value.u32_val;
             return ESP_OK;
         }

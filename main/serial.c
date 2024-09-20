@@ -14,20 +14,13 @@
 
 static const char *TAG = "serial";
 
-#define SERIAL_PORT_NUM 2
-#if CONFIG_IDF_TARGET_ESP32
-#define SERIAL_INPUT_PIN  GPIO_NUM_5
-#define SERIAL_OUTPUT_PIN GPIO_NUM_17
-#define SERIAL_IO_PIN     GPIO_NUM_33
-#elif CONFIG_IDF_TARGET_ESP32S3
-#define SERIAL_INPUT_PIN  GPIO_NUM_18
-#define SERIAL_OUTPUT_PIN GPIO_NUM_17
-#define SERIAL_IO_PIN     GPIO_NUM_8
-#endif
-
-#define SERIAL_BUF_SIZE      (1000)
-#define ECHO_READ_TOUT       (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
-#define UART_TASK_STACK_SIZE (1024 * 4)
+#define SERIAL_PORT_NUM             2
+#define SERIAL_INPUT_PIN            GPIO_NUM_5
+#define SERIAL_OUTPUT_PIN           GPIO_NUM_17
+#define SERIAL_IO_PIN               GPIO_NUM_33
+#define SERIAL_BUF_SIZE             (1000)
+#define SERIAL_READ_TOUT            (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
+#define SERIAL_TASK_STACK_SIZE      (1024 * 4)
 
 serial_receive_handler_t receive_handler = NULL;
 static QueueHandle_t uart_queue = NULL;
@@ -113,14 +106,17 @@ esp_err_t serial_init(serial_config_t *serial_config, serial_receive_handler_t s
     if (err != ESP_OK) {
         return err;
     }
-    err = uart_set_rx_timeout(SERIAL_PORT_NUM, ECHO_READ_TOUT);
+    err = uart_set_rx_timeout(SERIAL_PORT_NUM, SERIAL_READ_TOUT);
     if (err != ESP_OK) {
         return err;
     }
 
-    xTaskCreate(uart_event_task, "uart_event_task", UART_TASK_STACK_SIZE, NULL, 12, NULL);  // TODO: check stack size
+    xTaskCreate(uart_event_task, "uart_event_task", SERIAL_TASK_STACK_SIZE, NULL, 12, NULL);  // TODO: check stack size
 
     return err;
 }
 
-esp_err_t serial_send(uint8_t *data, uint8_t len) { return uart_write_bytes(SERIAL_PORT_NUM, (const char *)data, len); }
+esp_err_t serial_send(uint8_t *data, uint8_t len)
+{
+    return uart_write_bytes(SERIAL_PORT_NUM, (const char *)data, len);
+}

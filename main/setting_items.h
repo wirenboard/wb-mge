@@ -3,8 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define SETTING_ITEM_NUM_MAX 50
-#define SETTING_ITEM_MAX_STR_LEN 32
+#include "constants.h"
 
 typedef enum {
     SETTING_ITEM_TYPE_NUM,
@@ -42,12 +41,12 @@ typedef struct {
     read_from_storage_raw read_from_storage_raw;
 } setting_item_t;
 
-int setting_items_init(char * def_hostname, setting_item_iface_t *setting_item_iface);
+int setting_items_init(char *def_hostname, setting_item_iface_t *setting_item_iface);
 int setting_items_set_defaults();
 // Чтение данных из хранилища, без преобразования
 int setting_items_read_raw(const char *key, void *value, setting_item_type_t type_in_storage);
 // Чтение данных из хранилища, с преобразованием для использования в json
 int setting_items_read(const char *key, void *value);
-int setting_items_save(const char *key, void *value);
+int setting_items_save(const char *key, const void *value);
 int setting_items_get_keys(const char **keys);
 setting_item_type_t setting_items_get_type_in_json(const char *key);

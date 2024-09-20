@@ -4,8 +4,8 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 
-#define WIFI_SSID_MAX_LEN 32
-#define WIFI_PASS_MAX_LEN 64
+#define WIFI_SSID_MAX_LEN       32
+#define WIFI_PASS_MAX_LEN       64
 
 typedef struct {
     char ap_ssid[WIFI_SSID_MAX_LEN];

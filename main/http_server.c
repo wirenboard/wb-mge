@@ -11,7 +11,7 @@
 #include "setting_items.h"
 #include "ssdp.h"
 
-#define REQ_RECV_BUF_SIZE 1024
+#define REQ_RECV_BUF_SIZE       1024
 
 static const char *TAG = "http_server";
 
@@ -89,7 +89,9 @@ esp_err_t update_post_handler(httpd_req_t *req)
     }
 
     // Validate and switch to new OTA image and reboot
-    if ((esp_ota_end(ota_handle) != ESP_OK) || (esp_ota_set_boot_partition(ota_partition) != ESP_OK)) {
+    if ((esp_ota_end(ota_handle) != ESP_OK) ||
+        (esp_ota_set_boot_partition(ota_partition) != ESP_OK))
+    {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Validation / Activation Error");
         return ESP_FAIL;
     }
@@ -160,7 +162,8 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
                 int val = 1;
                 value = (int *)&val;
             } else {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Uncknown type json item");
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                    "Uncknown type json item");
             }
 
             if (setting_items_save(keys[i], value) == 0) {

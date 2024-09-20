@@ -2,8 +2,8 @@
 
 #include "esp_event.h"
 #include "esp_log.h"
-#include "ethernet.h"
 #include "esp_mac.h"
+#include "ethernet.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "http_server.h"
@@ -16,7 +16,6 @@
 #include "tcp_server.h"
 #include "wifi_apsta.h"
 
-#define BASE_HOSTNAME "WB-MGE"
 
 static const char *TAG = "main";
 
@@ -37,7 +36,7 @@ static void eth_event(void *arg, esp_event_base_t event_base, int32_t event_id, 
             break;
         case ETHERNET_EVENT_START:
             ESP_LOGI(TAG, "Ethernet Started");
-                break;
+            break;
         case ETHERNET_EVENT_STOP:
             ESP_LOGI(TAG, "Ethernet Stopped");
             break;
@@ -62,7 +61,8 @@ void app_main(void)
     char default_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_ETH);
-    snprintf(default_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3], mac[4], mac[5]);
+    snprintf(default_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
+             mac[4], mac[5]);
     ESP_ERROR_CHECK(setting_items_init(default_hostname, &setting_item_iface));
 
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -93,7 +93,7 @@ void app_main(void)
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg));
 
     bool eth_dhcpc = false;
-    esp_netif_ip_info_t* eth_ip_info = NULL;
+    esp_netif_ip_info_t *eth_ip_info = NULL;
     setting_items_read_raw("eth_dhcpc", &eth_dhcpc, SETTING_ITEM_TYPE_BOOL);
     if (!eth_dhcpc) {
         esp_netif_ip_info_t static_ip_info = {0};
@@ -104,6 +104,6 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ethernet_init(&eth_event, NULL, eth_ip_info));
 
-    ssdp_config_t ssdp_config = NULL;
+    ssdp_config_t ssdp_config = NULL;  // TODO: Add SSDP
     ESP_ERROR_CHECK(http_server_init(&ssdp_config));
 }

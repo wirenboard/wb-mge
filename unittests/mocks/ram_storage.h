@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 void rams_init(void);
 int rams_write_str(const char* key, const char* value);
 int rams_read_str(const char* key, char* value);

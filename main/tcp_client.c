@@ -1,18 +1,20 @@
 // #include "sdkconfig.h"
-#include <string.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include <sys/socket.h>
-#include <errno.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include "esp_netif.h"
-#include "esp_log.h"
 #include "tcp_client.h"
 
-#define RX_BUFFER_SIZE 1024
-#define TCP_CLIENT_TASK_STACK_SIZE 4096
-#define TCP_CLIENT_TASK_PRIORITY 5
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netdb.h>
+#include <string.h>
+#include <sys/socket.h>
+
+#include "esp_log.h"
+#include "esp_netif.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#define RX_BUFFER_SIZE                  1024
+#define TCP_CLIENT_TASK_STACK_SIZE      4096
+#define TCP_CLIENT_TASK_PRIORITY        5
 
 static const char *TAG = "tcp-client";
 
@@ -32,7 +34,7 @@ static void tcp_client_task(void *pvParameters)
             dest_addr.sin_family = AF_INET;
             dest_addr.sin_port = htons(port);
 
-            sock =  socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+            sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
             if (sock < 0) {
                 ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
                 break;
@@ -52,8 +54,7 @@ static void tcp_client_task(void *pvParameters)
                 if (len < 0) {
                     ESP_LOGE(TAG, "recv failed: errno %d", errno);
                     break;
-                }
-                else {
+                } else {
                     ESP_LOGD(TAG, "Received %d bytes", len);
                     ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
                     tcp_client_receive_handler((uint8_t *)rx_buffer, len);
@@ -77,7 +78,8 @@ esp_err_t tcp_client_init(char *host_ip, int host_port, tcpc_receive_handler_t t
     port = host_port;
     strcpy(ip, host_ip);
     tcp_client_receive_handler = tcpc_receive_handler;
-    xTaskCreate(tcp_client_task, "tcp_client", TCP_CLIENT_TASK_STACK_SIZE, NULL, TCP_CLIENT_TASK_PRIORITY, NULL); // TODO: check stack size
+    xTaskCreate(tcp_client_task, "tcp_client", TCP_CLIENT_TASK_STACK_SIZE, NULL,
+                TCP_CLIENT_TASK_PRIORITY, NULL);  // TODO: check stack size
     return ESP_OK;
 }
 

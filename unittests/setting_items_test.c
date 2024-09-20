@@ -42,11 +42,12 @@ int baudrate_test(void)
 
 int parity_test(void)
 {
-    char* valid_test_parity[] = {"none", "even", "odd"};
-    char* invalid_test_parity[] = {"n", "e", "o", "nonee", "evenn", "oddd"};
+    const char* valid_test_parity[] = {UART_PARITY_DISABLE_STR, UART_PARITY_EVEN_STR,
+                                       UART_PARITY_ODD_STR};
+    const char* invalid_test_parity[] = {"n", "e", "o", "nonee", "evenn", "oddd"};
 
     for (int i = 0; i < sizeof(valid_test_parity) / sizeof(valid_test_parity[0]); i++) {
-        char* expected_str = valid_test_parity[i];
+        const char* expected_str = valid_test_parity[i];
         if (setting_items_save("parity", expected_str) != 0) {
             TEST_FAILED("Failed to save parity \"%s\"", expected_str);
             return TEST_ERR;
@@ -63,7 +64,7 @@ int parity_test(void)
     }
 
     for (int i = 0; i < sizeof(invalid_test_parity) / sizeof(invalid_test_parity[0]); i++) {
-        char* invalid_str = invalid_test_parity[i];
+        const char* invalid_str = invalid_test_parity[i];
         if (setting_items_save("parity", invalid_str) == 0) {
             TEST_FAILED("Saved invalid parity \"%s\"", invalid_str);
             return TEST_ERR;
@@ -76,11 +77,12 @@ int parity_test(void)
 
 int databits_test(void)
 {
-    char* valid_test_databits[] = {"5-bit", "6-bit", "7-bit", "8-bit"};
-    char* invalid_test_databits[] = {"4", "9", "5b", "6b", "7b", "8b"};
+    const char* valid_test_databits[] = {UART_DATA_5_BITS_STR, UART_DATA_6_BITS_STR,
+                                         UART_DATA_7_BITS_STR, UART_DATA_8_BITS_STR};
+    const char* invalid_test_databits[] = {"4", "9", "5b", "6b", "7b", "8b"};
 
     for (int i = 0; i < sizeof(valid_test_databits) / sizeof(valid_test_databits[0]); i++) {
-        char* expected_str = valid_test_databits[i];
+        const char* expected_str = valid_test_databits[i];
         if (setting_items_save("databits", expected_str) != 0) {
             TEST_FAILED("Failed to save databits \"%s\"", expected_str);
             return TEST_ERR;
@@ -97,7 +99,7 @@ int databits_test(void)
     }
 
     for (int i = 0; i < sizeof(invalid_test_databits) / sizeof(invalid_test_databits[0]); i++) {
-        char* invalid_str = invalid_test_databits[i];
+        const char* invalid_str = invalid_test_databits[i];
         if (setting_items_save("databits", invalid_str) == 0) {
             TEST_FAILED("Saved invalid databits \"%s\"", invalid_str);
             return TEST_ERR;
@@ -110,11 +112,12 @@ int databits_test(void)
 
 int stopbits_test(void)
 {
-    char* valid_test_stopbits[] = {"1-bit", "1.5-bit", "2-bit"};
-    char* invalid_test_stopbits[] = {"1", "1.5", "2", "1-b", "1.5-b", "2-b"};
+    const char* valid_test_stopbits[] = {UART_STOP_BITS_1_STR, UART_STOP_BITS_1_5_STR,
+                                         UART_STOP_BITS_2_STR};
+    const char* invalid_test_stopbits[] = {"1", "1.5", "2", "1-b", "1.5-b", "2-b"};
 
     for (int i = 0; i < sizeof(valid_test_stopbits) / sizeof(valid_test_stopbits[0]); i++) {
-        char* expected_str = valid_test_stopbits[i];
+        const char* expected_str = valid_test_stopbits[i];
         if (setting_items_save("stopbits", expected_str) != 0) {
             TEST_FAILED("Failed to save stopbits \"%s\"", expected_str);
             return TEST_ERR;
@@ -131,7 +134,7 @@ int stopbits_test(void)
     }
 
     for (int i = 0; i < sizeof(invalid_test_stopbits) / sizeof(invalid_test_stopbits[0]); i++) {
-        char* invalid_str = invalid_test_stopbits[i];
+        const char* invalid_str = invalid_test_stopbits[i];
         if (setting_items_save("stopbits", invalid_str) == 0) {
             TEST_FAILED("Saved invalid stopbits \"%s\"", invalid_str);
             return TEST_ERR;
@@ -144,11 +147,12 @@ int stopbits_test(void)
 
 int ip_test(void)
 {
-    char* valid_test_ip[] = {"192.168.111.12", "127.0.0.1"};
-    char* invalid_test_ip[] = {"192.168..111.255", "192.168.111.256", "192.168.111.25.1", "192..1", "192.168.1"};
+    const char* valid_test_ip[] = {"192.168.111.12", "127.0.0.1"};
+    const char* invalid_test_ip[] = {"192.168..111.255", "192.168.111.256", "192.168.111.25.1",
+                                     "192..1", "192.168.1"};
 
     for (int i = 0; i < sizeof(valid_test_ip) / sizeof(valid_test_ip[0]); i++) {
-        char* expected_str = valid_test_ip[i];
+        const char* expected_str = valid_test_ip[i];
         if (setting_items_save("eth_ip_static", expected_str) != 0) {
             TEST_FAILED("Failed to save eth_ip \"%s\"", expected_str);
             return TEST_ERR;
@@ -165,7 +169,7 @@ int ip_test(void)
     }
 
     for (int i = 0; i < sizeof(invalid_test_ip) / sizeof(invalid_test_ip[0]); i++) {
-        char* invalid_str = invalid_test_ip[i];
+        const char* invalid_str = invalid_test_ip[i];
         if (setting_items_save("eth_ip", invalid_str) == 0) {
             TEST_FAILED("Saved invalid eth_ip \"%s\"", invalid_str);
             return TEST_ERR;

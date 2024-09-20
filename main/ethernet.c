@@ -9,12 +9,12 @@
 #include "esp_netif.h"
 #include "esp_netif_types.h"
 
-#define ETH_PHY_LAN87XX  1
-#define ETH_MDC_GPIO     GPIO_NUM_23
-#define ETH_MDIO_GPIO    GPIO_NUM_18
-#define ETH_PHY_RST_GPIO -1
-#define ETH_PHY_ADDR     1
-#define CLK_ENABLE_GPIO  GPIO_NUM_16
+#define ETH_PHY_LAN87XX     1
+#define ETH_MDC_GPIO        GPIO_NUM_23
+#define ETH_MDIO_GPIO       GPIO_NUM_18
+#define ETH_PHY_RST_GPIO    -1
+#define ETH_PHY_ADDR        1
+#define CLK_ENABLE_GPIO     GPIO_NUM_16
 
 esp_err_t ethernet_init(esp_event_handler_t eth_event_handler,
                         esp_event_handler_t got_ip_event_handler, esp_netif_ip_info_t *static_ip)

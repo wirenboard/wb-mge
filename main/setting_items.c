@@ -8,32 +8,30 @@
 #include "stdio.h"
 #include "string.h"
 
-#define UART_BAUD_RATE_MIN 300
-#define UART_BAUD_RATE_MAX 460800
-#define IP_ADDR_NUM        4
-#define IP_ADDR_STR_LEN    16
+#define IP_ADDR_OCTETS_NUM      4
+#define IP_ADDR_STR_LEN         16
 
-setting_item_iface_t iface;
-const setting_item_t setting_items[SETTING_ITEM_NUM_MAX];
+setting_item_iface_t iface = {0};
+const setting_item_t setting_items[SETTING_ITEM_NUM_MAX];  // инициализируется в конце файла
 
 char default_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
-const int default_baudrate = 9600;
-const bool default_eth_dhcpc = true;
-const int default_bridge_port = 1234;
-const bool default_bridge_mb = false;
+const int default_baudrate = DEFAULT_BAUDRATE;
+const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
+const int default_bridge_port = DEFAULT_BRIDGE_PORT;
+const bool default_bridge_mb = DEFAULT_BRIDGE_MB;
 
 static bool string2wifi_mode(const char *str, wifi_mode_t *mode)
 {
-    if (strcmp(str, "ap") == 0) {
+    if (strcmp(str, WIFI_MODE_AP_STR) == 0) {
         *mode = WIFI_MODE_AP;
         return true;
-    } else if (strcmp(str, "sta") == 0) {
+    } else if (strcmp(str, WIFI_MODE_STA_STR) == 0) {
         *mode = WIFI_MODE_STA;
         return true;
-    } else if (strcmp(str, "apsta") == 0) {
+    } else if (strcmp(str, WIFI_MODE_APSTA_STR) == 0) {
         *mode = WIFI_MODE_APSTA;
         return true;
-    } else if (strcmp(str, "none") == 0) {
+    } else if (strcmp(str, WIFI_MODE_NULL_STR) == 0) {
         *mode = WIFI_MODE_NULL;
         return true;
     }
@@ -44,16 +42,16 @@ static bool wifi_mode2string(wifi_mode_t mode, char *str)
 {
     switch (mode) {
         case WIFI_MODE_AP:
-            strcpy(str, "ap");
+            strcpy(str, WIFI_MODE_AP_STR);
             return true;
         case WIFI_MODE_STA:
-            strcpy(str, "sta");
+            strcpy(str, WIFI_MODE_STA_STR);
             return true;
         case WIFI_MODE_APSTA:
-            strcpy(str, "apsta");
+            strcpy(str, WIFI_MODE_APSTA_STR);
             return true;
         case WIFI_MODE_NULL:
-            strcpy(str, "none");
+            strcpy(str, WIFI_MODE_NULL_STR);
             return true;
         default:
             return false;
@@ -64,11 +62,11 @@ static bool wifi_mode2string(wifi_mode_t mode, char *str)
 static bool string2stopbits(const char *str, uint32_t *stopbits)
 {
     uint32_t val;
-    if (strcmp(str, "1-bit") == 0) {
+    if (strcmp(str, UART_STOP_BITS_1_STR) == 0) {
         val = UART_STOP_BITS_1;
-    } else if (strcmp(str, "1.5-bit") == 0) {
+    } else if (strcmp(str, UART_STOP_BITS_1_5_STR) == 0) {
         val = UART_STOP_BITS_1_5;
-    } else if (strcmp(str, "2-bit") == 0) {
+    } else if (strcmp(str, UART_STOP_BITS_2_STR) == 0) {
         val = UART_STOP_BITS_2;
     } else {
         return false;
@@ -83,13 +81,13 @@ static bool stopbits2string(uint32_t stopbits, char *str)
 {
     switch (stopbits) {
         case UART_STOP_BITS_1:
-            strcpy(str, "1-bit");
+            strcpy(str, UART_STOP_BITS_1_STR);
             return true;
         case UART_STOP_BITS_1_5:
-            strcpy(str, "1.5-bit");
+            strcpy(str, UART_STOP_BITS_1_5_STR);
             return true;
         case UART_STOP_BITS_2:
-            strcpy(str, "2-bit");
+            strcpy(str, UART_STOP_BITS_2_STR);
             return true;
     }
     return false;
@@ -98,13 +96,13 @@ static bool stopbits2string(uint32_t stopbits, char *str)
 static bool string2databits(const char *str, uint32_t *databits)
 {
     uint32_t val;
-    if (strcmp(str, "5-bit") == 0) {
+    if (strcmp(str, UART_DATA_5_BITS_STR) == 0) {
         val = UART_DATA_5_BITS;
-    } else if (strcmp(str, "6-bit") == 0) {
+    } else if (strcmp(str, UART_DATA_6_BITS_STR) == 0) {
         val = UART_DATA_6_BITS;
-    } else if (strcmp(str, "7-bit") == 0) {
+    } else if (strcmp(str, UART_DATA_7_BITS_STR) == 0) {
         val = UART_DATA_7_BITS;
-    } else if (strcmp(str, "8-bit") == 0) {
+    } else if (strcmp(str, UART_DATA_8_BITS_STR) == 0) {
         val = UART_DATA_8_BITS;
     } else {
         return false;
@@ -119,16 +117,16 @@ static bool databits2string(uint32_t databits, char *str)
 {
     switch (databits) {
         case UART_DATA_5_BITS:
-            strcpy(str, "5-bit");
+            strcpy(str, UART_DATA_5_BITS_STR);
             return true;
         case UART_DATA_6_BITS:
-            strcpy(str, "6-bit");
+            strcpy(str, UART_DATA_6_BITS_STR);
             return true;
         case UART_DATA_7_BITS:
-            strcpy(str, "7-bit");
+            strcpy(str, UART_DATA_7_BITS_STR);
             return true;
         case UART_DATA_8_BITS:
-            strcpy(str, "8-bit");
+            strcpy(str, UART_DATA_8_BITS_STR);
             return true;
     }
     return false;
@@ -137,11 +135,11 @@ static bool databits2string(uint32_t databits, char *str)
 static bool string2parity(const char *str, uint32_t *parity)
 {
     uint32_t val;
-    if (strcmp(str, "none") == 0) {
+    if (strcmp(str, UART_PARITY_DISABLE_STR) == 0) {
         val = UART_PARITY_DISABLE;
-    } else if (strcmp(str, "even") == 0) {
+    } else if (strcmp(str, UART_PARITY_EVEN_STR) == 0) {
         val = UART_PARITY_EVEN;
-    } else if (strcmp(str, "odd") == 0) {
+    } else if (strcmp(str, UART_PARITY_ODD_STR) == 0) {
         val = UART_PARITY_ODD;
     } else {
         return false;
@@ -156,13 +154,13 @@ static bool parity2string(uint32_t parity, char *str)
 {
     switch (parity) {
         case UART_PARITY_DISABLE:
-            strcpy(str, "none");
+            strcpy(str, UART_PARITY_DISABLE_STR);
             return true;
         case UART_PARITY_EVEN:
-            strcpy(str, "even");
+            strcpy(str, UART_PARITY_EVEN_STR);
             return true;
         case UART_PARITY_ODD:
-            strcpy(str, "odd");
+            strcpy(str, UART_PARITY_ODD_STR);
             return true;
     }
     return false;
@@ -170,8 +168,11 @@ static bool parity2string(uint32_t parity, char *str)
 
 static bool ip2string(uint32_t ip, char *str)
 {
-    int ret = snprintf(str, IP_ADDR_STR_LEN, "%lu.%lu.%lu.%lu", ip & 0xFF, (ip >> 8) & 0xFF,
-                       (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
+    int ret = snprintf(str, IP_ADDR_STR_LEN, "%u.%u.%u.%u",
+                       (uint8_t)(ip & 0xFF),           // 4st octet
+                       (uint8_t)((ip >> 8) & 0xFF),    // 3nd octet
+                       (uint8_t)((ip >> 16) & 0xFF),   // 2rd octet
+                       (uint8_t)((ip >> 24) & 0xFF));  // 1th octet
     if ((ret < 0) || (ret >= IP_ADDR_STR_LEN)) {
         return false;
     }
@@ -181,19 +182,19 @@ static bool ip2string(uint32_t ip, char *str)
 static bool string2ip(const char *str, uint32_t *ip)
 {
     // Дополнительная ячейка нужна для проверки наличия лишнего байта ip адреса
-    int ip_arr[IP_ADDR_NUM + 1] = {0};
-    if (sscanf(str, "%d.%d.%d.%d.%d", &ip_arr[3], &ip_arr[2], &ip_arr[1], &ip_arr[0], &ip_arr[4]) ==
-        IP_ADDR_NUM) {
-        for (int i = 0; i < IP_ADDR_NUM; i++) {
-            if (ip_arr[i] < 0 || ip_arr[i] > 255) {
+    int octets[IP_ADDR_OCTETS_NUM + 1] = {0};
+    if (sscanf(str, "%d.%d.%d.%d.%d", &octets[3], &octets[2], &octets[1], &octets[0], &octets[4]) ==
+        IP_ADDR_OCTETS_NUM) {
+        for (int i = 0; i < IP_ADDR_OCTETS_NUM; i++) {
+            if (octets[i] < 0 || octets[i] > 255) {
                 return false;
             }
         }
         if (ip != NULL) {
-            *ip = ((uint32_t)((ip_arr[0]) & 0xff) << 24) |  // 1st octet
-                  ((uint32_t)((ip_arr[1]) & 0xff) << 16) |  // 2nd octet
-                  ((uint32_t)((ip_arr[2]) & 0xff) << 8) |   // 3rd octet
-                  (uint32_t)((ip_arr[3]) & 0xff);           // 4th octet
+            *ip = ((uint32_t)((octets[0]) & 0xff) << 24) |  // 1st octet
+                  ((uint32_t)((octets[1]) & 0xff) << 16) |  // 2nd octet
+                  ((uint32_t)((octets[2]) & 0xff) << 8) |   // 3rd octet
+                  (uint32_t)((octets[3]) & 0xff);           // 4th octet
         }
         return true;
     } else {
@@ -228,7 +229,7 @@ static bool read_wifi_mode(const char *key, void *value)
 static bool save_boudrate(const char *key, const void *value)
 {
     uint32_t baudrate = *(uint32_t *)value;
-    if (baudrate < UART_BAUD_RATE_MIN || baudrate > UART_BAUD_RATE_MAX) {
+    if ((baudrate < UART_BAUD_RATE_MIN) || (baudrate > UART_BAUD_RATE_MAX)) {
         return false;
     }
     if (iface.save_num(key, baudrate) != 0) {
@@ -443,9 +444,9 @@ int setting_items_init(char *def_hostname, setting_item_iface_t *setting_item_if
     if (setting_item_iface == NULL) {
         return -1;
     }
-    if (setting_item_iface->save_bool == NULL || setting_item_iface->save_num == NULL ||
-        setting_item_iface->save_str == NULL || setting_item_iface->read_bool == NULL ||
-        setting_item_iface->read_num == NULL || setting_item_iface->read_str == NULL)
+    if ((setting_item_iface->save_bool == NULL) || (setting_item_iface->save_num == NULL) ||
+        (setting_item_iface->save_str == NULL) || (setting_item_iface->read_bool == NULL) ||
+        (setting_item_iface->read_num == NULL) || (setting_item_iface->read_str == NULL))
     {
         return -1;
     }
@@ -546,7 +547,7 @@ setting_item_type_t setting_items_get_type_in_json(const char *key)
     return setting_items[index].type_in_json;
 }
 
-int setting_items_save(const char *key, void *value)
+int setting_items_save(const char *key, const void *value)
 {
     int index = setting_items_get_index(key);
     if (index == -1) {
@@ -563,7 +564,7 @@ int setting_items_save(const char *key, void *value)
 
 const setting_item_t setting_items[] = {
     {
-        .key = "hostname",
+        .key = KEY_HOSTNAME,
         .default_value = default_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
@@ -572,8 +573,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "login",
-        .default_value = "admin",
+        .key = KEY_LOGIN,
+        .default_value = DEFAULT_LOGIN,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,
@@ -581,8 +582,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "pass",
-        .default_value = "admin",
+        .key = KEY_PASS,
+        .default_value = DEFAULT_PASS,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,
@@ -590,7 +591,7 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "baudrate",
+        .key = KEY_BAUDRATE,
         .default_value = &default_baudrate,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_NUM,
@@ -599,8 +600,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "stopbits",
-        .default_value = "1-bit",
+        .key = KEY_STOPBITS,
+        .default_value = DEFAULT_STOPBITS,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_stopbits,
@@ -608,8 +609,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "parity",
-        .default_value = "none",
+        .key = KEY_PARITY,
+        .default_value = DEFAULT_PARITY,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_parity,
@@ -617,8 +618,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "databits",
-        .default_value = "8-bit",
+        .key = KEY_DATABITS,
+        .default_value = DEFAULT_DATABITS,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_databits,
@@ -626,8 +627,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "eth_ip_static",
-        .default_value = "192.168.5.1",
+        .key = KEY_ETH_IP_STATIC,
+        .default_value = DEFAULT_ETH_IP_STATIC,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_ip,
@@ -635,8 +636,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "eth_mask_static",
-        .default_value = "255.255.255.0",
+        .key = KEY_ETH_MASK_STATIC,
+        .default_value = DEFAULT_ETH_MASK_STATIC,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_ip,
@@ -644,8 +645,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "eth_gw_static",
-        .default_value = "192.168.5.1",
+        .key = KEY_ETH_GW_STATIC,
+        .default_value = DEFAULT_ETH_GW_STATIC,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_ip,
@@ -653,7 +654,7 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "eth_dhcpc",
+        .key = KEY_ETH_DHCPC,
         .default_value = &default_eth_dhcpc,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
@@ -662,8 +663,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "wifi_mode",
-        .default_value = "ap",
+        .key = KEY_WIFI_MODE,
+        .default_value = DEFAULT_WIFI_MODE,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_wifi_mode,
@@ -671,8 +672,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "ap_ip_static",
-        .default_value = "192.168.4.1",
+        .key = KEY_AP_IP_STATIC,
+        .default_value = DEFAULT_AP_IP_STATIC,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_ip,
@@ -680,8 +681,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "ap_mask_static",
-        .default_value = "255.255.255.0",
+        .key = KEY_AP_MASK_STATIC,
+        .default_value = DEFAULT_AP_MASK_STATIC,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_ip,
@@ -689,8 +690,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "ap_gw_static",
-        .default_value = "192.168.4.1",
+        .key = KEY_AP_GW_STATIC,
+        .default_value = DEFAULT_AP_GW_STATIC,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_ip,
@@ -698,7 +699,7 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "ap_ssid",
+        .key = KEY_AP_SSID,
         .default_value = default_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
@@ -707,8 +708,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "ap_pass",
-        .default_value = "",
+        .key = KEY_AP_PASS,
+        .default_value = DEFAULT_AP_PASS,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,
@@ -716,8 +717,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "sta_ssid",
-        .default_value = "",
+        .key = KEY_STA_SSID,
+        .default_value = DEFAULT_STA_SSID,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,
@@ -725,8 +726,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "sta_pass",
-        .default_value = "",
+        .key = KEY_STA_PASS,
+        .default_value = DEFAULT_STA_PASS,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,
@@ -734,8 +735,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "bridge_mode",  // TODO: сделать валидатор для режима моста
-        .default_value = "tcps-serial",
+        .key = KEY_BRIDGE_MODE,  // TODO: сделать валидатор для режима моста
+        .default_value = DEFAULT_BRIDGE_MODE,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,
@@ -743,7 +744,7 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "bridge_port",
+        .key = KEY_BRIDGE_PORT,
         .default_value = &default_bridge_port,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_NUM,
@@ -752,8 +753,8 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "bridge_ip",
-        .default_value = "192.168.4.2",
+        .key = KEY_BRIDGE_IP,
+        .default_value = DEFAULT_BRIDGE_IP,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_ip,
@@ -761,7 +762,7 @@ const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = "bridge_mb",
+        .key = KEY_BRIDGE_MB,
         .default_value = &default_bridge_mb,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
