@@ -33,7 +33,7 @@ typedef struct {
     } value;
 } storage_item_t;
 
-storage_item_t storage[SETTING_ITEM_NUM_MAX];
+static storage_item_t storage[SETTING_ITEM_NUM_MAX];
 
 void rams_init()
 {

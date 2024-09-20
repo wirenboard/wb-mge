@@ -14,7 +14,7 @@
 
 static const char *TAG = "tcp-server";
 
-tcps_receive_handler_t tcp_server_receive_handler = NULL;
+static tcps_receive_handler_t tcp_server_receive_handler = NULL;
 static int sock = -1;
 
 static void tcp_server_task(void *pvParameters)
@@ -29,7 +29,7 @@ static void tcp_server_task(void *pvParameters)
     int keepCount = KEEPALIVE_COUNT;
 
     while (1) {
-        struct sockaddr_storage source_addr;  // Large enough for both IPv4 or IPv6
+        struct sockaddr_storage source_addr;
         socklen_t addr_len = sizeof(source_addr);
         sock = accept(listen_sock, (struct sockaddr *)&source_addr, &addr_len);
         if (sock < 0) {

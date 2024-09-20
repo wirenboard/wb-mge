@@ -42,7 +42,7 @@ typedef struct {
 } setting_item_t;
 
 int setting_items_init(char *def_hostname, setting_item_iface_t *setting_item_iface);
-int setting_items_set_defaults();
+int setting_items_set_defaults(void);
 // Чтение данных из хранилища, без преобразования
 int setting_items_read_raw(const char *key, void *value, setting_item_type_t type_in_storage);
 // Чтение данных из хранилища, с преобразованием для использования в json

@@ -120,12 +120,12 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
                     .authmode = WIFI_AUTH_WPA_WPA2_PSK,
                 },
         };
-        if (strlen(apsta_cfg->ap_pass) == 0) {
+        if (strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN) == 0) {
             wifi_config_ap.ap.authmode = WIFI_AUTH_OPEN;
         }
-        memcpy(&wifi_config_ap.ap.ssid, apsta_cfg->ap_ssid, strlen(apsta_cfg->ap_ssid));
-        wifi_config_ap.ap.ssid_len = strlen(apsta_cfg->ap_ssid);
-        memcpy(&wifi_config_ap.ap.password, apsta_cfg->ap_pass, strlen(apsta_cfg->ap_pass));
+        memcpy(&wifi_config_ap.ap.ssid, apsta_cfg->ap_ssid, strnlen(apsta_cfg->ap_ssid, WIFI_SSID_MAX_LEN));
+        wifi_config_ap.ap.ssid_len = strnlen(apsta_cfg->ap_ssid, WIFI_SSID_MAX_LEN);
+        memcpy(&wifi_config_ap.ap.password, apsta_cfg->ap_pass, strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN));
         err = esp_wifi_set_config(WIFI_IF_AP, &wifi_config_ap);
         ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "esp_wifi_set_config failed");
         err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &ap_event_handler,
@@ -147,8 +147,8 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
                         },
                 },
         };
-        memcpy(&wifi_config_sta.sta.ssid, apsta_cfg->sta_ssid, strlen(apsta_cfg->sta_ssid));
-        memcpy(&wifi_config_sta.sta.password, apsta_cfg->sta_pass, strlen(apsta_cfg->sta_pass));
+        memcpy(&wifi_config_sta.sta.ssid, apsta_cfg->sta_ssid, strnlen(apsta_cfg->sta_ssid, WIFI_SSID_MAX_LEN));
+        memcpy(&wifi_config_sta.sta.password, apsta_cfg->sta_pass, strnlen(apsta_cfg->sta_pass, WIFI_PASS_MAX_LEN));
         err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta);
         ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "esp_wifi_set_config failed");
         if (apsta_cfg->ap_event_handler != NULL) {

@@ -12,8 +12,6 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
-static const char *TAG = "serial";
-
 #define SERIAL_PORT_NUM             2
 #define SERIAL_INPUT_PIN            GPIO_NUM_5
 #define SERIAL_OUTPUT_PIN           GPIO_NUM_17
@@ -22,7 +20,9 @@ static const char *TAG = "serial";
 #define SERIAL_READ_TOUT            (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
 #define SERIAL_TASK_STACK_SIZE      (1024 * 4)
 
-serial_receive_handler_t receive_handler = NULL;
+static const char *TAG = "serial";
+
+static serial_receive_handler_t receive_handler = NULL;
 static QueueHandle_t uart_queue = NULL;
 
 static void uart_event_task(void *pvParameters)
