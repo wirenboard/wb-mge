@@ -12,9 +12,9 @@
 #include "setting_items.h"
 #include "ssdp.h"
 
-#define REQ_RECV_BUF_SIZE 1024
-#define COOKIE_MAX_LEN    32
-#define MAX_SESSIONS      10
+#define REQ_RECV_BUF_SIZE       1024
+#define COOKIE_MAX_LEN          32
+#define MAX_SESSIONS            10
 
 typedef struct {
     uint32_t session_ids[MAX_SESSIONS];
@@ -47,7 +47,7 @@ uint32_t safe_strtoul(const char *str)
     errno = 0;  // Сбросить errno перед вызовом strtoul
     uint32_t value = strtoul(str, &endptr, 10);
 
-    if (errno == ERANGE && (value == ULONG_MAX)) {
+    if ((errno == ERANGE) && (value == ULONG_MAX)) {
         ESP_LOGE(TAG, "Overflow occurred");
         return ULONG_MAX;
     }
@@ -70,8 +70,9 @@ static uint32_t authorization(char *login_req, char *pass_req)
     char login[SETTING_ITEM_MAX_STR_LEN] = {0};
     char pass[SETTING_ITEM_MAX_STR_LEN] = {0};
 
-    if (setting_items_read_raw("login", login, SETTING_ITEM_TYPE_STR) != 0 ||
-        setting_items_read_raw("pass", pass, SETTING_ITEM_TYPE_STR) != 0) {
+    if ((setting_items_read_raw("login", login, SETTING_ITEM_TYPE_STR) != 0) ||
+        (setting_items_read_raw("pass", pass, SETTING_ITEM_TYPE_STR) != 0)) 
+    {
         ESP_LOGE(TAG, "Failed to read login or pass from storage");
         return 0;
     }
@@ -194,7 +195,7 @@ static esp_err_t auth_post_handler(httpd_req_t *req)
         cJSON *login_req = cJSON_GetObjectItem(req_json, "login");
         cJSON *pass_req = cJSON_GetObjectItem(req_json, "pass");
 
-        if (login_req->type == cJSON_String && pass_req->type == cJSON_String) {
+        if ((login_req->type == cJSON_String) && (pass_req->type == cJSON_String)) {
             uint32_t session_id = authorization(login_req->valuestring, pass_req->valuestring);
             if (session_id != 0) {
                 char cookie_header[COOKIE_MAX_LEN];
@@ -300,7 +301,9 @@ static esp_err_t update_post_handler(httpd_req_t *req)
     }
 
     // Validate and switch to new OTA image and reboot
-    if ((esp_ota_end(ota_handle) != ESP_OK) || (esp_ota_set_boot_partition(ota_partition) != ESP_OK)) {
+    if ((esp_ota_end(ota_handle) != ESP_OK) ||
+        (esp_ota_set_boot_partition(ota_partition) != ESP_OK))
+    {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Validation / Activation Error");
         return ESP_FAIL;
     }
@@ -387,7 +390,8 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
             } else if (item->type == cJSON_True) {
                 value = &true_val;
             } else {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Uncknown type json item");
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                    "Uncknown type json item");
             }
 
             if (setting_items_save(keys[i], value) == 0) {
