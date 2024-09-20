@@ -11,14 +11,14 @@
 #define IP_ADDR_OCTETS_NUM      4
 #define IP_ADDR_STR_LEN         16
 
-setting_item_iface_t iface = {0};
-const setting_item_t setting_items[SETTING_ITEM_NUM_MAX];  // инициализируется в конце файла
+static setting_item_iface_t iface = {0};
+static const setting_item_t setting_items[SETTING_ITEM_NUM_MAX];  // инициализируется в конце файла
 
-char default_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
-const int default_baudrate = DEFAULT_BAUDRATE;
-const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
-const int default_bridge_port = DEFAULT_BRIDGE_PORT;
-const bool default_bridge_mb = DEFAULT_BRIDGE_MB;
+static char default_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+static const int default_baudrate = DEFAULT_BAUDRATE;
+static const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
+static const int default_bridge_port = DEFAULT_BRIDGE_PORT;
+static const bool default_bridge_mb = DEFAULT_BRIDGE_MB;
 
 static bool string2wifi_mode(const char *str, wifi_mode_t *mode)
 {
@@ -465,7 +465,7 @@ int setting_items_init(char *def_hostname, setting_item_iface_t *setting_item_if
 
 static int setting_items_get_index(const char *key)
 {
-    for (int i = 0; i < sizeof(setting_items) / sizeof(setting_items[0]); i++) {
+    for (int i = 0; i < (sizeof(setting_items) / sizeof(setting_items[0])); i++) {
         if (setting_items[i].key == NULL) {
             return -1;
         }
@@ -479,7 +479,7 @@ static int setting_items_get_index(const char *key)
 int setting_items_get_keys(const char **keys)
 {
     int num = 0;
-    for (int i = 0; i < sizeof(setting_items) / sizeof(setting_items[0]); i++) {
+    for (int i = 0; i < (sizeof(setting_items) / sizeof(setting_items[0])); i++) {
         if (setting_items[i].key == NULL) {
             break;
         }
@@ -493,7 +493,7 @@ int setting_items_get_keys(const char **keys)
 
 int setting_items_set_defaults(void)
 {
-    for (int i = 0; i < sizeof(setting_items) / sizeof(setting_items[0]); i++) {
+    for (int i = 0; i < (sizeof(setting_items) / sizeof(setting_items[0])); i++) {
         if (setting_items[i].save_to_storage != NULL) {
             bool ret = setting_items[i].save_to_storage(setting_items[i].key,
                                                         setting_items[i].default_value);
@@ -562,7 +562,7 @@ int setting_items_save(const char *key, const void *value)
     return 0;
 }
 
-const setting_item_t setting_items[] = {
+static const setting_item_t setting_items[] = {
     {
         .key = KEY_HOSTNAME,
         .default_value = default_hostname,
