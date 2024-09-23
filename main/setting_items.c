@@ -1,5 +1,6 @@
 #include "setting_items.h"
 
+#include "config.h"
 #include "driver/uart.h"
 #include "esp_mac.h"
 #include "esp_wifi_types_generic.h"
@@ -139,7 +140,7 @@ static bool string2ip(const char *str, uint32_t *ip)
     if (sscanf(str, "%d.%d.%d.%d.%d", &octets[0], &octets[1], &octets[2], &octets[3], &octets[4]) ==
         IP_ADDR_OCTETS_NUM) {
         for (int i = 0; i < IP_ADDR_OCTETS_NUM; i++) {
-            if (octets[i] < 0 || octets[i] > 255) {
+            if ((octets[i] < 0) || (octets[i] > 255)) {
                 return false;
             }
         }

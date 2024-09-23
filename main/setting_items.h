@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "constants.h"
+#include "setting_items_const.h"
 
 typedef enum {
     SETTING_ITEM_TYPE_NUM,

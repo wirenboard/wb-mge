@@ -11,8 +11,8 @@
 #define PRINT_W(TEXT)       COLOR_YELLOW TEXT COLOR_RESET
 #define PRINT_I(TEXT)       COLOR_GREEN TEXT COLOR_RESET
 
-#define TEST_OK     0
-#define TEST_ERR    -1
+#define TEST_OK             0
+#define TEST_ERR            -1
 
 #define TEST_FAILED(...)                                                            \
     do {                                                                            \

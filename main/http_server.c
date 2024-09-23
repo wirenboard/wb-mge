@@ -11,7 +11,8 @@
 #include "setting_items.h"
 #include "ssdp.h"
 
-#define REQ_RECV_BUF_SIZE       1024
+// Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
+#define REQ_RECV_BUF_SIZE       (CONFIG_HTTPD_MAX_REQ_HDR_LEN * 2)
 
 static const char *TAG = "http_server";
 
@@ -43,7 +44,7 @@ static cJSON *receive_json(httpd_req_t *req)
     char buf[REQ_RECV_BUF_SIZE];
     int received = 0;
 
-    received = httpd_req_recv(req, buf, req->content_len);
+    received = httpd_req_recv(req, buf, sizeof(buf));
     buf[received] = '\0';
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive data");
