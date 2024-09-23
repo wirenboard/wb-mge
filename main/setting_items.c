@@ -11,6 +11,11 @@
 #define IP_ADDR_OCTETS_NUM      4
 #define IP_ADDR_STR_LEN         16
 
+typedef struct {
+    const char *str;
+    int value;
+} string_int_map_t;
+
 static setting_item_iface_t iface = {0};
 static const setting_item_t setting_items[SETTING_ITEM_NUM_MAX];  // инициализируется в конце файла
 
@@ -20,150 +25,98 @@ static const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
 static const int default_bridge_port = DEFAULT_BRIDGE_PORT;
 static const bool default_bridge_mb = DEFAULT_BRIDGE_MB;
 
-static bool string2wifi_mode(const char *str, wifi_mode_t *mode)
+static const string_int_map_t wifi_mode_map[] = {
+    {WIFI_MODE_AP_STR, WIFI_MODE_AP},
+    {WIFI_MODE_STA_STR, WIFI_MODE_STA},
+    {WIFI_MODE_APSTA_STR, WIFI_MODE_APSTA},
+    {WIFI_MODE_NULL_STR, WIFI_MODE_NULL},
+    {NULL, -1}
+};
+
+static const string_int_map_t stopbits_map[] = {
+    {UART_STOP_BITS_1_STR, UART_STOP_BITS_1},
+    {UART_STOP_BITS_1_5_STR, UART_STOP_BITS_1_5},
+    {UART_STOP_BITS_2_STR, UART_STOP_BITS_2},
+    {NULL, -1}
+};
+
+static const string_int_map_t databits_map[] = {
+    {UART_DATA_5_BITS_STR, UART_DATA_5_BITS},
+    {UART_DATA_6_BITS_STR, UART_DATA_6_BITS},
+    {UART_DATA_7_BITS_STR, UART_DATA_7_BITS},
+    {UART_DATA_8_BITS_STR, UART_DATA_8_BITS},
+    {NULL, -1}
+};
+
+static const string_int_map_t parity_map[] = {
+    {UART_PARITY_DISABLE_STR, UART_PARITY_DISABLE},
+    {UART_PARITY_EVEN_STR, UART_PARITY_EVEN},
+    {UART_PARITY_ODD_STR, UART_PARITY_ODD},
+    {NULL, -1}
+};
+
+static bool string2int(const char *str, int *value, const string_int_map_t *map)
 {
-    if (strcmp(str, WIFI_MODE_AP_STR) == 0) {
-        *mode = WIFI_MODE_AP;
-        return true;
-    } else if (strcmp(str, WIFI_MODE_STA_STR) == 0) {
-        *mode = WIFI_MODE_STA;
-        return true;
-    } else if (strcmp(str, WIFI_MODE_APSTA_STR) == 0) {
-        *mode = WIFI_MODE_APSTA;
-        return true;
-    } else if (strcmp(str, WIFI_MODE_NULL_STR) == 0) {
-        *mode = WIFI_MODE_NULL;
-        return true;
+    for (int i = 0; map[i].str != NULL; i++) {
+        if (strncmp(str, map[i].str, SETTING_ITEM_MAX_STR_LEN) == 0) {
+            if (value != NULL) {
+                *value = map[i].value;
+            }
+            return true;
+        }
     }
     return false;
+}
+
+static bool int2string(int value, char *str, const string_int_map_t *map)
+{
+    for (int i = 0; map[i].str != NULL; i++) {
+        if (value == map[i].value) {
+            strncpy(str, map[i].str, SETTING_ITEM_MAX_STR_LEN);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool string2wifi_mode(const char *str, wifi_mode_t *mode)
+{
+    return string2int(str, (int *)mode, wifi_mode_map);
 }
 
 static bool wifi_mode2string(wifi_mode_t mode, char *str)
 {
-    switch (mode) {
-        case WIFI_MODE_AP:
-            strcpy(str, WIFI_MODE_AP_STR);
-            return true;
-        case WIFI_MODE_STA:
-            strcpy(str, WIFI_MODE_STA_STR);
-            return true;
-        case WIFI_MODE_APSTA:
-            strcpy(str, WIFI_MODE_APSTA_STR);
-            return true;
-        case WIFI_MODE_NULL:
-            strcpy(str, WIFI_MODE_NULL_STR);
-            return true;
-        default:
-            return false;
-    }
-    return false;
+    return int2string(mode, str, wifi_mode_map);
 }
 
 static bool string2stopbits(const char *str, uint32_t *stopbits)
 {
-    uint32_t val;
-    if (strcmp(str, UART_STOP_BITS_1_STR) == 0) {
-        val = UART_STOP_BITS_1;
-    } else if (strcmp(str, UART_STOP_BITS_1_5_STR) == 0) {
-        val = UART_STOP_BITS_1_5;
-    } else if (strcmp(str, UART_STOP_BITS_2_STR) == 0) {
-        val = UART_STOP_BITS_2;
-    } else {
-        return false;
-    }
-    if (stopbits != NULL) {
-        *stopbits = val;
-    }
-    return true;
+    return string2int(str, (int *)stopbits, stopbits_map);
 }
 
 static bool stopbits2string(uint32_t stopbits, char *str)
 {
-    switch (stopbits) {
-        case UART_STOP_BITS_1:
-            strcpy(str, UART_STOP_BITS_1_STR);
-            return true;
-        case UART_STOP_BITS_1_5:
-            strcpy(str, UART_STOP_BITS_1_5_STR);
-            return true;
-        case UART_STOP_BITS_2:
-            strcpy(str, UART_STOP_BITS_2_STR);
-            return true;
-    }
-    return false;
+    return int2string(stopbits, str, stopbits_map);
 }
 
 static bool string2databits(const char *str, uint32_t *databits)
 {
-    uint32_t val;
-    if (strcmp(str, UART_DATA_5_BITS_STR) == 0) {
-        val = UART_DATA_5_BITS;
-    } else if (strcmp(str, UART_DATA_6_BITS_STR) == 0) {
-        val = UART_DATA_6_BITS;
-    } else if (strcmp(str, UART_DATA_7_BITS_STR) == 0) {
-        val = UART_DATA_7_BITS;
-    } else if (strcmp(str, UART_DATA_8_BITS_STR) == 0) {
-        val = UART_DATA_8_BITS;
-    } else {
-        return false;
-    }
-    if (databits != NULL) {
-        *databits = val;
-    }
-    return true;
+    return string2int(str, (int *)databits, databits_map);
 }
 
 static bool databits2string(uint32_t databits, char *str)
 {
-    switch (databits) {
-        case UART_DATA_5_BITS:
-            strcpy(str, UART_DATA_5_BITS_STR);
-            return true;
-        case UART_DATA_6_BITS:
-            strcpy(str, UART_DATA_6_BITS_STR);
-            return true;
-        case UART_DATA_7_BITS:
-            strcpy(str, UART_DATA_7_BITS_STR);
-            return true;
-        case UART_DATA_8_BITS:
-            strcpy(str, UART_DATA_8_BITS_STR);
-            return true;
-    }
-    return false;
+    return int2string(databits, str, databits_map);
 }
 
 static bool string2parity(const char *str, uint32_t *parity)
 {
-    uint32_t val;
-    if (strcmp(str, UART_PARITY_DISABLE_STR) == 0) {
-        val = UART_PARITY_DISABLE;
-    } else if (strcmp(str, UART_PARITY_EVEN_STR) == 0) {
-        val = UART_PARITY_EVEN;
-    } else if (strcmp(str, UART_PARITY_ODD_STR) == 0) {
-        val = UART_PARITY_ODD;
-    } else {
-        return false;
-    }
-    if (parity != NULL) {
-        *parity = val;
-    }
-    return true;
+    return string2int(str, (int *)parity, parity_map);
 }
 
 static bool parity2string(uint32_t parity, char *str)
 {
-    switch (parity) {
-        case UART_PARITY_DISABLE:
-            strcpy(str, UART_PARITY_DISABLE_STR);
-            return true;
-        case UART_PARITY_EVEN:
-            strcpy(str, UART_PARITY_EVEN_STR);
-            return true;
-        case UART_PARITY_ODD:
-            strcpy(str, UART_PARITY_ODD_STR);
-            return true;
-    }
-    return false;
+    return int2string(parity, str, parity_map);
 }
 
 static bool ip2string(uint32_t ip, char *str)
@@ -183,7 +136,7 @@ static bool string2ip(const char *str, uint32_t *ip)
 {
     // Дополнительная ячейка нужна для проверки наличия лишнего байта ip адреса
     int octets[IP_ADDR_OCTETS_NUM + 1] = {0};
-    if (sscanf(str, "%d.%d.%d.%d.%d", &octets[3], &octets[2], &octets[1], &octets[0], &octets[4]) ==
+    if (sscanf(str, "%d.%d.%d.%d.%d", &octets[0], &octets[1], &octets[2], &octets[3], &octets[4]) ==
         IP_ADDR_OCTETS_NUM) {
         for (int i = 0; i < IP_ADDR_OCTETS_NUM; i++) {
             if (octets[i] < 0 || octets[i] > 255) {
@@ -191,10 +144,10 @@ static bool string2ip(const char *str, uint32_t *ip)
             }
         }
         if (ip != NULL) {
-            *ip = ((uint32_t)((octets[0]) & 0xff) << 24) |  // 1st octet
-                  ((uint32_t)((octets[1]) & 0xff) << 16) |  // 2nd octet
-                  ((uint32_t)((octets[2]) & 0xff) << 8) |   // 3rd octet
-                  (uint32_t)((octets[3]) & 0xff);           // 4th octet
+            *ip = ((uint32_t)((octets[3]) & 0xff) << 24) |  // 1st octet
+                  ((uint32_t)((octets[2]) & 0xff) << 16) |  // 2nd octet
+                  ((uint32_t)((octets[1]) & 0xff) << 8) |   // 3rd octet
+                  (uint32_t)((octets[0]) & 0xff);           // 4th octet
         }
         return true;
     } else {
