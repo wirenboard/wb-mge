@@ -337,7 +337,7 @@ static bool read_string_value(const char *key, void *value)
     if (iface.read_str(key, str) != 0) {
         return false;
     }
-    strcpy((char *)value, str);
+    strncpy((char *)value, str, SETTING_ITEM_NUM_MAX);
     return true;
 }
 
@@ -376,7 +376,7 @@ static bool read_raw_value(const char *key, void *value, setting_item_type_t typ
             if (iface.read_str(key, str) != 0) {
                 return false;
             }
-            strcpy((char *)value, str);
+            strncpy((char *)value, str, SETTING_ITEM_MAX_STR_LEN);
             return true;
         }
         case SETTING_ITEM_TYPE_BOOL: {
@@ -422,7 +422,7 @@ static int setting_items_get_index(const char *key)
         if (setting_items[i].key == NULL) {
             return -1;
         }
-        if (strcmp(setting_items[i].key, key) == 0) {
+        if (strncmp(setting_items[i].key, key, SETTING_ITEM_NUM_MAX) == 0) {
             return i;
         }
     }
