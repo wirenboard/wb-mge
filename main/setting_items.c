@@ -13,7 +13,7 @@
 #define IP_ADDR_STR_LEN         16
 #define MIN_REGISTERED_PORT     1024
 
-#define SETTING_ITEMS_NUM        (sizeof(setting_items) / sizeof(setting_items[0]))
+#define SETTING_ITEMS_NUM       (sizeof(setting_items) / sizeof(setting_items[0]))
 
 typedef struct {
     const char *str;
