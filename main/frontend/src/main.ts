@@ -21,6 +21,7 @@ export const i18n = createI18n({
       bridge: 'Bridge',
       network: 'Network',
       system: 'System',
+      login: 'Login',
     }
   }
 });

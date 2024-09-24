@@ -9,8 +9,18 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
+import { useRoute, useRouter } from 'vue-router';
 import Sidebar from '@/components/Sidebar.vue';
 import Alert from '@/components/Alert.vue';
+
+const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
+
+router.afterEach(() => {
+  document.title = `${t(route.name as string)} — WB-MGE v.3`;
+});
 </script>
 
 <style scoped>

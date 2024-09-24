@@ -74,7 +74,7 @@ module.exports = {
             argsIgnorePattern: '^h$'
          }
       ],
-      'eslint@typescript-eslint/ban-ts-comment': 0,
+      '@typescript-eslint/ban-ts-comment': 0,
       '@typescript-eslint/no-explicit-any': 0,
       '@typescript-eslint/no-this-alias': 0,
       '@typescript-eslint/no-inferrable-types': 0,

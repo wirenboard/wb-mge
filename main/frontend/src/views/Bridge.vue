@@ -5,6 +5,7 @@ import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
+import IpInput from '@/components/IpInput.vue';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -33,13 +34,13 @@ router.beforeResolve(async (to, from, next) => {
             bridge_mb: data.bridge_mb
           }, t)">
           <label for="bridge_mode">{{ t('bridge_mode') }}</label>
-          <select id="bridge_mode" v-model="data.bridge_mode" name="bridge_mode">
+          <select id="bridge_mode" v-model="data.bridge_mode" name="bridge_mode" autofocus>
             <option value="tcpc-serial">tcpc serial</option>
             <option value="tcps-serial">tcps serial</option>
           </select>
 
           <label for="bridge_ip">{{ t('bridge_ip') }}</label>
-          <input id="bridge_ip" v-model="data.bridge_ip" type="text" name="bridge_ip" />
+          <IpInput id="bridge_ip" v-model="data.bridge_ip" name="bridge_ip" />
 
           <label for="bridge_port">{{ t('bridge_port') }}</label>
           <input id="bridge_port" v-model="data.bridge_port" type="number" name="bridge_port" />

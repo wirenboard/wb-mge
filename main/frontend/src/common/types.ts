@@ -6,7 +6,7 @@ export interface Packgages {
   result: boolean;
   packages: {
     time: number;
-    dir: string;
+    dir: 'TX' | 'RX';
     id: number;
     func: number;
     data: number[];

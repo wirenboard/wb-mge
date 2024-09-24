@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import ArrowRight from '@/assets/arrowRight.svg?component';
+import ArrowLeft from '@/assets/arrowLeft.svg?component';
 import { Packgages } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -25,6 +27,10 @@ const getData = async () => {
 const toggleAnalysis = async () => {
   await api('cmd', { cmd: isAnalysing.value ? 'stop_analysis' : 'start_analysis' });
 };
+
+const convertToHexArray = (arr: number[]) => {
+  return arr.map(num => '0x' + Math.abs(num).toString(16).padStart(2, '0')).toString().replaceAll(',', ', ');
+};
 </script>
 
 <template>
@@ -34,25 +40,26 @@ const toggleAnalysis = async () => {
       <Button @click="toggleAnalysis">{{ isAnalysing ? t('stop_analysis') : t('start_analysis') }}</Button>
     </Heading>
 
-    <table>
+    <table class="traffic-table">
       <tbody>
       <tr>
-        <th>time</th>
-        <th>dir</th>
-        <th>slave id</th>
-        <th>func</th>
-        <th>data</th>
+        <th>Time</th>
+        <th>Dir</th>
+        <th>Slave id</th>
+        <th>Func</th>
+        <th>Data</th>
         <th>CRC</th>
-        <th>CRC is valid</th>
       </tr>
-      <tr v-for="(item, i) in packages" :key="i">
+      <tr v-for="(item, i) in packages" :key="i" :class="{ 'traffic-tableError': item.func === 70 }">
         <td>{{ item.time }}</td>
-        <td>{{ item.dir }}</td>
+        <td>
+          <ArrowRight v-if="item.dir === 'TX'" class="traffic-icon" />
+          <ArrowLeft v-else class="traffic-icon" />
+        </td>
         <td>{{ item.id }}</td>
         <td>{{ item.func }}</td>
-        <td>{{ item.data }}</td>
-        <td>{{ item.crc }}</td>
-        <td>{{ item.crc_ok }}</td>
+        <td>[{{ convertToHexArray(item.data) }}]</td>
+        <td :class="{ 'traffic-invalid': !item.crc_ok}">[{{ convertToHexArray(item.crc) }}]</td>
       </tr>
       </tbody>
     </table>
@@ -60,6 +67,27 @@ const toggleAnalysis = async () => {
 </template>
 
 <style scoped>
+.traffic-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.traffic-table {
+  width: 100%;
+}
+
+.traffic-table td {
+  vertical-align: center;
+}
+
+.traffic-tableError {
+  background: #ff151545;
+}
+
+.traffic-invalid {
+  color: var(--danger-color);
+  font-weight: bold;
+}
 </style>
 
 <i18n>

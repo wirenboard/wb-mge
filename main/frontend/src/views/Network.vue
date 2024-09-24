@@ -5,6 +5,7 @@ import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
+import IpInput from '@/components/IpInput.vue';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -35,20 +36,20 @@ router.beforeResolve(async (to, from, next) => {
             eth_gw_static: data.eth_gw_static,
           }, t)">
           <label for="hostname">{{ t('hostname') }}</label>
-          <input id="hostname" v-model="data.hostname" type="text" name="hostname" />
+          <input id="hostname" v-model="data.hostname" type="text" name="hostname" autofocus />
 
           <label for="eth_dhcpc">{{ t('eth_dhcpc') }}</label>
           <input id="eth_dhcpc" v-model="data.eth_dhcpc" type="checkbox" name="eth_dhcpc" />
 
-          <template v-if="data.eth_dhcpc">
+          <template v-if="!data.eth_dhcpc">
             <label for="eth_ip_static">{{ t('eth_ip_static') }}</label>
-            <input id="eth_ip_static" v-model="data.eth_ip_static" type="text" name="eth_ip_static" />
+            <IpInput id="eth_ip_static" v-model="data.eth_ip_static" name="eth_ip_static" />
 
             <label for="eth_mask_static">{{ t('eth_mask_static') }}</label>
-            <input id="eth_mask_static" v-model="data.eth_mask_static" type="text" name="eth_mask_static" />
+            <IpInput id="eth_mask_static" v-model="data.eth_mask_static" name="eth_mask_static" />
 
             <label for="eth_gw_static">{{ t('eth_gw_static') }}</label>
-            <input id="eth_gw_static" v-model="data.eth_gw_static" type="text" name="eth_gw_static" />
+            <IpInput id="eth_gw_static" v-model="data.eth_gw_static" name="eth_gw_static" />
           </template>
 
           <Button
@@ -86,13 +87,13 @@ router.beforeResolve(async (to, from, next) => {
           <template v-if="data.wifi_mode !== 'none'">
             <template v-if="data.wifi_mode === 'ap' || data.wifi_mode === 'apsta'">
               <label for="ap_ip_static">{{ t('ap_ip_static') }}</label>
-              <input id="ap_ip_static" v-model="data.ap_ip_static" type="text" name="ap_ip_static" />
+              <IpInput id="ap_ip_static" v-model="data.ap_ip_static" name="ap_ip_static" />
 
               <label for="ap_mask_static">{{ t('ap_mask_static') }}</label>
-              <input id="ap_mask_static" v-model="data.ap_mask_static" type="text" name="ap_mask_static" />
+              <IpInput id="ap_mask_static" v-model="data.ap_mask_static" name="ap_mask_static" />
 
               <label for="ap_gw_static">{{ t('ap_gw_static') }}</label>
-              <input id="ap_gw_static" v-model="data.ap_gw_static" type="text" name="ap_gw_static" />
+              <IpInput id="ap_gw_static" v-model="data.ap_gw_static" name="ap_gw_static" />
 
               <label for="ap_ssid">{{ t('ap_ssid') }}</label>
               <input id="ap_ssid" v-model="data.ap_ssid" type="text" name="ap_ssid" />

@@ -33,7 +33,7 @@ router.beforeResolve(async (to, from, next) => {
             databits: data.databits
           }, t)">
           <label for="baudrate">{{ t('baudrate') }}</label>
-          <input id="baudrate" v-model="data.baudrate" type="number" name="baudrate" min="300" max="460800" />
+          <input id="baudrate" v-model="data.baudrate" type="number" name="baudrate" min="300" max="460800" autofocus />
 
           <label for="parity">{{ t('parity') }}</label>
           <select id="parity" v-model="data.parity" name="parity">

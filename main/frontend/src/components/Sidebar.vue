@@ -2,6 +2,9 @@
 import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
+import Logo from '@/assets/logo.svg?component';
+import LogoutIcon from '@/assets/logout.svg?component';
+import MenuIcon from '@/assets/menu.svg?component';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -19,19 +22,10 @@ watch(
 <template>
   <aside class="sidebar">
     <RouterLink to="/" class="sidebar-logo">
-      <img src="/logo.svg" alt="Wiren Board">
+      <Logo alt="Wiren Board" />
     </RouterLink>
 
-    <svg
-      class="sidebar-burger"
-      width="46.08"
-      height="46.08"
-      viewBox="0 0 20 20"
-      fill="#222F3D"
-      @click="isShowMenu = !isShowMenu"
-    >
-      <path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm6 5a1 1 0 011-1h6a1 1 0 110 2h-6a1 1 0 01-1-1z" />
-    </svg>
+    <MenuIcon class="sidebar-burger" @click="isShowMenu = !isShowMenu" />
 
     <nav
       :class="{
@@ -47,7 +41,7 @@ watch(
         </RouterLink>
       </div>
       <RouterLink to="/logout">
-        <svg class="sidebar-logoutIcon" width="46.08" height="46.08" viewBox="0 0 512 512"><path fill="none" stroke="currentColor" stroke-width="32" d="M320 176v-40a40 40 0 00-40-40H88a40 40 0 00-40 40v240a40 40 0 0040 40h192a40 40 0 0040-40v-40M384 176l80 80-80 80M191 256h273"></path></svg>
+        <LogoutIcon class="sidebar-logoutIcon" />
         {{ t('logout') }}
       </RouterLink>
     </nav>
@@ -85,6 +79,7 @@ watch(
   display: flex;
   flex-direction: column;
   height: 100%;
+  z-index: 1;
 
   @media (max-width: 680px) {
     position: fixed;

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
+import Logo from '@/assets/logo.svg?component';
 import { alertData } from '@/common/global';
 import { Auth } from '@/common/types';
 import Alert from '@/components/Alert.vue';
@@ -9,24 +10,27 @@ import { api } from '@/utils/api';
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
 const data = reactive({ login: '', pass: '' });
 const isLoading = ref(false);
-
 const login = async () => {
   isLoading.value = true;
-  const { auth } = await api<Auth>('auth', data);
-  isLoading.value = false;
-  if (auth) {
-    await router.push('/');
-  } else {
-    alertData.value = { type: 'error', message: t('wrong_credentials') };
+  try {
+    const { auth } = await api<Auth>('auth', data);
+    if (auth) {
+      await router.push(route.query.redirect ? `/${route.query.redirect}` : '/');
+    } else {
+      alertData.value = { type: 'error', message: t('wrong_credentials') };
+    }
+  } finally {
+    isLoading.value = false;
   }
 };
 </script>
 
 <template>
   <section class="login">
-    <img src="/logo.svg" alt="Wiren Board">
+    <Logo alt="Wiren Board" />
 
     <fieldset class="login-wrapper">
       <form class="login-form" @submit.prevent="login">
