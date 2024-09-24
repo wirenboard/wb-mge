@@ -59,12 +59,12 @@ void app_main(void)
         .read_bool = nvs_read_u8,
     };
     // генерация уникального hostname
-    char default_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_ETH);
-    snprintf(default_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
+    snprintf(generated_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
              mac[4], mac[5]);
-    ESP_ERROR_CHECK(setting_items_init(default_hostname, &setting_item_iface));
+    ESP_ERROR_CHECK(setting_items_init(generated_hostname, &setting_item_iface));
 
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     // Если нет ячейки с именем хоста, то устанавливаем дефолтные значения для всех ячеек

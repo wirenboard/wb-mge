@@ -12,13 +12,17 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+// буфер должен быть больше, чем максимальный размер пакета modbus + байты арбитража быстрого modbus
+// но, так как устройство может работать в режиме "прозрачного" шлюза, то размер буфера
+// стоит выбирать с запасом
+// при переполнении буфера возникнет событие UART_BUFFER_FULL
+#define SERIAL_BUF_SIZE             (1000)
+#define SERIAL_READ_TOUT            (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
+#define SERIAL_TASK_STACK_SIZE      (1024 * 4)
 #define SERIAL_PORT_NUM             2
 #define SERIAL_INPUT_PIN            GPIO_NUM_5
 #define SERIAL_OUTPUT_PIN           GPIO_NUM_17
 #define SERIAL_IO_PIN               GPIO_NUM_33
-#define SERIAL_BUF_SIZE             (1000)
-#define SERIAL_READ_TOUT            (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
-#define SERIAL_TASK_STACK_SIZE      (1024 * 4)
 
 static const char *TAG = "serial";
 
@@ -33,7 +37,7 @@ static void uart_event_task(void *pvParameters)
 
     for (;;) {
         if (xQueueReceive(uart_queue, (void *)&event, (TickType_t)portMAX_DELAY)) {
-            bzero(dtmp, SERIAL_BUF_SIZE);
+            memset(dtmp, 0, SERIAL_BUF_SIZE);
             ESP_LOGD(TAG, "uart[%d] event:", SERIAL_PORT_NUM);
             switch (event.type) {
                 case UART_DATA:
@@ -81,7 +85,7 @@ esp_err_t serial_init(serial_config_t *serial_config, serial_receive_handler_t s
     }
 
     receive_handler = serial_receive_handler;
-    err = uart_driver_install(SERIAL_PORT_NUM, SERIAL_BUF_SIZE * 2, SERIAL_BUF_SIZE * 2, 20, &uart_queue, 0);
+    err = uart_driver_install(SERIAL_PORT_NUM, SERIAL_BUF_SIZE, SERIAL_BUF_SIZE, 20, &uart_queue, 0);
     if (err != ESP_OK) {
         return err;
     }

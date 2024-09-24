@@ -11,6 +11,9 @@
 
 #define IP_ADDR_OCTETS_NUM      4
 #define IP_ADDR_STR_LEN         16
+#define MIN_REGISTERED_PORT     1024
+
+#define SETTING_ITEMS_NUM        (sizeof(setting_items) / sizeof(setting_items[0]))
 
 typedef struct {
     const char *str;
@@ -18,9 +21,9 @@ typedef struct {
 } string_int_map_t;
 
 static setting_item_iface_t iface = {0};
-static const setting_item_t setting_items[SETTING_ITEM_NUM_MAX];  // инициализируется в конце файла
+static const setting_item_t setting_items[SETTING_ITEMS_NUM_MAX];  // инициализируется в конце файла
 
-static char default_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+static char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
 static const int default_baudrate = DEFAULT_BAUDRATE;
 static const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
 static const int default_bridge_port = DEFAULT_BRIDGE_PORT;
@@ -80,44 +83,28 @@ static bool int2string(int value, char *str, const string_int_map_t *map)
     return false;
 }
 
-static bool string2wifi_mode(const char *str, wifi_mode_t *mode)
+static bool save_map_value(const char *key, const void *value, const string_int_map_t *map)
 {
-    return string2int(str, (int *)mode, wifi_mode_map);
+    uint32_t num_value = 0;
+    if (string2int((char *)value, (int *)&num_value, map)) {
+        if (iface.save_num(key, num_value) != 0) {
+            return false;
+        }
+        return true;
+    }
+    return false;
 }
 
-static bool wifi_mode2string(wifi_mode_t mode, char *str)
+static bool read_map_value(const char *key, void *value, const string_int_map_t *map)
 {
-    return int2string(mode, str, wifi_mode_map);
-}
-
-static bool string2stopbits(const char *str, uint32_t *stopbits)
-{
-    return string2int(str, (int *)stopbits, stopbits_map);
-}
-
-static bool stopbits2string(uint32_t stopbits, char *str)
-{
-    return int2string(stopbits, str, stopbits_map);
-}
-
-static bool string2databits(const char *str, uint32_t *databits)
-{
-    return string2int(str, (int *)databits, databits_map);
-}
-
-static bool databits2string(uint32_t databits, char *str)
-{
-    return int2string(databits, str, databits_map);
-}
-
-static bool string2parity(const char *str, uint32_t *parity)
-{
-    return string2int(str, (int *)parity, parity_map);
-}
-
-static bool parity2string(uint32_t parity, char *str)
-{
-    return int2string(parity, str, parity_map);
+    uint32_t num_value = 0;
+    if (iface.read_num(key, &num_value) != 0) {
+        return false;
+    }
+    if (int2string((int)num_value, value, map) == false) {
+        return false;
+    }
+    return true;
 }
 
 static bool ip2string(uint32_t ip, char *str)
@@ -158,29 +145,15 @@ static bool string2ip(const char *str, uint32_t *ip)
 
 static bool save_wifi_mode(const char *key, const void *value)
 {
-    wifi_mode_t mode;
-    if (string2wifi_mode(value, &mode)) {
-        if (iface.save_num(key, (uint32_t)mode) != 0) {
-            return false;
-        }
-        return true;
-    }
-    return false;
+    return save_map_value(key, value, wifi_mode_map);
 }
 
 static bool read_wifi_mode(const char *key, void *value)
 {
-    uint32_t mode = 0;
-    if (iface.read_num(key, &mode) != 0) {
-        return false;
-    }
-    if (wifi_mode2string((wifi_mode_t)mode, value) == false) {
-        return false;
-    }
-    return true;
+    return read_map_value(key, value, wifi_mode_map);
 }
 
-static bool save_boudrate(const char *key, const void *value)
+static bool save_baudrate(const char *key, const void *value)
 {
     uint32_t baudrate = *(uint32_t *)value;
     if ((baudrate < UART_BAUD_RATE_MIN) || (baudrate > UART_BAUD_RATE_MAX)) {
@@ -192,7 +165,7 @@ static bool save_boudrate(const char *key, const void *value)
     return true;
 }
 
-static bool read_boudrate(const char *key, void *value)
+static bool read_baudrate(const char *key, void *value)
 {
     uint32_t baudrate = 0;
     if (iface.read_num(key, &baudrate) != 0) {
@@ -228,80 +201,38 @@ static bool read_ip(const char *key, void *value)
 
 static bool save_databits(const char *key, const void *value)
 {
-    uint32_t databits = 0;
-    if (string2databits((char *)value, &databits)) {
-        if (iface.save_num(key, databits) != 0) {
-            return false;
-        }
-        return true;
-    }
-    return false;
+    return save_map_value(key, value, databits_map);
 }
 
 static bool read_databits(const char *key, void *value)
 {
-    uint32_t databits = 0;
-    if (iface.read_num(key, &databits) != 0) {
-        return false;
-    }
-    if (databits2string(databits, value) == false) {
-        return false;
-    }
-    return true;
+    return read_map_value(key, value, databits_map);
 }
 
 static bool save_stopbits(const char *key, const void *value)
 {
-    uint32_t stopbits = 0;
-    if (string2stopbits((char *)value, &stopbits)) {
-        if (iface.save_num(key, stopbits) != 0) {
-            return false;
-        }
-        return true;
-    }
-    return false;
+    return save_map_value(key, value, stopbits_map);
 }
 
 static bool read_stopbits(const char *key, void *value)
 {
-    uint32_t stopbits = 0;
-    if (iface.read_num(key, &stopbits) != 0) {
-        return false;
-    }
-    if (stopbits2string(stopbits, value) == false) {
-        return false;
-    }
-    return true;
+    return read_map_value(key, value, stopbits_map);
 }
 
 static bool save_parity(const char *key, const void *value)
 {
-    uint32_t parity = 0;
-    if (string2parity(value, &parity)) {
-        if (iface.save_num(key, parity) != 0) {
-            return false;
-        }
-        return true;
-    }
-    return false;
+    return save_map_value(key, value, parity_map);
 }
 
 static bool read_parity(const char *key, void *value)
 {
-    uint32_t parity = 0;
-    if (iface.read_num(key, &parity) != 0) {
-        return false;
-    }
-    if (parity2string(parity, value) == false) {
-        return false;
-    }
-    return true;
+    return read_map_value(key, value, parity_map);
 }
 
 static bool save_bridge_port(const char *key, const void *value)
 {
     uint32_t bridge_port = *(uint32_t *)value;
-    if (bridge_port < 1024) {
+    if (bridge_port < MIN_REGISTERED_PORT) {
         return false;
     }
     if (iface.save_num(key, bridge_port) != 0) {
@@ -338,7 +269,7 @@ static bool read_string_value(const char *key, void *value)
     if (iface.read_str(key, str) != 0) {
         return false;
     }
-    strncpy((char *)value, str, SETTING_ITEM_NUM_MAX);
+    strncpy((char *)value, str, SETTING_ITEM_MAX_STR_LEN);
     return true;
 }
 
@@ -393,7 +324,7 @@ static bool read_raw_value(const char *key, void *value, setting_item_type_t typ
     }
 }
 
-int setting_items_init(char *def_hostname, setting_item_iface_t *setting_item_iface)
+int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
 {
     if (setting_item_iface == NULL) {
         return -1;
@@ -411,19 +342,19 @@ int setting_items_init(char *def_hostname, setting_item_iface_t *setting_item_if
     iface.read_num = setting_item_iface->read_num;
     iface.read_str = setting_item_iface->read_str;
 
-    if (def_hostname != NULL) {
-        strncpy(default_hostname, def_hostname, SETTING_ITEM_MAX_STR_LEN);
+    if (hostname != NULL) {
+        strncpy(generated_hostname, hostname, SETTING_ITEM_MAX_STR_LEN);
     }
     return 0;
 }
 
 static int setting_items_get_index(const char *key)
 {
-    for (int i = 0; i < (sizeof(setting_items) / sizeof(setting_items[0])); i++) {
+    for (int i = 0; i < SETTING_ITEMS_NUM; i++) {
         if (setting_items[i].key == NULL) {
             return -1;
         }
-        if (strncmp(setting_items[i].key, key, SETTING_ITEM_NUM_MAX) == 0) {
+        if (strncmp(setting_items[i].key, key, SETTING_ITEM_MAX_STR_LEN) == 0) {
             return i;
         }
     }
@@ -433,7 +364,7 @@ static int setting_items_get_index(const char *key)
 int setting_items_get_keys(const char **keys)
 {
     int num = 0;
-    for (int i = 0; i < (sizeof(setting_items) / sizeof(setting_items[0])); i++) {
+    for (int i = 0; i < SETTING_ITEMS_NUM; i++) {
         if (setting_items[i].key == NULL) {
             break;
         }
@@ -447,10 +378,10 @@ int setting_items_get_keys(const char **keys)
 
 int setting_items_set_defaults(void)
 {
-    for (int i = 0; i < (sizeof(setting_items) / sizeof(setting_items[0])); i++) {
+    for (int i = 0; i < SETTING_ITEMS_NUM; i++) {
         if (setting_items[i].save_to_storage != NULL) {
             bool ret = setting_items[i].save_to_storage(setting_items[i].key,
-                                                        setting_items[i].default_value);
+                setting_items[i].default_value);
             if (ret != true) {
                 return -1;
             }
@@ -519,7 +450,7 @@ int setting_items_save(const char *key, const void *value)
 static const setting_item_t setting_items[] = {
     {
         .key = KEY_HOSTNAME,
-        .default_value = default_hostname,
+        .default_value = generated_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,
@@ -549,8 +480,8 @@ static const setting_item_t setting_items[] = {
         .default_value = &default_baudrate,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_NUM,
-        .save_to_storage = save_boudrate,
-        .read_from_storage = read_boudrate,
+        .save_to_storage = save_baudrate,
+        .read_from_storage = read_baudrate,
         .read_from_storage_raw = read_raw_value,
     },
     {
@@ -654,7 +585,7 @@ static const setting_item_t setting_items[] = {
     },
     {
         .key = KEY_AP_SSID,
-        .default_value = default_hostname,
+        .default_value = generated_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_string_value,

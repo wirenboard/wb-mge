@@ -3,8 +3,8 @@
 #define BASE_HOSTNAME               "WB-MGE"
 
 // Значения по умолчанию
-#define DEFAULT_LOGIN               "admin"
-#define DEFAULT_PASS                "admin"
+#define DEFAULT_LOGIN               "wirenboard"
+#define DEFAULT_PASS                "wirenboard"
 #define DEFAULT_BAUDRATE            9600
 #define DEFAULT_STOPBITS            UART_STOP_BITS_1_STR
 #define DEFAULT_PARITY              UART_PARITY_DISABLE_STR
