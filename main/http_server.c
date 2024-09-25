@@ -163,8 +163,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
                 int val = 1;
                 value = (int *)&val;
             } else {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                    "Uncknown type json item");
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unknown type json item");
             }
 
             if (setting_items_save(keys[i], value) == 0) {

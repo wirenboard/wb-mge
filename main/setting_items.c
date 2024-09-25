@@ -1,5 +1,6 @@
 #include "setting_items.h"
 
+#include "array_size.h"
 #include "config.h"
 #include "driver/uart.h"
 #include "esp_mac.h"
@@ -13,7 +14,7 @@
 #define IP_ADDR_STR_LEN         16
 #define MIN_REGISTERED_PORT     1024
 
-#define SETTING_ITEMS_NUM       (sizeof(setting_items) / sizeof(setting_items[0]))
+#define SETTING_ITEMS_NUM       ARRAY_SIZE(setting_items)
 
 typedef struct {
     const char *str;
