@@ -27,19 +27,35 @@ const value = reactive([
   model.value?.split('.')[3] || ''],
 );
 
-const valueToIp = computed(() => {
-  return value.join('.');
-});
+const valueToIp = computed(() => value.join('.'));
 
 const handleChange = (ev: any) => {
+  if (['Tab', 'Alt'].includes(ev.code) || ev.shiftKey || ev.ctrlKey) {
+    return;
+  }
+  // prevent input chars
   if (ev.code.includes('Key')) {
     ev.preventDefault();
+    return;
   }
 
-  if (ev.target?.value?.length === 3) {
-    ev.target?.parentElement?.nextElementSibling?.querySelector('input')?.focus();
-  } else if (!ev.target?.value && ev.key === 'Backspace') {
-    ev.target?.parentElement?.previousElementSibling?.querySelector('input')?.focus();
+  const parent = ev.target?.parentElement;
+  const prev = parent?.previousElementSibling?.querySelector('input');
+  const next = parent?.nextElementSibling?.querySelector('input');
+  if (ev.key.includes('Arrow')) {
+    if (ev.key === 'ArrowLeft' && ev.target.selectionStart === 0) {
+      prev?.focus();
+    } else if (ev.key === 'ArrowRight' && ev.target.selectionStart === ev.target.value.length) {
+      next?.focus();
+      next?.setSelectionRange(0, 0);
+    }
+    return;
+  }
+
+  if (ev.target?.value?.length === 3 && ev.key !== 'Backspace') {
+    next?.focus();
+  } else if ((!ev.target?.value && ev.key === 'Backspace')) {
+    prev?.focus();
   }
 };
 
