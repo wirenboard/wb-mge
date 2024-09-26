@@ -1,0 +1,11 @@
+# VS Code Settings
+.vscode/
+
+# Build
+build/**
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# Dependencies
+managed_components/

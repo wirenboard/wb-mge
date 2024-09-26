@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WB-MGE v.3</title>
+</head>
+
+<body>
+    <br>
+    <button id="get">get settings</button>
+    <br>
+    <button id="post">post settings</button>
+    <br>
+    <br>
+    <label>Обновление прошивки</label>
+    <div>
+        <input accept=".bin" type="file" class="btn" id="otafile" name="otafile" />
+        <button id="upload" class="btn" onclick="startUpload()">ЗАГРУЗИТЬ</button>
+        <p></p>
+    </div>
+    <div id="progress"> </div>
+
+    <script>
+        const baseUrl = window.location.href
+
+        document.querySelector('#get').onclick = function () {
+            let url = new URL('settings', baseUrl)
+            requestMethod(url)
+        }
+
+        document.querySelector('#post').onclick = function () {
+            let url = new URL('settings', baseUrl)
+            requestMethod(url, 'POST',
+                JSON.stringify({
+                    "baudrate": 200,
+                    "parity": "none",
+                    "stopbits": "1.5-bit",
+                    "databits": "8-bit",
+                    "enable": true
+                }))
+        }
+
+        function requestMethod(url, method = 'GET', data = null) {
+
+            let xhr = new XMLHttpRequest()
+            xhr.open(method, url)
+            xhr.send(data)
+
+            xhr.onload = function () {
+                if (xhr.status != 200) {
+                    console.log(`Ошибка ${xhr.status}: ${xhr.statusText}`)
+                } else {
+                    responseHandler(xhr.response)
+                }
+            }
+            xhr.onerror = function () {
+                console.log("Запрос не удался")
+            }
+        }
+
+        function responseHandler(resp) {
+            let obj = JSON.parse(resp)
+            console.log("request:", obj)
+        }
+
+        function startUpload() {
+            var otafile = document.getElementById("otafile").files;
+
+            if (otafile.length == 0) {
+                alert("No file selected!");
+            } else {
+                document.getElementById("otafile").disabled = true;
+                document.getElementById("upload").disabled = true;
+
+                var file = otafile[0];
+                var xhr = new XMLHttpRequest();
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState == 4) {
+                        if (xhr.status == 200) {
+                            document.open();
+                            document.write(xhr.responseText);
+                            document.close();
+                        } else if (xhr.status == 0) {
+                            alert("Server closed the connection abruptly!");
+                            location.reload()
+                        } else {
+                            alert(xhr.status + " Error!\n" + xhr.responseText);
+                            location.reload()
+                        }
+                    }
+                };
+                xhr.upload.onprogress = function (e) {
+                    var progress = document.getElementById("progress");
+                    progress.textContent = "Progress: " + (e.loaded / e.total * 100).toFixed(0) + "%";
+                };
+                xhr.open("POST", "/update", true);
+                xhr.send(file);
+            }
+        }
+    </script>
+</body>
+
+</html>
