@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive } from 'vue';
+import { computed, reactive, watch } from 'vue';
 
 const emit = defineEmits(['update:modelValue']);
 const model = defineModel<string>();
@@ -27,12 +27,21 @@ const value = reactive([
   model.value?.split('.')[3] || ''],
 );
 
+// check is value was updated from parent
+watch(model, () => {
+  value[0] = model.value?.split('.')[0] || '';
+  value[1] = model.value?.split('.')[1] || '';
+  value[2] = model.value?.split('.')[2] || '';
+  value[3] = model.value?.split('.')[3] || '';
+});
+
 const valueToIp = computed(() => value.join('.'));
 
 const handleChange = (ev: any) => {
   if (['Tab', 'Alt'].includes(ev.code) || ev.shiftKey || ev.ctrlKey) {
     return;
   }
+
   // prevent input chars
   if (ev.code.includes('Key')) {
     ev.preventDefault();

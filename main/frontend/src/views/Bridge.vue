@@ -105,8 +105,6 @@ router.beforeResolve(async (to, from, next) => {
   "en": {
     "title": "Bridge configuration",
     "save": "Save",
-    "data_updated": "Data updated",
-    "invalid_fields": "Fields were not updated: ",
     "bridge_ip": "IP",
     "bridge_port": "Port",
     "bridge_mode": "Mode",

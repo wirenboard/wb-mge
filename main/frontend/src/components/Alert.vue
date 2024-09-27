@@ -19,7 +19,7 @@ watch(
       alertData.value = null;
       clearTimeout(timeout);
     }, 3000);
-  }
+  }, { immediate: true }
 );
 </script>
 

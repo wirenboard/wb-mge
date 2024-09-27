@@ -168,8 +168,6 @@ router.beforeResolve(async (to, from, next) => {
   "en": {
     "title": "Network settings",
     "save": "Save",
-    "data_updated": "Data updated",
-    "invalid_fields": "Fields were not updated: ",
     "ethernet": "Ethernet",
     "wifi_settings": "Wi-Fi",
     "serial": "Serial",

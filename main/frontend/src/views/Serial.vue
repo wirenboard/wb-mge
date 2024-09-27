@@ -114,8 +114,6 @@ router.beforeResolve(async (to, from, next) => {
   "en": {
     "title": "Serial configuration",
     "save": "Save",
-    "data_updated": "Data updated",
-    "invalid_fields": "Fields were not updated: ",
     "baudrate": "Baud rate",
     "databits": "Data bits",
     "stopbits": "Stop bits",
