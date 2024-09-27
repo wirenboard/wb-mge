@@ -1,17 +1,17 @@
-
 #include "http_server.h"
 
 #include <esp_http_server.h>
+#include <esp_ota_ops.h>
+#include <sys/param.h>
 
 #include "cJSON.h"
 #include "esp_log.h"
 #include "lwip/ip4_addr.h"
 #include "setting_items.h"
 #include "ssdp.h"
-#include <esp_ota_ops.h>
-#include <sys/param.h>
 
-#define REQ_RECV_BUF_SIZE 1024
+// Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
+#define REQ_RECV_BUF_SIZE       (CONFIG_HTTPD_MAX_REQ_HDR_LEN * 2)
 
 static const char *TAG = "http_server";
 
@@ -23,9 +23,6 @@ extern const uint8_t favicon_ico_end[] asm("_binary_favicon_ico_end");
 
 static esp_err_t ssdp_schema_get_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/xml");
-    const char *response = get_ssdp_schema_str();
-    httpd_resp_send(req, response, strlen(response));
     return ESP_OK;
 }
 
@@ -46,7 +43,7 @@ static cJSON *receive_json(httpd_req_t *req)
     char buf[REQ_RECV_BUF_SIZE];
     int received = 0;
 
-    received = httpd_req_recv(req, buf, req->content_len);
+    received = httpd_req_recv(req, buf, sizeof(buf));
     buf[received] = '\0';
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive data");
@@ -74,12 +71,10 @@ esp_err_t update_post_handler(httpd_req_t *req)
     while (remaining > 0) {
         int recv_len = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)));
 
-        // Timeout Error: Just retry
-        if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {
+        if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {  // Timeout Error: Just retry
             continue;
 
-            // Serious Error: Abort OTA
-        } else if (recv_len <= 0) {
+        } else if (recv_len <= 0) {  // Serious Error: Abort OTA
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Protocol Error");
             return ESP_FAIL;
         }
@@ -94,7 +89,9 @@ esp_err_t update_post_handler(httpd_req_t *req)
     }
 
     // Validate and switch to new OTA image and reboot
-    if (esp_ota_end(ota_handle) != ESP_OK || esp_ota_set_boot_partition(ota_partition) != ESP_OK) {
+    if ((esp_ota_end(ota_handle) != ESP_OK) ||
+        (esp_ota_set_boot_partition(ota_partition) != ESP_OK))
+    {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Validation / Activation Error");
         return ESP_FAIL;
     }
@@ -165,7 +162,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
                 int val = 1;
                 value = (int *)&val;
             } else {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Uncknown type json item");
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unknown type json item");
             }
 
             if (setting_items_save(keys[i], value) == 0) {
@@ -240,16 +237,5 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
         return ESP_FAIL;
     }
 
-    esp_err_t err = ssdp_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to init ssdp: %s", esp_err_to_name(err));
-    }
-
-    ESP_LOGI(TAG, "Starting ssdp service");
-    err = ssdp_start(ssdp_config);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start ssdp: %s", esp_err_to_name(err));
-        ssdp_stop();
-    }
     return ESP_OK;
 }

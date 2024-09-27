@@ -1,19 +1,20 @@
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_log.h"
-#include "lwip/sockets.h"
 #include "tcp_server.h"
 
-#define KEEPALIVE_IDLE 5
-#define KEEPALIVE_INTERVAL 5
-#define KEEPALIVE_COUNT 3
-#define RX_BUFFER_SIZE 1024
-#define TCP_SERVER_TASK_STACK_SIZE 4096
-#define TCP_SERVER_TASK_PRIORITY 5
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lwip/sockets.h"
+
+#define KEEPALIVE_IDLE                  5
+#define KEEPALIVE_INTERVAL              5
+#define KEEPALIVE_COUNT                 3
+#define RX_BUFFER_SIZE                  1024
+#define TCP_SERVER_TASK_STACK_SIZE      4096
+#define TCP_SERVER_TASK_PRIORITY        5
 
 static const char *TAG = "tcp-server";
 
-tcps_receive_handler_t tcp_server_receive_handler = NULL;
+static tcps_receive_handler_t tcp_server_receive_handler = NULL;
 static int sock = -1;
 
 static void tcp_server_task(void *pvParameters)
@@ -28,7 +29,7 @@ static void tcp_server_task(void *pvParameters)
     int keepCount = KEEPALIVE_COUNT;
 
     while (1) {
-        struct sockaddr_storage source_addr;  // Large enough for both IPv4 or IPv6
+        struct sockaddr_storage source_addr;
         socklen_t addr_len = sizeof(source_addr);
         sock = accept(listen_sock, (struct sockaddr *)&source_addr, &addr_len);
         if (sock < 0) {
@@ -42,7 +43,8 @@ static void tcp_server_task(void *pvParameters)
         setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
         // Convert ip address to string
         if (source_addr.ss_family == PF_INET) {
-            inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
+            inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str,
+                        sizeof(addr_str) - 1);
         }
         ESP_LOGD(TAG, "Socket accepted ip address: %s", addr_str);
 
@@ -109,7 +111,8 @@ esp_err_t tcp_server_init(int port, tcps_receive_handler_t tcps_receive_handler)
     }
     ESP_LOGD(TAG, "Socket listening");
 
-    xTaskCreate(tcp_server_task, "tcp_server", TCP_SERVER_TASK_STACK_SIZE, &listen_sock, TCP_SERVER_TASK_PRIORITY, NULL);
+    xTaskCreate(tcp_server_task, "tcp_server", TCP_SERVER_TASK_STACK_SIZE, &listen_sock,
+                TCP_SERVER_TASK_PRIORITY, NULL);  // TODO: check stack size
     return ESP_OK;
 }
 

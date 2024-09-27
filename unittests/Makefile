@@ -8,7 +8,7 @@ INC = . ../main/ $(MOCK_FOLDER)
 all: $(TEST_LIST)
 
 %_test: %_test.c $(UNIT_FOLDER)/%.c $(wildcard $(MOCK_FOLDER)/*.c)
-	gcc -g $(addprefix -I, $(INC)) $^ -o $@
+	gcc -g -mx32 $(addprefix -I, $(INC)) $^ -o $@
 	./$@
 
 clean:

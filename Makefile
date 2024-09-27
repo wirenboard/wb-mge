@@ -1,7 +1,4 @@
-RUN_IDF = . $(HOME)/esp/esp-idf-5.3/export.sh
-
 all: unittests
-	$(RUN_IDF)
 	idf.py build
 
 
