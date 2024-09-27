@@ -64,6 +64,10 @@ const login = async () => {
   height: 100dvh;
   margin-top: -60px;
   padding: 0 24px;
+
+  @media( max-height: 600px ) {
+    margin-top: 0;
+  }
 }
 
 .login-wrapper {

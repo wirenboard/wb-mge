@@ -24,7 +24,7 @@ router.beforeResolve(async (to, from, next) => {
     <Heading :title="t('title')" info-link="https://wirenboard.com/wiki/WB-MGE_v.3_Modbus-Ethernet_Interface_Converter" />
 
     <div v-if="data" class="network-container">
-      <fieldset>
+      <fieldset class="network-fieldset">
         <legend>{{ t('ethernet') }}</legend>
         <form
           class="network-info"
@@ -62,7 +62,7 @@ router.beforeResolve(async (to, from, next) => {
         </form>
       </fieldset>
 
-      <fieldset>
+      <fieldset class="network-fieldset">
         <legend>{{ t('wifi_settings') }}</legend>
         <form
           class="network-info"
@@ -139,9 +139,12 @@ router.beforeResolve(async (to, from, next) => {
   }
 }
 
-.network-info {
+.network-fieldset {
   page-break-inside: avoid;
   break-inside: avoid;
+}
+
+.network-info {
   display: grid;
   gap: 6px 12px;
   grid-template-columns: fit-content(100px) fit-content(100px);

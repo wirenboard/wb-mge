@@ -24,7 +24,7 @@ router.beforeResolve(async (to, from, next) => {
     <Heading :title="t('title')" info-link="https://wirenboard.com/wiki/WB-MGE_v.3_Modbus-Ethernet_Interface_Converter" />
 
     <div v-if="data" class="bridge-container">
-      <fieldset>
+      <fieldset class="bridge-fieldset">
         <form
           class="bridge-info"
           @submit.prevent="updateSettings({
@@ -76,9 +76,12 @@ router.beforeResolve(async (to, from, next) => {
   }
 }
 
-.bridge-info {
+.bridge-fieldset {
   page-break-inside: avoid;
   break-inside: avoid;
+}
+
+.bridge-info {
   display: grid;
   gap: 6px 12px;
   grid-template-columns: fit-content(100px) fit-content(100px);

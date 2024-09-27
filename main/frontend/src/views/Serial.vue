@@ -23,7 +23,7 @@ router.beforeResolve(async (to, from, next) => {
     <Heading :title="t('title')" info-link="https://wirenboard.com/wiki/WB-MGE_v.3_Modbus-Ethernet_Interface_Converter" />
 
     <div v-if="data" class="serial-container">
-      <fieldset>
+      <fieldset class="serial-fieldset">
         <form
           class="serial-info"
           @submit.prevent="updateSettings({
@@ -86,13 +86,16 @@ router.beforeResolve(async (to, from, next) => {
 }
 
 .serial-info {
-  page-break-inside: avoid;
-  break-inside: avoid;
   display: grid;
   gap: 6px 12px;
   grid-template-columns: fit-content(100px) fit-content(100px);
   align-items: center;
   justify-items: flex-start;
+}
+
+.serial-fieldset {
+  page-break-inside: avoid;
+  break-inside: avoid;
 }
 
 .serial-info label {

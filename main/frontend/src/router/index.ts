@@ -72,7 +72,13 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.requiresAuth && !session) {
-    return { path: '/login', query: { redirect: to.meta.menuName } };
+    const output: any = { path: '/login' };
+
+    if (to.meta.menuName !== 'dashboard') {
+      output.query = { redirect: to.meta.menuName };
+    }
+
+    return output;
   }
 });
 
