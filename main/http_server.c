@@ -14,8 +14,10 @@
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 #define REQ_RECV_BUF_SIZE       (CONFIG_HTTPD_MAX_REQ_HDR_LEN * 2)
-// Максимальная длина cookie с идентификатором сессии включая нулевой символ
-#define COOKIE_MAX_LEN          22
+// Длина строки с максимальным числом uint32 (10 цифр + 1 символ для '\0')
+#define UINT32_STR_MAX_LEN      11
+// Максимальная длина cookie с идентификатором сессии (session_id=<u32_id>)
+#define COOKIE_MAX_LEN          (11 + UINT32_STR_MAX_LEN)
 // При превышении этого количества сессий, самая старая сессия будет удалена
 #define MAX_SESSIONS            10
 
@@ -44,36 +46,46 @@ static void add_session_id(session_buffer_t *buffer, uint32_t session_id)
     buffer->current_index = (buffer->current_index + 1) % MAX_SESSIONS;
 }
 
-uint32_t safe_strtoul(const char *str)
+uint32_t strtou(const char *u32_str)
 {
+    if (u32_str == NULL) {
+        ESP_LOGE(TAG, "%s: String is NULL", __func__);
+        return 0;
+    }
+    if (strlen(u32_str) > UINT32_STR_MAX_LEN) {
+        ESP_LOGE(TAG, "%s: String is too long", __func__);
+        return 0;
+    }
+
     char *endptr;
     errno = 0;  // Сбросить errno перед вызовом strtoul
-    uint32_t value = strtoul(str, &endptr, 10);
+    uint32_t value = strtoul(u32_str, &endptr, 10);
 
-    if ((errno == ERANGE) && (value == UINT_MAX)) {
-        ESP_LOGE(TAG, "Overflow occurred");
-        return UINT_MAX;
+    if (errno == ERANGE || value > UINT32_MAX) {
+        ESP_LOGE(TAG, "%s: Overflow occurred", __func__);
+        return 0;
     }
-    if (endptr == str) {
-        ESP_LOGE(TAG, "No digits were found");
+    if (endptr == u32_str) {
+        ESP_LOGE(TAG, "%s: No digits were found", __func__);
         return 0;
     }
     if (*endptr != '\0') {
-        ESP_LOGE(TAG, "Further characters after number: %s", endptr);
+        ESP_LOGE(TAG, "%s: Further characters after number: %s", __func__, endptr);
         return 0;
     }
 
     return value;
 }
 
-static uint32_t get_session_id(httpd_req_t *req) {
+static uint32_t get_session_id_from_cookie(httpd_req_t *req)
+{
     char session_id_str[COOKIE_MAX_LEN];
     size_t buf_len = sizeof(session_id_str);
     if (httpd_req_get_cookie_val(req, "session_id", session_id_str, &buf_len) == ESP_OK) {
-        ESP_LOGI(TAG, "Session ID: %s", session_id_str);
-        return safe_strtoul(session_id_str);
+        ESP_LOGI(TAG, "%s: %s", __func__, session_id_str);
+        return strtou(session_id_str);
     }
-    return 0;  // Возвращаем 0, если не удалось получить session_id
+    return 0;  // Возвращает 0, если не удалось получить session_id
 }
 
 static uint32_t authorization(char *login_req, char *pass_req)
@@ -105,19 +117,27 @@ static uint32_t authorization(char *login_req, char *pass_req)
     return session_id;
 }
 
-static esp_err_t check_auth(httpd_req_t *req)
+static inline bool session_id_is_valid(uint32_t session_id)
+{
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (session_buffer.session_ids[i] == session_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool check_auth(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    uint32_t session_id = get_session_id(req);
+    uint32_t session_id = get_session_id_from_cookie(req);
     if (session_id != 0) {
-        for (int i = 0; i < MAX_SESSIONS; i++) {
-            if (session_buffer.session_ids[i] == session_id) {
-                ESP_LOGI(TAG, "Session ID %lu is valid", session_id);
-                return ESP_OK;
-            }
+        if (session_id_is_valid(session_id)) {
+            return true;
+        } else {
+            ESP_LOGW(TAG, "Session ID %lu is not valid", session_id);
         }
-        ESP_LOGW(TAG, "Session ID %lu is not valid", session_id);
     } else {
         ESP_LOGW(TAG, "Session ID cookie not found");
     }
@@ -125,23 +145,27 @@ static esp_err_t check_auth(httpd_req_t *req)
     httpd_resp_set_status(req, "401 Unauthorized");
     httpd_resp_send(req, NULL, 0);
 
-    return ESP_OK;
+    return false;
+}
+
+static inline void find_and_remove_session_id(uint32_t session_id)
+{
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (session_buffer.session_ids[i] == session_id) {
+            session_buffer.session_ids[i] = 0;
+            ESP_LOGI(TAG, "Session ID %lu removed", session_id);
+            break;
+        }
+    }
 }
 
 static esp_err_t logout(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    uint32_t session_id = get_session_id(req);
+    uint32_t session_id = get_session_id_from_cookie(req);
     if (session_id != 0) {
-        // Найти и удалить session_id из буфера
-        for (int i = 0; i < MAX_SESSIONS; i++) {
-            if (session_buffer.session_ids[i] == session_id) {
-                session_buffer.session_ids[i] = 0;  // Удаление session_id
-                ESP_LOGI(TAG, "Session ID %lu removed from buffer", session_id);
-                break;
-            }
-        }
+        find_and_remove_session_id(session_id);
     } else {
         ESP_LOGW(TAG, "Session ID cookie not found");
     }
@@ -167,6 +191,20 @@ static esp_err_t favicon_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static void resp_and_free_json(httpd_req_t *req, cJSON *req_json, cJSON *resp_json)
+{
+    const char *json_str = cJSON_Print(resp_json);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, json_str);
+
+    free((void *)json_str);
+    cJSON_Delete(resp_json);
+
+    if (req_json != NULL) {
+        cJSON_Delete(req_json);
+    }
+}
+
 static cJSON *receive_json(httpd_req_t *req)
 {
     char buf[REQ_RECV_BUF_SIZE];
@@ -188,6 +226,17 @@ static cJSON *receive_json(httpd_req_t *req)
     return req_json;
 }
 
+static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, char *cookie_header)
+{
+    snprintf(cookie_header, COOKIE_MAX_LEN, "session_id=%lu", session_id);
+    ESP_LOGI(TAG, "Cookie header: %s", cookie_header);
+    if (httpd_resp_set_hdr(req, "Set-Cookie", cookie_header) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set cookie header");
+        return false;
+    }
+    return true;
+}
+
 static esp_err_t auth_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
@@ -197,7 +246,7 @@ static esp_err_t auth_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    httpd_resp_set_type(req, "application/json");
+    char cookie_header[COOKIE_MAX_LEN] = {0};
     cJSON *resp_json = cJSON_CreateObject();
     bool result = false;
 
@@ -208,14 +257,7 @@ static esp_err_t auth_post_handler(httpd_req_t *req)
         if ((login_req->type == cJSON_String) && (pass_req->type == cJSON_String)) {
             uint32_t session_id = authorization(login_req->valuestring, pass_req->valuestring);
             if (session_id != 0) {
-                char cookie_header[COOKIE_MAX_LEN];
-                snprintf(cookie_header, sizeof(cookie_header), "session_id=%lu", session_id);
-                ESP_LOGI(TAG, "Session ID: %s", cookie_header);
-                if (httpd_resp_set_hdr(req, "Set-Cookie", cookie_header) != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to set cookie header");
-                } else {
-                    result = true;
-                }
+                result = set_cookie_session_id(req, session_id, cookie_header);
             } else {
                 cJSON_AddStringToObject(resp_json, "error", "Invalid login or password");
             }
@@ -227,16 +269,7 @@ static esp_err_t auth_post_handler(httpd_req_t *req)
     }
 
     cJSON_AddBoolToObject(resp_json, "auth", result);
-    const char *resp_json_str = cJSON_Print(resp_json);
-    httpd_resp_sendstr(req, resp_json_str);
-
-    free((void *)resp_json_str);
-    cJSON_Delete(resp_json);
-    cJSON_Delete(req_json);
-
-    if (result == false) {
-        return ESP_FAIL;
-    }
+    resp_and_free_json(req, req_json, resp_json);
 
     return ESP_OK;
 }
@@ -246,8 +279,8 @@ static esp_err_t session_get_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    if (check_auth(req) != ESP_OK) {
-        return ESP_FAIL;
+    if (check_auth(req) != true) {
+        return ESP_OK;
     }
     // Отправить пустой ответ с кодом 200 если пользователь авторизован
     httpd_resp_send(req, NULL, 0);
@@ -263,15 +296,9 @@ static esp_err_t logout_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    httpd_resp_set_type(req, "application/json");
     cJSON *resp_json = cJSON_CreateObject();
-
     cJSON_AddBoolToObject(resp_json, "logout", true);
-    const char *resp_json_str = cJSON_Print(resp_json);
-    httpd_resp_sendstr(req, resp_json_str);
-
-    free((void *)resp_json_str);
-    cJSON_Delete(resp_json);
+    resp_and_free_json(req, NULL, resp_json);
 
     return ESP_OK;
 }
@@ -280,8 +307,8 @@ static esp_err_t update_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    if (check_auth(req) != ESP_OK) {
-        return ESP_FAIL;
+    if (check_auth(req) != true) {
+        return ESP_OK;
     }
 
     char buf[REQ_RECV_BUF_SIZE];
@@ -319,52 +346,97 @@ static esp_err_t update_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    httpd_resp_set_type(req, "application/json");
     cJSON *resp_json = cJSON_CreateObject();
     cJSON_AddBoolToObject(resp_json, "update", true);
-    const char *resp_json_str = cJSON_Print(resp_json);
-    httpd_resp_sendstr(req, resp_json_str);
-
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    resp_and_free_json(req, NULL, resp_json);
     esp_restart();
 
     return ESP_OK;
+}
+
+static inline void add_setting_item_to_json(cJSON *json, const char *key)
+{
+    setting_item_type_t type = setting_items_get_type_in_json(key);
+
+    switch (type) {
+        case SETTING_ITEM_TYPE_NUM: {
+            uint32_t value = 0;
+            setting_items_read(key, &value);
+            cJSON_AddNumberToObject(json, key, value);
+            break;
+        }
+        case SETTING_ITEM_TYPE_STR: {
+            char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+            setting_items_read(key, value);
+            cJSON_AddStringToObject(json, key, value);
+            break;
+        }
+        case SETTING_ITEM_TYPE_BOOL: {
+            uint8_t value = 0;
+            setting_items_read(key, &value);
+            cJSON_AddBoolToObject(json, key, value);
+            break;
+        }
+        default:
+            ESP_LOGW(TAG, "Unknown setting item type for key: %s", key);
+            break;
+    }
 }
 
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    if (check_auth(req) != ESP_OK) {
-        return ESP_FAIL;
+    if (check_auth(req) != true) {
+        return ESP_OK;
     }
 
     cJSON *resp_json = cJSON_CreateObject();
-    httpd_resp_set_type(req, "application/json");
 
     int items_num = setting_items_get_keys(NULL);
     const char *keys[items_num];
     setting_items_get_keys(keys);
+
     for (int i = 0; i < items_num; i++) {
-        setting_item_type_t type = setting_items_get_type_in_json(keys[i]);
-        if (type == SETTING_ITEM_TYPE_NUM) {
-            uint32_t value = 0;
-            setting_items_read(keys[i], &value);
-            cJSON_AddNumberToObject(resp_json, keys[i], value);
-        } else if (type == SETTING_ITEM_TYPE_STR) {
-            char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-            setting_items_read(keys[i], value);
-            cJSON_AddStringToObject(resp_json, keys[i], value);
-        } else if (type == SETTING_ITEM_TYPE_BOOL) {
-            uint8_t value = 0;
-            setting_items_read(keys[i], &value);
-            cJSON_AddBoolToObject(resp_json, keys[i], value);
-        }
+        add_setting_item_to_json(resp_json, keys[i]);
     }
-    const char *settings = cJSON_Print(resp_json);
-    httpd_resp_sendstr(req, settings);
-    free((void *)settings);
-    cJSON_Delete(resp_json);
+
+    resp_and_free_json(req, NULL, resp_json);
+
+    return ESP_OK;
+}
+
+static inline esp_err_t process_json_item(httpd_req_t *req, cJSON *item, const char *key, cJSON *resp_json)
+{
+    void *value = NULL;
+    static const int false_val = 0;
+    static const int true_val = 1;
+
+    switch (item->type) {
+        case cJSON_String:
+            value = (char *)item->valuestring;
+            break;
+        case cJSON_Number:
+            value = (int *)&item->valueint;
+            break;
+        case cJSON_False:
+            value = (void *)&false_val;
+            break;
+        case cJSON_True:
+            value = (void *)&true_val;
+            break;
+        default:
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unknown type json item");
+            return ESP_FAIL;
+    }
+
+    if (setting_items_save(key, value) == 0) {
+        ESP_LOGI(TAG, "[%s] saved", key);
+        cJSON_AddBoolToObject(resp_json, key, true);
+    } else {
+        ESP_LOGW(TAG, "[%s] failed to save", key);
+        cJSON_AddBoolToObject(resp_json, key, false);
+    }
 
     return ESP_OK;
 }
@@ -373,51 +445,31 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    if (check_auth(req) != ESP_OK) {
-        return ESP_FAIL;
+    if (check_auth(req) != true) {
+        return ESP_OK;
     }
 
     cJSON *req_json = receive_json(req);
     if (req_json == NULL) {
         return ESP_FAIL;
     }
-    httpd_resp_set_type(req, "application/json");
+
     cJSON *resp_json = cJSON_CreateObject();
+
     int items_num = setting_items_get_keys(NULL);
     const char *keys[items_num];
     setting_items_get_keys(keys);
+
     for (int i = 0; i < items_num; i++) {
         if (cJSON_HasObjectItem(req_json, keys[i])) {
             cJSON *item = cJSON_GetObjectItem(req_json, keys[i]);
-            void *value = NULL;
-            static int false_val = 0;
-            static int true_val = 1;
-            if (item->type == cJSON_String) {
-                value = (char *)item->valuestring;
-            } else if (item->type == cJSON_Number) {
-                value = (int *)&item->valueint;
-            } else if (item->type == cJSON_False) {
-                value = &false_val;
-            } else if (item->type == cJSON_True) {
-                value = &true_val;
-            } else {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unknown type json item");
-            }
-
-            if (setting_items_save(keys[i], value) == 0) {
-                ESP_LOGI(TAG, "%s saved", keys[i]);
-                cJSON_AddBoolToObject(resp_json, keys[i], true);
-            } else {
-                ESP_LOGI(TAG, "%s failed to save", keys[i]);
-                cJSON_AddBoolToObject(resp_json, keys[i], false);
+            if (process_json_item(req, item, keys[i], resp_json) != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to process item: %s", keys[i]);
             }
         }
     }
-    cJSON_Delete(req_json);
-    const char *resp_json_str = cJSON_Print(resp_json);
-    httpd_resp_sendstr(req, resp_json_str);
-    free((void *)resp_json_str);
-    cJSON_Delete(resp_json);
+
+    resp_and_free_json(req, req_json, resp_json);
 
     return ESP_OK;
 }
