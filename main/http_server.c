@@ -61,7 +61,7 @@ uint32_t strtou(const char *u32_str)
     errno = 0;  // Сбросить errno перед вызовом strtoul
     uint64_t value = strtoul(u32_str, &endptr, 10);
 
-    if (errno == ERANGE || value > UINT32_MAX) {
+    if ((errno == ERANGE) || (value > UINT32_MAX)) {
         ESP_LOGE(TAG, "%s: Overflow occurred", __func__);
         return 0;
     }
