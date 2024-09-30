@@ -5,6 +5,7 @@ import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
+import { watch } from 'vue';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -15,6 +16,14 @@ router.beforeResolve(async (to, from, next) => {
     await refresh();
   }
   next();
+});
+
+const maxBaudrate = 460800;
+
+watch(() => data.value?.baudrate, () => {
+  if (data.value?.baudrate > maxBaudrate) {
+    data.value.baudrate = maxBaudrate;
+  }
 });
 </script>
 
@@ -33,7 +42,7 @@ router.beforeResolve(async (to, from, next) => {
             databits: data.databits
           }, t)">
           <label for="baudrate">{{ t('baudrate') }}</label>
-          <input id="baudrate" v-model="data.baudrate" type="number" name="baudrate" min="300" max="460800" autofocus />
+          <input id="baudrate" v-model="data.baudrate" type="number" name="baudrate" min="300" :max="maxBaudrate" autofocus />
 
           <label for="parity">{{ t('parity') }}</label>
           <select id="parity" v-model="data.parity" name="parity">
