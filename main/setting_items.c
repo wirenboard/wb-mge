@@ -255,7 +255,7 @@ static bool read_bridge_port(const char *key, void *value)
 static bool save_string_value(const char *key, const void *value)
 {
     char *str = (char *)value;
-    if (strlen(str) > SETTING_ITEM_MAX_STR_LEN) {
+    if (strnlen(str, (SETTING_ITEM_MAX_STR_LEN + 1)) > SETTING_ITEM_MAX_STR_LEN) {
         return false;
     }
     if (iface.save_str(key, value) != 0) {

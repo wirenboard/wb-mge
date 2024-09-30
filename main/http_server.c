@@ -52,7 +52,7 @@ uint32_t strtou(const char *u32_str)
         ESP_LOGE(TAG, "%s: String is NULL", __func__);
         return 0;
     }
-    if (strlen(u32_str) > UINT32_STR_MAX_LEN) {
+    if (strnlen(u32_str, (UINT32_STR_MAX_LEN + 1)) > UINT32_STR_MAX_LEN) {
         ESP_LOGE(TAG, "%s: String is too long", __func__);
         return 0;
     }
