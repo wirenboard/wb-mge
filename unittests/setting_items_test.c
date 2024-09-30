@@ -149,8 +149,8 @@ int stopbits_test(void)
 int ip_test(void)
 {
     const char* valid_test_ip[] = {"192.168.111.12", "127.0.0.1"};
-    const char* invalid_test_ip[] = {"192.168..111.255", "192.168.111.256", "192.168.111.25.1",
-                                     "192..1", "192.168.1"};
+    const char* invalid_test_ip[] = {"192.168..111.255", "192.168.111.256", "192.168.111.25.1", "192.g.1",
+        "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"};
 
     for (int i = 0; i < ARRAY_SIZE(valid_test_ip); i++) {
         const char* expected_str = valid_test_ip[i];

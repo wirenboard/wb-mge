@@ -123,6 +123,13 @@ static bool ip2string(uint32_t ip, char *str)
 
 static bool string2ip(const char *str, uint32_t *ip)
 {
+    if (str == NULL) {
+        return false;
+    }
+    if (strnlen(str, (IP_ADDR_STR_LEN + 1)) > IP_ADDR_STR_LEN) {
+        return false;
+    }
+
     // Дополнительная ячейка нужна для проверки наличия лишнего байта ip адреса
     int octets[IP_ADDR_OCTETS_NUM + 1] = {0};
     if (sscanf(str, "%d.%d.%d.%d.%d", &octets[0], &octets[1], &octets[2], &octets[3], &octets[4]) ==
@@ -139,9 +146,9 @@ static bool string2ip(const char *str, uint32_t *ip)
                   (uint32_t)((octets[0]) & 0xff);           // 4th octet
         }
         return true;
-    } else {
-        return false;
     }
+
+    return false;
 }
 
 static bool save_wifi_mode(const char *key, const void *value)
@@ -255,7 +262,7 @@ static bool read_bridge_port(const char *key, void *value)
 static bool save_string_value(const char *key, const void *value)
 {
     char *str = (char *)value;
-    if (strlen(str) > SETTING_ITEM_MAX_STR_LEN) {
+    if (strnlen(str, (SETTING_ITEM_MAX_STR_LEN + 1)) > SETTING_ITEM_MAX_STR_LEN) {
         return false;
     }
     if (iface.save_str(key, value) != 0) {
