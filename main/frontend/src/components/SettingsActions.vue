@@ -12,7 +12,8 @@ const { data, updateSettings } = await useSettings();
 
 const downloadSettings = () => {
   const fileName = `wb-mge3-settings-${new Date().toISOString()}.json`;
-  const file = new File([JSON.stringify(data.value)], fileName, {
+  const formattedData = JSON.stringify(data.value, null, 2);
+  const file = new File([formattedData], fileName, {
     type: 'application/json'
   });
 
