@@ -59,7 +59,7 @@ uint32_t strtou(const char *u32_str)
 
     char *endptr;
     errno = 0;  // Сбросить errno перед вызовом strtoul
-    uint32_t value = strtoul(u32_str, &endptr, 10);
+    uint64_t value = strtoul(u32_str, &endptr, 10);
 
     if (errno == ERANGE || value > UINT32_MAX) {
         ESP_LOGE(TAG, "%s: Overflow occurred", __func__);
@@ -74,7 +74,7 @@ uint32_t strtou(const char *u32_str)
         return 0;
     }
 
-    return value;
+    return (uint32_t)value;
 }
 
 static uint32_t get_session_id_from_cookie(httpd_req_t *req)
