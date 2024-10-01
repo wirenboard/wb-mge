@@ -287,6 +287,16 @@ static bool save_string_value(const char *key, const void *value)
     return true;
 }
 
+static bool save_non_zero_len_string_value(const char *key, const void *value)
+{
+    char *str = (char *)value;
+    if (strnlen(str, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return false;
+    }
+
+    return save_string_value(key, value);
+}
+
 static bool read_string_value(const char *key, void *value)
 {
     char str[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -359,6 +369,15 @@ int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
     {
         return -1;
     }
+    if (hostname == NULL) {
+        return -1;
+    }
+
+    int len = strnlen(hostname, (SETTING_ITEM_MAX_STR_LEN + 1));
+    if ((len > SETTING_ITEM_MAX_STR_LEN) || (len == 0)) {
+        return -1;
+    }
+
     iface.save_bool = setting_item_iface->save_bool;
     iface.save_num = setting_item_iface->save_num;
     iface.save_str = setting_item_iface->save_str;
@@ -366,9 +385,8 @@ int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
     iface.read_num = setting_item_iface->read_num;
     iface.read_str = setting_item_iface->read_str;
 
-    if (hostname != NULL) {
-        strncpy(generated_hostname, hostname, SETTING_ITEM_MAX_STR_LEN);
-    }
+    strncpy(generated_hostname, hostname, SETTING_ITEM_MAX_STR_LEN);
+
     return 0;
 }
 
@@ -416,6 +434,10 @@ int setting_items_set_defaults(void)
 
 int setting_items_read_raw(const char *key, void *value, setting_item_type_t type_in_storage)
 {
+    if ((key == NULL) || (value == NULL)) {
+        return -1;
+    }
+
     int index = setting_items_get_index(key);
     if (index == -1) {
         return -1;
@@ -434,6 +456,10 @@ int setting_items_read_raw(const char *key, void *value, setting_item_type_t typ
 
 int setting_items_read(const char *key, void *value)
 {
+    if ((key == NULL) || (value == NULL)) {
+        return -1;
+    }
+
     int index = setting_items_get_index(key);
     if (index == -1) {
         return -1;
@@ -449,6 +475,10 @@ int setting_items_read(const char *key, void *value)
 
 setting_item_type_t setting_items_get_type_in_json(const char *key)
 {
+    if (key == NULL) {
+        return -1;
+    }
+
     int index = setting_items_get_index(key);
     if (index == -1) {
         return -1;
@@ -458,6 +488,10 @@ setting_item_type_t setting_items_get_type_in_json(const char *key)
 
 int setting_items_save(const char *key, const void *value)
 {
+    if ((key == NULL) || (value == NULL)) {
+        return -1;
+    }
+
     int index = setting_items_get_index(key);
     if (index == -1) {
         return -1;
@@ -477,7 +511,7 @@ static const setting_item_t setting_items[] = {
         .default_value = generated_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
+        .save_to_storage = save_non_zero_len_string_value,
         .read_from_storage = read_string_value,
         .read_from_storage_raw = read_raw_value,
     },
@@ -486,7 +520,7 @@ static const setting_item_t setting_items[] = {
         .default_value = DEFAULT_LOGIN,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
+        .save_to_storage = save_non_zero_len_string_value,
         .read_from_storage = NULL,
         .read_from_storage_raw = read_raw_value,
     },
@@ -495,7 +529,7 @@ static const setting_item_t setting_items[] = {
         .default_value = DEFAULT_PASS,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
+        .save_to_storage = save_non_zero_len_string_value,
         .read_from_storage = NULL,
         .read_from_storage_raw = read_raw_value,
     },
@@ -612,7 +646,7 @@ static const setting_item_t setting_items[] = {
         .default_value = generated_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
+        .save_to_storage = save_non_zero_len_string_value,
         .read_from_storage = read_string_value,
         .read_from_storage_raw = read_raw_value,
     },

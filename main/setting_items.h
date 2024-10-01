@@ -53,5 +53,6 @@ int setting_items_read_raw(const char *key, void *value, setting_item_type_t typ
 // Чтение данных из хранилища, с преобразованием для использования в json
 int setting_items_read(const char *key, void *value);
 int setting_items_save(const char *key, const void *value);
+// Возвращает количество ключей, keys - может быть NULL
 int setting_items_get_keys(const char **keys);
 setting_item_type_t setting_items_get_type_in_json(const char *key);
