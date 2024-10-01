@@ -214,6 +214,40 @@ int bridge_mode_test(void) {
     return TEST_OK;
 }
 
+int string_test(void) {
+    const char* valid_test_string[] = {"string-----on------the------edge", "short-str"};
+    const char* invalid_test_string[] = {"", "long-string long-string long-string long-string long-string"};
+
+    // Для тестов строк выбран ключ KEY_HOSTNAME, т.к. при его сохранении строка проверяется на нулевую длину
+    for (int i = 0; i < ARRAY_SIZE(valid_test_string); i++) {
+        const char* expected_str = valid_test_string[i];
+        if (setting_items_save(KEY_HOSTNAME, expected_str) != 0) {
+            TEST_FAILED("Failed to save test_string \"%s\"", expected_str);
+            return TEST_ERR;
+        }
+        char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+        if (setting_items_read(KEY_HOSTNAME, got_str)) {
+            TEST_FAILED("Failed to read test_string");
+            return TEST_ERR;
+        }
+        if (strncmp(expected_str, got_str, SETTING_ITEM_MAX_STR_LEN) != 0) {
+            TEST_FAILED("Expected %s, got %s", expected_str, got_str);
+            return TEST_ERR;
+        }
+    }
+
+    for (int i = 0; i < ARRAY_SIZE(invalid_test_string); i++) {
+        const char* invalid_str = invalid_test_string[i];
+        if (setting_items_save(KEY_HOSTNAME, invalid_str) == 0) {
+            TEST_FAILED("Saved invalid test_string \"%s\"", invalid_str);
+            return TEST_ERR;
+        }
+    }
+
+    TEST_PASSED();
+    return TEST_OK;
+}
+
 int main(void)
 {
     rams_init();
@@ -251,6 +285,9 @@ int main(void)
         return -1;
     }
     if (bridge_mode_test() != 0) {
+        return -1;
+    }
+    if (string_test() != 0) {
         return -1;
     }
 
