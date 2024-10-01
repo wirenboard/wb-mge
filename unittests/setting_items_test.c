@@ -181,6 +181,39 @@ int ip_test(void)
     return TEST_OK;
 }
 
+int bridge_mode_test(void) {
+    const char* valid_test_bridge_mode[] = {BRIDGE_MODE_SERVER_STR, BRIDGE_MODE_CLIENT_STR};
+    const char* invalid_test_bridge_mode[] = {"server", "client", "serverr", "clientt"};
+
+    for (int i = 0; i < ARRAY_SIZE(valid_test_bridge_mode); i++) {
+        const char*  expected_bridge_mode = valid_test_bridge_mode[i];
+        if (setting_items_save("bridge_mode", expected_bridge_mode) != 0) {
+            TEST_FAILED("Failed to save bridge_mode %s", expected_bridge_mode);
+            return TEST_ERR;
+        }
+        char  got_bridge_mode[SETTING_ITEM_MAX_STR_LEN] = {0};
+        if (setting_items_read("bridge_mode", got_bridge_mode)) {
+            TEST_FAILED("Failed to read bridge_mode");
+            return TEST_ERR;
+        }
+        if (strncmp(expected_bridge_mode, got_bridge_mode, SETTING_ITEM_MAX_STR_LEN) != 0) {
+            TEST_FAILED("Expected %s, got %s", expected_bridge_mode, got_bridge_mode);
+            return TEST_ERR;
+        }
+    }
+
+    for (int i = 0; i < ARRAY_SIZE(invalid_test_bridge_mode); i++) {
+        const char* invalid_bridge_mode = invalid_test_bridge_mode[i];
+        if (setting_items_save("bridge_mode", invalid_bridge_mode) == 0) {
+            TEST_FAILED("Saved invalid bridge_mode \"%s\"", invalid_bridge_mode);
+            return TEST_ERR;
+        }
+    }
+
+    TEST_PASSED();
+    return TEST_OK;
+}
+
 int main(void)
 {
     rams_init();
@@ -215,6 +248,9 @@ int main(void)
         return -1;
     }
     if (ip_test() != 0) {
+        return -1;
+    }
+    if (bridge_mode_test() != 0) {
         return -1;
     }
 
