@@ -65,8 +65,9 @@ static int connect_socket(int sock, uint32_t ip, int port)
 static void receive_data(int sock)
 {
     char rx_buffer[RX_BUFFER_SIZE];
+    int len = 0;
     while (1) {
-        int len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+        len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
         if (len < 0) {
             ESP_LOGE(TAG, "recv failed: errno %d", errno);
             break;
@@ -113,7 +114,7 @@ esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
     return ESP_OK;
 }
 
-esp_err_t tcp_client_send(uint8_t *data, uint8_t len)
+esp_err_t tcp_client_send(uint8_t *data, size_t len)
 {
     int err = send(sock, data, len, 0);
     if (err < 0) {

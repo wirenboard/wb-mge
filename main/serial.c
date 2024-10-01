@@ -120,7 +120,12 @@ esp_err_t serial_init(serial_config_t *serial_config, serial_receive_handler_t s
     return err;
 }
 
-esp_err_t serial_send(uint8_t *data, uint8_t len)
+esp_err_t serial_send(uint8_t *data, size_t len)
 {
-    return uart_write_bytes(SERIAL_PORT_NUM, (const char *)data, len);
+    int written = uart_write_bytes(SERIAL_PORT_NUM, (const char *)data, len);
+    if (written != len) {
+        ESP_LOGE(TAG, "Error sending data to serial");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }

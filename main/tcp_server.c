@@ -116,7 +116,7 @@ esp_err_t tcp_server_init(int port, tcps_receive_handler_t tcps_receive_handler)
     return ESP_OK;
 }
 
-esp_err_t tcp_server_send(uint8_t *data, uint8_t len)
+esp_err_t tcp_server_send(uint8_t *data, size_t len)
 {
     int to_write = len;
     while (to_write > 0) {
