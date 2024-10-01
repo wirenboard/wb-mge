@@ -1,5 +1,6 @@
 #include <string.h>
 
+#include "bridge.h"
 #include "config.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -95,16 +96,20 @@ void app_main(void)
 
     bool eth_dhcpc = false;
     esp_netif_ip_info_t *eth_ip_info = NULL;
+    esp_netif_ip_info_t static_ip_info = {0};
     setting_items_read_raw("eth_dhcpc", &eth_dhcpc, SETTING_ITEM_TYPE_BOOL);
+    setting_items_read_raw("eth_ip_static", &static_ip_info.ip, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw("eth_mask_static", &static_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw("eth_gw_static", &static_ip_info.gw, SETTING_ITEM_TYPE_NUM);
+
     if (!eth_dhcpc) {
-        esp_netif_ip_info_t static_ip_info = {0};
-        setting_items_read_raw("eth_ip_static", &static_ip_info.ip, SETTING_ITEM_TYPE_NUM);
-        setting_items_read_raw("eth_mask_static", &static_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
-        setting_items_read_raw("eth_gw_static", &static_ip_info.gw, SETTING_ITEM_TYPE_NUM);
         eth_ip_info = &static_ip_info;
     }
-    ESP_ERROR_CHECK(ethernet_init(&eth_event, NULL, eth_ip_info));
+    // ESP_ERROR_CHECK(ethernet_init(&eth_event, NULL, eth_ip_info));
 
     ssdp_config_t ssdp_config = NULL;  // TODO: Add SSDP
     ESP_ERROR_CHECK(http_server_init(&ssdp_config));
+
+    // TODO: Инициализировать мост только после подключения к сети
+    ESP_ERROR_CHECK(bridge_init());
 }

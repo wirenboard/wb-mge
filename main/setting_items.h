@@ -11,6 +11,11 @@ typedef enum {
     SETTING_ITEM_TYPE_BOOL,
 } setting_item_type_t;
 
+typedef enum {
+    BRIDGE_MODE_SERVER = 1,
+    BRIDGE_MODE_CLIENT,
+} bridge_mode_t;
+
 typedef bool (*save_to_storage)(const char *, const void *);
 typedef bool (*read_from_storage)(const char *, void *);
 typedef bool (*read_from_storage_raw)(const char *, void *, setting_item_type_t);

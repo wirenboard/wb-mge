@@ -60,6 +60,12 @@ static const string_int_map_t parity_map[] = {
     {NULL, -1}
 };
 
+static const string_int_map_t bridge_mode_map[] = {
+    {BRIDGE_MODE_SERVER_STR, BRIDGE_MODE_SERVER},
+    {BRIDGE_MODE_CLIENT_STR, BRIDGE_MODE_CLIENT},
+    {NULL, -1}
+};
+
 static bool string2int(const char *str, int *value, const string_int_map_t *map)
 {
     for (int i = 0; map[i].str != NULL; i++) {
@@ -235,6 +241,16 @@ static bool save_parity(const char *key, const void *value)
 static bool read_parity(const char *key, void *value)
 {
     return read_map_value(key, value, parity_map);
+}
+
+static bool save_bridge_mode(const char *key, const void *value)
+{
+    return save_map_value(key, value, bridge_mode_map);
+}
+
+static bool read_bridge_mode(const char *key, void *value)
+{
+    return read_map_value(key, value, bridge_mode_map);
 }
 
 static bool save_bridge_port(const char *key, const void *value)
@@ -628,12 +644,12 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_BRIDGE_MODE,  // TODO: сделать валидатор для режима моста
+        .key = KEY_BRIDGE_MODE,
         .default_value = DEFAULT_BRIDGE_MODE,
-        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
-        .read_from_storage = read_string_value,
+        .save_to_storage = save_bridge_mode,
+        .read_from_storage = read_bridge_mode,
         .read_from_storage_raw = read_raw_value,
     },
     {
