@@ -533,6 +533,7 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
 {
     static httpd_handle_t http_server = NULL;
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
+    httpd_config.stack_size = 1024 * 6; // TODO: check stack size
     httpd_config.max_uri_handlers = 9; // Количество URI обработчиков
 
     if (httpd_start(&http_server, &httpd_config) == ESP_OK) {
