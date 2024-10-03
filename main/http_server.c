@@ -127,6 +127,15 @@ static inline bool session_id_is_valid(uint32_t session_id)
     return false;
 }
 
+static bool check_req_content_len(httpd_req_t *req)
+{
+    if (req->content_len > REQ_RECV_BUF_SIZE) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Request too large");
+        return false;
+    }
+    return true;
+}
+
 static bool check_auth(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
@@ -168,6 +177,7 @@ static esp_err_t logout(httpd_req_t *req)
         find_and_remove_session_id(session_id);
     } else {
         ESP_LOGW(TAG, "Session ID cookie not found");
+        return ESP_FAIL;
     }
 
     return ESP_OK;
@@ -207,21 +217,24 @@ static void resp_and_free_json(httpd_req_t *req, cJSON *req_json, cJSON *resp_js
 
 static cJSON *receive_json(httpd_req_t *req)
 {
-    char buf[REQ_RECV_BUF_SIZE];
+    char *buf = (char *)malloc(REQ_RECV_BUF_SIZE);
     int received = 0;
 
-    received = httpd_req_recv(req, buf, sizeof(buf));
+    received = httpd_req_recv(req, buf, REQ_RECV_BUF_SIZE);
     buf[received] = '\0';
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive data");
+        free(buf);
         return NULL;
     }
 
     cJSON *req_json = cJSON_Parse(buf);
     if (req_json == NULL) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to parse JSON");
+        free(buf);
         return NULL;
     }
+    free(buf);
 
     return req_json;
 }
@@ -240,6 +253,10 @@ static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, 
 static esp_err_t auth_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
+
+    if (check_req_content_len(req) != true) {
+        return ESP_FAIL;
+    }
 
     cJSON *req_json = receive_json(req);
     if (req_json == NULL) {
@@ -311,7 +328,7 @@ static esp_err_t update_post_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    char buf[REQ_RECV_BUF_SIZE];
+    char *buf = (char *)malloc(REQ_RECV_BUF_SIZE);
     esp_ota_handle_t ota_handle;
     int remaining = req->content_len;
 
@@ -319,24 +336,27 @@ static esp_err_t update_post_handler(httpd_req_t *req)
     ESP_ERROR_CHECK(esp_ota_begin(ota_partition, OTA_SIZE_UNKNOWN, &ota_handle));
 
     while (remaining > 0) {
-        int recv_len = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)));
+        int recv_len = httpd_req_recv(req, buf, MIN(remaining, REQ_RECV_BUF_SIZE));
 
         if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {  // Timeout Error: Just retry
             continue;
 
         } else if (recv_len <= 0) {  // Serious Error: Abort OTA
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Protocol Error");
+            free(buf);
             return ESP_FAIL;
         }
 
         // Successful Upload: Flash firmware chunk
         if (esp_ota_write(ota_handle, (const void *)buf, recv_len) != ESP_OK) {
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Flash Error");
+            free(buf);
             return ESP_FAIL;
         }
 
         remaining -= recv_len;
     }
+    free(buf);
 
     // Validate and switch to new OTA image and reboot
     if ((esp_ota_end(ota_handle) != ESP_OK) ||
@@ -349,7 +369,6 @@ static esp_err_t update_post_handler(httpd_req_t *req)
     cJSON *resp_json = cJSON_CreateObject();
     cJSON_AddBoolToObject(resp_json, "update", true);
     resp_and_free_json(req, NULL, resp_json);
-    esp_restart();
 
     return ESP_OK;
 }
@@ -445,6 +464,10 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
+    if (check_req_content_len(req) != true) {
+        return ESP_FAIL;
+    }
+
     if (check_auth(req) != true) {
         return ESP_OK;
     }
@@ -533,7 +556,6 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
 {
     static httpd_handle_t http_server = NULL;
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
-    httpd_config.stack_size = 1024 * 6; // TODO: check stack size
     httpd_config.max_uri_handlers = 9; // Количество URI обработчиков
 
     if (httpd_start(&http_server, &httpd_config) == ESP_OK) {
