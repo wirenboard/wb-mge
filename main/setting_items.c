@@ -359,6 +359,15 @@ static bool read_raw_value(const char *key, void *value, setting_item_type_t typ
     }
 }
 
+static bool set_default(int index)
+{
+    if (setting_items[index].save_to_storage != NULL) {
+        return setting_items[index].save_to_storage(setting_items[index].key,
+            setting_items[index].default_value);
+    }
+    return false;
+}
+
 int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
 {
     if (setting_item_iface == NULL) {
@@ -366,7 +375,8 @@ int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
     }
     if ((setting_item_iface->save_bool == NULL) || (setting_item_iface->save_num == NULL) ||
         (setting_item_iface->save_str == NULL) || (setting_item_iface->read_bool == NULL) ||
-        (setting_item_iface->read_num == NULL) || (setting_item_iface->read_str == NULL))
+        (setting_item_iface->read_num == NULL) || (setting_item_iface->read_str == NULL) ||
+        (setting_item_iface->has_key == NULL))
     {
         return -1;
     }
@@ -385,8 +395,21 @@ int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
     iface.read_bool = setting_item_iface->read_bool;
     iface.read_num = setting_item_iface->read_num;
     iface.read_str = setting_item_iface->read_str;
+    iface.has_key = setting_item_iface->has_key;
 
     strncpy(generated_hostname, hostname, SETTING_ITEM_MAX_STR_LEN);
+
+    // Проверка, есть ли такие ключи в хранилище. Если нет, то запись значений по умолчанию.
+    for (int i = 0; i < SETTING_ITEMS_NUM; i++) {
+        if (setting_items[i].key == NULL) {
+            break;
+        }
+        if (iface.has_key(setting_items[i].key) != true) {
+            if (set_default(i) != true) {
+                return -1;
+            }
+        }
+    }
 
     return 0;
 }
@@ -422,12 +445,11 @@ int setting_items_get_keys(const char **keys)
 int setting_items_set_defaults(void)
 {
     for (int i = 0; i < SETTING_ITEMS_NUM; i++) {
-        if (setting_items[i].save_to_storage != NULL) {
-            bool ret = setting_items[i].save_to_storage(setting_items[i].key,
-                setting_items[i].default_value);
-            if (ret != true) {
-                return -1;
-            }
+        if (setting_items[i].key == NULL) {
+            break;
+        }
+        if (set_default(i) != true) {
+            return -1;
         }
     }
     return 0;

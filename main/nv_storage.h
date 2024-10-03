@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #include "esp_err.h"
 
 esp_err_t nvs_init(void);
@@ -13,3 +15,4 @@ esp_err_t nvs_write_u32(const char* key, uint32_t value);
 esp_err_t nvs_read_u32(const char* key, uint32_t* value);
 esp_err_t nvs_write_blob(const char* key, uint8_t* value, size_t size);
 esp_err_t nvs_read_blob(const char* key, uint8_t* value, size_t* required_size);
+bool nvs_has_key(const char* key);

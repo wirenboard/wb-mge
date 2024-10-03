@@ -42,6 +42,16 @@ void rams_init()
     }
 }
 
+bool rams_has_key(const char* key)
+{
+    for (int i = 0; i < MAX_ITEM_NUM; i++) {
+        if (strncmp(storage[i].key, key, MAX_KEY_LEN) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int rams_write_str(const char* key, const char* value)
 {
     for (int i = 0; i < MAX_ITEM_NUM; i++) {

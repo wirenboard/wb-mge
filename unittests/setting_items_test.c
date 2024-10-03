@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "array_size.h"
 #include "common.h"
@@ -252,6 +253,7 @@ int main(void)
 {
     rams_init();
     setting_item_iface_t setting_item_iface = {
+        .has_key = rams_has_key,
         .save_num = rams_write_u32,
         .save_str = rams_write_str,
         .save_bool = rams_write_u8,
@@ -261,11 +263,12 @@ int main(void)
     };
 
     if (setting_items_init("WB-MGE", &setting_item_iface) != 0) {
+        printf(PRINT_E("Failed to init setting items\n"));
         return -1;
     }
 
-    int res = setting_items_set_defaults();
-    if (res != 0) {
+    if (setting_items_set_defaults() != 0) {
+        printf(PRINT_E("Failed to set defaults\n"));
         return -1;
     }
 

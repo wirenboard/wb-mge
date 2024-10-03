@@ -26,6 +26,7 @@ typedef int (*iface_storage_save_bool)(const char *, uint8_t);
 typedef int (*iface_storage_read_num)(const char *, uint32_t *);
 typedef int (*iface_storage_read_str)(const char *, char *);
 typedef int (*iface_storage_read_bool)(const char *, uint8_t *);
+typedef bool (*iface_storage_has_key)(const char *);
 
 typedef struct {
     iface_storage_save_num save_num;
@@ -34,6 +35,7 @@ typedef struct {
     iface_storage_read_num read_num;
     iface_storage_read_str read_str;
     iface_storage_read_bool read_bool;
+    iface_storage_has_key has_key;
 } setting_item_iface_t;
 
 typedef struct {
