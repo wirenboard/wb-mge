@@ -68,7 +68,7 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const session = await useSession();
   if (to.path === '/login' && session) {
-    return { path: '' };
+    return { path: to.query.redirect === 'dashboard' ? '' : to.query.redirect };
   }
 
   if (to.meta.requiresAuth && !session) {

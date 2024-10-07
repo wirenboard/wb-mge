@@ -6,10 +6,11 @@ import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import IpInput from '@/components/IpInput.vue';
+import InputNumber from '@/components/InputNumber.vue';
 
 const { t } = useI18n();
 const router = useRouter();
-const { data, isChanged, updateSettings, refresh } = await useSettings();
+const { data, isChanged, isLoading, updateSettings, refresh } = await useSettings();
 
 router.beforeResolve(async (to, from, next) => {
   if (to.path === '/bridge') {
@@ -35,15 +36,15 @@ router.beforeResolve(async (to, from, next) => {
           }, t)">
           <label for="bridge_mode">{{ t('bridge_mode') }}</label>
           <select id="bridge_mode" v-model="data.bridge_mode" name="bridge_mode" autofocus>
-            <option value="tcpc-serial">tcpc serial</option>
-            <option value="tcps-serial">tcps serial</option>
+            <option value="tcpc-serial">TCPC serial</option>
+            <option value="tcps-serial">TCPS serial</option>
           </select>
 
           <label for="bridge_ip">{{ t('bridge_ip') }}</label>
           <IpInput id="bridge_ip" v-model="data.bridge_ip" name="bridge_ip" />
 
           <label for="bridge_port">{{ t('bridge_port') }}</label>
-          <input id="bridge_port" v-model="data.bridge_port" type="number" name="bridge_port" />
+          <InputNumber id="bridge_port" v-model="data.bridge_port" name="bridge_port" min="1" max="65535" required />
 
           <label for="bridge_mb">{{ t('bridge_mb') }}</label>
           <input id="bridge_mb" v-model="data.bridge_mb" type="checkbox" name="bridge_mb" />
@@ -51,7 +52,8 @@ router.beforeResolve(async (to, from, next) => {
           <Button
             class="bridge-submit"
             type="submit"
-            :disabled="!isChanged(['bridge_ip', 'bridge_port', 'bridge_mode', 'bridge_mb'])"
+            :is-loading="isLoading"
+            :disabled="isLoading || !isChanged(['bridge_ip', 'bridge_port', 'bridge_mode', 'bridge_mb'])"
           >
             {{ t('save') }}
           </Button>
@@ -73,6 +75,10 @@ router.beforeResolve(async (to, from, next) => {
   @media (max-width: 936px) {
     column-count: 1;
     width: fit-content;
+  }
+
+  @media (max-width: 500px) {
+    width: 100%;
   }
 }
 
@@ -104,7 +110,6 @@ router.beforeResolve(async (to, from, next) => {
 {
   "en": {
     "title": "Bridge configuration",
-    "save": "Save",
     "bridge_ip": "IP",
     "bridge_port": "Port",
     "bridge_mode": "Mode",

@@ -78,6 +78,10 @@ const getDisplayValue = (val: any) => {
     column-count: 1;
     width: fit-content;
   }
+
+  @media (max-width: 500px) {
+    width: 100%;
+  }
 }
 
 .dashboard-container {

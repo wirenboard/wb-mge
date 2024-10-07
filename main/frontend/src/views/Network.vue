@@ -9,7 +9,7 @@ import IpInput from '@/components/IpInput.vue';
 
 const { t } = useI18n();
 const router = useRouter();
-const { data, isChanged, updateSettings, refresh } = await useSettings();
+const { data, isChanged, isLoading, updateSettings, refresh } = await useSettings();
 
 router.beforeResolve(async (to, from, next) => {
   if (to.path === '/network') {
@@ -36,7 +36,7 @@ router.beforeResolve(async (to, from, next) => {
             eth_gw_static: data.eth_gw_static,
           }, t)">
           <label for="hostname">{{ t('hostname') }}</label>
-          <input id="hostname" v-model="data.hostname" type="text" name="hostname" autofocus />
+          <input id="hostname" v-model="data.hostname" type="text" name="hostname" required autofocus />
 
           <label for="eth_dhcpc">{{ t('eth_dhcpc') }}</label>
           <input id="eth_dhcpc" v-model="data.eth_dhcpc" type="checkbox" name="eth_dhcpc" />
@@ -55,7 +55,8 @@ router.beforeResolve(async (to, from, next) => {
           <Button
             class="network-submit"
             type="submit"
-            :disabled="!isChanged(['hostname', 'eth_dhcpc', 'eth_ip_static', 'eth_mask_static', 'eth_gw_static'])"
+            :is-loading="isLoading && isChanged(['hostname', 'eth_dhcpc', 'eth_ip_static', 'eth_mask_static', 'eth_gw_static'])"
+            :disabled="isLoading || !isChanged(['hostname', 'eth_dhcpc', 'eth_ip_static', 'eth_mask_static', 'eth_gw_static'])"
           >
             {{ t('save') }}
           </Button>
@@ -96,7 +97,7 @@ router.beforeResolve(async (to, from, next) => {
               <IpInput id="ap_gw_static" v-model="data.ap_gw_static" name="ap_gw_static" />
 
               <label for="ap_ssid">{{ t('ap_ssid') }}</label>
-              <input id="ap_ssid" v-model="data.ap_ssid" type="text" name="ap_ssid" />
+              <input id="ap_ssid" v-model="data.ap_ssid" type="text" name="ap_ssid" required />
 
               <label for="ap_pass">{{ t('ap_pass') }}</label>
               <input id="ap_pass" v-model="data.ap_pass" type="password" name="ap_pass" />
@@ -104,7 +105,7 @@ router.beforeResolve(async (to, from, next) => {
 
             <template v-if="data.wifi_mode === 'sta' || data.wifi_mode === 'apsta'">
               <label for="sta_ssid">{{ t('sta_ssid') }}</label>
-              <input id="sta_ssid" v-model="data.sta_ssid" type="text" name="sta_ssid" />
+              <input id="sta_ssid" v-model="data.sta_ssid" type="text" name="sta_ssid" required />
 
               <label for="sta_pass">{{ t('sta_pass') }}</label>
               <input id="sta_pass" v-model="data.sta_pass" type="password" name="sta_pass" />
@@ -114,7 +115,8 @@ router.beforeResolve(async (to, from, next) => {
           <Button
             class="network-submit"
             type="submit"
-            :disabled="!isChanged(['wifi_mode', 'ap_ip_static', 'ap_mask_static', 'ap_gw_static', 'ap_ssid', 'ap_pass', 'sta_pass', 'sta_ssid'])"
+            :is-loading="isLoading && isChanged(['wifi_mode', 'ap_ip_static', 'ap_mask_static', 'ap_gw_static', 'ap_ssid', 'ap_pass', 'sta_pass', 'sta_ssid'])"
+            :disabled="isLoading || !isChanged(['wifi_mode', 'ap_ip_static', 'ap_mask_static', 'ap_gw_static', 'ap_ssid', 'ap_pass', 'sta_pass', 'sta_ssid'])"
           >
             {{ t('save') }}
           </Button>
@@ -136,6 +138,10 @@ router.beforeResolve(async (to, from, next) => {
   @media (max-width: 936px) {
     column-count: 1;
     width: fit-content;
+  }
+
+  @media (max-width: 500px) {
+    width: 100%;
   }
 }
 
@@ -167,7 +173,6 @@ router.beforeResolve(async (to, from, next) => {
 {
   "en": {
     "title": "Network settings",
-    "save": "Save",
     "ethernet": "Ethernet",
     "wifi_settings": "Wi-Fi",
     "serial": "Serial",

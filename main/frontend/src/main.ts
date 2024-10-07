@@ -15,6 +15,7 @@ export const i18n = createI18n({
   messages: {
     en: {
       connection_error: 'Controller connection error',
+      save: 'Save',
       dashboard: 'Dashboard',
       traffic: 'Traffic analysis',
       serial: 'Serial',

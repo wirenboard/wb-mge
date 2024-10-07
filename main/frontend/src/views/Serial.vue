@@ -4,26 +4,18 @@ import { useRouter } from 'vue-router';
 import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
+import InputNumber from '@/components/InputNumber.vue';
 import Layout from '@/components/Layout.vue';
-import { watch } from 'vue';
 
 const { t } = useI18n();
 const router = useRouter();
-const { data, isChanged, updateSettings, refresh } = await useSettings();
+const { data, isChanged, isLoading, updateSettings, refresh } = await useSettings();
 
 router.beforeResolve(async (to, from, next) => {
   if (to.path === '/serial') {
     await refresh();
   }
   next();
-});
-
-const maxBaudrate = 460800;
-
-watch(() => data.value?.baudrate, () => {
-  if (data.value?.baudrate > maxBaudrate) {
-    data.value.baudrate = maxBaudrate;
-  }
 });
 </script>
 
@@ -42,7 +34,7 @@ watch(() => data.value?.baudrate, () => {
             databits: data.databits
           }, t)">
           <label for="baudrate">{{ t('baudrate') }}</label>
-          <input id="baudrate" v-model="data.baudrate" type="number" name="baudrate" min="300" :max="maxBaudrate" autofocus />
+          <InputNumber id="baudrate" v-model="data.baudrate" name="baudrate" min="300" max="460800" required autofocus />
 
           <label for="parity">{{ t('parity') }}</label>
           <select id="parity" v-model="data.parity" name="parity">
@@ -69,7 +61,8 @@ watch(() => data.value?.baudrate, () => {
           <Button
             class="serial-submit"
             type="submit"
-            :disabled="!isChanged(['baudrate', 'stopbits', 'parity', 'databits'])"
+            :is-loading="isLoading"
+            :disabled="isLoading || !isChanged(['baudrate', 'stopbits', 'parity', 'databits'])"
           >
             {{ t('save') }}
           </Button>
@@ -91,6 +84,10 @@ watch(() => data.value?.baudrate, () => {
   @media (max-width: 936px) {
     column-count: 1;
     width: fit-content;
+  }
+
+  @media (max-width: 500px) {
+    width: 100%;
   }
 }
 
@@ -122,7 +119,6 @@ watch(() => data.value?.baudrate, () => {
 {
   "en": {
     "title": "Serial configuration",
-    "save": "Save",
     "baudrate": "Baud rate",
     "databits": "Data bits",
     "stopbits": "Stop bits",

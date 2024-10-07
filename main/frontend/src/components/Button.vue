@@ -1,3 +1,10 @@
+<script setup lang="ts">
+import Loader from '@/assets/loader.svg?component';
+
+const props = defineProps<{ variant?: 'primary' | 'gray' | 'outline' | 'danger'; isLoading?: boolean }>();
+const emit = defineEmits(['click']);
+</script>
+
 <template>
   <button
     v-bind="props"
@@ -8,16 +15,12 @@
       'button-gray': variant === 'gray'
     }]"
     @click="emit('click', $event)">
+    <Loader v-if="isLoading" class="button-loader" fill="currentColor" />
     <span class="button-caption">
       <slot />
     </span>
   </button>
 </template>
-
-<script setup lang="ts">
-const props = defineProps<{ variant?: 'primary' | 'gray' | 'outline' | 'danger' }>();
-const emit = defineEmits(['click']);
-</script>
 
 <style scoped>
 .button {
@@ -82,5 +85,22 @@ const emit = defineEmits(['click']);
 .button-outline:hover:not(:disabled) {
   border: 1px solid var(--border-color);
   background: #f8fafc;
+}
+
+.button-loader {
+  top: calc(50% - 10px);
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  animation: rotate 1s linear infinite;
+}
+
+@keyframes rotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 </style>

@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { firmwareVersion } from '@/common/global';
+import { alertData, firmwareVersion } from '@/common/global';
 import { Info } from '@/common/types';
+import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
 import FileUpload from '@/components/FileUpload.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
-import { api } from '@/utils/api';
 import SettingsActions from '@/components/SettingsActions.vue';
+import { api } from '@/utils/api';
 
 const { t } = useI18n();
 const firmwareFile = ref();
 const loadedMethod = ref();
+const { data, isChanged, updateSettings } = await useSettings();
 
 const getFirmwareVersion = async () => {
   return api<Info>('info').then((res) => {
@@ -26,6 +28,8 @@ if (!firmwareVersion.value) {
 
 const updateFirmware = async () => {
   loadedMethod.value = 'firmware';
+  alertData.value = { type: 'success', message: t('firmware_update_processed') };
+
   await api('update', firmwareFile.value[0], true).catch(err => {
     console.log('err', err);
   });
@@ -56,6 +60,30 @@ const cmd = async (command: string, confirmText?: string) => {
     <Heading :title="t('title')" info-link="https://wirenboard.com/wiki/WB-MGE_v.3_Modbus-Ethernet_Interface_Converter" />
 
     <div class="system-container">
+      <fieldset class="network-fieldset">
+        <legend>{{ t('credentials') }}</legend>
+        <form
+          class="system-infoInputs"
+          @submit.prevent="updateSettings({
+            login: data.login,
+            pass: data.pass,
+          }, t)">
+          <label for="login">{{ t('login') }}</label>
+          <input id="login" v-model="data.login" type="text" name="login" required />
+
+          <label for="pass">{{ t('pass') }}</label>
+          <input id="pass" v-model="data.pass" type="password" name="pass" />
+
+          <Button
+            class="network-submit"
+            type="submit"
+            :disabled="!isChanged(['login', 'pass'])"
+          >
+            {{ t('save') }}
+          </Button>
+        </form>
+      </fieldset>
+
       <fieldset class="system-info">
         <legend>{{ t('firmware_update') }}</legend>
 
@@ -92,6 +120,10 @@ const cmd = async (command: string, confirmText?: string) => {
     column-count: 1;
     width: fit-content;
   }
+
+  @media (max-width: 500px) {
+    width: 100%;
+  }
 }
 
 .system-info {
@@ -100,6 +132,14 @@ const cmd = async (command: string, confirmText?: string) => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.system-infoInputs {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: fit-content(100px) fit-content(100px);
+  align-items: center;
+  justify-items: flex-start;
 }
 
 .system-info * {
@@ -111,11 +151,15 @@ const cmd = async (command: string, confirmText?: string) => {
 {
   "en": {
     "title": "System",
+    "credentials": "Credentials",
+    "login": "Login",
+    "pass": "Password",
     "firmware_update": "Firmware update",
     "settings_backup": "Settings backup",
     "danger_zone": "Danger zone",
     "choose_firmware": "Choose firmware",
     "current_firmware_version": "Current version",
+    "firmware_update_processed": "Firmware update in progress",
     "set_default_settings": "Factory reset",
     "factory_reset_confirm": "Are you sure you want to do a factory reset?",
     "reboot": "Reboot"

@@ -50,5 +50,7 @@ export interface Settings {
   bridge_port: number;
   bridge_mb: boolean;
   eth_dhcpc: boolean;
+  login: string;
+  pass: string;
   wifi_mode: 'none' | 'ap' | 'sta' | 'apsta';
 }

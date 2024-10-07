@@ -73,7 +73,9 @@ const convertToHexArray = (arr: number[]) => {
 }
 
 .traffic-table {
-  width: 100%;
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .traffic-table td {
