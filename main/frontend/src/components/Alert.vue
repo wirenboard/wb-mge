@@ -12,9 +12,6 @@ watch(
       return;
     }
 
-    if (alertData.value.type === 'error') {
-      console.error(alertData.value.message);
-    }
     const timeout = setTimeout(() => {
       alertData.value = null;
       clearTimeout(timeout);

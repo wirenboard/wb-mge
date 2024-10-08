@@ -30,9 +30,8 @@ const updateFirmware = async () => {
   loadedMethod.value = 'firmware';
   alertData.value = { type: 'success', message: t('firmware_update_processed') };
 
-  await api('update', firmwareFile.value[0], true).catch(err => {
-    console.log('err', err);
-  });
+  await api('update', firmwareFile.value[0], true);
+  // TODO add firmware update handler
   await getFirmwareVersion();
   loadedMethod.value = null;
   location.reload();
@@ -47,9 +46,7 @@ const cmd = async (command: string, confirmText?: string) => {
   }
 
   loadedMethod.value = command;
-  await api('cmd', { cmd: command }).catch(err => {
-    console.log('err', err);
-  });
+  await api('cmd', { cmd: command });
   loadedMethod.value = null;
   location.reload();
 };

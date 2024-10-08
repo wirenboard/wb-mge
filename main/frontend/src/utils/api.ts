@@ -9,11 +9,12 @@ export const api = async <T>(url: string, body: any = null, isFile?: boolean): P
   return ky(`${prefix}${url}`, cfg)
     .json<T>()
     .catch(({ response }) => {
-      if (response.status === 500) {
-        alertData.value = { message: 'connection_error', type: 'error', withTranslation: true };
-        throw new Error('connection_error');
-      } else if (response.status === 401) {
-        hasSession.value = false;
+      switch (response.status) {
+        case 500:
+          alertData.value = { message: 'connection_error', type: 'error', withTranslation: true };
+          throw new Error('connection_error');
+        case 401:
+          hasSession.value = false;
       }
       return response;
     });

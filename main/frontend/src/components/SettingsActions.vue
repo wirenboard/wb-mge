@@ -1,7 +1,6 @@
 <script lang="ts" setup>
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { alertData } from '@/common/global';
 import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
 import { downloadFile } from '@/utils/downloadFile';
@@ -24,7 +23,6 @@ const handleFileChange = () => {
   const reader = new FileReader();
   reader.onload = async () => {
     await updateSettings(JSON.parse(reader.result as string), t);
-    alertData.value = { message: t('settingsUploaded'), type: 'success' };
     fileInput.value!.value = null;
   };
   reader.readAsText(fileInput.value.files[0]);

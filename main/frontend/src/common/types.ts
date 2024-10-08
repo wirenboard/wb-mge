@@ -2,17 +2,23 @@ export interface Auth {
   auth: boolean;
 }
 
+export interface Session {
+  session_id: number;
+}
+
+interface Package {
+  time: number;
+  dir: 'TX' | 'RX';
+  id: number;
+  func: number;
+  data: number[];
+  crc: number[];
+  crc_ok: boolean;
+}
+
 export interface Packgages {
   result: boolean;
-  packages: {
-    time: number;
-    dir: 'TX' | 'RX';
-    id: number;
-    func: number;
-    data: number[];
-    crc: number[];
-    crc_ok: boolean;
-  }[];
+  packages: Package[];
 }
 
 export interface Info {
