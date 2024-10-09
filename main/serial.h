@@ -12,7 +12,7 @@ typedef struct {
     uart_word_length_t databits;
 } serial_config_t;
 
-typedef void (*serial_receive_handler_t)(uint8_t *, uint8_t);
+typedef void (*serial_receive_handler_t)(uint8_t *, size_t);
 
 esp_err_t serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler);
-esp_err_t serial_send(uint8_t *data, uint8_t len);
+esp_err_t serial_send(uint8_t *data, size_t len);

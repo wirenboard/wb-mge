@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "array_size.h"
 #include "common.h"
@@ -181,10 +182,78 @@ int ip_test(void)
     return TEST_OK;
 }
 
+int bridge_mode_test(void) {
+    const char* valid_test_bridge_mode[] = {BRIDGE_MODE_SERVER_STR, BRIDGE_MODE_CLIENT_STR};
+    const char* invalid_test_bridge_mode[] = {"server", "client", "serverr", "clientt"};
+
+    for (int i = 0; i < ARRAY_SIZE(valid_test_bridge_mode); i++) {
+        const char*  expected_bridge_mode = valid_test_bridge_mode[i];
+        if (setting_items_save("bridge_mode", expected_bridge_mode) != 0) {
+            TEST_FAILED("Failed to save bridge_mode %s", expected_bridge_mode);
+            return TEST_ERR;
+        }
+        char  got_bridge_mode[SETTING_ITEM_MAX_STR_LEN] = {0};
+        if (setting_items_read("bridge_mode", got_bridge_mode)) {
+            TEST_FAILED("Failed to read bridge_mode");
+            return TEST_ERR;
+        }
+        if (strncmp(expected_bridge_mode, got_bridge_mode, SETTING_ITEM_MAX_STR_LEN) != 0) {
+            TEST_FAILED("Expected %s, got %s", expected_bridge_mode, got_bridge_mode);
+            return TEST_ERR;
+        }
+    }
+
+    for (int i = 0; i < ARRAY_SIZE(invalid_test_bridge_mode); i++) {
+        const char* invalid_bridge_mode = invalid_test_bridge_mode[i];
+        if (setting_items_save("bridge_mode", invalid_bridge_mode) == 0) {
+            TEST_FAILED("Saved invalid bridge_mode \"%s\"", invalid_bridge_mode);
+            return TEST_ERR;
+        }
+    }
+
+    TEST_PASSED();
+    return TEST_OK;
+}
+
+int string_test(void) {
+    const char* valid_test_string[] = {"string-----on------the------edge", "short-str"};
+    const char* invalid_test_string[] = {"", "long-string long-string long-string long-string long-string"};
+
+    // Для тестов строк выбран ключ KEY_HOSTNAME, т.к. при его сохранении строка проверяется на нулевую длину
+    for (int i = 0; i < ARRAY_SIZE(valid_test_string); i++) {
+        const char* expected_str = valid_test_string[i];
+        if (setting_items_save(KEY_HOSTNAME, expected_str) != 0) {
+            TEST_FAILED("Failed to save test_string \"%s\"", expected_str);
+            return TEST_ERR;
+        }
+        char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+        if (setting_items_read(KEY_HOSTNAME, got_str)) {
+            TEST_FAILED("Failed to read test_string");
+            return TEST_ERR;
+        }
+        if (strncmp(expected_str, got_str, SETTING_ITEM_MAX_STR_LEN) != 0) {
+            TEST_FAILED("Expected %s, got %s", expected_str, got_str);
+            return TEST_ERR;
+        }
+    }
+
+    for (int i = 0; i < ARRAY_SIZE(invalid_test_string); i++) {
+        const char* invalid_str = invalid_test_string[i];
+        if (setting_items_save(KEY_HOSTNAME, invalid_str) == 0) {
+            TEST_FAILED("Saved invalid test_string \"%s\"", invalid_str);
+            return TEST_ERR;
+        }
+    }
+
+    TEST_PASSED();
+    return TEST_OK;
+}
+
 int main(void)
 {
     rams_init();
     setting_item_iface_t setting_item_iface = {
+        .has_key = rams_has_key,
         .save_num = rams_write_u32,
         .save_str = rams_write_str,
         .save_bool = rams_write_u8,
@@ -194,11 +263,12 @@ int main(void)
     };
 
     if (setting_items_init("WB-MGE", &setting_item_iface) != 0) {
+        printf(PRINT_E("Failed to init setting items\n"));
         return -1;
     }
 
-    int res = setting_items_set_defaults();
-    if (res != 0) {
+    if (setting_items_set_defaults() != 0) {
+        printf(PRINT_E("Failed to set defaults\n"));
         return -1;
     }
 
@@ -215,6 +285,12 @@ int main(void)
         return -1;
     }
     if (ip_test() != 0) {
+        return -1;
+    }
+    if (bridge_mode_test() != 0) {
+        return -1;
+    }
+    if (string_test() != 0) {
         return -1;
     }
 

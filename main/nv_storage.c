@@ -18,6 +18,21 @@ esp_err_t nvs_init(void)
     return ret;
 }
 
+bool nvs_has_key(const char* key)
+{
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open("storage", NVS_READONLY, &nvs_handle);
+    if (ret != ESP_OK) {
+        return false;
+    }
+    ret = nvs_find_key(nvs_handle, key, NULL);
+    nvs_close(nvs_handle);
+    if (ret != ESP_OK) {
+        return false;
+    }
+    return true;
+}
+
 esp_err_t nvs_write_str(const char* key, const char* value)
 {
     nvs_handle_t nvs_handle;

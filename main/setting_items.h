@@ -11,6 +11,12 @@ typedef enum {
     SETTING_ITEM_TYPE_BOOL,
 } setting_item_type_t;
 
+typedef enum {
+    BRIDGE_MODE_SERVER,
+    BRIDGE_MODE_CLIENT,
+    BRIDGE_MODE_DISABLED,
+} bridge_mode_t;
+
 typedef bool (*save_to_storage)(const char *, const void *);
 typedef bool (*read_from_storage)(const char *, void *);
 typedef bool (*read_from_storage_raw)(const char *, void *, setting_item_type_t);
@@ -21,6 +27,7 @@ typedef int (*iface_storage_save_bool)(const char *, uint8_t);
 typedef int (*iface_storage_read_num)(const char *, uint32_t *);
 typedef int (*iface_storage_read_str)(const char *, char *);
 typedef int (*iface_storage_read_bool)(const char *, uint8_t *);
+typedef bool (*iface_storage_has_key)(const char *);
 
 typedef struct {
     iface_storage_save_num save_num;
@@ -29,6 +36,7 @@ typedef struct {
     iface_storage_read_num read_num;
     iface_storage_read_str read_str;
     iface_storage_read_bool read_bool;
+    iface_storage_has_key has_key;
 } setting_item_iface_t;
 
 typedef struct {
@@ -48,5 +56,6 @@ int setting_items_read_raw(const char *key, void *value, setting_item_type_t typ
 // Чтение данных из хранилища, с преобразованием для использования в json
 int setting_items_read(const char *key, void *value);
 int setting_items_save(const char *key, const void *value);
+// Возвращает количество ключей, keys - может быть NULL
 int setting_items_get_keys(const char **keys);
 setting_item_type_t setting_items_get_type_in_json(const char *key);

@@ -1,5 +1,6 @@
 #include <string.h>
 
+#include "bridge.h"
 #include "config.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -49,8 +50,10 @@ static void eth_event(void *arg, esp_event_base_t event_base, int32_t event_id, 
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     setting_item_iface_t setting_item_iface = {
+        .has_key = nvs_has_key,
         .save_num = nvs_write_u32,
         .save_str = nvs_write_str,
         .save_bool = nvs_write_u8,
@@ -67,17 +70,14 @@ void app_main(void)
     ESP_ERROR_CHECK(setting_items_init(generated_hostname, &setting_item_iface));
 
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
-    // Если нет ячейки с именем хоста, то устанавливаем дефолтные значения для всех ячеек
-    if (setting_items_read_raw("hostname", hostname, SETTING_ITEM_TYPE_STR) != 0) {
-        ESP_ERROR_CHECK(setting_items_set_defaults());
+    // Имя хоста берется из хранилища
+    if (setting_items_read_raw(KEY_HOSTNAME, hostname, SETTING_ITEM_TYPE_STR) != 0) {
+        ESP_LOGE(TAG, "Failed to read hostname from storage");
     } else {
-        ESP_LOGI(TAG, "hostname: %s", hostname);
+        ESP_ERROR_CHECK(mdns_init());
+        ESP_ERROR_CHECK(mdns_hostname_set(hostname));
+        ESP_LOGI(TAG, "mdns hostname set to: [%s]", hostname);
     }
-
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(mdns_init());
-    ESP_ERROR_CHECK(mdns_hostname_set(hostname));
-    ESP_LOGI(TAG, "mdns hostname set to: [%s]", hostname);
 
     // apsta = Access Point + Station
     wifi_apsta_config_t apsta_cfg = {0};
@@ -95,16 +95,20 @@ void app_main(void)
 
     bool eth_dhcpc = false;
     esp_netif_ip_info_t *eth_ip_info = NULL;
+    esp_netif_ip_info_t static_ip_info = {0};
     setting_items_read_raw("eth_dhcpc", &eth_dhcpc, SETTING_ITEM_TYPE_BOOL);
+    setting_items_read_raw("eth_ip_static", &static_ip_info.ip, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw("eth_mask_static", &static_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw("eth_gw_static", &static_ip_info.gw, SETTING_ITEM_TYPE_NUM);
+
     if (!eth_dhcpc) {
-        esp_netif_ip_info_t static_ip_info = {0};
-        setting_items_read_raw("eth_ip_static", &static_ip_info.ip, SETTING_ITEM_TYPE_NUM);
-        setting_items_read_raw("eth_mask_static", &static_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
-        setting_items_read_raw("eth_gw_static", &static_ip_info.gw, SETTING_ITEM_TYPE_NUM);
         eth_ip_info = &static_ip_info;
     }
     ESP_ERROR_CHECK(ethernet_init(&eth_event, NULL, eth_ip_info));
 
     ssdp_config_t ssdp_config = NULL;  // TODO: Add SSDP
     ESP_ERROR_CHECK(http_server_init(&ssdp_config));
+
+    // TODO: Инициализировать мост только после подключения к сети
+    ESP_ERROR_CHECK(bridge_init());
 }

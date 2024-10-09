@@ -13,6 +13,7 @@
 #define IP_ADDR_OCTETS_NUM      4
 #define IP_ADDR_STR_LEN         16
 #define MIN_REGISTERED_PORT     1024
+#define MAX_DYNAMIC_PORT        65535
 
 #define SETTING_ITEMS_NUM       ARRAY_SIZE(setting_items)
 
@@ -57,6 +58,12 @@ static const string_int_map_t parity_map[] = {
     {UART_PARITY_DISABLE_STR, UART_PARITY_DISABLE},
     {UART_PARITY_EVEN_STR, UART_PARITY_EVEN},
     {UART_PARITY_ODD_STR, UART_PARITY_ODD},
+    {NULL, -1}
+};
+
+static const string_int_map_t bridge_mode_map[] = {
+    {BRIDGE_MODE_SERVER_STR, BRIDGE_MODE_SERVER},
+    {BRIDGE_MODE_CLIENT_STR, BRIDGE_MODE_CLIENT},
     {NULL, -1}
 };
 
@@ -237,10 +244,20 @@ static bool read_parity(const char *key, void *value)
     return read_map_value(key, value, parity_map);
 }
 
+static bool save_bridge_mode(const char *key, const void *value)
+{
+    return save_map_value(key, value, bridge_mode_map);
+}
+
+static bool read_bridge_mode(const char *key, void *value)
+{
+    return read_map_value(key, value, bridge_mode_map);
+}
+
 static bool save_bridge_port(const char *key, const void *value)
 {
-    uint32_t bridge_port = *(uint32_t *)value;
-    if (bridge_port < MIN_REGISTERED_PORT) {
+    int bridge_port = *(int *)value;
+    if ((bridge_port < MIN_REGISTERED_PORT) || (bridge_port > MAX_DYNAMIC_PORT)) {
         return false;
     }
     if (iface.save_num(key, bridge_port) != 0) {
@@ -269,6 +286,16 @@ static bool save_string_value(const char *key, const void *value)
         return false;
     }
     return true;
+}
+
+static bool save_non_zero_len_string_value(const char *key, const void *value)
+{
+    char *str = (char *)value;
+    if (strnlen(str, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return false;
+    }
+
+    return save_string_value(key, value);
 }
 
 static bool read_string_value(const char *key, void *value)
@@ -332,6 +359,15 @@ static bool read_raw_value(const char *key, void *value, setting_item_type_t typ
     }
 }
 
+static bool set_default_value_for_item(int index)
+{
+    if (setting_items[index].save_to_storage != NULL) {
+        return setting_items[index].save_to_storage(setting_items[index].key,
+            setting_items[index].default_value);
+    }
+    return false;
+}
+
 int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
 {
     if (setting_item_iface == NULL) {
@@ -339,20 +375,42 @@ int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
     }
     if ((setting_item_iface->save_bool == NULL) || (setting_item_iface->save_num == NULL) ||
         (setting_item_iface->save_str == NULL) || (setting_item_iface->read_bool == NULL) ||
-        (setting_item_iface->read_num == NULL) || (setting_item_iface->read_str == NULL))
+        (setting_item_iface->read_num == NULL) || (setting_item_iface->read_str == NULL) ||
+        (setting_item_iface->has_key == NULL))
     {
         return -1;
     }
+    if (hostname == NULL) {
+        return -1;
+    }
+
+    int len = strnlen(hostname, (SETTING_ITEM_MAX_STR_LEN + 1));
+    if ((len > SETTING_ITEM_MAX_STR_LEN) || (len == 0)) {
+        return -1;
+    }
+
     iface.save_bool = setting_item_iface->save_bool;
     iface.save_num = setting_item_iface->save_num;
     iface.save_str = setting_item_iface->save_str;
     iface.read_bool = setting_item_iface->read_bool;
     iface.read_num = setting_item_iface->read_num;
     iface.read_str = setting_item_iface->read_str;
+    iface.has_key = setting_item_iface->has_key;
 
-    if (hostname != NULL) {
-        strncpy(generated_hostname, hostname, SETTING_ITEM_MAX_STR_LEN);
+    strncpy(generated_hostname, hostname, SETTING_ITEM_MAX_STR_LEN);
+
+    // Проверка, есть ли такие ключи в хранилище. Если нет, то запись значений по умолчанию.
+    for (int i = 0; i < SETTING_ITEMS_NUM; i++) {
+        if (setting_items[i].key == NULL) {
+            break;
+        }
+        if (iface.has_key(setting_items[i].key) != true) {
+            if (set_default_value_for_item(i) != true) {
+                return -1;
+            }
+        }
     }
+
     return 0;
 }
 
@@ -387,12 +445,11 @@ int setting_items_get_keys(const char **keys)
 int setting_items_set_defaults(void)
 {
     for (int i = 0; i < SETTING_ITEMS_NUM; i++) {
-        if (setting_items[i].save_to_storage != NULL) {
-            bool ret = setting_items[i].save_to_storage(setting_items[i].key,
-                setting_items[i].default_value);
-            if (ret != true) {
-                return -1;
-            }
+        if (setting_items[i].key == NULL) {
+            break;
+        }
+        if (set_default_value_for_item(i) != true) {
+            return -1;
         }
     }
     return 0;
@@ -400,6 +457,10 @@ int setting_items_set_defaults(void)
 
 int setting_items_read_raw(const char *key, void *value, setting_item_type_t type_in_storage)
 {
+    if ((key == NULL) || (value == NULL)) {
+        return -1;
+    }
+
     int index = setting_items_get_index(key);
     if (index == -1) {
         return -1;
@@ -418,6 +479,10 @@ int setting_items_read_raw(const char *key, void *value, setting_item_type_t typ
 
 int setting_items_read(const char *key, void *value)
 {
+    if ((key == NULL) || (value == NULL)) {
+        return -1;
+    }
+
     int index = setting_items_get_index(key);
     if (index == -1) {
         return -1;
@@ -433,6 +498,10 @@ int setting_items_read(const char *key, void *value)
 
 setting_item_type_t setting_items_get_type_in_json(const char *key)
 {
+    if (key == NULL) {
+        return -1;
+    }
+
     int index = setting_items_get_index(key);
     if (index == -1) {
         return -1;
@@ -442,6 +511,10 @@ setting_item_type_t setting_items_get_type_in_json(const char *key)
 
 int setting_items_save(const char *key, const void *value)
 {
+    if ((key == NULL) || (value == NULL)) {
+        return -1;
+    }
+
     int index = setting_items_get_index(key);
     if (index == -1) {
         return -1;
@@ -461,7 +534,7 @@ static const setting_item_t setting_items[] = {
         .default_value = generated_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
+        .save_to_storage = save_non_zero_len_string_value,
         .read_from_storage = read_string_value,
         .read_from_storage_raw = read_raw_value,
     },
@@ -470,7 +543,7 @@ static const setting_item_t setting_items[] = {
         .default_value = DEFAULT_LOGIN,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
+        .save_to_storage = save_non_zero_len_string_value,
         .read_from_storage = NULL,
         .read_from_storage_raw = read_raw_value,
     },
@@ -479,7 +552,7 @@ static const setting_item_t setting_items[] = {
         .default_value = DEFAULT_PASS,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
+        .save_to_storage = save_non_zero_len_string_value,
         .read_from_storage = NULL,
         .read_from_storage_raw = read_raw_value,
     },
@@ -596,7 +669,7 @@ static const setting_item_t setting_items[] = {
         .default_value = generated_hostname,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
+        .save_to_storage = save_non_zero_len_string_value,
         .read_from_storage = read_string_value,
         .read_from_storage_raw = read_raw_value,
     },
@@ -628,12 +701,12 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_BRIDGE_MODE,  // TODO: сделать валидатор для режима моста
+        .key = KEY_BRIDGE_MODE,
         .default_value = DEFAULT_BRIDGE_MODE,
-        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
-        .read_from_storage = read_string_value,
+        .save_to_storage = save_bridge_mode,
+        .read_from_storage = read_bridge_mode,
         .read_from_storage_raw = read_raw_value,
     },
     {
