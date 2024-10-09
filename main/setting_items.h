@@ -12,8 +12,9 @@ typedef enum {
 } setting_item_type_t;
 
 typedef enum {
-    BRIDGE_MODE_SERVER = 1,
+    BRIDGE_MODE_SERVER,
     BRIDGE_MODE_CLIENT,
+    BRIDGE_MODE_DISABLED,
 } bridge_mode_t;
 
 typedef bool (*save_to_storage)(const char *, const void *);

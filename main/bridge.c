@@ -8,10 +8,10 @@
 
 static const char *TAG = "bridge";
 
-static bridge_mode_t bridge_mode = 0;
+static bridge_mode_t bridge_mode = BRIDGE_MODE_DISABLED;
 static bool bridge_ready = false;
 
-void process_data_from_serial(uint8_t *data, size_t len)
+static void process_data_from_serial(uint8_t *data, size_t len)
 {
     if (!bridge_ready) {
         ESP_LOGW(TAG, "%s: bridge not ready", __func__);
@@ -41,7 +41,7 @@ void process_data_from_serial(uint8_t *data, size_t len)
     }
 }
 
-void process_data_from_tcp(uint8_t *data, size_t len)
+static void process_data_from_tcp(uint8_t *data, size_t len)
 {
     if (!bridge_ready) {
         ESP_LOGW(TAG, "%s: bridge not ready", __func__);

@@ -359,7 +359,7 @@ static bool read_raw_value(const char *key, void *value, setting_item_type_t typ
     }
 }
 
-static bool set_default(int index)
+static bool set_default_value_for_item(int index)
 {
     if (setting_items[index].save_to_storage != NULL) {
         return setting_items[index].save_to_storage(setting_items[index].key,
@@ -405,7 +405,7 @@ int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface)
             break;
         }
         if (iface.has_key(setting_items[i].key) != true) {
-            if (set_default(i) != true) {
+            if (set_default_value_for_item(i) != true) {
                 return -1;
             }
         }
@@ -448,7 +448,7 @@ int setting_items_set_defaults(void)
         if (setting_items[i].key == NULL) {
             break;
         }
-        if (set_default(i) != true) {
+        if (set_default_value_for_item(i) != true) {
             return -1;
         }
     }
