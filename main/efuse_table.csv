@@ -1,0 +1,8 @@
+# field_name,       |    efuse_block, | bit_start, | bit_count, |comment #
+#                   |    (EFUSE_BLK0  | (0..255)   | (1..-)     |        #
+#                   |     EFUSE_BLK1  |            |MAX_BLK_LEN*|        #
+#                   |     EFUSE_BLK2  |            |            |        #
+#                   |     EFUSE_BLK3) |            |            |        #
+##########################################################################
+
+SERIAL_NUMBER,                   EFUSE_BLK3,    160,  24,   Serial number

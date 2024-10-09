@@ -5,12 +5,14 @@
 #include <sys/param.h>
 
 #include "cJSON.h"
+#include "config.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "lwip/ip4_addr.h"
 #include "setting_items.h"
 #include "ssdp.h"
+#include "sys_info.h"
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 #define REQ_RECV_BUF_SIZE       (CONFIG_HTTPD_MAX_REQ_HDR_LEN * 2)
@@ -402,6 +404,84 @@ static inline void add_setting_item_to_json(cJSON *json, const char *key)
     }
 }
 
+static esp_err_t info_get_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+
+    if (check_auth(req) != true) {
+        return ESP_FAIL;
+    }
+
+    cJSON *resp_json = cJSON_CreateObject();
+
+    cJSON_AddStringToObject(resp_json, "device_name", sys_info_device_name);
+    cJSON_AddStringToObject(resp_json, "firmware", FIRMWARE_VERSION);
+    cJSON_AddStringToObject(resp_json, "hardware", sys_info_hardware);
+    cJSON_AddNumberToObject(resp_json, "serial_num", sys_info_serial_num);
+
+    cJSON_AddBoolToObject(resp_json, "con_eth", sys_info_con_eth);
+    cJSON_AddStringToObject(resp_json, "eth_ip", sys_info_eth_ip);
+    cJSON_AddStringToObject(resp_json, "eth_mask", sys_info_eth_mask);
+    cJSON_AddStringToObject(resp_json, "eth_gw", sys_info_eth_gw);
+    cJSON_AddStringToObject(resp_json, "eth_mac", sys_info_eth_mac);
+
+    cJSON_AddBoolToObject(resp_json, "con_sta", sys_info_con_sta);
+    cJSON_AddStringToObject(resp_json, "sta_ip", sys_info_sta_ip);
+    cJSON_AddStringToObject(resp_json, "sta_mask", sys_info_sta_mask);
+    cJSON_AddStringToObject(resp_json, "sta_gw", sys_info_sta_gw);
+
+    resp_and_free_json(req, NULL, resp_json);
+
+    return ESP_OK;
+}
+
+static inline esp_err_t update_info_from_json(cJSON *req_json, const char *key, void *dest, int type)
+{
+    if (cJSON_HasObjectItem(req_json, key)) {
+        cJSON *item = cJSON_GetObjectItem(req_json, key);
+        if (item->type == type) {
+            if (type == cJSON_String) {
+                strncpy((char *)dest, item->valuestring, SYS_INFO_MAX_STR_LEN);
+            } else if (type == cJSON_Number) {
+                *(int *)dest = item->valueint;
+            } else {
+                ESP_LOGW(TAG, "Unknown type json item");
+                return ESP_FAIL;
+            }
+            return ESP_OK;
+        }
+    }
+    return ESP_FAIL;
+}
+
+static esp_err_t info_post_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+
+    if (check_auth(req) != true) {
+        return ESP_FAIL;
+    }
+
+    cJSON *req_json = receive_json(req);
+    if (req_json == NULL) {
+        return ESP_FAIL;
+    }
+
+    if (update_info_from_json(req_json, "device_name", sys_info_device_name, cJSON_String) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to update device_name");
+    }
+    if (update_info_from_json(req_json, "hardware", sys_info_hardware, cJSON_String) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to update hardware");
+    }
+    if (update_info_from_json(req_json, "serial_num", &sys_info_serial_num, cJSON_Number) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to update serial_num");
+    }
+
+    cJSON_Delete(req_json);
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
@@ -539,6 +619,18 @@ static const httpd_uri_t update_post = {
     .handler = update_post_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t info_get = {
+    .uri = "/info",
+    .method = HTTP_GET,
+    .handler = info_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t info_post = {
+    .uri = "/info",
+    .method = HTTP_POST,
+    .handler = info_post_handler,
+    .user_ctx = NULL,
+};
 static const httpd_uri_t settings_get = {
     .uri = "/settings",
     .method = HTTP_GET,
@@ -556,7 +648,8 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
 {
     static httpd_handle_t http_server = NULL;
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
-    httpd_config.max_uri_handlers = 9; // Количество URI обработчиков
+    httpd_config.max_uri_handlers = 11; // Количество URI обработчиков
+    httpd_config.stack_size = 1024 * 6;
 
     if (httpd_start(&http_server, &httpd_config) == ESP_OK) {
         httpd_register_uri_handler(http_server, &ssdp_schema);
@@ -566,6 +659,8 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
         httpd_register_uri_handler(http_server, &index_get);
         httpd_register_uri_handler(http_server, &favicon_get);
         httpd_register_uri_handler(http_server, &update_post);
+        httpd_register_uri_handler(http_server, &info_get);
+        httpd_register_uri_handler(http_server, &info_post);
         httpd_register_uri_handler(http_server, &settings_get);
         httpd_register_uri_handler(http_server, &settings_post);
     }
