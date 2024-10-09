@@ -3,16 +3,18 @@ import { reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
-import { alertData } from '@/common/global';
+import { useAlerts } from '@/common/alert';
 import { Auth } from '@/common/types';
-import Alert from '@/components/Alert.vue';
+import AlertsWrapper from '@/components/AlertsWrapper.vue';
 import { api } from '@/utils/api';
 
 const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
+const { showAlert } = useAlerts();
 const data = reactive({ login: '', pass: '' });
 const isLoading = ref(false);
+
 const login = async () => {
   isLoading.value = true;
   try {
@@ -20,7 +22,7 @@ const login = async () => {
     if (auth) {
       await router.push(route.query.redirect ? `/${route.query.redirect}` : '/');
     } else {
-      alertData.value = { type: 'error', message: t('wrong_credentials') };
+      showAlert(t('wrong_credentials'));
     }
   } finally {
     isLoading.value = false;
@@ -52,7 +54,7 @@ const login = async () => {
       <a href="https://wirenboard.com/" target="_blank">{{ t('website') }}</a>
     </nav>
   </section>
-  <Alert />
+  <AlertsWrapper />
 </template>
 
 <style scoped>

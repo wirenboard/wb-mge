@@ -32,7 +32,7 @@ router.beforeResolve(async (to, from, next) => {
             stopbits: data.stopbits,
             parity: data.parity,
             databits: data.databits
-          }, t)">
+          })">
           <label for="baudrate">{{ t('baudrate') }}</label>
           <InputNumber id="baudrate" v-model="data.baudrate" name="baudrate" min="300" max="460800" required autofocus />
 

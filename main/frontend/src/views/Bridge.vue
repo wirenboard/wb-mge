@@ -33,7 +33,7 @@ router.beforeResolve(async (to, from, next) => {
             bridge_port: data.bridge_port,
             bridge_mode: data.bridge_mode,
             bridge_mb: data.bridge_mb
-          }, t)">
+          })">
           <label for="bridge_mode">{{ t('bridge_mode') }}</label>
           <select id="bridge_mode" v-model="data.bridge_mode" name="bridge_mode" autofocus>
             <option value="tcpc-serial">TCPC serial</option>

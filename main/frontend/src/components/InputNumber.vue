@@ -10,18 +10,18 @@ const model = defineModel<number>();
 const attrs = useAttrs();
 const props = defineProps<{ float?: boolean }>();
 
-const onKeydown = (ev) => {
-  if ((ev.key === '-' && +attrs?.min <= 1) || ev.key === 'e' || !props.float && ev.key === '.') {
+const onKeydown = (ev: KeyboardEvent) => {
+  if ((ev.key === '-' && +(attrs?.min as string) <= 1) || ev.key === 'e' || !props.float && ev.key === '.') {
     ev.preventDefault();
   }
 
-  if (attrs.max && model.value > +attrs.max) {
+  if (attrs.max && (model.value as number) > +attrs.max) {
     model.value = +attrs.max;
   }
 };
 
 watch(model, () => {
-  if (attrs.max && model.value > +attrs.max) {
+  if (attrs.max && (model.value as number) > +attrs.max) {
     model.value = +attrs.max;
   }
 });

@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { alertData } from '@/common/global';
+import { useAlerts } from '@/common/alert';
 import { Settings } from '@/common/types';
 import { api } from '@/utils/api';
 
@@ -7,6 +7,7 @@ export const useSettings = async () => {
   const isLoading = ref(false);
   const data = ref<Settings>();
   const initData = ref<Settings>();
+  const { showAlert } = useAlerts();
 
   const refresh = async () => {
     data.value = await api<Settings>('settings');
@@ -19,22 +20,21 @@ export const useSettings = async () => {
     return fields.some((field) => (data.value as any)[field] !== (initData.value as any)[field]);
   };
 
-  const updateSettings = async (body: any, t: any) => {
+  const updateSettings = async (body: any) => {
     isLoading.value = true;
-    return api('settings', body).then((res: any) => {
-      let errorText = t('invalid_fields');
+    return api('settings', body).then(async (res: any) => {
+      let invalidFieldsText = '';
       const invalidFields = Object.keys(res).filter(key => !res[key]);
       if (invalidFields.length) {
         invalidFields.forEach((field, i) => {
-          errorText += t(field);
+          invalidFieldsText += field;
           if (i !== invalidFields.length - 1) {
-            errorText += ', ';
+            invalidFieldsText += ', ';
           }
         });
-
-        alertData.value = { type: 'error', message: errorText, withTranslation: true };
+        showAlert('invalid_fields', { type: 'success', interpolation: invalidFieldsText });
       } else {
-        alertData.value = { type: 'success', message: 'data_updated', withTranslation: true };
+        showAlert('data_updated', { type: 'success' });
       }
     }).finally(async () => {
       isLoading.value = false;

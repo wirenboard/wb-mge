@@ -34,7 +34,7 @@ router.beforeResolve(async (to, from, next) => {
             eth_ip_static: data.eth_ip_static,
             eth_mask_static: data.eth_mask_static,
             eth_gw_static: data.eth_gw_static,
-          }, t)">
+          })">
           <label for="hostname">{{ t('hostname') }}</label>
           <input id="hostname" v-model="data.hostname" type="text" name="hostname" required autofocus />
 
@@ -76,7 +76,7 @@ router.beforeResolve(async (to, from, next) => {
             ap_pass: data.ap_pass,
             sta_pass: data.sta_pass,
             sta_ssid: data.sta_ssid,
-          }, t)">
+          })">
           <label for="wifi_mode">{{ t('wifi_mode') }}</label>
           <select id="wifi_mode" v-model="data.wifi_mode" name="wifi_mode">
             <option value="none">None</option>

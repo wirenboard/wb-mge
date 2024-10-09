@@ -24,7 +24,7 @@ export const i18n = createI18n({
       system: 'System',
       login: 'Login',
       data_updated: 'Data updated',
-      invalid_fields: 'Fields were not updated: ',
+      invalid_fields: 'Fields were not updated: {0}',
     }
   }
 });

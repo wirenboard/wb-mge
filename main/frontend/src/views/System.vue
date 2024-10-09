@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { alertData, firmwareVersion } from '@/common/global';
+import { useAlerts } from '@/common/alert';
+import { firmwareVersion } from '@/common/global';
 import { Info } from '@/common/types';
 import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
@@ -14,6 +15,7 @@ import { api } from '@/utils/api';
 const { t } = useI18n();
 const firmwareFile = ref();
 const loadedMethod = ref();
+const { showAlert } = useAlerts();
 const { data, isChanged, updateSettings } = await useSettings();
 
 const getFirmwareVersion = async () => {
@@ -28,7 +30,7 @@ if (!firmwareVersion.value) {
 
 const updateFirmware = async () => {
   loadedMethod.value = 'firmware';
-  alertData.value = { type: 'success', message: t('firmware_update_processed') };
+  showAlert(t('firmware_update_processed'), { type: 'success' });
 
   await api('update', firmwareFile.value[0], true);
   // TODO add firmware update handler
@@ -56,7 +58,7 @@ const cmd = async (command: string, confirmText?: string) => {
   <Layout>
     <Heading :title="t('title')" info-link="https://wirenboard.com/wiki/WB-MGE_v.3_Modbus-Ethernet_Interface_Converter" />
 
-    <div class="system-container">
+    <div v-if="data" class="system-container">
       <fieldset class="network-fieldset">
         <legend>{{ t('credentials') }}</legend>
         <form
@@ -64,7 +66,7 @@ const cmd = async (command: string, confirmText?: string) => {
           @submit.prevent="updateSettings({
             login: data.login,
             pass: data.pass,
-          }, t)">
+          })">
           <label for="login">{{ t('login') }}</label>
           <input id="login" v-model="data.login" type="text" name="login" required />
 

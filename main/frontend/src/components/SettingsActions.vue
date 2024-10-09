@@ -22,7 +22,7 @@ const downloadSettings = () => {
 const handleFileChange = () => {
   const reader = new FileReader();
   reader.onload = async () => {
-    await updateSettings(JSON.parse(reader.result as string), t);
+    await updateSettings(JSON.parse(reader.result as string));
     fileInput.value!.value = null;
   };
   reader.readAsText(fileInput.value.files[0]);
