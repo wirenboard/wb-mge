@@ -1,5 +1,6 @@
 export interface Auth {
   auth: boolean;
+  error?: string;
 }
 
 export interface Session {
@@ -46,6 +47,7 @@ export interface Settings {
   eth_ip_static: string;
   eth_mask_static: string;
   eth_gw_static: string;
+  eth_dhcpc: boolean;
   ap_gw_static: string;
   ap_ip_static: string;
   ap_mask_static: string;
@@ -57,7 +59,6 @@ export interface Settings {
   bridge_ip: string;
   bridge_port: number;
   bridge_mb: boolean;
-  eth_dhcpc: boolean;
   login: string;
   pass: string;
   wifi_mode: 'none' | 'ap' | 'sta' | 'apsta';
