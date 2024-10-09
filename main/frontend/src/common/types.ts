@@ -23,7 +23,9 @@ export interface Packgages {
 
 export interface Info {
   device_name: string;
+  serial_num: number;
   firmware: string;
+  hardware: string;
   con_eth: boolean;
   eth_ip: string;
   eth_mask: string;
