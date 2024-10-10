@@ -17,6 +17,7 @@
 #include "tcp_client.h"
 #include "tcp_server.h"
 #include "wifi_apsta.h"
+#include "sys_info.h"
 
 
 static const char *TAG = "main";
@@ -111,4 +112,5 @@ void app_main(void)
 
     // TODO: Инициализировать мост только после подключения к сети
     ESP_ERROR_CHECK(bridge_init());
+    sys_info_init();
 }
