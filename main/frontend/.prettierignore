@@ -1,0 +1,13 @@
+pnpm-lock.yaml
+.husky/
+.prettierignore
+*.svg
+*.jpg
+*.png
+*.ico
+.npmrc
+*.ejs.t
+auto-imports.d.ts
+components.d.ts
+.*ignore
+Dockerfile

@@ -1,0 +1,116 @@
+:root {
+  --primary-color: #5cb300;
+  --primary-color-hover: #68ca00;
+  --danger-color: #f0001c;
+  --danger-color-hover: #ff0000;
+  --link-color: #00b7f4;
+  --border-color: #ced4da;
+  --border-radius: 6px;
+  --text-color: #334155;
+  --sidebar-background: #eee;
+  --sidebar-background-mobile: #d8d8d8;
+  --sidebar-width: 230px;
+  --gray-color: #e2e5e8;
+  --gray-color-hover: #eee;
+}
+
+body {
+  margin: 0;
+  color: var(--text-color);
+  font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif,"Apple Color Emoji","Segoe UI Emoji",Segoe UI Symbol,"Noto Color Emoji";
+}
+
+h1 {
+  font-size: 32px;
+  margin: 0;
+}
+
+fieldset {
+  box-sizing: border-box;
+  border-radius: var(--border-radius);
+  border: 1px solid var(--border-color);
+  margin-bottom: 12px;
+  padding: 12px;
+}
+
+legend {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+select {
+  font-family: inherit;
+  font-feature-settings: inherit;
+  font-size: 1rem;
+  color: var(--text-color);
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  outline-color: transparent;
+  border-radius: 6px;
+  box-shadow: 0 0 #0000,0 0 #0000,0 1px 2px 0 rgba(18,18,23,0.05);
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="password"]:focus,
+select:focus {
+  border-color: var(--primary-color);
+  outline: none;
+}
+
+input[type="file"] {
+  all: unset;
+}
+
+select {
+  padding: 4px 10px;
+}
+
+button {
+  background: var(--primary-color);
+  border: var(--primary-color);
+  padding: 6px 16px;
+  white-space: nowrap;
+  color: #fff;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  font-size: 16px;
+  font-family: inherit;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: unset;
+}
+
+button:hover:not(:disabled) {
+  background: var(--primary-color-hover);
+  border: var(--primary-color-hover);
+}
+
+table {
+  border-collapse: collapse;
+}
+
+table td,
+table th {
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+}
+
+table th {
+  background: var(--sidebar-background);
+}
+
+.v-enter-active,
+.v-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.v-enter-from,
+.v-leave-to {
+  opacity: 0;
+}
