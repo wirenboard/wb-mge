@@ -1,0 +1,536 @@
+openapi: 3.1.0
+info:
+  title: WB-MGE api
+  version: 1.0.0
+tags:
+  - name: Info
+  - name: Settings
+  - name: Authorization
+  - name: Commands
+paths:
+  /info:
+    get:
+      tags:
+        - Info
+      description: Returns controller info
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Info'
+  /settings:
+    get:
+      tags:
+        - Settings
+      description: Returns controller settings
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+    post:
+      tags:
+        - Settings
+      description: Update controller settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Settings'
+
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsUpdateResponse'
+  /auth:
+    post:
+      tags:
+        - Authorization
+      description: Authorize user
+      responses:
+        '200':
+          description: operation may be successful or not
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth:
+                    type: boolean
+                    examples:
+                      - true
+                  error:
+                    type: string
+                    examples:
+                      - Invalid login or password
+                required:
+                  - auth
+  /session:
+    get:
+      tags:
+        - Authorization
+      description: Checks user session
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+  /logout:
+    post:
+      tags:
+        - Authorization
+      description: Logout user
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logout:
+                    type: boolean
+                    examples:
+                      - true
+  /cmd:
+    post:
+      tags:
+        - Commands
+      description: Controller commands
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cmd:
+                  type: string
+                  enum:
+                    - get_analysis_data
+                    - start_analysis
+                    - stop_analysis
+                    - reboot
+                    - set_default_settings
+                  examples:
+                    - reboot
+              required:
+                - cmd
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/TrafficAnalysis'
+  /update:
+    post:
+      tags:
+        - Commands
+      description: Firmware update
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  update:
+                    type: boolean
+                    examples:
+                      - true
+
+components:
+  schemas:
+    Info:
+      type: object
+      properties:
+        device_name:
+          type: string
+          examples:
+            - WB-MGE v.3
+        serial_num:
+          type: integer
+          examples:
+            - 1234
+        firmware:
+          type: string
+          examples:
+            - 2.0.0
+        hardware:
+          type: string
+          examples:
+            - 1.2.3
+        con_eth:
+          type: boolean
+          examples:
+            - true
+        eth_ip:
+          type: string
+          examples:
+            - 192.168.0.142
+        eth_mask:
+          type: string
+          examples:
+            - 255.255.252.0
+        eth_gw:
+          type: string
+          examples:
+            - 192.168.0.1
+        eth_mac:
+          type: string
+          examples:
+            - 88:13:bf:c7:a1:13
+        con_sta:
+          type: boolean
+          examples:
+            - true
+        sta_ip:
+          type: string
+          examples:
+            - 192.168.0.142
+        sta_mask:
+          type: string
+          examples:
+            - 255.255.252.0
+        sta_gw:
+          type: string
+          examples:
+            - 192.168.0.1
+      required:
+        - device_name
+        - serial_num
+        - firmware
+        - hardware
+        - con_eth
+        - eth_ip
+        - eth_mask
+        - eth_gw
+        - eth_mac
+        - con_sta
+        - sta_ip
+        - sta_mask
+        - sta_gw
+
+    Settings:
+      type: object
+      properties:
+        hostname:
+          type: string
+          examples:
+            - WB-MGE-C7A1122
+        baudrate:
+          type: integer
+          examples:
+            - 460800
+        parity:
+          type: string
+          enum:
+            - none
+            - even
+            - odd
+          examples:
+            - even
+        stopbits:
+          type: string
+          enum:
+            - 1-bit
+            - 1.5-bit
+            - 2-bit
+          examples:
+            - 1-bit
+        databits:
+          type: string
+          enum:
+            - 5-bit
+            - 6-bit
+            - 7-bit
+            - 8-bit
+          examples:
+            - 5-bit
+        eth_ip_static:
+          type: string
+          examples:
+            - 192.168.5.1
+        eth_mask_static:
+          type: string
+          examples:
+            - 255.255.255.0
+        eth_gw_static:
+          type: string
+          examples:
+            - 192.168.5.1
+        eth_dhcpc:
+          type: boolean
+          examples:
+            - true
+        ap_gw_static:
+          type: string
+          examples:
+            - 192.168.4.1
+        ap_ip_static:
+          type: string
+          examples:
+            - 192.168.4.1
+        ap_mask_static:
+          type: string
+          examples:
+            - 255.255.255.0
+        ap_ssid:
+          type: string
+          examples:
+            - WB-MGE-C7
+        ap_pass:
+          type: string
+          examples:
+            - ""
+        sta_ssid:
+          type: string
+          examples:
+            - WB-MGE-C7
+        sta_pass:
+          type: string
+          examples:
+            - ""
+        bridge_mode:
+          type: string
+          enum:
+            - tcpc-serial
+            - tcps-serial
+          examples:
+            - tcpc-serial
+        bridge_ip:
+          type: string
+          examples:
+            - 192.168.4.2
+        bridge_port:
+          type: string
+          examples:
+            - 8080
+        bridge_mb:
+          type: boolean
+          examples:
+            - false
+        wifi_mode:
+          type: string
+          enum:
+            - none
+            - ap
+            - sta
+            - apsta
+          examples:
+            - apsta
+        login:
+          type: string
+          examples:
+            - admin
+        pass:
+          type: string
+          examples:
+            - ""
+
+
+    #        items:
+    #          $ref: '#/components/schemas/Items'
+
+    SettingsUpdateResponse:
+      type: object
+      properties:
+        hostname:
+          type: boolean
+          examples:
+            - true
+        baudrate:
+          type: boolean
+          examples:
+            - true
+        parity:
+          type: boolean
+          examples:
+            - true
+        stopbits:
+          type: boolean
+          examples:
+            - true
+        databits:
+          type: boolean
+          examples:
+            - true
+        eth_ip_static:
+          type: boolean
+          examples:
+            - true
+        eth_mask_static:
+          type: boolean
+          examples:
+            - true
+        eth_gw_static:
+          type: boolean
+          examples:
+            - true
+        eth_dhcpc:
+          type: boolean
+          examples:
+            - true
+        ap_gw_static:
+          type: boolean
+          examples:
+            - true
+        ap_ip_static:
+          type: boolean
+          examples:
+            - true
+        ap_mask_static:
+          type: boolean
+          examples:
+            - true
+        ap_ssid:
+          type: boolean
+          examples:
+            - true
+        ap_pass:
+          type: boolean
+          examples:
+            - true
+        sta_ssid:
+          type: boolean
+          examples:
+            - true
+        sta_pass:
+          type: boolean
+          examples:
+            - true
+        bridge_mode:
+          type: boolean
+          examples:
+            - true
+        bridge_ip:
+          type: boolean
+          examples:
+            - true
+        bridge_port:
+          type: boolean
+          examples:
+            - true
+        bridge_mb:
+          type: boolean
+          examples:
+            - true
+        wifi_mode:
+          type: boolean
+          examples:
+            - true
+        login:
+          type: boolean
+          examples:
+            - true
+        pass:
+          type: boolean
+          examples:
+            - true
+
+    Session:
+      type: object
+      properties:
+        session_id:
+          type: number
+          examples:
+            - 1
+      required:
+        - session_id
+
+    TrafficAnalysis:
+      type: object
+      properties:
+        cmd:
+          type: string
+          examples:
+            - get_analysis_data
+        result:
+          type: boolean
+          examples:
+            - true
+        counters:
+          type: object
+          properties:
+            TX:
+              type: integer
+              examples:
+                - 2
+            RX:
+              type: integer
+              examples:
+                - 2
+            RX_ERR:
+              type: integer
+              examples:
+                - 0
+          required:
+            - TX
+            - RX
+            - RX_ERR
+        packages:
+          type: array
+          items:
+            type: object
+            properties:
+              time:
+                type: integer
+                examples:
+                  - 11554445
+              dir:
+                type: string
+                enum:
+                  - TX
+                  - RX
+                examples:
+                  - TX
+              id:
+                type: integer
+                examples:
+                  - 1
+              func:
+                type: integer
+                examples:
+                  - 3
+              data:
+                type: array
+                items:
+                  type: integer
+                  examples:
+                    - 0
+              crc:
+                type: array
+                items:
+                  type: integer
+                  examples:
+                    - 12
+              crc_ok:
+                type: boolean
+                examples:
+                  - true
+            required:
+              - time
+              - dir
+              - id
+              - func
+              - data
+              - crc
+              - crc_ok
+      required:
+        - cmd
+        - result
+        - counters
+        - packages
