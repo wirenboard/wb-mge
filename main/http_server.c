@@ -648,8 +648,8 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
 {
     static httpd_handle_t http_server = NULL;
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
-    httpd_config.max_uri_handlers = 11; // Количество URI обработчиков
-    httpd_config.stack_size = 1024 * 6;
+    httpd_config.max_uri_handlers = 30;  // TODO: Подобрать значение к релизу
+    httpd_config.stack_size = 1024 * 6;  // TODO: Проверить размер используемой памяти
 
     if (httpd_start(&http_server, &httpd_config) == ESP_OK) {
         httpd_register_uri_handler(http_server, &ssdp_schema);
