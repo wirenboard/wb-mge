@@ -16,8 +16,7 @@
 #define ETH_PHY_ADDR        1
 #define CLK_ENABLE_GPIO     GPIO_NUM_16
 
-esp_err_t ethernet_init(esp_event_handler_t eth_event_handler,
-                        esp_event_handler_t got_ip_event_handler, esp_netif_ip_info_t *static_ip)
+esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t *static_ip)
 {
     esp_err_t err = ESP_OK;
 
@@ -90,13 +89,12 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler,
         if (err != ESP_OK) {
             return err;
         }
-    }
-    if (got_ip_event_handler != NULL) {
-        err = esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, got_ip_event_handler, NULL);
+        err = esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, eth_event_handler, NULL);
         if (err != ESP_OK) {
             return err;
         }
     }
+
     err = esp_eth_start(eth_handle);
     if (err != ESP_OK) {
         return err;

@@ -492,6 +492,8 @@ int setting_items_read(const char *key, void *value)
         if (ret != true) {
             return -1;
         }
+    } else {
+        return -1;
     }
     return 0;
 }
@@ -524,6 +526,8 @@ int setting_items_save(const char *key, const void *value)
         if (ret != true) {
             return -1;
         }
+    } else {
+        return -1;
     }
     return 0;
 }
@@ -544,7 +548,7 @@ static const setting_item_t setting_items[] = {
         .type_in_storage = SETTING_ITEM_TYPE_STR,
         .type_in_json = SETTING_ITEM_TYPE_STR,
         .save_to_storage = save_non_zero_len_string_value,
-        .read_from_storage = NULL,
+        .read_from_storage = read_string_value,
         .read_from_storage_raw = read_raw_value,
     },
     {

@@ -24,5 +24,7 @@ extern char sys_info_sta_ip[SYS_INFO_MAX_STR_LEN];
 extern char sys_info_sta_mask[SYS_INFO_MAX_STR_LEN];
 extern char sys_info_sta_gw[SYS_INFO_MAX_STR_LEN];
 
+extern int sys_info_con_ap;
+
 esp_err_t sys_info_init(void);
 esp_err_t sys_info_write(void);

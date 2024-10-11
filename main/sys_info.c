@@ -27,6 +27,8 @@ char sys_info_sta_ip[SYS_INFO_MAX_STR_LEN] = {0};
 char sys_info_sta_mask[SYS_INFO_MAX_STR_LEN] = {0};
 char sys_info_sta_gw[SYS_INFO_MAX_STR_LEN] = {0};
 
+int sys_info_con_ap = 0;
+
 esp_err_t sys_info_init(void)
 {
     nvs_read_str(SYS_INFO_DEV_NAME_KEY, sys_info_device_name);

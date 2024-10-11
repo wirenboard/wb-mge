@@ -19,29 +19,99 @@
 #include "wifi_apsta.h"
 #include "sys_info.h"
 
-
 static const char *TAG = "main";
 
-static void eth_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
+// Для отладки. Выводит все настройки в лог.
+static inline void print_setting_items()
 {
-    uint8_t mac_addr[6] = {0};
-    esp_eth_handle_t eth_handle = *(esp_eth_handle_t *)event_data;
+    int items_num = setting_items_get_keys(NULL);
+    const char *keys[items_num];
+    setting_items_get_keys(keys);
 
+    for (int i = 0; i < items_num; i++) {
+        setting_item_type_t type = setting_items_get_type_in_json(keys[i]);
+        switch (type) {
+            case SETTING_ITEM_TYPE_NUM: {
+                uint32_t value = 0;
+                setting_items_read(keys[i], &value);
+                ESP_LOGI(TAG, "%s: %lu", keys[i], value);
+                break;
+            }
+            case SETTING_ITEM_TYPE_STR: {
+                char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+                setting_items_read(keys[i], value);
+                ESP_LOGI(TAG, "%s: %s", keys[i], value);
+                break;
+            }
+            case SETTING_ITEM_TYPE_BOOL: {
+                uint8_t value = 0;
+                setting_items_read(keys[i], &value);
+                ESP_LOGI(TAG, "%s: %s", keys[i], value ? "true" : "false");
+                break;
+            }
+            default:
+                ESP_LOGW(TAG, "Unknown setting item type for key: %s", keys[i]);
+                break;
+        }
+    }
+}
+
+static void eth_connect_event_handler(void *arg, esp_event_base_t event_base,
+    int32_t event_id, void *event_data)
+{
     switch (event_id) {
+        case IP_EVENT_ETH_GOT_IP:
+            ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+            snprintf(sys_info_eth_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.ip));
+            snprintf(sys_info_eth_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.netmask));
+            snprintf(sys_info_eth_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.gw));
+            break;
         case ETHERNET_EVENT_CONNECTED:
+            uint8_t mac_addr[6] = {0};
+            esp_eth_handle_t eth_handle = *(esp_eth_handle_t *)event_data;
             esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
-            ESP_LOGI(TAG, "Ethernet Link Up");
-            ESP_LOGI(TAG, "Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
-                     mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+            snprintf(sys_info_eth_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(mac_addr));
+            sys_info_con_eth = true;
             break;
         case ETHERNET_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "Ethernet Link Down");
+            sys_info_con_eth = false;
             break;
-        case ETHERNET_EVENT_START:
-            ESP_LOGI(TAG, "Ethernet Started");
+        default:
             break;
-        case ETHERNET_EVENT_STOP:
-            ESP_LOGI(TAG, "Ethernet Stopped");
+    }
+}
+
+static void wifi_sta_connect_event_handler(void *arg, esp_event_base_t event_base,
+    int32_t event_id, void *event_data)
+{
+    switch (event_id) {
+        case IP_EVENT_STA_GOT_IP:
+            ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
+            const esp_netif_ip_info_t *ip_info = &event->ip_info;
+            snprintf(sys_info_sta_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->ip));
+            snprintf(sys_info_sta_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->netmask));
+            snprintf(sys_info_sta_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->gw));
+            break;
+        case WIFI_EVENT_STA_CONNECTED:
+            sys_info_con_sta = true;
+            break;
+        case WIFI_EVENT_STA_DISCONNECTED:
+            sys_info_con_sta = false;
+            break;
+        default:
+            break;
+    }
+}
+
+static void wifi_ap_connect_event_handler(void *arg, esp_event_base_t event_base,
+    int32_t event_id, void *event_data)
+{
+    switch (event_id) {
+        case WIFI_EVENT_AP_STACONNECTED:
+            sys_info_con_ap++;
+            break;
+        case WIFI_EVENT_AP_STADISCONNECTED:
+            sys_info_con_ap--;
             break;
         default:
             break;
@@ -65,10 +135,14 @@ void app_main(void)
     // генерация уникального hostname
     char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_ETH);
+    esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
     snprintf(generated_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
              mac[4], mac[5]);
     ESP_ERROR_CHECK(setting_items_init(generated_hostname, &setting_item_iface));
+    ESP_LOGI(TAG, "Hostname: %s", generated_hostname);
+
+    mac[5] = 0xAA;
+    esp_base_mac_addr_set(mac);
 
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     // Имя хоста берется из хранилища
@@ -92,6 +166,8 @@ void app_main(void)
     setting_items_read_raw("sta_ssid", &apsta_cfg.sta_ssid, SETTING_ITEM_TYPE_STR);
     setting_items_read_raw("sta_pass", &apsta_cfg.sta_pass, SETTING_ITEM_TYPE_STR);
     setting_items_read_raw("wifi_mode", &apsta_cfg.wifi_mode, SETTING_ITEM_TYPE_NUM);
+    apsta_cfg.sta_event_handler = &wifi_sta_connect_event_handler;
+    apsta_cfg.ap_event_handler = &wifi_ap_connect_event_handler;
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg));
 
     bool eth_dhcpc = false;
@@ -105,12 +181,18 @@ void app_main(void)
     if (!eth_dhcpc) {
         eth_ip_info = &static_ip_info;
     }
-    ESP_ERROR_CHECK(ethernet_init(&eth_event, NULL, eth_ip_info));
+    ESP_ERROR_CHECK(ethernet_init(&eth_connect_event_handler, eth_ip_info));
 
     ssdp_config_t ssdp_config = NULL;  // TODO: Add SSDP
     ESP_ERROR_CHECK(http_server_init(&ssdp_config));
 
-    // TODO: Инициализировать мост только после подключения к сети
-    ESP_ERROR_CHECK(bridge_init());
     sys_info_init();
+    print_setting_items();
+
+    while ((sys_info_con_eth || sys_info_con_sta || sys_info_con_ap) == false) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGW(TAG, "Waiting for network connection");
+
+    }
+    ESP_ERROR_CHECK(bridge_init());
 }

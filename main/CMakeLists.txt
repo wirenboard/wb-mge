@@ -12,7 +12,10 @@ idf_component_register(SRCS "main.c"
                             "sys_info.c"
                             "efuse_table.c"
                         INCLUDE_DIRS "."
+                            "include"
                         EMBED_TXTFILES
-                        frontend/index.html
-                        frontend/favicon.ico
+                            frontend/dist/favicon.webp.gz
+                            frontend/dist/index.css.gz
+                            frontend/dist/index.html.gz
+                            frontend/dist/index.js.gz
 )

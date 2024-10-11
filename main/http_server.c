@@ -30,11 +30,17 @@ typedef struct {
 
 static const char *TAG = "http_server";
 
-extern const uint8_t favicon_start[] asm("_binary_favicon_ico_start");
-extern const uint8_t favicon_end[] asm("_binary_favicon_ico_end");
+extern const uint8_t favicon_start[] asm("_binary_favicon_webp_gz_start");
+extern const uint8_t favicon_end[] asm("_binary_favicon_webp_gz_end");
 
-extern const uint8_t index_html_start[] asm("_binary_index_html_start");
-extern const uint8_t index_html_end[] asm("_binary_index_html_end");
+extern const uint8_t index_css_start[] asm("_binary_index_css_gz_start");
+extern const uint8_t index_css_end[] asm("_binary_index_css_gz_end");
+
+extern const uint8_t index_js_start[] asm("_binary_index_js_gz_start");
+extern const uint8_t index_js_end[] asm("_binary_index_js_gz_end");
+
+extern const uint8_t index_html_start[] asm("_binary_index_html_gz_start");
+extern const uint8_t index_html_end[] asm("_binary_index_html_gz_end");
 
 static session_buffer_t session_buffer = {
     .current_index = 0,
@@ -132,7 +138,7 @@ static inline bool session_id_is_valid(uint32_t session_id)
 static bool check_req_content_len(httpd_req_t *req)
 {
     if (req->content_len > REQ_RECV_BUF_SIZE) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Request too large");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Request too large");
         return false;
     }
     return true;
@@ -193,7 +199,26 @@ static esp_err_t ssdp_schema_get_handler(httpd_req_t *req)
 static esp_err_t index_html_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     httpd_resp_send(req, (const char *)index_html_start, index_html_end - index_html_start);
+    return ESP_OK;
+}
+
+static esp_err_t index_css_get_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+    httpd_resp_set_type(req, "text/css");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_send(req, (const char *)index_css_start, index_css_end - index_css_start);
+    return ESP_OK;
+}
+
+static esp_err_t index_js_get_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+    httpd_resp_set_type(req, "application/javascript");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_send(req, (const char *)index_js_start, index_js_end - index_js_start);
     return ESP_OK;
 }
 
@@ -335,7 +360,11 @@ static esp_err_t update_post_handler(httpd_req_t *req)
     int remaining = req->content_len;
 
     const esp_partition_t *ota_partition = esp_ota_get_next_update_partition(NULL);
-    ESP_ERROR_CHECK(esp_ota_begin(ota_partition, OTA_SIZE_UNKNOWN, &ota_handle));
+    if (esp_ota_begin(ota_partition, OTA_SIZE_UNKNOWN, &ota_handle) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA Begin Error");
+        free(buf);
+        return ESP_FAIL;
+    }
 
     while (remaining > 0) {
         int recv_len = httpd_req_recv(req, buf, MIN(remaining, REQ_RECV_BUF_SIZE));
@@ -382,20 +411,23 @@ static inline void add_setting_item_to_json(cJSON *json, const char *key)
     switch (type) {
         case SETTING_ITEM_TYPE_NUM: {
             uint32_t value = 0;
-            setting_items_read(key, &value);
-            cJSON_AddNumberToObject(json, key, value);
+            if (setting_items_read(key, &value) == 0) {
+                cJSON_AddNumberToObject(json, key, value);
+            }
             break;
         }
         case SETTING_ITEM_TYPE_STR: {
             char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-            setting_items_read(key, value);
-            cJSON_AddStringToObject(json, key, value);
+            if (setting_items_read(key, value) == 0) {
+                cJSON_AddStringToObject(json, key, value);
+            }
             break;
         }
         case SETTING_ITEM_TYPE_BOOL: {
             uint8_t value = 0;
-            setting_items_read(key, &value);
-            cJSON_AddBoolToObject(json, key, value);
+            if (setting_items_read(key, &value) == 0) {
+                cJSON_AddBoolToObject(json, key, value);
+            }
             break;
         }
         default:
@@ -429,6 +461,8 @@ static esp_err_t info_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(resp_json, "sta_ip", sys_info_sta_ip);
     cJSON_AddStringToObject(resp_json, "sta_mask", sys_info_sta_mask);
     cJSON_AddStringToObject(resp_json, "sta_gw", sys_info_sta_gw);
+
+    cJSON_AddNumberToObject(resp_json, "con_ap", sys_info_con_ap);
 
     resp_and_free_json(req, NULL, resp_json);
 
@@ -525,7 +559,7 @@ static inline esp_err_t process_json_item(httpd_req_t *req, cJSON *item, const c
             value = (void *)&true_val;
             break;
         default:
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Unknown type json item");
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown type json item");
             return ESP_FAIL;
     }
 
@@ -608,9 +642,21 @@ static const httpd_uri_t index_get = {
     .user_ctx = NULL,
 };
 static const httpd_uri_t favicon_get = {
-    .uri = "/favicon.ico",
+    .uri = "/favicon.webp",
     .method = HTTP_GET,
     .handler = favicon_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t index_css_get = {
+    .uri = "/index.css",
+    .method = HTTP_GET,
+    .handler = index_css_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t index_js_get = {
+    .uri = "/index.js",
+    .method = HTTP_GET,
+    .handler = index_js_get_handler,
     .user_ctx = NULL,
 };
 static const httpd_uri_t update_post = {
@@ -657,6 +703,8 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
         httpd_register_uri_handler(http_server, &session_get);
         httpd_register_uri_handler(http_server, &logout_post);
         httpd_register_uri_handler(http_server, &index_get);
+        httpd_register_uri_handler(http_server, &index_css_get);
+        httpd_register_uri_handler(http_server, &index_js_get);
         httpd_register_uri_handler(http_server, &favicon_get);
         httpd_register_uri_handler(http_server, &update_post);
         httpd_register_uri_handler(http_server, &info_get);
