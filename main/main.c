@@ -157,15 +157,15 @@ void app_main(void)
     // apsta = Access Point + Station
     wifi_apsta_config_t apsta_cfg = {0};
     esp_netif_ip_info_t ap_ip_info;
-    setting_items_read_raw("ap_ip_static", &ap_ip_info.ip, SETTING_ITEM_TYPE_NUM);
-    setting_items_read_raw("ap_mask_static", &ap_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
-    setting_items_read_raw("ap_gw_static", &ap_ip_info.gw, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw(KEY_AP_IP_STATIC, &ap_ip_info.ip, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw(KEY_AP_MASK_STATIC, &ap_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw(KEY_AP_GW_STATIC, &ap_ip_info.gw, SETTING_ITEM_TYPE_NUM);
     apsta_cfg.ap_ip_info = &ap_ip_info;
-    setting_items_read_raw("ap_ssid", &apsta_cfg.ap_ssid, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw("ap_pass", &apsta_cfg.ap_pass, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw("sta_ssid", &apsta_cfg.sta_ssid, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw("sta_pass", &apsta_cfg.sta_pass, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw("wifi_mode", &apsta_cfg.wifi_mode, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw(KEY_AP_SSID, &apsta_cfg.ap_ssid, SETTING_ITEM_TYPE_STR);
+    setting_items_read_raw(KEY_AP_PASS, &apsta_cfg.ap_pass, SETTING_ITEM_TYPE_STR);
+    setting_items_read_raw(KEY_STA_SSID, &apsta_cfg.sta_ssid, SETTING_ITEM_TYPE_STR);
+    setting_items_read_raw(KEY_STA_PASS, &apsta_cfg.sta_pass, SETTING_ITEM_TYPE_STR);
+    setting_items_read_raw(KEY_WIFI_MODE, &apsta_cfg.wifi_mode, SETTING_ITEM_TYPE_NUM);
     apsta_cfg.sta_event_handler = &wifi_sta_connect_event_handler;
     apsta_cfg.ap_event_handler = &wifi_ap_connect_event_handler;
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg));
@@ -173,10 +173,10 @@ void app_main(void)
     bool eth_dhcpc = false;
     esp_netif_ip_info_t *eth_ip_info = NULL;
     esp_netif_ip_info_t static_ip_info = {0};
-    setting_items_read_raw("eth_dhcpc", &eth_dhcpc, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw("eth_ip_static", &static_ip_info.ip, SETTING_ITEM_TYPE_NUM);
-    setting_items_read_raw("eth_mask_static", &static_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
-    setting_items_read_raw("eth_gw_static", &static_ip_info.gw, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw(KEY_ETH_DHCPC, &eth_dhcpc, SETTING_ITEM_TYPE_BOOL);
+    setting_items_read_raw(KEY_ETH_IP_STATIC, &static_ip_info.ip, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw(KEY_ETH_MASK_STATIC, &static_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
+    setting_items_read_raw(KEY_ETH_GW_STATIC, &static_ip_info.gw, SETTING_ITEM_TYPE_NUM);
 
     if (!eth_dhcpc) {
         eth_ip_info = &static_ip_info;
