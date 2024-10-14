@@ -21,8 +21,9 @@
 
 static const char *TAG = "main";
 
-// Для отладки. Выводит все настройки в лог.
-static inline void print_setting_items()
+// Выводит все настройки (кроме паролей) в лог.
+// TODO: В релизе можно удалить
+static inline void print_setting_items(void)
 {
     int items_num = setting_items_get_keys(NULL);
     const char *keys[items_num];
@@ -62,19 +63,19 @@ static void eth_connect_event_handler(void *arg, esp_event_base_t event_base,
     switch (event_id) {
         case IP_EVENT_ETH_GOT_IP:
             ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-            snprintf(sys_info_eth_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.ip));
-            snprintf(sys_info_eth_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.netmask));
-            snprintf(sys_info_eth_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.gw));
+            snprintf(sys_info.eth_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.ip));
+            snprintf(sys_info.eth_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.netmask));
+            snprintf(sys_info.eth_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.gw));
             break;
         case ETHERNET_EVENT_CONNECTED:
             uint8_t mac_addr[6] = {0};
             esp_eth_handle_t eth_handle = *(esp_eth_handle_t *)event_data;
             esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
-            snprintf(sys_info_eth_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(mac_addr));
-            sys_info_con_eth = true;
+            snprintf(sys_info.eth_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(mac_addr));
+            sys_info.eth_is_connected = true;
             break;
         case ETHERNET_EVENT_DISCONNECTED:
-            sys_info_con_eth = false;
+            sys_info.eth_is_connected = false;
             break;
         default:
             break;
@@ -88,15 +89,15 @@ static void wifi_sta_connect_event_handler(void *arg, esp_event_base_t event_bas
         case IP_EVENT_STA_GOT_IP:
             ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
             const esp_netif_ip_info_t *ip_info = &event->ip_info;
-            snprintf(sys_info_sta_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->ip));
-            snprintf(sys_info_sta_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->netmask));
-            snprintf(sys_info_sta_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->gw));
+            snprintf(sys_info.wifi_sta_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->ip));
+            snprintf(sys_info.wifi_sta_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->netmask));
+            snprintf(sys_info.wifi_sta_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->gw));
             break;
         case WIFI_EVENT_STA_CONNECTED:
-            sys_info_con_sta = true;
+            sys_info.wifi_sta_is_connected = true;
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
-            sys_info_con_sta = false;
+            sys_info.wifi_sta_is_connected = false;
             break;
         default:
             break;
@@ -108,10 +109,10 @@ static void wifi_ap_connect_event_handler(void *arg, esp_event_base_t event_base
 {
     switch (event_id) {
         case WIFI_EVENT_AP_STACONNECTED:
-            sys_info_con_ap++;
+            sys_info.wifi_ap_connections_count++;
             break;
         case WIFI_EVENT_AP_STADISCONNECTED:
-            sys_info_con_ap--;
+            sys_info.wifi_ap_connections_count--;
             break;
         default:
             break;
@@ -140,9 +141,6 @@ void app_main(void)
              mac[4], mac[5]);
     ESP_ERROR_CHECK(setting_items_init(generated_hostname, &setting_item_iface));
     ESP_LOGI(TAG, "Hostname: %s", generated_hostname);
-
-    mac[5] = 0xAA;
-    esp_base_mac_addr_set(mac);
 
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     // Имя хоста берется из хранилища
@@ -189,10 +187,17 @@ void app_main(void)
     sys_info_init();
     print_setting_items();
 
-    while ((sys_info_con_eth || sys_info_con_sta || sys_info_con_ap) == false) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGW(TAG, "Waiting for network connection");
-
+    while (1)
+    {
+        if ((sys_info.wifi_ap_connections_count > 0) ||
+            sys_info.eth_is_connected ||
+            sys_info.wifi_sta_is_connected)
+        {
+            ESP_ERROR_CHECK(bridge_init());
+            break;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            ESP_LOGW(TAG, "Waiting for network connection");
+        }
     }
-    ESP_ERROR_CHECK(bridge_init());
 }

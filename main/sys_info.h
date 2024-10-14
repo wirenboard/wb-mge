@@ -8,23 +8,24 @@
 
 #define SYS_INFO_MAX_STR_LEN    32
 
-extern char sys_info_device_name[SYS_INFO_MAX_STR_LEN];
-extern char sys_info_firmware[SYS_INFO_MAX_STR_LEN];
-extern char sys_info_hardware[SYS_INFO_MAX_STR_LEN];
-extern int sys_info_serial_num;
+typedef struct {
+    int device_serial_num;
+    char device_name[SYS_INFO_MAX_STR_LEN];
+    char firmware_ver[SYS_INFO_MAX_STR_LEN];
+    char hardware_ver[SYS_INFO_MAX_STR_LEN];
+    bool eth_is_connected;
+    char eth_ip[SYS_INFO_MAX_STR_LEN];
+    char eth_mask[SYS_INFO_MAX_STR_LEN];
+    char eth_gw[SYS_INFO_MAX_STR_LEN];
+    char eth_mac[SYS_INFO_MAX_STR_LEN];
+    bool wifi_sta_is_connected;
+    char wifi_sta_ip[SYS_INFO_MAX_STR_LEN];
+    char wifi_sta_mask[SYS_INFO_MAX_STR_LEN];
+    char wifi_sta_gw[SYS_INFO_MAX_STR_LEN];
+    int wifi_ap_connections_count;
+} sys_info_t;
 
-extern bool sys_info_con_eth;
-extern char sys_info_eth_ip[SYS_INFO_MAX_STR_LEN];
-extern char sys_info_eth_mask[SYS_INFO_MAX_STR_LEN];
-extern char sys_info_eth_gw[SYS_INFO_MAX_STR_LEN];
-extern char sys_info_eth_mac[SYS_INFO_MAX_STR_LEN];
-
-extern bool sys_info_con_sta;
-extern char sys_info_sta_ip[SYS_INFO_MAX_STR_LEN];
-extern char sys_info_sta_mask[SYS_INFO_MAX_STR_LEN];
-extern char sys_info_sta_gw[SYS_INFO_MAX_STR_LEN];
-
-extern int sys_info_con_ap;
+extern sys_info_t sys_info;
 
 esp_err_t sys_info_init(void);
 esp_err_t sys_info_write(void);

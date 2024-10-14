@@ -446,23 +446,23 @@ static esp_err_t info_get_handler(httpd_req_t *req)
 
     cJSON *resp_json = cJSON_CreateObject();
 
-    cJSON_AddStringToObject(resp_json, "device_name", sys_info_device_name);
+    cJSON_AddStringToObject(resp_json, "device_name", sys_info.device_name);
     cJSON_AddStringToObject(resp_json, "firmware", FIRMWARE_VERSION);
-    cJSON_AddStringToObject(resp_json, "hardware", sys_info_hardware);
-    cJSON_AddNumberToObject(resp_json, "serial_num", sys_info_serial_num);
+    cJSON_AddStringToObject(resp_json, "hardware", sys_info.hardware_ver);
+    cJSON_AddNumberToObject(resp_json, "serial_num", sys_info.device_serial_num);
 
-    cJSON_AddBoolToObject(resp_json, "con_eth", sys_info_con_eth);
-    cJSON_AddStringToObject(resp_json, "eth_ip", sys_info_eth_ip);
-    cJSON_AddStringToObject(resp_json, "eth_mask", sys_info_eth_mask);
-    cJSON_AddStringToObject(resp_json, "eth_gw", sys_info_eth_gw);
-    cJSON_AddStringToObject(resp_json, "eth_mac", sys_info_eth_mac);
+    cJSON_AddBoolToObject(resp_json, "con_eth", sys_info.eth_is_connected);
+    cJSON_AddStringToObject(resp_json, "eth_ip", sys_info.eth_ip);
+    cJSON_AddStringToObject(resp_json, "eth_mask", sys_info.eth_mask);
+    cJSON_AddStringToObject(resp_json, "eth_gw", sys_info.eth_gw);
+    cJSON_AddStringToObject(resp_json, "eth_mac", sys_info.eth_mac);
 
-    cJSON_AddBoolToObject(resp_json, "con_sta", sys_info_con_sta);
-    cJSON_AddStringToObject(resp_json, "sta_ip", sys_info_sta_ip);
-    cJSON_AddStringToObject(resp_json, "sta_mask", sys_info_sta_mask);
-    cJSON_AddStringToObject(resp_json, "sta_gw", sys_info_sta_gw);
+    cJSON_AddBoolToObject(resp_json, "con_sta", sys_info.wifi_sta_is_connected);
+    cJSON_AddStringToObject(resp_json, "sta_ip", sys_info.wifi_sta_ip);
+    cJSON_AddStringToObject(resp_json, "sta_mask", sys_info.wifi_sta_mask);
+    cJSON_AddStringToObject(resp_json, "sta_gw", sys_info.wifi_sta_gw);
 
-    cJSON_AddNumberToObject(resp_json, "con_ap", sys_info_con_ap);
+    cJSON_AddNumberToObject(resp_json, "con_ap", sys_info.wifi_ap_connections_count);
 
     resp_and_free_json(req, NULL, resp_json);
 
@@ -501,13 +501,13 @@ static esp_err_t info_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    if (update_info_from_json(req_json, "device_name", sys_info_device_name, cJSON_String) != ESP_OK) {
+    if (update_info_from_json(req_json, "device_name", sys_info.device_name, cJSON_String) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to update device_name");
     }
-    if (update_info_from_json(req_json, "hardware", sys_info_hardware, cJSON_String) != ESP_OK) {
+    if (update_info_from_json(req_json, "hardware", sys_info.hardware_ver, cJSON_String) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to update hardware");
     }
-    if (update_info_from_json(req_json, "serial_num", &sys_info_serial_num, cJSON_Number) != ESP_OK) {
+    if (update_info_from_json(req_json, "serial_num", &sys_info.device_serial_num, cJSON_Number) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to update serial_num");
     }
 
