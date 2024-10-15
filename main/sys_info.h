@@ -28,4 +28,4 @@ typedef struct {
 extern sys_info_t sys_info;
 
 esp_err_t sys_info_init(void);
-esp_err_t sys_info_write(void);
+esp_err_t sys_info_write_factory_data(void);

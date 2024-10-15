@@ -4,6 +4,7 @@
 #include <esp_ota_ops.h>
 #include <sys/param.h>
 
+#include "array_size.h"
 #include "cJSON.h"
 #include "config.h"
 #include "esp_log.h"
@@ -23,10 +24,26 @@
 // При превышении этого количества сессий, самая старая сессия будет удалена
 #define MAX_SESSIONS            10
 
+#define CMD_NAME_MAX_LEN        32
+#define REBOOT_DELAY_MS         1000
+#define REBOOT_TASK_STACK_SIZE  2048
+#define REBOOT_TASK_PRIORITY    5
+
 typedef struct {
     uint32_t session_ids[MAX_SESSIONS];
     int current_index;
 } session_buffer_t;
+
+typedef struct {
+    int cmd_code;
+    const char *cmd_name;
+} cmd_t;
+
+enum {
+    CMD_REBOOT,
+    CMD_SET_DEFAULT_SETTINGS,
+    CMD_WRITE_FACTORY_DATA,
+};
 
 static const char *TAG = "http_server";
 
@@ -45,6 +62,26 @@ extern const uint8_t index_html_end[] asm("_binary_index_html_gz_end");
 static session_buffer_t session_buffer = {
     .current_index = 0,
 };
+
+static const cmd_t cmds[] = {
+    {CMD_REBOOT, "reboot"},
+    {CMD_SET_DEFAULT_SETTINGS, "set_default_settings"},
+    {CMD_WRITE_FACTORY_DATA, "write_factory_data"},
+    {-1, NULL},
+};
+
+static void reboot_task(void *pvParameters)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+
+    vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
+    esp_restart();
+}
+
+static void reboot_device(void)
+{
+    xTaskCreate(reboot_task, "reboot_task", REBOOT_TASK_STACK_SIZE, NULL, REBOOT_TASK_PRIORITY, NULL);
+}
 
 static void add_session_id(session_buffer_t *buffer, uint32_t session_id)
 {
@@ -401,6 +438,8 @@ static esp_err_t update_post_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(resp_json, "update", true);
     resp_and_free_json(req, NULL, resp_json);
 
+    reboot_device();
+
     return ESP_OK;
 }
 
@@ -611,6 +650,91 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static int get_cmd_code(const char *cmd_str)
+{
+    for (int i = 0; i < ARRAY_SIZE(cmds); i++) {
+        if (cmds[i].cmd_name == NULL) {
+            break;
+        }
+        if (strncmp(cmd_str, cmds[i].cmd_name, CMD_NAME_MAX_LEN) == 0) {
+            return cmds[i].cmd_code;
+        }
+    }
+    return -1;
+}
+
+static esp_err_t execute_cmd(int cmd_code)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+
+    esp_err_t err = ESP_OK;
+
+    switch (cmd_code) {
+        case CMD_REBOOT:
+            reboot_device();
+            break;
+        case CMD_SET_DEFAULT_SETTINGS:
+            if(setting_items_set_defaults() != 0) {
+                err = ESP_FAIL;
+            }
+            break;
+        case CMD_WRITE_FACTORY_DATA:
+            if (sys_info_write_factory_data() != ESP_OK) {
+                err = ESP_FAIL;
+            }
+            break;
+        default:
+            ESP_LOGW(TAG, "Unknown command code: %d", cmd_code);
+            break;
+    }
+    return err;
+}
+
+static esp_err_t cmd_post_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+
+    if (check_auth(req) != true) {
+        return ESP_OK;
+    }
+
+    cJSON *req_json = receive_json(req);
+    if (req_json == NULL) {
+        return ESP_FAIL;
+    }
+
+    if (cJSON_HasObjectItem(req_json, "cmd") != true) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No command in request");
+        cJSON_Delete(req_json);
+        return ESP_FAIL;
+    }
+
+    cJSON *cmd = cJSON_GetObjectItem(req_json, "cmd");
+    char cmd_str[CMD_NAME_MAX_LEN] = {0};
+    if (cmd->type == cJSON_String) {
+        strncpy(cmd_str, cmd->valuestring, CMD_NAME_MAX_LEN);
+    } else {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown command type");
+        cJSON_Delete(req_json);
+        return ESP_FAIL;
+    }
+    cJSON_Delete(req_json);
+
+    int cmd_code = get_cmd_code(cmd_str);
+    if (cmd_code == -1) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown command");
+        return ESP_FAIL;
+    }
+
+    if (execute_cmd(cmd_code) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to execute command");
+        return ESP_FAIL;
+    }
+    httpd_resp_send(req, NULL, 0);
+
+    return ESP_OK;
+}
+
 static const httpd_uri_t ssdp_schema = {
     .uri = "/description.xml",
     .method = HTTP_GET,
@@ -689,6 +813,12 @@ static const httpd_uri_t settings_post = {
     .handler = settings_post_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t cmd_post = {
+    .uri = "/cmd",
+    .method = HTTP_POST,
+    .handler = cmd_post_handler,
+    .user_ctx = NULL,
+};
 
 esp_err_t http_server_init(ssdp_config_t *ssdp_config)
 {
@@ -711,6 +841,7 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
         httpd_register_uri_handler(http_server, &info_post);
         httpd_register_uri_handler(http_server, &settings_get);
         httpd_register_uri_handler(http_server, &settings_post);
+        httpd_register_uri_handler(http_server, &cmd_post);
     }
     if (http_server == NULL) {
         return ESP_FAIL;
