@@ -128,6 +128,11 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
         memcpy(&wifi_config_ap.ap.password, apsta_cfg->ap_pass, strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN));
         err = esp_wifi_set_config(WIFI_IF_AP, &wifi_config_ap);
         ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "esp_wifi_set_config failed");
+        if (apsta_cfg->ap_event_handler != NULL) {
+            err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                      apsta_cfg->ap_event_handler, NULL, NULL);
+            ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "ap event handler register failed");
+        }
         err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &ap_event_handler,
                                                   NULL, NULL);
         ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG,
@@ -151,15 +156,15 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
         memcpy(&wifi_config_sta.sta.password, apsta_cfg->sta_pass, strnlen(apsta_cfg->sta_pass, WIFI_PASS_MAX_LEN));
         err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta);
         ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "esp_wifi_set_config failed");
-        if (apsta_cfg->ap_event_handler != NULL) {
-            err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                                      apsta_cfg->ap_event_handler, NULL, NULL);
-            ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "ap event handler register failed");
-        }
+
         if (apsta_cfg->sta_event_handler != NULL) {
             err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                                       apsta_cfg->sta_event_handler, NULL,
                                                       &instance_got_ip);
+            ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "sta event handler register failed");
+            err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                    apsta_cfg->sta_event_handler,
+                                                    NULL, &instance_any_id);
             ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "sta event handler register failed");
         }
         err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &sta_event_handler,
