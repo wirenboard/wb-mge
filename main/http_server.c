@@ -674,7 +674,7 @@ static esp_err_t execute_cmd(int cmd_code)
             reboot_device();
             break;
         case CMD_SET_DEFAULT_SETTINGS:
-            if(setting_items_set_defaults() != 0) {
+            if (setting_items_set_defaults() != 0) {
                 err = ESP_FAIL;
             }
             break;
