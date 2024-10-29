@@ -1,5 +1,3 @@
-IDF_PY = docker run --rm -v "$(PWD)":/project -w /project -u "$(UID)" -e HOME=/tmp espressif/idf idf.py
-
 all: unittests build-frontend build-idf-project
 
 UNITTESTS_DIRS += $(shell find -type d | grep unittests)
@@ -16,20 +14,18 @@ unittests: $(UNITTESTS_TARGETS)
 build-frontend:
 	set -e; \
 	cd main/frontend/; \
-	docker build -t frontend-build .; \
-	docker create --name temp-container frontend-build; \
-	docker cp temp-container:/dist/. ./dist; \
-	docker rm temp-container; \
-	find dist/ -type f -name "*.gz" -exec rm -f {} \;; \
-	find dist/ -type f -exec gzip -k {} \;; \
+	npm install;\
+	npm run build; \
+    find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
+    find dist/ -type f -exec gzip -k {} \; ; \
 	cd ../../; \
 	echo "Frontend build completed"
 
 build-idf-project:
-	$(IDF_PY) build
+	idf.py build
 
 clean:
-	$(IDF_PY) fullclean
+	idf.py fullclean
 	rm -rf build
 	rm -rf main/frontend/dist
 	@for dir in $(UNITTESTS_DIRS); do \
