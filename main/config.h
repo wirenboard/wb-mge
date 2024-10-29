@@ -1,7 +1,7 @@
 #pragma once
 
 #define BASE_HOSTNAME               "WB-MGE"
-#define FIRMWARE_VERSION            "1.0.0"
+#define FIRMWARE_VERSION            FW_VERSION_STRING
 
 // Значения по умолчанию
 #define DEFAULT_LOGIN               "wirenboard"
