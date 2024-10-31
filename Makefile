@@ -54,9 +54,8 @@ build-frontend:
 	cd main/frontend/; \
 	npm install;\
 	npm run build; \
-    find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
-    find dist/ -type f -exec gzip -k {} \; ; \
-	cd ../../
+	find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
+	find dist/ -type f -exec gzip -k {} \; ; \
 
 build-idf-project:
 	idf.py $(addprefix -D, $(DEFS)) build
