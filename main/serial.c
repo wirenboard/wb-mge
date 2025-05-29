@@ -19,10 +19,17 @@
 #define SERIAL_BUF_SIZE             (1000)
 #define SERIAL_READ_TOUT            (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
 #define SERIAL_TASK_STACK_SIZE      (1024 * 4)
-#define SERIAL_PORT_NUM             2
-#define SERIAL_INPUT_PIN            GPIO_NUM_5
-#define SERIAL_OUTPUT_PIN           GPIO_NUM_17
-#define SERIAL_IO_PIN               GPIO_NUM_33
+
+#define SERIAL_PORT_NUM             1
+#define SERIAL_INPUT_PIN            GPIO_NUM_9
+#define SERIAL_OUTPUT_PIN           GPIO_NUM_10
+#define SERIAL_IO_PIN               GPIO_NUM_4
+
+// TODO
+#define SERIAL_PORT_NUM2            2
+#define SERIAL_INPUT_PIN2           GPIO_NUM_12
+#define SERIAL_OUTPUT_PIN2          GPIO_NUM_14
+#define SERIAL_IO_PIN2              GPIO_NUM_15
 
 static const char *TAG = "serial";
 
