@@ -1,27 +1,22 @@
 #include "ethernet.h"
-
-#include "driver/gpio.h"
-#include "esp_check.h"
-#include "esp_eth.h"
-#include "esp_event.h"
-#include "esp_log.h"
-#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_types.h"
+#include "esp_eth.h"
+#include "esp_mac.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "esp_check.h"
+#include "driver/gpio.h"
 
-#define ETH_PHY_LAN87XX     1
+#define ETH_PHY_RTL8201     1
 #define ETH_MDC_GPIO        GPIO_NUM_23
 #define ETH_MDIO_GPIO       GPIO_NUM_18
-#define ETH_PHY_RST_GPIO    -1
-#define ETH_PHY_ADDR        1
-#define CLK_ENABLE_GPIO     GPIO_NUM_16
+#define ETH_PHY_RST_GPIO    GPIO_NUM_5
+#define ETH_PHY_ADDR        0 // LED0, LED1 are pulled down 
 
-esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t *static_ip)
+esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip)
 {
     esp_err_t err = ESP_OK;
-
-    ESP_ERROR_CHECK(gpio_set_direction(CLK_ENABLE_GPIO, GPIO_MODE_OUTPUT));
-    ESP_ERROR_CHECK(gpio_set_level(CLK_ENABLE_GPIO, 1));
 
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
     eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
@@ -30,6 +25,9 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
     phy_config.reset_gpio_num = ETH_PHY_RST_GPIO;
 
     eth_esp32_emac_config_t esp32_emac_config = ETH_ESP32_EMAC_DEFAULT_CONFIG();
+
+    esp32_emac_config.clock_config.rmii.clock_mode = EMAC_CLK_EXT_IN; // Use external clock
+    esp32_emac_config.clock_config.rmii.clock_gpio = GPIO_NUM_0;      // External clock on GPIO0
 
     esp32_emac_config.smi_gpio.mdc_num = ETH_MDC_GPIO;
     esp32_emac_config.smi_gpio.mdio_num = ETH_MDIO_GPIO;
@@ -50,8 +48,9 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
 
     esp_eth_handle_t eth_handle = NULL;
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
+    
     err = esp_eth_driver_install(&config, &eth_handle);
-    if (err != ESP_OK) {
+    if (err != ESP_OK){
         if (eth_handle != NULL) {
             esp_eth_driver_uninstall(eth_handle);
         }
@@ -89,10 +88,11 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
         if (err != ESP_OK) {
             return err;
         }
-        err = esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, eth_event_handler, NULL);
-        if (err != ESP_OK) {
-            return err;
-        }
+    }
+
+    err = esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, eth_event_handler, NULL);
+    if (err != ESP_OK) {
+        return err;
     }
 
     err = esp_eth_start(eth_handle);
