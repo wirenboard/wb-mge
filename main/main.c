@@ -19,7 +19,52 @@
 #include "wifi_apsta.h"
 #include "sys_info.h"
 
+#include "esp_io_expander_tca95xx_16bit.h"
+#include "driver/gpio.h"
+
+#include "rs485_control.h"
+#include "mio_control.h"
+#include "leds_control.h"
+
 static const char *TAG = "main";
+
+#define LEDS_TOGGLE_PERIOD_MS     500
+
+#define IO_EXPANDER_SDA_PIN       GPIO_NUM_32
+#define IO_EXPANDER_SCL_PIN       GPIO_NUM_33
+#define IO_EXPANDER_I2C_ADDRESS   ESP_IO_EXPANDER_I2C_TCA9555_ADDRESS_000
+
+static i2c_master_bus_handle_t i2c_handle = NULL;
+const i2c_master_bus_config_t bus_config = {
+    .i2c_port = I2C_NUM_0,
+    .sda_io_num = IO_EXPANDER_SDA_PIN,
+    .scl_io_num = IO_EXPANDER_SCL_PIN,
+    .clk_source = I2C_CLK_SRC_DEFAULT,
+};
+static esp_io_expander_handle_t io_expander = NULL;
+
+static void gpio_expander_init(void)
+{
+    i2c_new_master_bus(&bus_config, &i2c_handle);
+
+    esp_io_expander_new_i2c_tca95xx_16bit(i2c_handle, IO_EXPANDER_I2C_ADDRESS, &io_expander);
+    esp_io_expander_print_state(io_expander);
+}
+
+// task to toggle P04/P05/P07 every 500 ms // TODO: according to requirements https://wirenboard.youtrack.cloud/issue/FW-933
+static void blink_task(void *arg)
+{
+    while (1) {
+        leds_control_set_eth_led(true);
+        leds_control_set_wifi_led(true);
+        leds_control_set_unknown_led(true);
+        vTaskDelay(pdMS_TO_TICKS(LEDS_TOGGLE_PERIOD_MS));
+        leds_control_set_eth_led(false);
+        leds_control_set_wifi_led(false);
+        leds_control_set_unknown_led(false);
+        vTaskDelay(pdMS_TO_TICKS(LEDS_TOGGLE_PERIOD_MS));
+    }
+}
 
 // Выводит все настройки (кроме паролей) в лог.
 // TODO: В релизе можно удалить
@@ -186,6 +231,16 @@ void app_main(void)
 
     sys_info_init();
     print_setting_items();
+
+    gpio_expander_init();
+    rs485_control_init(io_expander);
+    leds_control_init(io_expander);
+    mio_control_init(io_expander);
+
+    mio_control_reset();
+
+    // init and start blink task to indicate that we are in bootloader mode
+    xTaskCreate(blink_task, "blink_task", 512, NULL, 1, NULL);
 
     while (1)
     {
