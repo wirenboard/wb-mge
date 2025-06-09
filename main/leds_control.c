@@ -18,7 +18,7 @@ void leds_control_init(esp_io_expander_handle_t io_expander_handle)
         return;
     }
 
-    esp_io_expander_handle_t io_expander = io_expander_handle;
+    io_expander = io_expander_handle;
 
     esp_io_expander_set_dir(io_expander, ETHERNET_LED_PIN, IO_EXPANDER_OUTPUT);
     esp_io_expander_set_level(io_expander, ETHERNET_LED_PIN, 0);

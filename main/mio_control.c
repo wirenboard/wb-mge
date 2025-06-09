@@ -11,7 +11,7 @@ static esp_io_expander_handle_t io_expander = NULL;
 void mio_control_init(esp_io_expander_handle_t io_expander_handle)
 {
     // Initialize the IO expander
-    if (io_expander == NULL) {
+    if (io_expander_handle == NULL) {
         ESP_LOGE(TAG, "IO expander is not initialized");
         return;
     }

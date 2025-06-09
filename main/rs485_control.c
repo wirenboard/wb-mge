@@ -56,7 +56,7 @@ void rs485_bus_vout_on_off(bool on)
 
 void rs485_control_init(esp_io_expander_handle_t io_expander_handle)
 {
-    if (io_expander == NULL) {
+    if (io_expander_handle == NULL) {
         ESP_LOGE(TAG, "io_expander is NULL");
         return;
     }
