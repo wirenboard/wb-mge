@@ -8,15 +8,15 @@
 #include "tcp_client.h"
 #include "tcp_server.h"
 
-#define SERIAL_PORT_NUM_1             2
-#define SERIAL_INPUT_PIN_1            GPIO_NUM_12
-#define SERIAL_OUTPUT_PIN_1           GPIO_NUM_14
-#define SERIAL_IO_PIN_1               GPIO_NUM_15
+#define SERIAL_PORT_NUM_1             1
+#define SERIAL_INPUT_PIN_1            GPIO_NUM_9
+#define SERIAL_OUTPUT_PIN_1           GPIO_NUM_10
+#define SERIAL_IO_PIN_1               GPIO_NUM_4
 
-#define SERIAL_PORT_NUM_2             1
-#define SERIAL_INPUT_PIN_2            GPIO_NUM_9
-#define SERIAL_OUTPUT_PIN_2           GPIO_NUM_10
-#define SERIAL_IO_PIN_2               GPIO_NUM_4
+#define SERIAL_PORT_NUM_2             2
+#define SERIAL_INPUT_PIN_2            GPIO_NUM_12
+#define SERIAL_OUTPUT_PIN_2           GPIO_NUM_14
+#define SERIAL_IO_PIN_2               GPIO_NUM_15
 
 static const char *TAG = "bridge";
 
