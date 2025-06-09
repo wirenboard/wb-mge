@@ -24,7 +24,7 @@ static const char *TAG = "serial";
 
 static void uart_event_task(void *pvParameters)
 {
-    serial_port_desc_t *desc = (serial_port_desc_t *)pvParameters;
+    serial_desc_t *desc = (serial_desc_t *)pvParameters;
     uart_event_t event;
     uint8_t *dtmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
     uart_flush_input(desc->port_num);
@@ -38,7 +38,7 @@ static void uart_event_task(void *pvParameters)
                     ESP_LOGD(TAG, "[UART DATA]: %d", event.size);
                     uart_read_bytes(desc->port_num, dtmp, event.size, portMAX_DELAY);
                     ESP_LOG_BUFFER_HEX_LEVEL(TAG, dtmp, event.size, ESP_LOG_DEBUG);
-                    desc->receive_handler(desc->port_num, dtmp, event.size);
+                    desc->receive_handler(desc, dtmp, event.size);
                     break;
                 case UART_FIFO_OVF:
                     ESP_LOGD(TAG, "hw fifo overflow");
@@ -70,18 +70,18 @@ static void uart_event_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-serial_port_desc_t* serial_init(uart_port_t port_num, serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
+serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
 {
     if (serial_receive_handler == NULL) {
         ESP_LOGE(TAG, "Serial receive handler is NULL");
         return NULL;
     }
-    serial_port_desc_t *desc = malloc(sizeof(serial_port_desc_t));
+    serial_desc_t *desc = malloc(sizeof(serial_desc_t));
     if (!desc) return NULL;
-    desc->port_num = port_num;
+    desc->port_num = serial_config->port_num;
     desc->receive_handler = serial_receive_handler;
     desc->uart_queue = NULL;
-    esp_err_t err = uart_driver_install(port_num, SERIAL_BUF_SIZE, SERIAL_BUF_SIZE, 20, &desc->uart_queue, 0);
+    esp_err_t err = uart_driver_install(serial_config->port_num, SERIAL_BUF_SIZE, SERIAL_BUF_SIZE, 20, &desc->uart_queue, 0);
     if (err != ESP_OK) { free(desc); return NULL; }
     uart_config_t uart_config = {
         .baud_rate = serial_config->baudrate,
@@ -91,19 +91,19 @@ serial_port_desc_t* serial_init(uart_port_t port_num, serial_config_t *serial_co
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    err = uart_param_config(port_num, &uart_config);
+    err = uart_param_config(serial_config->port_num, &uart_config);
     if (err != ESP_OK) { free(desc); return NULL; }
-    err = uart_set_pin(port_num, serial_config->tx_pin, serial_config->rx_pin, serial_config->dir_pin, NULL);
+    err = uart_set_pin(serial_config->port_num, serial_config->tx_pin, serial_config->rx_pin, serial_config->dir_pin, UART_PIN_NO_CHANGE);
     if (err != ESP_OK) { free(desc); return NULL; }
-    err = uart_set_mode(port_num, UART_MODE_RS485_HALF_DUPLEX);
+    err = uart_set_mode(serial_config->port_num, UART_MODE_RS485_HALF_DUPLEX);
     if (err != ESP_OK) { free(desc); return NULL; }
-    err = uart_set_rx_timeout(port_num, SERIAL_READ_TOUT);
+    err = uart_set_rx_timeout(serial_config->port_num, SERIAL_READ_TOUT);
     if (err != ESP_OK) { free(desc); return NULL; }
     xTaskCreate(uart_event_task, "uart_event_task", SERIAL_TASK_STACK_SIZE, desc, 12, NULL);
     return desc;
 }
 
-esp_err_t serial_send(serial_port_desc_t *desc, uint8_t *data, size_t len)
+esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 {
     int written = uart_write_bytes(desc->port_num, (const char *)data, len);
     if (written != len) {
