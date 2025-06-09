@@ -18,50 +18,37 @@
 // при переполнении буфера возникнет событие UART_BUFFER_FULL
 #define SERIAL_BUF_SIZE             (1000)
 #define SERIAL_READ_TOUT            (30)  // (3) 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
-#define SERIAL_TASK_STACK_SIZE      (1024 * 4)
-
-#define SERIAL_PORT_NUM             1
-#define SERIAL_INPUT_PIN            GPIO_NUM_9
-#define SERIAL_OUTPUT_PIN           GPIO_NUM_10
-#define SERIAL_IO_PIN               GPIO_NUM_4
-
-// TODO
-#define SERIAL_PORT_NUM2            2
-#define SERIAL_INPUT_PIN2           GPIO_NUM_12
-#define SERIAL_OUTPUT_PIN2          GPIO_NUM_14
-#define SERIAL_IO_PIN2              GPIO_NUM_15
+#define SERIAL_TASK_STACK_SIZE      (1024 * 4) // TODO: check stack size
 
 static const char *TAG = "serial";
 
-static serial_receive_handler_t receive_handler = NULL;
-static QueueHandle_t uart_queue = NULL;
-
 static void uart_event_task(void *pvParameters)
 {
+    serial_port_desc_t *desc = (serial_port_desc_t *)pvParameters;
     uart_event_t event;
     uint8_t *dtmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
-    uart_flush_input(SERIAL_PORT_NUM);
+    uart_flush_input(desc->port_num);
 
     for (;;) {
-        if (xQueueReceive(uart_queue, (void *)&event, (TickType_t)portMAX_DELAY)) {
+        if (xQueueReceive(desc->uart_queue, (void *)&event, (TickType_t)portMAX_DELAY)) {
             memset(dtmp, 0, SERIAL_BUF_SIZE);
-            ESP_LOGD(TAG, "uart[%d] event:", SERIAL_PORT_NUM);
+            ESP_LOGD(TAG, "uart[%d] event:", desc->port_num);
             switch (event.type) {
                 case UART_DATA:
                     ESP_LOGD(TAG, "[UART DATA]: %d", event.size);
-                    uart_read_bytes(SERIAL_PORT_NUM, dtmp, event.size, portMAX_DELAY);
+                    uart_read_bytes(desc->port_num, dtmp, event.size, portMAX_DELAY);
                     ESP_LOG_BUFFER_HEX_LEVEL(TAG, dtmp, event.size, ESP_LOG_DEBUG);
-                    receive_handler(dtmp, event.size);
+                    desc->receive_handler(desc->port_num, dtmp, event.size);
                     break;
                 case UART_FIFO_OVF:
                     ESP_LOGD(TAG, "hw fifo overflow");
-                    uart_flush_input(SERIAL_PORT_NUM);
-                    xQueueReset(uart_queue);
+                    uart_flush_input(desc->port_num);
+                    xQueueReset(desc->uart_queue);
                     break;
                 case UART_BUFFER_FULL:
                     ESP_LOGD(TAG, "ring buffer full");
-                    uart_flush_input(SERIAL_PORT_NUM);
-                    xQueueReset(uart_queue);
+                    uart_flush_input(desc->port_num);
+                    xQueueReset(desc->uart_queue);
                     break;
                 case UART_BREAK:
                     ESP_LOGD(TAG, "uart rx break");
@@ -83,20 +70,19 @@ static void uart_event_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-esp_err_t serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
+serial_port_desc_t* serial_init(uart_port_t port_num, serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
 {
-    esp_err_t err = ESP_OK;
     if (serial_receive_handler == NULL) {
         ESP_LOGE(TAG, "Serial receive handler is NULL");
-        return ESP_ERR_INVALID_ARG;
+        return NULL;
     }
-
-    receive_handler = serial_receive_handler;
-    err = uart_driver_install(SERIAL_PORT_NUM, SERIAL_BUF_SIZE, SERIAL_BUF_SIZE, 20, &uart_queue, 0);
-    if (err != ESP_OK) {
-        return err;
-    }
-
+    serial_port_desc_t *desc = malloc(sizeof(serial_port_desc_t));
+    if (!desc) return NULL;
+    desc->port_num = port_num;
+    desc->receive_handler = serial_receive_handler;
+    desc->uart_queue = NULL;
+    esp_err_t err = uart_driver_install(port_num, SERIAL_BUF_SIZE, SERIAL_BUF_SIZE, 20, &desc->uart_queue, 0);
+    if (err != ESP_OK) { free(desc); return NULL; }
     uart_config_t uart_config = {
         .baud_rate = serial_config->baudrate,
         .data_bits = serial_config->databits,
@@ -105,33 +91,23 @@ esp_err_t serial_init(serial_config_t *serial_config, serial_receive_handler_t s
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    err = uart_param_config(SERIAL_PORT_NUM, &uart_config);
-    if (err != ESP_OK) {
-        return err;
-    }
-    err = uart_set_pin(SERIAL_PORT_NUM, SERIAL_OUTPUT_PIN, SERIAL_INPUT_PIN, SERIAL_IO_PIN, UART_PIN_NO_CHANGE);
-    if (err != ESP_OK) {
-        return err;
-    }
-    err = uart_set_mode(SERIAL_PORT_NUM, UART_MODE_RS485_HALF_DUPLEX);
-    if (err != ESP_OK) {
-        return err;
-    }
-    err = uart_set_rx_timeout(SERIAL_PORT_NUM, SERIAL_READ_TOUT);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    xTaskCreate(uart_event_task, "uart_event_task", SERIAL_TASK_STACK_SIZE, NULL, 12, NULL);  // TODO: check stack size
-
-    return err;
+    err = uart_param_config(port_num, &uart_config);
+    if (err != ESP_OK) { free(desc); return NULL; }
+    err = uart_set_pin(port_num, serial_config->tx_pin, serial_config->rx_pin, serial_config->dir_pin, NULL);
+    if (err != ESP_OK) { free(desc); return NULL; }
+    err = uart_set_mode(port_num, UART_MODE_RS485_HALF_DUPLEX);
+    if (err != ESP_OK) { free(desc); return NULL; }
+    err = uart_set_rx_timeout(port_num, SERIAL_READ_TOUT);
+    if (err != ESP_OK) { free(desc); return NULL; }
+    xTaskCreate(uart_event_task, "uart_event_task", SERIAL_TASK_STACK_SIZE, desc, 12, NULL);
+    return desc;
 }
 
-esp_err_t serial_send(uint8_t *data, size_t len)
+esp_err_t serial_send(serial_port_desc_t *desc, uint8_t *data, size_t len)
 {
-    int written = uart_write_bytes(SERIAL_PORT_NUM, (const char *)data, len);
+    int written = uart_write_bytes(desc->port_num, (const char *)data, len);
     if (written != len) {
-        ESP_LOGE(TAG, "Error sending data to serial");
+        ESP_LOGE(TAG, "Error sending data to serial port %d", desc->port_num);
         return ESP_FAIL;
     }
     return ESP_OK;
