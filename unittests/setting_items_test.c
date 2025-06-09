@@ -12,29 +12,33 @@ int baudrate_test(void)
 {
     const uint32_t valid_test_baudrate[] = {9600, 115200, 460800};
     const uint32_t invalid_test_baudrate[] = {0, 299, 100, 1000000};
+    const char* keys[] = {"baudrate", "baudrate_2"};
 
-    for (int i = 0; i < ARRAY_SIZE(valid_test_baudrate); i++) {
-        uint32_t expected_baudrate = valid_test_baudrate[i];
-        if (setting_items_save("baudrate", &expected_baudrate) != 0) {
-            TEST_FAILED("Failed to save baudrate %u", expected_baudrate);
-            return TEST_ERR;
+    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
+        const char* key = keys[k];
+        for (int i = 0; i < ARRAY_SIZE(valid_test_baudrate); i++) {
+            uint32_t expected_baudrate = valid_test_baudrate[i];
+            if (setting_items_save(key, &expected_baudrate) != 0) {
+                TEST_FAILED("Failed to save %s %u", key, expected_baudrate);
+                return TEST_ERR;
+            }
+            uint32_t got_baudrate = 0;
+            if (setting_items_read(key, &got_baudrate)) {
+                TEST_FAILED("Failed to read %s", key);
+                return TEST_ERR;
+            }
+            if (expected_baudrate != got_baudrate) {
+                TEST_FAILED("Expected %u, got %u for %s", expected_baudrate, got_baudrate, key);
+                return TEST_ERR;
+            }
         }
-        uint32_t got_baudrate = 0;
-        if (setting_items_read("baudrate", &got_baudrate)) {
-            TEST_FAILED("Failed to read baudrate");
-            return TEST_ERR;
-        }
-        if (expected_baudrate != got_baudrate) {
-            TEST_FAILED("Expected %u, got %u", expected_baudrate, got_baudrate);
-            return TEST_ERR;
-        }
-    }
 
-    for (int i = 0; i < ARRAY_SIZE(invalid_test_baudrate); i++) {
-        uint32_t invalid_baudrate = invalid_test_baudrate[i];
-        if (setting_items_save("baudrate", &invalid_baudrate) == 0) {
-            TEST_FAILED("Saved invalid baudrate %u", invalid_baudrate);
-            return TEST_ERR;
+        for (int i = 0; i < ARRAY_SIZE(invalid_test_baudrate); i++) {
+            uint32_t invalid_baudrate = invalid_test_baudrate[i];
+            if (setting_items_save(key, &invalid_baudrate) == 0) {
+                TEST_FAILED("Saved invalid %s %u", key, invalid_baudrate);
+                return TEST_ERR;
+            }
         }
     }
 
@@ -47,29 +51,33 @@ int parity_test(void)
     const char* valid_test_parity[] = {UART_PARITY_DISABLE_STR, UART_PARITY_EVEN_STR,
                                        UART_PARITY_ODD_STR};
     const char* invalid_test_parity[] = {"n", "e", "o", "nonee", "evenn", "oddd"};
+    const char* keys[] = {"parity", "parity_2"};
 
-    for (int i = 0; i < ARRAY_SIZE(valid_test_parity); i++) {
-        const char* expected_str = valid_test_parity[i];
-        if (setting_items_save("parity", expected_str) != 0) {
-            TEST_FAILED("Failed to save parity \"%s\"", expected_str);
-            return TEST_ERR;
+    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
+        const char* key = keys[k];
+        for (int i = 0; i < ARRAY_SIZE(valid_test_parity); i++) {
+            const char* expected_str = valid_test_parity[i];
+            if (setting_items_save(key, expected_str) != 0) {
+                TEST_FAILED("Failed to save %s \"%s\"", key, expected_str);
+                return TEST_ERR;
+            }
+            char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+            if (setting_items_read(key, got_str)) {
+                TEST_FAILED("Failed to read %s", key);
+                return TEST_ERR;
+            }
+            if (strncmp(expected_str, got_str, SETTING_ITEM_MAX_STR_LEN) != 0) {
+                TEST_FAILED("Expected %s, got %s for %s", expected_str, got_str, key);
+                return TEST_ERR;
+            }
         }
-        char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-        if (setting_items_read("parity", got_str)) {
-            TEST_FAILED("Failed to read parity");
-            return TEST_ERR;
-        }
-        if (strncmp(expected_str, got_str, SETTING_ITEM_MAX_STR_LEN) != 0) {
-            TEST_FAILED("Expected %s, got %s", expected_str, got_str);
-            return TEST_ERR;
-        }
-    }
 
-    for (int i = 0; i < ARRAY_SIZE(invalid_test_parity); i++) {
-        const char* invalid_str = invalid_test_parity[i];
-        if (setting_items_save("parity", invalid_str) == 0) {
-            TEST_FAILED("Saved invalid parity \"%s\"", invalid_str);
-            return TEST_ERR;
+        for (int i = 0; i < ARRAY_SIZE(invalid_test_parity); i++) {
+            const char* invalid_str = invalid_test_parity[i];
+            if (setting_items_save(key, invalid_str) == 0) {
+                TEST_FAILED("Saved invalid %s \"%s\"", key, invalid_str);
+                return TEST_ERR;
+            }
         }
     }
 
@@ -82,29 +90,33 @@ int databits_test(void)
     const char* valid_test_databits[] = {UART_DATA_5_BITS_STR, UART_DATA_6_BITS_STR,
                                          UART_DATA_7_BITS_STR, UART_DATA_8_BITS_STR};
     const char* invalid_test_databits[] = {"4", "9", "5b", "6b", "7b", "8b"};
+    const char* keys[] = {"databits", "databits_2"};
 
-    for (int i = 0; i < ARRAY_SIZE(valid_test_databits); i++) {
-        const char* expected_str = valid_test_databits[i];
-        if (setting_items_save("databits", expected_str) != 0) {
-            TEST_FAILED("Failed to save databits \"%s\"", expected_str);
-            return TEST_ERR;
+    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
+        const char* key = keys[k];
+        for (int i = 0; i < ARRAY_SIZE(valid_test_databits); i++) {
+            const char* expected_str = valid_test_databits[i];
+            if (setting_items_save(key, expected_str) != 0) {
+                TEST_FAILED("Failed to save %s \"%s\"", key, expected_str);
+                return TEST_ERR;
+            }
+            char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+            if (setting_items_read(key, got_str)) {
+                TEST_FAILED("Failed to read %s", key);
+                return TEST_ERR;
+            }
+            if (strncmp(expected_str, got_str, SETTING_ITEM_MAX_STR_LEN) != 0) {
+                TEST_FAILED("Expected %s, got %s for %s", expected_str, got_str, key);
+                return TEST_ERR;
+            }
         }
-        char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-        if (setting_items_read("databits", got_str)) {
-            TEST_FAILED("Failed to read databits");
-            return TEST_ERR;
-        }
-        if (strncmp(expected_str, got_str, SETTING_ITEM_MAX_STR_LEN) != 0) {
-            TEST_FAILED("Expected %s, got %s", expected_str, got_str);
-            return TEST_ERR;
-        }
-    }
 
-    for (int i = 0; i < ARRAY_SIZE(invalid_test_databits); i++) {
-        const char* invalid_str = invalid_test_databits[i];
-        if (setting_items_save("databits", invalid_str) == 0) {
-            TEST_FAILED("Saved invalid databits \"%s\"", invalid_str);
-            return TEST_ERR;
+        for (int i = 0; i < ARRAY_SIZE(invalid_test_databits); i++) {
+            const char* invalid_str = invalid_test_databits[i];
+            if (setting_items_save(key, invalid_str) == 0) {
+                TEST_FAILED("Saved invalid %s \"%s\"", key, invalid_str);
+                return TEST_ERR;
+            }
         }
     }
 
@@ -117,29 +129,33 @@ int stopbits_test(void)
     const char* valid_test_stopbits[] = {UART_STOP_BITS_1_STR, UART_STOP_BITS_1_5_STR,
                                          UART_STOP_BITS_2_STR};
     const char* invalid_test_stopbits[] = {"1", "1.5", "2", "1-b", "1.5-b", "2-b"};
+    const char* keys[] = {"stopbits", "stopbits_2"};
 
-    for (int i = 0; i < ARRAY_SIZE(valid_test_stopbits); i++) {
-        const char* expected_str = valid_test_stopbits[i];
-        if (setting_items_save("stopbits", expected_str) != 0) {
-            TEST_FAILED("Failed to save stopbits \"%s\"", expected_str);
-            return TEST_ERR;
+    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
+        const char* key = keys[k];
+        for (int i = 0; i < ARRAY_SIZE(valid_test_stopbits); i++) {
+            const char* expected_str = valid_test_stopbits[i];
+            if (setting_items_save(key, expected_str) != 0) {
+                TEST_FAILED("Failed to save %s \"%s\"", key, expected_str);
+                return TEST_ERR;
+            }
+            char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+            if (setting_items_read(key, got_str)) {
+                TEST_FAILED("Failed to read %s", key);
+                return TEST_ERR;
+            }
+            if (strncmp(expected_str, got_str, SETTING_ITEM_MAX_STR_LEN) != 0) {
+                TEST_FAILED("Expected %s, got %s for %s", expected_str, got_str, key);
+                return TEST_ERR;
+            }
         }
-        char got_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-        if (setting_items_read("stopbits", got_str)) {
-            TEST_FAILED("Failed to read stopbits");
-            return TEST_ERR;
-        }
-        if (strncmp(expected_str, got_str, SETTING_ITEM_MAX_STR_LEN) != 0) {
-            TEST_FAILED("Expected %s, got %s", expected_str, got_str);
-            return TEST_ERR;
-        }
-    }
 
-    for (int i = 0; i < ARRAY_SIZE(invalid_test_stopbits); i++) {
-        const char* invalid_str = invalid_test_stopbits[i];
-        if (setting_items_save("stopbits", invalid_str) == 0) {
-            TEST_FAILED("Saved invalid stopbits \"%s\"", invalid_str);
-            return TEST_ERR;
+        for (int i = 0; i < ARRAY_SIZE(invalid_test_stopbits); i++) {
+            const char* invalid_str = invalid_test_stopbits[i];
+            if (setting_items_save(key, invalid_str) == 0) {
+                TEST_FAILED("Saved invalid %s \"%s\"", key, invalid_str);
+                return TEST_ERR;
+            }
         }
     }
 
@@ -182,32 +198,37 @@ int ip_test(void)
     return TEST_OK;
 }
 
-int bridge_mode_test(void) {
+int bridge_mode_test(void)
+{
     const char* valid_test_bridge_mode[] = {BRIDGE_MODE_SERVER_STR, BRIDGE_MODE_CLIENT_STR};
     const char* invalid_test_bridge_mode[] = {"server", "client", "serverr", "clientt"};
+    const char* keys[] = {"bridge_mode", "bridge_mode_2"};
 
-    for (int i = 0; i < ARRAY_SIZE(valid_test_bridge_mode); i++) {
-        const char*  expected_bridge_mode = valid_test_bridge_mode[i];
-        if (setting_items_save("bridge_mode", expected_bridge_mode) != 0) {
-            TEST_FAILED("Failed to save bridge_mode %s", expected_bridge_mode);
-            return TEST_ERR;
+    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
+        const char* key = keys[k];
+        for (int i = 0; i < ARRAY_SIZE(valid_test_bridge_mode); i++) {
+            const char* expected_bridge_mode = valid_test_bridge_mode[i];
+            if (setting_items_save(key, expected_bridge_mode) != 0) {
+                TEST_FAILED("Failed to save %s %s", key, expected_bridge_mode);
+                return TEST_ERR;
+            }
+            char got_bridge_mode[SETTING_ITEM_MAX_STR_LEN] = {0};
+            if (setting_items_read(key, got_bridge_mode)) {
+                TEST_FAILED("Failed to read %s", key);
+                return TEST_ERR;
+            }
+            if (strncmp(expected_bridge_mode, got_bridge_mode, SETTING_ITEM_MAX_STR_LEN) != 0) {
+                TEST_FAILED("Expected %s, got %s for %s", expected_bridge_mode, got_bridge_mode, key);
+                return TEST_ERR;
+            }
         }
-        char  got_bridge_mode[SETTING_ITEM_MAX_STR_LEN] = {0};
-        if (setting_items_read("bridge_mode", got_bridge_mode)) {
-            TEST_FAILED("Failed to read bridge_mode");
-            return TEST_ERR;
-        }
-        if (strncmp(expected_bridge_mode, got_bridge_mode, SETTING_ITEM_MAX_STR_LEN) != 0) {
-            TEST_FAILED("Expected %s, got %s", expected_bridge_mode, got_bridge_mode);
-            return TEST_ERR;
-        }
-    }
 
-    for (int i = 0; i < ARRAY_SIZE(invalid_test_bridge_mode); i++) {
-        const char* invalid_bridge_mode = invalid_test_bridge_mode[i];
-        if (setting_items_save("bridge_mode", invalid_bridge_mode) == 0) {
-            TEST_FAILED("Saved invalid bridge_mode \"%s\"", invalid_bridge_mode);
-            return TEST_ERR;
+        for (int i = 0; i < ARRAY_SIZE(invalid_test_bridge_mode); i++) {
+            const char* invalid_bridge_mode = invalid_test_bridge_mode[i];
+            if (setting_items_save(key, invalid_bridge_mode) == 0) {
+                TEST_FAILED("Saved invalid %s \"%s\"", key, invalid_bridge_mode);
+                return TEST_ERR;
+            }
         }
     }
 
