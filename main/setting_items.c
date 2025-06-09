@@ -29,6 +29,7 @@ static char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
 static const int default_baudrate = DEFAULT_BAUDRATE;
 static const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
 static const int default_bridge_port = DEFAULT_BRIDGE_PORT;
+static const int default_bridge_port2 = DEFAULT_BRIDGE_PORT2;
 static const bool default_bridge_mb = DEFAULT_BRIDGE_MB;
 
 static const string_int_map_t wifi_mode_map[] = {
@@ -738,6 +739,33 @@ static const setting_item_t setting_items[] = {
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
         .save_to_storage = save_bool_value,
         .read_from_storage = read_bool_value,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_BRIDGE_MODE2,
+        .default_value = DEFAULT_BRIDGE_MODE,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_bridge_mode,
+        .read_from_storage = read_bridge_mode,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_BRIDGE_PORT2,
+        .default_value = &default_bridge_port2,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_NUM,
+        .save_to_storage = save_bridge_port,
+        .read_from_storage = read_bridge_port,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_BRIDGE_IP2,
+        .default_value = DEFAULT_BRIDGE_IP,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_ip,
+        .read_from_storage = read_ip,
         .read_from_storage_raw = read_raw_value,
     },
 };

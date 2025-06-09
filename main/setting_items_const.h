@@ -10,14 +10,22 @@
 #define KEY_HOSTNAME                "hostname"
 #define KEY_LOGIN                   "login"
 #define KEY_PASS                    "pass"
+
 #define KEY_BAUDRATE                "baudrate"
 #define KEY_STOPBITS                "stopbits"
 #define KEY_PARITY                  "parity"
 #define KEY_DATABITS                "databits"
+
+#define KEY_BAUDRATE2               "baudrate_2"
+#define KEY_STOPBITS2               "stopbits_2"
+#define KEY_PARITY2                 "parity_2"
+#define KEY_DATABITS2               "databits_2"
+
 #define KEY_ETH_IP_STATIC           "eth_ip_static"
 #define KEY_ETH_MASK_STATIC         "eth_mask_static"
 #define KEY_ETH_GW_STATIC           "eth_gw_static"
 #define KEY_ETH_DHCPC               "eth_dhcpc"
+
 #define KEY_WIFI_MODE               "wifi_mode"
 #define KEY_AP_IP_STATIC            "ap_ip_static"
 #define KEY_AP_MASK_STATIC          "ap_mask_static"
@@ -26,10 +34,14 @@
 #define KEY_AP_PASS                 "ap_pass"
 #define KEY_STA_SSID                "sta_ssid"
 #define KEY_STA_PASS                "sta_pass"
+
 #define KEY_BRIDGE_MODE             "bridge_mode"
 #define KEY_BRIDGE_PORT             "bridge_port"
 #define KEY_BRIDGE_IP               "bridge_ip"
-#define KEY_BRIDGE_MB               "bridge_mb"
+#define KEY_BRIDGE_MODE2            "bridge_mode_2"
+#define KEY_BRIDGE_PORT2            "bridge_port_2"
+#define KEY_BRIDGE_IP2              "bridge_ip_2"
+#define KEY_BRIDGE_MB               "bridge_mb" // FIXME: что это?
 
 // WiFi режимы
 #define WIFI_MODE_AP_STR            "ap"
