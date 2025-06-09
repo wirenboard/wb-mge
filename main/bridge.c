@@ -37,7 +37,13 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
     ESP_LOGI(TAG, "received %d bytes from serial port %d", len, desc->port_num);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_INFO);
 
-    int idx = (desc == serial_desc[0]) ? 0 : (desc == serial_desc[1]) ? 1 : -1;
+    int idx = -1;
+    if (desc == serial_desc[0]) {
+        idx = 0;
+    } else if (desc == serial_desc[1]) {
+        idx = 1;
+    }
+    
     if (idx < 0) {
         ESP_LOGE(TAG, "%s: unknown serial descriptor", __func__);
         return;
@@ -69,7 +75,12 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
         return;
     }
 
-    int idx = (desc == tcp_desc[0]) ? 0 : (desc == tcp_desc[1]) ? 1 : -1;
+    int idx = -1;
+    if (desc == tcp_desc[0]) {
+        idx = 0;
+    } else if (desc == tcp_desc[1]) {
+        idx = 1;
+    }
 
     if (idx < 0) {
         ESP_LOGE(TAG, "%s: unknown tcp descriptor", __func__);
@@ -87,6 +98,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
 
     if (serial_desc[idx]) {
         err = serial_send(serial_desc[idx], data, len);
+        
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "%s: error sending data to serial port", __func__);
         }
@@ -97,6 +109,7 @@ static esp_err_t bridge_init_port(serial_config_t *config, bridge_mode_t mode, i
                                   tcp_desc_t **tcp_desc)
 {
     esp_err_t err = ESP_OK;
+    
     switch (mode) {
         case BRIDGE_MODE_SERVER:
             err = tcp_server_init(port, process_data_from_tcp, tcp_desc);
@@ -114,6 +127,7 @@ static esp_err_t bridge_init_port(serial_config_t *config, bridge_mode_t mode, i
     }
 
     *serial_desc = serial_init(config, process_data_from_serial);
+    
     if (!*serial_desc) {
         ESP_LOGE(TAG, "error initializing serial port");
         return ESP_FAIL;
