@@ -240,8 +240,8 @@ void app_main(void)
     mio_control_reset();
 
     // init and start blink task to indicate that we are in bootloader mode
-    xTaskCreate(blink_task, "blink_task", 512, NULL, 1, NULL);
-
+    xTaskCreate(blink_task, "blink_task", 2048, NULL, 1, NULL);
+    
     while (1)
     {
         if ((sys_info.wifi_ap_connections_count > 0) ||
