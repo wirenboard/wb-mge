@@ -12,7 +12,7 @@
 
 #define IP_ADDR_OCTETS_NUM      4
 #define IP_ADDR_STR_LEN         16
-#define MIN_REGISTERED_PORT     1024
+#define MIN_TCP_PORT            1
 #define MAX_DYNAMIC_PORT        65535
 
 #define SETTING_ITEMS_NUM       ARRAY_SIZE(setting_items)
@@ -258,7 +258,7 @@ static bool read_bridge_mode(const char *key, void *value)
 static bool save_bridge_port(const char *key, const void *value)
 {
     int bridge_port = *(int *)value;
-    if ((bridge_port < MIN_REGISTERED_PORT) || (bridge_port > MAX_DYNAMIC_PORT)) {
+    if ((bridge_port < MIN_TCP_PORT) || (bridge_port > MAX_DYNAMIC_PORT)) {
         return false;
     }
     if (iface.save_num(key, bridge_port) != 0) {
