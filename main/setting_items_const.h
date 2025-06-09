@@ -38,10 +38,11 @@
 #define KEY_BRIDGE_MODE             "bridge_mode"
 #define KEY_BRIDGE_PORT             "bridge_port"
 #define KEY_BRIDGE_IP               "bridge_ip"
+#define KEY_BRIDGE_MB               "bridge_mb"
 #define KEY_BRIDGE_MODE2            "bridge_mode_2"
 #define KEY_BRIDGE_PORT2            "bridge_port_2"
 #define KEY_BRIDGE_IP2              "bridge_ip_2"
-#define KEY_BRIDGE_MB               "bridge_mb" // FIXME: что это?
+#define KEY_BRIDGE_MB2              "bridge_mb_2"
 
 // WiFi режимы
 #define WIFI_MODE_AP_STR            "ap"
