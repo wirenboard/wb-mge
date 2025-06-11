@@ -20,9 +20,9 @@ void rs485_term_on_off(uint8_t port, bool on)
     }
 
     if (port == 1) {
-        esp_io_expander_set_level(io_expander, TERM485_1_PIN, on ? 1 : 0);
+        esp_io_expander_set_level(io_expander, TERM485_1_PIN, on);
     } else if (port == 2) {
-        esp_io_expander_set_level(io_expander, TERM485_2_PIN, on ? 1 : 0);
+        esp_io_expander_set_level(io_expander, TERM485_2_PIN, on);
     } else {
         ESP_LOGE(TAG, "Invalid RS485 port number: %d", port);
     }
@@ -36,9 +36,9 @@ void rs485_pupd_on_off(uint8_t port, bool on)
     }
 
     if (port == 1) {
-        esp_io_expander_set_level(io_expander, FAILSAFE_485_1_PIN, on ? 1 : 0);
+        esp_io_expander_set_level(io_expander, FAILSAFE_485_1_PIN, on);
     } else if (port == 2) {
-        esp_io_expander_set_level(io_expander, FAILSAFE_485_2_PIN, on ? 1 : 0);
+        esp_io_expander_set_level(io_expander, FAILSAFE_485_2_PIN, on);
     } else {
         ESP_LOGE(TAG, "Invalid RS485 port number: %d", port);
     }
@@ -51,7 +51,7 @@ void rs485_bus_vout_on_off(bool on)
         return;
     }
 
-    esp_io_expander_set_level(io_expander, VOUT_485_PIN, on ? 1 : 0);
+    esp_io_expander_set_level(io_expander, VOUT_485_PIN, on);
 }
 
 void rs485_control_init(esp_io_expander_handle_t io_expander_handle)
