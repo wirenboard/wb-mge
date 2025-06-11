@@ -22,6 +22,7 @@
 #define DEFAULT_STA_SSID            ""
 #define DEFAULT_STA_PASS            ""
 #define DEFAULT_BRIDGE_MODE         BRIDGE_MODE_SERVER_STR
-#define DEFAULT_BRIDGE_PORT         1234
+#define DEFAULT_BRIDGE_PORT         502
 #define DEFAULT_BRIDGE_IP           "192.168.4.2"
+#define DEFAULT_BRIDGE_PORT2        503
 #define DEFAULT_BRIDGE_MB           false

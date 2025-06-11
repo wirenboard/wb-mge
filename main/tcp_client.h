@@ -1,11 +1,10 @@
 #pragma once
 
-#include <stdint.h>
+#include "tcp_desc.h"
 
 #include "esp_err.h"
-
-typedef void (*tcpc_receive_handler_t)(uint8_t *, size_t);
+#include <stdint.h>
 
 esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
-                          tcpc_receive_handler_t tcpc_receive_handler);
-esp_err_t tcp_client_send(uint8_t *data, size_t len);
+                          tcp_receive_handler_t tcpc_receive_handler, tcp_desc_t **out_desc);
+esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len);

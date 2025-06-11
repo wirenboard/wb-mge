@@ -12,7 +12,7 @@
 
 #define IP_ADDR_OCTETS_NUM      4
 #define IP_ADDR_STR_LEN         16
-#define MIN_REGISTERED_PORT     1024
+#define MIN_TCP_PORT            1
 #define MAX_DYNAMIC_PORT        65535
 
 #define SETTING_ITEMS_NUM       ARRAY_SIZE(setting_items)
@@ -29,6 +29,7 @@ static char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
 static const int default_baudrate = DEFAULT_BAUDRATE;
 static const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
 static const int default_bridge_port = DEFAULT_BRIDGE_PORT;
+static const int default_bridge_port2 = DEFAULT_BRIDGE_PORT2;
 static const bool default_bridge_mb = DEFAULT_BRIDGE_MB;
 
 static const string_int_map_t wifi_mode_map[] = {
@@ -257,7 +258,7 @@ static bool read_bridge_mode(const char *key, void *value)
 static bool save_bridge_port(const char *key, const void *value)
 {
     int bridge_port = *(int *)value;
-    if ((bridge_port < MIN_REGISTERED_PORT) || (bridge_port > MAX_DYNAMIC_PORT)) {
+    if ((bridge_port < MIN_TCP_PORT) || (bridge_port > MAX_DYNAMIC_PORT)) {
         return false;
     }
     if (iface.save_num(key, bridge_port) != 0) {
@@ -597,6 +598,42 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
+        .key = KEY_BAUDRATE2,
+        .default_value = &default_baudrate,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_NUM,
+        .save_to_storage = save_baudrate,
+        .read_from_storage = read_baudrate,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_STOPBITS2,
+        .default_value = DEFAULT_STOPBITS,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_stopbits,
+        .read_from_storage = read_stopbits,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_PARITY2,
+        .default_value = DEFAULT_PARITY,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_parity,
+        .read_from_storage = read_parity,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_DATABITS2,
+        .default_value = DEFAULT_DATABITS,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_databits,
+        .read_from_storage = read_databits,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
         .key = KEY_ETH_IP_STATIC,
         .default_value = DEFAULT_ETH_IP_STATIC,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
@@ -733,6 +770,42 @@ static const setting_item_t setting_items[] = {
     },
     {
         .key = KEY_BRIDGE_MB,
+        .default_value = &default_bridge_mb,
+        .type_in_storage = SETTING_ITEM_TYPE_BOOL,
+        .type_in_json = SETTING_ITEM_TYPE_BOOL,
+        .save_to_storage = save_bool_value,
+        .read_from_storage = read_bool_value,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_BRIDGE_MODE2,
+        .default_value = DEFAULT_BRIDGE_MODE,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_bridge_mode,
+        .read_from_storage = read_bridge_mode,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_BRIDGE_PORT2,
+        .default_value = &default_bridge_port2,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_NUM,
+        .save_to_storage = save_bridge_port,
+        .read_from_storage = read_bridge_port,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_BRIDGE_IP2,
+        .default_value = DEFAULT_BRIDGE_IP,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_STR,
+        .save_to_storage = save_ip,
+        .read_from_storage = read_ip,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_BRIDGE_MB2,
         .default_value = &default_bridge_mb,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,

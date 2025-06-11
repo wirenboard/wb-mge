@@ -14,12 +14,9 @@
 
 static const char *TAG = "tcp-server";
 
-static tcps_receive_handler_t tcp_server_receive_handler = NULL;
-static int sock = -1;
-
 static void tcp_server_task(void *pvParameters)
 {
-    int listen_sock = *((int *)pvParameters);
+    tcp_desc_t *desc = (tcp_desc_t *)pvParameters;
     char addr_str[128];
     char rx_buffer[RX_BUFFER_SIZE];
     int len;
@@ -31,25 +28,29 @@ static void tcp_server_task(void *pvParameters)
     while (1) {
         struct sockaddr_storage source_addr;
         socklen_t addr_len = sizeof(source_addr);
-        sock = accept(listen_sock, (struct sockaddr *)&source_addr, &addr_len);
-        if (sock < 0) {
+        desc->client_sock = accept(desc->listen_sock, (struct sockaddr *)&source_addr, &addr_len);
+        
+        if (desc->client_sock < 0) {
             ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
             break;
         }
+        
         // Set tcp keepalive option
-        setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(int));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(int));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(int));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
+        setsockopt(desc->client_sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(int));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(int));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(int));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
+        
         // Convert ip address to string
         if (source_addr.ss_family == PF_INET) {
-            inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str,
-                        sizeof(addr_str) - 1);
+            inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
         }
+        
         ESP_LOGD(TAG, "Socket accepted ip address: %s", addr_str);
 
         do {
-            len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+            len = recv(desc->client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+        
             if (len < 0) {
                 ESP_LOGE(TAG, "Error occurred during receiving: errno %d", errno);
             } else if (len == 0) {
@@ -57,23 +58,23 @@ static void tcp_server_task(void *pvParameters)
             } else {
                 ESP_LOGD(TAG, "Received %d bytes", len);
                 ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
-                tcp_server_receive_handler((uint8_t *)rx_buffer, len);
+                desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
             }
         } while (len > 0);
 
-        shutdown(sock, 0);
-        close(sock);
+        shutdown(desc->client_sock, 0);
+        close(desc->client_sock);
     }
+
     vTaskDelete(NULL);
 }
 
-esp_err_t tcp_server_init(int port, tcps_receive_handler_t tcps_receive_handler)
+esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, tcp_desc_t **out_desc)
 {
     if (tcps_receive_handler == NULL) {
         ESP_LOGE(TAG, "tcps_receive_handler is NULL");
         return ESP_ERR_INVALID_ARG;
     }
-    tcp_server_receive_handler = tcps_receive_handler;
 
     int addr_family = (int)AF_INET;
     int ip_protocol = 0;
@@ -86,46 +87,73 @@ esp_err_t tcp_server_init(int port, tcps_receive_handler_t tcps_receive_handler)
     ip_protocol = IPPROTO_IP;
 
     int listen_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
+    
     if (listen_sock < 0) {
         ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
         return ESP_FAIL;
     }
+    
     int opt = 1;
     setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     ESP_LOGD(TAG, "Socket created");
 
     int err = bind(listen_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    
     if (err != 0) {
         ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
         ESP_LOGE(TAG, "IPPROTO: %d", addr_family);
         close(listen_sock);
         return ESP_FAIL;
     }
+    
     ESP_LOGD(TAG, "Socket bound, port %d", port);
 
     err = listen(listen_sock, 1);
+
     if (err != 0) {
         ESP_LOGE(TAG, "Error occurred during listen: errno %d", errno);
         close(listen_sock);
         return ESP_FAIL;
     }
+
     ESP_LOGD(TAG, "Socket listening");
 
-    xTaskCreate(tcp_server_task, "tcp_server", TCP_SERVER_TASK_STACK_SIZE, &listen_sock,
-                TCP_SERVER_TASK_PRIORITY, NULL);  // TODO: check stack size
+    tcp_desc_t *desc = calloc(1, sizeof(tcp_desc_t));
+
+    if (!desc) {
+        close(listen_sock);
+        return ESP_ERR_NO_MEM;
+    }
+
+    desc->listen_sock = listen_sock;
+    desc->client_sock = -1;
+    desc->receive_handler = tcps_receive_handler;
+    *out_desc = desc;
+
+    xTaskCreate(tcp_server_task, "tcp_server", TCP_SERVER_TASK_STACK_SIZE, desc,
+                TCP_SERVER_TASK_PRIORITY, NULL);
     return ESP_OK;
 }
 
-esp_err_t tcp_server_send(uint8_t *data, size_t len)
+esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
+    if (!desc || (desc->client_sock < 0)) {
+        ESP_LOGE(TAG, "No client connected");
+        return ESP_FAIL;
+    }
+
     int to_write = len;
+
     while (to_write > 0) {
-        int written = send(sock, data + (len - to_write), to_write, 0);
+        int written = send(desc->client_sock, data + (len - to_write), to_write, 0);
+        
         if (written < 0) {
             ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
             return ESP_FAIL;
         }
+        
         to_write -= written;
     }
+
     return ESP_OK;
 }
