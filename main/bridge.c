@@ -33,7 +33,6 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    esp_err_t err = ESP_OK;
     ESP_LOGI(TAG, "received %d bytes from serial port %d", len, desc->port_num);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_INFO);
 
@@ -42,21 +41,23 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         idx = 0;
     } else if (desc == serial_desc[1]) {
         idx = 1;
-    }
-    
-    if (idx < 0) {
+    } else {
         ESP_LOGE(TAG, "%s: unknown serial descriptor", __func__);
         return;
     }
+    
+    esp_err_t err = ESP_OK;
 
     switch (bridge_mode[idx]) {
         case BRIDGE_MODE_SERVER:
-            if (tcp_desc[idx])
+            if (tcp_desc[idx]) {
                 err = tcp_server_send(tcp_desc[idx], data, len);
+            }
             break;
         case BRIDGE_MODE_CLIENT:
-            if (tcp_desc[idx])
+            if (tcp_desc[idx]) {
                 err = tcp_client_send(tcp_desc[idx], data, len);
+            }
             break;
         default:
             ESP_LOGE(TAG, "%s: unknown bridge mode %d", __func__, idx + 1);
@@ -80,9 +81,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
         idx = 0;
     } else if (desc == tcp_desc[1]) {
         idx = 1;
-    }
-
-    if (idx < 0) {
+    } else {
         ESP_LOGE(TAG, "%s: unknown tcp descriptor", __func__);
         return;
     }
