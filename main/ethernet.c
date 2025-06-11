@@ -12,7 +12,8 @@
 #define ETH_MDC_GPIO        GPIO_NUM_23
 #define ETH_MDIO_GPIO       GPIO_NUM_18
 #define ETH_PHY_RST_GPIO    GPIO_NUM_5
-#define ETH_PHY_ADDR        0 // LED0, LED1 are pulled down 
+#define ETH_PHY_ADDR        0           // LED0, LED1 are pulled down 
+#define ETH_EXT_CLK_GPIO    GPIO_NUM_0  // External clock on GPIO0
 
 esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip)
 {
@@ -26,8 +27,7 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
 
     eth_esp32_emac_config_t esp32_emac_config = ETH_ESP32_EMAC_DEFAULT_CONFIG();
 
-    esp32_emac_config.clock_config.rmii.clock_mode = EMAC_CLK_EXT_IN; // Use external clock
-    esp32_emac_config.clock_config.rmii.clock_gpio = GPIO_NUM_0;      // External clock on GPIO0
+    esp32_emac_config.clock_config.rmii.clock_gpio = ETH_EXT_CLK_GPIO;      // External clock on GPIO0
 
     esp32_emac_config.smi_gpio.mdc_num = ETH_MDC_GPIO;
     esp32_emac_config.smi_gpio.mdio_num = ETH_MDIO_GPIO;
