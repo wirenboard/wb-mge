@@ -140,13 +140,13 @@ esp_err_t bridge_init(void)
     int bridge_port[2] = {0};
     uint32_t bridge_ip[2] = {0};
     
-    const char *baudrate_keys[2] = {"baudrate", "baudrate_2"};
-    const char *stopbits_keys[2] = {"stopbits", "stopbits_2"};
-    const char *parity_keys[2] = {"parity", "parity_2"};
-    const char *databits_keys[2] = {"databits", "databits_2"};
-    const char *mode_keys[2] = {"bridge_mode", "bridge_mode_2"};
-    const char *port_keys[2] = {"bridge_port", "bridge_port_2"};
-    const char *ip_keys[2] = {"bridge_ip", "bridge_ip_2"};
+    const char *baudrate_keys[2] = {KEY_BAUDRATE1, KEY_BAUDRATE2};
+    const char *stopbits_keys[2] = {KEY_STOPBITS1, KEY_STOPBITS2};
+    const char *parity_keys[2] = {KEY_PARITY1, KEY_PARITY2};
+    const char *databits_keys[2] = {KEY_DATABITS1, KEY_DATABITS2};
+    const char *mode_keys[2] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
+    const char *port_keys[2] = {KEY_BRIDGE_PORT1, KEY_BRIDGE_PORT2};
+    const char *ip_keys[2] = {KEY_BRIDGE_IP1, KEY_BRIDGE_IP2};
     
     uart_port_t port_nums[2] = {SERIAL_PORT_NUM_1, SERIAL_PORT_NUM_2};
     int tx_pins[2] = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};

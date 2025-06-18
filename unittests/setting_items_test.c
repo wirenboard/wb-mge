@@ -12,7 +12,7 @@ int baudrate_test(void)
 {
     const uint32_t valid_test_baudrate[] = {9600, 115200, 460800};
     const uint32_t invalid_test_baudrate[] = {0, 299, 100, 1000000};
-    const char* keys[] = {"baudrate", "baudrate_2"};
+    const char* keys[] = {KEY_BAUDRATE1, KEY_BAUDRATE2};
 
     for (int k = 0; k < ARRAY_SIZE(keys); k++) {
         const char* key = keys[k];
@@ -51,7 +51,7 @@ int parity_test(void)
     const char* valid_test_parity[] = {UART_PARITY_DISABLE_STR, UART_PARITY_EVEN_STR,
                                        UART_PARITY_ODD_STR};
     const char* invalid_test_parity[] = {"n", "e", "o", "nonee", "evenn", "oddd"};
-    const char* keys[] = {"parity", "parity_2"};
+    const char* keys[] = {KEY_PARITY1, KEY_PARITY2};
 
     for (int k = 0; k < ARRAY_SIZE(keys); k++) {
         const char* key = keys[k];
@@ -90,7 +90,7 @@ int databits_test(void)
     const char* valid_test_databits[] = {UART_DATA_5_BITS_STR, UART_DATA_6_BITS_STR,
                                          UART_DATA_7_BITS_STR, UART_DATA_8_BITS_STR};
     const char* invalid_test_databits[] = {"4", "9", "5b", "6b", "7b", "8b"};
-    const char* keys[] = {"databits", "databits_2"};
+    const char* keys[] = {KEY_DATABITS1, KEY_DATABITS2};
 
     for (int k = 0; k < ARRAY_SIZE(keys); k++) {
         const char* key = keys[k];
@@ -129,7 +129,7 @@ int stopbits_test(void)
     const char* valid_test_stopbits[] = {UART_STOP_BITS_1_STR, UART_STOP_BITS_1_5_STR,
                                          UART_STOP_BITS_2_STR};
     const char* invalid_test_stopbits[] = {"1", "1.5", "2", "1-b", "1.5-b", "2-b"};
-    const char* keys[] = {"stopbits", "stopbits_2"};
+    const char* keys[] = {KEY_STOPBITS1, KEY_STOPBITS2};
 
     for (int k = 0; k < ARRAY_SIZE(keys); k++) {
         const char* key = keys[k];
@@ -202,7 +202,7 @@ int bridge_mode_test(void)
 {
     const char* valid_test_bridge_mode[] = {BRIDGE_MODE_SERVER_STR, BRIDGE_MODE_CLIENT_STR};
     const char* invalid_test_bridge_mode[] = {"server", "client", "serverr", "clientt"};
-    const char* keys[] = {"bridge_mode", "bridge_mode_2"};
+    const char* keys[] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
 
     for (int k = 0; k < ARRAY_SIZE(keys); k++) {
         const char* key = keys[k];

@@ -562,7 +562,7 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_BAUDRATE,
+        .key = KEY_BAUDRATE1,
         .default_value = &default_baudrate,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_NUM,
@@ -571,7 +571,7 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_STOPBITS,
+        .key = KEY_STOPBITS1,
         .default_value = DEFAULT_STOPBITS,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
@@ -580,7 +580,7 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_PARITY,
+        .key = KEY_PARITY1,
         .default_value = DEFAULT_PARITY,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
@@ -589,7 +589,7 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_DATABITS,
+        .key = KEY_DATABITS1,
         .default_value = DEFAULT_DATABITS,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
@@ -742,7 +742,7 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_BRIDGE_MODE,
+        .key = KEY_BRIDGE_MODE1,
         .default_value = DEFAULT_BRIDGE_MODE,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
@@ -751,7 +751,7 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_BRIDGE_PORT,
+        .key = KEY_BRIDGE_PORT1,
         .default_value = &default_bridge_port,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_NUM,
@@ -760,7 +760,7 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_BRIDGE_IP,
+        .key = KEY_BRIDGE_IP1,
         .default_value = DEFAULT_BRIDGE_IP,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
@@ -769,7 +769,7 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
-        .key = KEY_BRIDGE_MB,
+        .key = KEY_BRIDGE_MB1,
         .default_value = &default_bridge_mb,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
