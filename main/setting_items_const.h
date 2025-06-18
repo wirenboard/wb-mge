@@ -44,6 +44,12 @@
 #define KEY_BRIDGE_IP2              "bridge_ip_2"
 #define KEY_BRIDGE_MB2              "bridge_mb_2"
 
+#define KEY_485_VOUT                "485_vout"
+#define KEY_485_TERM_1              "485_term_1"
+#define KEY_485_TERM_2              "485_term_2"
+#define KEY_485_FAIL_SAFE_1         "485_fail_safe_1"
+#define KEY_485_FAIL_SAFE_2         "485_fail_safe_2"
+
 // WiFi режимы
 #define WIFI_MODE_AP_STR            "ap"
 #define WIFI_MODE_STA_STR           "sta"

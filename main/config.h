@@ -26,3 +26,6 @@
 #define DEFAULT_BRIDGE_IP           "192.168.4.2"
 #define DEFAULT_BRIDGE_PORT2        503
 #define DEFAULT_BRIDGE_MB           false
+#define DEFAULT_485_VOUT            0
+#define DEFAULT_485_TERM            false
+#define DEFAULT_485_FAIL_SAFE       false
