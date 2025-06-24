@@ -213,6 +213,16 @@ void app_main(void)
     apsta_cfg.ap_event_handler = &wifi_ap_connect_event_handler;
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg));
 
+    // Read and log WiFi STA and AP MAC addresses
+    uint8_t wifi_sta_mac[6] = {0};
+    uint8_t wifi_ap_mac[6] = {0};
+    esp_wifi_get_mac(WIFI_IF_STA, wifi_sta_mac);
+    esp_wifi_get_mac(WIFI_IF_AP, wifi_ap_mac);
+    ESP_LOGI(TAG, "WiFi STA MAC: " MACSTR, MAC2STR(wifi_sta_mac));
+    ESP_LOGI(TAG, "WiFi AP MAC:  " MACSTR, MAC2STR(wifi_ap_mac));
+    snprintf(sys_info.wifi_sta_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_sta_mac));
+    snprintf(sys_info.wifi_ap_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_ap_mac));
+
     bool eth_dhcpc = false;
     esp_netif_ip_info_t *eth_ip_info = NULL;
     esp_netif_ip_info_t static_ip_info = {0};

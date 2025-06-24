@@ -4,6 +4,8 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 
+#define WIFI_CHAN_AP            6
+
 #define WIFI_SSID_MAX_LEN       32
 #define WIFI_PASS_MAX_LEN       64
 

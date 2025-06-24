@@ -12,4 +12,5 @@ typedef struct tcp_desc_t {
     int client_sock;
     int port;
     tcp_receive_handler_t receive_handler;
+    int active_connections; // per-server active connections, only for server mode
 } tcp_desc_t;

@@ -8,6 +8,11 @@
 #include "tcp_client.h"
 #include "tcp_server.h"
 
+#include "sys_info.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
+
 #define SERIAL_PORT_NUM_1             1
 #define SERIAL_INPUT_PIN_1            GPIO_NUM_9
 #define SERIAL_OUTPUT_PIN_1           GPIO_NUM_10
@@ -18,6 +23,8 @@
 #define SERIAL_OUTPUT_PIN_2           GPIO_NUM_14
 #define SERIAL_IO_PIN_2               GPIO_NUM_15
 
+#define RS485_BUSY_TIMEOUT_MS         5000
+
 static const char *TAG = "bridge";
 
 static bool bridge_ready = false;
@@ -25,6 +32,38 @@ static bool bridge_ready = false;
 static serial_desc_t *serial_desc[2] = {NULL, NULL};
 static tcp_desc_t *tcp_desc[2] = {NULL, NULL};
 static bridge_mode_t bridge_mode[2] = {BRIDGE_MODE_DISABLED, BRIDGE_MODE_DISABLED};
+
+static int64_t last_activity_us[2] = {0, 0}; // microseconds
+
+int tcp_server_active_connections(tcp_server_num_t server_num)
+{
+    if (server_num == TCP_SERVER_1) {
+        if (!tcp_desc[0]) {
+            return 0;
+        }
+        return tcp_desc[0]->active_connections;
+    } else if (server_num == TCP_SERVER_2) {
+        if (!tcp_desc[1]) {
+            return 0;
+        }
+        return tcp_desc[1]->active_connections;
+    } else {
+        ESP_LOGE(TAG, "Unknown server number: %d", server_num);
+        return 0;
+    }
+}
+
+static void rs485_busy_monitor_task(void *arg);
+
+static void update_rs485_activity(int idx)
+{
+    last_activity_us[idx] = esp_timer_get_time();
+    if (idx == 0) {
+        sys_info.rs485_1_is_busy = true;
+    } else if (idx == 1) {
+        sys_info.rs485_2_is_busy = true;
+    }
+}
 
 static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t len)
 {
@@ -45,7 +84,9 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         ESP_LOGE(TAG, "%s: unknown serial descriptor", __func__);
         return;
     }
-    
+
+    update_rs485_activity(idx);
+
     esp_err_t err = ESP_OK;
 
     switch (bridge_mode[idx]) {
@@ -91,6 +132,8 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
         return;
     }
 
+    update_rs485_activity(idx);
+
     esp_err_t err = ESP_OK;
     ESP_LOGI(TAG, "received %d bytes from tcp", len);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_INFO);
@@ -134,6 +177,22 @@ static esp_err_t bridge_init_port(serial_config_t *config, bridge_mode_t mode, i
     return ESP_OK;
 }
 
+static void rs485_busy_monitor_task(void *arg)
+{
+    while (1) {
+        int64_t now = esp_timer_get_time();
+        // Port 1
+        if (sys_info.rs485_1_is_busy && (now - last_activity_us[0]) > RS485_BUSY_TIMEOUT_MS * 1000) {
+            sys_info.rs485_1_is_busy = false;
+        }
+        // Port 2
+        if (sys_info.rs485_2_is_busy && (now - last_activity_us[1]) > RS485_BUSY_TIMEOUT_MS * 1000) {
+            sys_info.rs485_2_is_busy = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
 esp_err_t bridge_init(void)
 {
     serial_config_t serial_config[2] = {0};
@@ -171,5 +230,9 @@ esp_err_t bridge_init(void)
 
     bridge_ready = true;
     ESP_LOGI(TAG, "initialized");
+
+    // Start RS485 busy monitor task
+    xTaskCreate(rs485_busy_monitor_task, "rs485_busy_monitor_task", 2048, NULL, 1, NULL);
+
     return ESP_OK;
 }

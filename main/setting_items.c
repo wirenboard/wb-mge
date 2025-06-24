@@ -31,6 +31,9 @@ static const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
 static const int default_bridge_port = DEFAULT_BRIDGE_PORT;
 static const int default_bridge_port2 = DEFAULT_BRIDGE_PORT2;
 static const bool default_bridge_mb = DEFAULT_BRIDGE_MB;
+static const bool default_485_term = DEFAULT_485_TERM;
+static const bool default_485_fail_safe = DEFAULT_485_FAIL_SAFE;
+static const bool default_485_vout = DEFAULT_485_VOUT;
 
 static const string_int_map_t wifi_mode_map[] = {
     {WIFI_MODE_AP_STR, WIFI_MODE_AP},
@@ -815,16 +818,16 @@ static const setting_item_t setting_items[] = {
     },
     {
         .key = KEY_485_VOUT,
-        .default_value = DEFAULT_485_VOUT,
+        .default_value = &default_485_vout,
         .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_NUM,
-        .save_to_storage = save_baudrate,
-        .read_from_storage = read_baudrate,
+        .save_to_storage = save_bool_value,
+        .read_from_storage = read_bool_value,
         .read_from_storage_raw = read_raw_value,
     },
     {
         .key = KEY_485_TERM_1,
-        .default_value = DEFAULT_485_TERM,
+        .default_value = &default_485_term,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
         .save_to_storage = save_bool_value,
@@ -833,7 +836,7 @@ static const setting_item_t setting_items[] = {
     },
     {
         .key = KEY_485_TERM_2,
-        .default_value = DEFAULT_485_TERM,
+        .default_value = &default_485_term,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
         .save_to_storage = save_bool_value,
@@ -842,7 +845,7 @@ static const setting_item_t setting_items[] = {
     },
     {
         .key = KEY_485_FAIL_SAFE_1,
-        .default_value =  DEFAULT_485_FAIL_SAFE,
+        .default_value = &default_485_fail_safe,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
         .save_to_storage = save_bool_value,
@@ -851,7 +854,7 @@ static const setting_item_t setting_items[] = {
     },
     {
         .key = KEY_485_FAIL_SAFE_2,
-        .default_value = DEFAULT_485_FAIL_SAFE,
+        .default_value = &default_485_fail_safe,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
         .save_to_storage = save_bool_value,

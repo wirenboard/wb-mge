@@ -10,7 +10,6 @@
 #include "freertos/task.h"
 #include "lwip/ip4_addr.h"
 
-#define WIFI_CHAN_AP                        1
 #define MAX_STA_CONN                        5
 #define STA_ESP_MAXIMUM_RETRY               10
 #define WIFI_WAITING_EVENTS_STACK_SIZE      (1024 * 6)

@@ -10,10 +10,15 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
+#include "esp_timer.h"
 #include "lwip/ip4_addr.h"
 #include "setting_items.h"
 #include "ssdp.h"
 #include "sys_info.h"
+#include "wifi_apsta.h"
+#include "rs485_control.h"
+#include "bridge.h"
+#include "esp_netif.h"
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 #define REQ_RECV_BUF_SIZE       (CONFIG_HTTPD_MAX_REQ_HDR_LEN * 2)
@@ -225,11 +230,6 @@ static esp_err_t logout(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    return ESP_OK;
-}
-
-static esp_err_t ssdp_schema_get_handler(httpd_req_t *req)
-{
     return ESP_OK;
 }
 
@@ -503,6 +503,35 @@ static esp_err_t info_get_handler(httpd_req_t *req)
 
     cJSON_AddNumberToObject(resp_json, "con_ap", sys_info.wifi_ap_connections_count);
 
+    cJSON_AddNumberToObject(resp_json, "wifi_ap_channel", WIFI_CHAN_AP);
+    cJSON_AddStringToObject(resp_json, "wifi_sta_mac", sys_info.wifi_sta_mac);
+    cJSON_AddStringToObject(resp_json, "wifi_ap_mac", sys_info.wifi_ap_mac);
+
+    cJSON_AddNumberToObject(resp_json, "server1_connections_count", tcp_server_active_connections(TCP_SERVER_1));
+    cJSON_AddNumberToObject(resp_json, "server2_connections_count", tcp_server_active_connections(TCP_SERVER_2));
+
+    cJSON_AddBoolToObject(resp_json, "rs485_1_is_busy", sys_info.rs485_1_is_busy);
+    cJSON_AddBoolToObject(resp_json, "rs485_2_is_busy", sys_info.rs485_2_is_busy);
+
+    // only for Modbus TCP
+    cJSON_AddBoolToObject(resp_json, "rs485_1_error_percentage", sys_info.rs485_1_error_percentage);
+    cJSON_AddBoolToObject(resp_json, "rs485_2_error_percentage", sys_info.rs485_2_error_percentage);
+
+    uint32_t uptime = esp_timer_get_time() / 1000000;  // Convert microseconds to seconds
+
+    int days = uptime / (24 * 3600);
+    uptime %= (24 * 3600);
+    int hours = uptime / 3600;
+    uptime %= 3600;
+    int minutes = uptime / 60;
+    int seconds = uptime % 60;
+
+    char uptime_str[64];
+    snprintf(uptime_str, sizeof(uptime_str),
+        "{\"days\": %d, \"hours\": %d, \"minutes\": %d, \"seconds\": %d}",
+        days, hours, minutes, seconds);
+    cJSON_AddStringToObject(resp_json, "uptime", uptime_str);
+
     resp_and_free_json(req, NULL, resp_json);
 
     return ESP_OK;
@@ -613,6 +642,32 @@ static inline esp_err_t process_json_item(httpd_req_t *req, cJSON *item, const c
     return ESP_OK;
 }
 
+// обновляет состояние подтяжек, питания и терминаторов RS485 в соответствии с текущими настройками
+static void update_rs485_control(void)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+
+    bool pullup_1_enabled = false;
+    bool pullup_2_enabled = false;
+    bool term_1_enabled = false;
+    bool term_2_enabled = false;
+    bool vout_enabled = false;
+
+    setting_items_read_raw(KEY_485_FAIL_SAFE_1, &pullup_1_enabled, SETTING_ITEM_TYPE_BOOL);
+    setting_items_read_raw(KEY_485_FAIL_SAFE_2, &pullup_2_enabled, SETTING_ITEM_TYPE_BOOL);
+    setting_items_read_raw(KEY_485_TERM_1, &term_1_enabled, SETTING_ITEM_TYPE_BOOL);
+    setting_items_read_raw(KEY_485_TERM_2, &term_2_enabled, SETTING_ITEM_TYPE_BOOL);
+    setting_items_read_raw(KEY_485_VOUT, &vout_enabled, SETTING_ITEM_TYPE_BOOL);
+
+    rs485_pupd_on_off(RS485_1, pullup_1_enabled);
+    rs485_pupd_on_off(RS485_2, pullup_2_enabled);
+    rs485_term_on_off(RS485_1, term_1_enabled);
+    rs485_term_on_off(RS485_2, term_2_enabled);
+    rs485_bus_vout_on_off(vout_enabled);
+
+    ESP_LOGI(TAG, "RS485 control updated");
+}
+
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
@@ -644,6 +699,8 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
             }
         }
     }
+
+    update_rs485_control();
 
     resp_and_free_json(req, req_json, resp_json);
 
@@ -735,12 +792,91 @@ static esp_err_t cmd_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static const httpd_uri_t ssdp_schema = {
-    .uri = "/description.xml",
-    .method = HTTP_GET,
-    .handler = ssdp_schema_get_handler,
-    .user_ctx = NULL,
-};
+static esp_err_t wifi_scan_get_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "%s", __func__);
+
+    if (check_auth(req) != true) {
+        return ESP_OK;
+    }
+
+    cJSON *resp_json = cJSON_CreateArray();
+    const int config_wifi_scan_max_ap = 20;
+    wifi_ap_record_t ap_records[config_wifi_scan_max_ap];
+    uint16_t ap_count = 0;
+
+    if (esp_wifi_scan_get_ap_records(&ap_count, ap_records) == ESP_OK) {
+        for (int i = 0; i < ap_count; i++) {
+            cJSON *ap_json = cJSON_CreateObject();
+            cJSON_AddStringToObject(ap_json, "ssid", (const char *)ap_records[i].ssid);
+            cJSON_AddNumberToObject(ap_json, "rssi", ap_records[i].rssi);
+            cJSON_AddStringToObject(ap_json, "bssid", (const char *)ap_records[i].bssid);
+            cJSON_AddNumberToObject(ap_json, "channel", ap_records[i].primary);
+
+            cJSON_AddItemToArray(resp_json, ap_json);
+        }
+    } else {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to get Wi-Fi scan results");
+        cJSON_Delete(resp_json);
+        return ESP_FAIL;
+    }
+
+    // Send JSON response
+    char *json_str = cJSON_Print(resp_json);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, json_str);
+    free(json_str);
+    cJSON_Delete(resp_json);
+
+    return ESP_OK;
+}
+
+static esp_err_t ap_clients_get_handler(httpd_req_t *req)
+{
+    if (!check_auth(req)) {
+        return ESP_FAIL;
+    }
+
+    wifi_sta_list_t sta_list;
+    cJSON *sta_array = cJSON_CreateArray();
+
+    if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK) {
+        esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        esp_netif_pair_mac_ip_t mac_ip_pairs[sta_list.num];
+        memset(mac_ip_pairs, 0, sizeof(mac_ip_pairs));
+        for (int i = 0; i < sta_list.num; ++i) {
+            memcpy(mac_ip_pairs[i].mac, sta_list.sta[i].mac, 6);
+        }
+        bool got_ips = ap_netif && esp_netif_dhcps_get_clients_by_mac(ap_netif, sta_list.num, mac_ip_pairs) == ESP_OK;
+
+        for (int i = 0; i < sta_list.num; ++i) {
+            wifi_sta_info_t *sta = &sta_list.sta[i];
+            char mac_str[18];
+            snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     sta->mac[0], sta->mac[1], sta->mac[2],
+                     sta->mac[3], sta->mac[4], sta->mac[5]);
+            cJSON *client = cJSON_CreateObject();
+            cJSON_AddStringToObject(client, "mac", mac_str);
+            cJSON_AddNumberToObject(client, "rssi", sta->rssi);
+
+            char ip_str[16] = "0.0.0.0";
+            if (got_ips) {
+                snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&mac_ip_pairs[i].ip));
+            }
+            cJSON_AddStringToObject(client, "ip", ip_str);
+
+            cJSON_AddItemToArray(sta_array, client);
+        }
+    }
+
+    char *json_str = cJSON_Print(sta_array);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, json_str);
+    free(json_str);
+    cJSON_Delete(sta_array);
+
+    return ESP_OK;
+}
+
 static const httpd_uri_t auth_post = {
     .uri = "/auth",
     .method = HTTP_POST,
@@ -819,6 +955,18 @@ static const httpd_uri_t cmd_post = {
     .handler = cmd_post_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t wifi_scan_get = {
+    .uri = "/wifi_scan",
+    .method = HTTP_GET,
+    .handler = wifi_scan_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t ap_clients_get = {
+    .uri = "/ap_clients",
+    .method = HTTP_GET,
+    .handler = ap_clients_get_handler,
+    .user_ctx = NULL,
+};
 
 esp_err_t http_server_init(ssdp_config_t *ssdp_config)
 {
@@ -828,21 +976,26 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
     httpd_config.stack_size = 1024 * 6;  // TODO: Проверить размер используемой памяти
 
     if (httpd_start(&http_server, &httpd_config) == ESP_OK) {
-        httpd_register_uri_handler(http_server, &ssdp_schema);
         httpd_register_uri_handler(http_server, &auth_post);
         httpd_register_uri_handler(http_server, &session_get);
         httpd_register_uri_handler(http_server, &logout_post);
+
+        // files
         httpd_register_uri_handler(http_server, &index_get);
         httpd_register_uri_handler(http_server, &index_css_get);
         httpd_register_uri_handler(http_server, &index_js_get);
         httpd_register_uri_handler(http_server, &favicon_get);
+
         httpd_register_uri_handler(http_server, &update_post);
         httpd_register_uri_handler(http_server, &info_get);
         httpd_register_uri_handler(http_server, &info_post);
         httpd_register_uri_handler(http_server, &settings_get);
         httpd_register_uri_handler(http_server, &settings_post);
         httpd_register_uri_handler(http_server, &cmd_post);
+        httpd_register_uri_handler(http_server, &wifi_scan_get);
+        httpd_register_uri_handler(http_server, &ap_clients_get);
     }
+
     if (http_server == NULL) {
         return ESP_FAIL;
     }
