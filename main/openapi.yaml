@@ -351,8 +351,8 @@ paths:
                     485_term_2: false
                     485_fail_safe_1: false
                     485_fail_safe_2: false
-      '401':
-        description: Unauthorized
+        '401':
+          description: Unauthorized
     post:
       summary: Update device settings
       requestBody:
@@ -416,6 +416,7 @@ paths:
                 485_term_2: { type: boolean }
                 485_fail_safe_1: { type: boolean }
                 485_fail_safe_2: { type: boolean }
+              additionalProperties: false
       responses:
         '200':
           description: Update result
@@ -425,8 +426,8 @@ paths:
                 type: object
                 additionalProperties:
                   type: boolean
-      '401':
-        description: Unauthorized
+        '401':
+          description: Unauthorized
 
   /cmd:
     post:
