@@ -67,7 +67,7 @@ static void tcp_server_task(void *pvParameters)
         shutdown(desc->client_sock, 0);
         close(desc->client_sock);
 
-        desc->active_connections--; // Decrement per-server
+        desc->active_connections--;
     }
 
     vTaskDelete(NULL);
@@ -132,7 +132,7 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, 
     desc->listen_sock = listen_sock;
     desc->client_sock = -1;
     desc->receive_handler = tcps_receive_handler;
-    desc->active_connections = 0; // Initialize per-server counter
+    desc->active_connections = 0;
     *out_desc = desc;
 
     xTaskCreate(tcp_server_task, "tcp_server", TCP_SERVER_TASK_STACK_SIZE, desc,
