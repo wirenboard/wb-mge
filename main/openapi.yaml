@@ -1,0 +1,406 @@
+openapi: 3.1.0
+info:
+  title: WB-MGE HTTP API
+  version: 1.0.0
+servers:
+  - url: http://localhost
+paths:
+  /auth:
+    post:
+      summary: Authenticate user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                login:
+                  type: string
+                pass:
+                  type: string
+              required: [login, pass]
+      responses:
+        '200':
+          description: Authentication result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth:
+                    type: boolean
+                  error:
+                    type: string
+        '400':
+          description: Bad request
+
+  /session:
+    get:
+      summary: Check session authentication
+      responses:
+        '200':
+          description: Authenticated
+        '401':
+          description: Unauthorized
+
+  /logout:
+    post:
+      summary: Logout current session
+      responses:
+        '200':
+          description: Logout result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logout:
+                    type: boolean
+
+  /:
+    get:
+      summary: Get main HTML page
+      responses:
+        '200':
+          description: Main page (gzipped)
+          content:
+            text/html:
+              schema:
+                type: string
+                format: binary
+
+  /index.css:
+    get:
+      summary: Get CSS file
+      responses:
+        '200':
+          description: CSS (gzipped)
+          content:
+            text/css:
+              schema:
+                type: string
+                format: binary
+
+  /index.js:
+    get:
+      summary: Get JS file
+      responses:
+        '200':
+          description: JS (gzipped)
+          content:
+            application/javascript:
+              schema:
+                type: string
+                format: binary
+
+  /favicon.webp:
+    get:
+      summary: Get favicon
+      responses:
+        '200':
+          description: Favicon
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+
+  /update:
+    post:
+      summary: OTA firmware update
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  update:
+                    type: boolean
+        '401':
+          description: Unauthorized
+
+  /info:
+    get:
+      summary: Get device/system info
+      responses:
+        '200':
+          description: Device info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device_name: { type: string }
+                  firmware: { type: string }
+                  hardware: { type: string }
+                  serial_num: { type: integer }
+                  con_eth: { type: boolean }
+                  eth_ip: { type: string }
+                  eth_mask: { type: string }
+                  eth_gw: { type: string }
+                  eth_mac: { type: string }
+                  con_sta: { type: boolean }
+                  sta_ip: { type: string }
+                  sta_mask: { type: string }
+                  sta_gw: { type: string }
+                  con_ap: { type: integer }
+                  wifi_ap_channel: { type: integer }
+                  wifi_sta_mac: { type: string }
+                  wifi_ap_mac: { type: string }
+                  server1_connections_count: { type: integer }
+                  server2_connections_count: { type: integer }
+                  rs485_1_is_busy: { type: boolean }
+                  rs485_2_is_busy: { type: boolean }
+                  rs485_1_error_percentage: { type: boolean }
+                  rs485_2_error_percentage: { type: boolean }
+                  uptime:
+                    type: object
+                    description: >
+                      Uptime in the format:
+                      {"days": <int>, "hours": <int>, "minutes": <int>, "seconds": <int>}
+                    properties:
+                      days:
+                        type: integer
+                      hours:
+                        type: integer
+                      minutes:
+                        type: integer
+                      seconds:
+                        type: integer
+        '401':
+          description: Unauthorized
+    post:
+      summary: Update device info
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                device_name: { type: string }
+                hardware: { type: string }
+                serial_num: { type: integer }
+      responses:
+        '200':
+          description: Updated
+        '400':
+          description: Bad request
+        '401':
+          description: Unauthorized
+
+  /settings:
+    get:
+      summary: Get all device settings
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hostname: { type: string }
+                  login: { type: string }
+                  baudrate1: { type: integer }
+                  stopbits1:
+                    type: string
+                    enum: ["1", "1.5", "2"]
+                  parity1:
+                    type: string
+                    enum: ["none", "even", "odd"]
+                  databits1:
+                    type: string
+                    enum: ["5", "6", "7", "8"]
+                  baudrate2: { type: integer }
+                  stopbits2:
+                    type: string
+                    enum: ["1", "1.5", "2"]
+                  parity2:
+                    type: string
+                    enum: ["none", "even", "odd"]
+                  databits2:
+                    type: string
+                    enum: ["5", "6", "7", "8"]
+                  eth_ip_static: { type: string }
+                  eth_mask_static: { type: string }
+                  eth_gw_static: { type: string }
+                  eth_dhcpc: { type: boolean }
+                  wifi_mode:
+                    type: string
+                    enum: ["ap", "sta", "apsta", "null"]
+                  ap_ip_static: { type: string }
+                  ap_mask_static: { type: string }
+                  ap_gw_static: { type: string }
+                  ap_ssid: { type: string }
+                  sta_ssid: { type: string }
+                  bridge_mode1:
+                    type: string
+                    enum: ["server", "client"]
+                  bridge_port1: { type: integer }
+                  bridge_ip1: { type: string }
+                  bridge_mb1: { type: boolean }
+                  bridge_mode2:
+                    type: string
+                    enum: ["server", "client"]
+                  bridge_port2: { type: integer }
+                  bridge_ip2: { type: string }
+                  bridge_mb2: { type: boolean }
+                  485_vout: { type: integer }
+                  485_term_1: { type: boolean }
+                  485_term_2: { type: boolean }
+                  485_fail_safe_1: { type: boolean }
+                  485_fail_safe_2: { type: boolean }
+      '401':
+        description: Unauthorized
+    post:
+      summary: Update device settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hostname: { type: string }
+                login: { type: string }
+                pass: { type: string }
+                baudrate1: { type: integer }
+                stopbits1:
+                  type: string
+                  enum: ["1", "1.5", "2"]
+                parity1:
+                  type: string
+                  enum: ["none", "even", "odd"]
+                databits1:
+                  type: string
+                  enum: ["5", "6", "7", "8"]
+                baudrate2: { type: integer }
+                stopbits2:
+                  type: string
+                  enum: ["1", "1.5", "2"]
+                parity2:
+                  type: string
+                  enum: ["none", "even", "odd"]
+                databits2:
+                  type: string
+                  enum: ["5", "6", "7", "8"]
+                eth_ip_static: { type: string }
+                eth_mask_static: { type: string }
+                eth_gw_static: { type: string }
+                eth_dhcpc: { type: boolean }
+                wifi_mode:
+                  type: string
+                  enum: ["ap", "sta", "apsta", "null"]
+                ap_ip_static: { type: string }
+                ap_mask_static: { type: string }
+                ap_gw_static: { type: string }
+                ap_ssid: { type: string }
+                ap_pass: { type: string }
+                sta_ssid: { type: string }
+                sta_pass: { type: string }
+                bridge_mode1:
+                  type: string
+                  enum: ["server", "client"]
+                bridge_port1: { type: integer }
+                bridge_ip1: { type: string }
+                bridge_mb1: { type: boolean }
+                bridge_mode2:
+                  type: string
+                  enum: ["server", "client"]
+                bridge_port2: { type: integer }
+                bridge_ip2: { type: string }
+                bridge_mb2: { type: boolean }
+                485_vout: { type: integer }
+                485_term_1: { type: boolean }
+                485_term_2: { type: boolean }
+                485_fail_safe_1: { type: boolean }
+                485_fail_safe_2: { type: boolean }
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: boolean
+      '401':
+        description: Unauthorized
+
+  /cmd:
+    post:
+      summary: Execute command
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cmd:
+                  type: string
+                  enum: [reboot, set_default_settings, write_factory_data]
+      responses:
+        '200':
+          description: Command executed
+        '400':
+          description: Bad request
+        '401':
+          description: Unauthorized
+
+  /wifi_scan:
+    get:
+      summary: Get available Wi-Fi networks
+      responses:
+        '200':
+          description: Wi-Fi scan results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ssid: { type: string }
+                    rssi: { type: integer }
+                    bssid: { type: string }
+                    channel: { type: integer }
+        '401':
+          description: Unauthorized
+
+  /ap_clients:
+    get:
+      summary: Get list of AP clients
+      responses:
+        '200':
+          description: AP clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    mac: { type: string }
+                    rssi: { type: integer }
+                    ip: { type: string }
+        '401':
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session_id
