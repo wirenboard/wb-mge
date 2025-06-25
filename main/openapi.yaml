@@ -20,6 +20,17 @@ paths:
                 pass:
                   type: string
               required: [login, pass]
+            examples:
+              valid:
+                summary: Valid credentials
+                value:
+                  login: "admin"
+                  pass: "admin"
+              invalid:
+                summary: Invalid credentials
+                value:
+                  login: "admin"
+                  pass: "wrong"
       responses:
         '200':
           description: Authentication result
@@ -32,6 +43,16 @@ paths:
                     type: boolean
                   error:
                     type: string
+              examples:
+                success:
+                  summary: Successful authentication
+                  value:
+                    auth: true
+                failure:
+                  summary: Failed authentication
+                  value:
+                    auth: false
+                    error: "Invalid login or password"
         '400':
           description: Bad request
 
@@ -177,6 +198,38 @@ paths:
                         type: integer
                       seconds:
                         type: integer
+              examples:
+                default:
+                  summary: Example device info
+                  value:
+                    device_name: "WB-MGE"
+                    firmware: "1.0.0"
+                    hardware: "revA"
+                    serial_num: 123456
+                    con_eth: true
+                    eth_ip: "192.168.1.10"
+                    eth_mask: "255.255.255.0"
+                    eth_gw: "192.168.1.1"
+                    eth_mac: "AA:BB:CC:DD:EE:FF"
+                    con_sta: false
+                    sta_ip: ""
+                    sta_mask: ""
+                    sta_gw: ""
+                    con_ap: 0
+                    wifi_ap_channel: 6
+                    wifi_sta_mac: "AA:BB:CC:DD:EE:01"
+                    wifi_ap_mac: "AA:BB:CC:DD:EE:02"
+                    server1_connections_count: 1
+                    server2_connections_count: 0
+                    rs485_1_is_busy: false
+                    rs485_2_is_busy: false
+                    rs485_1_error_percentage: false
+                    rs485_2_error_percentage: false
+                    uptime:
+                      days: 1
+                      hours: 2
+                      minutes: 3
+                      seconds: 4
         '401':
           description: Unauthorized
     post:
@@ -261,6 +314,43 @@ paths:
                   485_term_2: { type: boolean }
                   485_fail_safe_1: { type: boolean }
                   485_fail_safe_2: { type: boolean }
+              examples:
+                default:
+                  summary: Example settings
+                  value:
+                    hostname: "wb-mge"
+                    login: "admin"
+                    baudrate1: 9600
+                    stopbits1: "1"
+                    parity1: "none"
+                    databits1: "8"
+                    baudrate2: 9600
+                    stopbits2: "1"
+                    parity2: "none"
+                    databits2: "8"
+                    eth_ip_static: "192.168.1.10"
+                    eth_mask_static: "255.255.255.0"
+                    eth_gw_static: "192.168.1.1"
+                    eth_dhcpc: true
+                    wifi_mode: "ap"
+                    ap_ip_static: "192.168.4.1"
+                    ap_mask_static: "255.255.255.0"
+                    ap_gw_static: "192.168.4.1"
+                    ap_ssid: "WB-MGE"
+                    sta_ssid: ""
+                    bridge_mode1: "server"
+                    bridge_port1: 502
+                    bridge_ip1: ""
+                    bridge_mb1: false
+                    bridge_mode2: "server"
+                    bridge_port2: 503
+                    bridge_ip2: ""
+                    bridge_mb2: false
+                    485_vout: 1
+                    485_term_1: false
+                    485_term_2: false
+                    485_fail_safe_1: false
+                    485_fail_safe_2: false
       '401':
         description: Unauthorized
     post:
