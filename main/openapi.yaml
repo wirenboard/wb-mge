@@ -161,8 +161,8 @@ paths:
                   server2_connections_count: { type: integer }
                   rs485_1_is_busy: { type: boolean }
                   rs485_2_is_busy: { type: boolean }
-                  rs485_1_error_percentage: { type: boolean }
-                  rs485_2_error_percentage: { type: boolean }
+                  rs485_1_error_percentage: { type: integer }
+                  rs485_2_error_percentage: { type: integer }
                   uptime:
                     type: object
                     description: >

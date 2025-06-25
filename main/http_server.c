@@ -514,8 +514,8 @@ static esp_err_t info_get_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(resp_json, "rs485_2_is_busy", sys_info.rs485_2_is_busy);
 
     // only for Modbus TCP
-    cJSON_AddBoolToObject(resp_json, "rs485_1_error_percentage", sys_info.rs485_1_error_percentage);
-    cJSON_AddBoolToObject(resp_json, "rs485_2_error_percentage", sys_info.rs485_2_error_percentage);
+    cJSON_AddNumberToObject(resp_json, "rs485_1_error_percentage", sys_info.rs485_1_error_percentage);
+    cJSON_AddNumberToObject(resp_json, "rs485_2_error_percentage", sys_info.rs485_2_error_percentage);
 
     uint32_t uptime = esp_timer_get_time() / 1000000;  // Convert microseconds to seconds
 
