@@ -2,7 +2,7 @@
 
     * version:  1.0.0-rc2
     * rework:   update REST API
-    * added:    new HW support: ethernet, gpio expander, leds, rs485 terminators and pulls control
+    * added:    new HW support: ethernet, gpio expander, leds, second rs485 bus, rs485 terminators and pulls control, WB-MIO control
 
 2024-10-29 Alexey Strizhnev <alexey.strizhnev@wirenboard.com>
 
