@@ -79,54 +79,6 @@ paths:
                   logout:
                     type: boolean
 
-  /:
-    get:
-      summary: Get main HTML page
-      responses:
-        '200':
-          description: Main page (gzipped)
-          content:
-            text/html:
-              schema:
-                type: string
-                format: binary
-
-  /index.css:
-    get:
-      summary: Get CSS file
-      responses:
-        '200':
-          description: CSS (gzipped)
-          content:
-            text/css:
-              schema:
-                type: string
-                format: binary
-
-  /index.js:
-    get:
-      summary: Get JS file
-      responses:
-        '200':
-          description: JS (gzipped)
-          content:
-            application/javascript:
-              schema:
-                type: string
-                format: binary
-
-  /favicon.webp:
-    get:
-      summary: Get favicon
-      responses:
-        '200':
-          description: Favicon
-          content:
-            image/webp:
-              schema:
-                type: string
-                format: binary
-
   /update:
     post:
       summary: OTA firmware update
