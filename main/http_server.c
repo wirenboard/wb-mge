@@ -526,11 +526,12 @@ static esp_err_t info_get_handler(httpd_req_t *req)
     int minutes = uptime / 60;
     int seconds = uptime % 60;
 
-    char uptime_str[64];
-    snprintf(uptime_str, sizeof(uptime_str),
-        "{\"days\": %d, \"hours\": %d, \"minutes\": %d, \"seconds\": %d}",
-        days, hours, minutes, seconds);
-    cJSON_AddStringToObject(resp_json, "uptime", uptime_str);
+    cJSON *uptime_obj = cJSON_CreateObject();
+    cJSON_AddNumberToObject(uptime_obj, "days", days);
+    cJSON_AddNumberToObject(uptime_obj, "hours", hours);
+    cJSON_AddNumberToObject(uptime_obj, "minutes", minutes);
+    cJSON_AddNumberToObject(uptime_obj, "seconds", seconds);
+    cJSON_AddItemToObject(resp_json, "uptime", uptime_obj);
 
     resp_and_free_json(req, NULL, resp_json);
 
