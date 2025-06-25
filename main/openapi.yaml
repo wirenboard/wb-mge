@@ -223,8 +223,8 @@ paths:
                     server2_connections_count: 0
                     rs485_1_is_busy: false
                     rs485_2_is_busy: false
-                    rs485_1_error_percentage: false
-                    rs485_2_error_percentage: false
+                    rs485_1_error_percentage: 0
+                    rs485_2_error_percentage: 10
                     uptime:
                       days: 1
                       hours: 2
