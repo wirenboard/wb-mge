@@ -73,5 +73,5 @@
 #define UART_PARITY_ODD_STR         "odd"
 
 // Режимы моста
-#define BRIDGE_MODE_SERVER_STR      "tcps-serial"
-#define BRIDGE_MODE_CLIENT_STR      "tcpc-serial"
+#define BRIDGE_MODE_SERVER_STR      "server"
+#define BRIDGE_MODE_CLIENT_STR      "client"
