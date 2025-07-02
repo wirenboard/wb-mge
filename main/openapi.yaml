@@ -261,7 +261,7 @@ paths:
                   bridge_port2: { type: integer }
                   bridge_ip2: { type: string }
                   bridge_mb2: { type: boolean }
-                  485_vout: { type: integer }
+                  485_vout: { type: boolean }
                   485_term_1: { type: boolean }
                   485_term_2: { type: boolean }
                   485_fail_safe_1: { type: boolean }
