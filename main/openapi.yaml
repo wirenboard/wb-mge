@@ -217,24 +217,24 @@ paths:
                 properties:
                   hostname: { type: string }
                   login: { type: string }
-                  baudrate1: { type: integer }
-                  stopbits1:
+                  baudrate_1: { type: integer }
+                  stopbits_1:
                     type: string
                     enum: ["1", "1.5", "2"]
-                  parity1:
+                  parity_1:
                     type: string
                     enum: ["none", "even", "odd"]
-                  databits1:
+                  databits_1:
                     type: string
                     enum: ["5", "6", "7", "8"]
-                  baudrate2: { type: integer }
-                  stopbits2:
+                  baudrate_2: { type: integer }
+                  stopbits_2:
                     type: string
                     enum: ["1", "1.5", "2"]
-                  parity2:
+                  parity_2:
                     type: string
                     enum: ["none", "even", "odd"]
-                  databits2:
+                  databits_2:
                     type: string
                     enum: ["5", "6", "7", "8"]
                   eth_ip_static: { type: string }
@@ -249,18 +249,18 @@ paths:
                   ap_gw_static: { type: string }
                   ap_ssid: { type: string }
                   sta_ssid: { type: string }
-                  bridge_mode1:
+                  bridge_mode_1:
                     type: string
                     enum: ["server", "client"]
-                  bridge_port1: { type: integer }
-                  bridge_ip1: { type: string }
-                  bridge_mb1: { type: boolean }
-                  bridge_mode2:
+                  bridge_port_1: { type: integer }
+                  bridge_ip_1: { type: string }
+                  bridge_mb_1: { type: boolean }
+                  bridge_mode_2:
                     type: string
                     enum: ["server", "client"]
-                  bridge_port2: { type: integer }
-                  bridge_ip2: { type: string }
-                  bridge_mb2: { type: boolean }
+                  bridge_port_2: { type: integer }
+                  bridge_ip_2: { type: string }
+                  bridge_mb_2: { type: boolean }
                   485_vout: { type: boolean }
                   485_term_1: { type: boolean }
                   485_term_2: { type: boolean }
@@ -272,14 +272,14 @@ paths:
                   value:
                     hostname: "wb-mge"
                     login: "admin"
-                    baudrate1: 9600
-                    stopbits1: "1"
-                    parity1: "none"
-                    databits1: "8"
-                    baudrate2: 9600
-                    stopbits2: "1"
-                    parity2: "none"
-                    databits2: "8"
+                    baudrate_1: 9600
+                    stopbits_1: "1"
+                    parity_1: "none"
+                    databits_1: "8"
+                    baudrate_2: 9600
+                    stopbits_2: "1"
+                    parity_2: "none"
+                    databits_2: "8"
                     eth_ip_static: "192.168.1.10"
                     eth_mask_static: "255.255.255.0"
                     eth_gw_static: "192.168.1.1"
@@ -290,14 +290,14 @@ paths:
                     ap_gw_static: "192.168.4.1"
                     ap_ssid: "WB-MGE"
                     sta_ssid: ""
-                    bridge_mode1: "server"
-                    bridge_port1: 502
-                    bridge_ip1: ""
-                    bridge_mb1: false
-                    bridge_mode2: "server"
-                    bridge_port2: 503
-                    bridge_ip2: ""
-                    bridge_mb2: false
+                    bridge_mode_1: "server"
+                    bridge_port_1: 502
+                    bridge_ip_1: ""
+                    bridge_mb_1: false
+                    bridge_mode_2: "server"
+                    bridge_port_2: 503
+                    bridge_ip_2: ""
+                    bridge_mb_2: false
                     485_vout: 1
                     485_term_1: false
                     485_term_2: false
@@ -317,24 +317,24 @@ paths:
                 hostname: { type: string }
                 login: { type: string }
                 pass: { type: string }
-                baudrate1: { type: integer }
-                stopbits1:
+                baudrate_1: { type: integer }
+                stopbits_1:
                   type: string
                   enum: ["1", "1.5", "2"]
-                parity1:
+                parity_1:
                   type: string
                   enum: ["none", "even", "odd"]
-                databits1:
+                databits_1:
                   type: string
                   enum: ["5", "6", "7", "8"]
-                baudrate2: { type: integer }
-                stopbits2:
+                baudrate_2: { type: integer }
+                stopbits_2:
                   type: string
                   enum: ["1", "1.5", "2"]
-                parity2:
+                parity_2:
                   type: string
                   enum: ["none", "even", "odd"]
-                databits2:
+                databits_2:
                   type: string
                   enum: ["5", "6", "7", "8"]
                 eth_ip_static: { type: string }
@@ -351,18 +351,18 @@ paths:
                 ap_pass: { type: string }
                 sta_ssid: { type: string }
                 sta_pass: { type: string }
-                bridge_mode1:
+                bridge_mode_1:
                   type: string
                   enum: ["server", "client"]
-                bridge_port1: { type: integer }
-                bridge_ip1: { type: string }
-                bridge_mb1: { type: boolean }
-                bridge_mode2:
+                bridge_port_1: { type: integer }
+                bridge_ip_1: { type: string }
+                bridge_mb_1: { type: boolean }
+                bridge_mode_2:
                   type: string
                   enum: ["server", "client"]
-                bridge_port2: { type: integer }
-                bridge_ip2: { type: string }
-                bridge_mb2: { type: boolean }
+                bridge_port_2: { type: integer }
+                bridge_ip_2: { type: string }
+                bridge_mb_2: { type: boolean }
                 485_vout: { type: integer }
                 485_term_1: { type: boolean }
                 485_term_2: { type: boolean }
