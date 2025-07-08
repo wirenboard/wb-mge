@@ -27,6 +27,8 @@
 #define KEY_ETH_DHCPC               "eth_dhcpc"
 
 #define KEY_WIFI_MODE               "wifi_mode"
+#define KEY_WIFI_AUTH_AP            "wifi_ap_auth_mode"
+#define KEY_WIFI_AUTH_STA           "wifi_sta_auth_mode"
 #define KEY_AP_IP_STATIC            "ap_ip_static"
 #define KEY_AP_MASK_STATIC          "ap_mask_static"
 #define KEY_AP_GW_STATIC            "ap_gw_static"
@@ -55,6 +57,11 @@
 #define WIFI_MODE_STA_STR           "sta"
 #define WIFI_MODE_APSTA_STR         "apsta"
 #define WIFI_MODE_NULL_STR          "none"
+
+// Wifi auth
+#define WIFI_AUTH_OPEN_STR          "open"
+#define WIFI_AUTH_WPA_PSK_STR       "wpa-psk"
+#define WIFI_AUTH_WPA2_PSK_STR      "wpa2-psk"
 
 // UART стоп-биты
 #define UART_STOP_BITS_1_STR        "1-bit"

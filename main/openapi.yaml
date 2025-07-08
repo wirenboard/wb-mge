@@ -244,6 +244,12 @@ paths:
                   wifi_mode:
                     type: string
                     enum: ["ap", "sta", "apsta", "null"]
+                  wifi_ap_auth_mode:
+                    type: string
+                    enum: ["open", "wpa_psk", "wpa2_psk", "wpa_wpa2_psk", "wpa3_psk"]
+                  wifi_sta_auth_mode:
+                    type: string
+                    enum: ["open", "wpa_psk", "wpa2_psk", "wpa_wpa2_psk", "wpa3_psk"]
                   ap_ip_static: { type: string }
                   ap_mask_static: { type: string }
                   ap_gw_static: { type: string }
@@ -285,6 +291,8 @@ paths:
                     eth_gw_static: "192.168.1.1"
                     eth_dhcpc: true
                     wifi_mode: "ap"
+                    wifi_ap_auth_mode: "open"
+                    wifi_sta_auth_mode: "open"
                     ap_ip_static: "192.168.4.1"
                     ap_mask_static: "255.255.255.0"
                     ap_gw_static: "192.168.4.1"
@@ -351,6 +359,12 @@ paths:
                 ap_pass: { type: string }
                 sta_ssid: { type: string }
                 sta_pass: { type: string }
+                wifi_ap_auth_mode:
+                  type: string
+                  enum: ["open", "wpa_psk", "wpa2_psk", "wpa_wpa2_psk", "wpa3_psk"]
+                wifi_sta_auth_mode:
+                  type: string
+                  enum: ["open", "wpa_psk", "wpa2_psk", "wpa_wpa2_psk", "wpa3_psk"]
                 bridge_mode_1:
                   type: string
                   enum: ["server", "client"]
