@@ -116,11 +116,11 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
                 {
                     .channel = WIFI_CHAN_AP,
                     .max_connection = MAX_STA_CONN,
-                    .authmode = WIFI_AUTH_WPA_WPA2_PSK,
+                    .authmode = apsta_cfg->wifi_auth_mode_sta,
                 },
         };
         if (strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN) == 0) {
-            wifi_config_ap.ap.authmode = WIFI_AUTH_OPEN;
+            wifi_config_ap.ap.authmode = apsta_cfg->wifi_auth_mode_ap;
         }
         memcpy(&wifi_config_ap.ap.ssid, apsta_cfg->ap_ssid, strnlen(apsta_cfg->ap_ssid, WIFI_SSID_MAX_LEN));
         wifi_config_ap.ap.ssid_len = strnlen(apsta_cfg->ap_ssid, WIFI_SSID_MAX_LEN);

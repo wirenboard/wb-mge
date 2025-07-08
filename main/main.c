@@ -164,6 +164,14 @@ static void wifi_ap_connect_event_handler(void *arg, esp_event_base_t event_base
     }
 }
 
+static wifi_auth_mode_t str_to_wifi_auth_mode(const char *str) {
+    if (strcmp(str, WIFI_AUTH_OPEN_STR) == 0) return WIFI_AUTH_OPEN;
+    if (strcmp(str, WIFI_AUTH_WPA_PSK_STR) == 0) return WIFI_AUTH_WPA_PSK;
+    if (strcmp(str, WIFI_AUTH_WPA2_PSK_STR) == 0) return WIFI_AUTH_WPA2_PSK;
+    if (strcmp(str, "wpa_wpa2_psk") == 0) return WIFI_AUTH_WPA_WPA2_PSK;
+    return WIFI_AUTH_OPEN;
+}
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_init());
@@ -209,6 +217,13 @@ void app_main(void)
     setting_items_read_raw(KEY_STA_SSID, &apsta_cfg.sta_ssid, SETTING_ITEM_TYPE_STR);
     setting_items_read_raw(KEY_STA_PASS, &apsta_cfg.sta_pass, SETTING_ITEM_TYPE_STR);
     setting_items_read_raw(KEY_WIFI_MODE, &apsta_cfg.wifi_mode, SETTING_ITEM_TYPE_NUM);
+    // Read WiFi auth modes from settings
+    char ap_auth_str[16] = {0};
+    char sta_auth_str[16] = {0};
+    setting_items_read_raw(KEY_WIFI_AUTH_AP, ap_auth_str, SETTING_ITEM_TYPE_STR);
+    setting_items_read_raw(KEY_WIFI_AUTH_STA, sta_auth_str, SETTING_ITEM_TYPE_STR);
+    apsta_cfg.wifi_auth_mode_ap = str_to_wifi_auth_mode(ap_auth_str);
+    apsta_cfg.wifi_auth_mode_sta = str_to_wifi_auth_mode(sta_auth_str);
     apsta_cfg.sta_event_handler = &wifi_sta_connect_event_handler;
     apsta_cfg.ap_event_handler = &wifi_ap_connect_event_handler;
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg));

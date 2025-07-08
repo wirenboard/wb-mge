@@ -18,6 +18,8 @@ typedef struct {
     char sta_pass[WIFI_PASS_MAX_LEN];
     esp_event_handler_t sta_event_handler;
     wifi_mode_t wifi_mode;
+    wifi_auth_mode_t wifi_auth_mode_ap; // Authentication mode for AP
+    wifi_auth_mode_t wifi_auth_mode_sta; // Authentication mode for STA
 } wifi_apsta_config_t;
 
 esp_err_t wifi_init_apsta(wifi_apsta_config_t* wifi_cfg);
