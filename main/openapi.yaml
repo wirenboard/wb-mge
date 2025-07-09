@@ -138,20 +138,6 @@ paths:
                   rs485_1_error_percentage: { type: integer }
                   rs485_2_error_percentage: { type: integer }
                   web_port: { type: integer }
-                  uptime:
-                    type: object
-                    description: >
-                      Uptime in the format:
-                      {"days": <int>, "hours": <int>, "minutes": <int>, "seconds": <int>}
-                    properties:
-                      days:
-                        type: integer
-                      hours:
-                        type: integer
-                      minutes:
-                        type: integer
-                      seconds:
-                        type: integer
               examples:
                 default:
                   summary: Example device info
@@ -181,11 +167,6 @@ paths:
                     rs485_1_error_percentage: 0
                     rs485_2_error_percentage: 10
                     web_port: 80
-                    uptime:
-                      days: 1
-                      hours: 2
-                      minutes: 3
-                      seconds: 4
         '401':
           description: Unauthorized
     post:
@@ -456,6 +437,32 @@ paths:
                     mac: { type: string }
                     rssi: { type: integer }
                     ip: { type: string }
+        '401':
+          description: Unauthorized
+
+  /uptime:
+    get:
+      summary: Get device uptime
+      responses:
+        '200':
+          description: Uptime
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days: { type: integer }
+                  hours: { type: integer }
+                  minutes: { type: integer }
+                  seconds: { type: integer }
+              examples:
+                default:
+                  summary: Example uptime
+                  value:
+                    days: 1
+                    hours: 2
+                    minutes: 3
+                    seconds: 4
         '401':
           description: Unauthorized
 

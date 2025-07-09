@@ -523,22 +523,6 @@ static esp_err_t info_get_handler(httpd_req_t *req)
     // Add web_port (from global variable)
     cJSON_AddNumberToObject(resp_json, "web_port", g_web_port);
 
-    uint32_t uptime = esp_timer_get_time() / 1000000;  // Convert microseconds to seconds
-
-    int days = uptime / (24 * 3600);
-    uptime %= (24 * 3600);
-    int hours = uptime / 3600;
-    uptime %= 3600;
-    int minutes = uptime / 60;
-    int seconds = uptime % 60;
-
-    cJSON *uptime_obj = cJSON_CreateObject();
-    cJSON_AddNumberToObject(uptime_obj, "days", days);
-    cJSON_AddNumberToObject(uptime_obj, "hours", hours);
-    cJSON_AddNumberToObject(uptime_obj, "minutes", minutes);
-    cJSON_AddNumberToObject(uptime_obj, "seconds", seconds);
-    cJSON_AddItemToObject(resp_json, "uptime", uptime_obj);
-
     resp_and_free_json(req, NULL, resp_json);
 
     return ESP_OK;
@@ -884,6 +868,37 @@ static esp_err_t ap_clients_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t uptime_get_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "%s", __func__);
+
+    if (check_auth(req) != true) {
+        return ESP_FAIL;
+    }
+
+    uint32_t uptime = esp_timer_get_time() / 1000000;  // Convert microseconds to seconds
+    int days = uptime / (24 * 3600);
+    uptime %= (24 * 3600);
+    int hours = uptime / 3600;
+    uptime %= 3600;
+    int minutes = uptime / 60;
+    int seconds = uptime % 60;
+
+    cJSON *uptime_obj = cJSON_CreateObject();
+    cJSON_AddNumberToObject(uptime_obj, "days", days);
+    cJSON_AddNumberToObject(uptime_obj, "hours", hours);
+    cJSON_AddNumberToObject(uptime_obj, "minutes", minutes);
+    cJSON_AddNumberToObject(uptime_obj, "seconds", seconds);
+
+    char *json_str = cJSON_Print(uptime_obj);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, json_str);
+    free(json_str);
+    cJSON_Delete(uptime_obj);
+
+    return ESP_OK;
+}
+
 static const httpd_uri_t auth_post = {
     .uri = "/auth",
     .method = HTTP_POST,
@@ -974,6 +989,12 @@ static const httpd_uri_t ap_clients_get = {
     .handler = ap_clients_get_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t uptime_get = {
+    .uri = "/uptime",
+    .method = HTTP_GET,
+    .handler = uptime_get_handler,
+    .user_ctx = NULL,
+};
 
 esp_err_t http_server_init(ssdp_config_t *ssdp_config)
 {
@@ -981,6 +1002,8 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
     httpd_config.max_uri_handlers = 30;  // TODO: Подобрать значение к релизу
     httpd_config.stack_size = 1024 * 6;  // TODO: Проверить размер используемой памяти
+
+    g_web_port = httpd_config.server_port;
 
     if (httpd_start(&http_server, &httpd_config) == ESP_OK) {
         httpd_register_uri_handler(http_server, &auth_post);
@@ -1001,6 +1024,7 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
         httpd_register_uri_handler(http_server, &cmd_post);
         httpd_register_uri_handler(http_server, &wifi_scan_get);
         httpd_register_uri_handler(http_server, &ap_clients_get);
+        httpd_register_uri_handler(http_server, &uptime_get);
     }
 
     if (http_server == NULL) {
