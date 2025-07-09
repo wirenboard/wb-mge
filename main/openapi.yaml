@@ -149,7 +149,6 @@ paths:
                       is_busy: { type: boolean }
                       error_percentage: { type: integer }
                       server_connections_count: { type: integer }
-                  web_port: { type: integer }
               examples:
                 default:
                   summary: Example device info
@@ -182,7 +181,6 @@ paths:
                       is_busy: false
                       error_percentage: 10
                       server_connections_count: 0
-                    web_port: 80
         '401':
           description: Unauthorized
     post:
@@ -282,6 +280,8 @@ paths:
                       bridge_port: { type: integer }
                       bridge_ip: { type: string }
                       bridge_mb: { type: boolean }
+                  web_port: { type: integer }
+                  io_bus: { type: boolean }
               examples:
                 default:
                   summary: Example settings
@@ -397,6 +397,8 @@ paths:
                     bridge_ip: { type: string }
                     bridge_mb: { type: boolean }
                 vout: { type: boolean }
+                web_port: { type: integer }
+                io_bus: { type: boolean }
               additionalProperties: false
       responses:
         '200':
