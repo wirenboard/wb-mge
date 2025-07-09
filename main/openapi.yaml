@@ -114,6 +114,7 @@ paths:
                 type: object
                 properties:
                   device_name: { type: string }
+                  hostname: { type: string }
                   firmware: { type: string }
                   hardware: { type: string }
                   serial_num: { type: integer }
@@ -156,6 +157,7 @@ paths:
                   summary: Example device info
                   value:
                     device_name: "WB-MGE"
+                    hostname: "wb-mge-123456.local"
                     firmware: "1.0.0"
                     hardware: "revA"
                     serial_num: 123456

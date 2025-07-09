@@ -488,6 +488,7 @@ static esp_err_t info_get_handler(httpd_req_t *req)
     cJSON *resp_json = cJSON_CreateObject();
 
     cJSON_AddStringToObject(resp_json, "device_name", sys_info.device_name);
+    cJSON_AddStringToObject(resp_json, "hostname", sys_info.hostname);
     cJSON_AddStringToObject(resp_json, "firmware", FIRMWARE_VERSION);
     cJSON_AddStringToObject(resp_json, "hardware", sys_info.hardware_ver);
     cJSON_AddNumberToObject(resp_json, "serial_num", sys_info.device_serial_num);
