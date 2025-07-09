@@ -20,17 +20,6 @@ paths:
                 pass:
                   type: string
               required: [login, pass]
-            examples:
-              valid:
-                summary: Valid credentials
-                value:
-                  login: "admin"
-                  pass: "admin"
-              invalid:
-                summary: Invalid credentials
-                value:
-                  login: "admin"
-                  pass: "wrong"
       responses:
         '200':
           description: Authentication result
@@ -138,49 +127,9 @@ paths:
                       wifi_sta_mac: { type: string }
                       wifi_ap_mac: { type: string }
                   rs485_1:
-                    type: object
-                    properties:
-                      is_busy: { type: boolean }
-                      error_percentage: { type: integer }
-                      server_connections_count: { type: integer }
+                    $ref: '#/components/schemas/RS485Status'
                   rs485_2:
-                    type: object
-                    properties:
-                      is_busy: { type: boolean }
-                      error_percentage: { type: integer }
-                      server_connections_count: { type: integer }
-              examples:
-                default:
-                  summary: Example device info
-                  value:
-                    device_name: "WB-MGE"
-                    hostname: "wb-mge-123456.local"
-                    firmware: "1.0.0"
-                    hardware: "revA"
-                    serial_num: 123456
-                    ethernet:
-                      con_eth: true
-                      eth_ip: "192.168.1.10"
-                      eth_mask: "255.255.255.0"
-                      eth_gw: "192.168.1.1"
-                      eth_mac: "AA:BB:CC:DD:EE:FF"
-                    wifi:
-                      con_sta: false
-                      sta_ip: ""
-                      sta_mask: ""
-                      sta_gw: ""
-                      con_ap: 0
-                      wifi_ap_channel: 6
-                      wifi_sta_mac: "AA:BB:CC:DD:EE:01"
-                      wifi_ap_mac: "AA:BB:CC:DD:EE:02"
-                    rs485_1:
-                      is_busy: false
-                      error_percentage: 0
-                      server_connections_count: 1
-                    rs485_2:
-                      is_busy: false
-                      error_percentage: 10
-                      server_connections_count: 0
+                    $ref: '#/components/schemas/RS485Status'
         '401':
           description: Unauthorized
     post:
@@ -212,118 +161,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  hostname: { type: string }
-                  login: { type: string }
-                  wifi:
-                    type: object
-                    properties:
-                      wifi_mode:
-                        type: string
-                        enum: ["ap", "sta", "apsta", "null"]
-                      wifi_ap_auth:
-                        type: string
-                        enum: ["open", "wpa2_psk", "wpa3_psk"]
-                      wifi_sta_auth:
-                        type: string
-                        enum: ["open", "wpa2_psk", "wpa3_psk"]
-                      ap_ip_static: { type: string }
-                      ap_mask_static: { type: string }
-                      ap_gw_static: { type: string }
-                      ap_ssid: { type: string }
-                      ap_pass: { type: string }
-                      sta_ssid: { type: string }
-                      sta_pass: { type: string }
-                  ethernet:
-                    type: object
-                    properties:
-                      eth_ip_static: { type: string }
-                      eth_mask_static: { type: string }
-                      eth_gw_static: { type: string }
-                      eth_dhcpc: { type: boolean }
-                  rs485_1:
-                    type: object
-                    properties:
-                      term: { type: boolean }
-                      fail_safe: { type: boolean }
-                      baudrate: { type: integer }
-                      stopbits:
-                        type: string
-                        enum: ["1", "1.5", "2"]
-                      parity:
-                        type: string
-                        enum: ["none", "even", "odd"]
-                      databits:
-                        type: string
-                        enum: ["5", "6", "7", "8"]
-                      bridge_mode: { type: string, enum: ["server", "client"] }
-                      bridge_port: { type: integer }
-                      bridge_ip: { type: string }
-                      bridge_mb: { type: boolean }
-                  rs485_2:
-                    type: object
-                    properties:
-                      term: { type: boolean }
-                      fail_safe: { type: boolean }
-                      baudrate: { type: integer }
-                      stopbits:
-                        type: string
-                        enum: ["1", "1.5", "2"]
-                      parity:
-                        type: string
-                        enum: ["none", "even", "odd"]
-                      databits:
-                        type: string
-                        enum: ["5", "6", "7", "8"]
-                      bridge_mode: { type: string, enum: ["server", "client"] }
-                      bridge_port: { type: integer }
-                      bridge_ip: { type: string }
-                      bridge_mb: { type: boolean }
-                  web_port: { type: integer }
-                  io_bus: { type: boolean }
-              examples:
-                default:
-                  summary: Example settings
-                  value:
-                    hostname: "wb-mge"
-                    login: "admin"
-                    wifi:
-                      wifi_mode: "ap"
-                      wifi_ap_auth: "open"
-                      wifi_sta_auth: "open"
-                      ap_ip_static: "192.168.4.1"
-                      ap_mask_static: "255.255.255.0"
-                      ap_gw_static: "192.168.4.1"
-                      ap_ssid: "WB-MGE"
-                      sta_ssid: ""
-                    ethernet:
-                      eth_ip_static: "192.168.1.10"
-                      eth_mask_static: "255.255.255.0"
-                      eth_gw_static: "192.168.1.1"
-                      eth_dhcpc: true
-                    rs485_1:
-                      term: false
-                      fail_safe: false
-                      baudrate: 9600
-                      stopbits: "1"
-                      parity: "none"
-                      databits: "8"
-                      bridge_mode: "server"
-                      bridge_port: 502
-                      bridge_ip: ""
-                      bridge_mb: false
-                    rs485_2:
-                      term: false
-                      fail_safe: false
-                      baudrate: 9600
-                      stopbits: "1"
-                      parity: "none"
-                      databits: "8"
-                      bridge_mode: "server"
-                      bridge_port: 503
-                      bridge_ip: ""
-                      bridge_mb: false
+                $ref: '#/components/schemas/DeviceSettings'
         '401':
           description: Unauthorized
     post:
@@ -333,82 +171,18 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                hostname: { type: string }
-                login: { type: string }
-                pass: { type: string }
-                wifi:
-                  type: object
+              allOf:
+                - $ref: '#/components/schemas/DeviceSettings'
+                - type: object
                   properties:
-                    wifi_mode:
-                      type: string
-                      enum: ["ap", "sta", "apsta", "null"]
-                    ap_ip_static: { type: string }
-                    ap_mask_static: { type: string }
-                    ap_gw_static: { type: string }
-                    ap_ssid: { type: string }
-                    ap_pass: { type: string }
-                    sta_ssid: { type: string }
-                    sta_pass: { type: string }
-                ethernet:
-                  type: object
-                  properties:
-                    eth_ip_static: { type: string }
-                    eth_mask_static: { type: string }
-                    eth_gw_static: { type: string }
-                    eth_dhcpc: { type: boolean }
-                rs485_1:
-                  type: object
-                  properties:
-                    term: { type: boolean }
-                    fail_safe: { type: boolean }
-                    baudrate: { type: integer }
-                    stopbits:
-                      type: string
-                      enum: ["1", "1.5", "2"]
-                    parity:
-                      type: string
-                      enum: ["none", "even", "odd"]
-                    databits:
-                      type: string
-                      enum: ["5", "6", "7", "8"]
-                    bridge_mode: { type: string, enum: ["server", "client"] }
-                    bridge_port: { type: integer }
-                    bridge_ip: { type: string }
-                    bridge_mb: { type: boolean }
-                rs485_2:
-                  type: object
-                  properties:
-                    term: { type: boolean }
-                    fail_safe: { type: boolean }
-                    baudrate: { type: integer }
-                    stopbits:
-                      type: string
-                      enum: ["1", "1.5", "2"]
-                    parity:
-                      type: string
-                      enum: ["none", "even", "odd"]
-                    databits:
-                      type: string
-                      enum: ["5", "6", "7", "8"]
-                    bridge_mode: { type: string, enum: ["server", "client"] }
-                    bridge_port: { type: integer }
-                    bridge_ip: { type: string }
-                    bridge_mb: { type: boolean }
-                vout: { type: boolean }
-                web_port: { type: integer }
-                io_bus: { type: boolean }
-              additionalProperties: false
+                    pass: { type: string }
       responses:
         '200':
           description: Update result
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties:
-                  type: boolean
+                $ref: '#/components/schemas/DeviceSettings'
         '401':
           description: Unauthorized
 
@@ -487,14 +261,7 @@ paths:
                   hours: { type: integer }
                   minutes: { type: integer }
                   seconds: { type: integer }
-              examples:
-                default:
-                  summary: Example uptime
-                  value:
-                    days: 1
-                    hours: 2
-                    minutes: 3
-                    seconds: 4
+
         '401':
           description: Unauthorized
 
@@ -504,3 +271,77 @@ components:
       type: apiKey
       in: cookie
       name: session_id
+  schemas:
+    RS485Status:
+      type: object
+      properties:
+        is_busy: { type: boolean }
+        error_percentage: { type: integer }
+        server_connections_count: { type: integer }
+
+    RS485Settings:
+      type: object
+      properties:
+        term: { type: boolean }
+        fail_safe: { type: boolean }
+        baudrate: { type: integer }
+        stopbits:
+          type: string
+          enum: ["1", "1.5", "2"]
+        parity:
+          type: string
+          enum: ["none", "even", "odd"]
+        databits:
+          type: string
+          enum: ["5", "6", "7", "8"]
+        bridge_mode:
+          type: string
+          enum: ["server", "client"]
+        bridge_port: { type: integer }
+        bridge_ip: { type: string }
+        bridge_mb: { type: boolean }
+
+    EthernetSettings:
+      type: object
+      properties:
+        eth_ip_static: { type: string }
+        eth_mask_static: { type: string }
+        eth_gw_static: { type: string }
+        eth_dhcpc: { type: boolean }
+
+    WiFiSettings:
+      type: object
+      properties:
+        wifi_mode:
+          type: string
+          enum: ["ap", "sta", "apsta", "null"]
+        wifi_ap_auth:
+          type: string
+          enum: ["open", "wpa2_psk", "wpa3_psk"]
+        wifi_sta_auth:
+          type: string
+          enum: ["open", "wpa2_psk", "wpa3_psk"]
+        ap_ip_static: { type: string }
+        ap_mask_static: { type: string }
+        ap_gw_static: { type: string }
+        ap_ssid: { type: string }
+        ap_pass: { type: string }
+        sta_ssid: { type: string }
+        sta_pass: { type: string }
+
+    DeviceSettings:
+      type: object
+      properties:
+        hostname: { type: string }
+        login: { type: string }
+        wifi:
+          $ref: '#/components/schemas/WiFiSettings'
+        ethernet:
+          $ref: '#/components/schemas/EthernetSettings'
+        rs485_1:
+          $ref: '#/components/schemas/RS485Settings'
+        rs485_2:
+          $ref: '#/components/schemas/RS485Settings'
+        vout: { type: boolean }
+        web_port: { type: integer }
+        io_bus: { type: boolean }
