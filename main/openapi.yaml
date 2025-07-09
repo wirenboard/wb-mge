@@ -136,6 +136,7 @@ paths:
                   rs485_2_is_busy: { type: boolean }
                   rs485_1_error_percentage: { type: integer }
                   rs485_2_error_percentage: { type: integer }
+                  web_port: { type: integer }
                   uptime:
                     type: object
                     description: >
@@ -177,6 +178,7 @@ paths:
                     rs485_2_is_busy: false
                     rs485_1_error_percentage: 0
                     rs485_2_error_percentage: 10
+                    web_port: 80
                     uptime:
                       days: 1
                       hours: 2

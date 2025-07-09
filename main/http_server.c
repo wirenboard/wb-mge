@@ -475,6 +475,8 @@ static inline void add_setting_item_to_json(cJSON *json, const char *key)
     }
 }
 
+static uint16_t g_web_port = 80;
+
 static esp_err_t info_get_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
@@ -516,6 +518,9 @@ static esp_err_t info_get_handler(httpd_req_t *req)
     // only for Modbus TCP
     cJSON_AddNumberToObject(resp_json, "rs485_1_error_percentage", sys_info.rs485_1_error_percentage);
     cJSON_AddNumberToObject(resp_json, "rs485_2_error_percentage", sys_info.rs485_2_error_percentage);
+
+    // Add web_port (from global variable)
+    cJSON_AddNumberToObject(resp_json, "web_port", g_web_port);
 
     uint32_t uptime = esp_timer_get_time() / 1000000;  // Convert microseconds to seconds
 
