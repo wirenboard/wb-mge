@@ -2,11 +2,28 @@
 TARGET := MGE
 
 #######################################
+# OS detection and tool selection
+#######################################
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    # macOS - use GNU tools if available
+    SED := $(shell which gsed 2>/dev/null || which sed)
+    GREP := $(shell which ggrep 2>/dev/null || which grep)
+    FIND := $(shell which gfind 2>/dev/null || which find)
+else
+    # Linux and other Unix-like systems
+    SED := sed
+    GREP := grep
+    FIND := find
+endif
+
+#######################################
 # version parsing
 #######################################
 
 # get version string from ChangeLog if VERSION_STRING is not defined
-VERSION_STRING ?= $(shell cat ChangeLog | grep version: | head -n 1 | sed 's/.*version:[ ]*//')
+VERSION_STRING ?= $(shell cat ChangeLog | $(GREP) version: | head -n 1 | $(SED) 's/.*version:[ ]*//')
 # check version string format using regexp
 VERSION := $(shell echo $(VERSION_STRING) | awk '/[0-9]+\.[0-9]+\.[0-9]+(\+wb[1-9][0-9]*|-rc[1-9][0-9]*)?$$/{print $$0}')
 # global defines with version in different formats
@@ -31,7 +48,7 @@ DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
 # unittests
 #######################################
 
-UNITTESTS_DIRS += $(shell find -type d | grep unittests)
+UNITTESTS_DIRS += $(shell $(FIND) -type d | grep unittests)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
 
@@ -54,8 +71,8 @@ build-frontend:
 	cd main/frontend/; \
 	npm install;\
 	npm run build; \
-	find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
-	find dist/ -type f -exec gzip -k {} \; ; \
+	$(FIND) dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
+	$(FIND) dist/ -type f -exec gzip -k {} \; ; \
 
 build-idf-project:
 	idf.py $(addprefix -D, $(DEFS)) build
