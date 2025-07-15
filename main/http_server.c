@@ -20,8 +20,8 @@
 #include "update_rs485_mio_gpio_states.h"
 #include "bridge.h"
 #include "esp_netif.h"
-#include "nvs_flash.h"
-#include "nvs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 #define REQ_RECV_BUF_SIZE       (CONFIG_HTTPD_MAX_REQ_HDR_LEN * 2)
@@ -35,6 +35,10 @@
 #define REBOOT_TASK_STACK_SIZE  2048
 #define REBOOT_TASK_PRIORITY    5
 
+// WiFi scan constants
+#define MAX_WIFI_SCAN_RESULTS   20
+#define BSSID_STR_SIZE          18
+
 typedef struct {
     int cmd_code;
     const char *cmd_name;
@@ -47,6 +51,9 @@ enum {
 };
 
 static const char *TAG = "http_server";
+
+// WiFi scan mutex for thread safety
+static SemaphoreHandle_t wifi_scan_mutex = NULL;
 
 extern const uint8_t favicon_start[] asm("_binary_favicon_webp_gz_start");
 extern const uint8_t favicon_end[] asm("_binary_favicon_webp_gz_end");
@@ -209,7 +216,7 @@ static esp_err_t auth_post_handler(httpd_req_t *req)
                     if (remember_session_id != 0) {
                         // Get the token from the auth module
                         const char *token_str = auth_get_current_remember_token();
-                        if (token_str != NULL) {
+                        if (token_str != NULL && strlen(token_str) < (sizeof(remember_cookie) - 50)) {
                             int written = snprintf(remember_cookie, sizeof(remember_cookie), 
                                     "remember_token=%s; Max-Age=%d; HttpOnly", 
                                     token_str, REMEMBER_TOKEN_LIFETIME_SEC);
@@ -219,6 +226,8 @@ static esp_err_t auth_post_handler(httpd_req_t *req)
                             } else {
                                 ESP_LOGE(TAG, "Remember cookie buffer too small");
                             }
+                        } else {
+                            ESP_LOGE(TAG, "Remember token too long or invalid");
                         }
                     }
                 }
@@ -883,10 +892,19 @@ static esp_err_t wifi_scan_start_handler(httpd_req_t *req) {
 
     cJSON *resp_json = cJSON_CreateObject();
 
+    // Take mutex for thread safety
+    if (xSemaphoreTake(wifi_scan_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        cJSON_AddBoolToObject(resp_json, "success", false);
+        cJSON_AddStringToObject(resp_json, "error", "Scan system busy");
+        resp_and_free_json(req, NULL, resp_json);
+        return ESP_OK;
+    }
+
     // Check if scan is already in progress
     if (wifi_scan_state.scan_in_progress) {
         cJSON_AddBoolToObject(resp_json, "success", false);
         cJSON_AddStringToObject(resp_json, "error", "Scan already in progress");
+        xSemaphoreGive(wifi_scan_mutex);
         resp_and_free_json(req, NULL, resp_json);
         return ESP_OK;
     }
@@ -895,6 +913,8 @@ static esp_err_t wifi_scan_start_handler(httpd_req_t *req) {
     wifi_scan_state.scan_in_progress = true;
     wifi_scan_state.scan_completed = false;
     wifi_scan_state.ap_count = 0;
+
+    xSemaphoreGive(wifi_scan_mutex);
 
     // Start WiFi scan (non-blocking)
     wifi_scan_config_t scan_config = {
@@ -916,8 +936,12 @@ static esp_err_t wifi_scan_start_handler(httpd_req_t *req) {
         cJSON_AddBoolToObject(resp_json, "success", true);
         cJSON_AddStringToObject(resp_json, "message", "Scan started");
     } else {
-        wifi_scan_state.scan_in_progress = false;
-        wifi_scan_state.last_scan_result = scan_result;
+        // Take mutex again to update state
+        if (xSemaphoreTake(wifi_scan_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            wifi_scan_state.scan_in_progress = false;
+            wifi_scan_state.last_scan_result = scan_result;
+            xSemaphoreGive(wifi_scan_mutex);
+        }
         cJSON_AddBoolToObject(resp_json, "success", false);
         cJSON_AddStringToObject(resp_json, "error", "Failed to start scan");
         ESP_LOGW(TAG, "WiFi scan failed to start with error: 0x%x", scan_result);
@@ -936,10 +960,19 @@ static esp_err_t wifi_scan_results_handler(httpd_req_t *req) {
 
     cJSON *resp_json = cJSON_CreateObject();
 
+    // Take mutex for thread safety
+    if (xSemaphoreTake(wifi_scan_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        cJSON_AddBoolToObject(resp_json, "scan_in_progress", false);
+        cJSON_AddBoolToObject(resp_json, "scan_completed", false);
+        cJSON_AddStringToObject(resp_json, "error", "Scan system busy");
+        resp_and_free_json(req, NULL, resp_json);
+        return ESP_OK;
+    }
+
     // Check scan status
     if (wifi_scan_state.scan_in_progress && !wifi_scan_state.scan_completed) {
         // Try to get results to see if scan completed
-        uint16_t ap_count = 20;
+        uint16_t ap_count = MAX_WIFI_SCAN_RESULTS;
         esp_err_t result = esp_wifi_scan_get_ap_records(&ap_count, wifi_scan_state.ap_records);
         
         if (result == ESP_OK) {
@@ -964,7 +997,7 @@ static esp_err_t wifi_scan_results_handler(httpd_req_t *req) {
             cJSON_AddStringToObject(ap_json, "ssid", (const char *)wifi_scan_state.ap_records[i].ssid);
             cJSON_AddNumberToObject(ap_json, "rssi", wifi_scan_state.ap_records[i].rssi);
             
-            char bssid_str[18];
+            char bssid_str[BSSID_STR_SIZE];
             snprintf(bssid_str, sizeof(bssid_str), "%02X:%02X:%02X:%02X:%02X:%02X",
                      wifi_scan_state.ap_records[i].bssid[0], wifi_scan_state.ap_records[i].bssid[1], 
                      wifi_scan_state.ap_records[i].bssid[2], wifi_scan_state.ap_records[i].bssid[3], 
@@ -979,6 +1012,7 @@ static esp_err_t wifi_scan_results_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(resp_json, "error", "Scan failed");
     }
 
+    xSemaphoreGive(wifi_scan_mutex);
     resp_and_free_json(req, NULL, resp_json);
     return ESP_OK;
 }
@@ -992,14 +1026,29 @@ static esp_err_t ap_clients_get_handler(httpd_req_t *req)
     wifi_sta_list_t sta_list;
     cJSON *sta_array = cJSON_CreateArray();
 
-    if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK) {
+    if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK && sta_list.num > 0) {
         esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
-        esp_netif_pair_mac_ip_t mac_ip_pairs[sta_list.num];
-        memset(mac_ip_pairs, 0, sizeof(mac_ip_pairs));
+        if (ap_netif == NULL) {
+            ESP_LOGW(TAG, "Failed to get AP netif handle");
+            // Still proceed with MAC and RSSI info
+        }
+        
+        esp_netif_pair_mac_ip_t *mac_ip_pairs = malloc(sta_list.num * sizeof(esp_netif_pair_mac_ip_t));
+        if (mac_ip_pairs == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate memory for MAC-IP pairs");
+            cJSON_Delete(sta_array);
+            return ESP_FAIL;
+        }
+        
+        memset(mac_ip_pairs, 0, sta_list.num * sizeof(esp_netif_pair_mac_ip_t));
         for (int i = 0; i < sta_list.num; ++i) {
             memcpy(mac_ip_pairs[i].mac, sta_list.sta[i].mac, 6);
         }
-        bool got_ips = ap_netif && esp_netif_dhcps_get_clients_by_mac(ap_netif, sta_list.num, mac_ip_pairs) == ESP_OK;
+        
+        bool got_ips = false;
+        if (ap_netif != NULL) {
+            got_ips = (esp_netif_dhcps_get_clients_by_mac(ap_netif, sta_list.num, mac_ip_pairs) == ESP_OK);
+        }
 
         for (int i = 0; i < sta_list.num; ++i) {
             wifi_sta_info_t *sta = &sta_list.sta[i];
@@ -1019,9 +1068,17 @@ static esp_err_t ap_clients_get_handler(httpd_req_t *req)
 
             cJSON_AddItemToArray(sta_array, client);
         }
+        
+        free(mac_ip_pairs);
     }
 
     char *json_str = cJSON_Print(sta_array);
+    if (json_str == NULL) {
+        ESP_LOGE(TAG, "Failed to print JSON");
+        cJSON_Delete(sta_array);
+        return ESP_FAIL;
+    }
+    
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, json_str);
     free(json_str);
@@ -1174,6 +1231,15 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
     if (setting_items_read_raw("web_port", &httpd_config.server_port, SETTING_ITEM_TYPE_NUM) != 0) {
         ESP_LOGE(TAG, "Failed to read web_port from settings");
         return ESP_FAIL;
+    }
+
+    // Initialize WiFi scan mutex
+    if (wifi_scan_mutex == NULL) {
+        wifi_scan_mutex = xSemaphoreCreateMutex();
+        if (wifi_scan_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create WiFi scan mutex");
+            return ESP_FAIL;
+        }
     }
 
     // Initialize authentication module
