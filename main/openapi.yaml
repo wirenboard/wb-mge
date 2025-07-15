@@ -103,7 +103,6 @@ paths:
                 type: object
                 properties:
                   device_name: { type: string }
-                  hostname: { type: string }
                   firmware: { type: string }
                   hardware: { type: string }
                   serial_num: { type: integer }
@@ -123,6 +122,7 @@ paths:
                       sta_mask: { type: string }
                       sta_gw: { type: string }
                       con_ap: { type: integer }
+                      sta_rssi: { type: integer }
                       wifi_ap_channel: { type: integer }
                       wifi_sta_mac: { type: string }
                       wifi_ap_mac: { type: string }
@@ -207,23 +207,84 @@ paths:
         '401':
           description: Unauthorized
 
-  /wifi_scan:
-    get:
-      summary: Get available Wi-Fi networks
+  /wifi_scan/start:
+    post:
+      summary: Start Wi-Fi network scan
       responses:
         '200':
-          description: Wi-Fi scan results
+          description: Scan start result
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    ssid: { type: string }
-                    rssi: { type: integer }
-                    bssid: { type: string }
-                    channel: { type: integer }
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  error: { type: string }
+              examples:
+                success:
+                  summary: Scan started successfully
+                  value:
+                    success: true
+                    message: "Scan started"
+                already_running:
+                  summary: Scan already in progress
+                  value:
+                    success: false
+                    error: "Scan already in progress"
+                failed:
+                  summary: Failed to start scan
+                  value:
+                    success: false
+                    error: "Failed to start scan"
+        '401':
+          description: Unauthorized
+
+  /wifi_scan/results:
+    get:
+      summary: Get Wi-Fi scan status and results
+      responses:
+        '200':
+          description: Wi-Fi scan status and results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scan_in_progress: { type: boolean }
+                  scan_completed: { type: boolean }
+                  error: { type: string }
+                  networks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ssid: { type: string }
+                        rssi: { type: integer }
+                        bssid: { type: string }
+                        channel: { type: integer }
+              examples:
+                in_progress:
+                  summary: Scan in progress
+                  value:
+                    scan_in_progress: true
+                    scan_completed: false
+                completed:
+                  summary: Scan completed with results
+                  value:
+                    scan_in_progress: false
+                    scan_completed: true
+                    networks:
+                      - ssid: "MyWiFi"
+                        rssi: -45
+                        bssid: "AA:BB:CC:DD:EE:FF"
+                        channel: 6
+                failed:
+                  summary: Scan failed
+                  value:
+                    scan_in_progress: false
+                    scan_completed: false
+                    error: "Scan failed"
         '401':
           description: Unauthorized
 
