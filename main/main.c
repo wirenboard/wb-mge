@@ -200,7 +200,6 @@ void app_main(void)
         ESP_ERROR_CHECK(mdns_init());
         ESP_ERROR_CHECK(mdns_hostname_set(hostname));
         ESP_LOGI(TAG, "mdns hostname set to: [%s]", hostname);
-        strncpy(sys_info.hostname, hostname, SYS_INFO_MAX_STR_LEN - 1);
     }
 
     // apsta = Access Point + Station
