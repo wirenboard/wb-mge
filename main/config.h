@@ -30,3 +30,5 @@
 #define DEFAULT_485_VOUT            true
 #define DEFAULT_485_TERM            false
 #define DEFAULT_485_FAIL_SAFE       false
+#define DEFAULT_IO_BUS_ENABLED      false
+#define DEFAULT_WEB_PORT            80
