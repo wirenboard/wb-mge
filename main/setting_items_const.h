@@ -27,8 +27,8 @@
 #define KEY_ETH_DHCPC               "eth_dhcpc"
 
 #define KEY_WIFI_MODE               "wifi_mode"
-#define KEY_WIFI_AUTH_AP            "wifi_ap_auth_mode"
-#define KEY_WIFI_AUTH_STA           "wifi_sta_auth_mode"
+#define KEY_WIFI_AUTH_AP            "wifi_ap_auth" // FIXME: эта хрень не принимает имена длиннее на 5 символов!
+#define KEY_WIFI_AUTH_STA           "wifi_sta_auth"
 #define KEY_AP_IP_STATIC            "ap_ip_static"
 #define KEY_AP_MASK_STATIC          "ap_mask_static"
 #define KEY_AP_GW_STATIC            "ap_gw_static"
@@ -46,7 +46,7 @@
 #define KEY_BRIDGE_IP2              "bridge_ip_2"
 #define KEY_BRIDGE_MB2              "bridge_mb_2"
 
-#define KEY_485_VOUT                "485_vout"
+#define KEY_485_VOUT                "vout"
 #define KEY_485_TERM_1              "485_term_1"
 #define KEY_485_TERM_2              "485_term_2"
 #define KEY_485_FAIL_SAFE_1         "485_fail_safe_1"
@@ -60,8 +60,8 @@
 
 // Wifi auth
 #define WIFI_AUTH_OPEN_STR          "open"
-#define WIFI_AUTH_WPA_PSK_STR       "wpa-psk"
 #define WIFI_AUTH_WPA2_PSK_STR      "wpa2-psk"
+#define WIFI_AUTH_WPA3_PSK_STR      "wpa3-psk"
 
 // UART стоп-биты
 #define UART_STOP_BITS_1_STR        "1-bit"
@@ -82,3 +82,9 @@
 // Режимы моста
 #define BRIDGE_MODE_SERVER_STR      "server"
 #define BRIDGE_MODE_CLIENT_STR      "client"
+
+// Включение MIO на RS485-2
+#define KEY_IO_BUS_ENABLED          "io_bus"
+
+// Web server port
+#define KEY_WEB_PORT                "web_port"

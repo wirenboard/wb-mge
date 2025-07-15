@@ -26,6 +26,7 @@ static setting_item_iface_t iface = {0};
 static const setting_item_t setting_items[SETTING_ITEMS_NUM_MAX];  // инициализируется в конце файла
 
 static char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+static const int default_web_server_port = DEFAULT_WEB_PORT;
 static const int default_baudrate = DEFAULT_BAUDRATE;
 static const bool default_eth_dhcpc = DEFAULT_ETH_DHCPC;
 static const int default_bridge_port = DEFAULT_BRIDGE_PORT;
@@ -34,12 +35,20 @@ static const bool default_bridge_mb = DEFAULT_BRIDGE_MB;
 static const bool default_485_term = DEFAULT_485_TERM;
 static const bool default_485_fail_safe = DEFAULT_485_FAIL_SAFE;
 static const bool default_485_vout = DEFAULT_485_VOUT;
+static const bool default_io_bus_state = DEFAULT_IO_BUS_ENABLED;
 
 static const string_int_map_t wifi_mode_map[] = {
     {WIFI_MODE_AP_STR, WIFI_MODE_AP},
     {WIFI_MODE_STA_STR, WIFI_MODE_STA},
     {WIFI_MODE_APSTA_STR, WIFI_MODE_APSTA},
     {WIFI_MODE_NULL_STR, WIFI_MODE_NULL},
+    {NULL, -1}
+};
+
+static const string_int_map_t wifi_auth_mode_map[] = {
+    {WIFI_AUTH_OPEN_STR, WIFI_AUTH_OPEN},
+    {WIFI_AUTH_WPA2_PSK_STR, WIFI_AUTH_WPA2_PSK},
+    {WIFI_AUTH_WPA3_PSK_STR, WIFI_AUTH_WPA3_PSK},
     {NULL, -1}
 };
 
@@ -172,6 +181,16 @@ static bool read_wifi_mode(const char *key, void *value)
     return read_map_value(key, value, wifi_mode_map);
 }
 
+static bool save_wifi_auth_mode(const char *key, const void *value)
+{
+    return save_map_value(key, value, wifi_auth_mode_map);
+}
+
+static bool read_wifi_auth_mode(const char *key, void *value)
+{
+    return read_map_value(key, value, wifi_auth_mode_map);
+}
+
 static bool save_baudrate(const char *key, const void *value)
 {
     uint32_t baudrate = *(uint32_t *)value;
@@ -277,6 +296,28 @@ static bool read_bridge_port(const char *key, void *value)
         return false;
     }
     *(uint32_t *)value = bridge_port;
+    return true;
+}
+
+static bool save_web_server_port(const char *key, const void *value)
+{
+    int web_port = *(int *)value;
+    if ((web_port < MIN_TCP_PORT) || (web_port > MAX_DYNAMIC_PORT)) {
+        return false;
+    }
+    if (iface.save_num(key, web_port) != 0) {
+        return false;
+    }
+    return true;
+}
+
+static bool read_web_server_port(const char *key, void *value)
+{
+    uint32_t web_port = 0;
+    if (iface.read_num(key, &web_port) != 0) {
+        return false;
+    }
+    *(uint32_t *)value = web_port;
     return true;
 }
 
@@ -547,6 +588,15 @@ static const setting_item_t setting_items[] = {
         .read_from_storage_raw = read_raw_value,
     },
     {
+        .key = KEY_WEB_PORT,
+        .default_value = &default_web_server_port,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
+        .type_in_json = SETTING_ITEM_TYPE_NUM,
+        .save_to_storage = save_web_server_port,
+        .read_from_storage = read_web_server_port,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
         .key = KEY_LOGIN,
         .default_value = DEFAULT_LOGIN,
         .type_in_storage = SETTING_ITEM_TYPE_STR,
@@ -684,19 +734,19 @@ static const setting_item_t setting_items[] = {
     {
         .key = KEY_WIFI_AUTH_AP,
         .default_value = DEFAULT_WIFI_AUTH,
-        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
-        .read_from_storage = read_string_value,
+        .save_to_storage = save_wifi_auth_mode,
+        .read_from_storage = read_wifi_auth_mode,
         .read_from_storage_raw = read_raw_value,
     },
     {
         .key = KEY_WIFI_AUTH_STA,
         .default_value = DEFAULT_WIFI_AUTH,
-        .type_in_storage = SETTING_ITEM_TYPE_STR,
+        .type_in_storage = SETTING_ITEM_TYPE_NUM,
         .type_in_json = SETTING_ITEM_TYPE_STR,
-        .save_to_storage = save_string_value,
-        .read_from_storage = read_string_value,
+        .save_to_storage = save_wifi_auth_mode,
+        .read_from_storage = read_wifi_auth_mode,
         .read_from_storage_raw = read_raw_value,
     },
     {
@@ -837,8 +887,8 @@ static const setting_item_t setting_items[] = {
     {
         .key = KEY_485_VOUT,
         .default_value = &default_485_vout,
-        .type_in_storage = SETTING_ITEM_TYPE_NUM,
-        .type_in_json = SETTING_ITEM_TYPE_NUM,
+        .type_in_storage = SETTING_ITEM_TYPE_BOOL,
+        .type_in_json = SETTING_ITEM_TYPE_BOOL,
         .save_to_storage = save_bool_value,
         .read_from_storage = read_bool_value,
         .read_from_storage_raw = read_raw_value,
@@ -873,6 +923,15 @@ static const setting_item_t setting_items[] = {
     {
         .key = KEY_485_FAIL_SAFE_2,
         .default_value = &default_485_fail_safe,
+        .type_in_storage = SETTING_ITEM_TYPE_BOOL,
+        .type_in_json = SETTING_ITEM_TYPE_BOOL,
+        .save_to_storage = save_bool_value,
+        .read_from_storage = read_bool_value,
+        .read_from_storage_raw = read_raw_value,
+    },
+    {
+        .key = KEY_IO_BUS_ENABLED,
+        .default_value = &default_io_bus_state,
         .type_in_storage = SETTING_ITEM_TYPE_BOOL,
         .type_in_json = SETTING_ITEM_TYPE_BOOL,
         .save_to_storage = save_bool_value,
