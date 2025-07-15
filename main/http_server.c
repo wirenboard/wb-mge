@@ -1,4 +1,5 @@
 #include "http_server.h"
+#include "auth_session.h"
 
 #include <esp_http_server.h>
 #include <esp_ota_ops.h>
@@ -16,9 +17,11 @@
 #include "ssdp.h"
 #include "sys_info.h"
 #include "wifi_apsta.h"
-#include "rs485_control.h"
+#include "update_rs485_mio_gpio_states.h"
 #include "bridge.h"
 #include "esp_netif.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 #define REQ_RECV_BUF_SIZE       (CONFIG_HTTPD_MAX_REQ_HDR_LEN * 2)
@@ -26,18 +29,11 @@
 #define UINT32_STR_MAX_LEN      11
 // Максимальная длина cookie с идентификатором сессии (session_id=<u32_id>)
 #define COOKIE_MAX_LEN          (11 + UINT32_STR_MAX_LEN)
-// При превышении этого количества сессий, самая старая сессия будет удалена
-#define MAX_SESSIONS            10
 
 #define CMD_NAME_MAX_LEN        32
 #define REBOOT_DELAY_MS         1000
 #define REBOOT_TASK_STACK_SIZE  2048
 #define REBOOT_TASK_PRIORITY    5
-
-typedef struct {
-    uint32_t session_ids[MAX_SESSIONS];
-    int current_index;
-} session_buffer_t;
 
 typedef struct {
     int cmd_code;
@@ -64,10 +60,6 @@ extern const uint8_t index_js_end[] asm("_binary_index_js_gz_end");
 extern const uint8_t index_html_start[] asm("_binary_index_html_gz_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_gz_end");
 
-static session_buffer_t session_buffer = {
-    .current_index = 0,
-};
-
 static const cmd_t cmds[] = {
     {CMD_REBOOT, "reboot"},
     {CMD_SET_DEFAULT_SETTINGS, "set_default_settings"},
@@ -88,95 +80,6 @@ static void reboot_device(void)
     xTaskCreate(reboot_task, "reboot_task", REBOOT_TASK_STACK_SIZE, NULL, REBOOT_TASK_PRIORITY, NULL);
 }
 
-static void add_session_id(session_buffer_t *buffer, uint32_t session_id)
-{
-    ESP_LOGI(TAG, "%s", __func__);
-
-    buffer->session_ids[buffer->current_index] = session_id;
-    buffer->current_index = (buffer->current_index + 1) % MAX_SESSIONS;
-}
-
-uint32_t strtou(const char *u32_str)
-{
-    if (u32_str == NULL) {
-        ESP_LOGE(TAG, "%s: String is NULL", __func__);
-        return 0;
-    }
-    if (strnlen(u32_str, (UINT32_STR_MAX_LEN + 1)) > UINT32_STR_MAX_LEN) {
-        ESP_LOGE(TAG, "%s: String is too long", __func__);
-        return 0;
-    }
-
-    char *endptr;
-    errno = 0;  // Сбросить errno перед вызовом strtoul
-    uint64_t value = strtoul(u32_str, &endptr, 10);
-
-    if ((errno == ERANGE) || (value > UINT32_MAX)) {
-        ESP_LOGE(TAG, "%s: Overflow occurred", __func__);
-        return 0;
-    }
-    if (endptr == u32_str) {
-        ESP_LOGE(TAG, "%s: No digits were found", __func__);
-        return 0;
-    }
-    if (*endptr != '\0') {
-        ESP_LOGE(TAG, "%s: Further characters after number: %s", __func__, endptr);
-        return 0;
-    }
-
-    return (uint32_t)value;
-}
-
-static uint32_t get_session_id_from_cookie(httpd_req_t *req)
-{
-    char session_id_str[COOKIE_MAX_LEN];
-    size_t buf_len = sizeof(session_id_str);
-    if (httpd_req_get_cookie_val(req, "session_id", session_id_str, &buf_len) == ESP_OK) {
-        ESP_LOGI(TAG, "%s: %s", __func__, session_id_str);
-        return strtou(session_id_str);
-    }
-    return 0;  // Возвращает 0, если не удалось получить session_id
-}
-
-static uint32_t authorization(char *login_req, char *pass_req)
-{
-    ESP_LOGI(TAG, "%s", __func__);
-
-    char login[SETTING_ITEM_MAX_STR_LEN] = {0};
-    char pass[SETTING_ITEM_MAX_STR_LEN] = {0};
-
-    if ((setting_items_read_raw("login", login, SETTING_ITEM_TYPE_STR) != 0) ||
-        (setting_items_read_raw("pass", pass, SETTING_ITEM_TYPE_STR) != 0))
-    {
-        ESP_LOGE(TAG, "Failed to read login or pass from storage");
-        return 0;
-    }
-    if ((strncmp(login_req, login, SETTING_ITEM_MAX_STR_LEN) != 0) ||
-        (strncmp(pass_req, pass, SETTING_ITEM_MAX_STR_LEN) != 0))
-    {
-        ESP_LOGW(TAG, "Invalid login or password");
-        return 0;
-    }
-
-    uint32_t session_id = esp_random();
-    if (session_id == 0) {
-        session_id = esp_random();  // Повторная попытка генерации session_id
-    }
-    add_session_id(&session_buffer, session_id);
-
-    return session_id;
-}
-
-static inline bool session_id_is_valid(uint32_t session_id)
-{
-    for (int i = 0; i < MAX_SESSIONS; i++) {
-        if (session_buffer.session_ids[i] == session_id) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static bool check_req_content_len(httpd_req_t *req)
 {
     if (req->content_len > REQ_RECV_BUF_SIZE) {
@@ -188,49 +91,7 @@ static bool check_req_content_len(httpd_req_t *req)
 
 static bool check_auth(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "%s", __func__);
-
-    uint32_t session_id = get_session_id_from_cookie(req);
-    if (session_id != 0) {
-        if (session_id_is_valid(session_id)) {
-            return true;
-        } else {
-            ESP_LOGW(TAG, "Session ID %lu is not valid", session_id);
-        }
-    } else {
-        ESP_LOGW(TAG, "Session ID cookie not found");
-    }
-
-    httpd_resp_set_status(req, "401 Unauthorized");
-    httpd_resp_send(req, NULL, 0);
-
-    return false;
-}
-
-static inline void find_and_remove_session_id(uint32_t session_id)
-{
-    for (int i = 0; i < MAX_SESSIONS; i++) {
-        if (session_buffer.session_ids[i] == session_id) {
-            session_buffer.session_ids[i] = 0;
-            ESP_LOGI(TAG, "Session ID %lu removed", session_id);
-            break;
-        }
-    }
-}
-
-static esp_err_t logout(httpd_req_t *req)
-{
-    ESP_LOGI(TAG, "%s", __func__);
-
-    uint32_t session_id = get_session_id_from_cookie(req);
-    if (session_id != 0) {
-        find_and_remove_session_id(session_id);
-    } else {
-        ESP_LOGW(TAG, "Session ID cookie not found");
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
+    return auth_check_request(req);
 }
 
 static esp_err_t index_html_get_handler(httpd_req_t *req)
@@ -328,17 +189,39 @@ static esp_err_t auth_post_handler(httpd_req_t *req)
     }
 
     char cookie_header[COOKIE_MAX_LEN] = {0};
+    char remember_cookie[REMEMBER_COOKIE_BUF_SIZE] = {0};
     cJSON *resp_json = cJSON_CreateObject();
     bool result = false;
 
     if (cJSON_HasObjectItem(req_json, "login") && cJSON_HasObjectItem(req_json, "pass")) {
         cJSON *login_req = cJSON_GetObjectItem(req_json, "login");
         cJSON *pass_req = cJSON_GetObjectItem(req_json, "pass");
+        cJSON *remember_me = cJSON_GetObjectItem(req_json, "remember_me");
 
         if ((login_req->type == cJSON_String) && (pass_req->type == cJSON_String)) {
-            uint32_t session_id = authorization(login_req->valuestring, pass_req->valuestring);
+            uint32_t session_id = auth_create_session(login_req->valuestring, pass_req->valuestring);
             if (session_id != 0) {
                 result = set_cookie_session_id(req, session_id, cookie_header);
+                
+                // Handle remember me token
+                if (remember_me && cJSON_IsTrue(remember_me)) {
+                    uint32_t remember_session_id = auth_create_remember_token();
+                    if (remember_session_id != 0) {
+                        // Get the token from the auth module
+                        const char *token_str = auth_get_current_remember_token();
+                        if (token_str != NULL) {
+                            int written = snprintf(remember_cookie, sizeof(remember_cookie), 
+                                    "remember_token=%s; Max-Age=%d; HttpOnly", 
+                                    token_str, REMEMBER_TOKEN_LIFETIME_SEC);
+                            if (written > 0 && written < sizeof(remember_cookie)) {
+                                httpd_resp_set_hdr(req, "Set-Cookie", remember_cookie);
+                                ESP_LOGI(TAG, "Remember token set in cookie");
+                            } else {
+                                ESP_LOGE(TAG, "Remember cookie buffer too small");
+                            }
+                        }
+                    }
+                }
             } else {
                 cJSON_AddStringToObject(resp_json, "error", "Invalid login or password");
             }
@@ -373,12 +256,18 @@ static esp_err_t logout_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    if (logout(req) != ESP_OK) {
+    uint32_t session_id = auth_get_session_from_cookie(req);
+    if (session_id != 0) {
+        auth_remove_session(session_id);
+    } else {
+        ESP_LOGW(TAG, "Session ID cookie not found");
         return ESP_FAIL;
     }
 
+    auth_clear_remember_token();
+
     cJSON *resp_json = cJSON_CreateObject();
-    cJSON_AddBoolToObject(resp_json, "logout", true);
+    cJSON_AddBoolToObject(resp_json, "success", true);
     resp_and_free_json(req, NULL, resp_json);
 
     return ESP_OK;
@@ -435,7 +324,7 @@ static esp_err_t update_post_handler(httpd_req_t *req)
     }
 
     cJSON *resp_json = cJSON_CreateObject();
-    cJSON_AddBoolToObject(resp_json, "update", true);
+    cJSON_AddBoolToObject(resp_json, "success", true);
     resp_and_free_json(req, NULL, resp_json);
 
     reboot_device();
@@ -443,39 +332,61 @@ static esp_err_t update_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static inline void add_setting_item_to_json(cJSON *json, const char *key)
-{
+static void add_setting_to_json(cJSON *json, const char *key, const char *json_key) {
     setting_item_type_t type = setting_items_get_type_in_json(key);
-
-    switch (type) {
-        case SETTING_ITEM_TYPE_NUM: {
-            uint32_t value = 0;
-            if (setting_items_read(key, &value) == 0) {
-                cJSON_AddNumberToObject(json, key, value);
-            }
-            break;
-        }
-        case SETTING_ITEM_TYPE_STR: {
-            char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-            if (setting_items_read(key, value) == 0) {
-                cJSON_AddStringToObject(json, key, value);
-            }
-            break;
-        }
-        case SETTING_ITEM_TYPE_BOOL: {
-            uint8_t value = 0;
-            if (setting_items_read(key, &value) == 0) {
-                cJSON_AddBoolToObject(json, key, value);
-            }
-            break;
-        }
-        default:
-            ESP_LOGW(TAG, "Unknown setting item type for key: %s", key);
-            break;
+    if (type == SETTING_ITEM_TYPE_STR) {
+        char val[SETTING_ITEM_MAX_STR_LEN] = {0};
+        if (setting_items_read(key, val) == 0)
+            cJSON_AddStringToObject(json, json_key, val);
+    } else if (type == SETTING_ITEM_TYPE_NUM) {
+        int val = 0;
+        if (setting_items_read(key, &val) == 0)
+            cJSON_AddNumberToObject(json, json_key, val);
+    } else if (type == SETTING_ITEM_TYPE_BOOL) {
+        uint8_t val = 0;
+        if (setting_items_read(key, &val) == 0)
+            cJSON_AddBoolToObject(json, json_key, val);
     }
 }
 
-static uint16_t g_web_port = 80;
+static bool validate_hostname(const char *hostname) {
+    if (!hostname) {
+        return false;
+    }
+    
+    size_t len = strlen(hostname);
+    
+    // Check length (1-63 characters)
+    if (len == 0 || len > 63) {
+        return false;
+    }
+    
+    // Cannot start or end with hyphen
+    if (hostname[0] == '-' || hostname[len-1] == '-') {
+        return false;
+    }
+    
+    // Check valid characters
+    for (size_t i = 0; i < len; i++) {
+        char c = hostname[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+              (c >= '0' && c <= '9') || c == '-')) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+static void add_info_to_json_group(cJSON *group, const char *json_key, const void *value, size_t size) {
+    if (size == sizeof(int)) {
+        cJSON_AddNumberToObject(group, json_key, *(const int *)value);
+    } else if (size == sizeof(bool) || size == sizeof(uint8_t)) {
+        cJSON_AddBoolToObject(group, json_key, *(const bool *)value);
+    } else {
+        cJSON_AddStringToObject(group, json_key, (const char *)value);
+    }
+}
 
 static esp_err_t info_get_handler(httpd_req_t *req)
 {
@@ -487,41 +398,58 @@ static esp_err_t info_get_handler(httpd_req_t *req)
 
     cJSON *resp_json = cJSON_CreateObject();
 
-    cJSON_AddStringToObject(resp_json, "device_name", sys_info.device_name);
-    cJSON_AddStringToObject(resp_json, "hostname", sys_info.hostname);
-    cJSON_AddStringToObject(resp_json, "firmware", FIRMWARE_VERSION);
-    cJSON_AddStringToObject(resp_json, "hardware", sys_info.hardware_ver);
-    cJSON_AddNumberToObject(resp_json, "serial_num", sys_info.device_serial_num);
+    add_info_to_json_group(resp_json, "device_name", sys_info.device_name, sizeof(sys_info.device_name));
+    add_info_to_json_group(resp_json, "firmware", FIRMWARE_VERSION, sizeof(FIRMWARE_VERSION));
+    add_info_to_json_group(resp_json, "hardware", sys_info.hardware_ver, sizeof(sys_info.hardware_ver));
+    add_info_to_json_group(resp_json, "serial_num", &sys_info.device_serial_num, sizeof(sys_info.device_serial_num));
 
-    cJSON_AddBoolToObject(resp_json, "con_eth", sys_info.eth_is_connected);
-    cJSON_AddStringToObject(resp_json, "eth_ip", sys_info.eth_ip);
-    cJSON_AddStringToObject(resp_json, "eth_mask", sys_info.eth_mask);
-    cJSON_AddStringToObject(resp_json, "eth_gw", sys_info.eth_gw);
-    cJSON_AddStringToObject(resp_json, "eth_mac", sys_info.eth_mac);
+    // Ethernet group
+    cJSON *ethernet = cJSON_CreateObject();
+    add_info_to_json_group(ethernet, "con_eth", &sys_info.eth_is_connected, sizeof(sys_info.eth_is_connected));
+    add_info_to_json_group(ethernet, "ip", sys_info.eth_ip, sizeof(sys_info.eth_ip));
+    add_info_to_json_group(ethernet, "mask", sys_info.eth_mask, sizeof(sys_info.eth_mask));
+    add_info_to_json_group(ethernet, "gw", sys_info.eth_gw, sizeof(sys_info.eth_gw));
+    add_info_to_json_group(ethernet, "mac", sys_info.eth_mac, sizeof(sys_info.eth_mac));
+    cJSON_AddItemToObject(resp_json, "ethernet", ethernet);
 
-    cJSON_AddBoolToObject(resp_json, "con_sta", sys_info.wifi_sta_is_connected);
-    cJSON_AddStringToObject(resp_json, "sta_ip", sys_info.wifi_sta_ip);
-    cJSON_AddStringToObject(resp_json, "sta_mask", sys_info.wifi_sta_mask);
-    cJSON_AddStringToObject(resp_json, "sta_gw", sys_info.wifi_sta_gw);
+    // WiFi group
+    cJSON *wifi = cJSON_CreateObject();
+    add_info_to_json_group(wifi, "con_sta", &sys_info.wifi_sta_is_connected, sizeof(sys_info.wifi_sta_is_connected));
+    add_info_to_json_group(wifi, "sta_ip", sys_info.wifi_sta_ip, sizeof(sys_info.wifi_sta_ip));
+    add_info_to_json_group(wifi, "sta_mask", sys_info.wifi_sta_mask, sizeof(sys_info.wifi_sta_mask));
+    add_info_to_json_group(wifi, "sta_gw", sys_info.wifi_sta_gw, sizeof(sys_info.wifi_sta_gw));
+    add_info_to_json_group(wifi, "con_ap", &sys_info.wifi_ap_connections_count, sizeof(sys_info.wifi_ap_connections_count));
+    
+    // Add WiFi STA RSSI
+    if (sys_info.wifi_sta_is_connected) {
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            cJSON_AddNumberToObject(wifi, "sta_rssi", ap_info.rssi);
+        } else {
+            cJSON_AddNumberToObject(wifi, "sta_rssi", 0);
+        }
+    } else {
+        cJSON_AddNumberToObject(wifi, "sta_rssi", 0);
+    }
+    
+    add_info_to_json_group(wifi, "ap_channel", &(int){WIFI_CHAN_AP}, sizeof(int));
+    add_info_to_json_group(wifi, "sta_mac", sys_info.wifi_sta_mac, sizeof(sys_info.wifi_sta_mac));
+    add_info_to_json_group(wifi, "ap_mac", sys_info.wifi_ap_mac, sizeof(sys_info.wifi_ap_mac));
+    cJSON_AddItemToObject(resp_json, "wifi", wifi);
 
-    cJSON_AddNumberToObject(resp_json, "con_ap", sys_info.wifi_ap_connections_count);
+    // RS485_1 status
+    cJSON *rs485_1 = cJSON_CreateObject();
+    cJSON_AddBoolToObject(rs485_1, "is_busy", sys_info.rs485_1_is_busy);
+    cJSON_AddNumberToObject(rs485_1, "error_percentage", sys_info.rs485_1_error_percentage);
+    cJSON_AddNumberToObject(rs485_1, "server_connections_count", tcp_server_active_connections(TCP_SERVER_1));
+    cJSON_AddItemToObject(resp_json, "rs485_1", rs485_1);
 
-    cJSON_AddNumberToObject(resp_json, "wifi_ap_channel", WIFI_CHAN_AP);
-    cJSON_AddStringToObject(resp_json, "wifi_sta_mac", sys_info.wifi_sta_mac);
-    cJSON_AddStringToObject(resp_json, "wifi_ap_mac", sys_info.wifi_ap_mac);
-
-    cJSON_AddNumberToObject(resp_json, "server1_connections_count", tcp_server_active_connections(TCP_SERVER_1));
-    cJSON_AddNumberToObject(resp_json, "server2_connections_count", tcp_server_active_connections(TCP_SERVER_2));
-
-    cJSON_AddBoolToObject(resp_json, "rs485_1_is_busy", sys_info.rs485_1_is_busy);
-    cJSON_AddBoolToObject(resp_json, "rs485_2_is_busy", sys_info.rs485_2_is_busy);
-
-    // only for Modbus TCP
-    cJSON_AddNumberToObject(resp_json, "rs485_1_error_percentage", sys_info.rs485_1_error_percentage);
-    cJSON_AddNumberToObject(resp_json, "rs485_2_error_percentage", sys_info.rs485_2_error_percentage);
-
-    // Add web_port (from global variable)
-    cJSON_AddNumberToObject(resp_json, "web_port", g_web_port);
+    // RS485_2 status
+    cJSON *rs485_2 = cJSON_CreateObject();
+    cJSON_AddBoolToObject(rs485_2, "is_busy", sys_info.rs485_2_is_busy);
+    cJSON_AddNumberToObject(rs485_2, "error_percentage", sys_info.rs485_2_error_percentage);
+    cJSON_AddNumberToObject(rs485_2, "server_connections_count", tcp_server_active_connections(TCP_SERVER_2));
+    cJSON_AddItemToObject(resp_json, "rs485_2", rs485_2);
 
     resp_and_free_json(req, NULL, resp_json);
 
@@ -585,16 +513,67 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
 
     cJSON *resp_json = cJSON_CreateObject();
 
-    int items_num = setting_items_get_keys(NULL);
-    const char *keys[items_num];
-    setting_items_get_keys(keys);
-
-    for (int i = 0; i < items_num; i++) {
-        add_setting_item_to_json(resp_json, keys[i]);
+    // Top-level
+    const char *top_keys[] = {"hostname", "login", "web_port", "io_bus", "vout"};
+    for (int i = 0; i < 5; ++i) {
+        add_setting_to_json(resp_json, top_keys[i], top_keys[i]);
     }
 
-    resp_and_free_json(req, NULL, resp_json);
+    // WiFi
+    cJSON *wifi = cJSON_CreateObject();
+    const char *wifi_keys[] = {"wifi_mode", "ap_auth", "sta_auth", "ap_ip_static", "ap_mask_static", "ap_gw_static", "ap_ssid", "ap_pass", "sta_ssid", "sta_pass"};
+    const char *wifi_json_keys[] = {"mode", "ap_auth", "sta_auth", "ap_ip_static", "ap_mask_static", "ap_gw_static", "ap_ssid", "ap_pass", "sta_ssid", "sta_pass"};
+    for (int i = 0; i < 10; ++i) {
+        add_setting_to_json(wifi, wifi_keys[i], wifi_json_keys[i]);
+    }
+    cJSON_AddItemToObject(resp_json, "wifi", wifi);
 
+    // Ethernet
+    cJSON *ethernet = cJSON_CreateObject();
+    const char *eth_keys[] = {"eth_ip_static", "eth_mask_static", "eth_gw_static", "eth_dhcpc"};
+    const char *eth_json_keys[] = {"ip_static", "mask_static", "gw_static", "dhcpc"};
+    for (int i = 0; i < 4; ++i) {
+        add_setting_to_json(ethernet, eth_keys[i], eth_json_keys[i]);
+    }
+    cJSON_AddItemToObject(resp_json, "ethernet", ethernet);
+
+    // RS485_1
+    cJSON *rs485_1 = cJSON_CreateObject();
+    const char *rs485_fields[] = {"term", "fail_safe", "baudrate", "stopbits", "parity", "databits"};
+    char key_buf[32];
+    for (int i = 0; i < 6; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "%s_1", rs485_fields[i]);
+        add_setting_to_json(rs485_1, key_buf, rs485_fields[i]);
+    }
+    
+    // Bridge subgroup for RS485_1
+    cJSON *bridge_1 = cJSON_CreateObject();
+    const char *bridge_fields[] = {"bridge_mode", "bridge_port", "bridge_ip", "bridge_mb"};
+    const char *bridge_json_keys[] = {"mode", "port", "ip", "modbus"};
+    for (int i = 0; i < 4; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "%s_1", bridge_fields[i]);
+        add_setting_to_json(bridge_1, key_buf, bridge_json_keys[i]);
+    }
+    cJSON_AddItemToObject(rs485_1, "bridge", bridge_1);
+    cJSON_AddItemToObject(resp_json, "rs485_1", rs485_1);
+
+    // RS485_2
+    cJSON *rs485_2 = cJSON_CreateObject();
+    for (int i = 0; i < 6; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "%s_2", rs485_fields[i]);
+        add_setting_to_json(rs485_2, key_buf, rs485_fields[i]);
+    }
+    
+    // Bridge subgroup for RS485_2
+    cJSON *bridge_2 = cJSON_CreateObject();
+    for (int i = 0; i < 4; ++i) {
+        snprintf(key_buf, sizeof(key_buf), "%s_2", bridge_fields[i]);
+        add_setting_to_json(bridge_2, key_buf, bridge_json_keys[i]);
+    }
+    cJSON_AddItemToObject(rs485_2, "bridge", bridge_2);
+    cJSON_AddItemToObject(resp_json, "rs485_2", rs485_2);
+
+    resp_and_free_json(req, NULL, resp_json);
     return ESP_OK;
 }
 
@@ -633,32 +612,6 @@ static inline esp_err_t process_json_item(httpd_req_t *req, cJSON *item, const c
     return ESP_OK;
 }
 
-// обновляет состояние подтяжек, питания и терминаторов RS485 в соответствии с текущими настройками
-static void update_rs485_control(void)
-{
-    ESP_LOGI(TAG, "%s", __func__);
-
-    bool pullup_1_enabled = false;
-    bool pullup_2_enabled = false;
-    bool term_1_enabled = false;
-    bool term_2_enabled = false;
-    bool vout_enabled = false;
-
-    setting_items_read_raw(KEY_485_FAIL_SAFE_1, &pullup_1_enabled, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_485_FAIL_SAFE_2, &pullup_2_enabled, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_485_TERM_1, &term_1_enabled, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_485_TERM_2, &term_2_enabled, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_485_VOUT, &vout_enabled, SETTING_ITEM_TYPE_BOOL);
-
-    rs485_pupd_on_off(RS485_1, pullup_1_enabled);
-    rs485_pupd_on_off(RS485_2, pullup_2_enabled);
-    rs485_term_on_off(RS485_1, term_1_enabled);
-    rs485_term_on_off(RS485_2, term_2_enabled);
-    rs485_bus_vout_on_off(vout_enabled);
-
-    ESP_LOGI(TAG, "RS485 control updated");
-}
-
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s", __func__);
@@ -678,23 +631,144 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
 
     cJSON *resp_json = cJSON_CreateObject();
 
-    int items_num = setting_items_get_keys(NULL);
-    const char *keys[items_num];
-    setting_items_get_keys(keys);
+    // Top-level
+    if (cJSON_HasObjectItem(req_json, "hostname")) {
+        cJSON *item = cJSON_GetObjectItem(req_json, "hostname");
+        if (cJSON_IsString(item)) {
+            const char *hostname = item->valuestring;
+            
+            if (validate_hostname(hostname)) {
+                setting_items_save("hostname", (void *)hostname);
+                cJSON_AddBoolToObject(resp_json, "hostname", true);
+            } else {
+                cJSON_AddBoolToObject(resp_json, "hostname", false);
+                ESP_LOGW(TAG, "Invalid hostname: %s", hostname);
+            }
+        } else {
+            cJSON_AddBoolToObject(resp_json, "hostname", false);
+            ESP_LOGW(TAG, "hostname must be a string");
+        }
+    }
+    if (cJSON_HasObjectItem(req_json, "login")) {
+        cJSON *item = cJSON_GetObjectItem(req_json, "login");
+        setting_items_save("login", (void *)item->valuestring);
+        cJSON_AddBoolToObject(resp_json, "login", true);
+    }
+    if (cJSON_HasObjectItem(req_json, "web_port")) {
+        cJSON *item = cJSON_GetObjectItem(req_json, "web_port");
+        if (cJSON_IsNumber(item)) {
+            int val = item->valueint;
+            if (val >= 1 && val <= 65535) {
+                setting_items_save("web_port", &val);
+                cJSON_AddBoolToObject(resp_json, "web_port", true);
+            } else {
+                cJSON_AddBoolToObject(resp_json, "web_port", false);
+                ESP_LOGW(TAG, "Invalid web_port: %d (must be 1-65535)", val);
+            }
+        } else {
+            cJSON_AddBoolToObject(resp_json, "web_port", false);
+            ESP_LOGW(TAG, "web_port must be a number");
+        }
+    }
+    if (cJSON_HasObjectItem(req_json, "io_bus")) {
+        cJSON *item = cJSON_GetObjectItem(req_json, "io_bus");
+        bool val = cJSON_IsTrue(item);
+        setting_items_save("io_bus", &val);
+        cJSON_AddBoolToObject(resp_json, "io_bus", true);
+    }
+    if (cJSON_HasObjectItem(req_json, "vout")) {
+        cJSON *item = cJSON_GetObjectItem(req_json, "vout");
+        bool val = cJSON_IsTrue(item);
+        setting_items_save("vout", &val);
+        cJSON_AddBoolToObject(resp_json, "vout", true);
+    }
 
-    for (int i = 0; i < items_num; i++) {
-        if (cJSON_HasObjectItem(req_json, keys[i])) {
-            cJSON *item = cJSON_GetObjectItem(req_json, keys[i]);
-            if (process_json_item(req, item, keys[i], resp_json) != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to process item: %s", keys[i]);
+    // WiFi
+    if (cJSON_HasObjectItem(req_json, "wifi")) {
+        cJSON *wifi = cJSON_GetObjectItem(req_json, "wifi");
+        if (cJSON_HasObjectItem(wifi, "mode")) setting_items_save("wifi_mode", (void *)cJSON_GetObjectItem(wifi, "mode")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "ap_auth")) setting_items_save("ap_auth", (void *)cJSON_GetObjectItem(wifi, "ap_auth")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "sta_auth")) setting_items_save("sta_auth", (void *)cJSON_GetObjectItem(wifi, "sta_auth")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "ap_ip_static")) setting_items_save("ap_ip_static", (void *)cJSON_GetObjectItem(wifi, "ap_ip_static")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "ap_mask_static")) setting_items_save("ap_mask_static", (void *)cJSON_GetObjectItem(wifi, "ap_mask_static")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "ap_gw_static")) setting_items_save("ap_gw_static", (void *)cJSON_GetObjectItem(wifi, "ap_gw_static")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "ap_ssid")) setting_items_save("ap_ssid", (void *)cJSON_GetObjectItem(wifi, "ap_ssid")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "ap_pass")) setting_items_save("ap_pass", (void *)cJSON_GetObjectItem(wifi, "ap_pass")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "sta_ssid")) setting_items_save("sta_ssid", (void *)cJSON_GetObjectItem(wifi, "sta_ssid")->valuestring);
+        if (cJSON_HasObjectItem(wifi, "sta_pass")) setting_items_save("sta_pass", (void *)cJSON_GetObjectItem(wifi, "sta_pass")->valuestring);
+    }
+
+    // Ethernet
+    if (cJSON_HasObjectItem(req_json, "ethernet")) {
+        cJSON *ethernet = cJSON_GetObjectItem(req_json, "ethernet");
+        if (cJSON_HasObjectItem(ethernet, "ip_static")) setting_items_save("eth_ip_static", (void *)cJSON_GetObjectItem(ethernet, "ip_static")->valuestring);
+        if (cJSON_HasObjectItem(ethernet, "mask_static")) setting_items_save("eth_mask_static", (void *)cJSON_GetObjectItem(ethernet, "mask_static")->valuestring);
+        if (cJSON_HasObjectItem(ethernet, "gw_static")) setting_items_save("eth_gw_static", (void *)cJSON_GetObjectItem(ethernet, "gw_static")->valuestring);
+        if (cJSON_HasObjectItem(ethernet, "dhcpc")) {
+            bool val = cJSON_IsTrue(cJSON_GetObjectItem(ethernet, "dhcpc"));
+            setting_items_save("eth_dhcpc", &val);
+        }
+    }
+
+    // RS485_1 and RS485_2
+    const char *rs485_fields[] = {"term", "fail_safe", "baudrate", "stopbits", "parity", "databits"};
+    const char *rs485_json_names[] = {"rs485_1", "rs485_2"};
+    const char *rs485_suffix[] = {"_1", "_2"};
+    for (int port = 0; port < 2; ++port) {
+        if (cJSON_HasObjectItem(req_json, rs485_json_names[port])) {
+            cJSON *rs485 = cJSON_GetObjectItem(req_json, rs485_json_names[port]);
+            char key_buf[32];
+            
+            // Handle regular RS485 fields
+            for (int i = 0; i < 6; ++i) {
+                if (cJSON_HasObjectItem(rs485, rs485_fields[i])) {
+                    cJSON *item = cJSON_GetObjectItem(rs485, rs485_fields[i]);
+                    snprintf(key_buf, sizeof(key_buf), "%s%s", rs485_fields[i], rs485_suffix[port]);
+                    setting_item_type_t type = setting_items_get_type_in_json(key_buf);
+                    if (type == SETTING_ITEM_TYPE_STR && cJSON_IsString(item)) {
+                        setting_items_save(key_buf, (void *)item->valuestring);
+                    } else if (type == SETTING_ITEM_TYPE_NUM && cJSON_IsNumber(item)) {
+                        int v = item->valueint;
+                        setting_items_save(key_buf, &v);
+                    } else if (type == SETTING_ITEM_TYPE_BOOL) {
+                        bool v = cJSON_IsTrue(item);
+                        setting_items_save(key_buf, &v);
+                    }
+                }
+            }
+            
+            // Handle bridge subgroup
+            if (cJSON_HasObjectItem(rs485, "bridge")) {
+                cJSON *bridge = cJSON_GetObjectItem(rs485, "bridge");
+                const char *bridge_json_keys[] = {"mode", "port", "ip", "modbus"};
+                const char *bridge_setting_keys[] = {"bridge_mode", "bridge_port", "bridge_ip", "bridge_mb"};
+                
+                for (int i = 0; i < 4; ++i) {
+                    if (cJSON_HasObjectItem(bridge, bridge_json_keys[i])) {
+                        cJSON *item = cJSON_GetObjectItem(bridge, bridge_json_keys[i]);
+                        snprintf(key_buf, sizeof(key_buf), "%s%s", bridge_setting_keys[i], rs485_suffix[port]);
+                        setting_item_type_t type = setting_items_get_type_in_json(key_buf);
+                        if (type == SETTING_ITEM_TYPE_STR && cJSON_IsString(item)) {
+                            setting_items_save(key_buf, (void *)item->valuestring);
+                        } else if (type == SETTING_ITEM_TYPE_NUM && cJSON_IsNumber(item)) {
+                            int v = item->valueint;
+                            setting_items_save(key_buf, &v);
+                        } else if (type == SETTING_ITEM_TYPE_BOOL) {
+                            bool v = cJSON_IsTrue(item);
+                            setting_items_save(key_buf, &v);
+                        }
+                    }
+                }
             }
         }
     }
 
     update_rs485_control();
+    update_io_bus_control();
+    // TODO: обновить настройки Wi-Fi и Ethernet без перезагрузки устройства
 
+    cJSON_AddBoolToObject(resp_json, "success", true);
     resp_and_free_json(req, req_json, resp_json);
-
     return ESP_OK;
 }
 
@@ -778,46 +852,134 @@ static esp_err_t cmd_post_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to execute command");
         return ESP_FAIL;
     }
-    httpd_resp_send(req, NULL, 0);
+    
+    cJSON *resp_json = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp_json, "success", true);
+    resp_and_free_json(req, NULL, resp_json);
 
     return ESP_OK;
 }
 
-static esp_err_t wifi_scan_get_handler(httpd_req_t *req) {
+// WiFi scan state
+static struct {
+    bool scan_in_progress;
+    bool scan_completed;
+    wifi_ap_record_t ap_records[20];
+    uint16_t ap_count;
+    esp_err_t last_scan_result;
+} wifi_scan_state = {
+    .scan_in_progress = false,
+    .scan_completed = false,
+    .ap_count = 0,
+    .last_scan_result = ESP_OK
+};
+
+static esp_err_t wifi_scan_start_handler(httpd_req_t *req) {
     ESP_LOGI(TAG, "%s", __func__);
 
     if (check_auth(req) != true) {
         return ESP_OK;
     }
 
-    cJSON *resp_json = cJSON_CreateArray();
-    const int config_wifi_scan_max_ap = 20;
-    wifi_ap_record_t ap_records[config_wifi_scan_max_ap];
-    uint16_t ap_count = 0;
+    cJSON *resp_json = cJSON_CreateObject();
 
-    if (esp_wifi_scan_get_ap_records(&ap_count, ap_records) == ESP_OK) {
-        for (int i = 0; i < ap_count; i++) {
-            cJSON *ap_json = cJSON_CreateObject();
-            cJSON_AddStringToObject(ap_json, "ssid", (const char *)ap_records[i].ssid);
-            cJSON_AddNumberToObject(ap_json, "rssi", ap_records[i].rssi);
-            cJSON_AddStringToObject(ap_json, "bssid", (const char *)ap_records[i].bssid);
-            cJSON_AddNumberToObject(ap_json, "channel", ap_records[i].primary);
-
-            cJSON_AddItemToArray(resp_json, ap_json);
-        }
-    } else {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to get Wi-Fi scan results");
-        cJSON_Delete(resp_json);
-        return ESP_FAIL;
+    // Check if scan is already in progress
+    if (wifi_scan_state.scan_in_progress) {
+        cJSON_AddBoolToObject(resp_json, "success", false);
+        cJSON_AddStringToObject(resp_json, "error", "Scan already in progress");
+        resp_and_free_json(req, NULL, resp_json);
+        return ESP_OK;
     }
 
-    // Send JSON response
-    char *json_str = cJSON_Print(resp_json);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json_str);
-    free(json_str);
-    cJSON_Delete(resp_json);
+    // Reset scan state
+    wifi_scan_state.scan_in_progress = true;
+    wifi_scan_state.scan_completed = false;
+    wifi_scan_state.ap_count = 0;
 
+    // Start WiFi scan (non-blocking)
+    wifi_scan_config_t scan_config = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time = {
+            .active = {
+                .min = 100,
+                .max = 300
+            }
+        }
+    };
+
+    esp_err_t scan_result = esp_wifi_scan_start(&scan_config, false); // false = non-blocking
+    if (scan_result == ESP_OK) {
+        cJSON_AddBoolToObject(resp_json, "success", true);
+        cJSON_AddStringToObject(resp_json, "message", "Scan started");
+    } else {
+        wifi_scan_state.scan_in_progress = false;
+        wifi_scan_state.last_scan_result = scan_result;
+        cJSON_AddBoolToObject(resp_json, "success", false);
+        cJSON_AddStringToObject(resp_json, "error", "Failed to start scan");
+        ESP_LOGW(TAG, "WiFi scan failed to start with error: 0x%x", scan_result);
+    }
+
+    resp_and_free_json(req, NULL, resp_json);
+    return ESP_OK;
+}
+
+static esp_err_t wifi_scan_results_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "%s", __func__);
+
+    if (check_auth(req) != true) {
+        return ESP_OK;
+    }
+
+    cJSON *resp_json = cJSON_CreateObject();
+
+    // Check scan status
+    if (wifi_scan_state.scan_in_progress && !wifi_scan_state.scan_completed) {
+        // Try to get results to see if scan completed
+        uint16_t ap_count = 20;
+        esp_err_t result = esp_wifi_scan_get_ap_records(&ap_count, wifi_scan_state.ap_records);
+        
+        if (result == ESP_OK) {
+            wifi_scan_state.scan_completed = true;
+            wifi_scan_state.scan_in_progress = false;
+            wifi_scan_state.ap_count = ap_count;
+            wifi_scan_state.last_scan_result = ESP_OK;
+        } else if (result == ESP_ERR_WIFI_NOT_STARTED) {
+            wifi_scan_state.scan_in_progress = false;
+            wifi_scan_state.last_scan_result = result;
+        }
+    }
+
+    // Return status and results
+    cJSON_AddBoolToObject(resp_json, "scan_in_progress", wifi_scan_state.scan_in_progress);
+    cJSON_AddBoolToObject(resp_json, "scan_completed", wifi_scan_state.scan_completed);
+
+    if (wifi_scan_state.scan_completed) {
+        cJSON *networks = cJSON_CreateArray();
+        for (int i = 0; i < wifi_scan_state.ap_count; i++) {
+            cJSON *ap_json = cJSON_CreateObject();
+            cJSON_AddStringToObject(ap_json, "ssid", (const char *)wifi_scan_state.ap_records[i].ssid);
+            cJSON_AddNumberToObject(ap_json, "rssi", wifi_scan_state.ap_records[i].rssi);
+            
+            char bssid_str[18];
+            snprintf(bssid_str, sizeof(bssid_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     wifi_scan_state.ap_records[i].bssid[0], wifi_scan_state.ap_records[i].bssid[1], 
+                     wifi_scan_state.ap_records[i].bssid[2], wifi_scan_state.ap_records[i].bssid[3], 
+                     wifi_scan_state.ap_records[i].bssid[4], wifi_scan_state.ap_records[i].bssid[5]);
+            cJSON_AddStringToObject(ap_json, "bssid", bssid_str);
+            cJSON_AddNumberToObject(ap_json, "channel", wifi_scan_state.ap_records[i].primary);
+
+            cJSON_AddItemToArray(networks, ap_json);
+        }
+        cJSON_AddItemToObject(resp_json, "networks", networks);
+    } else if (!wifi_scan_state.scan_in_progress && wifi_scan_state.last_scan_result != ESP_OK) {
+        cJSON_AddStringToObject(resp_json, "error", "Scan failed");
+    }
+
+    resp_and_free_json(req, NULL, resp_json);
     return ESP_OK;
 }
 
@@ -977,10 +1139,16 @@ static const httpd_uri_t cmd_post = {
     .handler = cmd_post_handler,
     .user_ctx = NULL,
 };
-static const httpd_uri_t wifi_scan_get = {
-    .uri = "/wifi_scan",
+static const httpd_uri_t wifi_scan_start_post = {
+    .uri = "/wifi_scan/start",
+    .method = HTTP_POST,
+    .handler = wifi_scan_start_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t wifi_scan_results_get = {
+    .uri = "/wifi_scan/results",
     .method = HTTP_GET,
-    .handler = wifi_scan_get_handler,
+    .handler = wifi_scan_results_handler,
     .user_ctx = NULL,
 };
 static const httpd_uri_t ap_clients_get = {
@@ -1003,7 +1171,16 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
     httpd_config.max_uri_handlers = 30;  // TODO: Подобрать значение к релизу
     httpd_config.stack_size = 1024 * 6;  // TODO: Проверить размер используемой памяти
 
-    g_web_port = httpd_config.server_port;
+    if (setting_items_read_raw("web_port", &httpd_config.server_port, SETTING_ITEM_TYPE_NUM) != 0) {
+        ESP_LOGE(TAG, "Failed to read web_port from settings");
+        return ESP_FAIL;
+    }
+
+    // Initialize authentication module
+    if (auth_session_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize authentication module");
+        return ESP_FAIL;
+    }
 
     if (httpd_start(&http_server, &httpd_config) == ESP_OK) {
         httpd_register_uri_handler(http_server, &auth_post);
@@ -1022,7 +1199,8 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
         httpd_register_uri_handler(http_server, &settings_get);
         httpd_register_uri_handler(http_server, &settings_post);
         httpd_register_uri_handler(http_server, &cmd_post);
-        httpd_register_uri_handler(http_server, &wifi_scan_get);
+        httpd_register_uri_handler(http_server, &wifi_scan_start_post);
+        httpd_register_uri_handler(http_server, &wifi_scan_results_get);
         httpd_register_uri_handler(http_server, &ap_clients_get);
         httpd_register_uri_handler(http_server, &uptime_get);
     }
