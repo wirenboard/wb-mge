@@ -113,10 +113,6 @@ static void eth_connect_event_handler(void *arg, esp_event_base_t event_base,
             snprintf(sys_info.eth_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&event->ip_info.gw));
             break;
         case ETHERNET_EVENT_CONNECTED:
-            uint8_t mac_addr[6] = {0};
-            esp_eth_handle_t eth_handle = *(esp_eth_handle_t *)event_data;
-            esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
-            snprintf(sys_info.eth_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(mac_addr));
             sys_info.eth_is_connected = true;
             break;
         case ETHERNET_EVENT_DISCONNECTED:
@@ -251,6 +247,15 @@ void app_main(void)
         eth_ip_info = &static_ip_info;
     }
     ESP_ERROR_CHECK(ethernet_init(&eth_connect_event_handler, eth_ip_info));
+
+    // Get Ethernet MAC address after initialization
+    esp_eth_handle_t eth_handle = ethernet_get_handle();
+    if (eth_handle != NULL) {
+        uint8_t eth_mac[6] = {0};
+        esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, eth_mac);
+        snprintf(sys_info.eth_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(eth_mac));
+        ESP_LOGI(TAG, "Ethernet MAC: " MACSTR, MAC2STR(eth_mac));
+    }
 
     ssdp_config_t ssdp_config = NULL;  // TODO: Add SSDP
     ESP_ERROR_CHECK(http_server_init(&ssdp_config));
