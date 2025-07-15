@@ -273,6 +273,8 @@ void app_main(void)
     // init and start blink task to indicate that we are in bootloader mode
     xTaskCreate(blink_task, "blink_task", 2048, NULL, 1, NULL);
     
+    ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
+    
     while (1)
     {
         if ((sys_info.wifi_ap_connections_count > 0) ||
