@@ -162,10 +162,11 @@ static void wifi_ap_connect_event_handler(void *arg, esp_event_base_t event_base
 }
 
 static wifi_auth_mode_t str_to_wifi_auth_mode(const char *str) {
-    if (strcmp(str, WIFI_AUTH_OPEN_STR) == 0) return WIFI_AUTH_OPEN;
-    if (strcmp(str, WIFI_AUTH_WPA_PSK_STR) == 0) return WIFI_AUTH_WPA_PSK;
-    if (strcmp(str, WIFI_AUTH_WPA2_PSK_STR) == 0) return WIFI_AUTH_WPA2_PSK;
-    if (strcmp(str, "wpa_wpa2_psk") == 0) return WIFI_AUTH_WPA_WPA2_PSK;
+    if (strcmp(str, WIFI_AUTH_WPA2_PSK_STR) == 0) {
+        return WIFI_AUTH_WPA2_PSK;
+    } else if (strcmp(str, WIFI_AUTH_WPA3_PSK_STR) == 0) {
+        return WIFI_AUTH_WPA3_PSK;
+    }
     return WIFI_AUTH_OPEN;
 }
 
