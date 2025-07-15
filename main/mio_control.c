@@ -34,3 +34,19 @@ void mio_control_reset(void)
     vTaskDelay(pdMS_TO_TICKS(100));
     esp_io_expander_set_level(io_expander, MIO_RESET_PIN, 1);
 }
+
+void mio_control_io_bus_onoff(bool enabled)
+{
+    if (io_expander == NULL) {
+        ESP_LOGE(TAG, "IO expander is not initialized");
+        return;     
+    }
+
+    if (enabled) {
+        esp_io_expander_set_level(io_expander, MIO_RESET_PIN, 1);
+        ESP_LOGI(TAG, "IO bus enabled");
+    } else {
+        esp_io_expander_set_level(io_expander, MIO_RESET_PIN, 0);
+        ESP_LOGI(TAG, "IO bus disabled");
+    }
+}
