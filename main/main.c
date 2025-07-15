@@ -25,6 +25,7 @@
 #include "rs485_control.h"
 #include "mio_control.h"
 #include "leds_control.h"
+#include "update_rs485_mio_gpio_states.h"
 
 static const char *TAG = "main";
 
@@ -269,6 +270,9 @@ void app_main(void)
     mio_control_init(io_expander);
 
     mio_control_reset();
+
+    update_rs485_control();
+    update_io_bus_control();
 
     // init and start blink task to indicate that we are in bootloader mode
     xTaskCreate(blink_task, "blink_task", 2048, NULL, 1, NULL);
