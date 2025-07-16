@@ -21,6 +21,8 @@ idf_component_register(SRCS "main.c"
                             "json_utils.c"
                             "wifi_scan.c"
                             "settings_manager.c"
+                            "cmd_handler.c"
+                            "ota_handler.c"
                         INCLUDE_DIRS "."
                             "include"
                         EMBED_TXTFILES

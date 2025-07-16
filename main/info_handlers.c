@@ -300,7 +300,7 @@ esp_err_t info_get_handler(httpd_req_t *req)
     ESP_LOGI(TAG, "System info GET request");
 
     if (!auth_middleware_check(req)) {
-        return ESP_FAIL;
+        return ESP_OK;
     }
 
     cJSON *response_json = cJSON_CreateObject();
@@ -383,7 +383,7 @@ esp_err_t uptime_get_handler(httpd_req_t *req)
     ESP_LOGI(TAG, "Uptime GET request");
 
     if (!auth_middleware_check(req)) {
-        return ESP_FAIL;
+        return ESP_OK;
     }
 
     cJSON *uptime_json = NULL;

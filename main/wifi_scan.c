@@ -1,6 +1,6 @@
 #include "wifi_scan.h"
 #include "json_utils.h"
-#include "auth_session.h"
+#include "auth_handlers.h"
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
@@ -220,7 +220,7 @@ esp_err_t wifi_scan_start_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "WiFi scan start request");
 
-    if (!auth_check_request(req)) {
+    if (!auth_middleware_check(req)) {
         return ESP_OK;
     }
 
@@ -251,7 +251,7 @@ esp_err_t wifi_scan_results_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "WiFi scan results request");
 
-    if (!auth_check_request(req)) {
+    if (!auth_middleware_check(req)) {
         return ESP_OK;
     }
 

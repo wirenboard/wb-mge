@@ -1,6 +1,6 @@
 #include "settings_manager.h"
 #include "json_utils.h"
-#include "auth_session.h"
+#include "auth_handlers.h"
 #include "update_rs485_mio_gpio_states.h"
 #include <esp_log.h>
 #include <string.h>
@@ -426,7 +426,7 @@ esp_err_t settings_get_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "Settings GET request");
 
-    if (!auth_check_request(req)) {
+    if (!auth_middleware_check(req)) {
         return ESP_OK;
     }
 
@@ -446,7 +446,7 @@ esp_err_t settings_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "Settings POST request");
 
-    if (!auth_check_request(req)) {
+    if (!auth_middleware_check(req)) {
         return ESP_OK;
     }
 
