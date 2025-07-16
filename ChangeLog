@@ -1,7 +1,7 @@
 2025-06-25 Radmir Khakimov <radmir.khakimov@wirenboard.com>
 
     * version:  1.0.0-rc2
-    * rework:   update REST API
+    * rework:   update REST API, refactor http_server code
     * added:    new HW support: ethernet, gpio expander, leds, second rs485 bus, rs485 terminators and pulls control, WB-MIO control
 
 2024-10-29 Alexey Strizhnev <alexey.strizhnev@wirenboard.com>
