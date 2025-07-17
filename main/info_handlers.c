@@ -20,37 +20,6 @@ esp_err_t info_handlers_init(void)
     return ESP_OK;
 }
 
-static void add_info_to_json_group(cJSON *group, const char *json_key, const void *value, size_t size)
-{
-    if (size == sizeof(int)) {
-        cJSON_AddNumberToObject(group, json_key, *(const int *)value);
-    } else if ((size == sizeof(bool)) || (size == sizeof(uint8_t))) {
-        cJSON_AddBoolToObject(group, json_key, *(const bool *)value);
-    } else {
-        cJSON_AddStringToObject(group, json_key, (const char *)value);
-    }
-}
-
-static esp_err_t info_build_device_json(cJSON **device_json)
-{
-    if (device_json == NULL) {
-        return ESP_FAIL;
-    }
-
-    *device_json = cJSON_CreateObject();
-    if (*device_json == NULL) {
-        ESP_LOGE(TAG, "Failed to create device JSON object");
-        return ESP_FAIL;
-    }
-
-    add_info_to_json_group(*device_json, "device_name", sys_info.device_name, sizeof(sys_info.device_name));
-    add_info_to_json_group(*device_json, "firmware", FIRMWARE_VERSION, sizeof(FIRMWARE_VERSION));
-    add_info_to_json_group(*device_json, "hardware", sys_info.hardware_ver, sizeof(sys_info.hardware_ver));
-    add_info_to_json_group(*device_json, "serial_num", &sys_info.device_serial_num, sizeof(sys_info.device_serial_num));
-
-    return ESP_OK;
-}
-
 static esp_err_t info_build_network_json(cJSON **network_json)
 {
     if (network_json == NULL) {
@@ -71,11 +40,11 @@ static esp_err_t info_build_network_json(cJSON **network_json)
         return ESP_FAIL;
     }
 
-    add_info_to_json_group(ethernet, "con_eth", &sys_info.eth_is_connected, sizeof(sys_info.eth_is_connected));
-    add_info_to_json_group(ethernet, "ip", sys_info.eth_ip, sizeof(sys_info.eth_ip));
-    add_info_to_json_group(ethernet, "mask", sys_info.eth_mask, sizeof(sys_info.eth_mask));
-    add_info_to_json_group(ethernet, "gw", sys_info.eth_gw, sizeof(sys_info.eth_gw));
-    add_info_to_json_group(ethernet, "mac", sys_info.eth_mac, sizeof(sys_info.eth_mac));
+    cJSON_AddBoolToObject(ethernet, "con_eth", sys_info.eth_is_connected);
+    cJSON_AddStringToObject(ethernet, "ip", sys_info.eth_ip);
+    cJSON_AddStringToObject(ethernet, "mask", sys_info.eth_mask);
+    cJSON_AddStringToObject(ethernet, "gw", sys_info.eth_gw);
+    cJSON_AddStringToObject(ethernet, "mac", sys_info.eth_mac);
     cJSON_AddItemToObject(*network_json, "ethernet", ethernet);
 
     // WiFi group
@@ -86,11 +55,11 @@ static esp_err_t info_build_network_json(cJSON **network_json)
         return ESP_FAIL;
     }
 
-    add_info_to_json_group(wifi, "con_sta", &sys_info.wifi_sta_is_connected, sizeof(sys_info.wifi_sta_is_connected));
-    add_info_to_json_group(wifi, "sta_ip", sys_info.wifi_sta_ip, sizeof(sys_info.wifi_sta_ip));
-    add_info_to_json_group(wifi, "sta_mask", sys_info.wifi_sta_mask, sizeof(sys_info.wifi_sta_mask));
-    add_info_to_json_group(wifi, "sta_gw", sys_info.wifi_sta_gw, sizeof(sys_info.wifi_sta_gw));
-    add_info_to_json_group(wifi, "con_ap", &sys_info.wifi_ap_connections_count, sizeof(sys_info.wifi_ap_connections_count));
+    cJSON_AddBoolToObject(wifi, "con_sta", sys_info.wifi_sta_is_connected);
+    cJSON_AddStringToObject(wifi, "sta_ip", sys_info.wifi_sta_ip);
+    cJSON_AddStringToObject(wifi, "sta_mask", sys_info.wifi_sta_mask);
+    cJSON_AddStringToObject(wifi, "sta_gw", sys_info.wifi_sta_gw);
+    cJSON_AddNumberToObject(wifi, "con_ap", sys_info.wifi_ap_connections_count);
 
     // Add WiFi STA RSSI
     if (sys_info.wifi_sta_is_connected) {
@@ -104,9 +73,9 @@ static esp_err_t info_build_network_json(cJSON **network_json)
         cJSON_AddNumberToObject(wifi, "sta_rssi", 0);
     }
 
-    add_info_to_json_group(wifi, "ap_channel", &(int){WIFI_CHAN_AP}, sizeof(int));
-    add_info_to_json_group(wifi, "sta_mac", sys_info.wifi_sta_mac, sizeof(sys_info.wifi_sta_mac));
-    add_info_to_json_group(wifi, "ap_mac", sys_info.wifi_ap_mac, sizeof(sys_info.wifi_ap_mac));
+    cJSON_AddNumberToObject(wifi, "ap_channel", WIFI_CHAN_AP);
+    cJSON_AddStringToObject(wifi, "sta_mac", sys_info.wifi_sta_mac);
+    cJSON_AddStringToObject(wifi, "ap_mac", sys_info.wifi_ap_mac);
     cJSON_AddItemToObject(*network_json, "wifi", wifi);
 
     return ESP_OK;
@@ -320,29 +289,11 @@ esp_err_t info_get_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    // Build device info
-    cJSON *device_json = NULL;
-    if (info_build_device_json(&device_json) == ESP_OK && device_json != NULL) {
-        cJSON *device_name = cJSON_DetachItemFromObject(device_json, "device_name");
-        cJSON *firmware = cJSON_DetachItemFromObject(device_json, "firmware");
-        cJSON *hardware = cJSON_DetachItemFromObject(device_json, "hardware");
-        cJSON *serial_num = cJSON_DetachItemFromObject(device_json, "serial_num");
-
-        if (device_name) {
-            cJSON_AddItemToObject(response_json, "device_name", device_name);
-        }
-        if (firmware) {
-            cJSON_AddItemToObject(response_json, "firmware", firmware);
-        }
-        if (hardware) {
-            cJSON_AddItemToObject(response_json, "hardware", hardware);
-        }
-        if (serial_num) {
-            cJSON_AddItemToObject(response_json, "serial_num", serial_num);
-        }
-
-        cJSON_Delete(device_json);
-    }
+    // Build device info directly
+    cJSON_AddStringToObject(response_json, "device_name", sys_info.device_name);
+    cJSON_AddStringToObject(response_json, "firmware", FIRMWARE_VERSION);
+    cJSON_AddStringToObject(response_json, "hardware", sys_info.hardware_ver);
+    cJSON_AddNumberToObject(response_json, "serial_num", sys_info.device_serial_num);
 
     // Build network info
     cJSON *network_json = NULL;

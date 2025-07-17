@@ -105,9 +105,9 @@ static const setting_mapping_t rs485_base_mappings[] = {
     {"term", "term", SETTING_ITEM_TYPE_BOOL, NULL, false},
     {"fail_safe", "fail_safe", SETTING_ITEM_TYPE_BOOL, NULL, false},
     {"baudrate", "baudrate", SETTING_ITEM_TYPE_NUM, NULL, false},
-    {"stopbits", "stopbits", SETTING_ITEM_TYPE_NUM, NULL, false},
+    {"stopbits", "stopbits", SETTING_ITEM_TYPE_STR, NULL, false},
     {"parity", "parity", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"databits", "databits", SETTING_ITEM_TYPE_NUM, NULL, false},
+    {"databits", "databits", SETTING_ITEM_TYPE_STR, NULL, false},
 };
 
 static const setting_mapping_t rs485_bridge_mappings[] = {
