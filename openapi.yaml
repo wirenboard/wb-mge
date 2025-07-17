@@ -64,14 +64,7 @@ paths:
       summary: Logout current session
       responses:
         '200':
-          description: Logout result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
+          $ref: '#/components/responses/SuccessResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -87,14 +80,7 @@ paths:
               format: binary
       responses:
         '200':
-          description: Update result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
+          $ref: '#/components/responses/SuccessResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -138,7 +124,7 @@ paths:
                   rs485_2:
                     $ref: '#/components/schemas/RS485Status'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
     post:
       summary: Update device info
       requestBody:
@@ -157,7 +143,7 @@ paths:
         '400':
           description: Bad request
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /settings:
     get:
@@ -170,7 +156,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeviceSettings'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
     post:
       summary: Update device settings
       requestBody:
@@ -197,7 +183,7 @@ paths:
                   type: boolean
                   description: Individual field update status (true/false for each field)
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /cmd:
     post:
@@ -227,7 +213,7 @@ paths:
         '400':
           description: Bad request
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /wifi_scan/start:
     post:
@@ -260,7 +246,7 @@ paths:
                     success: false
                     error: "Failed to start scan"
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /wifi_scan/results:
     get:
@@ -308,7 +294,7 @@ paths:
                     scan_completed: false
                     error: "Scan failed"
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /ap_clients:
     get:
@@ -327,7 +313,7 @@ paths:
                     rssi: { type: integer }
                     ip: { type: string }
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /uptime:
     get:
@@ -345,7 +331,7 @@ paths:
                   minutes: { type: integer }
                   seconds: { type: integer }
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
 components:
   securitySchemes:
@@ -356,6 +342,15 @@ components:
   responses:
     UnauthorizedError:
       description: Unauthorized - Session cookie required or invalid
+    SuccessResponse:
+      description: Operation successful
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
   schemas:
     RS485Status:
       type: object
