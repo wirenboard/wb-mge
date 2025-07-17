@@ -1,5 +1,4 @@
-#ifndef JSON_UTILS_H
-#define JSON_UTILS_H
+#pragma once
 
 #include <esp_http_server.h>
 #include "cJSON.h"
@@ -24,13 +23,6 @@ cJSON *json_utils_receive_json(httpd_req_t *req);
 void json_utils_send_response(httpd_req_t *req, cJSON *req_json, cJSON *resp_json);
 
 /**
- * @brief Send success JSON response
- * @param req HTTP request handle
- * @return ESP_OK on success
- */
-esp_err_t json_utils_send_success(httpd_req_t *req);
-
-/**
  * @brief Send error JSON response
  * @param req HTTP request handle
  * @param error_message Error message string
@@ -39,18 +31,8 @@ esp_err_t json_utils_send_success(httpd_req_t *req);
 esp_err_t json_utils_send_error(httpd_req_t *req, const char *error_message);
 
 /**
- * @brief Send JSON object as response
- * @param req HTTP request handle
- * @param json JSON object to send
- * @return ESP_OK on success
- */
-esp_err_t json_utils_send_json(httpd_req_t *req, cJSON *json);
-
-/**
  * @brief Cleanup JSON objects
  * @param req_json Request JSON object (can be NULL)
  * @param resp_json Response JSON object (can be NULL)
  */
 void json_utils_cleanup(cJSON *req_json, cJSON *resp_json);
-
-#endif // JSON_UTILS_H

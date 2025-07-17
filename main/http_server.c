@@ -1,8 +1,7 @@
 #include "http_server.h"
-#include "auth_session.h"
+#include "auth.h"
 #include "wifi_scan.h"
 #include "settings_manager.h"
-#include "auth_handlers.h"
 #include "info_handlers.h"
 #include "cmd_handler.h"
 #include "ota_handler.h"
@@ -12,7 +11,6 @@
 
 #include "esp_log.h"
 #include "setting_items.h"
-#include "ssdp.h"
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 // Note: REQ_RECV_BUF_SIZE moved to json_utils.h as JSON_UTILS_REQ_RECV_BUF_SIZE
@@ -172,7 +170,7 @@ static const httpd_uri_t uptime_get = {
     .user_ctx = NULL,
 };
 
-esp_err_t http_server_init(ssdp_config_t *ssdp_config)
+esp_err_t http_server_init(void)
 {
     static httpd_handle_t http_server = NULL;
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
@@ -196,9 +194,9 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
         return ESP_FAIL;
     }
 
-    // Initialize authentication handlers
-    if (auth_handlers_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize authentication handlers");
+    // Initialize authentication module
+    if (auth_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize authentication module");
         return ESP_FAIL;
     }
 
@@ -217,12 +215,6 @@ esp_err_t http_server_init(ssdp_config_t *ssdp_config)
     // Initialize OTA handler
     if (ota_handler_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize OTA handler");
-        return ESP_FAIL;
-    }
-
-    // Initialize authentication module
-    if (auth_session_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize authentication module");
         return ESP_FAIL;
     }
 

@@ -258,8 +258,7 @@ void app_main(void)
         ESP_LOGI(TAG, "Ethernet MAC: " MACSTR, MAC2STR(eth_mac));
     }
 
-    ssdp_config_t ssdp_config = NULL;  // TODO: Add SSDP
-    ESP_ERROR_CHECK(http_server_init(&ssdp_config));
+    ESP_ERROR_CHECK(http_server_init());
 
     sys_info_init();
     print_setting_items();

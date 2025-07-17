@@ -1,7 +1,8 @@
 #include "ota_handler.h"
 #include "json_utils.h"
-#include "auth_handlers.h"
+#include "auth.h"
 #include "cmd_handler.h"
+
 #include <esp_log.h>
 #include <esp_ota_ops.h>
 #include <sys/param.h>
@@ -10,13 +11,19 @@
 
 static const char *TAG = "ota_handler";
 
+typedef struct {
+    bool success;
+    int bytes_written;
+    const char *error_message;
+} ota_result_t;
+
 esp_err_t ota_handler_init(void)
 {
     ESP_LOGI(TAG, "OTA handler initialized");
     return ESP_OK;
 }
 
-esp_err_t ota_validate_content_type(httpd_req_t *req)
+static esp_err_t ota_validate_content_type(httpd_req_t *req)
 {
     char content_type[64];
     if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) == ESP_OK) {
@@ -30,7 +37,7 @@ esp_err_t ota_validate_content_type(httpd_req_t *req)
     return ESP_OK;
 }
 
-esp_err_t ota_begin_update(const esp_partition_t **ota_partition, esp_ota_handle_t *ota_handle)
+static esp_err_t ota_begin_update(const esp_partition_t **ota_partition, esp_ota_handle_t *ota_handle)
 {
     *ota_partition = esp_ota_get_next_update_partition(NULL);
     if (*ota_partition == NULL) {
@@ -47,9 +54,9 @@ esp_err_t ota_begin_update(const esp_partition_t **ota_partition, esp_ota_handle
     return ESP_OK;
 }
 
-esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_handle, int *total_received)
+static esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_handle, int *total_received)
 {
-    if (req == NULL || total_received == NULL) {
+    if ((req == NULL) || (total_received == NULL)) {
         return ESP_FAIL;
     }
 
@@ -83,12 +90,12 @@ esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_handle, i
 
         remaining -= recv_len;
         *total_received += recv_len;
-        
+
         // Log progress every 10% or every 64KB, whichever is larger
         int progress_threshold = MAX(req->content_len / 10, 65536);
         if (*total_received % progress_threshold == 0 || remaining == 0) {
             int progress_percent = (*total_received * 100) / req->content_len;
-            ESP_LOGI(TAG, "OTA Update progress: %d%% (%d/%d bytes)", 
+            ESP_LOGI(TAG, "OTA Update progress: %d%% (%d/%d bytes)",
                      progress_percent, *total_received, req->content_len);
         }
     }
@@ -97,7 +104,7 @@ esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_handle, i
     return ESP_OK;
 }
 
-esp_err_t ota_finalize_update(esp_ota_handle_t ota_handle, const esp_partition_t *ota_partition)
+static esp_err_t ota_finalize_update(esp_ota_handle_t ota_handle, const esp_partition_t *ota_partition)
 {
     ESP_LOGI(TAG, "OTA upload completed, validating firmware...");
 
@@ -115,7 +122,7 @@ esp_err_t ota_finalize_update(esp_ota_handle_t ota_handle, const esp_partition_t
     return ESP_OK;
 }
 
-cJSON *ota_create_success_response(int bytes_written)
+static cJSON *ota_create_success_response(int bytes_written)
 {
     cJSON *response_json = cJSON_CreateObject();
     if (response_json == NULL) {
@@ -130,9 +137,9 @@ cJSON *ota_create_success_response(int bytes_written)
     return response_json;
 }
 
-esp_err_t ota_update_from_http(httpd_req_t *req, ota_result_t *result)
+static esp_err_t ota_update_from_http(httpd_req_t *req, ota_result_t *result)
 {
-    if (req == NULL || result == NULL) {
+    if ((req == NULL) || (result == NULL)) {
         return ESP_FAIL;
     }
 
