@@ -37,12 +37,6 @@ static const cmd_t available_commands[] = {
     {-1, NULL, NULL},  // Terminator
 };
 
-esp_err_t cmd_handler_init(void)
-{
-    ESP_LOGI(TAG, "Command handler initialized");
-    return ESP_OK;
-}
-
 static void reboot_task(void *pvParameters)
 {
     ESP_LOGI(TAG, "Executing reboot command");

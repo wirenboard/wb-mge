@@ -2,8 +2,6 @@
 
 #include <esp_http_server.h>
 
-esp_err_t info_handlers_init(void);
-
 // HTTP handler for system info GET endpoint
 esp_err_t info_get_handler(httpd_req_t *req);
 // HTTP handler for system info POST endpoint

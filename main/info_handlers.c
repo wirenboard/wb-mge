@@ -14,12 +14,6 @@
 
 static const char *TAG = "info_handlers";
 
-esp_err_t info_handlers_init(void)
-{
-    ESP_LOGI(TAG, "Info handlers initialized");
-    return ESP_OK;
-}
-
 static esp_err_t info_build_network_json(cJSON **network_json)
 {
     if (network_json == NULL) {

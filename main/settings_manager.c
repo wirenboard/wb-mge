@@ -132,12 +132,6 @@ size_t settings_get_group_count(void) {
     return sizeof(setting_groups) / sizeof(setting_groups[0]);
 }
 
-esp_err_t settings_manager_init(void)
-{
-    ESP_LOGI(TAG, "Settings manager initialized");
-    return ESP_OK;
-}
-
 static void add_setting_to_json(cJSON *json, const char *key, const char *json_key)
 {
     setting_item_type_t type = setting_items_get_type_in_json(key);

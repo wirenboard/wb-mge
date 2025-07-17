@@ -180,28 +180,8 @@ esp_err_t http_server_init(void)
         return ESP_FAIL;
     }
 
-    if (settings_manager_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize settings manager");
-        return ESP_FAIL;
-    }
-
     if (auth_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize authentication module");
-        return ESP_FAIL;
-    }
-
-    if (info_handlers_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize info handlers");
-        return ESP_FAIL;
-    }
-
-    if (cmd_handler_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize command handler");
-        return ESP_FAIL;
-    }
-
-    if (ota_handler_init() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize OTA handler");
         return ESP_FAIL;
     }
 

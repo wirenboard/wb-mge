@@ -17,12 +17,6 @@ typedef struct {
     const char *error_message;
 } ota_result_t;
 
-esp_err_t ota_handler_init(void)
-{
-    ESP_LOGI(TAG, "OTA handler initialized");
-    return ESP_OK;
-}
-
 static esp_err_t ota_validate_content_type(httpd_req_t *req)
 {
     char content_type[64];

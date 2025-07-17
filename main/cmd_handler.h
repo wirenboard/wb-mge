@@ -2,8 +2,6 @@
 
 #include <esp_http_server.h>
 
-esp_err_t cmd_handler_init(void);
-
 // HTTP handler for command POST endpoint
 esp_err_t cmd_post_handler(httpd_req_t *req);
 
