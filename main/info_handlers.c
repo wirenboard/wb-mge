@@ -316,7 +316,8 @@ esp_err_t info_get_handler(httpd_req_t *req)
     cJSON *response_json = cJSON_CreateObject();
     if (response_json == NULL) {
         ESP_LOGE(TAG, "Failed to create response JSON");
-        return ESP_FAIL;
+        json_utils_send_error(req, "Failed to create response");
+        return ESP_OK;
     }
 
     // Build device info
@@ -384,7 +385,7 @@ esp_err_t info_post_handler(httpd_req_t *req)
     ESP_LOGI(TAG, "System info POST request");
 
     if (!auth_middleware_check(req)) {
-        return ESP_FAIL;
+        return ESP_OK;
     }
 
     cJSON *request_json = json_utils_receive_json(req);
@@ -396,7 +397,8 @@ esp_err_t info_post_handler(httpd_req_t *req)
 
     if (result != ESP_OK) {
         json_utils_cleanup(request_json, NULL);
-        return json_utils_send_error(req, "Failed to update system info");
+        json_utils_send_error(req, "Failed to update system info");
+        return ESP_OK;
     }
 
     json_utils_cleanup(request_json, NULL);
@@ -417,21 +419,11 @@ esp_err_t uptime_get_handler(httpd_req_t *req)
 
     if ((result != ESP_OK) || (uptime_json == NULL)) {
         ESP_LOGE(TAG, "Failed to build uptime JSON");
-        return json_utils_send_error(req, "Failed to get uptime");
+        json_utils_send_error(req, "Failed to get uptime");
+        return ESP_OK;
     }
 
-    char *json_str = cJSON_Print(uptime_json);
-    if (json_str == NULL) {
-        ESP_LOGE(TAG, "Failed to print uptime JSON");
-        cJSON_Delete(uptime_json);
-        return ESP_FAIL;
-    }
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json_str);
-    free(json_str);
-    cJSON_Delete(uptime_json);
-
+    json_utils_send_response(req, NULL, uptime_json);
     return ESP_OK;
 }
 
@@ -440,7 +432,7 @@ esp_err_t ap_clients_get_handler(httpd_req_t *req)
     ESP_LOGI(TAG, "AP clients GET request");
 
     if (!auth_middleware_check(req)) {
-        return ESP_FAIL;
+        return ESP_OK;
     }
 
     cJSON *clients_json = NULL;
@@ -448,20 +440,10 @@ esp_err_t ap_clients_get_handler(httpd_req_t *req)
 
     if ((result != ESP_OK) || (clients_json == NULL)) {
         ESP_LOGE(TAG, "Failed to build AP clients JSON");
-        return json_utils_send_error(req, "Failed to get AP clients");
+        json_utils_send_error(req, "Failed to get AP clients");
+        return ESP_OK;
     }
 
-    char *json_str = cJSON_Print(clients_json);
-    if (json_str == NULL) {
-        ESP_LOGE(TAG, "Failed to print AP clients JSON");
-        cJSON_Delete(clients_json);
-        return ESP_FAIL;
-    }
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json_str);
-    free(json_str);
-    cJSON_Delete(clients_json);
-
+    json_utils_send_response(req, NULL, clients_json);
     return ESP_OK;
 }

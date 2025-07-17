@@ -263,7 +263,8 @@ esp_err_t wifi_scan_start_handler(httpd_req_t *req)
     cJSON *resp_json = cJSON_CreateObject();
     if (resp_json == NULL) {
         ESP_LOGE(TAG, "Failed to create response JSON");
-        return ESP_FAIL;
+        json_utils_send_error(req, "Failed to create response");
+        return ESP_OK;
     }
 
     esp_err_t result = wifi_scan_start();
@@ -296,7 +297,8 @@ esp_err_t wifi_scan_results_handler(httpd_req_t *req)
 
     if ((result != ESP_OK) || (resp_json == NULL)) {
         ESP_LOGE(TAG, "Failed to get scan status");
-        return json_utils_send_error(req, "Failed to get scan status");
+        json_utils_send_error(req, "Failed to get scan status");
+        return ESP_OK;
     }
 
     // Add scan results if completed
