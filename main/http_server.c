@@ -13,15 +13,8 @@
 #include "setting_items.h"
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
-// Note: REQ_RECV_BUF_SIZE moved to json_utils.h as JSON_UTILS_REQ_RECV_BUF_SIZE
-// Note: Authentication constants moved to auth_handlers.h
-// Note: Command handler constants moved to cmd_handler.h
-// Note: OTA handler constants moved to ota_handler.h
-// Note: WiFi scan constants moved to wifi_scan.h
 
 static const char *TAG = "http_server";
-
-// Note: WiFi scan mutex and state moved to wifi_scan.c
 
 extern const uint8_t favicon_start[] asm("_binary_favicon_webp_gz_start");
 extern const uint8_t favicon_end[] asm("_binary_favicon_webp_gz_end");
@@ -182,37 +175,31 @@ esp_err_t http_server_init(void)
         return ESP_FAIL;
     }
 
-    // Initialize WiFi scan module
     if (wifi_scan_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize WiFi scan module");
         return ESP_FAIL;
     }
 
-    // Initialize settings manager
     if (settings_manager_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize settings manager");
         return ESP_FAIL;
     }
 
-    // Initialize authentication module
     if (auth_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize authentication module");
         return ESP_FAIL;
     }
 
-    // Initialize info handlers
     if (info_handlers_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize info handlers");
         return ESP_FAIL;
     }
 
-    // Initialize command handler
     if (cmd_handler_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize command handler");
         return ESP_FAIL;
     }
 
-    // Initialize OTA handler
     if (ota_handler_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize OTA handler");
         return ESP_FAIL;
@@ -223,7 +210,7 @@ esp_err_t http_server_init(void)
         httpd_register_uri_handler(http_server, &session_get);
         httpd_register_uri_handler(http_server, &logout_post);
 
-        // files
+        // static files
         httpd_register_uri_handler(http_server, &index_get);
         httpd_register_uri_handler(http_server, &index_css_get);
         httpd_register_uri_handler(http_server, &index_js_get);
