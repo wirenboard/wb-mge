@@ -4,10 +4,13 @@ info:
   version: 1.0.0
 servers:
   - url: http://localhost
+security:
+  - sessionCookie: []
 paths:
   /auth:
     post:
       summary: Authenticate user
+      security: []  # Override global security - no auth required
       requestBody:
         required: true
         content:
@@ -50,19 +53,15 @@ paths:
   /session:
     get:
       summary: Check session authentication
-      security:
-        - sessionCookie: []
       responses:
         '200':
           description: Authenticated
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /logout:
     post:
       summary: Logout current session
-      security:
-        - sessionCookie: []
       responses:
         '200':
           description: Logout result
@@ -74,13 +73,11 @@ paths:
                   success:
                     type: boolean
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /update:
     post:
       summary: OTA firmware update
-      security:
-        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -99,13 +96,11 @@ paths:
                   success:
                     type: boolean
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/UnauthorizedError'
 
   /info:
     get:
       summary: Get device/system info
-      security:
-        - sessionCookie: []
       responses:
         '200':
           description: Device info
@@ -146,8 +141,6 @@ paths:
           description: Unauthorized
     post:
       summary: Update device info
-      security:
-        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -169,8 +162,6 @@ paths:
   /settings:
     get:
       summary: Get all device settings
-      security:
-        - sessionCookie: []
       responses:
         '200':
           description: Settings
@@ -182,8 +173,6 @@ paths:
           description: Unauthorized
     post:
       summary: Update device settings
-      security:
-        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -213,8 +202,6 @@ paths:
   /cmd:
     post:
       summary: Execute command
-      security:
-        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -245,8 +232,6 @@ paths:
   /wifi_scan/start:
     post:
       summary: Start Wi-Fi network scan
-      security:
-        - sessionCookie: []
       responses:
         '200':
           description: Scan start result
@@ -280,8 +265,6 @@ paths:
   /wifi_scan/results:
     get:
       summary: Get Wi-Fi scan status and results
-      security:
-        - sessionCookie: []
       responses:
         '200':
           description: Wi-Fi scan status and results
@@ -330,8 +313,6 @@ paths:
   /ap_clients:
     get:
       summary: Get list of AP clients
-      security:
-        - sessionCookie: []
       responses:
         '200':
           description: AP clients
@@ -351,8 +332,6 @@ paths:
   /uptime:
     get:
       summary: Get device uptime
-      security:
-        - sessionCookie: []
       responses:
         '200':
           description: Uptime
@@ -374,6 +353,9 @@ components:
       type: apiKey
       in: cookie
       name: session_id
+  responses:
+    UnauthorizedError:
+      description: Unauthorized - Session cookie required or invalid
   schemas:
     RS485Status:
       type: object
