@@ -1,216 +1,147 @@
 #include "settings_manager.h"
+#include "setting_items.h"
 #include "json_utils.h"
 #include "auth.h"
 #include "update_rs485_mio_gpio_states.h"
+
 #include <esp_log.h>
 #include <string.h>
+#include <stdlib.h>
 
 static const char *TAG = "settings_manager";
 
-// Forward declarations
-typedef struct setting_mapping_s setting_mapping_t;
-typedef struct setting_group_s setting_group_t;
+typedef struct {
+    const char *json_key;
+    const char *setting_key;
+    enum {
+        TYPE_STRING,
+        TYPE_BOOL,
+        TYPE_INT
+    } type;
+} setting_mapping_t;
 
-// Validation function pointer type
-typedef bool (*setting_validator_t)(const void *value);
-
-struct setting_mapping_s {
-    const char *json_key;           // Key in JSON request/response
-    const char *setting_key;        // Key in settings storage
-    setting_item_type_t type;       // Type of the setting
-    setting_validator_t validator;  // Optional validation function
-    bool required;                  // Whether this setting is required
-};
-
-struct setting_group_s {
-    const char *group_name;         // Name of the group (e.g., "wifi", "ethernet")
-    const setting_mapping_t *mappings; // Array of setting mappings
-    size_t mapping_count;           // Number of mappings in the array
-    bool is_top_level;              // Whether this group is at top level
-};
-
-bool settings_validate_hostname(const char *hostname)
-{
-    if (!hostname) {
-        return false;
-    }
-
-    size_t len = strlen(hostname);
-
-    // Check length (1-63 characters)
-    if (len == 0 || len > 63) {
-        return false;
-    }
-
-    // Cannot start or end with hyphen
-    if (hostname[0] == '-' || hostname[len-1] == '-') {
-        return false;
-    }
-
-    // Check valid characters
-    for (size_t i = 0; i < len; i++) {
-        char c = hostname[i];
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-              (c >= '0' && c <= '9') || c == '-')) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool settings_validate_port(int port)
-{
-    return (port >= 1 && port <= 65535);
-}
-
-static bool validate_hostname_wrapper(const void *value) {
-    return settings_validate_hostname((const char *)value);
-}
-
-static bool validate_port_wrapper(const void *value) {
-    return settings_validate_port(*(const int *)value);
-}
-
-// Setting mappings for different groups
 static const setting_mapping_t top_level_mappings[] = {
-    {"hostname", "hostname", SETTING_ITEM_TYPE_STR, validate_hostname_wrapper, false},
-    {"login", "login", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"web_port", "web_port", SETTING_ITEM_TYPE_NUM, validate_port_wrapper, false},
-    {"io_bus", "io_bus", SETTING_ITEM_TYPE_BOOL, NULL, false},
-    {"vout", "vout", SETTING_ITEM_TYPE_BOOL, NULL, false},
+    {"hostname", "hostname", TYPE_STRING},
+    {"login", "login", TYPE_STRING},
+    {"web_port", "web_port", TYPE_INT},
+    {"io_bus", "io_bus", TYPE_BOOL},
+    {"vout", "vout", TYPE_BOOL},
 };
 
 static const setting_mapping_t wifi_mappings[] = {
-    {"mode", "wifi_mode", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"ap_auth", "ap_auth", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"sta_auth", "sta_auth", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"ap_ip_static", "ap_ip_static", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"ap_mask_static", "ap_mask_static", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"ap_gw_static", "ap_gw_static", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"ap_ssid", "ap_ssid", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"ap_pass", "ap_pass", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"sta_ssid", "sta_ssid", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"sta_pass", "sta_pass", SETTING_ITEM_TYPE_STR, NULL, false},
+    {"mode", "wifi_mode", TYPE_STRING},
+    {"ap_auth", "ap_auth", TYPE_STRING},
+    {"sta_auth", "sta_auth", TYPE_STRING},
+    {"ap_ssid", "ap_ssid", TYPE_STRING},
+    {"ap_pass", "ap_pass", TYPE_STRING},
+    {"sta_ssid", "sta_ssid", TYPE_STRING},
+    {"sta_pass", "sta_pass", TYPE_STRING},
+    {"ap_ip_static", "ap_ip_static", TYPE_STRING},
+    {"ap_mask_static", "ap_mask_static", TYPE_STRING},
+    {"ap_gw_static", "ap_gw_static", TYPE_STRING},
 };
 
 static const setting_mapping_t ethernet_mappings[] = {
-    {"ip_static", "eth_ip_static", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"mask_static", "eth_mask_static", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"gw_static", "eth_gw_static", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"dhcpc", "eth_dhcpc", SETTING_ITEM_TYPE_BOOL, NULL, false},
+    {"ip_static", "eth_ip_static", TYPE_STRING},
+    {"mask_static", "eth_mask_static", TYPE_STRING},
+    {"gw_static", "eth_gw_static", TYPE_STRING},
+    {"dhcpc", "eth_dhcpc", TYPE_BOOL},
 };
 
 static const setting_mapping_t rs485_base_mappings[] = {
-    {"term", "term", SETTING_ITEM_TYPE_BOOL, NULL, false},
-    {"fail_safe", "fail_safe", SETTING_ITEM_TYPE_BOOL, NULL, false},
-    {"baudrate", "baudrate", SETTING_ITEM_TYPE_NUM, NULL, false},
-    {"stopbits", "stopbits", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"parity", "parity", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"databits", "databits", SETTING_ITEM_TYPE_STR, NULL, false},
+    {"baudrate", "baudrate", TYPE_INT},
+    {"stopbits", "stopbits", TYPE_STRING},
+    {"parity", "parity", TYPE_STRING},
+    {"databits", "databits", TYPE_STRING},
+    {"term", "term", TYPE_BOOL},
+    {"fail_safe", "fail_safe", TYPE_BOOL},
 };
 
 static const setting_mapping_t rs485_bridge_mappings[] = {
-    {"mode", "bridge_mode", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"port", "bridge_port", SETTING_ITEM_TYPE_NUM, NULL, false},
-    {"ip", "bridge_ip", SETTING_ITEM_TYPE_STR, NULL, false},
-    {"modbus", "bridge_mb", SETTING_ITEM_TYPE_BOOL, NULL, false},
+    {"mode", "bridge_mode", TYPE_STRING},
+    {"port", "bridge_port", TYPE_INT},
+    {"ip", "bridge_ip", TYPE_STRING},
+    {"modbus", "bridge_mb", TYPE_BOOL},
 };
 
-// Setting groups
-static const setting_group_t setting_groups[] = {
-    {"top_level", top_level_mappings, sizeof(top_level_mappings)/sizeof(top_level_mappings[0]), true},
-    {"wifi", wifi_mappings, sizeof(wifi_mappings)/sizeof(wifi_mappings[0]), false},
-    {"ethernet", ethernet_mappings, sizeof(ethernet_mappings)/sizeof(ethernet_mappings[0]), false},
-};
+static esp_err_t add_rs485_settings_to_json(cJSON *parent);
 
-const setting_group_t *settings_get_groups(void) {
-    return setting_groups;
-}
-
-size_t settings_get_group_count(void) {
-    return sizeof(setting_groups) / sizeof(setting_groups[0]);
-}
-
-static void add_setting_to_json(cJSON *json, const char *key, const char *json_key)
-{
-    setting_item_type_t type = setting_items_get_type_in_json(key);
-    if (type == SETTING_ITEM_TYPE_STR) {
-        char val[SETTING_ITEM_MAX_STR_LEN] = {0};
-        if (setting_items_read(key, val) == 0)
-            cJSON_AddStringToObject(json, json_key, val);
-    } else if (type == SETTING_ITEM_TYPE_NUM) {
-        int val = 0;
-        if (setting_items_read(key, &val) == 0)
-            cJSON_AddNumberToObject(json, json_key, val);
-    } else if (type == SETTING_ITEM_TYPE_BOOL) {
-        uint8_t val = 0;
-        if (setting_items_read(key, &val) == 0)
-            cJSON_AddBoolToObject(json, json_key, val);
-    }
-}
-
-static esp_err_t add_group_to_json(cJSON *parent, const setting_group_t *group)
-{
-    cJSON *group_json = NULL;
-
-    if (group->is_top_level) {
-        group_json = parent;
-    } else {
-        group_json = cJSON_CreateObject();
-        if (group_json == NULL) {
-            ESP_LOGE(TAG, "Failed to create JSON object for group %s", group->group_name);
-            return ESP_FAIL;
+static bool add_setting_to_json(cJSON *parent, const char *setting_key, const char *json_key,
+                                int type) {
+    switch (type) {
+        case TYPE_STRING: {
+            char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+            if (setting_items_read(setting_key, value) != ESP_OK) {
+                return false;
+            }
+            return cJSON_AddStringToObject(parent, json_key, value) != NULL;
         }
-        cJSON_AddItemToObject(parent, group->group_name, group_json);
+        case TYPE_BOOL: {
+            bool value = setting_items_read_bool(setting_key);
+            return cJSON_AddBoolToObject(parent, json_key, value) != NULL;
+        }
+        case TYPE_INT: {
+            int value = setting_items_read_int(setting_key);
+            return cJSON_AddNumberToObject(parent, json_key, value) != NULL;
+        }
+        default:
+            return false;
+    }
+}
+
+static bool save_setting_from_json(cJSON *item, const char *setting_key, int type) {
+    switch (type) {
+        case TYPE_STRING:
+            if (!cJSON_IsString(item)) return false;
+            return setting_items_save(setting_key, item->valuestring) == ESP_OK;
+
+        case TYPE_BOOL:
+            if (!cJSON_IsBool(item)) return false;
+            return setting_items_save_bool(setting_key, cJSON_IsTrue(item)) == ESP_OK;
+
+        case TYPE_INT:
+            if (!cJSON_IsNumber(item)) return false;
+            return setting_items_save_int(setting_key, (int)item->valuedouble) == ESP_OK;
+
+        default:
+            return false;
+    }
+}
+
+static esp_err_t add_group_to_json(cJSON *response_json, const char *group_name,
+                                   const setting_mapping_t *mappings, size_t mapping_count) {
+    cJSON *group_json = cJSON_CreateObject();
+    if (!group_json) {
+        return ESP_ERR_NO_MEM;
     }
 
-    // Add all mapped settings
-    for (size_t i = 0; i < group->mapping_count; i++) {
-        const setting_mapping_t *mapping = &group->mappings[i];
-        add_setting_to_json(group_json, mapping->setting_key, mapping->json_key);
+    for (size_t i = 0; i < mapping_count; i++) {
+        add_setting_to_json(group_json, mappings[i].setting_key, mappings[i].json_key,
+                           mappings[i].type);
     }
 
+    cJSON_AddItemToObject(response_json, group_name, group_json);
     return ESP_OK;
 }
 
-static esp_err_t add_rs485_settings_to_json(cJSON *parent)
-{
-    char key_buf[32];
+static esp_err_t save_group_settings(cJSON *group_json, const setting_mapping_t *mappings,
+                                     size_t mapping_count, const char *suffix) {
+    if (!group_json || !mappings) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
-    for (int port = 1; port <= 2; ++port) {
-        // Create RS485 port object
-        cJSON *rs485_port = cJSON_CreateObject();
-        if (rs485_port == NULL) {
-            ESP_LOGE(TAG, "Failed to create RS485_%d JSON object", port);
-            return ESP_FAIL;
+    for (size_t i = 0; i < mapping_count; i++) {
+        cJSON *item = cJSON_GetObjectItem(group_json, mappings[i].json_key);
+        if (item) {
+            char setting_key[64];
+            if (suffix && strlen(suffix) > 0) {
+                snprintf(setting_key, sizeof(setting_key), "%s_%s", mappings[i].setting_key, suffix);
+            } else {
+                strncpy(setting_key, mappings[i].setting_key, sizeof(setting_key) - 1);
+            }
+
+            save_setting_from_json(item, setting_key, mappings[i].type);
         }
-
-        // Add regular RS485 fields using mappings
-        for (size_t i = 0; i < sizeof(rs485_base_mappings)/sizeof(rs485_base_mappings[0]); i++) {
-            const setting_mapping_t *mapping = &rs485_base_mappings[i];
-            snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
-            add_setting_to_json(rs485_port, key_buf, mapping->json_key);
-        }
-
-        // Add bridge subgroup
-        cJSON *bridge = cJSON_CreateObject();
-        if (bridge == NULL) {
-            ESP_LOGE(TAG, "Failed to create bridge JSON object for RS485_%d", port);
-            cJSON_Delete(rs485_port);
-            return ESP_FAIL;
-        }
-
-        for (size_t i = 0; i < sizeof(rs485_bridge_mappings)/sizeof(rs485_bridge_mappings[0]); i++) {
-            const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
-            snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
-            add_setting_to_json(bridge, key_buf, mapping->json_key);
-        }
-        cJSON_AddItemToObject(rs485_port, "bridge", bridge);
-
-        // Add to main response
-        snprintf(key_buf, sizeof(key_buf), "rs485_%d", port);
-        cJSON_AddItemToObject(parent, key_buf, rs485_port);
     }
 
     return ESP_OK;
@@ -228,19 +159,30 @@ esp_err_t settings_build_response_json(cJSON **response_json)
         return ESP_FAIL;
     }
 
-    // Process standard setting groups using mappings
-    const setting_group_t *groups = settings_get_groups();
-    size_t group_count = settings_get_group_count();
-
-    for (size_t i = 0; i < group_count; i++) {
-        if (add_group_to_json(*response_json, &groups[i]) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to add group %s to JSON", groups[i].group_name);
-            cJSON_Delete(*response_json);
-            return ESP_FAIL;
-        }
+    // Add top-level settings
+    for (size_t i = 0; i < sizeof(top_level_mappings) / sizeof(top_level_mappings[0]); i++) {
+        add_setting_to_json(*response_json, top_level_mappings[i].setting_key,
+                           top_level_mappings[i].json_key,
+                           top_level_mappings[i].type);
     }
 
-    // Handle RS485 settings (special case with port suffixes)
+    // Add WiFi settings group
+    if (add_group_to_json(*response_json, "wifi", wifi_mappings,
+                         sizeof(wifi_mappings) / sizeof(wifi_mappings[0])) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add WiFi settings to JSON");
+        cJSON_Delete(*response_json);
+        return ESP_FAIL;
+    }
+
+    // Add Ethernet settings group
+    if (add_group_to_json(*response_json, "ethernet", ethernet_mappings,
+                         sizeof(ethernet_mappings) / sizeof(ethernet_mappings[0])) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add Ethernet settings to JSON");
+        cJSON_Delete(*response_json);
+        return ESP_FAIL;
+    }
+
+    // Add RS485 settings (special case with port suffixes)
     if (add_rs485_settings_to_json(*response_json) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add RS485 settings to JSON");
         cJSON_Delete(*response_json);
@@ -250,93 +192,45 @@ esp_err_t settings_build_response_json(cJSON **response_json)
     return ESP_OK;
 }
 
-static esp_err_t save_setting_value(const setting_mapping_t *mapping, cJSON *item, cJSON *response_json)
+static esp_err_t add_rs485_settings_to_json(cJSON *parent)
 {
-    bool success = false;
+    char key_buf[64];
 
-    // Type validation
-    if (mapping->type == SETTING_ITEM_TYPE_STR && !cJSON_IsString(item)) {
-        ESP_LOGW(TAG, "%s must be a string", mapping->json_key);
-        goto fail;
-    }
-    if (mapping->type == SETTING_ITEM_TYPE_NUM && !cJSON_IsNumber(item)) {
-        ESP_LOGW(TAG, "%s must be a number", mapping->json_key);
-        goto fail;
-    }
-
-    // Extract value based on type
-    void *value = NULL;
-    int int_val;
-    bool bool_val;
-
-    switch (mapping->type) {
-        case SETTING_ITEM_TYPE_STR:
-            value = (void *)item->valuestring;
-            break;
-        case SETTING_ITEM_TYPE_NUM:
-            int_val = item->valueint;
-            value = &int_val;
-            break;
-        case SETTING_ITEM_TYPE_BOOL:
-            bool_val = cJSON_IsTrue(item);
-            value = &bool_val;
-            break;
-        default:
-            ESP_LOGW(TAG, "Unknown type for %s", mapping->json_key);
-            goto fail;
-    }
-
-    // Validate value if validator exists
-    if (mapping->validator && !mapping->validator(value)) {
-        ESP_LOGW(TAG, "Validation failed for %s", mapping->json_key);
-        goto fail;
-    }
-
-    // Save setting
-    if (setting_items_save(mapping->setting_key, value) == 0) {
-        ESP_LOGI(TAG, "[%s] saved successfully", mapping->setting_key);
-        success = true;
-    } else {
-        ESP_LOGW(TAG, "[%s] failed to save", mapping->setting_key);
-    }
-
-fail:
-    if (response_json) {
-        cJSON_AddBoolToObject(response_json, mapping->json_key, success);
-    }
-    return success ? ESP_OK : ESP_FAIL;
-}
-
-static esp_err_t process_group_settings(cJSON *request_json, cJSON *response_json, const setting_group_t *group)
-{
-    cJSON *group_json = NULL;
-
-    if (group->is_top_level) {
-        group_json = request_json;
-    } else {
-        if (!cJSON_HasObjectItem(request_json, group->group_name)) {
-            return ESP_OK; // Group not present in request
+    for (int port = 1; port <= 2; ++port) {
+        // Create RS485 port object
+        cJSON *rs485_port = cJSON_CreateObject();
+        if (rs485_port == NULL) {
+            ESP_LOGE(TAG, "Failed to create RS485_%d JSON object", port);
+            return ESP_FAIL;
         }
-        group_json = cJSON_GetObjectItem(request_json, group->group_name);
-        if (!cJSON_IsObject(group_json)) {
-            ESP_LOGW(TAG, "%s must be an object", group->group_name);
-            return ESP_OK;
-        }
-    }
 
-    // Process each mapping in the group
-    for (size_t i = 0; i < group->mapping_count; i++) {
-        const setting_mapping_t *mapping = &group->mappings[i];
-
-        if (cJSON_HasObjectItem(group_json, mapping->json_key)) {
-            cJSON *item = cJSON_GetObjectItem(group_json, mapping->json_key);
-            save_setting_value(mapping, item, response_json);
-        } else if (mapping->required) {
-            ESP_LOGW(TAG, "Required setting %s not found", mapping->json_key);
-            if (response_json) {
-                cJSON_AddBoolToObject(response_json, mapping->json_key, false);
-            }
+        // Add regular RS485 fields using mappings
+        for (size_t i = 0; i < sizeof(rs485_base_mappings)/sizeof(rs485_base_mappings[0]); i++) {
+            const setting_mapping_t *mapping = &rs485_base_mappings[i];
+            snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
+            add_setting_to_json(rs485_port, key_buf, mapping->json_key,
+                               mapping->type);
         }
+
+        // Add bridge subgroup
+        cJSON *bridge = cJSON_CreateObject();
+        if (bridge == NULL) {
+            ESP_LOGE(TAG, "Failed to create bridge JSON object for RS485_%d", port);
+            cJSON_Delete(rs485_port);
+            return ESP_FAIL;
+        }
+
+        for (size_t i = 0; i < sizeof(rs485_bridge_mappings) / sizeof(rs485_bridge_mappings[0]); i++) {
+            const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
+            snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
+            add_setting_to_json(bridge, key_buf, mapping->json_key,
+                               mapping->type);
+        }
+        cJSON_AddItemToObject(rs485_port, "bridge", bridge);
+
+        // Add to main response
+        snprintf(key_buf, sizeof(key_buf), "rs485_%d", port);
+        cJSON_AddItemToObject(parent, key_buf, rs485_port);
     }
 
     return ESP_OK;
@@ -345,8 +239,8 @@ static esp_err_t process_group_settings(cJSON *request_json, cJSON *response_jso
 static esp_err_t process_rs485_settings(cJSON *request_json, cJSON *response_json)
 {
     const char *rs485_json_names[] = {"rs485_1", "rs485_2"};
-    const char *rs485_suffix[] = {"_1", "_2"};
-    char key_buf[32];
+    const char *rs485_suffix[] = {"1", "2"};
+    char key_buf[64];
 
     for (int port = 0; port < 2; ++port) {
         if (!cJSON_HasObjectItem(request_json, rs485_json_names[port])) {
@@ -360,20 +254,16 @@ static esp_err_t process_rs485_settings(cJSON *request_json, cJSON *response_jso
         }
 
         // Process regular RS485 fields using mappings
-        for (size_t i = 0; i < sizeof(rs485_base_mappings)/sizeof(rs485_base_mappings[0]); i++) {
+        for (size_t i = 0; i < sizeof(rs485_base_mappings) / sizeof(rs485_base_mappings[0]); i++) {
             const setting_mapping_t *mapping = &rs485_base_mappings[i];
 
             if (cJSON_HasObjectItem(rs485, mapping->json_key)) {
                 cJSON *item = cJSON_GetObjectItem(rs485, mapping->json_key);
 
                 // Create setting key with port suffix
-                snprintf(key_buf, sizeof(key_buf), "%s%s", mapping->setting_key, rs485_suffix[port]);
+                snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
 
-                // Create temporary mapping with port-specific setting key
-                setting_mapping_t temp_mapping = *mapping;
-                temp_mapping.setting_key = key_buf;
-
-                save_setting_value(&temp_mapping, item, NULL);
+                save_setting_from_json(item, key_buf, mapping->type);
             }
         }
 
@@ -381,20 +271,16 @@ static esp_err_t process_rs485_settings(cJSON *request_json, cJSON *response_jso
         if (cJSON_HasObjectItem(rs485, "bridge")) {
             cJSON *bridge = cJSON_GetObjectItem(rs485, "bridge");
             if (cJSON_IsObject(bridge)) {
-                for (size_t i = 0; i < sizeof(rs485_bridge_mappings)/sizeof(rs485_bridge_mappings[0]); i++) {
+                for (size_t i = 0; i < sizeof(rs485_bridge_mappings) / sizeof(rs485_bridge_mappings[0]); i++) {
                     const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
 
                     if (cJSON_HasObjectItem(bridge, mapping->json_key)) {
                         cJSON *item = cJSON_GetObjectItem(bridge, mapping->json_key);
 
                         // Create setting key with port suffix
-                        snprintf(key_buf, sizeof(key_buf), "%s%s", mapping->setting_key, rs485_suffix[port]);
+                        snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
 
-                        // Create temporary mapping with port-specific setting key
-                        setting_mapping_t temp_mapping = *mapping;
-                        temp_mapping.setting_key = key_buf;
-
-                        save_setting_value(&temp_mapping, item, NULL);
+                        save_setting_from_json(item, key_buf, mapping->type);
                     }
                 }
             }
@@ -406,7 +292,7 @@ static esp_err_t process_rs485_settings(cJSON *request_json, cJSON *response_jso
 
 esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_json)
 {
-    if (request_json == NULL || response_json == NULL) {
+    if ((request_json == NULL) || (response_json == NULL)) {
         return ESP_FAIL;
     }
 
@@ -416,18 +302,35 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         return ESP_FAIL;
     }
 
-    // Process standard setting groups using mappings
-    const setting_group_t *groups = settings_get_groups();
-    size_t group_count = settings_get_group_count();
-
-    for (size_t i = 0; i < group_count; i++) {
-        process_group_settings(request_json, *response_json, &groups[i]);
+    // Process top-level settings
+    for (size_t i = 0; i < sizeof(top_level_mappings) / sizeof(top_level_mappings[0]); i++) {
+        const setting_mapping_t *mapping = &top_level_mappings[i];
+        if (cJSON_HasObjectItem(request_json, mapping->json_key)) {
+            cJSON *item = cJSON_GetObjectItem(request_json, mapping->json_key);
+            save_setting_from_json(item, mapping->setting_key, mapping->type);
+        }
     }
 
-    // Process RS485 settings (special case with port suffixes)
+    // Process WiFi settings group
+    if (cJSON_HasObjectItem(request_json, "wifi")) {
+        cJSON *wifi_json = cJSON_GetObjectItem(request_json, "wifi");
+        if (cJSON_IsObject(wifi_json)) {
+            save_group_settings(wifi_json, wifi_mappings,
+                               sizeof(wifi_mappings) / sizeof(wifi_mappings[0]), NULL);
+        }
+    }
+
+    // Process Ethernet settings group
+    if (cJSON_HasObjectItem(request_json, "ethernet")) {
+        cJSON *eth_json = cJSON_GetObjectItem(request_json, "ethernet");
+        if (cJSON_IsObject(eth_json)) {
+            save_group_settings(eth_json, ethernet_mappings,
+                               sizeof(ethernet_mappings) / sizeof(ethernet_mappings[0]), NULL);
+        }
+    }
+
     process_rs485_settings(request_json, *response_json);
 
-    // Update control systems
     update_rs485_control();
     update_io_bus_control();
 
@@ -448,7 +351,7 @@ esp_err_t settings_get_handler(httpd_req_t *req)
     cJSON *response_json = NULL;
     esp_err_t result = settings_build_response_json(&response_json);
 
-    if (result != ESP_OK || response_json == NULL) {
+    if ((result != ESP_OK) || (response_json == NULL)) {
         ESP_LOGE(TAG, "Failed to build settings response");
         return json_utils_send_error(req, "Failed to build settings response");
     }
@@ -473,7 +376,7 @@ esp_err_t settings_post_handler(httpd_req_t *req)
     cJSON *response_json = NULL;
     esp_err_t result = settings_process_request_json(request_json, &response_json);
 
-    if (result != ESP_OK || response_json == NULL) {
+    if ((result != ESP_OK) || (response_json == NULL)) {
         ESP_LOGE(TAG, "Failed to process settings request");
         json_utils_cleanup(request_json, NULL);
         return json_utils_send_error(req, "Failed to process settings request");

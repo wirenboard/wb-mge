@@ -4,7 +4,6 @@
 #define UART_BAUD_RATE_MAX          460800
 
 #define SETTING_ITEMS_NUM_MAX       50
-#define SETTING_ITEM_MAX_STR_LEN    32
 
 // Ключи для хранения настроек
 #define KEY_HOSTNAME                "hostname"

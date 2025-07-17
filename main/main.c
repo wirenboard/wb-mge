@@ -1,4 +1,6 @@
 #include <string.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 
 #include "bridge.h"
 #include "config.h"
@@ -71,36 +73,25 @@ static void blink_task(void *arg)
 // TODO: В релизе можно удалить
 static inline void print_setting_items(void)
 {
-    int items_num = setting_items_get_keys(NULL);
-    const char *keys[items_num];
-    setting_items_get_keys(keys);
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
 
-    for (int i = 0; i < items_num; i++) {
-        setting_item_type_t type = setting_items_get_type_in_json(keys[i]);
-        switch (type) {
-            case SETTING_ITEM_TYPE_NUM: {
-                uint32_t value = 0;
-                setting_items_read(keys[i], &value);
-                ESP_LOGI(TAG, "%s: %lu", keys[i], value);
-                break;
+    ESP_LOGI(TAG, "=== Current Settings ===");
+
+    size_t count = setting_items_get_count();
+    for (size_t i = 0; i < count; i++) {
+        const char *key = setting_items_get_key_at(i);
+        if (key && !setting_items_is_private(key)) {
+            if (setting_items_read(key, value) == ESP_OK) {
+                ESP_LOGI(TAG, "%s: %s", key, value);
+            } else {
+                ESP_LOGW(TAG, "%s: [not found]", key);
             }
-            case SETTING_ITEM_TYPE_STR: {
-                char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-                setting_items_read(keys[i], value);
-                ESP_LOGI(TAG, "%s: %s", keys[i], value);
-                break;
-            }
-            case SETTING_ITEM_TYPE_BOOL: {
-                uint8_t value = 0;
-                setting_items_read(keys[i], &value);
-                ESP_LOGI(TAG, "%s: %s", keys[i], value ? "true" : "false");
-                break;
-            }
-            default:
-                ESP_LOGW(TAG, "Unknown setting item type for key: %s", keys[i]);
-                break;
+        } else if (key && setting_items_is_private(key)) {
+            ESP_LOGI(TAG, "%s: [HIDDEN]", key);
         }
     }
+
+    ESP_LOGI(TAG, "=== Settings printed (passwords hidden for security) ===");
 }
 
 static void eth_connect_event_handler(void *arg, esp_event_base_t event_base,
@@ -162,12 +153,21 @@ static void wifi_ap_connect_event_handler(void *arg, esp_event_base_t event_base
 }
 
 static wifi_auth_mode_t str_to_wifi_auth_mode(const char *str) {
-    if (strcmp(str, WIFI_AUTH_WPA2_PSK_STR) == 0) {
+    if (strncmp(str, "wpa2_psk", SETTING_ITEM_MAX_STR_LEN) == 0) {
         return WIFI_AUTH_WPA2_PSK;
-    } else if (strcmp(str, WIFI_AUTH_WPA3_PSK_STR) == 0) {
+    } else if (strncmp(str, "wpa3_psk", SETTING_ITEM_MAX_STR_LEN) == 0) {
         return WIFI_AUTH_WPA3_PSK;
     }
     return WIFI_AUTH_OPEN;
+}
+
+// Helper function to convert string IP to uint32_t
+static uint32_t str_to_ip(const char *ip_str) {
+    uint32_t ip = 0;
+    if (ip_str && strlen(ip_str) > 0) {
+        inet_pton(AF_INET, ip_str, &ip);
+    }
+    return ip;
 }
 
 void app_main(void)
@@ -175,53 +175,75 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    setting_item_iface_t setting_item_iface = {
-        .has_key = nvs_has_key,
-        .save_num = nvs_write_u32,
-        .save_str = nvs_write_str,
-        .save_bool = nvs_write_u8,
-        .read_num = nvs_read_u32,
-        .read_str = nvs_read_str,
-        .read_bool = nvs_read_u8,
-    };
-    // генерация уникального hostname
+    // Initialize setting items with new simplified API
+    ESP_ERROR_CHECK(setting_items_init());
+
+    // Generate unique hostname
     char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
     snprintf(generated_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
              mac[4], mac[5]);
-    ESP_ERROR_CHECK(setting_items_init(generated_hostname, &setting_item_iface));
-    ESP_LOGI(TAG, "Hostname: %s", generated_hostname);
 
+    // Set hostname if not already set
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
-    // Имя хоста берется из хранилища
-    if (setting_items_read_raw(KEY_HOSTNAME, hostname, SETTING_ITEM_TYPE_STR) != 0) {
-        ESP_LOGE(TAG, "Failed to read hostname from storage");
-    } else {
-        ESP_ERROR_CHECK(mdns_init());
-        ESP_ERROR_CHECK(mdns_hostname_set(hostname));
-        ESP_LOGI(TAG, "mdns hostname set to: [%s]", hostname);
+    if (setting_items_read("hostname", hostname) != ESP_OK) {
+        // Set default generated hostname
+        ESP_ERROR_CHECK(setting_items_save("hostname", generated_hostname));
+        strcpy(hostname, generated_hostname);
     }
+    ESP_LOGI(TAG, "Hostname: %s", hostname);
 
-    // apsta = Access Point + Station
+    // Initialize mDNS
+    ESP_ERROR_CHECK(mdns_init());
+    ESP_ERROR_CHECK(mdns_hostname_set(hostname));
+    ESP_LOGI(TAG, "mdns hostname set to: [%s]", hostname);
+
+    // Configure WiFi using convenient wrapper functions
     wifi_apsta_config_t apsta_cfg = {0};
     esp_netif_ip_info_t ap_ip_info;
-    setting_items_read_raw(KEY_AP_IP_STATIC, &ap_ip_info.ip, SETTING_ITEM_TYPE_NUM);
-    setting_items_read_raw(KEY_AP_MASK_STATIC, &ap_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
-    setting_items_read_raw(KEY_AP_GW_STATIC, &ap_ip_info.gw, SETTING_ITEM_TYPE_NUM);
+
+    char temp_value[SETTING_ITEM_MAX_STR_LEN] = {0};
+
+    // Read AP IP configuration using string functions (for IP addresses)
+    if (setting_items_read("ap_ip_static", temp_value) == ESP_OK) {
+        ap_ip_info.ip.addr = str_to_ip(temp_value);
+    }
+    if (setting_items_read("ap_mask_static", temp_value) == ESP_OK) {
+        ap_ip_info.netmask.addr = str_to_ip(temp_value);
+    }
+    if (setting_items_read("ap_gw_static", temp_value) == ESP_OK) {
+        ap_ip_info.gw.addr = str_to_ip(temp_value);
+    }
     apsta_cfg.ap_ip_info = &ap_ip_info;
-    setting_items_read_raw(KEY_AP_SSID, &apsta_cfg.ap_ssid, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw(KEY_AP_PASS, &apsta_cfg.ap_pass, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw(KEY_STA_SSID, &apsta_cfg.sta_ssid, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw(KEY_STA_PASS, &apsta_cfg.sta_pass, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw(KEY_WIFI_MODE, &apsta_cfg.wifi_mode, SETTING_ITEM_TYPE_NUM);
-    // Read WiFi auth modes from settings
-    char ap_auth_str[16] = {0};
-    char sta_auth_str[16] = {0};
-    setting_items_read_raw(KEY_WIFI_AUTH_AP, ap_auth_str, SETTING_ITEM_TYPE_STR);
-    setting_items_read_raw(KEY_WIFI_AUTH_STA, sta_auth_str, SETTING_ITEM_TYPE_STR);
-    apsta_cfg.wifi_auth_mode_ap = str_to_wifi_auth_mode(ap_auth_str);
-    apsta_cfg.wifi_auth_mode_sta = str_to_wifi_auth_mode(sta_auth_str);
+
+    // Read WiFi credentials using string functions
+    setting_items_read("ap_ssid", apsta_cfg.ap_ssid);
+    setting_items_read("ap_pass", apsta_cfg.ap_pass);
+    setting_items_read("sta_ssid", apsta_cfg.sta_ssid);
+    setting_items_read("sta_pass", apsta_cfg.sta_pass);
+
+    // Read WiFi mode using string function (enum conversion needed)
+    if (setting_items_read("wifi_mode", temp_value) == ESP_OK) {
+        if (strncmp(temp_value, "ap", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            apsta_cfg.wifi_mode = WIFI_MODE_AP;
+        } else if (strncmp(temp_value, "sta", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            apsta_cfg.wifi_mode = WIFI_MODE_STA;
+        } else if (strncmp(temp_value, "apsta", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            apsta_cfg.wifi_mode = WIFI_MODE_APSTA;
+        } else {
+            apsta_cfg.wifi_mode = WIFI_MODE_NULL;
+        }
+    }
+
+    // Read WiFi auth modes using string functions
+    if (setting_items_read("ap_auth", temp_value) == ESP_OK) {
+        apsta_cfg.wifi_auth_mode_ap = str_to_wifi_auth_mode(temp_value);
+    }
+    if (setting_items_read("sta_auth", temp_value) == ESP_OK) {
+        apsta_cfg.wifi_auth_mode_sta = str_to_wifi_auth_mode(temp_value);
+    }
+
     apsta_cfg.sta_event_handler = &wifi_sta_connect_event_handler;
     apsta_cfg.ap_event_handler = &wifi_ap_connect_event_handler;
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg));
@@ -236,13 +258,21 @@ void app_main(void)
     snprintf(sys_info.wifi_sta_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_sta_mac));
     snprintf(sys_info.wifi_ap_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_ap_mac));
 
-    bool eth_dhcpc = false;
+    // Configure Ethernet using convenient wrapper functions
+    bool eth_dhcpc = setting_items_read_bool("eth_dhcpc");  // One line instead of verbose conversion!
     esp_netif_ip_info_t *eth_ip_info = NULL;
     esp_netif_ip_info_t static_ip_info = {0};
-    setting_items_read_raw(KEY_ETH_DHCPC, &eth_dhcpc, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_ETH_IP_STATIC, &static_ip_info.ip, SETTING_ITEM_TYPE_NUM);
-    setting_items_read_raw(KEY_ETH_MASK_STATIC, &static_ip_info.netmask, SETTING_ITEM_TYPE_NUM);
-    setting_items_read_raw(KEY_ETH_GW_STATIC, &static_ip_info.gw, SETTING_ITEM_TYPE_NUM);
+
+    // Read Ethernet static IP configuration (still need string functions for IP addresses)
+    if (setting_items_read("eth_ip_static", temp_value) == ESP_OK) {
+        static_ip_info.ip.addr = str_to_ip(temp_value);
+    }
+    if (setting_items_read("eth_mask_static", temp_value) == ESP_OK) {
+        static_ip_info.netmask.addr = str_to_ip(temp_value);
+    }
+    if (setting_items_read("eth_gw_static", temp_value) == ESP_OK) {
+        static_ip_info.gw.addr = str_to_ip(temp_value);
+    }
 
     if (!eth_dhcpc) {
         eth_ip_info = &static_ip_info;
@@ -275,9 +305,9 @@ void app_main(void)
 
     // init and start blink task to indicate that we are in bootloader mode
     xTaskCreate(blink_task, "blink_task", 2048, NULL, 1, NULL);
-    
+
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
-    
+
     while (1)
     {
         if ((sys_info.wifi_ap_connections_count > 0) ||

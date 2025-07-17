@@ -10,8 +10,9 @@ static const char *TAG = "json_utils";
 
 cJSON *json_utils_receive_json(httpd_req_t *req)
 {
-    if (req->content_len > JSON_UTILS_REQ_RECV_BUF_SIZE) {
-        ESP_LOGE(TAG, "Request too large: %d bytes", req->content_len);
+    if (req->content_len > JSON_UTILS_REQ_RECV_BUF_SIZE - 1) {  // Reserve space for null terminator
+        ESP_LOGE(TAG, "Request too large: %d bytes (max: %d)",
+                req->content_len, JSON_UTILS_REQ_RECV_BUF_SIZE - 1);
         return NULL;
     }
 
@@ -21,23 +22,27 @@ cJSON *json_utils_receive_json(httpd_req_t *req)
         return NULL;
     }
 
-    int received = httpd_req_recv(req, buf, JSON_UTILS_REQ_RECV_BUF_SIZE);
-    if (received <= 0) {
-        ESP_LOGE(TAG, "Failed to receive data: %d", received);
-        free(buf);
-        return NULL;
+    // Receive the complete request
+    int total_received = 0;
+    int remaining = req->content_len;
+
+    while (remaining > 0) {
+        int received = httpd_req_recv(req, buf + total_received, remaining);
+        if (received <= 0) {
+            ESP_LOGE(TAG, "Failed to receive data: %d", received);
+            free(buf);
+            return NULL;
+        }
+        total_received += received;
+        remaining -= received;
     }
 
-    // Null-terminate the buffer
-    if (received < JSON_UTILS_REQ_RECV_BUF_SIZE) {
-        buf[received] = '\0';
-    } else {
-        buf[JSON_UTILS_REQ_RECV_BUF_SIZE - 1] = '\0';
-    }
+    // Always null-terminate safely
+    buf[total_received] = '\0';
 
     cJSON *req_json = cJSON_Parse(buf);
     if (req_json == NULL) {
-        ESP_LOGE(TAG, "Failed to parse JSON");
+        ESP_LOGE(TAG, "Failed to parse JSON: %.100s", buf);  // Show first 100 chars for debugging
         free(buf);
         return NULL;
     }
@@ -72,21 +77,29 @@ esp_err_t json_utils_send_error(httpd_req_t *req, const char *error_message)
 {
     cJSON *resp_json = cJSON_CreateObject();
     if (resp_json == NULL) {
-        ESP_LOGE(TAG, "Failed to create JSON object");
+        ESP_LOGE(TAG, "Failed to create error response JSON object");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"success\":false,\"error\":\"Internal server error\"}");
         return ESP_FAIL;
     }
 
     cJSON_AddBoolToObject(resp_json, "success", false);
     if (error_message != NULL) {
         cJSON_AddStringToObject(resp_json, "error", error_message);
+        ESP_LOGW(TAG, "Sending error response: %s", error_message);
+    } else {
+        cJSON_AddStringToObject(resp_json, "error", "Unknown error");
+        ESP_LOGW(TAG, "Sending generic error response");
     }
 
+    httpd_resp_set_status(req, "400 Bad Request");
     json_utils_send_response(req, NULL, resp_json);
     return ESP_OK;
 }
 
 void json_utils_cleanup(cJSON *req_json, cJSON *resp_json)
 {
+    // Defensive programming - always safe to call with NULL
     if (req_json != NULL) {
         cJSON_Delete(req_json);
     }

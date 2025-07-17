@@ -170,10 +170,15 @@ esp_err_t http_server_init(void)
     httpd_config.max_uri_handlers = 30;  // TODO: Подобрать значение к релизу
     httpd_config.stack_size = 1024 * 6;  // TODO: Проверить размер используемой памяти
 
-    if (setting_items_read_raw("web_port", &httpd_config.server_port, SETTING_ITEM_TYPE_NUM) != 0) {
-        ESP_LOGE(TAG, "Failed to read web_port from settings");
-        return ESP_FAIL;
+    // Read web port from settings using convenience wrapper - much cleaner!
+    uint16_t web_port = (uint16_t)setting_items_read_u32("web_port");
+    if (web_port == 0) {
+        web_port = 80;  // Fallback to default port
+        ESP_LOGW(TAG, "Using default web port: %u", web_port);
     }
+
+    httpd_config.server_port = web_port;
+    ESP_LOGI(TAG, "HTTP server will start on port: %u", httpd_config.server_port);
 
     if (wifi_scan_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize WiFi scan module");

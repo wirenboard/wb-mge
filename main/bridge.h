@@ -9,4 +9,10 @@ typedef enum {
     TCP_SERVER_2 = 1,
 } tcp_server_num_t;
 
+typedef enum {
+    BRIDGE_MODE_SERVER,
+    BRIDGE_MODE_CLIENT,
+    BRIDGE_MODE_DISABLED,
+} bridge_mode_t;
+
 int tcp_server_active_connections(tcp_server_num_t server_num);

@@ -1,61 +1,36 @@
 #pragma once
 
+#include <esp_err.h>
 #include <stdbool.h>
-#include <stdint.h>
 
-#include "setting_items_const.h"
+#define SETTING_ITEM_MAX_STR_LEN 32
 
-typedef enum {
-    SETTING_ITEM_TYPE_NUM,
-    SETTING_ITEM_TYPE_STR,
-    SETTING_ITEM_TYPE_BOOL,
-} setting_item_type_t;
-
-typedef enum {
-    BRIDGE_MODE_SERVER,
-    BRIDGE_MODE_CLIENT,
-    BRIDGE_MODE_DISABLED,
-} bridge_mode_t;
-
-typedef bool (*save_to_storage)(const char *, const void *);
-typedef bool (*read_from_storage)(const char *, void *);
-typedef bool (*read_from_storage_raw)(const char *, void *, setting_item_type_t);
-
-typedef int (*iface_storage_save_num)(const char *, uint32_t);
-typedef int (*iface_storage_save_str)(const char *, const char *);
-typedef int (*iface_storage_save_bool)(const char *, uint8_t);
-typedef int (*iface_storage_read_num)(const char *, uint32_t *);
-typedef int (*iface_storage_read_str)(const char *, char *);
-typedef int (*iface_storage_read_bool)(const char *, uint8_t *);
-typedef bool (*iface_storage_has_key)(const char *);
-
+// Storage interface for dependency injection (mainly for testing)
 typedef struct {
-    iface_storage_save_num save_num;
-    iface_storage_save_str save_str;
-    iface_storage_save_bool save_bool;
-    iface_storage_read_num read_num;
-    iface_storage_read_str read_str;
-    iface_storage_read_bool read_bool;
-    iface_storage_has_key has_key;
-} setting_item_iface_t;
+    bool (*has_key)(const char* key);
+    esp_err_t (*write_str)(const char* key, const char* value);
+    esp_err_t (*read_str)(const char* key, char* value);
+} setting_storage_iface_t;
 
-typedef struct {
-    const char *key;
-    const void *default_value;
-    setting_item_type_t type_in_storage;
-    setting_item_type_t type_in_json;
-    save_to_storage save_to_storage;
-    read_from_storage read_from_storage;
-    read_from_storage_raw read_from_storage_raw;
-} setting_item_t;
+// Core functions
+esp_err_t setting_items_init(void);
+esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *storage_iface);
+esp_err_t setting_items_save(const char *key, const char *value);
+esp_err_t setting_items_read(const char *key, char *value);
 
-int setting_items_init(char *hostname, setting_item_iface_t *setting_item_iface);
-int setting_items_set_defaults(void);
-// Чтение данных из хранилища, без преобразования
-int setting_items_read_raw(const char *key, void *value, setting_item_type_t type_in_storage);
-// Чтение данных из хранилища, с преобразованием для использования в json
-int setting_items_read(const char *key, void *value);
-int setting_items_save(const char *key, const void *value);
-// Возвращает количество ключей, keys - может быть NULL
-int setting_items_get_keys(const char **keys);
-setting_item_type_t setting_items_get_type_in_json(const char *key);
+// Convenience wrapper functions for common types
+uint32_t setting_items_read_u32(const char *key);
+bool setting_items_read_bool(const char *key);
+int setting_items_read_int(const char *key);
+
+esp_err_t setting_items_save_u32(const char *key, uint32_t value);
+esp_err_t setting_items_save_bool(const char *key, bool value);
+esp_err_t setting_items_save_int(const char *key, int value);
+bool setting_items_has_key(const char *key);
+esp_err_t setting_items_set_default(const char *key);
+const char *setting_items_get_default(const char *key);
+
+// Iterator functions for all settings
+size_t setting_items_get_count(void);
+const char *setting_items_get_key_at(size_t index);
+bool setting_items_is_private(const char *key);

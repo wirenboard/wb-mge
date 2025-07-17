@@ -61,37 +61,6 @@ static void find_and_remove_session_id(uint32_t session_id)
     }
 }
 
-static uint32_t strtou(const char *u32_str)
-{
-    if (u32_str == NULL) {
-        ESP_LOGE(TAG, "String is NULL");
-        return 0;
-    }
-    if (strnlen(u32_str, (UINT32_STR_MAX_LEN + 1)) > UINT32_STR_MAX_LEN) {
-        ESP_LOGE(TAG, "String is too long");
-        return 0;
-    }
-
-    char *endptr;
-    errno = 0;
-    uint64_t value = strtoul(u32_str, &endptr, 10);
-
-    if ((errno == ERANGE) || (value > UINT32_MAX)) {
-        ESP_LOGE(TAG, "Overflow occurred");
-        return 0;
-    }
-    if (endptr == u32_str) {
-        ESP_LOGE(TAG, "No digits were found");
-        return 0;
-    }
-    if (*endptr != '\0') {
-        ESP_LOGE(TAG, "Further characters after number: %s", endptr);
-        return 0;
-    }
-
-    return (uint32_t)value;
-}
-
 static uint32_t create_new_session_id(void)
 {
     uint32_t session_id = esp_random();
@@ -109,12 +78,13 @@ static uint32_t create_session(const char *login, const char *password)
     char stored_login[SETTING_ITEM_MAX_STR_LEN] = {0};
     char stored_pass[SETTING_ITEM_MAX_STR_LEN] = {0};
 
-    if ((setting_items_read_raw("login", stored_login, SETTING_ITEM_TYPE_STR) != 0) ||
-        (setting_items_read_raw("pass", stored_pass, SETTING_ITEM_TYPE_STR) != 0))
+    if ((setting_items_read("login", stored_login) != ESP_OK) ||
+        (setting_items_read("pass", stored_pass) != ESP_OK))
     {
         ESP_LOGE(TAG, "Failed to read login or pass from storage");
         return 0;
     }
+
     if ((strncmp(login, stored_login, SETTING_ITEM_MAX_STR_LEN) != 0) ||
         (strncmp(password, stored_pass, SETTING_ITEM_MAX_STR_LEN) != 0))
     {
@@ -146,7 +116,13 @@ static uint32_t get_session_from_cookie(httpd_req_t *req)
     size_t buf_len = sizeof(session_id_str);
     if (httpd_req_get_cookie_val(req, "session_id", session_id_str, &buf_len) == ESP_OK) {
         ESP_LOGI(TAG, "Session ID from cookie: %s", session_id_str);
-        return strtou(session_id_str);
+
+        // Use standard library function instead of custom strtou()
+        char *endptr;
+        unsigned long val = strtoul(session_id_str, &endptr, 10);
+        if (endptr != session_id_str && *endptr == '\0' && val <= UINT32_MAX) {
+            return (uint32_t)val;
+        }
     }
     return 0;
 }

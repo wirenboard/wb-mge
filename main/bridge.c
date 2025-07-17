@@ -12,6 +12,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
+#include <string.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 
 #define SERIAL_PORT_NUM_1             1
 #define SERIAL_INPUT_PIN_1            GPIO_NUM_9
@@ -26,6 +30,9 @@
 #define RS485_BUSY_TIMEOUT_MS         5000
 
 static const char *TAG = "bridge";
+
+// Forward declarations
+static bridge_mode_t string_to_bridge_mode(const char *str);
 
 static bool bridge_ready = false;
 
@@ -54,6 +61,15 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
 }
 
 static void rs485_busy_monitor_task(void *arg);
+
+static bridge_mode_t string_to_bridge_mode(const char *str) {
+    if (strncmp(str, "server", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return BRIDGE_MODE_SERVER;
+    } else if (strncmp(str, "client", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return BRIDGE_MODE_CLIENT;
+    }
+    return BRIDGE_MODE_DISABLED;
+}
 
 static void update_rs485_activity(int idx)
 {
@@ -140,7 +156,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
 
     if (serial_desc[idx]) {
         err = serial_send(serial_desc[idx], data, len);
-        
+
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "%s: error sending data to serial port", __func__);
         }
@@ -151,7 +167,7 @@ static esp_err_t bridge_init_port(serial_config_t *config, bridge_mode_t mode, i
                                   tcp_desc_t **tcp_desc)
 {
     esp_err_t err = ESP_OK;
-    
+
     switch (mode) {
         case BRIDGE_MODE_SERVER:
             err = tcp_server_init(port, process_data_from_tcp, tcp_desc);
@@ -169,7 +185,7 @@ static esp_err_t bridge_init_port(serial_config_t *config, bridge_mode_t mode, i
     }
 
     *serial_desc = serial_init(config, process_data_from_serial);
-    
+
     if (!*serial_desc) {
         ESP_LOGE(TAG, "error initializing serial port");
         return ESP_FAIL;
@@ -198,19 +214,13 @@ esp_err_t bridge_init(void)
     serial_config_t serial_config[2] = {0};
     int bridge_port[2] = {0};
     uint32_t bridge_ip[2] = {0};
-    
-    const char *baudrate_keys[2] = {KEY_BAUDRATE1, KEY_BAUDRATE2};
-    const char *stopbits_keys[2] = {KEY_STOPBITS1, KEY_STOPBITS2};
-    const char *parity_keys[2] = {KEY_PARITY1, KEY_PARITY2};
-    const char *databits_keys[2] = {KEY_DATABITS1, KEY_DATABITS2};
-    const char *mode_keys[2] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
-    const char *port_keys[2] = {KEY_BRIDGE_PORT1, KEY_BRIDGE_PORT2};
-    const char *ip_keys[2] = {KEY_BRIDGE_IP1, KEY_BRIDGE_IP2};
-    
+
     uart_port_t port_nums[2] = {SERIAL_PORT_NUM_1, SERIAL_PORT_NUM_2};
     int tx_pins[2] = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};
     int rx_pins[2] = {SERIAL_INPUT_PIN_1, SERIAL_INPUT_PIN_2};
     int dir_pins[2] = {SERIAL_IO_PIN_1, SERIAL_IO_PIN_2};
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
 
     for (int i = 0; i < 2; ++i) {
         serial_config[i].port_num = port_nums[i];
@@ -218,13 +228,61 @@ esp_err_t bridge_init(void)
         serial_config[i].rx_pin = rx_pins[i];
         serial_config[i].dir_pin = dir_pins[i];
 
-        ESP_RETURN_ON_ERROR(setting_items_read_raw(baudrate_keys[i], &serial_config[i].baudrate, SETTING_ITEM_TYPE_NUM), TAG, "error reading baudrate for port %d", i + 1);
-        ESP_RETURN_ON_ERROR(setting_items_read_raw(stopbits_keys[i], &serial_config[i].stopbits, SETTING_ITEM_TYPE_NUM), TAG, "error reading stopbits for port %d", i + 1);
-        ESP_RETURN_ON_ERROR(setting_items_read_raw(parity_keys[i], &serial_config[i].parity, SETTING_ITEM_TYPE_NUM), TAG, "error reading parity for port %d", i + 1);
-        ESP_RETURN_ON_ERROR(setting_items_read_raw(databits_keys[i], &serial_config[i].databits, SETTING_ITEM_TYPE_NUM), TAG, "error reading databits for port %d", i + 1);
-        ESP_RETURN_ON_ERROR(setting_items_read_raw(mode_keys[i], &bridge_mode[i], SETTING_ITEM_TYPE_NUM), TAG, "error reading bridge_mode for port %d", i + 1);
-        ESP_RETURN_ON_ERROR(setting_items_read_raw(port_keys[i], &bridge_port[i], SETTING_ITEM_TYPE_NUM), TAG, "error reading bridge_port for port %d", i + 1);
-        ESP_RETURN_ON_ERROR(setting_items_read_raw(ip_keys[i], &bridge_ip[i], SETTING_ITEM_TYPE_NUM), TAG, "error reading bridge_ip for port %d", i + 1);
+        // Read settings using convenience wrappers - much cleaner!
+        char key_buf[32];
+
+        snprintf(key_buf, sizeof(key_buf), "baudrate_%d", i + 1);
+        serial_config[i].baudrate = setting_items_read_u32(key_buf);
+
+        snprintf(key_buf, sizeof(key_buf), "stopbits_%d", i + 1);
+        char stopbits_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, stopbits_str), TAG, "error reading stopbits for port %d", i + 1);
+        if (strncmp(stopbits_str, "1", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            serial_config[i].stopbits = UART_STOP_BITS_1;
+        } else if (strncmp(stopbits_str, "1.5", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            serial_config[i].stopbits = UART_STOP_BITS_1_5;
+        } else if (strncmp(stopbits_str, "2", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            serial_config[i].stopbits = UART_STOP_BITS_2;
+        } else {
+            serial_config[i].stopbits = UART_STOP_BITS_1;
+        }
+
+        snprintf(key_buf, sizeof(key_buf), "parity_%d", i + 1);
+        char parity_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, parity_str), TAG, "error reading parity for port %d", i + 1);
+        if (strncmp(parity_str, "none", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            serial_config[i].parity = UART_PARITY_DISABLE;
+        } else if (strncmp(parity_str, "even", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            serial_config[i].parity = UART_PARITY_EVEN;
+        } else if (strncmp(parity_str, "odd", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            serial_config[i].parity = UART_PARITY_ODD;
+        } else {
+            serial_config[i].parity = UART_PARITY_DISABLE;
+        }
+
+        snprintf(key_buf, sizeof(key_buf), "databits_%d", i + 1);
+        int databits = setting_items_read_int(key_buf);
+        switch (databits) {
+            case 5: serial_config[i].databits = UART_DATA_5_BITS; break;
+            case 6: serial_config[i].databits = UART_DATA_6_BITS; break;
+            case 7: serial_config[i].databits = UART_DATA_7_BITS; break;
+            case 8: serial_config[i].databits = UART_DATA_8_BITS; break;
+            default: serial_config[i].databits = UART_DATA_8_BITS; break;
+        }
+
+        snprintf(key_buf, sizeof(key_buf), "bridge_mode_%d", i + 1);
+        char mode_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, mode_str), TAG, "error reading bridge_mode for port %d", i + 1);
+        bridge_mode[i] = string_to_bridge_mode(mode_str);
+
+        snprintf(key_buf, sizeof(key_buf), "bridge_port_%d", i + 1);
+        bridge_port[i] = setting_items_read_int(key_buf);
+
+        snprintf(key_buf, sizeof(key_buf), "bridge_ip_%d", i + 1);
+        char ip_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, ip_str), TAG, "error reading bridge_ip for port %d", i + 1);
+        inet_pton(AF_INET, ip_str, &bridge_ip[i]);
+
         ESP_RETURN_ON_ERROR(bridge_init_port(&serial_config[i], bridge_mode[i], bridge_port[i], bridge_ip[i], &serial_desc[i], &tcp_desc[i]), TAG, "error initializing port %d", i + 1);
     }
 

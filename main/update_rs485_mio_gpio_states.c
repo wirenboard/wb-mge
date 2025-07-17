@@ -5,6 +5,7 @@
 #include "esp_err.h"
 
 #include <stdbool.h>
+#include <string.h>
 
 static const char *TAG = "update_rs485_mio_gpio_states";
 
@@ -13,17 +14,11 @@ void update_rs485_control(void)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    bool pullup_1_enabled = false;
-    bool pullup_2_enabled = false;
-    bool term_1_enabled = false;
-    bool term_2_enabled = false;
-    bool vout_enabled = false;
-
-    setting_items_read_raw(KEY_485_FAIL_SAFE_1, &pullup_1_enabled, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_485_FAIL_SAFE_2, &pullup_2_enabled, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_485_TERM_1, &term_1_enabled, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_485_TERM_2, &term_2_enabled, SETTING_ITEM_TYPE_BOOL);
-    setting_items_read_raw(KEY_485_VOUT, &vout_enabled, SETTING_ITEM_TYPE_BOOL);
+    bool pullup_1_enabled = setting_items_read_bool("fail_safe_1");
+    bool pullup_2_enabled = setting_items_read_bool("fail_safe_2");
+    bool term_1_enabled = setting_items_read_bool("term_1");
+    bool term_2_enabled = setting_items_read_bool("term_2");
+    bool vout_enabled = setting_items_read_bool("vout");
 
     rs485_pupd_on_off(RS485_1, pullup_1_enabled);
     rs485_pupd_on_off(RS485_2, pullup_2_enabled);
@@ -38,9 +33,8 @@ void update_io_bus_control(void)
 {
     ESP_LOGI(TAG, "%s", __func__);
 
-    bool io_bus_enabled = false;
-    setting_items_read_raw(KEY_IO_BUS_ENABLED, &io_bus_enabled, SETTING_ITEM_TYPE_BOOL);
+    bool io_bus_enabled = setting_items_read_bool("io_bus");
 
     mio_control_io_bus_onoff(io_bus_enabled);
-    ESP_LOGI(TAG, "IO bus control updated");
+    ESP_LOGI(TAG, "IO bus control updated: %s", io_bus_enabled ? "enabled" : "disabled");
 }
