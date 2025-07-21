@@ -1,13 +1,13 @@
 import { createRouter, createWebHashHistory, } from 'vue-router';
-import { hasSession, useSession } from '@/common/session';
+import { useInfo } from '@/common/info';
+import { hasSession } from '@/common/session';
+import { useSettings } from '@/common/settings';
 import Dashboard from '@/views/Dashboard.vue';
-import Traffic from '@/views/Traffic.vue';
 import Login from '@/views/Login.vue';
-import Serial from '@/views/Serial.vue';
-import Bridge from '@/views/Bridge.vue';
-import Network from '@/views/Network.vue';
+import Settings from '@/views/Settings.vue';
 import System from '@/views/System.vue';
 import { api } from '@/utils/api';
+import { checkSession } from './checkSession';
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -17,41 +17,49 @@ const router = createRouter({
       name: 'dashboard',
       component: Dashboard,
       meta: { requiresAuth: true, menuName: 'dashboard' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
     },
     {
-      path: '/traffic',
-      name: 'traffic',
-      component: Traffic,
-      meta: { requiresAuth: true, menuName: 'traffic' },
-    },
-    {
-      path: '/network',
-      name: 'network',
-      component: Network,
-      meta: { requiresAuth: true, menuName: 'network' },
-    },
-    {
-      path: '/serial',
-      name: 'serial',
-      component: Serial,
-      meta: { requiresAuth: true, menuName: 'serial' },
-    },
-    {
-      path: '/bridge',
-      name: 'bridge',
-      component: Bridge,
-      meta: { requiresAuth: true, menuName: 'bridge' },
+      path: '/settings',
+      name: 'settings',
+      component: Settings,
+      meta: { requiresAuth: true, menuName: 'settings' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
     },
     {
       path: '/system',
       name: 'system',
       component: System,
       meta: { requiresAuth: true, menuName: 'system' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
     },
     {
       path: '/login',
       name: 'login',
       component: Login,
+      beforeEnter: [checkSession],
     },
     {
       path: '/logout',
@@ -64,22 +72,6 @@ const router = createRouter({
   ],
 });
 
-// @ts-ignore
-router.beforeEach(async (to) => {
-  const session = await useSession();
-  if (to.path === '/login' && session) {
-    return { path: to.query.redirect === 'dashboard' ? '' : to.query.redirect };
-  }
-
-  if (to.meta.requiresAuth && !session) {
-    const output: any = { path: '/login' };
-
-    if (to.meta.menuName !== 'dashboard') {
-      output.query = { redirect: to.meta.menuName };
-    }
-
-    return output;
-  }
-});
+// router.beforeRouteLeave(setTitle);
 
 export default router;

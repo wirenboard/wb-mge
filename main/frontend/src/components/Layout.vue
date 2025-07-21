@@ -2,25 +2,17 @@
   <div class="container">
     <Sidebar />
     <main class="content">
-      <slot />
+      <article class="content-wrapper">
+        <slot />
+      </article>
     </main>
     <AlertsWrapper />
   </div>
 </template>
 
 <script setup lang="ts">
-import { useI18n } from 'vue-i18n';
-import { useRoute, useRouter } from 'vue-router';
-import Sidebar from '@/components/Sidebar.vue';
 import AlertsWrapper from '@/components/AlertsWrapper.vue';
-
-const { t } = useI18n();
-const route = useRoute();
-const router = useRouter();
-
-router.afterEach(() => {
-  document.title = `${t(route.name as string)} — WB-MGE v.3`;
-});
+import Sidebar from '@/components/Sidebar.vue';
 </script>
 
 <style scoped>
@@ -44,5 +36,9 @@ router.afterEach(() => {
     padding: 0 12px 12px;
     max-height: calc(100dvh - 84px);
   }
+}
+
+.content-wrapper {
+  max-width: 936px;
 }
 </style>
