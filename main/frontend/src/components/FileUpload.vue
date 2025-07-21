@@ -36,10 +36,6 @@ const cancelChoice = () => {
 </template>
 
 <style scoped>
-.fileUpload {
-  padding-top: 12px;
-}
-
 .fileUpload-input {
   display: none;
 }
@@ -55,6 +51,10 @@ const cancelChoice = () => {
   "en": {
     "cancel": "Cancel choice",
     "upload": "Upload"
+  },
+  "ru": {
+    "cancel": "Отменить",
+    "upload": "Загрузить"
   }
 }
 </i18n>
