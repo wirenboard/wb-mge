@@ -22,4 +22,4 @@ typedef struct {
     wifi_auth_mode_t wifi_auth_mode_sta; // Authentication mode for STA
 } wifi_apsta_config_t;
 
-esp_err_t wifi_init_apsta(wifi_apsta_config_t* wifi_cfg);
+esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname);

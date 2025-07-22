@@ -246,7 +246,7 @@ void app_main(void)
 
     apsta_cfg.sta_event_handler = &wifi_sta_connect_event_handler;
     apsta_cfg.ap_event_handler = &wifi_ap_connect_event_handler;
-    ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg));
+    ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, generated_hostname));
 
     // Read and log WiFi STA and AP MAC addresses
     uint8_t wifi_sta_mac[6] = {0};
@@ -277,7 +277,7 @@ void app_main(void)
     if (!eth_dhcpc) {
         eth_ip_info = &static_ip_info;
     }
-    ESP_ERROR_CHECK(ethernet_init(&eth_connect_event_handler, eth_ip_info));
+    ESP_ERROR_CHECK(ethernet_init(&eth_connect_event_handler, eth_ip_info, generated_hostname));
 
     // Get Ethernet MAC address after initialization
     esp_eth_handle_t eth_handle = ethernet_get_handle();

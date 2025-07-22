@@ -79,7 +79,7 @@ void wifi_waiting_events(void* pvParameter)
     vTaskDelete(NULL);
 }
 
-esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
+esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
 {
     if (apsta_cfg->wifi_mode == WIFI_MODE_NULL) {
         return ESP_OK;
@@ -139,7 +139,18 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
     }
 
     if ((apsta_cfg->wifi_mode == WIFI_MODE_STA) || (apsta_cfg->wifi_mode == WIFI_MODE_APSTA)) {
-        esp_netif_create_default_wifi_sta();
+        esp_netif_t* esp_netif_sta = esp_netif_create_default_wifi_sta();
+
+        // Set DHCP hostname for WiFi Station
+        if (netif_hostname != NULL && esp_netif_sta != NULL) {
+            err = esp_netif_set_hostname(esp_netif_sta, netif_hostname);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "WiFi STA DHCP hostname set to: %s", netif_hostname);
+            } else {
+                ESP_LOGE(TAG, "Failed to set WiFi STA hostname: %s", esp_err_to_name(err));
+            }
+        }
+
         wifi_config_t wifi_config_sta = {
             .sta =
                 {
