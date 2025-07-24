@@ -3,7 +3,16 @@
 #include <esp_err.h>
 #include <stdbool.h>
 
-#define SETTING_ITEM_MAX_STR_LEN 32
+#define SETTING_ITEM_MAX_STR_LEN 64 // WPA2 passwords can be up to 63 characters + null terminator
+
+// Setting types - used for type checking and JSON mapping
+typedef enum {
+    SETTING_ITEM_TYPE_STRING,
+    SETTING_ITEM_TYPE_BOOL,
+    SETTING_ITEM_TYPE_INT,
+    SETTING_ITEM_TYPE_UINT32,
+    SETTING_ITEM_TYPE_INVALID
+} setting_item_type_t;
 
 // Storage interface for dependency injection (mainly for testing)
 typedef struct {
@@ -33,4 +42,7 @@ const char *setting_items_get_default(const char *key);
 // Iterator functions for all settings
 size_t setting_items_get_count(void);
 const char *setting_items_get_key_at(size_t index);
-bool setting_items_is_private(const char *key);
+
+// Type introspection functions
+setting_item_type_t setting_items_get_type(const char *key);
+const char *setting_items_type_to_string(setting_item_type_t type);
