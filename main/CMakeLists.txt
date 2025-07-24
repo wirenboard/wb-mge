@@ -11,7 +11,6 @@ idf_component_register(SRCS "main.c"
                             "tcp_server.c"
                             "wifi_apsta.c"
                             "sys_info.c"
-                            "efuse_table.c"
                             "rs485_control.c"
                             "mio_control.c"
                             "update_rs485_mio_gpio_states.c"
@@ -21,8 +20,8 @@ idf_component_register(SRCS "main.c"
                             "settings_manager.c"
                             "cmd_handler.c"
                             "ota_handler.c"
-                        INCLUDE_DIRS "."
-                            "include"
+                            "system_voltage.c"
+                            "config_button.c"
                         EMBED_TXTFILES
                             frontend/dist/favicon.webp.gz
                             frontend/dist/index.css.gz
