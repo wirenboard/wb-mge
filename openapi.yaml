@@ -20,10 +20,19 @@ paths:
               properties:
                 login:
                   type: string
+                  minLength: 1
+                  maxLength: 32
+                  pattern: '^[a-zA-Z0-9_-]+$'
+                  description: "Username, alphanumeric, underscore and hyphen"
                 pass:
                   type: string
+                  minLength: 8
+                  maxLength: 32
+                  pattern: '^[ -~]+$'
+                  description: "Password, 8-32 printable ASCII characters"
                 remember_me:
                   type: boolean
+                  default: false
               required: [login, pass]
       responses:
         '200':
@@ -37,6 +46,7 @@ paths:
                     type: boolean
                   error:
                     type: string
+                    maxLength: 255
               examples:
                 success:
                   summary: Successful authentication
@@ -95,30 +105,88 @@ paths:
               schema:
                 type: object
                 properties:
-                  device_name: { type: string }
-                  firmware: { type: string }
-                  hardware: { type: string }
-                  serial_num: { type: integer }
+                  device_name:
+                    type: string
+                    maxLength: 32
+                    pattern: '^[a-zA-Z0-9\s\-_.]+$'
+                  firmware:
+                    type: string
+                    pattern: '^\d+\.\d+\.\d+$'
+                    example: "1.0.0"
+                  hardware:
+                    type: string
+                    maxLength: 32
+                    pattern: '^[a-zA-Z0-9\s\-_.]+$'
+                  serial_num:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    maximum: 18446744073709551615
+                  system_voltage: 
+                    type: number
+                    format: float
+                    minimum: 0.0
+                    maximum: 100.0
+                    description: "System voltage in volts"
+                  config_button_presses: 
+                    type: integer
+                    minimum: 0
+                    maximum: 1000
+                    description: "Number of config button presses"
                   ethernet:
                     type: object
                     properties:
                       con_eth: { type: boolean }
-                      ip: { type: string }
-                      mask: { type: string }
-                      gw: { type: string }
-                      mac: { type: string }
+                      ip: 
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      mask: 
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      gw: 
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      mac: 
+                        type: string
+                        pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
                   wifi:
                     type: object
                     properties:
                       con_sta: { type: boolean }
-                      con_ap: { type: integer }
-                      sta_ip: { type: string }
-                      sta_mask: { type: string }
-                      sta_gw: { type: string }
-                      sta_rssi: { type: integer }
-                      sta_mac: { type: string }
-                      ap_mac: { type: string }
-                      ap_channel: { type: integer }
+                      con_ap: 
+                        type: integer
+                        minimum: 0
+                        maximum: 10
+                      sta_ip: 
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      sta_mask: 
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      sta_gw: 
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      sta_rssi: 
+                        type: integer
+                        minimum: -100
+                        maximum: 0
+                        nullable: true
+                      sta_mac: 
+                        type: string
+                        pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+                      ap_mac: 
+                        type: string
+                        pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+                      ap_channel: 
+                        type: integer
+                        minimum: 1
+                        maximum: 14
                   rs485_1:
                     $ref: '#/components/schemas/RS485Status'
                   rs485_2:
@@ -134,9 +202,14 @@ paths:
             schema:
               type: object
               properties:
-                device_name: { type: string }
-                hardware: { type: string }
-                serial_num: { type: integer }
+                device_name: # TODO: подумать надо ли это записывать или просто проиписать в конфиг
+                  type: string
+                  maxLength: 32
+                  pattern: '^[a-zA-Z0-9\s\-_.]+$'
+                hardware: # TODO: подумать надо ли это записывать или просто проиписать в конфиг
+                  type: string
+                  maxLength: 32
+                  pattern: '^[a-zA-Z0-9\s\-_.]+$'
       responses:
         '200':
           description: Updated
@@ -168,7 +241,12 @@ paths:
                 - $ref: '#/components/schemas/DeviceSettings'
                 - type: object
                   properties:
-                    pass: { type: string }
+                    pass: 
+                      type: string
+                      minLength: 8
+                      maxLength: 32
+                      pattern: '^[ -~]+$'
+                      description: "Password, 8-32 printable ASCII characters"
       responses:
         '200':
           description: Update result
@@ -198,6 +276,7 @@ paths:
                 cmd:
                   type: string
                   enum: [reboot, set_default_settings, write_factory_data]
+              required: [cmd]
       responses:
         '200':
           description: Command executed
@@ -210,6 +289,7 @@ paths:
                     type: boolean
                   command:
                     type: string
+                    maxLength: 32
         '400':
           description: Bad request
         '401':
@@ -227,8 +307,12 @@ paths:
                 type: object
                 properties:
                   success: { type: boolean }
-                  message: { type: string }
-                  error: { type: string }
+                  message: 
+                    type: string
+                    maxLength: 255
+                  error: 
+                    type: string
+                    maxLength: 255
               examples:
                 success:
                   summary: Scan started successfully
@@ -261,16 +345,28 @@ paths:
                 properties:
                   scan_in_progress: { type: boolean }
                   scan_completed: { type: boolean }
-                  error: { type: string }
+                  error: 
+                    type: string
+                    maxLength: 255
                   networks:
                     type: array
                     items:
                       type: object
                       properties:
-                        ssid: { type: string }
-                        rssi: { type: integer }
-                        bssid: { type: string }
-                        channel: { type: integer }
+                        ssid: 
+                          type: string
+                          maxLength: 32
+                        rssi: 
+                          type: integer
+                          minimum: -100
+                          maximum: 0
+                        bssid: 
+                          type: string
+                          pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+                        channel: 
+                          type: integer
+                          minimum: 1
+                          maximum: 14
               examples:
                 in_progress:
                   summary: Scan in progress
@@ -309,9 +405,16 @@ paths:
                 items:
                   type: object
                   properties:
-                    mac: { type: string }
-                    rssi: { type: integer }
-                    ip: { type: string }
+                    mac: 
+                      type: string
+                      pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+                    rssi: 
+                      type: integer
+                      minimum: -100
+                      maximum: 0
+                    ip: 
+                      type: string
+                      format: ipv4
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -326,12 +429,92 @@ paths:
               schema:
                 type: object
                 properties:
-                  days: { type: integer }
-                  hours: { type: integer }
-                  minutes: { type: integer }
-                  seconds: { type: integer }
+                  days: 
+                    type: integer
+                    minimum: 0
+                    maximum: 2147483647
+                  hours: 
+                    type: integer
+                    minimum: 0
+                    maximum: 23
+                  minutes: 
+                    type: integer
+                    minimum: 0
+                    maximum: 59
+                  seconds: 
+                    type: integer
+                    minimum: 0
+                    maximum: 59
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+
+  /:
+    get:
+      summary: Get main application page
+      description: Serves the main HTML interface
+      responses:
+        '200':
+          description: Main HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Encoding:
+              schema:
+                type: string
+                enum: [gzip]
+
+  /index.css:
+    get:
+      summary: Get application CSS styles
+      description: Serves the compressed CSS stylesheet
+      responses:
+        '200':
+          description: CSS stylesheet
+          content:
+            text/css:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Encoding:
+              schema:
+                type: string
+                enum: [gzip]
+
+  /index.js:
+    get:
+      summary: Get application JavaScript
+      description: Serves the compressed JavaScript application
+      responses:
+        '200':
+          description: JavaScript application
+          content:
+            application/javascript:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Encoding:
+              schema:
+                type: string
+                enum: [gzip]
+
+  /favicon.webp:
+    get:
+      summary: Get website favicon
+      description: Serves the favicon in WebP format
+      security: []  # No authentication required for favicon
+      responses:
+        '200':
+          description: Favicon image
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
 
 components:
   securitySchemes:
@@ -356,15 +539,25 @@ components:
       type: object
       properties:
         is_busy: { type: boolean }
-        error_percentage: { type: integer }
-        server_connections_count: { type: integer }
+        error_percentage: 
+          type: integer
+          minimum: 0
+          maximum: 100
+        server_connections_count: 
+          type: integer
+          minimum: 0
+          maximum: 10
 
     RS485Settings:
       type: object
       properties:
         term: { type: boolean }
         fail_safe: { type: boolean }
-        baudrate: { type: integer }
+        baudrate: 
+          type: integer
+          minimum: 300
+          maximum: 230400
+          enum: [300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400]
         stopbits:
           type: string
           enum: ["1", "1.5", "2"]
@@ -380,16 +573,31 @@ components:
             mode:
               type: string
               enum: ["server", "client"]
-            port: { type: integer }
-            ip: { type: string }
+            port: 
+              type: integer
+              minimum: 1
+              maximum: 65535
+            ip: 
+              type: string
+              format: ipv4
+              pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
             modbus: { type: boolean }
 
     EthernetSettings:
       type: object
       properties:
-        ip_static: { type: string }
-        mask_static: { type: string }
-        gw_static: { type: string }
+        ip_static: 
+          type: string
+          format: ipv4
+          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
+        mask_static: 
+          type: string
+          format: ipv4
+          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
+        gw_static: 
+          type: string
+          format: ipv4
+          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
         dhcpc: { type: boolean }
 
     WiFiSettings:
@@ -404,19 +612,56 @@ components:
         sta_auth:
           type: string
           enum: ["open", "wpa2_psk", "wpa3_psk"]
-        ap_ip_static: { type: string }
-        ap_mask_static: { type: string }
-        ap_gw_static: { type: string }
-        ap_ssid: { type: string }
-        ap_pass: { type: string }
-        sta_ssid: { type: string }
-        sta_pass: { type: string }
+        ap_ip_static: 
+          type: string
+          format: ipv4
+          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
+        ap_mask_static: 
+          type: string
+          format: ipv4
+          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
+        ap_gw_static: 
+          type: string
+          format: ipv4
+          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
+        ap_ssid: 
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9-]+$'
+        ap_pass: 
+          type: string
+          minLength: 8
+          maxLength: 63
+          pattern: '^[ -~]+$'
+          description: "WPA password, 8-63 printable ASCII characters"
+        sta_ssid: 
+          type: string
+          minLength: 0
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9-]*$'
+        sta_pass: 
+          type: string
+          minLength: 0
+          maxLength: 63
+          pattern: '^[ -~]*$'
+          description: "WPA password, printable ASCII characters"
 
     DeviceSettings:
       type: object
       properties:
-        hostname: { type: string }
-        login: { type: string }
+        hostname: 
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9-]+$'
+          description: "Valid hostname, alphanumeric and hyphens only"
+        login: 
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: "Username, alphanumeric, underscore and hyphen"
         wifi:
           $ref: '#/components/schemas/WiFiSettings'
         ethernet:
@@ -426,5 +671,9 @@ components:
         rs485_2:
           $ref: '#/components/schemas/RS485Settings'
         vout: { type: boolean }
-        web_port: { type: integer }
+        web_port: 
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 80
         io_bus: { type: boolean }
