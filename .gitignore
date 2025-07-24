@@ -9,3 +9,6 @@ dependencies.lock
 
 # Dependencies
 managed_components/
+
+.clang-format
+.clang-tidy
