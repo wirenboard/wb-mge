@@ -5,6 +5,8 @@
 #include "wifi_apsta.h"
 #include "config.h"
 #include "sys_info.h"
+#include "system_voltage.h"
+#include "config_button.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -229,7 +231,8 @@ static esp_err_t update_info_from_json(cJSON *req_json, const char *key, void *d
         cJSON *item = cJSON_GetObjectItem(req_json, key);
         if (item->type == type) {
             if (type == cJSON_String) {
-                strncpy((char *)dest, item->valuestring, SYS_INFO_MAX_STR_LEN);
+                strncpy((char *)dest, item->valuestring, SYS_INFO_MAX_STR_LEN - 1);
+                ((char *)dest)[SYS_INFO_MAX_STR_LEN - 1] = '\0';
             } else if (type == cJSON_Number) {
                 *(int *)dest = item->valueint;
             } else {
@@ -260,11 +263,6 @@ static esp_err_t info_update_from_json(cJSON *request_json)
         result = ESP_FAIL;
     }
 
-    if (update_info_from_json(request_json, "serial_num", &sys_info.device_serial_num, cJSON_Number) != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to update serial_num");
-        result = ESP_FAIL;
-    }
-
     return result;
 }
 
@@ -288,6 +286,14 @@ esp_err_t info_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(response_json, "firmware", FIRMWARE_VERSION);
     cJSON_AddStringToObject(response_json, "hardware", sys_info.hardware_ver);
     cJSON_AddNumberToObject(response_json, "serial_num", sys_info.device_serial_num);
+
+    // Add system voltage measurement
+    float system_voltage = system_voltage_read();
+    cJSON_AddNumberToObject(response_json, "system_voltage", system_voltage);
+
+    // Add config button press count
+    uint32_t button_presses = config_button_get_press_count();
+    cJSON_AddNumberToObject(response_json, "config_button_presses", button_presses);
 
     // Build network info
     cJSON *network_json = NULL;
