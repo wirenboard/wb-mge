@@ -9,9 +9,10 @@
 #define SYS_INFO_MAX_STR_LEN    32
 
 typedef struct {
-    int device_serial_num;
-    char device_name[SYS_INFO_MAX_STR_LEN];
+    uint64_t device_serial_num;
     char firmware_ver[SYS_INFO_MAX_STR_LEN];
+
+    char device_name[SYS_INFO_MAX_STR_LEN];
     char hardware_ver[SYS_INFO_MAX_STR_LEN];
 
     bool eth_is_connected;
