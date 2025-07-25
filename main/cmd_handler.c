@@ -73,49 +73,49 @@ static esp_err_t cmd_execute(int cmd_code)
     esp_err_t result = ESP_OK;
 
     switch (cmd_code) {
-        case CMD_REBOOT:
-            cmd_reboot_device();
-            break;
+    case CMD_REBOOT:
+        cmd_reboot_device();
+        break;
 
-        case CMD_SET_DEFAULT_SETTINGS: {
-            ESP_LOGI(TAG, "Setting all settings to defaults");
-            esp_err_t overall_result = ESP_OK;
+    case CMD_SET_DEFAULT_SETTINGS: {
+        ESP_LOGI(TAG, "Setting all settings to defaults");
+        esp_err_t overall_result = ESP_OK;
 
-            // Get count of all settings and set each to default
-            size_t count = setting_items_get_count();
-            for (size_t i = 0; i < count; i++) {
-                const char *key = setting_items_get_key_at(i);
-                if (key) {
-                    esp_err_t set_result = setting_items_set_default(key);
-                    if (set_result != ESP_OK) {
-                        ESP_LOGW(TAG, "Failed to set default for %s: %s", key, esp_err_to_name(set_result));
-                        overall_result = ESP_FAIL;
-                    }
+        // Get count of all settings and set each to default
+        size_t count = setting_items_get_count();
+        for (size_t i = 0; i < count; i++) {
+            const char *key = setting_items_get_key_at(i);
+            if (key) {
+                esp_err_t set_result = setting_items_set_default(key);
+                if (set_result != ESP_OK) {
+                    ESP_LOGW(TAG, "Failed to set default for %s: %s", key, esp_err_to_name(set_result));
+                    overall_result = ESP_FAIL;
                 }
             }
-
-            if (overall_result != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to set some default settings");
-                result = ESP_FAIL;
-            } else {
-                ESP_LOGI(TAG, "All default settings applied successfully");
-            }
-            break;
         }
 
-        case CMD_WRITE_FACTORY_DATA:
-            if (sys_info_write_factory_data() != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to write factory data");
-                result = ESP_FAIL;
-            } else {
-                ESP_LOGI(TAG, "Factory data written successfully");
-            }
-            break;
-
-        default:
-            ESP_LOGW(TAG, "Unknown command code: %d", cmd_code);
+        if (overall_result != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set some default settings");
             result = ESP_FAIL;
-            break;
+        } else {
+            ESP_LOGI(TAG, "All default settings applied successfully");
+        }
+        break;
+    }
+
+    case CMD_WRITE_FACTORY_DATA:
+        if (sys_info_write_factory_data() != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to write factory data");
+            result = ESP_FAIL;
+        } else {
+            ESP_LOGI(TAG, "Factory data written successfully");
+        }
+        break;
+
+    default:
+        ESP_LOGW(TAG, "Unknown command code: %d", cmd_code);
+        result = ESP_FAIL;
+        break;
     }
 
     return result;

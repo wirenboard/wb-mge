@@ -63,9 +63,9 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
 static void rs485_busy_monitor_task(void *arg);
 
 static bridge_mode_t string_to_bridge_mode(const char *str) {
-    if (strncmp(str, "server", SETTING_ITEM_MAX_STR_LEN) == 0) {
+    if (strncmp(str, BRIDGE_MODE_SERVER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
         return BRIDGE_MODE_SERVER;
-    } else if (strncmp(str, "client", SETTING_ITEM_MAX_STR_LEN) == 0) {
+    } else if (strncmp(str, BRIDGE_MODE_CLIENT_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
         return BRIDGE_MODE_CLIENT;
     }
     return BRIDGE_MODE_DISABLED;
@@ -228,8 +228,7 @@ esp_err_t bridge_init(void)
         serial_config[i].rx_pin = rx_pins[i];
         serial_config[i].dir_pin = dir_pins[i];
 
-        // Read settings using convenience wrappers - much cleaner!
-        char key_buf[32];
+        char key_buf[32]; // TODO: use defined constant for buffer size
 
         snprintf(key_buf, sizeof(key_buf), "baudrate_%d", i + 1);
         serial_config[i].baudrate = setting_items_read_u32(key_buf);
@@ -237,11 +236,11 @@ esp_err_t bridge_init(void)
         snprintf(key_buf, sizeof(key_buf), "stopbits_%d", i + 1);
         char stopbits_str[SETTING_ITEM_MAX_STR_LEN] = {0};
         ESP_RETURN_ON_ERROR(setting_items_read(key_buf, stopbits_str), TAG, "error reading stopbits for port %d", i + 1);
-        if (strncmp(stopbits_str, "1", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        if (strncmp(stopbits_str, UART_STOP_BITS_1_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].stopbits = UART_STOP_BITS_1;
-        } else if (strncmp(stopbits_str, "1.5", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        } else if (strncmp(stopbits_str, UART_STOP_BITS_1_5_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].stopbits = UART_STOP_BITS_1_5;
-        } else if (strncmp(stopbits_str, "2", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        } else if (strncmp(stopbits_str, UART_STOP_BITS_2_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].stopbits = UART_STOP_BITS_2;
         } else {
             serial_config[i].stopbits = UART_STOP_BITS_1;
@@ -250,11 +249,11 @@ esp_err_t bridge_init(void)
         snprintf(key_buf, sizeof(key_buf), "parity_%d", i + 1);
         char parity_str[SETTING_ITEM_MAX_STR_LEN] = {0};
         ESP_RETURN_ON_ERROR(setting_items_read(key_buf, parity_str), TAG, "error reading parity for port %d", i + 1);
-        if (strncmp(parity_str, "none", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        if (strncmp(parity_str, UART_PARITY_DISABLE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].parity = UART_PARITY_DISABLE;
-        } else if (strncmp(parity_str, "even", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        } else if (strncmp(parity_str, UART_PARITY_EVEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].parity = UART_PARITY_EVEN;
-        } else if (strncmp(parity_str, "odd", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        } else if (strncmp(parity_str, UART_PARITY_ODD_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].parity = UART_PARITY_ODD;
         } else {
             serial_config[i].parity = UART_PARITY_DISABLE;
@@ -263,11 +262,21 @@ esp_err_t bridge_init(void)
         snprintf(key_buf, sizeof(key_buf), "databits_%d", i + 1);
         int databits = setting_items_read_int(key_buf);
         switch (databits) {
-            case 5: serial_config[i].databits = UART_DATA_5_BITS; break;
-            case 6: serial_config[i].databits = UART_DATA_6_BITS; break;
-            case 7: serial_config[i].databits = UART_DATA_7_BITS; break;
-            case 8: serial_config[i].databits = UART_DATA_8_BITS; break;
-            default: serial_config[i].databits = UART_DATA_8_BITS; break;
+        case 5:
+            serial_config[i].databits = UART_DATA_5_BITS;
+            break;
+        case 6:
+            serial_config[i].databits = UART_DATA_6_BITS;
+            break;
+        case 7:
+            serial_config[i].databits = UART_DATA_7_BITS;
+            break;
+        case 8:
+            serial_config[i].databits = UART_DATA_8_BITS;
+            break;
+        default:
+            serial_config[i].databits = UART_DATA_8_BITS;
+            break;
         }
 
         snprintf(key_buf, sizeof(key_buf), "bridge_mode_%d", i + 1);

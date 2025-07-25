@@ -1,17 +1,15 @@
 #include "setting_items.h"
 #include "nv_storage.h"
-#include "setting_items_const.h"
 #include "config.h"
 #include "nvs.h"
 #include "esp_mac.h"
+#include "array_size.h"
 
 #include <string.h>
 #include <stdlib.h>
 #include <esp_log.h>
 
 static const char *TAG = "setting_items";
-
-#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
 typedef bool (*setting_validator_t)(const char *value);
 
@@ -66,7 +64,7 @@ bool validate_baudrate(const char *value)
     }
     char *endptr;
     long baudrate = strtol(value, &endptr, 10);
-    return (*endptr == '\0' && baudrate >= UART_BAUD_RATE_MIN && baudrate <= UART_BAUD_RATE_MAX);
+    return (*endptr == '\0' && baudrate >= 300 && baudrate <= 460800);
 }
 
 bool validate_stopbits(const char *value)
@@ -74,9 +72,9 @@ bool validate_stopbits(const char *value)
     if (!value) {
         return false;
     }
-    return (strncmp(value, "1", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "1.5", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "2", SETTING_ITEM_MAX_STR_LEN) == 0);
+    return (strncmp(value, UART_STOP_BITS_1_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, UART_STOP_BITS_1_5_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, UART_STOP_BITS_2_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
 }
 
 bool validate_parity(const char *value)
@@ -84,9 +82,9 @@ bool validate_parity(const char *value)
     if (!value) {
         return false;
     }
-    return (strncmp(value, "none", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "even", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "odd", SETTING_ITEM_MAX_STR_LEN) == 0);
+    return (strncmp(value, UART_PARITY_DISABLE_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, UART_PARITY_EVEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, UART_PARITY_ODD_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
 }
 
 bool validate_databits(const char *value)
@@ -94,10 +92,10 @@ bool validate_databits(const char *value)
     if (!value) {
         return false;
     }
-    return (strncmp(value, "5", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "6", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "7", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "8", SETTING_ITEM_MAX_STR_LEN) == 0);
+    return (strncmp(value, UART_DATA_5_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, UART_DATA_6_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, UART_DATA_7_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, UART_DATA_8_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
 }
 
 bool validate_ip(const char *value)
@@ -130,10 +128,10 @@ bool validate_wifi_mode(const char *value)
     if (!value) {
         return false;
     }
-    return (strncmp(value, "ap", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "sta", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "apsta", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "null", SETTING_ITEM_MAX_STR_LEN) == 0);
+    return (strncmp(value, WIFI_MODE_AP_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, WIFI_MODE_STA_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, WIFI_MODE_APSTA_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, WIFI_MODE_NULL_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
 }
 
 bool validate_wifi_auth(const char *value)
@@ -141,9 +139,9 @@ bool validate_wifi_auth(const char *value)
     if (!value) {
         return false;
     }
-    return (strncmp(value, "open", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "wpa2_psk", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "wpa3_psk", SETTING_ITEM_MAX_STR_LEN) == 0);
+    return (strncmp(value, WIFI_AUTH_OPEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, WIFI_AUTH_WPA2_PSK_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, WIFI_AUTH_WPA3_PSK_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
 }
 
 bool validate_bridge_mode(const char *value)
@@ -151,8 +149,8 @@ bool validate_bridge_mode(const char *value)
     if (!value) {
         return false;
     }
-    return (strncmp(value, "server", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "client", SETTING_ITEM_MAX_STR_LEN) == 0);
+    return (strncmp(value, BRIDGE_MODE_SERVER_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
+            strncmp(value, BRIDGE_MODE_CLIENT_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
 }
 
 bool validate_bool(const char *value)
@@ -240,56 +238,55 @@ static const char *get_dynamic_ap_pass_default(void)
     return generated_password;
 }
 
-// TODO: use default values from setting_items_const.h or delete those defines
 static const setting_item_t setting_items[] = {
-    {"hostname", BASE_HOSTNAME, validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
-    {"login", DEFAULT_LOGIN, validate_login, SETTING_ITEM_TYPE_STRING},
-    {"pass", DEFAULT_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
-    {"web_port", "80", validate_port, SETTING_ITEM_TYPE_INT},
-    {"io_bus", "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {"vout", "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_HOSTNAME, BASE_HOSTNAME, validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
+    {KEY_LOGIN, DEFAULT_LOGIN, validate_login, SETTING_ITEM_TYPE_STRING},
+    {KEY_PASS, DEFAULT_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
+    {KEY_WEB_PORT, DEFAULT_WEB_PORT, validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_IO_BUS_ENABLED, DEFAULT_IO_BUS_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_VOUT, DEFAULT_485_VOUT, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // WiFi settings
-    {"wifi_mode", "ap", validate_wifi_mode, SETTING_ITEM_TYPE_STRING},
-    {"ap_auth", "wpa2_psk", validate_wifi_auth, SETTING_ITEM_TYPE_STRING},
-    {"sta_auth", "wpa2_psk", validate_wifi_auth, SETTING_ITEM_TYPE_STRING},
-    {"ap_ssid", BASE_HOSTNAME, validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
-    {"ap_pass", "wirenboard", validate_password, SETTING_ITEM_TYPE_STRING},
-    {"sta_ssid", "", validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
-    {"sta_pass", "", validate_password, SETTING_ITEM_TYPE_STRING},
-    {"ap_ip_static", "192.168.1.1", validate_ip, SETTING_ITEM_TYPE_STRING},
-    {"ap_mask_static", "255.255.255.0", validate_ip, SETTING_ITEM_TYPE_STRING},
-    {"ap_gw_static", "192.168.1.1", validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_WIFI_MODE, DEFAULT_WIFI_MODE, validate_wifi_mode, SETTING_ITEM_TYPE_STRING},
+    {KEY_WIFI_AUTH_AP, DEFAULT_WIFI_AUTH, validate_wifi_auth, SETTING_ITEM_TYPE_STRING},
+    {KEY_WIFI_AUTH_STA, DEFAULT_WIFI_AUTH, validate_wifi_auth, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_SSID, BASE_HOSTNAME, validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_PASS, DEFAULT_AP_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_SSID, DEFAULT_STA_SSID, validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_PASS, DEFAULT_STA_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_IP_STATIC, DEFAULT_AP_IP_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_MASK_STATIC, DEFAULT_AP_MASK_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_GW_STATIC, DEFAULT_AP_GW_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
 
     // Ethernet settings
-    {"eth_ip_static", "192.168.1.100", validate_ip, SETTING_ITEM_TYPE_STRING},
-    {"eth_mask_static", "255.255.255.0", validate_ip, SETTING_ITEM_TYPE_STRING},
-    {"eth_gw_static", "192.168.1.1", validate_ip, SETTING_ITEM_TYPE_STRING},
-    {"eth_dhcpc", "true", validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_ETH_IP_STATIC, DEFAULT_ETH_IP_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_ETH_MASK_STATIC, DEFAULT_ETH_MASK_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_ETH_GW_STATIC, DEFAULT_ETH_GW_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_ETH_DHCPC, DEFAULT_ETH_DHCPC, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // RS485 port 1 settings
-    {"baudrate_1", "9600", validate_baudrate, SETTING_ITEM_TYPE_INT},
-    {"stopbits_1", "1", validate_stopbits, SETTING_ITEM_TYPE_STRING},
-    {"parity_1", "none", validate_parity, SETTING_ITEM_TYPE_STRING},
-    {"databits_1", "8", validate_databits, SETTING_ITEM_TYPE_STRING},
-    {"term_1", "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {"fail_safe_1", "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {"bridge_mode_1", "client", validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
-    {"bridge_port_1", "502", validate_port, SETTING_ITEM_TYPE_INT},
-    {"bridge_ip_1", "192.168.1.10", validate_ip, SETTING_ITEM_TYPE_STRING},
-    {"bridge_mb_1", "true", validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BAUDRATE1, DEFAULT_BAUDRATE, validate_baudrate, SETTING_ITEM_TYPE_INT},
+    {KEY_STOPBITS1, DEFAULT_STOPBITS, validate_stopbits, SETTING_ITEM_TYPE_STRING},
+    {KEY_PARITY1, DEFAULT_PARITY, validate_parity, SETTING_ITEM_TYPE_STRING},
+    {KEY_DATABITS1, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
+    {KEY_485_TERM_1, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_FAIL_SAFE_1, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BRIDGE_MODE1, DEFAULT_BRIDGE_MODE, validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
+    {KEY_BRIDGE_PORT1, DEFAULT_BRIDGE_PORT, validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_BRIDGE_IP1, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_BRIDGE_MB1, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // RS485 port 2 settings
-    {"baudrate_2", "9600", validate_baudrate, SETTING_ITEM_TYPE_INT},
-    {"stopbits_2", "1", validate_stopbits, SETTING_ITEM_TYPE_STRING},
-    {"parity_2", "none", validate_parity, SETTING_ITEM_TYPE_STRING},
-    {"databits_2", "8", validate_databits, SETTING_ITEM_TYPE_STRING},
-    {"term_2", "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {"fail_safe_2", "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {"bridge_mode_2", "client", validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
-    {"bridge_port_2", "503", validate_port, SETTING_ITEM_TYPE_INT},
-    {"bridge_ip_2", "192.168.1.10", validate_ip, SETTING_ITEM_TYPE_STRING},
-    {"bridge_mb_2", "true", validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BAUDRATE2, DEFAULT_BAUDRATE, validate_baudrate, SETTING_ITEM_TYPE_INT},
+    {KEY_STOPBITS2, DEFAULT_STOPBITS, validate_stopbits, SETTING_ITEM_TYPE_STRING},
+    {KEY_PARITY2, DEFAULT_PARITY, validate_parity, SETTING_ITEM_TYPE_STRING},
+    {KEY_DATABITS2, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
+    {KEY_485_TERM_2, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_FAIL_SAFE_2, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BRIDGE_MODE2, DEFAULT_BRIDGE_MODE, validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
+    {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
 };
 
 static const setting_item_t *find_setting_item(const char *key)
@@ -363,7 +360,7 @@ esp_err_t setting_items_read(const char *key, char *value)
             const char *default_value;
 
             // Special case: generate dynamic default for AP password
-            if (strncmp(key, "ap_pass", SETTING_ITEM_MAX_STR_LEN) == 0) {
+            if (strncmp(key, KEY_AP_PASS, SETTING_ITEM_MAX_STR_LEN) == 0) {
                 default_value = get_dynamic_ap_pass_default();
             } else {
                 default_value = item->default_value;

@@ -18,31 +18,31 @@ typedef struct {
 } setting_mapping_t;
 
 static const setting_mapping_t top_level_mappings[] = {
-    {"hostname", "hostname"},
-    {"login", "login"},
-    {"web_port", "web_port"},
-    {"io_bus", "io_bus"},
-    {"vout", "vout"},
+    {"hostname", KEY_HOSTNAME},
+    {"login", KEY_LOGIN},
+    {"web_port", KEY_WEB_PORT},
+    {"io_bus", KEY_IO_BUS_ENABLED},
+    {"vout", KEY_485_VOUT},
 };
 
 static const setting_mapping_t wifi_mappings[] = {
-    {"mode", "wifi_mode"},
-    {"ap_auth", "ap_auth"},
-    {"sta_auth", "sta_auth"},
-    {"ap_ssid", "ap_ssid"},
-    {"ap_pass", "ap_pass"},
-    {"sta_ssid", "sta_ssid"},
-    {"sta_pass", "sta_pass"},
-    {"ap_ip_static", "ap_ip_static"},
-    {"ap_mask_static", "ap_mask_static"},
-    {"ap_gw_static", "ap_gw_static"},
+    {"mode", KEY_WIFI_MODE},
+    {"ap_auth", KEY_WIFI_AUTH_AP},
+    {"sta_auth", KEY_WIFI_AUTH_STA},
+    {"ap_ssid", KEY_AP_SSID},
+    {"ap_pass", KEY_AP_PASS},
+    {"sta_ssid", KEY_STA_SSID},
+    {"sta_pass", KEY_STA_PASS},
+    {"ap_ip_static", KEY_AP_IP_STATIC},
+    {"ap_mask_static", KEY_AP_MASK_STATIC},
+    {"ap_gw_static", KEY_AP_GW_STATIC},
 };
 
 static const setting_mapping_t ethernet_mappings[] = {
-    {"ip_static", "eth_ip_static"},
-    {"mask_static", "eth_mask_static"},
-    {"gw_static", "eth_gw_static"},
-    {"dhcpc", "eth_dhcpc"},
+    {"ip_static", KEY_ETH_IP_STATIC},
+    {"mask_static", KEY_ETH_MASK_STATIC},
+    {"gw_static", KEY_ETH_GW_STATIC},
+    {"dhcpc", KEY_ETH_DHCPC},
 };
 
 static const setting_mapping_t rs485_base_mappings[] = {
@@ -50,15 +50,15 @@ static const setting_mapping_t rs485_base_mappings[] = {
     {"stopbits", "stopbits"},
     {"parity", "parity"},
     {"databits", "databits"},
-    {"term", "term"},
-    {"fail_safe", "fail_safe"},
+    {"term", "485_term"},
+    {"fail_safe", "485_fail_safe"},
 };
 
 static const setting_mapping_t rs485_bridge_mappings[] = {
     {"mode", "bridge_mode"},
     {"port", "bridge_port"},
     {"ip", "bridge_ip"},
-    {"modbus", "bridge_mb"},
+    {"modbus", "bridge_modbus"},
 };
 
 static esp_err_t add_rs485_settings_to_json(cJSON *parent);
@@ -68,25 +68,25 @@ static bool add_setting_to_json(cJSON *parent, const char *setting_key, const ch
     setting_item_type_t type = setting_items_get_type(setting_key);
 
     switch (type) {
-        case SETTING_ITEM_TYPE_STRING: {
-            char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-            if (setting_items_read(setting_key, value) != ESP_OK) {
-                return false;
-            }
-            return cJSON_AddStringToObject(parent, json_key, value) != NULL;
-        }
-        case SETTING_ITEM_TYPE_BOOL: {
-            bool value = setting_items_read_bool(setting_key);
-            return cJSON_AddBoolToObject(parent, json_key, value) != NULL;
-        }
-        case SETTING_ITEM_TYPE_INT:
-        case SETTING_ITEM_TYPE_UINT32: {
-            int value = setting_items_read_int(setting_key);
-            return cJSON_AddNumberToObject(parent, json_key, value) != NULL;
-        }
-        default:
-            ESP_LOGE(TAG, "Unknown setting type for key: %s", setting_key);
+    case SETTING_ITEM_TYPE_STRING: {
+        char value[SETTING_ITEM_MAX_STR_LEN] = { 0 };
+        if (setting_items_read(setting_key, value) != ESP_OK) {
             return false;
+        }
+        return cJSON_AddStringToObject(parent, json_key, value) != NULL;
+    }
+    case SETTING_ITEM_TYPE_BOOL: {
+        bool value = setting_items_read_bool(setting_key);
+        return cJSON_AddBoolToObject(parent, json_key, value) != NULL;
+    }
+    case SETTING_ITEM_TYPE_INT:
+    case SETTING_ITEM_TYPE_UINT32: {
+        int value = setting_items_read_int(setting_key);
+        return cJSON_AddNumberToObject(parent, json_key, value) != NULL;
+    }
+    default:
+        ESP_LOGE(TAG, "Unknown setting type for key: %s", setting_key);
+        return false;
     }
 }
 
@@ -95,31 +95,31 @@ static bool save_setting_from_json(cJSON *item, const char *setting_key) {
     setting_item_type_t type = setting_items_get_type(setting_key);
 
     switch (type) {
-        case SETTING_ITEM_TYPE_STRING:
-            if (!cJSON_IsString(item)) {
-                ESP_LOGE(TAG, "Expected string for setting %s", setting_key);
-                return false;
-            }
-            return setting_items_save(setting_key, item->valuestring) == ESP_OK;
-
-        case SETTING_ITEM_TYPE_BOOL:
-            if (!cJSON_IsBool(item)) {
-                ESP_LOGE(TAG, "Expected boolean for setting %s", setting_key);
-                return false;
-            }
-            return setting_items_save_bool(setting_key, cJSON_IsTrue(item)) == ESP_OK;
-
-        case SETTING_ITEM_TYPE_INT:
-        case SETTING_ITEM_TYPE_UINT32:
-            if (!cJSON_IsNumber(item)) {
-                ESP_LOGE(TAG, "Expected number for setting %s", setting_key);
-                return false;
-            }
-            return setting_items_save_int(setting_key, (int)item->valuedouble) == ESP_OK;
-
-        default:
-            ESP_LOGE(TAG, "Unknown setting type for key: %s", setting_key);
+    case SETTING_ITEM_TYPE_STRING:
+        if (!cJSON_IsString(item)) {
+            ESP_LOGE(TAG, "Expected string for setting %s", setting_key);
             return false;
+        }
+        return setting_items_save(setting_key, item->valuestring) == ESP_OK;
+
+    case SETTING_ITEM_TYPE_BOOL:
+        if (!cJSON_IsBool(item)) {
+            ESP_LOGE(TAG, "Expected boolean for setting %s", setting_key);
+            return false;
+        }
+        return setting_items_save_bool(setting_key, cJSON_IsTrue(item)) == ESP_OK;
+
+    case SETTING_ITEM_TYPE_INT:
+    case SETTING_ITEM_TYPE_UINT32:
+        if (!cJSON_IsNumber(item)) {
+            ESP_LOGE(TAG, "Expected number for setting %s", setting_key);
+            return false;
+        }
+        return setting_items_save_int(setting_key, (int)item->valuedouble) == ESP_OK;
+
+    default:
+        ESP_LOGE(TAG, "Unknown setting type for key: %s", setting_key);
+        return false;
     }
 }
 
