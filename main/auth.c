@@ -78,8 +78,8 @@ static uint32_t create_session(const char *login, const char *password)
     char stored_login[SETTING_ITEM_MAX_STR_LEN] = {0};
     char stored_pass[SETTING_ITEM_MAX_STR_LEN] = {0};
 
-    if ((setting_items_read("login", stored_login) != ESP_OK) ||
-        (setting_items_read("pass", stored_pass) != ESP_OK))
+    if ((setting_items_read(KEY_LOGIN, stored_login) != ESP_OK) ||
+        (setting_items_read(KEY_PASS, stored_pass) != ESP_OK))
     {
         ESP_LOGE(TAG, "Failed to read login or pass from storage");
         return 0;
