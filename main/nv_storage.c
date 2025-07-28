@@ -25,6 +25,16 @@ esp_err_t nvs_init(void)
         return ret;
     }
 
+    // Print NVS statistics for debugging
+    nvs_stats_t nvs_stats;
+    ret = nvs_get_stats(NULL, &nvs_stats);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "NVS Stats - Used: %d, Free: %d, Total: %d",
+                 nvs_stats.used_entries, nvs_stats.free_entries, nvs_stats.total_entries);
+    } else {
+        ESP_LOGW(TAG, "Failed to get NVS stats: %s", esp_err_to_name(ret));
+    }
+
     ESP_LOGI(TAG, "NVS initialized successfully");
     return ESP_OK;
 }
