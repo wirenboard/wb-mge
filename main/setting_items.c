@@ -303,6 +303,36 @@ esp_err_t setting_items_init(void)
 {
     ESP_LOGI(TAG, "Initializing settings with string storage");
     storage_iface = &nvs_storage_iface;
+
+    // Initialize default values for all settings that don't exist yet
+    // This matches the behavior of the original implementation
+    ESP_LOGI(TAG, "Setting default values for uninitialized settings");
+
+    for (size_t i = 0; i < ARRAY_SIZE(setting_items); i++) {
+        const setting_item_t *item = &setting_items[i];
+
+        // Check if the setting already exists in storage
+        if (!storage_iface->has_key(item->key)) {
+            const char *default_value;
+
+            // Special case: generate dynamic default for AP password
+            if (strncmp(item->key, KEY_AP_PASS, SETTING_ITEM_MAX_STR_LEN) == 0) {
+                default_value = get_dynamic_ap_pass_default();
+            } else {
+                default_value = item->default_value;
+            }
+
+            esp_err_t ret = storage_iface->write_str(item->key, default_value);
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "Set default %s = %s", item->key, default_value);
+            } else {
+                ESP_LOGE(TAG, "Failed to set default for %s: %s", item->key, esp_err_to_name(ret));
+                return ret;
+            }
+        }
+    }
+
+    ESP_LOGI(TAG, "Settings initialization completed");
     return ESP_OK;
 }
 
@@ -422,39 +452,76 @@ const char *setting_items_get_key_at(size_t index)
     return setting_items[index].key;
 }
 
-// Convenience wrapper functions for common types with type checking
-uint32_t setting_items_read_u32(const char *key)
+// Helper functions to validate setting types semantically
+static bool is_numeric_type(setting_item_type_t type)
+{
+    return (type == SETTING_ITEM_TYPE_INT || type == SETTING_ITEM_TYPE_UINT32);
+}
+
+static const setting_item_t *validate_numeric_setting(const char *key)
 {
     const setting_item_t *item = find_setting_item(key);
     if (!item) {
         ESP_LOGE(TAG, "Setting '%s' not found", key);
-        return 0;
+        return NULL;
     }
 
-    if (item->type != SETTING_ITEM_TYPE_INT && item->type != SETTING_ITEM_TYPE_UINT32) {
-        ESP_LOGE(TAG, "Type mismatch: '%s' is %s, not INT/UINT32",
+    if (!is_numeric_type(item->type)) {
+        ESP_LOGE(TAG, "Type mismatch: '%s' is %s, expected numeric type",
                  key, setting_items_type_to_string(item->type));
+        return NULL;
+    }
+
+    return item;
+}
+
+static const setting_item_t *validate_bool_setting(const char *key)
+{
+    const setting_item_t *item = find_setting_item(key);
+    if (!item) {
+        ESP_LOGE(TAG, "Setting '%s' not found", key);
+        return NULL;
+    }
+
+    if (item->type != SETTING_ITEM_TYPE_BOOL) {
+        ESP_LOGE(TAG, "Type mismatch: '%s' is %s, expected BOOL",
+                 key, setting_items_type_to_string(item->type));
+        return NULL;
+    }
+
+    return item;
+}
+
+// Generic helper function for reading numeric values
+static long read_numeric_value(const char *key)
+{
+    const setting_item_t *item = validate_numeric_setting(key);
+    if (!item) {
         return 0;
     }
 
     char value[SETTING_ITEM_MAX_STR_LEN] = {0};
     if (setting_items_read(key, value) != ESP_OK) {
-        return (uint32_t)strtoul(item->default_value, NULL, 10);
+        return strtol(item->default_value, NULL, 10);
     }
-    return (uint32_t)strtoul(value, NULL, 10);
+    return strtol(value, NULL, 10);
+}
+
+// Convenience wrapper functions for common types with semantic type checking
+uint32_t setting_items_read_u32(const char *key)
+{
+    return (uint32_t)read_numeric_value(key);
+}
+
+int setting_items_read_int(const char *key)
+{
+    return (int)read_numeric_value(key);
 }
 
 bool setting_items_read_bool(const char *key)
 {
-    const setting_item_t *item = find_setting_item(key);
+    const setting_item_t *item = validate_bool_setting(key);
     if (!item) {
-        ESP_LOGE(TAG, "Setting '%s' not found", key);
-        return false;
-    }
-
-    if (item->type != SETTING_ITEM_TYPE_BOOL) {
-        ESP_LOGE(TAG, "Type mismatch: '%s' is %s, not BOOL",
-                 key, setting_items_type_to_string(item->type));
         return false;
     }
 
@@ -463,27 +530,6 @@ bool setting_items_read_bool(const char *key)
         return (strncmp(item->default_value, "true", SETTING_ITEM_MAX_STR_LEN) == 0);
     }
     return (strncmp(value, "true", SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-int setting_items_read_int(const char *key)
-{
-    const setting_item_t *item = find_setting_item(key);
-    if (!item) {
-        ESP_LOGE(TAG, "Setting '%s' not found", key);
-        return 0;
-    }
-
-    if (item->type != SETTING_ITEM_TYPE_INT && item->type != SETTING_ITEM_TYPE_UINT32) {
-        ESP_LOGE(TAG, "Type mismatch: '%s' is %s, not INT",
-                 key, setting_items_type_to_string(item->type));
-        return 0;
-    }
-
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    if (setting_items_read(key, value) != ESP_OK) {
-        return (int)strtol(item->default_value, NULL, 10);
-    }
-    return (int)strtol(value, NULL, 10);
 }
 
 esp_err_t setting_items_save_u32(const char *key, uint32_t value)
