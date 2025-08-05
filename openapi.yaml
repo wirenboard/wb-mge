@@ -30,9 +30,6 @@ paths:
                   maxLength: 32
                   pattern: '^[ -~]+$'
                   description: "Password, 8-32 printable ASCII characters"
-                remember_me:
-                  type: boolean
-                  default: false
               required: [login, pass]
       responses:
         '200':
