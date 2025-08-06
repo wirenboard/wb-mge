@@ -368,7 +368,7 @@ void app_main(void)
     leds_control_init(io_expander);
     mio_control_init(io_expander);
 
-    config_button_init(config_button_callback); // Use callback for factory reset on 5s hold
+    config_button_init(config_button_callback);
     system_voltage_init();
 
     mio_control_reset();

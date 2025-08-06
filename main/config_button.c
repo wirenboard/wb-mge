@@ -16,6 +16,33 @@ static config_button_callback_t button_callback = NULL;
 static volatile bool button_initialized = false;
 static volatile uint64_t button_press_start_time = 0;
 static volatile bool button_pressed = false;
+static volatile bool button_event_pending = false;
+static volatile uint32_t last_press_duration = 0;
+
+bool config_button_check_event(uint32_t *press_count, uint32_t *press_duration)
+{
+    if (button_event_pending) {
+        button_event_pending = false;
+        if (press_count) *press_count = button_press_count;
+        if (press_duration) *press_duration = last_press_duration;
+        return true;
+    }
+    return false;
+}
+
+// Polling task for button events
+static void config_button_poll_task(void *arg)
+{
+    while (1) {
+        uint32_t press_count, press_duration;
+        if (config_button_check_event(&press_count, &press_duration)) {
+            if (button_callback) {
+                button_callback(press_count, press_duration);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
+    }
+}
 
 static void IRAM_ATTR config_button_isr_handler(void* arg)
 {
@@ -39,13 +66,9 @@ static void IRAM_ATTR config_button_isr_handler(void* arg)
         button_pressed = false;
         button_press_count++;
 
-        // Calculate press duration
-        uint32_t press_duration = (current_time - button_press_start_time) / 1000;
-
-        // Call callback if set (from ISR, so keep it simple)
-        if (button_callback != NULL) {
-            button_callback(button_press_count, press_duration);
-        }
+        // Calculate press duration and store it
+        last_press_duration = (current_time - button_press_start_time) / 1000;
+        button_event_pending = true;
     }
 }
 
@@ -71,12 +94,11 @@ esp_err_t config_button_init(config_button_callback_t callback)
 
     // Install GPIO ISR service if not already installed
     ret = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+    if ((ret != ESP_OK) && (ret != ESP_ERR_INVALID_STATE)) {
         // ESP_ERR_INVALID_STATE means ISR service already installed
         return ret;
     }
 
-    // Add ISR handler for this GPIO
     ret = gpio_isr_handler_add(CONFIG_BUTTON_GPIO, config_button_isr_handler, NULL);
     if (ret != ESP_OK) {
         return ret;
@@ -87,6 +109,10 @@ esp_err_t config_button_init(config_button_callback_t callback)
     button_pressed = false;
     button_press_start_time = 0;
     button_initialized = true;
+
+    if (callback) {
+        xTaskCreate(config_button_poll_task, "button_poll", 2048, NULL, 1, NULL);
+    }
 
     return ESP_OK;
 }
