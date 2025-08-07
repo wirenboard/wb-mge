@@ -23,8 +23,12 @@ bool config_button_check_event(uint32_t *press_count, uint32_t *press_duration)
 {
     if (button_event_pending) {
         button_event_pending = false;
-        if (press_count) *press_count = button_press_count;
-        if (press_duration) *press_duration = last_press_duration;
+        if (press_count) {
+            *press_count = button_press_count;
+        }
+        if (press_duration) {
+            *press_duration = last_press_duration;
+        }
         return true;
     }
     return false;
@@ -57,11 +61,11 @@ static void IRAM_ATTR config_button_isr_handler(void* arg)
 
     int button_state = gpio_get_level(CONFIG_BUTTON_GPIO);
 
-    if (button_state == 0 && !button_pressed) {
+    if ((button_state == 0) && !button_pressed) {
         // Button pressed (falling edge)
         button_pressed = true;
         button_press_start_time = current_time;
-    } else if (button_state == 1 && button_pressed) {
+    } else if ((button_state == 1) && button_pressed) {
         // Button released (rising edge)
         button_pressed = false;
         button_press_count++;

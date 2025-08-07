@@ -218,7 +218,7 @@ static esp_err_t add_rs485_settings_to_json(cJSON *parent)
         }
 
         // Add regular RS485 fields using mappings
-        for (size_t i = 0; i < sizeof(rs485_base_mappings)/sizeof(rs485_base_mappings[0]); i++) {
+        for (size_t i = 0; i < sizeof(rs485_base_mappings) / sizeof(rs485_base_mappings[0]); i++) {
             const setting_mapping_t *mapping = &rs485_base_mappings[i];
             snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
             add_setting_to_json(rs485_port, key_buf, mapping->json_key);

@@ -130,7 +130,7 @@ static inline void print_setting_items(void)
         const char *key = setting_items_get_key_at(i);
         if (key) {
             // Skip printing any setting that contains 'pass' for security
-            if (key != NULL && strstr(key, "pass") != NULL) {
+            if ((key != NULL) && (strstr(key, "pass") != NULL)) {
                 ESP_LOGI(TAG, "%s: [HIDDEN]", key);
                 continue;
             }
@@ -233,8 +233,11 @@ void app_main(void)
     char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
-    snprintf(generated_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
+    int ret = snprintf(generated_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
              mac[4], mac[5]);
+    if (ret >= SETTING_ITEM_MAX_STR_LEN) {
+        ESP_LOGW(TAG, "Generated hostname was truncated");
+    }
 
     // Set hostname if not already set
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -319,8 +322,11 @@ void app_main(void)
     esp_wifi_get_mac(WIFI_IF_AP, wifi_ap_mac);
     ESP_LOGI(TAG, "WiFi STA MAC: " MACSTR, MAC2STR(wifi_sta_mac));
     ESP_LOGI(TAG, "WiFi AP MAC:  " MACSTR, MAC2STR(wifi_ap_mac));
-    snprintf(sys_info.wifi_sta_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_sta_mac));
-    snprintf(sys_info.wifi_ap_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_ap_mac));
+    int ret1 = snprintf(sys_info.wifi_sta_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_sta_mac));
+    int ret2 = snprintf(sys_info.wifi_ap_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_ap_mac));
+    if ((ret1 >= SYS_INFO_MAX_STR_LEN) || (ret2 >= SYS_INFO_MAX_STR_LEN)) {
+        ESP_LOGW(TAG, "WiFi MAC address string was truncated");
+    }
 
     // Configure Ethernet
     bool eth_dhcpc = setting_items_read_bool(KEY_ETH_DHCPC);
@@ -349,7 +355,10 @@ void app_main(void)
         uint8_t eth_mac[6] = {0};
         esp_err_t ret = esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, eth_mac);
         if (ret == ESP_OK) {
-            snprintf(sys_info.eth_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(eth_mac));
+            ret = snprintf(sys_info.eth_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(eth_mac));
+            if (ret >= SYS_INFO_MAX_STR_LEN) {
+                ESP_LOGW(TAG, "Ethernet MAC address string was truncated");
+            }
             ESP_LOGI(TAG, "Ethernet MAC: " MACSTR, MAC2STR(eth_mac));
         } else {
             ESP_LOGW(TAG, "Failed to get Ethernet MAC address: %s", esp_err_to_name(ret));

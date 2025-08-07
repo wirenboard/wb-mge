@@ -29,6 +29,12 @@ static uint32_t get_session_from_cookie(httpd_req_t *req)
     char buf[32];
     size_t len = sizeof(buf);
     if (httpd_req_get_cookie_val(req, "session_id", buf, &len) == ESP_OK) {
+        // Ensure null termination for safety
+        if (len < sizeof(buf)) {
+            buf[len] = '\0';
+        } else {
+            buf[sizeof(buf) - 1] = '\0';
+        }
         return strtoul(buf, NULL, 10);
     }
     return 0;
@@ -45,13 +51,15 @@ static uint32_t create_session(const char *login, const char *pass)
         return 0;
     }
 
-    if (strcmp(login, stored_login) != 0 || strcmp(pass, stored_pass) != 0) {
+    if ((strcmp(login, stored_login) != 0) || (strcmp(pass, stored_pass) != 0)) {
         ESP_LOGW(TAG, "Invalid login or password");
         return 0;
     }
 
     uint32_t session_id = esp_random();
-    if (session_id == 0) session_id = esp_random(); // Avoid 0
+    if (session_id == 0) {
+        session_id = esp_random(); // Avoid 0
+    }
     ESP_LOGI(TAG, "Session created: %lu", session_id);
     return session_id;
 }

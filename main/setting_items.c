@@ -33,14 +33,15 @@ static const setting_storage_iface_t nvs_storage_iface = {
 // Validation functions
 bool validate_hostname_or_ssid(const char *value)
 {
-    if (!value || strlen(value) == 0 || strlen(value) >= 32) {
+    if ((!value) || (strlen(value) == 0) || (strlen(value) >= 32)) {
         return false;
     }
     // Basic hostname/SSID validation - only alphanumeric and hyphens
-    for (size_t i = 0; i < strlen(value); i++) {
+    size_t len = strlen(value); // Calculate once for security
+    for (size_t i = 0; i < len; i++) {
         char c = value[i];
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-              (c >= '0' && c <= '9') || c == '-')) {
+        if (!(((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) ||
+              ((c >= '0') && (c <= '9')) || (c == '-'))) {
             return false;
         }
     }
@@ -54,7 +55,11 @@ bool validate_port(const char *value)
     }
     char *endptr;
     long port = strtol(value, &endptr, 10);
-    return (*endptr == '\0' && port >= 1 && port <= 65535);
+    if ((*endptr == '\0') && (port >= 1) && (port <= 65535)) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 bool validate_baudrate(const char *value)
@@ -64,7 +69,11 @@ bool validate_baudrate(const char *value)
     }
     char *endptr;
     long baudrate = strtol(value, &endptr, 10);
-    return (*endptr == '\0' && baudrate >= 300 && baudrate <= 460800);
+    if ((*endptr == '\0') && (baudrate >= 300) && (baudrate <= 460800)) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 bool validate_stopbits(const char *value)
@@ -100,7 +109,7 @@ bool validate_databits(const char *value)
 
 bool validate_ip(const char *value)
 {
-    if (!value || strlen(value) == 0) {
+    if ((!value) || (strlen(value) == 0)) {
         return false;
     }
 
@@ -114,8 +123,8 @@ bool validate_ip(const char *value)
     }
 
     // Check ranges (0-255 for each octet)
-    if (a < 0 || a > 255 || b < 0 || b > 255 ||
-        c < 0 || c > 255 || d < 0 || d > 255) {
+    if ((a < 0) || (a > 255) || (b < 0) || (b > 255) ||
+        (c < 0) || (c > 255) || (d < 0) || (d > 255)) {
         return false;
     }
 
@@ -169,15 +178,15 @@ bool validate_login(const char *value)
         return false;
     }
     size_t len = strlen(value);
-    if (len == 0 || len >= 32) {
+    if ((len == 0) || (len >= 32)) {
         return false;
     }
 
     // Basic alphanumeric validation for login
     for (size_t i = 0; i < len; i++) {
         char c = value[i];
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-              (c >= '0' && c <= '9') || c == '_' || c == '-')) {
+        if (!(((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) ||
+              ((c >= '0') && (c <= '9')) || (c == '_') || (c == '-'))) {
             return false;
         }
     }
@@ -190,14 +199,14 @@ bool validate_password(const char *value)
         return false;
     }
     size_t len = strlen(value);
-    if (len < 8 || len >= 32) {
+    if ((len < 8) || (len >= 32)) {
         return false;  // Password must be between 8 and 32 characters
     }
 
     // Basic password validation - can be enhanced with regex or additional rules
     for (size_t i = 0; i < len; i++) {
         char c = value[i];
-        if (!(c >= ' ' && c <= '~')) {  // Printable ASCII characters
+        if (!((c >= ' ') && (c <= '~'))) {  // Printable ASCII characters
             return false;
         }
     }
@@ -224,12 +233,16 @@ static const char *get_dynamic_ap_pass_default(void)
             if (password_num < 10000000) {  // Less than 8 digits
                 password_num += 10000000;   // Make it 8 digits minimum
             }
-            snprintf(generated_password, sizeof(generated_password), "%010lu", (unsigned long)password_num);
+            int ret = snprintf(generated_password, sizeof(generated_password), "%010lu", (unsigned long)password_num);
+            if (ret >= sizeof(generated_password)) {
+                ESP_LOGW(TAG, "Generated password was truncated");
+            }
             ESP_LOGI(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], generated_password);
         } else {
             // Fallback to default if MAC read fails
             strncpy(generated_password, "wirenboard", sizeof(generated_password) - 1);
+            generated_password[sizeof(generated_password) - 1] = '\0';
             ESP_LOGW(TAG, "Failed to read MAC for AP password generation, using fallback");
         }
         password_generated = true;
@@ -535,7 +548,11 @@ bool setting_items_read_bool(const char *key)
 esp_err_t setting_items_save_u32(const char *key, uint32_t value)
 {
     char str_value[SETTING_ITEM_MAX_STR_LEN];
-    snprintf(str_value, sizeof(str_value), "%lu", (unsigned long)value);
+    int ret = snprintf(str_value, sizeof(str_value), "%lu", (unsigned long)value);
+    if (ret >= sizeof(str_value)) {
+        ESP_LOGE(TAG, "Value too large for buffer when saving %s", key);
+        return ESP_ERR_INVALID_SIZE;
+    }
     return setting_items_save(key, str_value);
 }
 
@@ -551,7 +568,11 @@ esp_err_t setting_items_save_bool(const char *key, bool value)
 esp_err_t setting_items_save_int(const char *key, int value)
 {
     char str_value[SETTING_ITEM_MAX_STR_LEN];
-    snprintf(str_value, sizeof(str_value), "%d", value);
+    int ret = snprintf(str_value, sizeof(str_value), "%d", value);
+    if (ret >= sizeof(str_value)) {
+        ESP_LOGE(TAG, "Value too large for buffer when saving %s", key);
+        return ESP_ERR_INVALID_SIZE;
+    }
     return setting_items_save(key, str_value);
 }
 
