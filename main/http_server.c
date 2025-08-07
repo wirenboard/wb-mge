@@ -56,6 +56,8 @@ static esp_err_t index_js_get_handler(httpd_req_t *req)
 
 static esp_err_t favicon_get_handler(httpd_req_t *req)
 {
+    httpd_resp_set_type(req, "image/webp");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     httpd_resp_send(req, (const char *)favicon_start, favicon_end - favicon_start);
     return ESP_OK;
 }
