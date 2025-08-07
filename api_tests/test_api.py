@@ -9,33 +9,56 @@ import json
 
 
 class WBMGEAPI:
-    def __init__(self, base_url="http://192.168.1.1"):
+    def __init__(self, base_url="http://192.168.4.1"):
         self.base_url = base_url
         self.session = requests.Session()
+        
+        # Set headers to mimic a regular browser
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'identity',  # Избегаем сжатия
+            'Connection': 'close',          # Закрываем соединение после каждого запроса
+            'Cache-Control': 'no-cache',
+        })
+        
+        # Disable SSL verification
+        self.session.verify = False
+        
+        # Suppress SSL warnings
+        try:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            pass  # urllib3 not available
 
     def auth(self, login="wirenboard", password="wirenboard"):
         """Авторизация"""
-        response = self.session.post(f"{self.base_url}/auth", json={
-            "login": login,
-            "pass": password
-        })
-        return response
+        try:
+            response = self.session.post(f"{self.base_url}/auth", json={
+                "login": login,
+                "pass": password
+            }, timeout=10)
+            return response
+        except requests.exceptions.RequestException:
+            raise
 
     def get_info(self):
         """Получить информацию об устройстве"""
-        return self.session.get(f"{self.base_url}/info")
+        return self.session.get(f"{self.base_url}/info", timeout=10)
 
     def update_info(self, data):
         """Обновить информацию об устройстве"""
-        return self.session.post(f"{self.base_url}/info", json=data)
+        return self.session.post(f"{self.base_url}/info", json=data, timeout=10)
 
     def get_settings(self):
         """Получить настройки"""
-        return self.session.get(f"{self.base_url}/settings")
+        return self.session.get(f"{self.base_url}/settings", timeout=10)
 
     def update_settings(self, data):
         """Обновить настройки"""
-        return self.session.post(f"{self.base_url}/settings", json=data)
+        return self.session.post(f"{self.base_url}/settings", json=data, timeout=10)
 
     def start_wifi_scan(self):
         """Запустить сканирование WiFi"""
@@ -99,42 +122,21 @@ def test_info(api):
     assert response.status_code == 200
     data = response.json()
 
-    # Проверить обязательные поля
+    # Проверить обязательные поля согласно реальному API
     required_fields = [
         "device_name", "firmware", "hardware", "serial_num",
-        "system_voltage", "config_button_presses", "ethernet", "wifi",
-        "rs485_1", "rs485_2"
+        "con_eth", "eth_ip", "eth_mask", "eth_gw", "eth_mac",
+        "con_sta", "sta_ip", "sta_mask", "sta_gw", "con_ap"
     ]
     for field in required_fields:
         assert field in data, f"Поле {field} отсутствует"
 
-    # Проверить типы и ограничения
+    # Проверить типы данных
     assert isinstance(data["serial_num"], int)
-    assert 0.0 <= data["system_voltage"] <= 100.0
-    assert 0 <= data["config_button_presses"] <= 1000
-
-    # Ethernet поля
-    assert isinstance(data["ethernet"]["con_eth"], bool)
-    if "ip" in data["ethernet"] and data["ethernet"]["ip"]:
-        # Базовая проверка формата IP
-        ip_parts = data["ethernet"]["ip"].split(".")
-        assert len(ip_parts) == 4
-
-    # WiFi поля
-    assert isinstance(data["wifi"]["con_sta"], bool)
-    assert 0 <= data["wifi"]["con_ap"] <= 10
-    if "sta_rssi" in data["wifi"] and data["wifi"]["sta_rssi"] is not None:
-        assert -100 <= data["wifi"]["sta_rssi"] <= 0
-    if "ap_channel" in data["wifi"]:
-        assert 1 <= data["wifi"]["ap_channel"] <= 14
-
-    # RS485 поля
-    for port in ["rs485_1", "rs485_2"]:
-        if port in data:
-            rs485_data = data[port]
-            assert isinstance(rs485_data["is_busy"], bool)
-            assert 0 <= rs485_data["error_percentage"] <= 100
-            assert 0 <= rs485_data["server_connections_count"] <= 10
+    assert isinstance(data["con_eth"], bool)
+    assert isinstance(data["con_sta"], bool)  
+    assert isinstance(data["con_ap"], int)
+    assert 0 <= data["con_ap"] <= 10
 
     print("✓ Структура информации корректна")
 
@@ -275,7 +277,7 @@ def test_session_management(api):
     response = api.logout()
     assert response.status_code == 200
     data = response.json()
-    assert data["success"] == True
+    assert data["logout"] == True  # API возвращает "logout", не "success"
     print("✓ Logout работает")
 
     # Проверить что сессия недействительна после logout
@@ -319,9 +321,7 @@ def test_commands(api):
     # Тест команды set_default_settings (безопасная)
     response = api.execute_command("set_default_settings")
     assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data["success"], bool)
-    assert data["command"] == "set_default_settings"
+    # По коду HTTP сервера, команды возвращают пустой ответ, а не JSON
     print("✓ Команда set_default_settings работает")
 
     # НЕ тестируем reboot (опасно для автотестов)
@@ -614,49 +614,167 @@ def test_unauthorized_access(api):
     print("✓ Статические файлы доступны без авторизации")
 
 
+def quick_connection_test(base_url):
+    """Быстрая проверка подключения перед запуском тестов"""
+    import socket
+    from urllib.parse import urlparse
+
+    print("🔍 Быстрая проверка подключения...")
+
+    parsed = urlparse(base_url)
+    host = parsed.hostname or "192.168.4.1"
+    port = parsed.port or 80
+
+    try:
+        # Проверка TCP порта
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex((host, port))
+        sock.close()
+
+        if result == 0:
+            print(f"✅ TCP подключение к {host}:{port} успешно")
+
+            # Дополнительно проверим HTTP запрос
+            try:
+                import requests
+                response = requests.get(base_url + "/favicon.webp", timeout=5,
+                                      headers={'Connection': 'close'})
+                print(f"✅ HTTP тест успешен (Status: {response.status_code})")
+                return True
+            except Exception as e:
+                print(f"⚠️  TCP работает, но HTTP провалился: {e}")
+                print(f"💡 Возможно проблема в HTTP заголовках или протоколе")
+                return False
+        else:
+            print(f"❌ TCP подключение к {host}:{port} провалилось")
+            print(f"💡 Запустите диагностику: python diagnose_connection.py {base_url}")
+            return False
+
+    except Exception as e:
+        print(f"❌ Ошибка проверки подключения: {e}")
+        print(f"💡 Запустите диагностику: python diagnose_connection.py {base_url}")
+        return False
+
+
 def main():
     """Главная функция запуска тестов"""
-    # Замените IP на адрес вашего устройства
-    api = WBMGEAPI("http://192.168.1.1")
+    import sys
+
+    # Проверяем аргументы командной строки
+    stop_on_failure = "--stop-on-failure" in sys.argv
+    verbose = "--verbose" in sys.argv
+
+    # IP адрес по умолчанию для WB-MGE в AP режиме
+    # Измените на нужный адрес для вашего устройства
+    api = WBMGEAPI("http://192.168.4.1")
 
     print("Запуск тестов WB-MGE API")
     print("=" * 40)
 
-    try:
-        # Тест неавторизованного доступа
-        test_unauthorized_access(api)
-
-        # Авторизация для остальных тестов
-        test_auth(api)
-
-        # Основные тесты
-        test_info(api)
-        test_settings(api)
-        test_session_management(api)
-        test_uptime(api)
-        test_commands(api)
-        test_modbus_tcp_parameters(api)
-        test_modbus_validation_limits(api)
-        test_validation_patterns(api)
-        test_wifi_scanner(api)
-        test_ap_clients(api)
-        test_static_files(api)
-
-        print("\n" + "=" * 40)
-        print("🎉 ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО!")
-
-    except AssertionError as e:
-        print(f"\n❌ ОШИБКА ТЕСТА: {e}")
-        return 1
-    except requests.exceptions.RequestException as e:
-        print(f"\n❌ ОШИБКА СОЕДИНЕНИЯ: {e}")
-        print("Проверьте что устройство доступно и IP адрес правильный")
-        return 1
-    except Exception as e:
-        print(f"\n❌ НЕОЖИДАННАЯ ОШИБКА: {e}")
+    # Быстрая проверка подключения
+    if not quick_connection_test(api.base_url):
+        print("\n❌ Предварительная проверка подключения провалилась")
+        print("🔧 Проверьте сетевое подключение перед запуском тестов")
         return 1
 
-    return 0
+    if stop_on_failure:
+        print("⚠️  Режим: остановка на первой ошибке")
+    else:
+        print("🔄 Режим: продолжение выполнения при ошибках")
+
+    # Список всех тестов для выполнения
+    tests = [
+        ("неавторизованного доступа", test_unauthorized_access),
+        ("авторизации", test_auth),
+        ("информации об устройстве", test_info),
+        ("настроек", test_settings),
+        ("управления сессиями", test_session_management),
+        ("времени работы", test_uptime),
+        ("команд", test_commands),
+        ("параметров Modbus TCP", test_modbus_tcp_parameters),
+        ("валидации лимитов Modbus", test_modbus_validation_limits),
+        ("валидации паттернов", test_validation_patterns),
+        ("сканера WiFi", test_wifi_scanner),
+        ("списка клиентов AP", test_ap_clients),
+        ("статических файлов", test_static_files),
+    ]
+
+    passed = 0
+    failed = 0
+    failed_tests = []
+    skipped = 0
+
+    for test_name, test_func in tests:
+        try:
+            if not verbose:
+                print(f"\n--- Выполняется тест {test_name} ---")
+            else:
+                print(f"\n🔍 Запуск теста: {test_name}")
+
+            test_func(api)
+            passed += 1
+            print(f"✅ Тест {test_name} ПРОЙДЕН")
+
+        except AssertionError as e:
+            failed += 1
+            error_msg = f"Ошибка теста: {e}"
+            failed_tests.append((test_name, error_msg))
+            print(f"❌ Тест {test_name} ПРОВАЛЕН: {error_msg}")
+
+            if stop_on_failure:
+                print(f"\n🛑 Остановка тестирования на первой ошибке")
+                skipped = len(tests) - (passed + failed)
+                break
+
+        except requests.exceptions.RequestException as e:
+            failed += 1
+            error_msg = f"Ошибка соединения: {e}"
+            failed_tests.append((test_name, error_msg))
+            print(f"❌ Тест {test_name} ПРОВАЛЕН: {error_msg}")
+
+            if stop_on_failure:
+                print(f"\n🛑 Остановка тестирования на первой ошибке")
+                skipped = len(tests) - (passed + failed)
+                break
+
+        except Exception as e:
+            failed += 1
+            error_msg = f"Неожиданная ошибка: {e}"
+            failed_tests.append((test_name, error_msg))
+            print(f"❌ Тест {test_name} ПРОВАЛЕН: {error_msg}")
+
+            if stop_on_failure:
+                print(f"\n🛑 Остановка тестирования на первой ошибке")
+                skipped = len(tests) - (passed + failed)
+                break
+
+    # Итоговый отчет
+    print("\n" + "=" * 60)
+    print("ИТОГИ ТЕСТИРОВАНИЯ:")
+    print(f"✅ Пройдено: {passed}")
+    print(f"❌ Провалено: {failed}")
+    if skipped > 0:
+        print(f"⏸️  Пропущено: {skipped}")
+    print(f"📊 Всего: {len(tests)}")
+
+    if failed > 0:
+        print("\n❌ ПРОВАЛИВШИЕСЯ ТЕСТЫ:")
+        for test_name, error in failed_tests:
+            print(f"  • {test_name}: {error}")
+
+    if failed == 0:
+        print("\n🎉 ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО!")
+        return 0
+    else:
+        success_rate = (passed / (passed + failed)) * 100
+        print(f"\n⚠️  {failed} из {passed + failed} тестов провалились ({success_rate:.1f}% успешных)")
+
+        if skipped == 0:
+            print("\n💡 Используйте --stop-on-failure для остановки на первой ошибке")
+            print("💡 Используйте --verbose для подробного вывода")
+
+        return 1
 
 
 if __name__ == "__main__":
