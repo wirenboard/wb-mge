@@ -59,10 +59,10 @@ static const setting_mapping_t rs485_bridge_mappings[] = {
     {"port", "bridge_port"},
     {"ip", "bridge_ip"},
     {"modbus", "bridge_modbus"},
-    {"reverse_gateway", "bridge_reverse_gw"},
-    {"rtu_timeout", "bridge_rtu_timeout"},
-    {"tcp_timeout", "bridge_tcp_timeout"},
-    {"break_on_req", "bridge_break_on_req"},
+    {"reverse_gateway", "reverse_gw"},
+    {"rtu_timeout", "rtu_timeout"},
+    {"tcp_timeout", "tcp_timeout"},
+    {"break_on_req", "break_on_req"},
 };
 
 static esp_err_t add_rs485_settings_to_json(cJSON *parent);
