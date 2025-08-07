@@ -213,6 +213,22 @@ bool validate_password(const char *value)
     return true;
 }
 
+bool validate_modbus_timeout(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+    char *endptr;
+    long timeout = strtol(value, &endptr, 10);
+    
+    // Combined validation for both RTU (10-2000) and TCP (50-3000) timeouts
+    if ((*endptr == '\0') && (timeout >= 10) && (timeout <= 3000)) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 // Generate dynamic default AP password from MAC address
 static const char *get_dynamic_ap_pass_default(void)
 {
@@ -288,6 +304,10 @@ static const setting_item_t setting_items[] = {
     {KEY_BRIDGE_PORT1, DEFAULT_BRIDGE_PORT, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP1, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_MB1, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BRIDGE_REVERSE_GW1, DEFAULT_BRIDGE_REVERSE_GW, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BRIDGE_RTU_TIMEOUT1, DEFAULT_BRIDGE_RTU_TIMEOUT, validate_modbus_timeout, SETTING_ITEM_TYPE_INT},
+    {KEY_BRIDGE_TCP_TIMEOUT1, DEFAULT_BRIDGE_TCP_TIMEOUT, validate_modbus_timeout, SETTING_ITEM_TYPE_INT},
+    {KEY_BRIDGE_BREAK_ON_REQ1, DEFAULT_BRIDGE_BREAK_ON_REQ, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // RS485 port 2 settings
     {KEY_BAUDRATE2, DEFAULT_BAUDRATE, validate_baudrate, SETTING_ITEM_TYPE_INT},
@@ -300,6 +320,10 @@ static const setting_item_t setting_items[] = {
     {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BRIDGE_REVERSE_GW2, DEFAULT_BRIDGE_REVERSE_GW, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BRIDGE_RTU_TIMEOUT2, DEFAULT_BRIDGE_RTU_TIMEOUT, validate_modbus_timeout, SETTING_ITEM_TYPE_INT},
+    {KEY_BRIDGE_TCP_TIMEOUT2, DEFAULT_BRIDGE_TCP_TIMEOUT, validate_modbus_timeout, SETTING_ITEM_TYPE_INT},
+    {KEY_BRIDGE_BREAK_ON_REQ2, DEFAULT_BRIDGE_BREAK_ON_REQ, validate_bool, SETTING_ITEM_TYPE_BOOL},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

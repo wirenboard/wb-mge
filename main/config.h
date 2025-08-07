@@ -32,3 +32,8 @@
 #define DEFAULT_485_FAIL_SAFE       "false"
 #define DEFAULT_IO_BUS_ENABLED      "false"
 #define DEFAULT_WEB_PORT            "80"
+
+#define DEFAULT_BRIDGE_REVERSE_GW    "false"
+#define DEFAULT_BRIDGE_RTU_TIMEOUT   "500"
+#define DEFAULT_BRIDGE_TCP_TIMEOUT   "1000"
+#define DEFAULT_BRIDGE_BREAK_ON_REQ  "false"
