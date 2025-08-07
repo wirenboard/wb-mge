@@ -7,10 +7,11 @@ TARGET := MGE
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-    # macOS - use GNU tools if available
+    # macOS - use GNU tools if available, fallback to BSD versions
     SED := $(shell which gsed 2>/dev/null || which sed)
     GREP := $(shell which ggrep 2>/dev/null || which grep)
-    FIND := $(shell which gfind 2>/dev/null || which find)
+    # Try to find GNU find first, then use system find with compatible syntax
+    FIND := $(shell which gfind 2>/dev/null || echo "find")
 else
     # Linux and other Unix-like systems
     SED := sed
@@ -48,7 +49,13 @@ DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
 # unittests
 #######################################
 
-UNITTESTS_DIRS += $(shell $(FIND) -type d | grep unittests)
+ifeq ($(UNAME_S),Darwin)
+    # macOS BSD find syntax
+    UNITTESTS_DIRS += $(shell find . -name "*unittests*" -type d 2>/dev/null)
+else
+    # GNU find syntax
+    UNITTESTS_DIRS += $(shell $(FIND) . -type d -name "*unittests*")
+endif
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
 
@@ -71,8 +78,8 @@ build-frontend:
 	cd main/frontend/; \
 	npm install;\
 	npm run build; \
-	$(FIND) dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
-	$(FIND) dist/ -type f -exec gzip -k {} \; ; \
+	find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
+	find dist/ -type f -exec gzip -k {} \; ; \
 
 build-idf-project:
 	idf.py $(addprefix -D, $(DEFS)) build
