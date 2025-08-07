@@ -66,6 +66,8 @@ static void factory_reset(void)
         if (key) {
             // Reset the setting to its default value
             setting_items_set_default(key);
+        } else {
+            ESP_LOGW(TAG, "Setting key at index %d is NULL", i);
         }
     }
 

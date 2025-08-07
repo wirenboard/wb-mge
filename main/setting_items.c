@@ -31,12 +31,29 @@ static const setting_storage_iface_t nvs_storage_iface = {
 };
 
 // Validation functions
-bool validate_hostname_or_ssid(const char *value)
+bool validate_hostname(const char *value)
 {
     if ((!value) || (strlen(value) == 0) || (strlen(value) >= 32)) {
         return false;
     }
-    // Basic hostname/SSID validation - only alphanumeric and hyphens
+    // Basic hostname validation - only alphanumeric and hyphens
+    size_t len = strlen(value); // Calculate once for security
+    for (size_t i = 0; i < len; i++) {
+        char c = value[i];
+        if (!(((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) ||
+              ((c >= '0') && (c <= '9')) || (c == '-'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_ssid(const char *value)
+{
+    if ((!value) || (strlen(value) >= 32)) {
+        return false;
+    }
+    // Basic SSID validation - only alphanumeric and hyphens
     size_t len = strlen(value); // Calculate once for security
     for (size_t i = 0; i < len; i++) {
         char c = value[i];
@@ -199,8 +216,8 @@ bool validate_password(const char *value)
         return false;
     }
     size_t len = strlen(value);
-    if ((len < 8) || (len >= 32)) {
-        return false;  // Password must be between 8 and 32 characters
+    if (len >= 32) { // пока минимальную длину не задаём
+        return false;  // Password must be not longer than 32 characters
     }
 
     // Basic password validation - can be enhanced with regex or additional rules
@@ -220,7 +237,7 @@ bool validate_modbus_timeout(const char *value)
     }
     char *endptr;
     long timeout = strtol(value, &endptr, 10);
-    
+
     // Combined validation for both RTU (10-2000) and TCP (50-3000) timeouts
     if ((*endptr == '\0') && (timeout >= 10) && (timeout <= 3000)) {
         return true;
@@ -268,7 +285,7 @@ static const char *get_dynamic_ap_pass_default(void)
 }
 
 static const setting_item_t setting_items[] = {
-    {KEY_HOSTNAME, BASE_HOSTNAME, validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
+    {KEY_HOSTNAME, BASE_HOSTNAME, validate_hostname, SETTING_ITEM_TYPE_STRING},
     {KEY_LOGIN, DEFAULT_LOGIN, validate_login, SETTING_ITEM_TYPE_STRING},
     {KEY_PASS, DEFAULT_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
     {KEY_WEB_PORT, DEFAULT_WEB_PORT, validate_port, SETTING_ITEM_TYPE_INT},
@@ -279,9 +296,9 @@ static const setting_item_t setting_items[] = {
     {KEY_WIFI_MODE, DEFAULT_WIFI_MODE, validate_wifi_mode, SETTING_ITEM_TYPE_STRING},
     {KEY_WIFI_AUTH_AP, DEFAULT_WIFI_AUTH, validate_wifi_auth, SETTING_ITEM_TYPE_STRING},
     {KEY_WIFI_AUTH_STA, DEFAULT_WIFI_AUTH, validate_wifi_auth, SETTING_ITEM_TYPE_STRING},
-    {KEY_AP_SSID, BASE_HOSTNAME, validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_SSID, BASE_HOSTNAME, validate_ssid, SETTING_ITEM_TYPE_STRING},
     {KEY_AP_PASS, DEFAULT_AP_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
-    {KEY_STA_SSID, DEFAULT_STA_SSID, validate_hostname_or_ssid, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_SSID, DEFAULT_STA_SSID, validate_ssid, SETTING_ITEM_TYPE_STRING},
     {KEY_STA_PASS, DEFAULT_STA_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
     {KEY_AP_IP_STATIC, DEFAULT_AP_IP_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
     {KEY_AP_MASK_STATIC, DEFAULT_AP_MASK_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
