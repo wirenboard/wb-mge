@@ -579,27 +579,6 @@ components:
               format: ipv4
               pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
             modbus: { type: boolean }
-            # Modbus TCP specific parameters (used only when modbus: true)
-            reverse_gateway:
-              type: boolean
-              default: false
-              description: "Enable reverse gateway mode (gateway as slave on RS-485 bus)"
-            rtu_timeout:
-              type: integer
-              minimum: 10
-              maximum: 2000
-              default: 500
-              description: "RTU response timeout in ms (for reverse_gateway = false)"
-            tcp_timeout:
-              type: integer
-              minimum: 50
-              maximum: 3000
-              default: 1000
-              description: "TCP response timeout in ms (for reverse_gateway = true)"
-            break_on_req:
-              type: boolean
-              default: false
-              description: "Enable break on new request mode"
 
     EthernetSettings:
       type: object
