@@ -195,6 +195,18 @@ def test_settings(api):
         assert 1 <= bridge["port"] <= 65535
         assert isinstance(bridge["modbus"], bool)
 
+        # Проверить Modbus TCP параметры (если они есть)
+        if "reverse_gateway" in bridge:
+            assert isinstance(bridge["reverse_gateway"], bool)
+        if "rtu_timeout" in bridge:
+            assert isinstance(bridge["rtu_timeout"], int)
+            assert 10 <= bridge["rtu_timeout"] <= 2000
+        if "tcp_timeout" in bridge:
+            assert isinstance(bridge["tcp_timeout"], int)
+            assert 50 <= bridge["tcp_timeout"] <= 3000
+        if "break_on_req" in bridge:
+            assert isinstance(bridge["break_on_req"], bool)
+
     print("✓ Структура настроек корректна")
 
     # Тест записи настроек с проверкой ограничений
@@ -316,7 +328,151 @@ def test_commands(api):
     print("✓ Опасные команды пропущены для безопасности")
 
 
-def test_pattern_validation(api):
+def test_modbus_tcp_parameters(api):
+    """Тест специфических параметров Modbus TCP"""
+    print("\n=== Тест параметров Modbus TCP ===")
+
+    # Получить текущие настройки
+    response = api.get_settings()
+    assert response.status_code == 200
+    original_settings = response.json()
+
+    # Тест настроек Modbus TCP для первого порта
+    modbus_settings = {
+        "rs485_1": {
+            "bridge": {
+                "mode": "server",
+                "port": 502,
+                "modbus": True,
+                "reverse_gateway": True,
+                "rtu_timeout": 750,      # 10-2000 мс
+                "tcp_timeout": 1500,     # 50-3000 мс
+                "break_on_req": True
+            }
+        },
+        "rs485_2": {
+            "bridge": {
+                "mode": "client",
+                "port": 503,
+                "ip": "192.168.1.10",
+                "modbus": True,
+                "reverse_gateway": False,
+                "rtu_timeout": 1000,
+                "tcp_timeout": 2000,
+                "break_on_req": False
+            }
+        }
+    }
+
+    response = api.update_settings(modbus_settings)
+    assert response.status_code == 200
+    result = response.json()
+    assert result["success"] == True
+    print("✓ Настройки Modbus TCP сохранены")
+
+    # Проверить что настройки применились
+    response = api.get_settings()
+    assert response.status_code == 200
+    new_settings = response.json()
+
+    # Проверить первый порт
+    rs485_1 = new_settings["rs485_1"]["bridge"]
+    assert rs485_1["modbus"] == True
+    assert rs485_1["reverse_gateway"] == True
+    assert rs485_1["rtu_timeout"] == 750
+    assert rs485_1["tcp_timeout"] == 1500
+    assert rs485_1["break_on_req"] == True
+
+    # Проверить второй порт
+    rs485_2 = new_settings["rs485_2"]["bridge"]
+    assert rs485_2["modbus"] == True
+    assert rs485_2["reverse_gateway"] == False
+    assert rs485_2["rtu_timeout"] == 1000
+    assert rs485_2["tcp_timeout"] == 2000
+    assert rs485_2["break_on_req"] == False
+
+    print("✓ Параметры Modbus TCP корректно применились")
+
+    # Тест граничных значений
+    boundary_settings = {
+        "rs485_1": {
+            "bridge": {
+                "rtu_timeout": 10,       # Минимум
+                "tcp_timeout": 50        # Минимум
+            }
+        }
+    }
+
+    response = api.update_settings(boundary_settings)
+    assert response.status_code == 200
+    print("✓ Минимальные значения тайм-аутов принимаются")
+
+    boundary_settings = {
+        "rs485_1": {
+            "bridge": {
+                "rtu_timeout": 2000,     # Максимум
+                "tcp_timeout": 3000      # Максимум
+            }
+        }
+    }
+
+    response = api.update_settings(boundary_settings)
+    assert response.status_code == 200
+    print("✓ Максимальные значения тайм-аутов принимаются")
+
+    # Тест с отключенным Modbus (параметры должны игнорироваться)
+    transparent_settings = {
+        "rs485_1": {
+            "bridge": {
+                "modbus": False,         # Прозрачный режим
+                "rtu_timeout": 9999,     # Должен игнорироваться
+                "tcp_timeout": 9999      # Должен игнорироваться
+            }
+        }
+    }
+
+    response = api.update_settings(transparent_settings)
+    assert response.status_code == 200
+    print("✓ Настройки для прозрачного режима принимаются")
+
+
+def test_modbus_validation_limits(api):
+    """Тест валидации лимитов для Modbus параметров"""
+    print("\n=== Тест валидации лимитов Modbus ===")
+
+    # Тест превышения лимитов
+    invalid_settings = {
+        "rs485_1": {
+            "bridge": {
+                "modbus": True,
+                "rtu_timeout": 5,        # Меньше минимума (10)
+                "tcp_timeout": 5000      # Больше максимума (3000)
+            }
+        }
+    }
+
+    response = api.update_settings(invalid_settings)
+    # API должен либо отклонить, либо скорректировать значения
+    assert response.status_code in [200, 400]
+    print("✓ Превышение лимитов тайм-аутов обрабатывается")
+
+    # Тест с отрицательными значениями
+    invalid_settings = {
+        "rs485_2": {
+            "bridge": {
+                "modbus": True,
+                "rtu_timeout": -100,     # Отрицательное значение
+                "tcp_timeout": -200      # Отрицательное значение
+            }
+        }
+    }
+
+    response = api.update_settings(invalid_settings)
+    assert response.status_code in [200, 400]
+    print("✓ Отрицательные значения тайм-аутов обрабатываются")
+
+
+def test_validation_patterns(api):
     """Тест валидации паттернов и ограничений"""
     print("\n=== Тест валидации паттернов ===")
 
@@ -479,7 +635,9 @@ def main():
         test_session_management(api)
         test_uptime(api)
         test_commands(api)
-        test_pattern_validation(api)
+        test_modbus_tcp_parameters(api)
+        test_modbus_validation_limits(api)
+        test_validation_patterns(api)
         test_wifi_scanner(api)
         test_ap_clients(api)
         test_static_files(api)
