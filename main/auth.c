@@ -5,73 +5,119 @@
 
 #include <esp_log.h>
 #include <esp_random.h>
-#include <esp_timer.h>
-#include <nvs.h>
 #include <string.h>
+#include <errno.h>
+
+#define MAX_SESSIONS 10
+#define COOKIE_MAX_LEN (11 + 10 + 1) // "session_id=" + uint32_max + '\0'
+
+typedef struct {
+    uint32_t session_ids[MAX_SESSIONS];
+    int current_index;
+} session_buffer_t;
 
 static const char *TAG = "auth";
 
-static esp_err_t set_cookie(httpd_req_t *req, const char *name, const char *value, int max_age)
+static session_buffer_t session_buffer = {
+    .current_index = 0,
+};
+
+static void add_session_id(session_buffer_t *buffer, uint32_t session_id)
 {
-    char cookie[256];
-    if (max_age > 0) {
-        snprintf(cookie, sizeof(cookie), "%s=%s; Max-Age=%d; Path=/; HttpOnly", name, value, max_age);
-    } else if (max_age == 0) {
-        snprintf(cookie, sizeof(cookie), "%s=; Max-Age=0; Path=/", name);
-    } else {
-        snprintf(cookie, sizeof(cookie), "%s=%s; Path=/", name, value);
-    }
-    return httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+    ESP_LOGI(TAG, "Adding session ID: %lu", session_id);
+    buffer->session_ids[buffer->current_index] = session_id;
+    buffer->current_index = (buffer->current_index + 1) % MAX_SESSIONS;
 }
 
-static uint32_t get_session_from_cookie(httpd_req_t *req)
+static inline bool session_id_is_valid(uint32_t session_id)
 {
-    char buf[32];
-    size_t len = sizeof(buf);
-    if (httpd_req_get_cookie_val(req, "session_id", buf, &len) == ESP_OK) {
-        // Ensure null termination for safety
-        if (len < sizeof(buf)) {
-            buf[len] = '\0';
-        } else {
-            buf[sizeof(buf) - 1] = '\0';
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (session_buffer.session_ids[i] == session_id) {
+            return true;
         }
-        return strtoul(buf, NULL, 10);
+    }
+    return false;
+}
+
+static inline void find_and_remove_session_id(uint32_t session_id)
+{
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (session_buffer.session_ids[i] == session_id) {
+            session_buffer.session_ids[i] = 0;
+            ESP_LOGI(TAG, "Session ID %lu removed", session_id);
+            break;
+        }
+    }
+}
+
+static uint32_t get_session_id_from_cookie(httpd_req_t *req)
+{
+    char session_id_str[COOKIE_MAX_LEN];
+    size_t buf_len = sizeof(session_id_str);
+    if (httpd_req_get_cookie_val(req, "session_id", session_id_str, &buf_len) == ESP_OK) {
+        ESP_LOGI(TAG, "Session ID from cookie: %s", session_id_str);
+
+        char *endptr;
+        errno = 0;
+        uint64_t value = strtoul(session_id_str, &endptr, 10);
+
+        if ((errno == ERANGE) || (value > UINT32_MAX)) {
+            ESP_LOGE(TAG, "Overflow occurred");
+            return 0;
+        }
+        if (endptr == session_id_str) {
+            ESP_LOGE(TAG, "No digits were found");
+            return 0;
+        }
+        if (*endptr != '\0') {
+            ESP_LOGE(TAG, "Further characters after number: %s", endptr);
+            return 0;
+        }
+
+        return (uint32_t)value;
     }
     return 0;
 }
 
-static uint32_t create_session(const char *login, const char *pass)
+static uint32_t authorization(char *login_req, char *pass_req)
 {
-    char stored_login[SETTING_ITEM_MAX_STR_LEN] = {0};
-    char stored_pass[SETTING_ITEM_MAX_STR_LEN] = {0};
+    ESP_LOGI(TAG, "Authorization attempt");
 
-    if (setting_items_read(KEY_LOGIN, stored_login) != ESP_OK ||
-        setting_items_read(KEY_PASS, stored_pass) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read credentials from storage");
+    char login[SETTING_ITEM_MAX_STR_LEN] = {0};
+    char pass[SETTING_ITEM_MAX_STR_LEN] = {0};
+
+    if ((setting_items_read(KEY_LOGIN, login) != ESP_OK) ||
+        (setting_items_read(KEY_PASS, pass) != ESP_OK))
+    {
+        ESP_LOGE(TAG, "Failed to read login or pass from storage");
         return 0;
     }
 
-    if ((strcmp(login, stored_login) != 0) || (strcmp(pass, stored_pass) != 0)) {
+    if ((strncmp(login_req, login, SETTING_ITEM_MAX_STR_LEN) != 0) ||
+        (strncmp(pass_req, pass, SETTING_ITEM_MAX_STR_LEN) != 0))
+    {
         ESP_LOGW(TAG, "Invalid login or password");
         return 0;
     }
 
     uint32_t session_id = esp_random();
     if (session_id == 0) {
-        session_id = esp_random(); // Avoid 0
+        session_id = esp_random();
     }
-    ESP_LOGI(TAG, "Session created: %lu", session_id);
+    add_session_id(&session_buffer, session_id);
+
     return session_id;
 }
 
-static bool is_session_valid(uint32_t session_id)
+static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, char *cookie_header)
 {
-    return session_id != 0;
-}
-
-static void remove_session(uint32_t session_id)
-{
-    ESP_LOGI(TAG, "Session removed: %lu (noop)", session_id);
+    snprintf(cookie_header, COOKIE_MAX_LEN, "session_id=%lu", session_id);
+    ESP_LOGI(TAG, "Cookie header: %s", cookie_header);
+    if (httpd_resp_set_hdr(req, "Set-Cookie", cookie_header) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set cookie header");
+        return false;
+    }
+    return true;
 }
 
 // === PUBLIC API ===
@@ -84,10 +130,17 @@ esp_err_t auth_init(void)
 
 bool auth_middleware_check(httpd_req_t *req)
 {
-    uint32_t session_id = get_session_from_cookie(req);
-    if (session_id && is_session_valid(session_id)) {
-        return true;
+    uint32_t session_id = get_session_id_from_cookie(req);
+    if (session_id != 0) {
+        if (session_id_is_valid(session_id)) {
+            return true;
+        } else {
+            ESP_LOGW(TAG, "Session ID %lu is not valid", session_id);
+        }
+    } else {
+        ESP_LOGW(TAG, "Session ID cookie not found");
     }
+
     httpd_resp_set_status(req, "401 Unauthorized");
     httpd_resp_send(req, NULL, 0);
     return false;
@@ -97,36 +150,38 @@ esp_err_t auth_login_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "Login request received");
 
+    if (req->content_len > JSON_UTILS_REQ_RECV_BUF_SIZE) {
+        return json_utils_send_error(req, "Request too large");
+    }
+
     cJSON *request_json = json_utils_receive_json(req);
-    if (!request_json) {
+    if (request_json == NULL) {
         return json_utils_send_error(req, "Invalid JSON");
     }
 
-    cJSON *login = cJSON_GetObjectItem(request_json, "login");
-    cJSON *pass = cJSON_GetObjectItem(request_json, "pass");
-
+    char cookie_header[COOKIE_MAX_LEN] = {0};
     cJSON *response_json = cJSON_CreateObject();
-    if (!response_json) {
-        json_utils_cleanup(request_json, NULL);
-        return json_utils_send_error(req, "Failed to create response");
-    }
+    bool result = false;
 
-    if (!cJSON_IsString(login) || !cJSON_IsString(pass)) {
-        cJSON_AddBoolToObject(response_json, "auth", false);
-        cJSON_AddStringToObject(response_json, "error", "Invalid login or password format");
-    } else {
-        uint32_t session_id = create_session(login->valuestring, pass->valuestring);
-        if (session_id) {
-            cJSON_AddBoolToObject(response_json, "auth", true);
-            char session_str[32];
-            snprintf(session_str, sizeof(session_str), "%lu", session_id);
-            set_cookie(req, "session_id", session_str, -1);
+    if (cJSON_HasObjectItem(request_json, "login") && cJSON_HasObjectItem(request_json, "pass")) {
+        cJSON *login_req = cJSON_GetObjectItem(request_json, "login");
+        cJSON *pass_req = cJSON_GetObjectItem(request_json, "pass");
+
+        if ((login_req->type == cJSON_String) && (pass_req->type == cJSON_String)) {
+            uint32_t session_id = authorization(login_req->valuestring, pass_req->valuestring);
+            if (session_id != 0) {
+                result = set_cookie_session_id(req, session_id, cookie_header);
+            } else {
+                cJSON_AddStringToObject(response_json, "error", "Invalid login or password");
+            }
         } else {
-            cJSON_AddBoolToObject(response_json, "auth", false);
-            cJSON_AddStringToObject(response_json, "error", "Invalid login or password");
+            cJSON_AddStringToObject(response_json, "error", "Invalid login or password type");
         }
+    } else {
+        cJSON_AddStringToObject(response_json, "error", "No login or password in request");
     }
 
+    cJSON_AddBoolToObject(response_json, "auth", result);
     json_utils_send_response(req, request_json, response_json);
     return ESP_OK;
 }
@@ -134,16 +189,19 @@ esp_err_t auth_login_handler(httpd_req_t *req)
 esp_err_t auth_logout_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "Logout request received");
-    uint32_t session_id = get_session_from_cookie(req);
-    if (session_id) {
-        remove_session(session_id);
+
+    uint32_t session_id = get_session_id_from_cookie(req);
+    if (session_id != 0) {
+        find_and_remove_session_id(session_id);
+    } else {
+        ESP_LOGW(TAG, "Session ID cookie not found");
     }
-    set_cookie(req, "session_id", "", 0);
+
     cJSON *response_json = cJSON_CreateObject();
-    if (!response_json) {
+    if (response_json == NULL) {
         return json_utils_send_error(req, "Failed to create response");
     }
-    cJSON_AddBoolToObject(response_json, "success", true);
+    cJSON_AddBoolToObject(response_json, "logout", true);
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;
 }
