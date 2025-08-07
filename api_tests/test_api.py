@@ -12,7 +12,7 @@ class WBMGEAPI:
     def __init__(self, base_url="http://192.168.4.1"):
         self.base_url = base_url
         self.session = requests.Session()
-        
+
         # Set headers to mimic a regular browser
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -22,10 +22,10 @@ class WBMGEAPI:
             'Connection': 'close',          # Закрываем соединение после каждого запроса
             'Cache-Control': 'no-cache',
         })
-        
+
         # Disable SSL verification
         self.session.verify = False
-        
+
         # Suppress SSL warnings
         try:
             import urllib3
@@ -90,7 +90,18 @@ class WBMGEAPI:
 
     def execute_command(self, cmd):
         """Выполнить команду"""
-        return self.session.post(f"{self.base_url}/cmd", json={"cmd": cmd})
+        try:
+            print(f"Отправка команды: {cmd}")
+            payload = {"cmd": cmd}
+            print(f"JSON payload: {payload}")
+
+            response = self.session.post(f"{self.base_url}/cmd", json=payload, timeout=10)
+            print(f"Команда {cmd} отправлена, статус: {response.status_code}")
+
+            return response
+        except requests.exceptions.RequestException as e:
+            print(f"Ошибка при отправке команды {cmd}: {e}")
+            raise
 
 
 def test_auth(api):
@@ -134,7 +145,7 @@ def test_info(api):
     # Проверить типы данных
     assert isinstance(data["serial_num"], int)
     assert isinstance(data["con_eth"], bool)
-    assert isinstance(data["con_sta"], bool)  
+    assert isinstance(data["con_sta"], bool)
     assert isinstance(data["con_ap"], int)
     assert 0 <= data["con_ap"] <= 10
 
@@ -318,14 +329,40 @@ def test_commands(api):
     """Тест выполнения команд"""
     print("\n=== Тест команд ===")
 
-    # Тест команды set_default_settings (безопасная)
-    response = api.execute_command("set_default_settings")
-    assert response.status_code == 200
-    # По коду HTTP сервера, команды возвращают пустой ответ, а не JSON
-    print("✓ Команда set_default_settings работает")
+    try:
+        # Тест команды set_default_settings (безопасная)
+        print("Отправка команды set_default_settings...")
+        response = api.execute_command("set_default_settings")
 
-    # НЕ тестируем reboot (опасно для автотестов)
-    print("✓ Опасные команды пропущены для безопасности")
+        print(f"Status Code: {response.status_code}")
+        print(f"Headers: {response.headers}")
+        print(f"Content: {response.text[:500]}...")  # Первые 500 символов
+
+        assert response.status_code == 200, f"Ожидался статус 200, получен {response.status_code}"
+
+        # По коду HTTP сервера, команды возвращают пустой ответ, а не JSON
+        if response.text.strip():
+            try:
+                data = response.json()
+                print(f"JSON Response: {data}")
+            except Exception as e:
+                print(f"Не удалось разобрать JSON: {e}")
+                print(f"Raw response: {response.text}")
+        else:
+            print("Получен пустой ответ (ожидается для команд)")
+
+        print("✓ Команда set_default_settings работает")
+
+        # НЕ тестируем reboot (опасно для автотестов)
+        print("✓ Опасные команды пропущены для безопасности")
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Ошибка соединения при выполнении команды: {e}")
+        raise
+    except Exception as e:
+        print(f"❌ Неожиданная ошибка в тесте команд: {e}")
+        print(f"Тип ошибки: {type(e).__name__}")
+        raise
 
 
 def test_modbus_tcp_parameters(api):
