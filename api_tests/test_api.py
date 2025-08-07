@@ -133,21 +133,41 @@ def test_info(api):
     assert response.status_code == 200
     data = response.json()
 
-    # Проверить обязательные поля согласно реальному API
+    # Проверить обязательные поля согласно новой структуре API
     required_fields = [
         "device_name", "firmware", "hardware", "serial_num",
-        "con_eth", "eth_ip", "eth_mask", "eth_gw", "eth_mac",
-        "con_sta", "sta_ip", "sta_mask", "sta_gw", "con_ap"
+        "system_voltage", "config_button_presses"
     ]
     for field in required_fields:
         assert field in data, f"Поле {field} отсутствует"
 
-    # Проверить типы данных
+    # Проверить типы данных основных полей
     assert isinstance(data["serial_num"], int)
-    assert isinstance(data["con_eth"], bool)
-    assert isinstance(data["con_sta"], bool)
-    assert isinstance(data["con_ap"], int)
-    assert 0 <= data["con_ap"] <= 10
+    assert isinstance(data["system_voltage"], (int, float))
+    assert isinstance(data["config_button_presses"], int)
+
+    # Проверить структуру ethernet
+    assert "ethernet" in data
+    eth = data["ethernet"]
+    assert isinstance(eth["con_eth"], bool)
+    assert "mac" in eth
+
+    # Проверить структуру wifi
+    assert "wifi" in data
+    wifi = data["wifi"]
+    assert isinstance(wifi["con_sta"], bool)
+    assert isinstance(wifi["con_ap"], int)
+    assert 0 <= wifi["con_ap"] <= 10
+    assert "sta_mac" in wifi
+    assert "ap_mac" in wifi
+
+    # Проверить структуру rs485 портов
+    for port in ["rs485_1", "rs485_2"]:
+        assert port in data
+        rs485 = data[port]
+        assert isinstance(rs485["is_busy"], bool)
+        assert isinstance(rs485["error_percentage"], (int, float))
+        assert isinstance(rs485["server_connections_count"], int)
 
     print("✓ Структура информации корректна")
 
@@ -578,13 +598,22 @@ def test_unauthorized_access(api):
     unauth_session = requests.Session()
 
     protected_endpoints = [
-        "/info", "/settings", "/wifi_scan/start",
-        "/wifi_scan/results", "/ap_clients"
+        ("/info", "GET"), ("/settings", "GET"), ("/wifi_scan/start", "POST"),
+        ("/wifi_scan/results", "GET"), ("/ap_clients", "GET")
     ]
 
-    for endpoint in protected_endpoints:
-        response = unauth_session.get(f"{api.base_url}{endpoint}")
-        assert response.status_code == 401, f"Эндпоинт {endpoint} должен требовать авторизацию"
+    for endpoint, method in protected_endpoints:
+        if method == "GET":
+            response = unauth_session.get(f"{api.base_url}{endpoint}")
+        elif method == "POST":
+            response = unauth_session.post(f"{api.base_url}{endpoint}")
+
+        print(f"Тестируем {method} {endpoint}:")
+        print(f"  Status Code: {response.status_code}")
+        print(f"  Headers: {dict(response.headers)}")
+        print(f"  Content: {response.text[:200]}...")
+
+        assert response.status_code == 401, f"Эндпоинт {method} {endpoint} должен требовать авторизацию. Получен статус: {response.status_code}, содержимое: {response.text[:100]}"
 
     print("✓ Защищенные эндпоинты требуют авторизацию")
 
@@ -668,16 +697,16 @@ def main():
         ("неавторизованного доступа", test_unauthorized_access),
         ("авторизации", test_auth),
         ("информации об устройстве", test_info),
-       # ("настроек", test_settings), // FIXME
+        ("настроек", test_settings),
         ("управления сессиями", test_session_management),
         ("времени работы", test_uptime),
-        ("команд", test_commands),
         ("параметров Modbus TCP", test_modbus_tcp_parameters),
         ("валидации лимитов Modbus", test_modbus_validation_limits),
         ("валидации паттернов", test_validation_patterns),
         ("сканера WiFi", test_wifi_scanner),
         ("списка клиентов AP", test_ap_clients),
         ("статических файлов", test_static_files),
+        ("команд", test_commands),
     ]
 
     passed = 0
