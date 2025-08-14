@@ -13,7 +13,7 @@
 
 int baudrate_test(void)
 {
-    const char* valid_test_baudrate[] = {"9600", "115200", "460800"};
+    const char* valid_test_baudrate[] = {"9600", "115200"};
     const char* invalid_test_baudrate[] = {"0", "299", "100", "1000000"};
     const char* keys[] = {KEY_BAUDRATE1, KEY_BAUDRATE2};
 

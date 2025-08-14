@@ -86,7 +86,7 @@ bool validate_baudrate(const char *value)
     }
     char *endptr;
     long baudrate = strtol(value, &endptr, 10);
-    if ((*endptr == '\0') && (baudrate >= 300) && (baudrate <= 460800)) {
+    if ((*endptr == '\0') && (baudrate >= 1200) && (baudrate <= 115200)) {
         return true;
     } else {
         return false;
