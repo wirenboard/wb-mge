@@ -17,7 +17,7 @@ cJSON *json_utils_receive_json(httpd_req_t *req);
 /**
  * @brief Send JSON response and cleanup
  * @param req HTTP request handle
- * @param req_json Request JSON object (will be freed)
+ * @param req_json Request JSON object (will be freed if not NULL)
  * @param resp_json Response JSON object (will be freed)
  */
 void json_utils_send_response(httpd_req_t *req, cJSON *req_json, cJSON *resp_json);
