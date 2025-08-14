@@ -86,7 +86,7 @@ esp_err_t config_button_init(config_button_callback_t callback)
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << CONFIG_BUTTON_GPIO),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_ANYEDGE  // Trigger on both edges
     };
@@ -115,7 +115,7 @@ esp_err_t config_button_init(config_button_callback_t callback)
     button_initialized = true;
 
     if (callback) {
-        xTaskCreate(config_button_poll_task, "button_poll", 2048, NULL, 1, NULL);
+        xTaskCreate(config_button_poll_task, "button_poll", 4096, NULL, 1, NULL);
     }
 
     return ESP_OK;
