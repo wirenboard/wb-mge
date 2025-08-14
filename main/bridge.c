@@ -31,7 +31,7 @@
 
 #define BRIDGES_COUNT                 2
 
-#define RS485_BUSY_MONITOR_STACK_SIZE 512
+#define RS485_BUSY_MONITOR_STACK_SIZE 1024
 #define RS485_BUSY_MONITOR_PRIORITY   1
 
 static const char *TAG = "bridge";
