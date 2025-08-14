@@ -1,5 +1,6 @@
 #include "setting_items.h"  // Use new string-based implementation
 #include "ram_storage.h"     // Mock storage for testing
+#include "array_size.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -17,11 +18,12 @@ int baudrate_test(void)
     const char* invalid_test_baudrate[] = {"0", "299", "100", "1000000"};
     const char* keys[] = {KEY_BAUDRATE1, KEY_BAUDRATE2};
 
-    for (int k = 0; k < 2; k++) {
+    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
         printf("Testing key: %s\n", keys[k]);
 
         // Test valid values
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < ARRAY_SIZE(valid_test_baudrate); i++) {
+            printf("Testing valid baudrate: %s\n", valid_test_baudrate[i]);
             if (setting_items_save(keys[k], valid_test_baudrate[i]) != ESP_OK) {
                 TEST_FAILED("Failed to save valid baudrate: %s", valid_test_baudrate[i]);
                 return TEST_FAIL;
@@ -41,7 +43,8 @@ int baudrate_test(void)
         }
 
         // Test invalid values
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ARRAY_SIZE(invalid_test_baudrate); i++) {
+            printf("Testing invalid baudrate: %s\n", invalid_test_baudrate[i]);
             if (setting_items_save(keys[k], invalid_test_baudrate[i]) == ESP_OK) {
                 TEST_FAILED("Invalid baudrate %s was accepted", invalid_test_baudrate[i]);
                 return TEST_FAIL;
@@ -58,7 +61,7 @@ int hostname_test(void)
     const char* valid_hostnames[] = {"WB-MGE", "device-123", "test"};
     const char* invalid_hostnames[] = {"", "device with spaces", "very-long-hostname-that-exceeds-maximum-length"};
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < ARRAY_SIZE(valid_hostnames); i++) {
         if (setting_items_save(KEY_HOSTNAME, valid_hostnames[i]) != ESP_OK) {
             TEST_FAILED("Failed to save valid hostname: %s", valid_hostnames[i]);
             return TEST_FAIL;
@@ -77,7 +80,7 @@ int hostname_test(void)
     }
 
     // Test invalid hostnames
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < ARRAY_SIZE(invalid_hostnames); i++) {
         if (setting_items_save(KEY_HOSTNAME, invalid_hostnames[i]) == ESP_OK) {
             TEST_FAILED("Invalid hostname %s was accepted", invalid_hostnames[i]);
             return TEST_FAIL;
@@ -92,7 +95,7 @@ int bool_test(void)
 {
     const char* keys[] = {KEY_IO_BUS_ENABLED, KEY_485_VOUT, KEY_ETH_DHCPC};
 
-    for (int k = 0; k < 3; k++) {
+    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
         // Test valid boolean values
         if (setting_items_save(keys[k], "true") != ESP_OK) {
             TEST_FAILED("Failed to save 'true' for %s", keys[k]);
@@ -143,7 +146,7 @@ int wifi_test(void)
     const char* valid_modes[] = {"ap", "sta", "apsta"};
     const char* invalid_modes[] = {"invalid", "", "AP", "Station"};
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < ARRAY_SIZE(valid_modes); i++) {
         if (setting_items_save(KEY_WIFI_MODE, valid_modes[i]) != ESP_OK) {
             TEST_FAILED("Failed to save valid WiFi mode: %s", valid_modes[i]);
             return TEST_FAIL;
@@ -162,7 +165,7 @@ int wifi_test(void)
     }
 
     // Test invalid modes
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < ARRAY_SIZE(invalid_modes); i++) {
         if (setting_items_save(KEY_WIFI_MODE, invalid_modes[i]) == ESP_OK) {
             TEST_FAILED("Invalid WiFi mode %s was accepted", invalid_modes[i]);
             return TEST_FAIL;
@@ -178,7 +181,7 @@ int rs485_test(void)
     // Test termination and fail-safe booleans
     const char* bool_keys[] = {KEY_485_TERM_1, KEY_485_FAIL_SAFE_1, KEY_485_TERM_2, KEY_485_FAIL_SAFE_2};
 
-    for (int k = 0; k < 4; k++) {
+    for (int k = 0; k < ARRAY_SIZE(bool_keys); k++) {
         // Test true/false
         if (setting_items_save(bool_keys[k], "true") != ESP_OK) {
             TEST_FAILED("Failed to save 'true' for %s", bool_keys[k]);
