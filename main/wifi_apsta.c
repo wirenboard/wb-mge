@@ -1,4 +1,5 @@
 #include "wifi_apsta.h"
+#include "config.h"
 
 #include <string.h>
 

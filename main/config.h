@@ -1,5 +1,7 @@
 #pragma once
 
+#define WIFI_CHAN_AP                9
+
 #define BASE_HOSTNAME               "WB-MGE"
 #define FIRMWARE_VERSION            FW_VERSION_STRING
 
