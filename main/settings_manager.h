@@ -1,7 +1,6 @@
 #pragma once
 
 #include <esp_http_server.h>
-#include "cJSON.h"
 #include "setting_items.h"
 
 // HTTP handler for settings GET endpoint

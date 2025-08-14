@@ -3,6 +3,7 @@
 #include "json_utils.h"
 #include "auth.h"
 #include "update_rs485_mio_gpio_states.h"
+#include "array_size.h"
 
 #include <esp_log.h>
 #include <string.h>
@@ -79,8 +80,7 @@ static bool add_setting_to_json(cJSON *parent, const char *setting_key, const ch
         bool value = setting_items_read_bool(setting_key);
         return cJSON_AddBoolToObject(parent, json_key, value) != NULL;
     }
-    case SETTING_ITEM_TYPE_INT:
-    case SETTING_ITEM_TYPE_UINT32: {
+    case SETTING_ITEM_TYPE_INT: {
         int value = setting_items_read_int(setting_key);
         return cJSON_AddNumberToObject(parent, json_key, value) != NULL;
     }
@@ -110,7 +110,6 @@ static bool save_setting_from_json(cJSON *item, const char *setting_key) {
         return setting_items_save_bool(setting_key, cJSON_IsTrue(item)) == ESP_OK;
 
     case SETTING_ITEM_TYPE_INT:
-    case SETTING_ITEM_TYPE_UINT32:
         if (!cJSON_IsNumber(item)) {
             ESP_LOGE(TAG, "Expected number for setting %s", setting_key);
             return false;
@@ -174,14 +173,13 @@ esp_err_t settings_build_response_json(cJSON **response_json)
     }
 
     // Add top-level settings
-    for (size_t i = 0; i < sizeof(top_level_mappings) / sizeof(top_level_mappings[0]); i++) {
+    for (size_t i = 0; i < ARRAY_SIZE(top_level_mappings); i++) {
         add_setting_to_json(*response_json, top_level_mappings[i].setting_key,
                            top_level_mappings[i].json_key);
     }
 
     // Add WiFi settings group
-    if (add_group_to_json(*response_json, "wifi", wifi_mappings,
-                         sizeof(wifi_mappings) / sizeof(wifi_mappings[0])) != ESP_OK) {
+    if (add_group_to_json(*response_json, "wifi", wifi_mappings, ARRAY_SIZE(wifi_mappings)) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add WiFi settings to JSON");
         cJSON_Delete(*response_json);
         return ESP_FAIL;
@@ -189,7 +187,7 @@ esp_err_t settings_build_response_json(cJSON **response_json)
 
     // Add Ethernet settings group
     if (add_group_to_json(*response_json, "ethernet", ethernet_mappings,
-                         sizeof(ethernet_mappings) / sizeof(ethernet_mappings[0])) != ESP_OK) {
+                         ARRAY_SIZE(ethernet_mappings)) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add Ethernet settings to JSON");
         cJSON_Delete(*response_json);
         return ESP_FAIL;
@@ -218,7 +216,7 @@ static esp_err_t add_rs485_settings_to_json(cJSON *parent)
         }
 
         // Add regular RS485 fields using mappings
-        for (size_t i = 0; i < sizeof(rs485_base_mappings) / sizeof(rs485_base_mappings[0]); i++) {
+        for (size_t i = 0; i < ARRAY_SIZE(rs485_base_mappings); i++) {
             const setting_mapping_t *mapping = &rs485_base_mappings[i];
             snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
             add_setting_to_json(rs485_port, key_buf, mapping->json_key);
@@ -232,7 +230,7 @@ static esp_err_t add_rs485_settings_to_json(cJSON *parent)
             return ESP_FAIL;
         }
 
-        for (size_t i = 0; i < sizeof(rs485_bridge_mappings) / sizeof(rs485_bridge_mappings[0]); i++) {
+        for (size_t i = 0; i < ARRAY_SIZE(rs485_bridge_mappings); i++) {
             const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
             snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
             add_setting_to_json(bridge, key_buf, mapping->json_key);
@@ -265,7 +263,7 @@ static esp_err_t process_rs485_settings(cJSON *request_json)
         }
 
         // Process regular RS485 fields using mappings
-        for (size_t i = 0; i < sizeof(rs485_base_mappings) / sizeof(rs485_base_mappings[0]); i++) {
+        for (size_t i = 0; i < ARRAY_SIZE(rs485_base_mappings); i++) {
             const setting_mapping_t *mapping = &rs485_base_mappings[i];
 
             if (cJSON_HasObjectItem(rs485, mapping->json_key)) {
@@ -282,7 +280,7 @@ static esp_err_t process_rs485_settings(cJSON *request_json)
         if (cJSON_HasObjectItem(rs485, "bridge")) {
             cJSON *bridge = cJSON_GetObjectItem(rs485, "bridge");
             if (cJSON_IsObject(bridge)) {
-                for (size_t i = 0; i < sizeof(rs485_bridge_mappings) / sizeof(rs485_bridge_mappings[0]); i++) {
+                for (size_t i = 0; i < ARRAY_SIZE(rs485_bridge_mappings); i++) {
                     const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
 
                     if (cJSON_HasObjectItem(bridge, mapping->json_key)) {
@@ -314,7 +312,7 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     }
 
     // Process top-level settings
-    for (size_t i = 0; i < sizeof(top_level_mappings) / sizeof(top_level_mappings[0]); i++) {
+    for (size_t i = 0; i < ARRAY_SIZE(top_level_mappings); i++) {
         const setting_mapping_t *mapping = &top_level_mappings[i];
         if (cJSON_HasObjectItem(request_json, mapping->json_key)) {
             cJSON *item = cJSON_GetObjectItem(request_json, mapping->json_key);
@@ -326,8 +324,7 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     if (cJSON_HasObjectItem(request_json, "wifi")) {
         cJSON *wifi_json = cJSON_GetObjectItem(request_json, "wifi");
         if (cJSON_IsObject(wifi_json)) {
-            save_group_settings(wifi_json, wifi_mappings,
-                               sizeof(wifi_mappings) / sizeof(wifi_mappings[0]), NULL);
+            save_group_settings(wifi_json, wifi_mappings, ARRAY_SIZE(wifi_mappings), NULL);
         }
     }
 
@@ -335,8 +332,7 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     if (cJSON_HasObjectItem(request_json, "ethernet")) {
         cJSON *eth_json = cJSON_GetObjectItem(request_json, "ethernet");
         if (cJSON_IsObject(eth_json)) {
-            save_group_settings(eth_json, ethernet_mappings,
-                               sizeof(ethernet_mappings) / sizeof(ethernet_mappings[0]), NULL);
+            save_group_settings(eth_json, ethernet_mappings, ARRAY_SIZE(ethernet_mappings), NULL);
         }
     }
 
