@@ -152,7 +152,7 @@ esp_err_t cmd_post_handler(httpd_req_t *req)
     }
 
     int cmd_code = cmd_get_code(cmd_str);
-    if (cmd_code == -1) {
+    if (cmd_code == CMD_UNKNOWN) {
         ESP_LOGW(TAG, "Unknown command: %s", cmd_str);
         json_utils_cleanup(request_json, NULL);
         return json_utils_send_error(req, "Unknown command");
