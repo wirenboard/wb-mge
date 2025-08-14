@@ -63,10 +63,10 @@ static esp_err_t info_build_network_json(cJSON **network_json)
         if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
             cJSON_AddNumberToObject(wifi, "sta_rssi", ap_info.rssi);
         } else {
-            cJSON_AddNumberToObject(wifi, "sta_rssi", 0);
+            cJSON_AddNumberToObject(wifi, "sta_rssi", -128);
         }
     } else {
-        cJSON_AddNumberToObject(wifi, "sta_rssi", 0);
+        cJSON_AddNumberToObject(wifi, "sta_rssi", -128);
     }
 
     cJSON_AddNumberToObject(wifi, "ap_channel", WIFI_CHAN_AP);
