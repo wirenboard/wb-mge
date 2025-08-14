@@ -65,8 +65,8 @@
 
 // Wifi auth
 #define WIFI_AUTH_OPEN_STR          "open"
-#define WIFI_AUTH_WPA2_PSK_STR      "wpa2-psk"
-#define WIFI_AUTH_WPA3_PSK_STR      "wpa3-psk"
+#define WIFI_AUTH_WPA2_PSK_STR      "wpa2_psk"
+#define WIFI_AUTH_WPA3_PSK_STR      "wpa3_psk"
 
 // UART стоп-биты
 #define UART_STOP_BITS_1_STR        "1"
