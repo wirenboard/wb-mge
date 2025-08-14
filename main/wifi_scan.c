@@ -93,8 +93,8 @@ static esp_err_t wifi_scan_start(void)
 
     if (wifi_scan_state.scan_in_progress) {
         ESP_LOGW(TAG, "WiFi scan already in progress");
-        ret = ESP_FAIL;
-        goto exit;
+        xSemaphoreGive(wifi_scan_mutex);
+        return ESP_FAIL;
     }
 
     wifi_scan_prepare_for_start();
@@ -123,7 +123,6 @@ static esp_err_t wifi_scan_start(void)
         ESP_LOGI(TAG, "WiFi scan started successfully");
     }
 
-exit:
     xSemaphoreGive(wifi_scan_mutex);
     return ret;
 }
