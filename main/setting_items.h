@@ -48,17 +48,6 @@
 #define KEY_BRIDGE_IP2              "bridge_ip_2"
 #define KEY_BRIDGE_MB2              "bridge_modbus_2"
 
-// Modbus TCP specific parameters
-#define KEY_BRIDGE_REVERSE_GW1      "reverse_gw_1"
-#define KEY_BRIDGE_RTU_TIMEOUT1     "rtu_timeout_1"
-#define KEY_BRIDGE_TCP_TIMEOUT1     "tcp_timeout_1"
-#define KEY_BRIDGE_BREAK_ON_REQ1    "break_on_req_1"
-
-#define KEY_BRIDGE_REVERSE_GW2      "reverse_gw_2"
-#define KEY_BRIDGE_RTU_TIMEOUT2     "rtu_timeout_2"
-#define KEY_BRIDGE_TCP_TIMEOUT2     "tcp_timeout_2"
-#define KEY_BRIDGE_BREAK_ON_REQ2    "break_on_req_2"
-
 #define KEY_485_VOUT                "vout"
 #define KEY_485_TERM_1              "485_term_1"
 #define KEY_485_TERM_2              "485_term_2"
