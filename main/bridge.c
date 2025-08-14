@@ -227,7 +227,7 @@ esp_err_t bridge_init(void)
         char key_buf[32]; // TODO: use defined constant for buffer size
 
         snprintf(key_buf, sizeof(key_buf), "baudrate_%d", i + 1);
-        serial_config[i].baudrate = setting_items_read_u32(key_buf);
+        serial_config[i].baudrate = setting_items_read_int(key_buf);
 
         snprintf(key_buf, sizeof(key_buf), "stopbits_%d", i + 1);
         char stopbits_str[SETTING_ITEM_MAX_STR_LEN] = {0};

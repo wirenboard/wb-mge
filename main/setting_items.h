@@ -93,7 +93,6 @@ typedef enum {
     SETTING_ITEM_TYPE_STRING,
     SETTING_ITEM_TYPE_BOOL,
     SETTING_ITEM_TYPE_INT,
-    SETTING_ITEM_TYPE_UINT32,
     SETTING_ITEM_TYPE_INVALID
 } setting_item_type_t;
 
@@ -111,16 +110,12 @@ esp_err_t setting_items_save(const char *key, const char *value);
 esp_err_t setting_items_read(const char *key, char *value);
 
 // Convenience wrapper functions for common types
-uint32_t setting_items_read_u32(const char *key);
 bool setting_items_read_bool(const char *key);
 int setting_items_read_int(const char *key);
 
-esp_err_t setting_items_save_u32(const char *key, uint32_t value);
 esp_err_t setting_items_save_bool(const char *key, bool value);
 esp_err_t setting_items_save_int(const char *key, int value);
-bool setting_items_has_key(const char *key);
 esp_err_t setting_items_set_default(const char *key);
-const char *setting_items_get_default(const char *key);
 
 // Iterator functions for all settings
 size_t setting_items_get_count(void);

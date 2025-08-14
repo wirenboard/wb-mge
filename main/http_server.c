@@ -172,7 +172,7 @@ esp_err_t http_server_init(void)
     httpd_config.max_uri_handlers = 30;  // TODO: Подобрать значение к релизу
     httpd_config.stack_size = 1024 * 6;  // TODO: Проверить размер используемой памяти
 
-    uint16_t web_port = (uint16_t)setting_items_read_u32(KEY_WEB_PORT);
+    uint16_t web_port = (uint16_t)setting_items_read_int(KEY_WEB_PORT);
     if (web_port == 0) {
         web_port = 80;  // Fallback to default port
         ESP_LOGW(TAG, "Using default web port: %u", web_port);

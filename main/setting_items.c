@@ -460,11 +460,6 @@ esp_err_t setting_items_read(const char *key, char *value)
     return ESP_OK;
 }
 
-bool setting_items_has_key(const char *key)
-{
-    return find_setting_item(key) != NULL;
-}
-
 esp_err_t setting_items_set_default(const char *key)
 {
     const setting_item_t *item = find_setting_item(key);
@@ -473,16 +468,6 @@ esp_err_t setting_items_set_default(const char *key)
     }
 
     return setting_items_save(key, item->default_value);
-}
-
-const char *setting_items_get_default(const char *key)
-{
-    const setting_item_t *item = find_setting_item(key);
-    if (item) {
-        return item->default_value;
-    } else {
-        return NULL;
-    }
 }
 
 size_t setting_items_get_count(void)
@@ -501,7 +486,7 @@ const char *setting_items_get_key_at(size_t index)
 // Helper functions to validate setting types semantically
 static bool is_numeric_type(setting_item_type_t type)
 {
-    return (type == SETTING_ITEM_TYPE_INT || type == SETTING_ITEM_TYPE_UINT32);
+    return (type == SETTING_ITEM_TYPE_INT);
 }
 
 static const setting_item_t *validate_numeric_setting(const char *key)
@@ -554,11 +539,6 @@ static long read_numeric_value(const char *key)
 }
 
 // Convenience wrapper functions for common types with semantic type checking
-uint32_t setting_items_read_u32(const char *key)
-{
-    return (uint32_t)read_numeric_value(key);
-}
-
 int setting_items_read_int(const char *key)
 {
     return (int)read_numeric_value(key);
@@ -576,17 +556,6 @@ bool setting_items_read_bool(const char *key)
         return (strncmp(item->default_value, "true", SETTING_ITEM_MAX_STR_LEN) == 0);
     }
     return (strncmp(value, "true", SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-esp_err_t setting_items_save_u32(const char *key, uint32_t value)
-{
-    char str_value[SETTING_ITEM_MAX_STR_LEN];
-    int ret = snprintf(str_value, sizeof(str_value), "%lu", (unsigned long)value);
-    if (ret >= sizeof(str_value)) {
-        ESP_LOGE(TAG, "Value too large for buffer when saving %s", key);
-        return ESP_ERR_INVALID_SIZE;
-    }
-    return setting_items_save(key, str_value);
 }
 
 esp_err_t setting_items_save_bool(const char *key, bool value)
@@ -629,8 +598,6 @@ const char *setting_items_type_to_string(setting_item_type_t type)
         return "BOOL";
     case SETTING_ITEM_TYPE_INT:
         return "INT";
-    case SETTING_ITEM_TYPE_UINT32:
-        return "UINT32";
     case SETTING_ITEM_TYPE_INVALID:
         return "INVALID";
     default:
