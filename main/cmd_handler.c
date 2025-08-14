@@ -3,6 +3,7 @@
 #include "auth.h"
 #include "setting_items.h"
 #include "sys_info.h"
+#include "array_size.h"
 
 #include <esp_log.h>
 #include <esp_system.h>
@@ -17,6 +18,8 @@ static const char *TAG = "cmd_handler";
 
 #define REBOOT_TASK_STACK_SIZE  2048
 #define REBOOT_TASK_PRIORITY    5
+
+#define CMD_UNKNOWN             -1
 
 typedef enum {
     CMD_REBOOT,
@@ -34,7 +37,6 @@ static const cmd_t available_commands[] = {
     {CMD_REBOOT, "reboot", "Restart the device"},
     {CMD_SET_DEFAULT_SETTINGS, "set_default_settings", "Reset all settings to factory defaults"},
     {CMD_WRITE_FACTORY_DATA, "write_factory_data", "Write factory calibration data to storage"},
-    {-1, NULL, NULL},  // Terminator
 };
 
 static void reboot_task(void *pvParameters)
@@ -54,16 +56,36 @@ void cmd_reboot_device(void)
 static int cmd_get_code(const char *cmd_str)
 {
     if (cmd_str == NULL) {
-        return -1;
+        return CMD_UNKNOWN;
     }
 
-    for (int i = 0; available_commands[i].cmd_name != NULL; i++) {
+    for (size_t i = 0; i < ARRAY_SIZE(available_commands); i++) {
         if (strncmp(cmd_str, available_commands[i].cmd_name, CMD_NAME_MAX_LEN) == 0) {
             return available_commands[i].cmd_code;
         }
     }
 
-    return -1;
+    return CMD_UNKNOWN;
+}
+
+static esp_err_t reset_settings_to_defaults(void)
+{
+    esp_err_t overall_result = ESP_OK;
+
+    // Get count of all settings and set each to default
+    size_t count = setting_items_get_count();
+    for (size_t i = 0; i < count; i++) {
+        const char *key = setting_items_get_key_at(i);
+        if (key) {
+            esp_err_t result = setting_items_set_default(key);
+            if (result != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to set default for %s: %s", key, esp_err_to_name(result));
+                overall_result = ESP_FAIL;
+            }
+        }
+    }
+
+    return overall_result;
 }
 
 static esp_err_t cmd_execute(int cmd_code)
@@ -77,31 +99,16 @@ static esp_err_t cmd_execute(int cmd_code)
         cmd_reboot_device();
         break;
 
-    case CMD_SET_DEFAULT_SETTINGS: {
-        ESP_LOGI(TAG, "Setting all settings to defaults");
-        esp_err_t overall_result = ESP_OK;
+    case CMD_SET_DEFAULT_SETTINGS:
+        ESP_LOGI(TAG, "Resetting all settings to defaults");
 
-        // Get count of all settings and set each to default
-        size_t count = setting_items_get_count();
-        for (size_t i = 0; i < count; i++) {
-            const char *key = setting_items_get_key_at(i);
-            if (key) {
-                esp_err_t set_result = setting_items_set_default(key);
-                if (set_result != ESP_OK) {
-                    ESP_LOGW(TAG, "Failed to set default for %s: %s", key, esp_err_to_name(set_result));
-                    overall_result = ESP_FAIL;
-                }
-            }
-        }
-
-        if (overall_result != ESP_OK) {
+        if (reset_settings_to_defaults() != ESP_OK) {
             ESP_LOGE(TAG, "Failed to set some default settings");
             result = ESP_FAIL;
         } else {
             ESP_LOGI(TAG, "All default settings applied successfully");
         }
         break;
-    }
 
     case CMD_WRITE_FACTORY_DATA:
         if (sys_info_write_factory_data() != ESP_OK) {
@@ -151,6 +158,7 @@ esp_err_t cmd_post_handler(httpd_req_t *req)
     ESP_LOGI(TAG, "Command POST request received");
 
     if (!auth_middleware_check(req)) {
+        // Func will send 401 Unauthorized if auth fails
         return ESP_OK;
     }
 
