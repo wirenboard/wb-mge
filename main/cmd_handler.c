@@ -68,26 +68,6 @@ static int cmd_get_code(const char *cmd_str)
     return CMD_UNKNOWN;
 }
 
-static esp_err_t reset_settings_to_defaults(void)
-{
-    esp_err_t overall_result = ESP_OK;
-
-    // Get count of all settings and set each to default
-    size_t count = setting_items_get_count();
-    for (size_t i = 0; i < count; i++) {
-        const char *key = setting_items_get_key_at(i);
-        if (key) {
-            esp_err_t result = setting_items_set_default(key);
-            if (result != ESP_OK) {
-                ESP_LOGW(TAG, "Failed to set default for %s: %s", key, esp_err_to_name(result));
-                overall_result = ESP_FAIL;
-            }
-        }
-    }
-
-    return overall_result;
-}
-
 static esp_err_t cmd_execute(int cmd_code)
 {
     ESP_LOGI(TAG, "Executing command with code: %d", cmd_code);
@@ -100,10 +80,7 @@ static esp_err_t cmd_execute(int cmd_code)
         break;
 
     case CMD_SET_DEFAULT_SETTINGS:
-        ESP_LOGI(TAG, "Resetting all settings to defaults");
-
-        if (reset_settings_to_defaults() != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to set some default settings");
+        if (setting_items_set_defaults(false) != ESP_OK) {
             result = ESP_FAIL;
         } else {
             ESP_LOGI(TAG, "All default settings applied successfully");

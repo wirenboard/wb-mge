@@ -56,20 +56,8 @@ static void factory_reset(void)
     // Stop blinking to indicate factory reset in progress
     // TODO: Set specific LED pattern for factory reset
 
-    // Reset all settings to defaults
     ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
-
-    // Get all setting keys and reset them to default values
-    size_t count = setting_items_get_count();
-    for (size_t i = 0; i < count; i++) {
-        const char *key = setting_items_get_key_at(i);
-        if (key) {
-            // Reset the setting to its default value
-            setting_items_set_default(key);
-        } else {
-            ESP_LOGW(TAG, "Setting key at index %d is NULL", i);
-        }
-    }
+    ESP_ERROR_CHECK(setting_items_set_defaults(false));
 
     ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
     ESP_LOGI(TAG, "Device will continue running with default configuration.");

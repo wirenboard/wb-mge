@@ -115,7 +115,7 @@ int setting_items_read_int(const char *key);
 
 esp_err_t setting_items_save_bool(const char *key, bool value);
 esp_err_t setting_items_save_int(const char *key, int value);
-esp_err_t setting_items_set_default(const char *key);
+esp_err_t setting_items_set_defaults(bool only_uninitialized);
 
 // Iterator functions for all settings
 size_t setting_items_get_count(void);

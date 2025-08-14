@@ -354,15 +354,15 @@ static const setting_item_t *find_setting_item(const char *key)
     return NULL;
 }
 
-static esp_err_t setting_items_set_defaults(void)
+esp_err_t setting_items_set_defaults(bool only_uninitialized)
 {
-    ESP_LOGI(TAG, "Setting default values for uninitialized settings");
+    ESP_LOGI(TAG, "Setting default values for %s settings", only_uninitialized ? "uninitialized" : "all");
 
     for (size_t i = 0; i < ARRAY_SIZE(setting_items); i++) {
         const setting_item_t *item = &setting_items[i];
 
         // Check if the setting already exists in storage
-        if (!storage_iface->has_key(item->key)) {
+        if ((only_uninitialized == false) || !storage_iface->has_key(item->key)) {
             const char *default_value;
 
             // Special cases for dynamic defaults
@@ -394,7 +394,7 @@ esp_err_t setting_items_init(void)
     ESP_LOGI(TAG, "Initializing settings with string storage");
     storage_iface = &nvs_storage_iface;
 
-    return setting_items_set_defaults();
+    return setting_items_set_defaults(true);
 }
 
 esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *test_storage_iface)
@@ -402,7 +402,7 @@ esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *test_st
     ESP_LOGI(TAG, "Initializing settings with custom storage for testing");
     storage_iface = test_storage_iface;
 
-    return setting_items_set_defaults();
+    return setting_items_set_defaults(true);
 }
 
 esp_err_t setting_items_save(const char *key, const char *value)
@@ -478,16 +478,6 @@ esp_err_t setting_items_read(const char *key, char *value)
 
     ESP_LOGI(TAG, "Read setting %s = %s", key, value);
     return ESP_OK;
-}
-
-esp_err_t setting_items_set_default(const char *key)
-{
-    const setting_item_t *item = find_setting_item(key);
-    if (!item) {
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    return setting_items_save(key, item->default_value);
 }
 
 size_t setting_items_get_count(void)
