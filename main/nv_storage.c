@@ -113,36 +113,13 @@ bool nvs_has_key(const char* key)
 
     size_t required_size = 0;
     ret = nvs_get_str(nvs_handle, key, NULL, &required_size);
+
+    if (required_size > SETTING_ITEM_MAX_STR_LEN) {
+        ESP_LOGE(TAG, "Key %s exceeds maximum size", key);
+        ret = ESP_ERR_INVALID_SIZE;
+    }
+
     nvs_close(nvs_handle);
 
     return (ret == ESP_OK);
-}
-
-esp_err_t nvs_erase_setting_key(const char* key)
-{
-    if (!key) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    nvs_handle_t nvs_handle;
-    esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open NVS handle: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = nvs_erase_key(nvs_handle, key);
-    if (ret != ESP_OK) {
-        if (ret != ESP_ERR_NVS_NOT_FOUND) {
-            ESP_LOGE(TAG, "Failed to erase key %s: %s", key, esp_err_to_name(ret));
-        }
-    } else {
-        ret = nvs_commit(nvs_handle);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to commit NVS: %s", esp_err_to_name(ret));
-        }
-    }
-
-    nvs_close(nvs_handle);
-    return ret;
 }
