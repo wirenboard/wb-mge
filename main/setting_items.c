@@ -264,6 +264,35 @@ static const char *get_dynamic_ap_pass_default(void)
     return generated_password;
 }
 
+// Generate dynamic hostname from MAC address
+static const char *get_dynamic_hostname_default(void)
+{
+    static char generated_hostname[32] = {0};
+    static bool hostname_generated = false;
+
+    if (!hostname_generated) {
+        uint8_t mac[6];
+        esp_err_t ret = esp_read_mac(mac, ESP_MAC_ETH);
+        if (ret == ESP_OK) {
+            int ret = snprintf(generated_hostname, sizeof(generated_hostname), "%s-%02X%02X%02X",
+                              BASE_HOSTNAME, mac[3], mac[4], mac[5]);
+            if (ret >= sizeof(generated_hostname)) {
+                ESP_LOGW(TAG, "Generated hostname was truncated");
+            }
+            ESP_LOGI(TAG, "Generated hostname from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], generated_hostname);
+        } else {
+            // Fallback to base hostname if MAC read fails
+            strncpy(generated_hostname, BASE_HOSTNAME, sizeof(generated_hostname) - 1);
+            generated_hostname[sizeof(generated_hostname) - 1] = '\0';
+            ESP_LOGW(TAG, "Failed to read MAC for hostname generation, using fallback");
+        }
+        hostname_generated = true;
+    }
+
+    return generated_hostname;
+}
+
 static const setting_item_t setting_items[] = {
     {KEY_HOSTNAME, BASE_HOSTNAME, validate_hostname, SETTING_ITEM_TYPE_STRING},
     {KEY_LOGIN, DEFAULT_LOGIN, validate_login, SETTING_ITEM_TYPE_STRING},
@@ -336,9 +365,13 @@ static esp_err_t setting_items_set_defaults(void)
         if (!storage_iface->has_key(item->key)) {
             const char *default_value;
 
-            // Special case: generate dynamic default for AP password
+            // Special cases for dynamic defaults
             if (strncmp(item->key, KEY_AP_PASS, SETTING_ITEM_MAX_STR_LEN) == 0) {
                 default_value = get_dynamic_ap_pass_default();
+            } else if (strncmp(item->key, KEY_HOSTNAME, SETTING_ITEM_MAX_STR_LEN) == 0) {
+                default_value = get_dynamic_hostname_default();
+            } else if (strncmp(item->key, KEY_AP_SSID, SETTING_ITEM_MAX_STR_LEN) == 0) {
+                default_value = get_dynamic_hostname_default();
             } else {
                 default_value = item->default_value;
             }
@@ -418,9 +451,13 @@ esp_err_t setting_items_read(const char *key, char *value)
         if (result == ESP_ERR_NOT_FOUND) {
             const char *default_value;
 
-            // Special case: generate dynamic default for AP password
+            // Special cases for dynamic defaults
             if (strncmp(key, KEY_AP_PASS, SETTING_ITEM_MAX_STR_LEN) == 0) {
                 default_value = get_dynamic_ap_pass_default();
+            } else if (strncmp(key, KEY_HOSTNAME, SETTING_ITEM_MAX_STR_LEN) == 0) {
+                default_value = get_dynamic_hostname_default();
+            } else if (strncmp(key, KEY_AP_SSID, SETTING_ITEM_MAX_STR_LEN) == 0) {
+                default_value = get_dynamic_hostname_default();
             } else {
                 default_value = item->default_value;
             }

@@ -231,24 +231,9 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(setting_items_init());
 
-    // Generate unique hostname
-    char generated_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
-    int ret = snprintf(generated_hostname, SETTING_ITEM_MAX_STR_LEN, "%s-%02X%02X%02X", BASE_HOSTNAME, mac[3],
-             mac[4], mac[5]);
-    if (ret >= SETTING_ITEM_MAX_STR_LEN) {
-        ESP_LOGW(TAG, "Generated hostname was truncated");
-    }
-
-    // Set hostname if not already set
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
-    if (setting_items_read(KEY_HOSTNAME, hostname) != ESP_OK) {
-        // Set default generated hostname
-        ESP_ERROR_CHECK(setting_items_save(KEY_HOSTNAME, generated_hostname));
-        strncpy(hostname, generated_hostname, SETTING_ITEM_MAX_STR_LEN - 1);
-        hostname[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-    }
+    ESP_ERROR_CHECK(setting_items_read(KEY_HOSTNAME, hostname));
+    hostname[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
     ESP_LOGI(TAG, "Hostname: %s", hostname);
 
     // Initialize mDNS
@@ -315,7 +300,11 @@ void app_main(void)
 
     apsta_cfg.sta_event_handler = &wifi_sta_connect_event_handler;
     apsta_cfg.ap_event_handler = &wifi_ap_connect_event_handler;
-    ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, generated_hostname));
+
+    char wifi_ssid[SETTING_ITEM_MAX_STR_LEN] = {0};
+    ESP_ERROR_CHECK(setting_items_read(KEY_AP_SSID, wifi_ssid));
+    wifi_ssid[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+    ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, wifi_ssid));
 
     // Read and log WiFi STA and AP MAC addresses
     uint8_t wifi_sta_mac[6] = {0};
@@ -349,7 +338,7 @@ void app_main(void)
     if (!eth_dhcpc) {
         eth_ip_info = &static_ip_info;
     }
-    ESP_ERROR_CHECK(ethernet_init(&eth_connect_event_handler, eth_ip_info, generated_hostname));
+    ESP_ERROR_CHECK(ethernet_init(&eth_connect_event_handler, eth_ip_info, hostname));
 
     // Get Ethernet MAC address after initialization
     esp_eth_handle_t eth_handle = ethernet_get_handle();
