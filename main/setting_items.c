@@ -30,13 +30,9 @@ static const setting_storage_iface_t nvs_storage_iface = {
     .read_str = nvs_read_str,
 };
 
-// Validation functions
-bool validate_hostname(const char *value)
+static bool validate_hostname_ssid(const char *value)
 {
-    if ((!value) || (strlen(value) == 0) || (strlen(value) >= 32)) {
-        return false;
-    }
-    // Basic hostname validation - only alphanumeric and hyphens
+    // Basic hostname/ssid validation - only alphanumeric and hyphens
     size_t len = strlen(value); // Calculate once for security
     for (size_t i = 0; i < len; i++) {
         char c = value[i];
@@ -48,21 +44,21 @@ bool validate_hostname(const char *value)
     return true;
 }
 
+// Validation functions
+bool validate_hostname(const char *value)
+{
+    if ((!value) || (strlen(value) == 0) || (strlen(value) >= 32)) {
+        return false;
+    }
+    return validate_hostname_ssid(value);
+}
+
 bool validate_ssid(const char *value)
 {
     if ((!value) || (strlen(value) >= 32)) {
         return false;
     }
-    // Basic SSID validation - only alphanumeric and hyphens
-    size_t len = strlen(value); // Calculate once for security
-    for (size_t i = 0; i < len; i++) {
-        char c = value[i];
-        if (!(((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) ||
-              ((c >= '0') && (c <= '9')) || (c == '-'))) {
-            return false;
-        }
-    }
-    return true;
+    return validate_hostname_ssid(value);
 }
 
 bool validate_port(const char *value)
