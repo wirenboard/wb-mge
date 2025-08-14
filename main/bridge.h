@@ -7,6 +7,7 @@ esp_err_t bridge_init(void);
 typedef enum {
     TCP_SERVER_1 = 0,
     TCP_SERVER_2 = 1,
+    TCP_SERVER_COUNT
 } tcp_server_num_t;
 
 typedef enum {
