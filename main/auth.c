@@ -100,10 +100,10 @@ static uint32_t authorization(char *login_req, char *pass_req)
         return 0;
     }
 
-    uint32_t session_id = esp_random();
-    if (session_id == 0) {
+    uint32_t session_id;
+    do {
         session_id = esp_random();
-    }
+    } while (session_id == 0);
     add_session_id(&session_buffer, session_id);
 
     return session_id;
@@ -124,6 +124,7 @@ static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, 
 
 esp_err_t auth_init(void)
 {
+    memset(session_buffer.session_ids, 0, sizeof(session_buffer.session_ids));
     ESP_LOGI(TAG, "Initializing authentication");
     return ESP_OK;
 }
