@@ -225,7 +225,7 @@ static esp_err_t info_build_ap_clients_json(cJSON **clients_json)
     return ESP_OK;
 }
 
-static esp_err_t update_info_from_json(cJSON *req_json, const char *key, void *dest, int type)
+static esp_err_t update_info_key_from_json(cJSON *req_json, const char *key, void *dest, int type)
 {
     if (cJSON_HasObjectItem(req_json, key)) {
         cJSON *item = cJSON_GetObjectItem(req_json, key);
@@ -253,12 +253,12 @@ static esp_err_t info_update_from_json(cJSON *request_json)
 
     esp_err_t result = ESP_OK;
 
-    if (update_info_from_json(request_json, "device_name", sys_info.device_name, cJSON_String) != ESP_OK) {
+    if (update_info_key_from_json(request_json, "device_name", sys_info.device_name, cJSON_String) != ESP_OK) {
         ESP_LOGW(TAG, "Failed to update device_name");
         result = ESP_FAIL;
     }
 
-    if (update_info_from_json(request_json, "hardware", sys_info.hardware_ver, cJSON_String) != ESP_OK) {
+    if (update_info_key_from_json(request_json, "hardware", sys_info.hardware_ver, cJSON_String) != ESP_OK) {
         ESP_LOGW(TAG, "Failed to update hardware");
         result = ESP_FAIL;
     }
@@ -346,13 +346,13 @@ esp_err_t info_post_handler(httpd_req_t *req)
 
     esp_err_t result = info_update_from_json(request_json);
 
+    json_utils_cleanup(request_json, NULL);
+
     if (result != ESP_OK) {
-        json_utils_cleanup(request_json, NULL);
         json_utils_send_error(req, "Failed to update system info");
         return ESP_OK;
     }
 
-    json_utils_cleanup(request_json, NULL);
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
