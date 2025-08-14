@@ -329,13 +329,8 @@ static const setting_item_t *find_setting_item(const char *key)
     return NULL;
 }
 
-esp_err_t setting_items_init(void)
+static esp_err_t setting_items_set_defaults(void)
 {
-    ESP_LOGI(TAG, "Initializing settings with string storage");
-    storage_iface = &nvs_storage_iface;
-
-    // Initialize default values for all settings that don't exist yet
-    // This matches the behavior of the original implementation
     ESP_LOGI(TAG, "Setting default values for uninitialized settings");
 
     for (size_t i = 0; i < ARRAY_SIZE(setting_items); i++) {
@@ -362,15 +357,23 @@ esp_err_t setting_items_init(void)
         }
     }
 
-    ESP_LOGI(TAG, "Settings initialization completed");
     return ESP_OK;
+}
+
+esp_err_t setting_items_init(void)
+{
+    ESP_LOGI(TAG, "Initializing settings with string storage");
+    storage_iface = &nvs_storage_iface;
+
+    return setting_items_set_defaults();
 }
 
 esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *test_storage_iface)
 {
     ESP_LOGI(TAG, "Initializing settings with custom storage for testing");
     storage_iface = test_storage_iface;
-    return ESP_OK;
+
+    return setting_items_set_defaults();
 }
 
 esp_err_t setting_items_save(const char *key, const char *value)
