@@ -8,3 +8,8 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
 # HTTP Server
 #
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+
+#
+# Serial flasher config
+#
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
