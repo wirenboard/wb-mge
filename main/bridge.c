@@ -258,24 +258,19 @@ esp_err_t bridge_init(void)
         }
 
         snprintf(key_buf, sizeof(key_buf), "databits_%d", i + 1);
-        int databits = setting_items_read_int(key_buf);
-        switch (databits) {
-        case 5:
+        char databits_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, databits_str), TAG, "error reading databits for port %d", i + 1);
+        if (strncmp(databits_str, UART_DATA_5_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].databits = UART_DATA_5_BITS;
-            break;
-        case 6:
+        } else if (strncmp(databits_str, UART_DATA_6_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].databits = UART_DATA_6_BITS;
-            break;
-        case 7:
+        } else if (strncmp(databits_str, UART_DATA_7_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].databits = UART_DATA_7_BITS;
-            break;
-        case 8:
+        } else if (strncmp(databits_str, UART_DATA_8_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             serial_config[i].databits = UART_DATA_8_BITS;
-            break;
-        default:
+        } else {
             serial_config[i].databits = UART_DATA_8_BITS;
             ESP_LOGW(TAG, "Unknown databits setting for port %d, defaulting to 8", i + 1);
-            break;
         }
 
         snprintf(key_buf, sizeof(key_buf), "bridge_mode_%d", i + 1);
