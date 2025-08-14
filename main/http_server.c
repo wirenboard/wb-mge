@@ -215,6 +215,7 @@ esp_err_t http_server_init(void)
     }
 
     if (http_server == NULL) {
+        ESP_LOGE(TAG, "Failed to start HTTP server");
         return ESP_FAIL;
     }
 
