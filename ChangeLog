@@ -1,4 +1,4 @@
-2025-06-25 Radmir Khakimov <radmir.khakimov@wirenboard.com>
+2025-08-14 Radmir Khakimov <radmir.khakimov@wirenboard.com>
 
     * version:  1.0.0-rc2
     * rework:   update REST API, refactor http_server code
