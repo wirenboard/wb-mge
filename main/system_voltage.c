@@ -7,16 +7,24 @@
 
 static const char *TAG = "system_voltage";
 
-#define VOLTAGE_DIVIDER_R1     33000  // 33k ohm
-#define VOLTAGE_DIVIDER_R2     3300   // 3.3k ohm
+#define VOLTAGE_DIVIDER_R1     33000.0f  // 33k ohm
+#define VOLTAGE_DIVIDER_R2     3300.0f   // 3.3k ohm
 #define VOLTAGE_ADC_CHANNEL    ADC_CHANNEL_7  // GPIO35
 #define VOLTAGE_ADC_UNIT       ADC_UNIT_1
-#define VOLTAGE_ADC_ATTEN      ADC_ATTEN_DB_11
+#define VOLTAGE_ADC_ATTEN      ADC_ATTEN_DB_12
 #define VOLTAGE_ADC_BITWIDTH   ADC_BITWIDTH_12
+#define VOLTAGE_ADC_REF_MV     3300.0f   // Reference voltage in mV for 11dB attenuation
+#define VOLTAGE_ADC_MAX_VALUE  ((1 << 12) - 1)  // 4095 for 12-bit ADC
 
 static adc_oneshot_unit_handle_t adc1_handle = NULL;
 static adc_cali_handle_t adc1_cali_handle = NULL;
 static bool adc_calibration_init = false;
+
+// Convert ADC raw reading to voltage in mV using linear conversion
+static inline float adc_raw_to_voltage_mv(int adc_reading)
+{
+    return (adc_reading * VOLTAGE_ADC_REF_MV) / VOLTAGE_ADC_MAX_VALUE;
+}
 
 esp_err_t system_voltage_init(void)
 {
@@ -87,12 +95,11 @@ float system_voltage_read(void)
             voltage_mv = (float)voltage_mv_int;
         } else {
             ESP_LOGW(TAG, "ADC calibration failed, using linear conversion");
-            // Fallback to linear conversion (3.3V / 4096 counts for 12-bit ADC with 11dB attenuation)
-            voltage_mv = (adc_reading * 3300.0) / 4096.0;
+            voltage_mv = adc_raw_to_voltage_mv(adc_reading);
         }
     } else {
         // Linear conversion fallback
-        voltage_mv = (adc_reading * 3300.0) / 4096.0;
+        voltage_mv = adc_raw_to_voltage_mv(adc_reading);
     }
 
     // Apply voltage divider formula: Vin = Vout * (R1 + R2) / R2
