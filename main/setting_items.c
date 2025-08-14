@@ -230,22 +230,6 @@ bool validate_password(const char *value)
     return true;
 }
 
-bool validate_modbus_timeout(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    char *endptr;
-    long timeout = strtol(value, &endptr, 10);
-
-    // Combined validation for both RTU (10-2000) and TCP (50-3000) timeouts
-    if ((*endptr == '\0') && (timeout >= 10) && (timeout <= 3000)) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
 // Generate dynamic default AP password from MAC address
 static const char *get_dynamic_ap_pass_default(void)
 {
