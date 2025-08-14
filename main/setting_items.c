@@ -157,7 +157,7 @@ bool validate_wifi_mode(const char *value)
     return (strncmp(value, WIFI_MODE_AP_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
             strncmp(value, WIFI_MODE_STA_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
             strncmp(value, WIFI_MODE_APSTA_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, WIFI_MODE_NULL_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
+            strncmp(value, WIFI_MODE_NONE_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
 }
 
 bool validate_wifi_auth(const char *value)

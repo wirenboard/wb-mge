@@ -61,7 +61,7 @@
 #define WIFI_MODE_AP_STR            "ap"
 #define WIFI_MODE_STA_STR           "sta"
 #define WIFI_MODE_APSTA_STR         "apsta"
-#define WIFI_MODE_NULL_STR          "none"
+#define WIFI_MODE_NONE_STR          "none"
 
 // Wifi auth
 #define WIFI_AUTH_OPEN_STR          "open"
