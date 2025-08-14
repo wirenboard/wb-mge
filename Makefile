@@ -49,13 +49,7 @@ DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
 # unittests
 #######################################
 
-ifeq ($(UNAME_S),Darwin)
-    # macOS BSD find syntax
-    UNITTESTS_DIRS += $(shell find . -name "*unittests*" -type d 2>/dev/null)
-else
-    # GNU find syntax
-    UNITTESTS_DIRS += $(shell $(FIND) . -type d -name "*unittests*")
-endif
+UNITTESTS_DIRS += $(shell $(FIND) . -type d -name "*unittests*" 2>/dev/null)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
 
