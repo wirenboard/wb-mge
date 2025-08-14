@@ -382,8 +382,6 @@ void app_main(void)
     config_button_init(config_button_callback);
     system_voltage_init();
 
-    mio_control_reset();
-
     update_rs485_control();
     update_io_bus_control();
 
