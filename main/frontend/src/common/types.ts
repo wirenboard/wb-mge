@@ -25,12 +25,13 @@ export interface Info {
   serial_num: number;
   firmware: string;
   hardware: string;
+  system_voltage: number;
   ethernet: {
     con_eth: boolean;
-    eth_ip: string;
-    eth_mask: string;
-    eth_gw: string;
-    eth_mac: string;
+    ip: string;
+    mask: string;
+    gw: string;
+    mac: string;
   };
   wifi: {
     con_ap: number;
@@ -51,9 +52,9 @@ export type WiFiSecuityProtocol = 'open' | 'wpa2_psk' | 'wpa3_psk';
 
 export type Baudrate = 1200 | 2400 | 4800 | 9600 | 19200 | 38400 | 57600 | 115200;
 
-export type Stopbits = '1-bit' | '1.5-bit' | '2-bit';
+export type Stopbits = '1' | '1.5' | '2';
 
-export type Databits = '5-bit' | '6-bit' | '7-bit' | '8-bit';
+export type Databits = '5' | '6' | '7' | '8';
 
 export type Parity = 'none' | 'even' | 'odd';
 

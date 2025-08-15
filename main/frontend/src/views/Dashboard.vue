@@ -32,10 +32,10 @@ const getDisplayValue = (val: any) => {
         <div>{{ getDisplayValue(info!.ethernet.con_eth) }}</div>
 
         <div>{{ t('ip') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.eth_ip) }}</div>
+        <div>{{ getDisplayValue(info!.ethernet.ip) }}</div>
 
         <div>{{ t('mac') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.eth_mac) }}</div>
+        <div>{{ getDisplayValue(info!.ethernet.mac) }}</div>
       </fieldset>
 
       <fieldset class="dashboard-container">
@@ -44,18 +44,18 @@ const getDisplayValue = (val: any) => {
         <div>{{ t('connection') }}</div>
         <div>{{ getDisplayValue(info!.wifi.con_sta) }}</div>
 
+        <div>{{ t('wifi_mode') }}</div>
+        <div>{{ t(settings!.wifi.mode) }}</div>
+
+        <div><b>{{ t('access_point') }}</b></div>
+        <div></div>
+
         <template v-if="settings!.wifi.mode === 'apsta'">
-          <div>{{ t('ap_ip') }}</div>
+          <div>{{ t('ip') }}</div>
           <div>{{ settings!.wifi.ap_ip_static }}</div>
 
-          <div>{{ t('ap_mac') }}</div>
+          <div>{{ t('mac') }}</div>
           <div>{{ info!.wifi.ap_mac }}</div>
-
-          <div>{{ t('station_ip') }}</div>
-          <div>{{ info!.wifi.sta_ip }}</div>
-
-          <div>{{ t('station_mac') }}</div>
-          <div>{{ info!.wifi.sta_mac }}</div>
         </template>
         <template v-else>
           <div>{{ t('ip') }}</div>
@@ -65,13 +65,22 @@ const getDisplayValue = (val: any) => {
           <div>{{ getDisplayValue(settings!.wifi.mode === 'sta' ? info!.wifi.sta_mac : info!.wifi.ap_mac) }}</div>
         </template>
 
-        <div>{{ t('wifi_mode') }}</div>
-        <div>{{ t(settings!.wifi.mode) }}</div>
-
         <template v-if="['sta', 'apsta'].includes(settings!.wifi.mode)">
+          <div>{{ t('connections_count') }}</div>
+          <div>{{ info!.wifi.con_ap }}</div>
+
           <div>{{ t('rssi') }}</div>
           <div>{{ info?.wifi.sta_rssi }}</div>
         </template>
+
+        <div><b>{{ t('router') }}</b></div>
+        <div></div>
+
+        <div>{{ t('ip') }}</div>
+        <div>{{ info!.wifi.sta_ip }}</div>
+
+        <div>{{ t('mac') }}</div>
+        <div>{{ info!.wifi.sta_mac }}</div>
       </fieldset>
 
       <fieldset class="dashboard-container">
@@ -85,6 +94,8 @@ const getDisplayValue = (val: any) => {
             @change="() => updateSettings({ vout: settings!.vout })"
           />
         </div>
+        <div>{{ t('power') }}</div>
+        <div>{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
 
         <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
 
@@ -151,14 +162,15 @@ const getDisplayValue = (val: any) => {
 
     "wifi": "Wi-Fi",
     "wifi_mode": "Mode",
-    "ap_ip": "Access Point IP address",
-    "ap_mac": "Access Point MAC address",
-    "station_ip": "Station IP address",
-    "station_mac": "Station MAC address",
-    "rssi": "Station RSSI",
+    "router": "Router",
+    "access_point": "Access Point",
+    "connections_count": "Number of connections",
+    "rssi": "RSSI",
 
     "gateway": "Gateway",
-    "power_vout": "Power Vout"
+    "power_vout": "Power Vout",
+    "power": "Power",
+    "v": "V"
   },
   "ru": {
     "title": "Обзор",
@@ -172,15 +184,16 @@ const getDisplayValue = (val: any) => {
     "ethernet": "Ethernet",
 
     "wifi": "Wi-Fi",
+    "router": "Роутер",
+    "access_point": "Точка доступа",
     "wifi_mode": "Роль",
-    "ap_ip": "IP-адрес точки доступа",
-    "ap_mac": "MAC-адрес точки доступа",
-    "station_ip": "IP-адрес станции",
-    "station_mac": "MAC-адрес станции",
-    "rssi": "RSSI станции",
+    "connections_count": "Количество подключений",
+    "rssi": "RSSI",
 
     "gateway": "Шлюз",
-    "power_vout": "Питание Vout"
+    "power_vout": "Питание Vout",
+    "power": "Напряжение питания",
+    "v": "В"
   }
 }
 </i18n>

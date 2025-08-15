@@ -32,24 +32,24 @@ const handleFileChange = () => {
 </script>
 
 <template>
-  <fieldset>
+  <fieldset class="configuration-container">
     <legend>{{ t('configuration') }}</legend>
 
     <div>{{ t('export') }}</div>
-    <div class="settingsActions-button">
+    <div class="configuration-button">
       <Button @click="downloadSettings">
         {{ t('downloadSettings') }}
       </Button>
     </div>
 
     <div>{{ t('import') }}</div>
-    <div class="settingsActions-button">
+    <div class="configuration-button">
       <Button @click="fileInput.click()">{{ t('uploadSettings') }}</Button>
-      <input ref="fileInput" class="settingsActions-input" type="file" required accept=".json" @change="handleFileChange" />
+      <input ref="fileInput" class="configuration-input" type="file" required accept=".json" @change="handleFileChange" />
     </div>
 
     <div>{{ t('reset') }}</div>
-    <div class="settingsActions-button">
+    <div class="configuration-button">
       <Button type="button" variant="danger" :disabled="loadedMethod === 'set_default_settings'" @click="cmd('set_default_settings', t('factory_reset_confirm'))">
         {{ t('set_default_settings') }}
       </Button>
@@ -58,11 +58,33 @@ const handleFileChange = () => {
 </template>
 
 <style scoped>
-.settingsActions-input {
+.configuration-container {
+  display: grid;
+  gap: 6px 24px;
+  grid-template-columns: 55% 45%;
+  align-items: center;
+  justify-items: flex-start;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.configuration-container div {
+  height: 33px;
+  display: flex;
+  align-items: center;
+}
+
+.system-container div:nth-child(odd)  {
+  width: calc(100% - 24px);
+  display: flex;
+  justify-content: end;
+}
+
+.configuration-input {
   display: none;
 }
 
-.settingsActions-button {
+.configuration-button {
   width: calc(100% - 24px);
   display: flex;
   justify-content: end;
@@ -89,7 +111,7 @@ const handleFileChange = () => {
     "import": "Импорт",
     "uploadSettings": "Загрузить из файла",
     "settingsUploaded": "Настройки импортированы",
-    "reset": "Сброс к заводским",
+    "reset": "Сброс к заводским настройкам",
     "set_default_settings": "Сбросить",
     "factory_reset_confirm": "Вы уверены, что хотите сделать сброс к заводским настройкам?"
   }
