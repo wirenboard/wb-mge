@@ -14,6 +14,10 @@ export const useWifi = () => {
 
   const fetchResults = async () => {
     wifi.value = await api<WifiScanResult>('wifi_scan/results').then(res => {
+      if (res.scan_completed) {
+        stopPolling();
+      }
+
       if (res.networks) {
         return res.networks;
       } else {
@@ -31,7 +35,7 @@ export const useWifi = () => {
 
     intervalId = setInterval(() => {
       fetchResults();
-    }, 15000);
+    }, 1000);
   };
 
   const stopPolling = () => {

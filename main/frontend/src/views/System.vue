@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n';
 import { changeLang, type Locale } from '@/i18n';
 import SaveIcon from '@/assets/save.svg?component';
 import { useAlerts } from '@/common/alert';
-import { firmwareVersion } from '@/common/global';
 import { useInfo } from '@/common/info';
 import { documentation, email, support, website } from '@/common/links';
 import { useSettings } from '@/common/settings';
@@ -49,7 +48,9 @@ const cmd = async (command: string, confirmText?: string) => {
   await api('cmd', { cmd: command });
   isReconnecting.value = true;
   loadedMethod.value = null;
-  location.reload();
+  setTimeout(() => {
+    location.reload();
+  }, 3500);
 };
 
 const updateInterface = () => {
@@ -100,7 +101,7 @@ const updateInterface = () => {
 
         <div>{{ t('firmware_version') }}</div>
         <div class="system-data">
-          {{ firmwareVersion }}
+          {{ info?.firmware }}
         </div>
 
         <div>{{ t('firmware_update') }}</div>
@@ -154,7 +155,7 @@ const updateInterface = () => {
         </form>
       </fieldset>
 
-      <Configuration :cmd="cmd" :loaded-method="loadedMethod" class="system-container" />
+      <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
 
       <fieldset class="system-container">
         <legend>{{ t('links') }}</legend>
@@ -204,6 +205,8 @@ const updateInterface = () => {
 
 .system-container div {
   height: 33px;
+  align-items: center;
+  display: flex;
 }
 
 .system-container div:nth-child(odd),

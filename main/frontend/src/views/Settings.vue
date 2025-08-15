@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue';
+import { onUnmounted, ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useWifi } from '@/common/network';
 import { useSettings } from '@/common/settings';
-import type { WiFiMode, WiFiSecuityProtocol } from '@/common/types';
+import type { WiFiSecuityProtocol } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
@@ -18,12 +18,9 @@ const { wifi, startPolling, stopPolling } = useWifi();
 const isChangeApPassword = ref(false);
 const isChangeStaPassword = ref(false);
 
-watch(() => initData.value?.wifi.mode,
-  (value) => {
-    if (['sta', 'apsta'].includes(value as WiFiMode)) {
-      startPolling();
-    }
-  }, { immediate: true });
+onMounted(() =>{
+  startPolling();
+});
 
 onUnmounted(() => {
   stopPolling();
@@ -40,6 +37,7 @@ const updateWifiSettings = async () => {
     ap_ssid: data.value!.wifi.ap_ssid,
     sta_auth: data.value!.wifi.sta_auth,
     sta_ssid: data.value!.wifi.sta_ssid,
+    ap_auth: data.value!.wifi.ap_auth,
   };
 
   if (data.value!.wifi.ap_auth === 'open') {
@@ -84,20 +82,22 @@ const updateWifiSettings = async () => {
             />
           </div>
 
-          <label for="eth_ip_static">{{ t('ip') }}</label>
-          <div class="settings-data">
-            <IpInput id="eth_ip_static" v-model="data.ethernet.ip_static" :disabled="data.ethernet.dhcpc" name="eth_ip_static" />
-          </div>
+          <template v-if="!data.ethernet.dhcpc">
+            <label for="eth_ip_static">{{ t('ip') }}</label>
+            <div class="settings-data">
+              <IpInput id="eth_ip_static" v-model="data.ethernet.ip_static" :disabled="data.ethernet.dhcpc" name="eth_ip_static" />
+            </div>
 
-          <label for="eth_gw_static">{{ t('gateway') }}</label>
-          <div class="settings-data">
-            <IpInput id="eth_gw_static" v-model="data.ethernet.gw_static" :disabled="data.ethernet.dhcpc" name="eth_gw_static" />
-          </div>
+            <label for="eth_gw_static">{{ t('gateway') }}</label>
+            <div class="settings-data">
+              <IpInput id="eth_gw_static" v-model="data.ethernet.gw_static" :disabled="data.ethernet.dhcpc" name="eth_gw_static" />
+            </div>
 
-          <label for="eth_mask_static">{{ t('mask') }}</label>
-          <div class="settings-data">
-            <IpInput id="eth_mask_static" v-model="data.ethernet.mask_static" :disabled="data.ethernet.dhcpc" name="eth_mask_static" />
-          </div>
+            <label for="eth_mask_static">{{ t('mask') }}</label>
+            <div class="settings-data">
+              <IpInput id="eth_mask_static" v-model="data.ethernet.mask_static" :disabled="data.ethernet.dhcpc" name="eth_mask_static" />
+            </div>
+          </template>
 
           <Button
             class="settings-submit"
@@ -178,7 +178,7 @@ const updateWifiSettings = async () => {
               <label for="sta_ssid">{{ t('ssid') }}</label>
               <div class="settings-data">
                 <input v-if="!wifi.length" id="sta_ssid" v-model="data.wifi.sta_ssid" type="text" name="sta_ssid" required />
-                <select v-else id="sta_ssid" v-model="data.wifi.sta_ssid" class="settings-wifi" name="sta_ssid">
+                <select v-else id="sta_ssid" v-model="data.wifi.sta_ssid" class="settings-wifi" name="sta_ssid" @click="startPolling">
                   <option v-for="item in wifi" :key="item.ssid" :value="item.ssid">{{ item.ssid }}</option>
                 </select>
               </div>
@@ -212,9 +212,20 @@ const updateWifiSettings = async () => {
         </form>
       </fieldset>
 
-      <RsSettings v-model:settings="data.rs485_1" field="rs485_1" title="RS-485 1" />
+      <RsSettings
+        v-model:settings="data.rs485_1"
+        field="rs485_1"
+        title="RS-485 1"
+        :has-ports-conflict="data.rs485_1.bridge.port === data.rs485_2.bridge.port"
+      />
 
-      <RsSettings v-model:settings="data.rs485_2" v-model:io_bus="data.io_bus" field="rs485_2" title="RS-485 2" />
+      <RsSettings
+        v-model:settings="data.rs485_2"
+        v-model:io_bus="data.io_bus"
+        field="rs485_2"
+        title="RS-485 2"
+        :has-ports-conflict="data.rs485_1.bridge.port === data.rs485_2.bridge.port"
+      />
     </div>
   </Layout>
 </template>
@@ -303,7 +314,7 @@ const updateWifiSettings = async () => {
     "wifi_settings": "Wi-Fi",
     "wifi_mode": "Mode",
     "wifi_pass_security": "Network protection",
-    "scan_info": "Network scanning will be available after saving",
+    "scan_info": "Scanning will be available when the access point or access point and client mode is set and saved",
     "open": "Unsecured",
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
@@ -322,7 +333,7 @@ const updateWifiSettings = async () => {
     "wifi_settings": "Wi-Fi",
     "wifi_mode": "Роль",
     "wifi_pass_security": "Защита сети",
-    "scan_info": "Сканирование сетей будет доступно после сохранения",
+    "scan_info": "Сканирование будет доступно когда будет установлен и сохранён режим точка доступа или точка доступа и клиент",
     "open": "Без защиты",
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",

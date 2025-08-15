@@ -8,7 +8,7 @@ import InputNumber from '@/components/InputNumber.vue';
 import IpInput from '@/components/IpInput.vue';
 import Switch from '@/components/Switch.vue';
 
-const props = defineProps<{ title: string; field: string }>();
+const props = defineProps<{ title: string; field: string; hasPortsConflict: boolean }>();
 
 const { t } = useI18n();
 const { isChanged, isLoading, updateSettings } = useSettings();
@@ -19,9 +19,9 @@ const baudrateOptions: Baudrate[] = [1200, 2400, 4800, 9600, 19200, 38400, 57600
 
 const parityOptions: Parity[] = ['none', 'even', 'odd'];
 
-const stopBits: Stopbits[] = ['1-bit', '1.5-bit', '2-bit'];
+const stopBits: Stopbits[] = ['1', '1.5', '2'];
 
-const dataBits: Databits[] = ['5-bit', '6-bit', '7-bit', '8-bit'];
+const dataBits: Databits[] = ['5', '6', '7', '8'];
 
 const bridgeModbus = [{ value: true, label: t('bridge_modbus') }, { value: false, label:  t('bridge_transparent') }];
 
@@ -74,7 +74,7 @@ const save = () => {
         </select>
       </div>
 
-      <label :for="`${field}-fail_safe`">{{ t('pullup') }}</label>
+      <label :for="`${field}-fail_safe`">{{ t('failsafe') }}</label>
       <div class="settings-data">
         <Switch
           :id="`${field}-fail_safe`"
@@ -118,21 +118,33 @@ const save = () => {
         </select>
       </div>
 
-      <label :for="`${field}-bridge_ip`">{{ t('bridge_ip') }}</label>
-      <div class="settings-data">
-        <IpInput :id="`${field}-bridge_ip`" v-model="settings!.bridge.ip" name="bridge_ip" />
-      </div>
+      <template v-if="settings!.bridge.mode !== 'server'">
+        <label :for="`${field}-bridge_ip`">{{ t('bridge_ip') }}</label>
+        <div class="settings-data">
+          <IpInput :id="`${field}-bridge_ip`" v-model="settings!.bridge.ip" name="bridge_ip" />
+        </div>
+      </template>
 
       <label :for="`${field}-bridge_port`">{{ t('port') }}</label>
       <div class="settings-data">
-        <InputNumber :id="`${field}-bridge_port`" v-model="settings!.bridge.port" name="bridge_port" min="1" max="65535" class="rsSettings-port" required />
+        <InputNumber
+          :id="`${field}-bridge_port`"
+          v-model="settings!.bridge.port"
+          name="bridge_port"
+          min="1"
+          max="65535"
+          class="rsSettings-port"
+          :invalid="hasPortsConflict"
+          required
+        />
       </div>
+      <Info v-if="isChanged([field, 'io_bus']) && hasPortsConflict" :text="t('ports_conflict')" severity="error" />
 
       <Button
         class="settings-submit"
         type="submit"
         :is-loading="isLoading"
-        :disabled="isLoading || !isChanged([field, 'io_bus'])"
+        :disabled="isLoading || !isChanged([field, 'io_bus']) || hasPortsConflict"
       >
         {{ t('save') }}
       </Button>
@@ -155,7 +167,7 @@ const save = () => {
     "odd": "Odd",
     "stopbits": "Stop bits",
     "databits": "Data bits",
-    "pullup": "Pullup",
+    "failsafe": "Failsafe bias",
     "terminator": "Terminator",
     "modbus_mode": "Modbus mode",
     "bridge_mode": "Bridge mode",
@@ -163,7 +175,8 @@ const save = () => {
     "bridge_transparent": "Transparent",
     "bridge_ip": "IP address",
     "io_bus": "I/O Bus",
-    "io_bus_info": "Adds RS-485 support for WB-MIO side modules"
+    "io_bus_info": "Adds RS-485 support for WB-MIO side modules",
+    "ports_conflict": "Port values must be unique"
   },
   "ru": {
     "baudrate": "Скорость",
@@ -172,7 +185,7 @@ const save = () => {
     "odd": "Нечетный",
     "stopbits": "Стоп-бит",
     "databits": "Биты данных",
-    "pullup": "Растяжка",
+    "failsafe": "Failsafe bias",
     "terminator": "Терминатор",
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
@@ -180,7 +193,8 @@ const save = () => {
     "bridge_transparent": "Прозрачный",
     "bridge_ip": "IP-адрес сервера",
     "io_bus": "Боковые модули",
-    "io_bus_info": "Добавляет поддержку боковых модулей WB-MIO по RS-485"
+    "io_bus_info": "Добавляет поддержку боковых модулей WB-MIO по RS-485",
+    "ports_conflict": "Значение порта должно быть уникальным"
   }
 }
 </i18n>

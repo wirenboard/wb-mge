@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import InfoIcon from '@/assets/infoIcon.svg?component';
+import WarnIcon from '@/assets/warnIcon.svg?component';
 
-defineProps<{ text: string }>();
+defineProps<{ text: string; severity?: 'info' | 'error' }>();
 </script>
 
 <template>
   <div class="info">
-    <InfoIcon class="info-icon" />
-    {{ text }}
+    <WarnIcon v-if="severity === 'error'" class="info-icon info-error" />
+    <InfoIcon v-else class="info-icon" />
+    <span :class="{'info-error': severity === 'error'}">{{ text }}</span>
   </div>
 </template>
 
@@ -29,5 +31,9 @@ defineProps<{ text: string }>();
   width: 14px;
   height: 14px;
   color: var(--gray-text);
+}
+
+.info-error {
+  color: var(--danger-color) !important;
 }
 </style>

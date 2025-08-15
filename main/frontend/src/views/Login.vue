@@ -20,7 +20,7 @@ const isLoading = ref(false);
 const login = async () => {
   isLoading.value = true;
   try {
-    const { auth } = await api<Auth>('auth', { ...data, remember_me: true });
+    const { auth } = await api<Auth>('auth', data);
     if (auth) {
       await router.push(route.query.redirect ? `/${route.query.redirect}` : '/');
     } else {
