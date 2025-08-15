@@ -26,10 +26,10 @@ paths:
                   description: "Username, alphanumeric, underscore and hyphen"
                 pass:
                   type: string
-                  minLength: 8
+                  minLength: 0
                   maxLength: 32
-                  pattern: '^[ -~]+$'
-                  description: "Password, 8-32 printable ASCII characters"
+                  pattern: '^[ -~]*$'
+                  description: "Password, printable ASCII characters"
               required: [login, pass]
       responses:
         '200':
@@ -56,6 +56,28 @@ paths:
                     error: "Invalid login or password"
         '400':
           description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum: [false]
+                  error:
+                    type: string
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum: [false]
+                  error:
+                    type: string
 
   /session:
     get:
@@ -71,7 +93,26 @@ paths:
       summary: Logout current session
       responses:
         '200':
-          $ref: '#/components/responses/SuccessResponse'
+          description: Logout result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logout:
+                    type: boolean
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -88,6 +129,18 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SuccessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -188,6 +241,18 @@ paths:
                     $ref: '#/components/schemas/RS485Status'
                   rs485_2:
                     $ref: '#/components/schemas/RS485Status'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
     post:
@@ -212,6 +277,16 @@ paths:
           description: Updated
         '400':
           description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -225,6 +300,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeviceSettings'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
     post:
@@ -240,10 +327,10 @@ paths:
                   properties:
                     pass: 
                       type: string
-                      minLength: 8
+                      minLength: 0
                       maxLength: 32
-                      pattern: '^[ -~]+$'
-                      description: "Password, 8-32 printable ASCII characters"
+                      pattern: '^[ -~]*$'
+                      description: "Password, printable ASCII characters"
       responses:
         '200':
           description: Update result
@@ -257,6 +344,18 @@ paths:
                 additionalProperties:
                   type: boolean
                   description: Individual field update status (true/false for each field)
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -289,12 +388,29 @@ paths:
                     maxLength: 32
         '400':
           description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
   /wifi_scan/start:
     post:
       summary: Start Wi-Fi network scan
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              maxProperties: 0
       responses:
         '200':
           description: Scan start result
@@ -326,6 +442,18 @@ paths:
                   value:
                     success: false
                     error: "Failed to start scan"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -386,6 +514,18 @@ paths:
                     scan_in_progress: false
                     scan_completed: false
                     error: "Scan failed"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -412,6 +552,18 @@ paths:
                     ip: 
                       type: string
                       format: ipv4
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -442,6 +594,18 @@ paths:
                     type: integer
                     minimum: 0
                     maximum: 59
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -552,9 +716,9 @@ components:
         fail_safe: { type: boolean }
         baudrate: 
           type: integer
-          minimum: 300
-          maximum: 230400
-          enum: [300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400]
+          minimum: 1200
+          maximum: 115200
+          enum: [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
         stopbits:
           type: string
           enum: ["1", "1.5", "2"]
@@ -602,7 +766,7 @@ components:
       properties:
         mode:
           type: string
-          enum: ["ap", "sta", "apsta", "null"]
+          enum: ["ap", "sta", "apsta", "none"]
         ap_auth:
           type: string
           enum: ["open", "wpa2_psk", "wpa3_psk"]
@@ -674,3 +838,13 @@ components:
           maximum: 65535
           default: 80
         io_bus: { type: boolean }
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+          maxLength: 255
