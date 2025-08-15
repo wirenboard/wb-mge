@@ -9,7 +9,7 @@ import json
 
 
 class WBMGEAPI:
-    def __init__(self, base_url="http://192.168.4.1"):
+    def __init__(self, base_url="http://192.168.42.1"):
         self.base_url = base_url
         self.session = requests.Session()
 
@@ -33,7 +33,7 @@ class WBMGEAPI:
         except ImportError:
             pass  # urllib3 not available
 
-    def auth(self, login="wirenboard", password="wirenboard"):
+    def auth(self, login="admin", password="admin"):
         """Авторизация"""
         try:
             response = self.session.post(f"{self.base_url}/auth", json={
@@ -201,7 +201,7 @@ def test_settings(api):
 
     # Проверить WiFi настройки
     wifi = original_settings["wifi"]
-    assert wifi["mode"] in ["ap", "sta", "apsta", "null"]
+    assert wifi["mode"] in ["ap", "sta", "apsta", "none"]
     if "ap_auth" in wifi:
         assert wifi["ap_auth"] in ["open", "wpa2_psk", "wpa3_psk"]
     if "sta_auth" in wifi:
@@ -631,7 +631,7 @@ def quick_connection_test(base_url):
     print("🔍 Быстрая проверка подключения...")
 
     parsed = urlparse(base_url)
-    host = parsed.hostname or "192.168.4.1"
+    host = parsed.hostname or "192.168.42.1"
     port = parsed.port or 80
 
     try:
@@ -668,15 +668,23 @@ def quick_connection_test(base_url):
 
 def main():
     """Главная функция запуска тестов"""
+    import argparse
     import sys
 
-    # Проверяем аргументы командной строки
-    stop_on_failure = "--stop-on-failure" in sys.argv
-    verbose = "--verbose" in sys.argv
+    # Парсинг аргументов командной строки
+    parser = argparse.ArgumentParser(description='WB-MGE API Tests')
+    parser.add_argument('--ip', default='192.168.42.1', help='IP address of WB-MGE device')
+    parser.add_argument('--stop-on-failure', action='store_true', help='Stop on first test failure')
+    parser.add_argument('--verbose', action='store_true', help='Verbose output')
 
-    # IP адрес по умолчанию для WB-MGE в AP режиме
-    # Измените на нужный адрес для вашего устройства
-    api = WBMGEAPI("http://192.168.4.1")
+    args = parser.parse_args()
+
+    # Проверяем аргументы командной строки
+    stop_on_failure = args.stop_on_failure or "--stop-on-failure" in sys.argv
+    verbose = args.verbose or "--verbose" in sys.argv
+
+    # Создаем API клиент с указанным IP
+    api = WBMGEAPI(f"http://{args.ip}")
 
     print("Запуск тестов WB-MGE API")
     print("=" * 40)
