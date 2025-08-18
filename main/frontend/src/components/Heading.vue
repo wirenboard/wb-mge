@@ -1,34 +1,16 @@
 <script setup lang="ts">
-import { injectHead, useHead } from '@unhead/vue';
-import { computed, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
-import { useSettings } from '@/common/settings';
+import InfoIcon from '@/assets/infoIcon.svg?component';
 
-const props = defineProps<{ title: string }>();
-const { data, isChanged } = useSettings();
-const { locale } = useI18n();
-const head = injectHead();
-
-const prefix = computed(() => data.value?.hostname || 'WB-MGE v.3');
-
-async function updatePageTitle() {
-  useHead({
-    title: `${prefix.value} — ${props.title}`,
-  }, { head });
-}
-
-watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostname'])], () => {
-  // prevent update page title before save
-  if (!isChanged(['hostname'])) {
-    updatePageTitle();
-  }
-}, { immediate: true });
+defineProps<{ title: string; infoLink?: string }>();
 </script>
 
 <template>
   <header class="heading">
     <div class="heading-container">
       <h1 class="heading-title">{{ title }}</h1>
+      <a v-if="infoLink" :href="infoLink" target="_blank">
+        <InfoIcon class="heading-icon" />
+      </a>
     </div>
 
     <div class="heading-actions">
@@ -67,5 +49,11 @@ watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostnam
   display: flex;
   gap: 12px;
   height: min-content;
+}
+
+.heading-icon {
+  color: var(--text-color);
+  width: 20px;
+  height: 34px;
 }
 </style>

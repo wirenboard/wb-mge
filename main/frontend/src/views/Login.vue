@@ -4,13 +4,11 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
 import { useAlerts } from '@/common/alert';
-import { changeLang, Locale } from '@/i18n';
-import { documentation } from '@/common/links';
 import { Auth } from '@/common/types';
 import AlertsWrapper from '@/components/AlertsWrapper.vue';
 import { api } from '@/utils/api';
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
 const { showAlert } = useAlerts();
@@ -39,11 +37,11 @@ const login = async () => {
     <fieldset class="login-wrapper">
       <form class="login-form" @submit.prevent="login">
         <div class="login-fields">
-          <label for="username">{{ t('login') }}</label>
-          <input id="username" v-model="data.login" name="username" type="text" autocomplete="username" required autofocus />
+          <label for="login">{{ t('login') }}</label>
+          <input id="login" v-model="data.login" name="login" type="text" required autofocus />
 
           <label for="password">{{ t('password') }}</label>
-          <input id="password" v-model="data.pass" name="pass" type="password" autocomplete="current-password" required />
+          <input id="password" v-model="data.pass" name="pass" type="password" required />
         </div>
 
         <div class="login-actions">
@@ -52,15 +50,8 @@ const login = async () => {
       </form>
     </fieldset>
     <nav class="login-links">
-      <a :href="documentation" target="_blank">{{ t('documentation') }}</a>
-
-      <label class="login-languageWrapper">
-        <span class="login-languageIcon" />
-        <select v-model="locale" class="login-language" @change="changeLang(locale as Locale)">
-          <option value="en">English</option>
-          <option value="ru">Русский</option>
-        </select>
-      </label>
+      <a href="https://wirenboard.com/wiki/WB-MGE_v.3_Modbus-Ethernet_Interface_Converter" target="_blank">{{ t('help') }}</a>
+      <a href="https://wirenboard.com/" target="_blank">{{ t('website') }}</a>
     </nav>
   </section>
   <AlertsWrapper />
@@ -106,54 +97,28 @@ const login = async () => {
 .login-links {
   display: flex;
   gap: 24px;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  max-width: 350px;
-  box-sizing: border-box;
-  padding: 0 12px 0 24px;
 }
 
 .login-links a {
-  font-size: 14px;
-}
-
-.login-languageWrapper {
-  display: flex;
-  align-items: center;
-}
-
-.login-language {
-  border: 0;
-  box-shadow: none;
-  font-size: 14px;
-  background: none;
   color: var(--link-color);
-  cursor: pointer;
-  padding-right: 12px;
+  font-size: 14px;
+  text-decoration: none;
 }
 
-.login-languageIcon {
-  background-image: url("@/assets/locale.svg");
-  background-repeat: no-repeat;
-  background-position:center;
-  background-size: 14px;
-  height: 14px;
-  width: 14px;
+.login-links a:hover {
+  text-decoration: underline;
 }
 </style>
 
 <i18n>
 {
   "en": {
+    "login": "Login",
+    "password": "Password",
     "sign_in": "Sign in",
-    "documentation": "Documentation",
+    "website": "Official website",
+    "help": "Help",
     "wrong_credentials": "Please enter correct login and password"
-  },
-  "ru": {
-    "sign_in": "Войти",
-    "documentation": "Документация",
-    "wrong_credentials": "Введены неверные логин или пароль"
   }
 }
 </i18n>
