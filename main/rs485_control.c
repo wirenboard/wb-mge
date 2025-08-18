@@ -80,5 +80,5 @@ void rs485_control_init(esp_io_expander_handle_t io_expander_handle)
     rs485_term_on_off(RS485_2, false);
     rs485_pupd_on_off(RS485_1, false);
     rs485_pupd_on_off(RS485_2, false);
-    rs485_bus_vout_on_off(true);
+    rs485_bus_vout_on_off(false);
 }
