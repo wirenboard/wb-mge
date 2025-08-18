@@ -59,25 +59,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    enum: [false]
-                  error:
-                    type: string
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    enum: [false]
-                  error:
-                    type: string
+                $ref: '#/components/schemas/ErrorResponse'
 
   /session:
     get:
