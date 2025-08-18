@@ -235,22 +235,53 @@ def test_settings(api):
     # Тест записи настроек с проверкой ограничений
     test_settings = {
         "hostname": "test-device-123",  # Валидный hostname
+        #"login": "testuser123",         # Валидный login # NOTE: Пока не трогаем, иначе дальше ломается авторизация
         "web_port": 8080,               # Валидный порт
         "vout": not original_settings["vout"],  # Переключить bool
+        "io_bus": not original_settings["io_bus"],  # Переключить bool
         "wifi": {
-            "mode": "ap",
+            "mode": "apsta",
+            "ap_auth": "wpa2_psk",
+            "sta_auth": "wpa3_psk",
             "ap_ssid": "TestSSID123",
-            "ap_pass": "testpass123"
+            "ap_pass": "testpass123",
+            "sta_ssid": "StationSSID",
+            "sta_pass": "stapass456",
+            "ap_ip_static": "192.168.4.1",
+            "ap_mask_static": "255.255.255.0",
+            "ap_gw_static": "192.168.4.1"
         },
         "ethernet": {
-            "dhcpc": not original_settings["ethernet"]["dhcpc"]
+            "dhcpc": not original_settings["ethernet"]["dhcpc"],
+            "ip_static": "192.168.1.100",
+            "mask_static": "255.255.255.0",
+            "gw_static": "192.168.1.1"
         },
         "rs485_1": {
-            "baudrate": 115200,
             "term": not original_settings["rs485_1"]["term"],
+            "fail_safe": not original_settings["rs485_1"]["fail_safe"],
+            "baudrate": 115200,
+            "stopbits": "2",
+            "parity": "even",
+            "databits": "8",
             "bridge": {
                 "mode": "server",
-                "port": 5020
+                "port": 5020,
+                "modbus": True
+            }
+        },
+        "rs485_2": {
+            "term": not original_settings["rs485_2"]["term"],
+            "fail_safe": not original_settings["rs485_2"]["fail_safe"],
+            "baudrate": 38400,
+            "stopbits": "1",
+            "parity": "odd",
+            "databits": "7",
+            "bridge": {
+                "mode": "client",
+                "port": 5021,
+                "ip": "192.168.1.50",
+                "modbus": False
             }
         }
     }
@@ -261,14 +292,64 @@ def test_settings(api):
     assert result["success"] == True
     print("✓ Запись настроек с валидными данными работает")
 
-    # Проверить что настройки сохранились
+    # Проверить что все настройки сохранились
     response = api.get_settings()
     assert response.status_code == 200
     new_settings = response.json()
+
+    # Проверить основные параметры
     assert new_settings["hostname"] == "test-device-123"
+    # assert new_settings["login"] == "testuser123"
     assert new_settings["web_port"] == 8080
     assert new_settings["vout"] == test_settings["vout"]
-    print("✓ Настройки корректно сохраняются")
+    assert new_settings["io_bus"] == test_settings["io_bus"]
+
+    # Проверить WiFi настройки
+    wifi = new_settings["wifi"]
+    assert wifi["mode"] == "apsta"
+    assert wifi["ap_auth"] == "wpa2_psk"
+    assert wifi["sta_auth"] == "wpa3_psk"
+    assert wifi["ap_ssid"] == "TestSSID123"
+    assert wifi["ap_pass"] == "testpass123"
+    assert wifi["sta_ssid"] == "StationSSID"
+    assert wifi["sta_pass"] == "stapass456"
+    assert wifi["ap_ip_static"] == "192.168.4.1"
+    assert wifi["ap_mask_static"] == "255.255.255.0"
+    assert wifi["ap_gw_static"] == "192.168.4.1"
+
+    # Проверить Ethernet настройки
+    eth = new_settings["ethernet"]
+    assert eth["dhcpc"] == test_settings["ethernet"]["dhcpc"]
+    assert eth["ip_static"] == "192.168.1.100"
+    assert eth["mask_static"] == "255.255.255.0"
+    assert eth["gw_static"] == "192.168.1.1"
+
+    # Проверить RS485_1 настройки
+    rs485_1 = new_settings["rs485_1"]
+    assert rs485_1["term"] == test_settings["rs485_1"]["term"]
+    assert rs485_1["fail_safe"] == test_settings["rs485_1"]["fail_safe"]
+    assert rs485_1["baudrate"] == 115200
+    assert rs485_1["stopbits"] == "2"
+    assert rs485_1["parity"] == "even"
+    assert rs485_1["databits"] == "8"
+    assert rs485_1["bridge"]["mode"] == "server"
+    assert rs485_1["bridge"]["port"] == 5020
+    assert rs485_1["bridge"]["modbus"] == True
+
+    # Проверить RS485_2 настройки
+    rs485_2 = new_settings["rs485_2"]
+    assert rs485_2["term"] == test_settings["rs485_2"]["term"]
+    assert rs485_2["fail_safe"] == test_settings["rs485_2"]["fail_safe"]
+    assert rs485_2["baudrate"] == 38400
+    assert rs485_2["stopbits"] == "1"
+    assert rs485_2["parity"] == "odd"
+    assert rs485_2["databits"] == "7"
+    assert rs485_2["bridge"]["mode"] == "client"
+    assert rs485_2["bridge"]["port"] == 5021
+    assert rs485_2["bridge"]["ip"] == "192.168.1.50"
+    assert rs485_2["bridge"]["modbus"] == False
+
+    print("✓ Все настройки корректно сохраняются")
 
     # Тест с невалидными данными
     invalid_settings = {
