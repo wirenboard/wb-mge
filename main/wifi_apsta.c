@@ -1,4 +1,5 @@
 #include "wifi_apsta.h"
+#include "config.h"
 
 #include <string.h>
 
@@ -10,7 +11,6 @@
 #include "freertos/task.h"
 #include "lwip/ip4_addr.h"
 
-#define WIFI_CHAN_AP                        1
 #define MAX_STA_CONN                        5
 #define STA_ESP_MAXIMUM_RETRY               10
 #define WIFI_WAITING_EVENTS_STACK_SIZE      (1024 * 6)
@@ -80,7 +80,7 @@ void wifi_waiting_events(void* pvParameter)
     vTaskDelete(NULL);
 }
 
-esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
+esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
 {
     if (apsta_cfg->wifi_mode == WIFI_MODE_NULL) {
         return ESP_OK;
@@ -117,11 +117,11 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
                 {
                     .channel = WIFI_CHAN_AP,
                     .max_connection = MAX_STA_CONN,
-                    .authmode = WIFI_AUTH_WPA_WPA2_PSK,
+                    .authmode = apsta_cfg->wifi_auth_mode_sta,
                 },
         };
         if (strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN) == 0) {
-            wifi_config_ap.ap.authmode = WIFI_AUTH_OPEN;
+            wifi_config_ap.ap.authmode = apsta_cfg->wifi_auth_mode_ap;
         }
         memcpy(&wifi_config_ap.ap.ssid, apsta_cfg->ap_ssid, strnlen(apsta_cfg->ap_ssid, WIFI_SSID_MAX_LEN));
         wifi_config_ap.ap.ssid_len = strnlen(apsta_cfg->ap_ssid, WIFI_SSID_MAX_LEN);
@@ -140,7 +140,18 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg)
     }
 
     if ((apsta_cfg->wifi_mode == WIFI_MODE_STA) || (apsta_cfg->wifi_mode == WIFI_MODE_APSTA)) {
-        esp_netif_create_default_wifi_sta();
+        esp_netif_t* esp_netif_sta = esp_netif_create_default_wifi_sta();
+
+        // Set DHCP hostname for WiFi Station
+        if (netif_hostname != NULL && esp_netif_sta != NULL) {
+            err = esp_netif_set_hostname(esp_netif_sta, netif_hostname);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "WiFi STA DHCP hostname set to: %s", netif_hostname);
+            } else {
+                ESP_LOGE(TAG, "Failed to set WiFi STA hostname: %s", esp_err_to_name(err));
+            }
+        }
+
         wifi_config_t wifi_config_sta = {
             .sta =
                 {

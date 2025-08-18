@@ -12,32 +12,32 @@ static const char *TAG = "rs485_control";
 #define FAILSAFE_485_2_PIN   IO_EXPANDER_PIN_NUM_3
 #define VOUT_485_PIN         IO_EXPANDER_PIN_NUM_6
 
-void rs485_term_on_off(uint8_t port, bool on)
+void rs485_term_on_off(rs485_port_t port, bool on)
 {
     if (io_expander == NULL) {
         ESP_LOGE(TAG, "io_expander is NULL");
         return;
     }
 
-    if (port == 1) {
+    if (port == RS485_1) {
         esp_io_expander_set_level(io_expander, TERM485_1_PIN, on);
-    } else if (port == 2) {
+    } else if (port == RS485_2) {
         esp_io_expander_set_level(io_expander, TERM485_2_PIN, on);
     } else {
         ESP_LOGE(TAG, "Invalid RS485 port number: %d", port);
     }
 }
 
-void rs485_pupd_on_off(uint8_t port, bool on)
+void rs485_pupd_on_off(rs485_port_t port, bool on)
 {
     if (io_expander == NULL) {
         ESP_LOGE(TAG, "io_expander is NULL");
         return;
     }
 
-    if (port == 1) {
+    if (port == RS485_1) {
         esp_io_expander_set_level(io_expander, FAILSAFE_485_1_PIN, on);
-    } else if (port == 2) {
+    } else if (port == RS485_2) {
         esp_io_expander_set_level(io_expander, FAILSAFE_485_2_PIN, on);
     } else {
         ESP_LOGE(TAG, "Invalid RS485 port number: %d", port);
@@ -67,7 +67,7 @@ void rs485_control_init(esp_io_expander_handle_t io_expander_handle)
     esp_io_expander_set_level(io_expander, TERM485_1_PIN, 0);
     esp_io_expander_set_dir(io_expander, TERM485_2_PIN, IO_EXPANDER_OUTPUT);
     esp_io_expander_set_level(io_expander, TERM485_2_PIN, 0);
-    
+
     esp_io_expander_set_dir(io_expander, FAILSAFE_485_1_PIN, IO_EXPANDER_OUTPUT);
     esp_io_expander_set_level(io_expander, FAILSAFE_485_1_PIN, 0);
     esp_io_expander_set_dir(io_expander, FAILSAFE_485_2_PIN, IO_EXPANDER_OUTPUT);
@@ -76,9 +76,9 @@ void rs485_control_init(esp_io_expander_handle_t io_expander_handle)
     esp_io_expander_set_dir(io_expander, VOUT_485_PIN, IO_EXPANDER_OUTPUT);
     esp_io_expander_set_level(io_expander, VOUT_485_PIN, 0);
 
-    rs485_term_on_off(1, false);
-    rs485_term_on_off(2, false);
-    rs485_pupd_on_off(1, false);
-    rs485_pupd_on_off(2, false);
-    rs485_bus_vout_on_off(true);
+    rs485_term_on_off(RS485_1, false);
+    rs485_term_on_off(RS485_2, false);
+    rs485_pupd_on_off(RS485_1, false);
+    rs485_pupd_on_off(RS485_2, false);
+    rs485_bus_vout_on_off(false);
 }

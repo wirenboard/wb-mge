@@ -12,10 +12,12 @@
 #define ETH_MDC_GPIO        GPIO_NUM_23
 #define ETH_MDIO_GPIO       GPIO_NUM_18
 #define ETH_PHY_RST_GPIO    GPIO_NUM_5
-#define ETH_PHY_ADDR        0           // LED0, LED1 are pulled down 
+#define ETH_PHY_ADDR        0           // LED0, LED1 are pulled down
 #define ETH_EXT_CLK_GPIO    GPIO_NUM_0  // External clock on GPIO0
 
-esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip)
+static esp_eth_handle_t s_eth_handle = NULL;
+
+esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip, char * netif_hostname)
 {
     esp_err_t err = ESP_OK;
 
@@ -46,13 +48,12 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
     esp_eth_phy_t *phy = esp_eth_phy_new_ksz80xx(&phy_config);
 #endif
 
-    esp_eth_handle_t eth_handle = NULL;
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
-    
-    err = esp_eth_driver_install(&config, &eth_handle);
+
+    err = esp_eth_driver_install(&config, &s_eth_handle);
     if (err != ESP_OK){
-        if (eth_handle != NULL) {
-            esp_eth_driver_uninstall(eth_handle);
+        if (s_eth_handle != NULL) {
+            esp_eth_driver_uninstall(s_eth_handle);
         }
         if (mac != NULL) {
             mac->del(mac);
@@ -69,8 +70,9 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
 
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
     eth_netif = esp_netif_new(&cfg);
-    eth_netif_glue = esp_eth_new_netif_glue(eth_handle);
+    eth_netif_glue = esp_eth_new_netif_glue(s_eth_handle);
     ESP_ERROR_CHECK(esp_netif_attach(eth_netif, eth_netif_glue));
+    esp_netif_set_hostname(eth_netif, netif_hostname);
     if (static_ip != NULL) {
         esp_netif_dhcpc_stop(eth_netif);
         err = esp_netif_set_ip_info(eth_netif, static_ip);
@@ -95,10 +97,15 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
         return err;
     }
 
-    err = esp_eth_start(eth_handle);
+    err = esp_eth_start(s_eth_handle);
     if (err != ESP_OK) {
         return err;
     }
 
     return ESP_OK;
+}
+
+esp_eth_handle_t ethernet_get_handle(void)
+{
+    return s_eth_handle;
 }
