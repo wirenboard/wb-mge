@@ -217,7 +217,7 @@ def test_settings(api):
         assert isinstance(rs485["term"], bool)
         assert isinstance(rs485["fail_safe"], bool)
         assert isinstance(rs485["baudrate"], int)
-        assert rs485["baudrate"] in [300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400]
+        assert rs485["baudrate"] in [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
         assert rs485["stopbits"] in ["1", "1.5", "2"]
         assert rs485["parity"] in ["none", "even", "odd"]
         assert rs485["databits"] in ["5", "6", "7", "8"]
