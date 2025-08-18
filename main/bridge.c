@@ -148,7 +148,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
     }
 
     esp_err_t err = ESP_OK;
-    ESP_LOGI(TAG, "received %d bytes from tcp", len);
+    ESP_LOGI(TAG, "received %d bytes from tcp port %d", len, desc->port);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_INFO);
 
     if (serial_desc[idx]) {
@@ -169,9 +169,15 @@ static esp_err_t bridge_init_port(serial_config_t *config, bridge_mode_t mode, i
     switch (mode) {
         case BRIDGE_MODE_SERVER:
             err = tcp_server_init(port, process_data_from_tcp, tcp_desc);
+            if (err == ESP_OK && *tcp_desc) {
+                (*tcp_desc)->port = port;
+            }
             break;
         case BRIDGE_MODE_CLIENT:
             err = tcp_client_init(ip, port, process_data_from_tcp, tcp_desc);
+            if (err == ESP_OK && *tcp_desc) {
+                (*tcp_desc)->port = port;
+            }
             break;
         default:
             ESP_LOGE(TAG, "unknown bridge mode");
