@@ -294,14 +294,14 @@ static const char *get_dynamic_hostname_default(void)
 }
 
 // Helper function to get the appropriate default value (including dynamic ones)
-static const char *get_setting_default_value(const char *key, const setting_item_t *item)
+static const char *get_setting_default_value(const setting_item_t *item)
 {
     // Special cases for dynamic defaults
-    if (strncmp(key, KEY_AP_PASS, SETTING_ITEM_MAX_STR_LEN) == 0) {
+    if (strncmp(item->key, KEY_AP_PASS, SETTING_ITEM_MAX_STR_LEN) == 0) {
         return get_dynamic_ap_pass_default();
-    } else if (strncmp(key, KEY_HOSTNAME, SETTING_ITEM_MAX_STR_LEN) == 0) {
+    } else if (strncmp(item->key, KEY_HOSTNAME, SETTING_ITEM_MAX_STR_LEN) == 0) {
         return get_dynamic_hostname_default();
-    } else if (strncmp(key, KEY_AP_SSID, SETTING_ITEM_MAX_STR_LEN) == 0) {
+    } else if (strncmp(item->key, KEY_AP_SSID, SETTING_ITEM_MAX_STR_LEN) == 0) {
         return get_dynamic_hostname_default();
     } else {
         return item->default_value;
@@ -378,7 +378,7 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized)
 
         // Check if the setting already exists in storage
         if ((only_uninitialized == false) || !storage_iface->has_key(item->key)) {
-            const char *default_value = get_setting_default_value(item->key, item);
+            const char *default_value = get_setting_default_value(item);
 
             esp_err_t ret = storage_iface->write_str(item->key, default_value);
             if (ret == ESP_OK) {
@@ -453,7 +453,7 @@ esp_err_t setting_items_read(const char *key, char *value)
     if (result != ESP_OK) {
         // Use default value if not found in storage
         if (result == ESP_ERR_NOT_FOUND) {
-            const char *default_value = get_setting_default_value(key, item);
+            const char *default_value = get_setting_default_value(item);
 
             strncpy(value, default_value, SETTING_ITEM_MAX_STR_LEN - 1);
             value[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
