@@ -1,15 +1,28 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useInfo } from '@/common/info';
-import { useSettings } from '@/common/settings';
+import { firmwareVersion } from '@/common/global';
+import { Info } from '@/common/types';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
-import Switch from '@/components/Switch.vue';
-import RsStatus from '@/components/RsStatus.vue';
+import { api } from '@/utils/api';
 
 const { t } = useI18n();
-const { info } = useInfo();
-const { data: settings, updateSettings } = useSettings();
+const dataArray = ref<any[]>([[], [], []]);
+
+const categorizeData = (key: string) => {
+  if (key.startsWith('sta_') || key === 'con_sta') return 2;
+  if (key.startsWith('eth_') || key === 'con_eth') return 1;
+  return 0;
+};
+
+dataArray.value = await api<Info>('info').then((res) => {
+  firmwareVersion.value = res.firmware;
+  Object.entries(res).forEach(([key, value]) => {
+    dataArray.value[categorizeData(key)].push({ [key]: value });
+  });
+  return dataArray.value;
+});
 
 const getDisplayValue = (val: any) => {
   if (typeof val === 'boolean') {
@@ -22,101 +35,48 @@ const getDisplayValue = (val: any) => {
 
 <template>
   <Layout>
-    <Heading :title="t('title')" />
+    <Heading :title="t('title')" info-link="https://wirenboard.com/wiki/WB-MGE_v.3_Modbus-Ethernet_Interface_Converter" />
 
     <div class="dashboard">
       <fieldset class="dashboard-container">
+        <legend>{{ t('common_info') }}</legend>
+        <template v-for="(item, key) in dataArray[0]" :key="key">
+          <div>{{ t(Object.keys(item)[0]) }}</div>
+          <div>{{ getDisplayValue(Object.values(item)[0]) }}</div>
+        </template>
+      </fieldset>
+
+      <fieldset class="dashboard-container">
         <legend>{{ t('ethernet') }}</legend>
-
-        <div>{{ t('connection') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.con_eth) }}</div>
-
-        <div>{{ t('ip') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.ip) }}</div>
-
-        <div>{{ t('mac') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.mac) }}</div>
+        <template v-for="(item, key) in dataArray[1]" :key="key">
+          <div>{{ t(Object.keys(item)[0]) }}</div>
+          <div>{{ getDisplayValue(Object.values(item)[0]) }}</div>
+        </template>
       </fieldset>
 
       <fieldset class="dashboard-container">
-        <legend>{{ t('wifi') }}</legend>
-
-        <div>{{ t('connection') }}</div>
-        <div>{{ getDisplayValue(info!.wifi.con_sta) }}</div>
-
-        <div>{{ t('wifi_mode') }}</div>
-        <div>{{ t(settings!.wifi.mode) }}</div>
-
-        <div><b>{{ t('access_point') }}</b></div>
-        <div></div>
-
-        <template v-if="settings!.wifi.mode === 'apsta'">
-          <div>{{ t('ip') }}</div>
-          <div>{{ settings!.wifi.ap_ip_static }}</div>
-
-          <div>{{ t('mac') }}</div>
-          <div>{{ info!.wifi.ap_mac }}</div>
+        <legend>{{ t('station') }}</legend>
+        <template v-for="(item, key) in dataArray[2]" :key="key">
+          <div>{{ t(Object.keys(item)[0]) }}</div>
+          <div>{{ getDisplayValue(Object.values(item)[0]) }}</div>
         </template>
-        <template v-else>
-          <div>{{ t('ip') }}</div>
-          <div>{{ getDisplayValue(settings!.wifi.mode === 'sta' ? info!.wifi.sta_ip : settings!.wifi.ap_ip_static) }}</div>
-
-          <div>{{ t('mac') }}</div>
-          <div>{{ getDisplayValue(settings!.wifi.mode === 'sta' ? info!.wifi.sta_mac : info!.wifi.ap_mac) }}</div>
-        </template>
-
-        <template v-if="['sta', 'apsta'].includes(settings!.wifi.mode)">
-          <div>{{ t('connections_count') }}</div>
-          <div>{{ info!.wifi.con_ap }}</div>
-
-          <div>{{ t('rssi') }}</div>
-          <div>{{ info?.wifi.sta_rssi }}</div>
-        </template>
-
-        <div><b>{{ t('router') }}</b></div>
-        <div></div>
-
-        <div>{{ t('ip') }}</div>
-        <div>{{ info!.wifi.sta_ip }}</div>
-
-        <div>{{ t('mac') }}</div>
-        <div>{{ info!.wifi.sta_mac }}</div>
-      </fieldset>
-
-      <fieldset class="dashboard-container">
-        <legend>{{ t('gateway') }}</legend>
-
-        <div>{{ t('power_vout') }}</div>
-        <div>
-          <Switch
-            id="power_vout"
-            v-model="settings!.vout"
-            @change="() => updateSettings({ vout: settings!.vout })"
-          />
-        </div>
-        <div>{{ t('power') }}</div>
-        <div>{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
-
-        <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
-
-        <RsStatus title="RS-485 2" :info="info!.rs485_2" :settings="settings!.rs485_2" />
       </fieldset>
     </div>
   </Layout>
 </template>
 
-<style>
+<style scoped>
 .dashboard {
-  columns: 2;
+  column-count: 3;
   column-gap: 12px;
 
   @media (max-width: 1320px) {
-    columns: 2;
+    column-count: 2;
   }
 
-  @media (max-width: 1024px) {
-    columns: 1;
-    max-width: 470px;
+  @media (max-width: 936px) {
+    column-count: 1;
+    width: fit-content;
   }
 
   @media (max-width: 500px) {
@@ -127,23 +87,11 @@ const getDisplayValue = (val: any) => {
 .dashboard-container {
   display: grid;
   gap: 6px 24px;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: fit-content(180px) fit-content(100px);
   align-items: center;
-  justify-items: end;
+  justify-items: flex-start;
   page-break-inside: avoid;
   break-inside: avoid;
-}
-
-.dashboard-container div {
-  height: 33px;
-}
-
-.dashboard-container div:nth-child(even) {
-  justify-self: start;
-}
-
-.dashboard-container div:nth-child(odd) {
-  justify-self: end;
 }
 </style>
 
@@ -151,49 +99,24 @@ const getDisplayValue = (val: any) => {
 {
   "en": {
     "title": "Dashboard",
-
-    "connection": "Connection",
-    "ip": "IP address",
-    "mac": "MAC address",
+    "common_info": "Common info",
+    "ethernet": "Ethernet",
+    "station": "Station",
+    "device_name": "Device name",
+    "firmware": "Firmware",
+    "hardware": "Hardware",
+    "serial_num": "Serial number  ",
+    "con_eth": "Connection",
+    "eth_ip": "IP",
+    "eth_mask": "Submask",
+    "eth_gw": "Gateway",
+    "eth_mac": "MAC address",
+    "con_sta": "Connection",
+    "sta_ip": "IP",
+    "sta_mask": "Submask",
+    "sta_gw": "Gateway",
     "enabled": "Enabled",
-    "disabled": "Disabled",
-
-    "ethernet": "Ethernet",
-
-    "wifi": "Wi-Fi",
-    "wifi_mode": "Mode",
-    "router": "Router",
-    "access_point": "Access Point",
-    "connections_count": "Number of connections",
-    "rssi": "RSSI",
-
-    "gateway": "Gateway",
-    "power_vout": "Power Vout",
-    "power": "Power",
-    "v": "V"
-  },
-  "ru": {
-    "title": "Обзор",
-
-    "connection": "Состояние",
-    "ip": "IP-адрес",
-    "mac": "MAC-адрес",
-    "enabled": "Подключено",
-    "disabled": "Отключено",
-
-    "ethernet": "Ethernet",
-
-    "wifi": "Wi-Fi",
-    "router": "Роутер",
-    "access_point": "Точка доступа",
-    "wifi_mode": "Роль",
-    "connections_count": "Количество подключений",
-    "rssi": "RSSI",
-
-    "gateway": "Шлюз",
-    "power_vout": "Питание Vout",
-    "power": "Напряжение питания",
-    "v": "В"
+    "disabled": "Disabled"
   }
 }
 </i18n>

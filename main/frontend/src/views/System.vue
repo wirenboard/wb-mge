@@ -1,37 +1,40 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { changeLang, type Locale } from '@/i18n';
-import SaveIcon from '@/assets/save.svg?component';
 import { useAlerts } from '@/common/alert';
-import { useInfo } from '@/common/info';
-import { documentation, email, support, website } from '@/common/links';
+import { firmwareVersion } from '@/common/global';
+import { Info } from '@/common/types';
 import { useSettings } from '@/common/settings';
-import { useUptime } from '@/common/uptime';
 import Button from '@/components/Button.vue';
-import Configuration from '@/components/Configuration.vue';
-import Heading from '@/components/Heading.vue';
-import Info from '@/components/Info.vue';
-import InputNumber from '@/components/InputNumber.vue';
 import FileUpload from '@/components/FileUpload.vue';
+import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
+import SettingsActions from '@/components/SettingsActions.vue';
 import { api } from '@/utils/api';
 
-const { t, locale } = useI18n();
-const language = ref<Locale>(locale.value as Locale);
+const { t } = useI18n();
 const firmwareFile = ref();
 const loadedMethod = ref();
-const isChangePassword = ref(false);
 const { showAlert } = useAlerts();
-const { data: settings, isChanged, updateSettings } = useSettings();
-const { isReconnecting, uptime } = useUptime();
-const { info } = useInfo();
+const { data, isChanged, updateSettings } = await useSettings();
+
+const getFirmwareVersion = async () => {
+  return api<Info>('info').then((res) => {
+    firmwareVersion.value = res?.firmware;
+  });
+};
+
+if (!firmwareVersion.value) {
+  await getFirmwareVersion();
+}
 
 const updateFirmware = async () => {
   loadedMethod.value = 'firmware';
   showAlert(t('firmware_update_processed'), { type: 'success' });
 
   await api('update', firmwareFile.value[0], true);
+  // TODO add firmware update handler
+  await getFirmwareVersion();
   loadedMethod.value = null;
   location.reload();
 };
@@ -46,146 +49,75 @@ const cmd = async (command: string, confirmText?: string) => {
 
   loadedMethod.value = command;
   await api('cmd', { cmd: command });
-  isReconnecting.value = true;
   loadedMethod.value = null;
-  setTimeout(() => {
-    location.reload();
-  }, 3500);
-};
-
-const updateInterface = () => {
-  const val: any = {
-    login: settings.value!.login,
-  };
-
-  if (isChangePassword.value) {
-    val.pass = settings.value!.pass;
-  }
-
-  updateSettings(val);
-  isChangePassword.value = false;
-  changeLang(language.value);
+  location.reload();
 };
 </script>
 
 <template>
   <Layout>
-    <Heading :title="t('title')" />
+    <Heading :title="t('title')" info-link="https://wirenboard.com/wiki/WB-MGE_v.3_Modbus-Ethernet_Interface_Converter" />
 
-    <div class="system">
-      <fieldset class="system-container">
-        <legend>{{ t('device') }}</legend>
-        <div>{{ t('hostname') }}</div>
-        <form class="system-data system-saveWrapper" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
-          <input v-model="settings!.hostname" type="text" name="hostname">
-          <button type="submit" :disabled="!settings!.hostname || !isChanged(['hostname'])">
-            <SaveIcon class="system-save" />
-          </button>
-        </form>
-
-        <div>{{ t('serial_num') }}</div>
-        <div class="system-data">
-          {{ info!.serial_num }}
-        </div>
-
-        <div>{{ t('uptime') }}</div>
-        <div class="system-data">
-          <template v-if="uptime.days">
-            <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
-          </template>
-          <template v-if="uptime.hours">
-            <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
-          </template>
-          <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
-        </div>
-
-        <div>{{ t('firmware_version') }}</div>
-        <div class="system-data">
-          {{ info?.firmware }}
-        </div>
-
-        <div>{{ t('firmware_update') }}</div>
-        <div class="system-data">
-          <FileUpload v-model="firmwareFile" :placeholder="t('choose_firmware')" :disabled="loadedMethod === 'firmware'" @upload="updateFirmware" />
-        </div>
-        <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
-
-        <div>{{ t('reboot') }}</div>
-        <div class="system-data">
-          <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>{{ t('interface') }}</legend>
+    <div v-if="data" class="system-container">
+      <fieldset class="network-fieldset">
+        <legend>{{ t('credentials') }}</legend>
         <form
-          class="system-container"
-          @submit.prevent="updateInterface">
-          <label for="port">{{ t('port') }}</label>
-          <div class="system-data">
-            <InputNumber id="port" v-model="settings!.web_port" type="text" name="port" autocomplete="port" required />
-          </div>
+          class="system-infoInputs"
+          @submit.prevent="updateSettings({
+            login: data.login,
+            pass: data.pass,
+          })">
+          <label for="login">{{ t('login') }}</label>
+          <input id="login" v-model="data.login" type="text" name="login" required />
 
-          <label for="username">{{ t('login') }}</label>
-          <div class="system-data">
-            <input id="username" v-model="settings!.login" type="text" name="username" autocomplete="username" required />
-          </div>
-
-          <label for="new-password">{{ t('password') }}</label>
-          <div class="system-data">
-            <button v-if="!isChangePassword" class="system-textButton" type="button" @click="isChangePassword = true">{{ t('change_password') }}</button>
-            <input v-else id="new-password" v-model="settings!.pass" v-focus required :placeholder="t('pass_placeholder')" autocomplete="new-password" type="password" name="new-password" />
-          </div>
-
-          <label for="language">{{ t('language') }}</label>
-          <div class="system-data">
-            <select id="language" v-model="language" name="language">
-              <option value="en">English</option>
-              <option value="ru">Русский</option>
-            </select>
-          </div>
+          <label for="pass">{{ t('pass') }}</label>
+          <input id="pass" v-model="data.pass" type="password" name="pass" />
 
           <Button
-            class="system-submit"
+            class="network-submit"
             type="submit"
-            :disabled="!isChanged(['login', 'pass']) && language === locale"
+            :disabled="!isChanged(['login', 'pass'])"
           >
             {{ t('save') }}
           </Button>
         </form>
       </fieldset>
 
-      <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
+      <fieldset class="system-info">
+        <legend>{{ t('firmware_update') }}</legend>
 
-      <fieldset class="system-container">
-        <legend>{{ t('links') }}</legend>
+        <div>{{ t('current_firmware_version') }} {{ firmwareVersion }}</div>
+        <FileUpload v-model="firmwareFile" :placeholder="t('choose_firmware')" :disabled="loadedMethod === 'firmware'" @upload="updateFirmware" />
+      </fieldset>
 
-        <a :href="documentation" target="_blank">{{ t('documentation') }}</a>
-        <div></div>
+      <fieldset class="system-info">
+        <legend>{{ t('settings_backup') }}</legend>
 
-        <a v-if="locale === 'ru'" :href="support" target="_blank">{{ t('support') }}</a>
-        <a v-else :href="`mailto: ${email}`">{{ t('support') }}:&nbsp;{{ email }}</a>
-        <div></div>
+        <SettingsActions />
+      </fieldset>
 
-        <a :href="website" target="_blank">{{ t('website') }}</a>
-        <div></div>
+      <fieldset class="system-info">
+        <legend>{{ t('danger_zone') }}</legend>
+
+        <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('reboot') }}</Button>
+        <Button type="button" variant="danger" :disabled="loadedMethod === 'set_default_settings'" @click="cmd('set_default_settings', t('factory_reset_confirm'))">{{ t('set_default_settings') }}</Button>
       </fieldset>
     </div>
   </Layout>
 </template>
 
 <style scoped>
-.system {
-  columns: 2;
+.system-container {
+  column-count: 3;
   column-gap: 12px;
 
   @media (max-width: 1320px) {
-    columns: 2;
+    column-count: 2;
   }
 
-  @media (max-width: 1024px) {
-    columns: 1;
-    max-width: 470px;
+  @media (max-width: 936px) {
+    column-count: 1;
+    width: fit-content;
   }
 
   @media (max-width: 500px) {
@@ -193,64 +125,24 @@ const updateInterface = () => {
   }
 }
 
-.system-container {
-  display: grid;
-  gap: 6px 24px;
-  grid-template-columns: 45% 55%;
-  align-items: center;
-  justify-items: flex-start;
+.system-info {
   page-break-inside: avoid;
   break-inside: avoid;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.system-container div {
-  height: 33px;
+.system-infoInputs {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: fit-content(100px) fit-content(100px);
   align-items: center;
-  display: flex;
-}
-
-.system-container div:nth-child(odd),
-.system-data {
-  width: calc(100% - 24px);
-  display: flex;
-  justify-content: end;
-}
-
-.system-submit {
-  margin-top: 14px;
-}
-
-.system-textButton {
-  appearance: none;
-  background: transparent;
-  color: var(--text-color);
-  text-decoration: underline;
-}
-
-.system-textButton:hover,
-.system-textButton:focus{
-  background: transparent;
-  outline: none;
-  box-shadow: none;
-  color: var(--link-color);
+  justify-items: flex-start;
 }
 
 .system-info * {
   width: fit-content;
-}
-
-.system-saveWrapper {
-  display: flex;
-  gap: 6px;
-}
-
-.system-save {
-  width: 12px;
-  height: 12px;
-}
-
-.system-uptime {
-  margin-right: 4px;
 }
 </style>
 
@@ -258,49 +150,18 @@ const updateInterface = () => {
 {
   "en": {
     "title": "System",
-    "device": "Device",
-    "hostname": "Hostname",
-    "serial_num": "Serial number",
-    "uptime": "Uptime",
-    "uptime_days": "- | {n} day | {n} days | {n} days",
-    "uptime_hours": "less than an hour | {n} hour | {n} hours | {n} hours",
-    "uptime_minutes": "minute | {n} minute | {n} minutes | {n} minutes",
-    "interface": "Web interface",
-    "language": "Language",
-    "firmware_version": "Firmware version",
+    "credentials": "Credentials",
+    "login": "Login",
+    "pass": "Password",
     "firmware_update": "Firmware update",
-    "wirmware_update_info": "The device will reboot after the update",
-    "choose_firmware": "Choose file",
+    "settings_backup": "Settings backup",
+    "danger_zone": "Danger zone",
+    "choose_firmware": "Choose firmware",
+    "current_firmware_version": "Current version",
     "firmware_update_processed": "Firmware update in progress",
-    "reboot": "Reboot",
-    "restart": "Reboot device",
-    "links": "Links",
-    "documentation": "Documentation",
-    "support": "Support",
-    "website": "Buy devices"
-  },
-  "ru": {
-    "title": "Система",
-    "device": "Устройство",
-    "hostname": "Название хоста",
-    "serial_num": "Серийный номер",
-    "uptime": "Время работы",
-    "uptime_days": "- | {n} день | {n} дня | {n} дней",
-    "uptime_hours": "- | {n} час | {n} часа | {n} часов",
-    "uptime_minutes": "минута | {n} минута | {n} минуты | {n} минут",
-    "interface": "Веб-интерфейс",
-    "language": "Язык",
-    "firmware_version": "Версия ПО",
-    "firmware_update": "Обновление ПО",
-    "wirmware_update_info": "После обновления устройство будет перезагружено",
-    "choose_firmware": "Выбрать файл",
-    "firmware_update_processed": "Обновление ПО в процессе",
-    "reboot": "Перезагрузка",
-    "restart": "Перезагрузить",
-    "links": "Ссылки",
-    "documentation": "Документация",
-    "support": "Техподдержка",
-    "website": "Купить устройства"
+    "set_default_settings": "Factory reset",
+    "factory_reset_confirm": "Are you sure you want to do a factory reset?",
+    "reboot": "Reboot"
   }
 }
 </i18n>
