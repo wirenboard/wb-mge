@@ -11,7 +11,13 @@
   --sidebar-background-mobile: #d8d8d8;
   --sidebar-width: 230px;
   --gray-color: #e2e5e8;
+  --gray-text: #bdbdbd;
   --gray-color-hover: #eee;
+  --input-focus-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(92, 179, 0, 0.5);
+}
+
+* {
+  outline-width: 0;
 }
 
 body {
@@ -26,11 +32,13 @@ h1 {
 }
 
 fieldset {
-  box-sizing: border-box;
   border-radius: var(--border-radius);
   border: 1px solid var(--border-color);
   margin-bottom: 12px;
   padding: 12px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  -webkit-column-break-inside: avoid;
 }
 
 legend {
@@ -38,27 +46,39 @@ legend {
   white-space: nowrap;
 }
 
+input,
 input[type="text"],
 input[type="number"],
 input[type="password"],
 select {
+  box-sizing: border-box;
   font-family: inherit;
   font-feature-settings: inherit;
   font-size: 1rem;
   color: var(--text-color);
-  padding: 6px 12px;
+  padding: 5px 12px;
   border: 1px solid var(--border-color);
   outline-color: transparent;
   border-radius: 6px;
   box-shadow: 0 0 #0000,0 0 #0000,0 1px 2px 0 rgba(18,18,23,0.05);
 }
 
+input {
+  width: 100%;
+}
+
+input:focus,
 input[type="text"]:focus,
 input[type="number"]:focus,
 input[type="password"]:focus,
 select:focus {
-  border-color: var(--primary-color);
   outline: none;
+  z-index: 10;
+  box-shadow: var(--input-focus-shadow);
+}
+
+input:disabled {
+  background: var(--gray-color-hover);
 }
 
 input[type="file"] {
@@ -66,7 +86,13 @@ input[type="file"] {
 }
 
 select {
-  padding: 4px 10px;
+  padding: 5px 30px 5px 10px;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("@/assets/chevron.svg");
+  background-size: 10px;
+  background-repeat: no-repeat;
+  background-position: calc(100% - 10px) center;
 }
 
 button {
@@ -91,6 +117,23 @@ button:hover:not(:disabled) {
   border: var(--primary-color-hover);
 }
 
+button:focus {
+  z-index: 10;
+  box-shadow: var(--input-focus-shadow);
+}
+
+a,
+a:visited {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+a:hover,
+a:focus {
+  outline: none;
+  text-decoration: underline;
+}
+
 table {
   border-collapse: collapse;
 }
@@ -113,4 +156,13 @@ table th {
 .v-enter-from,
 .v-leave-to {
   opacity: 0;
+}
+
+@keyframes rotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }

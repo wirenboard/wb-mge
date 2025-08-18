@@ -148,6 +148,9 @@ watch(
 {
   "en": {
     "logout": "Logout"
+  },
+  "ru": {
+    "logout": "Выйти"
   }
 }
 </i18n>
