@@ -4,5 +4,7 @@
 #include "tcp_desc.h"
 #include "bridge.h"
 
-esp_err_t modbus_tcp_init_port(serial_config_t *config, bridge_mode_t mode, int port, uint32_t ip,
+// Инициализация порта в режиме Modbus TCP
+esp_err_t modbus_tcp_init_port(int index, serial_config_t *config,
+                                bridge_mode_t mode, int port, uint32_t ip,
                                 serial_desc_t **serial_desc, tcp_desc_t **tcp_desc);

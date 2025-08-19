@@ -5,6 +5,7 @@
 #include "tcp_server.h"
 #include "modbus_helpers.h"
 #include "packet_queue.h"
+#include "rs485_busy_monitor.h"
 
 //------------------------------------------------------------------------------
 
@@ -12,7 +13,7 @@
 
 #define MODBUS_TCP_TASK_STACK_SIZE          3072        // Размер стека каждой задачи
 #define MODBUS_TCP_TASK_PRIORITY            4           // Приоритет задач
-#define MODBUS_TCP_MAX_TASK_COUNT           2           // Максимальное количество задач
+#define MODBUS_TCP_MAX_TASK_COUNT           2           // Максимальное количество задач (портов)
 
 #define MODBUS_TCP_QUEUE_LEN                10          // Длина очереди запросов от клиентов
 
@@ -24,6 +25,7 @@
 
 typedef struct {
     bool initialized;
+    int index;
     serial_desc_t* serial_desc;
     tcp_desc_t* tcp_desc;
     bridge_mode_t mode;
@@ -105,7 +107,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 
     mb_tcp_task_ctx_t* ctx = find_ctx_by_serial_desc(desc);
     if (!ctx) {
-        ESP_LOGE(TAG, "Unknown tcp_desc in process_data_from_tcp()");
+        ESP_LOGE(TAG, "Unknown serial_desc in process_data_from_serial()");
         return;
     }
     if (!ctx->initialized) {
@@ -115,8 +117,10 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 
     // TODO: Add fast modbus support (0xFF truncation)
 
-    ESP_LOGD(TAG, "Processing data from serial");
+    ESP_LOGD(TAG, "Processing data from serial port %d", desc->port_num);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_DEBUG);
+
+    rs485_busy_monitor_update_activity(ctx->index);
 
     int check_res = modbus_rtu_check_response(data, len, 0);
     if (check_res != 0) {
@@ -153,7 +157,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
 
     mb_tcp_task_ctx_t* ctx = find_ctx_by_tcp_desc(desc);
     if (!ctx) {
-        ESP_LOGE(TAG, "Unknown tcp_desc in process_data_from_tcp");
+        ESP_LOGE(TAG, "Unknown tcp_desc in process_data_from_tcp()");
         return;
     }
     if (!ctx->initialized) {
@@ -204,7 +208,7 @@ static void modbus_tcp_server_task(void *arg)
 
         // Принятый пакет уже проверен в колбэке process_data_from_tcp()
 
-        ESP_LOGD(TAG, "Fetch TCP request from queue, length: %u", tcp_req_len);
+        ESP_LOGD(TAG, "Fetch TCP request from queue, port %d, length: %u", ctx->serial_desc->port_num, tcp_req_len);
         ESP_LOG_BUFFER_HEX_LEVEL(TAG, tcp_req_buf, tcp_req_len, ESP_LOG_DEBUG);
 
         // TODO: Add special commands detection and response (e.g. fast modbus support probe)
@@ -226,8 +230,10 @@ static void modbus_tcp_server_task(void *arg)
             continue;
         }
 
-        ESP_LOGD(TAG, "Sending RTU request, length: %u", rtu_req_len);
+        ESP_LOGD(TAG, "Sending RTU request to port %d, length: %u", ctx->serial_desc->port_num, rtu_req_len);
         ESP_LOG_BUFFER_HEX_LEVEL(TAG, rtu_req_buf, rtu_req_len, ESP_LOG_DEBUG);
+
+        rs485_busy_monitor_update_activity(ctx->index);
 
         esp_err_t send_result = serial_send(ctx->serial_desc, rtu_req_buf, rtu_req_len);
         free(rtu_req_buf);
@@ -243,8 +249,8 @@ static void modbus_tcp_server_task(void *arg)
 
 //------------------------------------------------------------------------------
 
-// Инициализация порта в режиме Modbus TCP
-esp_err_t modbus_tcp_init_port(serial_config_t *config, bridge_mode_t mode, int port, uint32_t ip,
+esp_err_t modbus_tcp_init_port(int index, serial_config_t *config,
+                                bridge_mode_t mode, int port, uint32_t ip,
                                 serial_desc_t **serial_desc, tcp_desc_t **tcp_desc)
 {
     if (mode != BRIDGE_MODE_SERVER) {
@@ -282,6 +288,7 @@ esp_err_t modbus_tcp_init_port(serial_config_t *config, bridge_mode_t mode, int 
     }
 
     mb_tcp_task_ctx_t* ctx = &mb_tcp_task_ctx[mb_tcp_task_count];
+    ctx->index = index;
     ctx->serial_desc = *serial_desc;
     ctx->tcp_desc = *tcp_desc;
     ctx->mode = mode;

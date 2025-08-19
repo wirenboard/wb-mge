@@ -7,12 +7,11 @@
 #include "serial.h"
 #include "tcp_client.h"
 #include "tcp_server.h"
+#include "transparent_tcp.h"
 #include "modbus_tcp.h"
+#include "rs485_busy_monitor.h"
 
-#include "sys_info.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_timer.h"
 #include <string.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
@@ -40,13 +39,17 @@ static const char *TAG = "bridge";
 // Forward declarations
 static bridge_mode_t string_to_bridge_mode(const char *str);
 
-static bool bridge_ready = false;
+typedef struct {
+    serial_config_t serial_config;
+    bridge_mode_t bridge_mode;
+    uint32_t bridge_ip;
+    int bridge_port;
+    bool bridge_mb;
+    serial_desc_t* serial_desc;
+    tcp_desc_t* tcp_desc;
+} bridge_ctx_t;
 
-static serial_desc_t *serial_desc[BRIDGES_COUNT] = {NULL, NULL};
-static tcp_desc_t *tcp_desc[BRIDGES_COUNT] = {NULL, NULL};
-static bridge_mode_t bridge_mode[BRIDGES_COUNT] = {BRIDGE_MODE_DISABLED, BRIDGE_MODE_DISABLED};
-
-static int64_t last_activity_us[BRIDGES_COUNT] = {0, 0}; // microseconds
+static bridge_ctx_t bridge_ctx[BRIDGES_COUNT] = {0};
 
 int tcp_server_active_connections(tcp_server_num_t server_num)
 {
@@ -54,13 +57,11 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
         ESP_LOGE(TAG, "Unknown server number: %d", server_num);
         return 0;
     }
-    if (!tcp_desc[server_num]) {
+    if (!bridge_ctx[server_num].tcp_desc) {
         return 0;
     }
-    return tcp_desc[server_num]->active_connections;
+    return bridge_ctx[server_num].tcp_desc->active_connections;
 }
-
-static void rs485_busy_monitor_task(void *arg);
 
 static bridge_mode_t string_to_bridge_mode(const char *str) {
     if (strncmp(str, BRIDGE_MODE_SERVER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
@@ -71,251 +72,124 @@ static bridge_mode_t string_to_bridge_mode(const char *str) {
     return BRIDGE_MODE_DISABLED;
 }
 
-static void update_rs485_activity(int idx)
+static esp_err_t read_serial_port_config(const int index, serial_config_t* serial_config)
 {
-    last_activity_us[idx] = esp_timer_get_time();
-    if (idx == 0) {
-        sys_info.rs485_1_is_busy = true;
-    } else if (idx == 1) {
-        sys_info.rs485_2_is_busy = true;
-    }
-}
+    static const uart_port_t port_nums[BRIDGES_COUNT] = {SERIAL_PORT_NUM_1, SERIAL_PORT_NUM_2};
+    static const int tx_pins[BRIDGES_COUNT] = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};
+    static const int rx_pins[BRIDGES_COUNT] = {SERIAL_INPUT_PIN_1, SERIAL_INPUT_PIN_2};
+    static const int dir_pins[BRIDGES_COUNT] = {SERIAL_IO_PIN_1, SERIAL_IO_PIN_2};
 
-static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t len)
-{
-    if (!bridge_ready) {
-        ESP_LOGW(TAG, "%s: bridge not ready", __func__);
-        return;
-    }
+    serial_config->port_num = port_nums[index];
+    serial_config->tx_pin = tx_pins[index];
+    serial_config->rx_pin = rx_pins[index];
+    serial_config->dir_pin = dir_pins[index];
 
-    ESP_LOGI(TAG, "received %d bytes from serial port %d", len, desc->port_num);
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_INFO);
+    char key_buf[SETTING_ITEM_MAX_STR_LEN];
+    char value_str[SETTING_ITEM_MAX_STR_LEN];
 
-    int idx = -1;
-    if (desc == serial_desc[0]) {
-        idx = 0;
-    } else if (desc == serial_desc[1]) {
-        idx = 1;
-    } else {
-        ESP_LOGE(TAG, "%s: unknown serial descriptor", __func__);
-        return;
-    }
-
-    update_rs485_activity(idx);
-
-    esp_err_t err = ESP_OK;
-
-    switch (bridge_mode[idx]) {
-        case BRIDGE_MODE_SERVER:
-            if (tcp_desc[idx]) {
-                err = tcp_server_send(tcp_desc[idx], data, len);
-            }
-            break;
-        case BRIDGE_MODE_CLIENT:
-            if (tcp_desc[idx]) {
-                err = tcp_client_send(tcp_desc[idx], data, len);
-            }
-            break;
-        default:
-            ESP_LOGE(TAG, "%s: unknown bridge mode %d", __func__, idx + 1);
-            return;
-    }
-
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "%s: error sending data to tcp", __func__);
-    }
-}
-
-static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
-{
-    if (!bridge_ready) {
-        ESP_LOGW(TAG, "%s: bridge not ready", __func__);
-        return;
-    }
-
-    int idx = -1;
-    if (desc == tcp_desc[0]) {
-        idx = 0;
-    } else if (desc == tcp_desc[1]) {
-        idx = 1;
-    } else {
-        ESP_LOGE(TAG, "%s: unknown tcp descriptor", __func__);
-        return;
-    }
-
-    if (desc->client_sock < 0) {
-        ESP_LOGE(TAG, "%s: no client connected", __func__);
-        return;
-    }
-
-    esp_err_t err = ESP_OK;
-    ESP_LOGI(TAG, "received %d bytes from tcp port %d", len, desc->port);
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_INFO);
-
-    if (serial_desc[idx]) {
-        err = serial_send(serial_desc[idx], data, len);
-        update_rs485_activity(idx);
-
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "%s: error sending data to serial port", __func__);
-        }
-    }
-}
-
-static esp_err_t bridge_init_port(serial_config_t *config, bridge_mode_t mode, int port, uint32_t ip, serial_desc_t **serial_desc,
-                                  tcp_desc_t **tcp_desc)
-{
-    esp_err_t err = ESP_OK;
-
-    switch (mode) {
-        case BRIDGE_MODE_SERVER:
-            err = tcp_server_init(port, process_data_from_tcp, tcp_desc);
-            if (err == ESP_OK && *tcp_desc) {
-                (*tcp_desc)->port = port;
-            }
-            break;
-        case BRIDGE_MODE_CLIENT:
-            err = tcp_client_init(ip, port, process_data_from_tcp, tcp_desc);
-            if (err == ESP_OK && *tcp_desc) {
-                (*tcp_desc)->port = port;
-            }
-            break;
-        default:
-            ESP_LOGE(TAG, "unknown bridge mode");
-            return ESP_FAIL;
-    }
-
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    *serial_desc = serial_init(config, process_data_from_serial);
-
-    if (!*serial_desc) {
-        ESP_LOGE(TAG, "error initializing serial port");
+    snprintf(key_buf, sizeof(key_buf), "baudrate_%d", index + 1);
+    serial_config->baudrate = setting_items_read_int(key_buf);
+    if (!serial_config->baudrate) {
+        ESP_LOGE(TAG, "Failed to read baudrate for port %d", index + 1);
         return ESP_FAIL;
     }
+
+    snprintf(key_buf, sizeof(key_buf), "parity_%d", index + 1);
+    ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read parity for port %d", index + 1);
+    if (strncmp(value_str, UART_PARITY_DISABLE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->parity = UART_PARITY_DISABLE;
+    } else if (strncmp(value_str, UART_PARITY_EVEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->parity = UART_PARITY_EVEN;
+    } else if (strncmp(value_str, UART_PARITY_ODD_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->parity = UART_PARITY_ODD;
+    } else {
+        serial_config->parity = UART_PARITY_DISABLE;
+    }
+
+    snprintf(key_buf, sizeof(key_buf), "stopbits_%d", index + 1);
+    ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read stopbits for port %d", index + 1);
+    if (strncmp(value_str, UART_STOP_BITS_1_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->stopbits = UART_STOP_BITS_1;
+    } else if (strncmp(value_str, UART_STOP_BITS_1_5_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->stopbits = UART_STOP_BITS_1_5;
+    } else if (strncmp(value_str, UART_STOP_BITS_2_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->stopbits = UART_STOP_BITS_2;
+    } else {
+        serial_config->stopbits = UART_STOP_BITS_2;
+    }
+
+    snprintf(key_buf, sizeof(key_buf), "databits_%d", index + 1);
+    ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read databits for port %d", index + 1);
+    if (strncmp(value_str, UART_DATA_5_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->databits = UART_DATA_5_BITS;
+    } else if (strncmp(value_str, UART_DATA_6_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->databits = UART_DATA_6_BITS;
+    } else if (strncmp(value_str, UART_DATA_7_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->databits = UART_DATA_7_BITS;
+    } else if (strncmp(value_str, UART_DATA_8_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        serial_config->databits = UART_DATA_8_BITS;
+    } else {
+        serial_config->databits = UART_DATA_8_BITS;
+    }
+
     return ESP_OK;
 }
 
-static void rs485_busy_monitor_task(void *arg)
+static esp_err_t read_tcp_bridge_config(const int index, bridge_mode_t* mode, uint32_t* ip, int* port, bool* modbus)
 {
-    while (1) {
-        int64_t now = esp_timer_get_time();
-        // Port 1
-        if (sys_info.rs485_1_is_busy && (now - last_activity_us[0]) > RS485_BUSY_TIMEOUT_MS * 1000) {
-            sys_info.rs485_1_is_busy = false;
-        }
-        // Port 2
-        if (sys_info.rs485_2_is_busy && (now - last_activity_us[1]) > RS485_BUSY_TIMEOUT_MS * 1000) {
-            sys_info.rs485_2_is_busy = false;
-        }
-        vTaskDelay(pdMS_TO_TICKS(500));
+    char key_buf[SETTING_ITEM_MAX_STR_LEN];
+    char value_str[SETTING_ITEM_MAX_STR_LEN];
+
+    snprintf(key_buf, sizeof(key_buf), "bridge_mode_%d", index + 1);
+    ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read bridge_mode for port %d", index + 1);
+    *mode = string_to_bridge_mode(value_str);
+
+    snprintf(key_buf, sizeof(key_buf), "bridge_ip_%d", index + 1);
+    ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read bridge_ip for port %d", index + 1);
+    inet_pton(AF_INET, value_str, ip);
+
+    snprintf(key_buf, sizeof(key_buf), "bridge_port_%d", index + 1);
+    *port = setting_items_read_int(key_buf);
+    if (!*port) {
+        ESP_LOGE(TAG, "Failed to read bridge_port for port %d", index + 1);
+        return ESP_FAIL;
     }
+
+    snprintf(key_buf, sizeof(key_buf), "bridge_modbus_%d", index + 1);
+    *modbus = setting_items_read_bool(key_buf);
+
+    return ESP_OK;
 }
 
 esp_err_t bridge_init(void)
 {
-    serial_config_t serial_config[BRIDGES_COUNT] = {0};
-    int bridge_port[BRIDGES_COUNT] = {0};
-    uint32_t bridge_ip[BRIDGES_COUNT] = {0};
-    bool bridge_mb[BRIDGES_COUNT] = {0};
-
-    uart_port_t port_nums[BRIDGES_COUNT] = {SERIAL_PORT_NUM_1, SERIAL_PORT_NUM_2};
-    int tx_pins[BRIDGES_COUNT] = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};
-    int rx_pins[BRIDGES_COUNT] = {SERIAL_INPUT_PIN_1, SERIAL_INPUT_PIN_2};
-    int dir_pins[BRIDGES_COUNT] = {SERIAL_IO_PIN_1, SERIAL_IO_PIN_2};
-
     for (int i = 0; i < BRIDGES_COUNT; ++i) {
-        serial_config[i].port_num = port_nums[i];
-        serial_config[i].tx_pin = tx_pins[i];
-        serial_config[i].rx_pin = rx_pins[i];
-        serial_config[i].dir_pin = dir_pins[i];
 
-        char key_buf[32]; // TODO: use defined constant for buffer size
+        ESP_RETURN_ON_ERROR(read_serial_port_config(i, &bridge_ctx[i].serial_config), TAG, "Failed to read serial config for port %d", i + 1);
+        ESP_RETURN_ON_ERROR(read_tcp_bridge_config(i, &bridge_ctx[i].bridge_mode, &bridge_ctx[i].bridge_ip, &bridge_ctx[i].bridge_port, &bridge_ctx[i].bridge_mb),
+                                                    TAG, "Failed to read bridge config for port %d", i + 1);
 
-        snprintf(key_buf, sizeof(key_buf), "baudrate_%d", i + 1);
-        serial_config[i].baudrate = setting_items_read_int(key_buf);
-
-        snprintf(key_buf, sizeof(key_buf), "stopbits_%d", i + 1);
-        char stopbits_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, stopbits_str), TAG, "error reading stopbits for port %d", i + 1);
-        if (strncmp(stopbits_str, UART_STOP_BITS_1_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].stopbits = UART_STOP_BITS_1;
-        } else if (strncmp(stopbits_str, UART_STOP_BITS_1_5_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].stopbits = UART_STOP_BITS_1_5;
-        } else if (strncmp(stopbits_str, UART_STOP_BITS_2_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].stopbits = UART_STOP_BITS_2;
-        } else {
-            serial_config[i].stopbits = UART_STOP_BITS_2;
-            ESP_LOGW(TAG, "Unknown stopbits setting for port %d, defaulting to 2", i + 1);
-        }
-
-        snprintf(key_buf, sizeof(key_buf), "parity_%d", i + 1);
-        char parity_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, parity_str), TAG, "error reading parity for port %d", i + 1);
-        if (strncmp(parity_str, UART_PARITY_DISABLE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].parity = UART_PARITY_DISABLE;
-        } else if (strncmp(parity_str, UART_PARITY_EVEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].parity = UART_PARITY_EVEN;
-        } else if (strncmp(parity_str, UART_PARITY_ODD_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].parity = UART_PARITY_ODD;
-        } else {
-            serial_config[i].parity = UART_PARITY_DISABLE;
-            ESP_LOGW(TAG, "Unknown parity setting for port %d, defaulting to disable", i + 1);
-        }
-
-        snprintf(key_buf, sizeof(key_buf), "databits_%d", i + 1);
-        char databits_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, databits_str), TAG, "error reading databits for port %d", i + 1);
-        if (strncmp(databits_str, UART_DATA_5_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].databits = UART_DATA_5_BITS;
-        } else if (strncmp(databits_str, UART_DATA_6_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].databits = UART_DATA_6_BITS;
-        } else if (strncmp(databits_str, UART_DATA_7_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].databits = UART_DATA_7_BITS;
-        } else if (strncmp(databits_str, UART_DATA_8_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            serial_config[i].databits = UART_DATA_8_BITS;
-        } else {
-            serial_config[i].databits = UART_DATA_8_BITS;
-            ESP_LOGW(TAG, "Unknown databits setting for port %d, defaulting to 8", i + 1);
-        }
-
-        snprintf(key_buf, sizeof(key_buf), "bridge_mode_%d", i + 1);
-        char mode_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, mode_str), TAG, "error reading bridge_mode for port %d", i + 1);
-        bridge_mode[i] = string_to_bridge_mode(mode_str);
-
-        snprintf(key_buf, sizeof(key_buf), "bridge_port_%d", i + 1);
-        bridge_port[i] = setting_items_read_int(key_buf);
-
-        snprintf(key_buf, sizeof(key_buf), "bridge_ip_%d", i + 1);
-        char ip_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-        ESP_RETURN_ON_ERROR(setting_items_read(key_buf, ip_str), TAG, "error reading bridge_ip for port %d", i + 1);
-        inet_pton(AF_INET, ip_str, &bridge_ip[i]);
-
-        snprintf(key_buf, sizeof(key_buf), "bridge_modbus_%d", i + 1);
-        bridge_mb[i] = setting_items_read_bool(key_buf);
-
-        if (bridge_mode[i] == BRIDGE_MODE_DISABLED) {
-            ESP_LOGW(TAG, "Port[%d] disabled", serial_config[i].port_num);
+        if (bridge_ctx[i].bridge_mode == BRIDGE_MODE_DISABLED) {
+            ESP_LOGW(TAG, "Port[%d] is disabled", bridge_ctx[i].serial_config.port_num);
             continue;
         }
 
-        if (bridge_mb[i]) {
-            ESP_RETURN_ON_ERROR(modbus_tcp_init_port(&serial_config[i], bridge_mode[i], bridge_port[i], bridge_ip[i], &serial_desc[i], &tcp_desc[i]), TAG, "error initializing port %d in Modbus TCP mode", i + 1);
-            ESP_LOGI(TAG, "Port[%d] initialized in Modbus TCP mode", serial_config[i].port_num);
+        if (bridge_ctx[i].bridge_mb) {
+            ESP_RETURN_ON_ERROR(modbus_tcp_init_port(i, &bridge_ctx[i].serial_config, bridge_ctx[i].bridge_mode,
+                                bridge_ctx[i].bridge_port, bridge_ctx[i].bridge_ip, &bridge_ctx[i].serial_desc, &bridge_ctx[i].tcp_desc),
+                                TAG, "error initializing port %d in Modbus TCP mode", i + 1);
+            ESP_LOGI(TAG, "Port[%d] initialized in Modbus TCP mode", bridge_ctx[i].serial_config.port_num);
         } else {
-            ESP_RETURN_ON_ERROR(bridge_init_port(&serial_config[i], bridge_mode[i], bridge_port[i], bridge_ip[i], &serial_desc[i], &tcp_desc[i]), TAG, "error initializing port %d in transparent bridge mode", i + 1);
-            ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", serial_config[i].port_num);
+            ESP_RETURN_ON_ERROR(transparent_tcp_init_port(i, &bridge_ctx[i].serial_config, bridge_ctx[i].bridge_mode,
+                                bridge_ctx[i].bridge_port, bridge_ctx[i].bridge_ip, &bridge_ctx[i].serial_desc, &bridge_ctx[i].tcp_desc),
+                                TAG, "error initializing port %d in transparent bridge mode", i + 1);
+            ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", bridge_ctx[i].serial_config.port_num);
         }
     }
 
-    bridge_ready = true;
-    ESP_LOGI(TAG, "Initialized");
+    rs485_busy_monitor_init();
 
-    // Start RS485 busy monitor task
-    xTaskCreate(rs485_busy_monitor_task, "rs485_busy_monitor_task", RS485_BUSY_MONITOR_STACK_SIZE, NULL, RS485_BUSY_MONITOR_PRIORITY, NULL);
+    ESP_LOGI(TAG, "Bridge initialized");
 
     return ESP_OK;
 }
