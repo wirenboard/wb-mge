@@ -1,8 +1,10 @@
 #include "sys_info.h"
 #include "freertos/FreeRTOS.h"
-#include "array_size.h"
+#include <string.h>
 
 //------------------------------------------------------------------------------
+
+#define RS485_PORT_COUNT                        2
 
 #define RS485_BUSY_MONITOR_TIMEOUT_MS           5000
 
@@ -13,7 +15,10 @@
 
 //------------------------------------------------------------------------------
 
-static TickType_t last_activity_tick[2] = {0, 0};   // FreeRTOS ticks
+static TickType_t last_activity_tick[RS485_PORT_COUNT] = {0, 0};    // FreeRTOS ticks
+
+static unsigned stats_total[RS485_PORT_COUNT] = {0, 0};
+static unsigned stats_success[RS485_PORT_COUNT] = {0, 0};
 
 //------------------------------------------------------------------------------
 
@@ -51,7 +56,7 @@ void rs485_busy_monitor_init(void)
 
 void rs485_busy_monitor_update_activity(int index)
 {
-    if (index >= ARRAY_SIZE(last_activity_tick)) {
+    if (index >= RS485_PORT_COUNT) {
         return;
     }
 
@@ -60,6 +65,40 @@ void rs485_busy_monitor_update_activity(int index)
         sys_info.rs485_1_is_busy = true;
     } else if (index == 1) {
         sys_info.rs485_2_is_busy = true;
+    }
+}
+
+//------------------------------------------------------------------------------
+
+void rs485_stats_init(void)
+{
+    memset(stats_total, 0, sizeof(stats_total));
+    memset(stats_success, 0, sizeof(stats_success));
+    sys_info.rs485_1_error_percentage = 0;
+    sys_info.rs485_2_error_percentage = 0;
+}
+
+//------------------------------------------------------------------------------
+
+void rs485_stats_update(int index, unsigned count, unsigned success)
+{
+    if (index >= RS485_PORT_COUNT) {
+        return;
+    }
+
+    stats_total[index] += count;
+    stats_success[index] += success;
+
+    uint8_t err_percent = 0;
+    if (stats_total[index]) {
+        unsigned errors = stats_total[index] - stats_success[index];
+        err_percent = ((100UL * errors) + (stats_total[index] / 2)) / stats_total[index];
+    }
+
+    if (index == 0) {
+        sys_info.rs485_1_error_percentage = err_percent;
+    } else if (index == 1) {
+        sys_info.rs485_2_error_percentage = err_percent;
     }
 }
 

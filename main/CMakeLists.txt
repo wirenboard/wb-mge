@@ -26,7 +26,7 @@ idf_component_register(SRCS "main.c"
                             "bridge/modbus_tcp.c"
                             "bridge/packet_queue.c"
                             "bridge/modbus_helpers.c"
-                            "bridge/rs485_busy_monitor.c"
+                            "bridge/rs485_stats.c"
                         INCLUDE_DIRS "."
                             "bridge"
                         EMBED_TXTFILES

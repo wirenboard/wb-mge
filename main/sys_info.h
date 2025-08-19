@@ -33,7 +33,7 @@ typedef struct {
     bool rs485_1_is_busy;
     bool rs485_2_is_busy;
 
-    // only for Modbus TCP // TODO: implement
+    // only for Modbus TCP
     uint8_t rs485_1_error_percentage;
     uint8_t rs485_2_error_percentage;
 } sys_info_t;

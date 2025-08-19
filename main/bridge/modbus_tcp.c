@@ -5,7 +5,7 @@
 #include "tcp_server.h"
 #include "modbus_helpers.h"
 #include "packet_queue.h"
-#include "rs485_busy_monitor.h"
+#include "rs485_stats.h"
 
 //------------------------------------------------------------------------------
 
@@ -148,6 +148,8 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 
     tcp_server_send(ctx->tcp_desc, tcp_resp_buf, tcp_resp_len);
     free(tcp_resp_buf);
+
+    rs485_stats_update(ctx->index, 0, 1);
 }
 
 // Callback-функция приема данных из TCP-сокета
@@ -165,7 +167,12 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
         return;
     }
 
-    separate_and_push_requests_from_tcp(ctx, data, len);
+    unsigned count = separate_and_push_requests_from_tcp(ctx, data, len);
+    if (count) {
+        rs485_stats_update(ctx->index, count, 0);
+    } else {
+        rs485_stats_update(ctx->index, 1, 0);
+    }
 }
 
 //------------------------------------------------------------------------------

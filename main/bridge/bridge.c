@@ -9,7 +9,7 @@
 #include "tcp_server.h"
 #include "transparent_tcp.h"
 #include "modbus_tcp.h"
-#include "rs485_busy_monitor.h"
+#include "rs485_stats.h"
 
 #include "freertos/FreeRTOS.h"
 #include <string.h>
@@ -187,7 +187,9 @@ esp_err_t bridge_init(void)
         }
     }
 
+    // Start RS485 busy monitor task and init error percentage statistics
     rs485_busy_monitor_init();
+    rs485_stats_init();
 
     ESP_LOGI(TAG, "Bridge initialized");
 
