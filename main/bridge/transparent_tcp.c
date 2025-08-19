@@ -74,7 +74,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    ESP_LOGD(TAG, "Received %d bytes from serial port %d, sending them to TCP", len, desc->port_num);
+    ESP_LOGD(TAG, "Port[%d]: Received %d bytes from serial, sending them to TCP", ctx->index + 1, len);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);
@@ -82,7 +82,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
     esp_err_t err = ctx->tcp_send_func(ctx->tcp_desc, data, len);
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to send data to TCP from serial port %d", desc->port_num);
+        ESP_LOGE(TAG, "Port[%d]: Failed to send data to TCP from serial", ctx->index + 1);
     }
 }
 
@@ -104,18 +104,18 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
     }
 
     if (desc->client_sock < 0) {
-        ESP_LOGE(TAG, "%s: no client connected", __func__);
+        ESP_LOGE(TAG, "Port[%d]: no client connected", ctx->index + 1);
         return;
     }
 
-    ESP_LOGD(TAG, "Received %d bytes from TCP, sending them to serial port %d", len, ctx->serial_desc->port_num);
+    ESP_LOGD(TAG, "Port[%d]: Received %d bytes from TCP, sending them to serial", ctx->index + 1, len);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);
 
     esp_err_t err = serial_send(ctx->serial_desc, data, len);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to send data to serial port %d from TCP", ctx->serial_desc->port_num);
+        ESP_LOGE(TAG, "Port[%d]: Failed to send data to serial from TCP", ctx->index + 1);
     }
 }
 
@@ -130,7 +130,7 @@ esp_err_t transparent_tcp_init_port(int index, serial_config_t *config,
     }
 
     if (transp_tcp_task_count >= TRANSPARENT_TCP_MAX_TASK_COUNT) {
-        ESP_LOGE(TAG, "Task count limit reached");
+        ESP_LOGE(TAG, "Port[%d]: Task count limit reached", index + 1);
         return ESP_FAIL;
     }
 
@@ -147,7 +147,7 @@ esp_err_t transparent_tcp_init_port(int index, serial_config_t *config,
             tcp_send_func = tcp_client_send;
             break;
         default:
-            ESP_LOGE(TAG, "Unknown bridge mode: %d", mode);
+            ESP_LOGE(TAG, "Port[%d]: Unknown bridge mode: %d", index + 1, mode);
             return ESP_FAIL;
     }
 
@@ -158,7 +158,7 @@ esp_err_t transparent_tcp_init_port(int index, serial_config_t *config,
     *serial_desc = serial_init(config, process_data_from_serial);
 
     if (!*serial_desc) {
-        ESP_LOGE(TAG, "Failed to initialize serial port");
+        ESP_LOGE(TAG, "Port[%d]: Failed to initialize serial port", index + 1);
         return ESP_FAIL;
     }
 
