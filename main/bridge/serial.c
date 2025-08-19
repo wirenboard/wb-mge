@@ -140,3 +140,8 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
     }
     return ESP_OK;
 }
+
+esp_err_t serial_wait_tx_done(serial_desc_t *desc, TickType_t timeout_ticks)
+{
+    return uart_wait_tx_done(desc->port_num, timeout_ticks);
+}
