@@ -1,4 +1,7 @@
-idf_component_register(SRCS "main.c"
+idf_component_register(SRCS "packet_queue.c"
+                            "modbus_helpers.c"
+                            "modbus_tcp.c"
+                            "main.c"
                             "bridge.c"
                             "ethernet.c"
                             "auth.c"

@@ -7,6 +7,7 @@
 #include "serial.h"
 #include "tcp_client.h"
 #include "tcp_server.h"
+#include "modbus_tcp.h"
 
 #include "sys_info.h"
 #include "freertos/FreeRTOS.h"
@@ -218,6 +219,7 @@ esp_err_t bridge_init(void)
     serial_config_t serial_config[BRIDGES_COUNT] = {0};
     int bridge_port[BRIDGES_COUNT] = {0};
     uint32_t bridge_ip[BRIDGES_COUNT] = {0};
+    bool bridge_mb[BRIDGES_COUNT] = {0};
 
     uart_port_t port_nums[BRIDGES_COUNT] = {SERIAL_PORT_NUM_1, SERIAL_PORT_NUM_2};
     int tx_pins[BRIDGES_COUNT] = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};
@@ -292,11 +294,25 @@ esp_err_t bridge_init(void)
         ESP_RETURN_ON_ERROR(setting_items_read(key_buf, ip_str), TAG, "error reading bridge_ip for port %d", i + 1);
         inet_pton(AF_INET, ip_str, &bridge_ip[i]);
 
-        ESP_RETURN_ON_ERROR(bridge_init_port(&serial_config[i], bridge_mode[i], bridge_port[i], bridge_ip[i], &serial_desc[i], &tcp_desc[i]), TAG, "error initializing port %d", i + 1);
+        snprintf(key_buf, sizeof(key_buf), "bridge_modbus_%d", i + 1);
+        bridge_mb[i] = setting_items_read_bool(key_buf);
+
+        if (bridge_mode[i] == BRIDGE_MODE_DISABLED) {
+            ESP_LOGW(TAG, "Port[%d] disabled", serial_config[i].port_num);
+            continue;
+        }
+
+        if (bridge_mb[i]) {
+            ESP_RETURN_ON_ERROR(modbus_tcp_init_port(&serial_config[i], bridge_mode[i], bridge_port[i], bridge_ip[i], &serial_desc[i], &tcp_desc[i]), TAG, "error initializing port %d in Modbus TCP mode", i + 1);
+            ESP_LOGI(TAG, "Port[%d] initialized in Modbus TCP mode", serial_config[i].port_num);
+        } else {
+            ESP_RETURN_ON_ERROR(bridge_init_port(&serial_config[i], bridge_mode[i], bridge_port[i], bridge_ip[i], &serial_desc[i], &tcp_desc[i]), TAG, "error initializing port %d in transparent bridge mode", i + 1);
+            ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", serial_config[i].port_num);
+        }
     }
 
     bridge_ready = true;
-    ESP_LOGI(TAG, "initialized");
+    ESP_LOGI(TAG, "Initialized");
 
     // Start RS485 busy monitor task
     xTaskCreate(rs485_busy_monitor_task, "rs485_busy_monitor_task", RS485_BUSY_MONITOR_STACK_SIZE, NULL, RS485_BUSY_MONITOR_PRIORITY, NULL);
