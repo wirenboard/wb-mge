@@ -169,8 +169,9 @@ esp_err_t http_server_init(void)
 {
     static httpd_handle_t http_server = NULL;
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
-    httpd_config.max_uri_handlers = 30;  // TODO: Подобрать значение к релизу
+    httpd_config.max_uri_handlers = 20;  // TODO: Подобрать значение к релизу
     httpd_config.stack_size = 1024 * 6;  // TODO: Проверить размер используемой памяти
+    httpd_config.max_open_sockets = 12;  // Увеличено, чтобы можно было одновременно подключиться хотя бы с 2-3 устройств
 
     uint16_t web_port = (uint16_t)setting_items_read_int(KEY_WEB_PORT);
     if (web_port == 0) {
