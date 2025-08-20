@@ -1,4 +1,4 @@
-2025-08-15 Maxim Toropov <maxim.toropov@wirenboard.com>
+2025-08-20 Maxim Toropov <maxim.toropov@wirenboard.com>
 
     * version:  1.0.0-rc3
     * added:    modbus TCP support in server mode

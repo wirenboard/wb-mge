@@ -9,7 +9,7 @@
 
 //------------------------------------------------------------------------------
 
-#define TRANSPARENT_TCP_DEBUG_LOG_ENABLE        1
+#define TRANSPARENT_TCP_DEBUG_LOG_ENABLE        0           // TODO: Возможно, вынести в настройки
 
 #define TRANSPARENT_TCP_MAX_TASK_COUNT          2           // Максимальное количество задач (портов)
 
