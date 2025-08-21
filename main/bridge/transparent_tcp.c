@@ -62,7 +62,7 @@ static transp_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 // Callback-функция приема данных из последовательного порта
 static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t len)
 {
-    ESP_LOGI(TAG, "Received data from serial, length: %u", len);
+    ESP_LOGD(TAG, "Received data from serial, length: %u", len);
 
     transp_tcp_task_ctx_t* ctx = find_ctx_by_serial_desc(desc);
     if (!ctx) {
@@ -91,7 +91,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 // Callback-функция приема данных из TCP-сокета
 static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
-    ESP_LOGI(TAG, "Received data from TCP, length: %u", len);
+    ESP_LOGD(TAG, "Received data from TCP, length: %u", len);
 
     transp_tcp_task_ctx_t* ctx = find_ctx_by_tcp_desc(desc);
     if (!ctx) {
