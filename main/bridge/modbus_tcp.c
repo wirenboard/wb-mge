@@ -267,13 +267,14 @@ static void modbus_tcp_server_task(void *arg)
 
 static unsigned calc_response_timeout_ticks(unsigned baudrate)
 {
-    static const unsigned max_resp_len = 256 + 5;
+    static const unsigned max_resp_len = 256 + 10;
     static const unsigned bit_count = 10;
 
     unsigned bytes_rate = baudrate / bit_count;
     unsigned timeout_ms = ((1000 * max_resp_len) + bytes_rate - 1) / bytes_rate;
+    unsigned timeout_ticks = (timeout_ms * configTICK_RATE_HZ + 999) / 1000;
 
-    return pdMS_TO_TICKS(timeout_ms);
+    return timeout_ticks;
 }
 
 //------------------------------------------------------------------------------

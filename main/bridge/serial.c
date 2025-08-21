@@ -17,7 +17,7 @@
 // стоит выбирать с запасом
 // при переполнении буфера возникнет событие UART_BUFFER_FULL
 #define SERIAL_BUF_SIZE             (1000)
-#define SERIAL_READ_TOUT            5           // Задержка приема UART в символах (1 символ ~= 11 бит), с запасом
+#define SERIAL_READ_TOUT            10          // Задержка приема UART в символах (1 символ ~= 11 бит), с запасом
 #define SERIAL_TASK_STACK_SIZE      (1024 * 4)  // TODO: check stack size
 #define SERIAL_TASK_PRIORITY        12
 
