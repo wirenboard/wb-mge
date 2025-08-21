@@ -4,12 +4,14 @@
 
 //------------------------------------------------------------------------------
 
-#define RS485_PORT_COUNT                        2
+#define RS485_PORT_COUNT                        2       // Количество портов
 
-#define RS485_BUSY_MONITOR_TIMEOUT_MS           5000
+#define RS485_BUSY_MONITOR_TIMEOUT_MS           5000    // Тайм-аут определения наличия обмена в порте RS-485
 
-#define RS485_BUSY_MONITOR_TASK_STACK_SIZE      1024
-#define RS485_BUSY_MONITOR_TASK_PRIORITY        1
+#define RS485_BUSY_MONITOR_TASK_STACK_SIZE      1024    // Размер стека задачи мониторинга
+#define RS485_BUSY_MONITOR_TASK_PRIORITY        1       // Приоритет задачи мониторинга
+
+#define RS485_STATS_WINDOW_SIZE                 100     // Размер окна (кол-во запросов) для расчета статистики
 
 #define MAX(a, b)                               ((a) > (b) ? (a) : (b))
 
@@ -17,8 +19,9 @@
 
 static TickType_t last_activity_tick[RS485_PORT_COUNT] = {0, 0};    // FreeRTOS ticks
 
-static unsigned stats_total[RS485_PORT_COUNT] = {0, 0};
-static unsigned stats_success[RS485_PORT_COUNT] = {0, 0};
+static bool stats_errors[RS485_PORT_COUNT][RS485_STATS_WINDOW_SIZE] = {0};
+static unsigned stats_count[RS485_PORT_COUNT] = {0, 0};
+static unsigned stats_ptr[RS485_PORT_COUNT] = {0, 0};
 
 //------------------------------------------------------------------------------
 
@@ -72,27 +75,56 @@ void rs485_busy_monitor_update_activity(int index)
 
 void rs485_stats_init(void)
 {
-    memset(stats_total, 0, sizeof(stats_total));
-    memset(stats_success, 0, sizeof(stats_success));
+    memset(stats_count, 0, sizeof(stats_count));
+    memset(stats_ptr, 0, sizeof(stats_ptr));
     sys_info.rs485_1_error_percentage = 0;
     sys_info.rs485_2_error_percentage = 0;
 }
 
 //------------------------------------------------------------------------------
 
-void rs485_stats_update(int index, unsigned count, unsigned success)
+static void stats_push_result(bool success, bool errors[RS485_STATS_WINDOW_SIZE], unsigned* count, unsigned* ptr)
+{
+    errors[*ptr] = !success;
+
+    (*ptr)++;
+    if (*ptr >= RS485_STATS_WINDOW_SIZE) {
+        *ptr = 0;
+    }
+
+    if (*count < RS485_STATS_WINDOW_SIZE) {
+        (*count)++;
+    }
+}
+
+
+static unsigned stats_get_errors_count(bool errors[RS485_STATS_WINDOW_SIZE], unsigned count)
+{
+    unsigned result = 0;
+
+    for (unsigned i = 0; i < count; i++) {
+        if (errors[i]) {
+            result++;
+        }
+    }
+
+    return result;
+}
+
+//------------------------------------------------------------------------------
+
+void rs485_stats_update(int index, bool success)
 {
     if (index >= RS485_PORT_COUNT) {
         return;
     }
 
-    stats_total[index] += count;
-    stats_success[index] += success;
+    stats_push_result(success, stats_errors[index], &stats_count[index], &stats_ptr[index]);
+    unsigned errors = stats_get_errors_count(stats_errors[index], stats_count[index]);
 
     uint8_t err_percent = 0;
-    if (stats_total[index]) {
-        unsigned errors = stats_total[index] - stats_success[index];
-        err_percent = ((100UL * errors) + (stats_total[index] / 2)) / stats_total[index];
+    if (stats_count[index]) {
+        err_percent = ((100UL * errors) + (stats_count[index] / 2)) / stats_count[index];
     }
 
     if (index == 0) {

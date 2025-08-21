@@ -171,7 +171,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
 
     unsigned count = separate_and_push_requests_from_tcp(ctx, data, len);
     if (!count) {
-        rs485_stats_update(ctx->index, 1, 0);
+        rs485_stats_update(ctx->index, 0);
     }
 }
 
@@ -228,6 +228,7 @@ static void modbus_tcp_server_task(void *arg)
         size_t rtu_req_len = modbus_rtu_from_tcp(tcp_req_buf, tcp_req_len, rtu_req_buf, MODBUS_TCP_SEND_BUFFER_SIZE);
 
         ctx->pending_tid = modbus_swap16(((mb_tcp_header_t*)tcp_req_buf)->transaction_id);
+        int slave_id = ((mb_tcp_header_t*)tcp_req_buf)->unit_id;
         free(tcp_req_buf);
 
         if (!rtu_req_len) {
@@ -255,9 +256,10 @@ static void modbus_tcp_server_task(void *arg)
         EventBits_t bits = xEventGroupWaitBits(ctx->event_group, EVENT_SERIAL_RESPONSE_RECEIVED,
                                                 pdTRUE, pdTRUE, ctx->resp_timeout_ticks);
         if (bits & EVENT_SERIAL_RESPONSE_RECEIVED) {
-            rs485_stats_update(ctx->index, 1, 1);
+            rs485_stats_update(ctx->index, 1);
         } else {
-            rs485_stats_update(ctx->index, 1, 0);
+            rs485_stats_update(ctx->index, 0);
+            ESP_LOGW(TAG, "Port[%d]: No response from device with slave ID: %d", ctx->index + 1, slave_id);
         }
 
     } // while (1)
