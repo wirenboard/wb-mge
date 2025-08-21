@@ -23,6 +23,9 @@
 
 static const char *TAG = "serial";
 
+// Нельзя эту задачу надолго блокировать в колбэке
+// Иначе может переполниться очередь событий UART,
+// из-за чего пакеты начнут склеиваться и частично дропаться
 static void uart_event_task(void *pvParameters)
 {
     serial_desc_t *desc = (serial_desc_t *)pvParameters;

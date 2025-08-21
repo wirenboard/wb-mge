@@ -16,6 +16,7 @@
 //------------------------------------------------------------------------------
 
 typedef esp_err_t (*tcp_send_func_t)(tcp_desc_t *desc, uint8_t *data, size_t len);
+typedef esp_err_t (*tcp_connected_func_t)(tcp_desc_t *desc);
 
 typedef struct {
     bool initialized;
@@ -24,6 +25,7 @@ typedef struct {
     tcp_desc_t* tcp_desc;
     bridge_mode_t mode;
     tcp_send_func_t tcp_send_func;
+    tcp_connected_func_t tcp_connected_func;
 } transp_tcp_task_ctx_t;
 
 //------------------------------------------------------------------------------
@@ -78,6 +80,12 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);
+
+    esp_err_t conn = ctx->tcp_connected_func(ctx->tcp_desc);
+    if (conn != ESP_OK) {
+        ESP_LOGW(TAG, "Port[%d]: No TCP connection, packet from serial will be skipped", ctx->index + 1);
+        return;
+    }
 
     esp_err_t err = ctx->tcp_send_func(ctx->tcp_desc, data, len);
 
@@ -136,15 +144,18 @@ esp_err_t transparent_tcp_init_port(int index, serial_config_t *config,
 
     esp_err_t err = ESP_OK;
     tcp_send_func_t tcp_send_func = 0;
+    tcp_connected_func_t tcp_connected_func = 0;
 
     switch (mode) {
         case BRIDGE_MODE_SERVER:
             err = tcp_server_init(port, process_data_from_tcp, tcp_desc);
             tcp_send_func = tcp_server_send;
+            tcp_connected_func = tcp_server_connected;
             break;
         case BRIDGE_MODE_CLIENT:
             err = tcp_client_init(ip, port, process_data_from_tcp, tcp_desc);
             tcp_send_func = tcp_client_send;
+            tcp_connected_func = tcp_client_connected;
             break;
         default:
             ESP_LOGE(TAG, "Port[%d]: Unknown bridge mode: %d", index + 1, mode);
@@ -168,6 +179,7 @@ esp_err_t transparent_tcp_init_port(int index, serial_config_t *config,
     ctx->tcp_desc = *tcp_desc;
     ctx->mode = mode;
     ctx->tcp_send_func = tcp_send_func;
+    ctx->tcp_connected_func = tcp_connected_func;
 
     transp_tcp_task_count++;
     ctx->initialized = 1;

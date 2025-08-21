@@ -106,6 +106,9 @@ static void tcp_client_task(void *pvParameters)
 {
     tcp_desc_t *desc = (tcp_desc_t *)pvParameters;
 
+    // Небольшая задержка, пока сеть заработает и можно будет подключаться к серверу
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
     while (1) {
         desc->listen_sock = -1; // not used for client
         desc->client_sock = create_socket();
@@ -167,10 +170,29 @@ esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len)
         return ESP_FAIL;
     }
 
-    int err = send(desc->client_sock, data, len, 0);
+    // Используется неблокирующая функция, чтобы не блокировать задачу uart_event_task()
+    // Иначе переполняется очередь событий UART и пакеты начинают склеиваться и дропаться
+    // В TCP под капотом есть свой буфер передачи и окно, проблем быть не должно
+    int res = send(desc->client_sock, data, len, MSG_DONTWAIT);
 
-    if (err < 0) {
+    if (res < 0) {
         ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+        return ESP_FAIL;
+    }
+
+    if (res != len) {
+        ESP_LOGW(TAG, "Not all data sent, required: %u, sent: %d", len, res);
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t tcp_client_connected(tcp_desc_t *desc)
+{
+    if (!desc || (desc->client_sock < 0)) {
+        return ESP_FAIL;
+    }
+    if (!desc->active_connections) {
         return ESP_FAIL;
     }
     return ESP_OK;

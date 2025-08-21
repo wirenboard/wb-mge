@@ -69,6 +69,7 @@ static void tcp_server_task(void *pvParameters)
             }
         } while (len > 0);
 
+        shutdown(desc->client_sock, SHUT_RDWR);
         close(desc->client_sock);
         desc->client_sock = -1;
         desc->active_connections--;
@@ -156,17 +157,18 @@ esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
         return ESP_FAIL;
     }
 
-    int to_write = len;
+    // Используется неблокирующая функция, чтобы не блокировать задачу uart_event_task()
+    // Иначе переполняется очередь событий UART и пакеты начинают склеиваться и дропаться
+    // В TCP под капотом есть свой буфер передачи и окно, проблем быть не должно
+    int res = send(desc->client_sock, data, len, MSG_DONTWAIT);
 
-    while (to_write > 0) {
-        int written = send(desc->client_sock, data + (len - to_write), to_write, 0);
+    if (res < 0) {
+        ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+        return ESP_FAIL;
+    }
 
-        if (written < 0) {
-            ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-            return ESP_FAIL;
-        }
-
-        to_write -= written;
+    if (res != len) {
+        ESP_LOGW(TAG, "Not all data sent, required: %u, sent: %d", len, res);
     }
 
     return ESP_OK;
