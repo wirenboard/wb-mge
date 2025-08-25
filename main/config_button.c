@@ -9,7 +9,7 @@
 #define CONFIG_BUTTON_GPIO                  GPIO_NUM_34
 #define CONFIG_BUTTON_DEBOUNCE_TIME_MS      50
 
-#define CONFIG_BUTTON_TASK_STACK_SIZE       2048
+#define CONFIG_BUTTON_TASK_STACK_SIZE       3072
 #define CONFIG_BUTTON_TASK_PRIORITY         2
 
 //------------------------------------------------------------------------------
