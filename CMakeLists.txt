@@ -4,7 +4,6 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 add_compile_definitions(FW_VERSION_STRING="${FW_VERSION_STRING}")
 
 # Enable lwip statistics
-add_compile_definitions(LWIP_STATS=1)
 add_compile_definitions(MIB2_STATS=1)
 
 # Custom lwip hook
