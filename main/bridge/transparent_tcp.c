@@ -6,14 +6,13 @@
 #include "tcp_server.h"
 #include "tcp_client.h"
 #include "rs485_stats.h"
+#include "bridge.h"
 
-//------------------------------------------------------------------------------
 
-#define TRANSPARENT_TCP_DEBUG_LOG_ENABLE        0           // TODO: Возможно, вынести в настройки
+#define TRANSPARENT_TCP_DEBUG_LOG_ENABLE    0               // TODO: Возможно, вынести в настройки
 
-#define TRANSPARENT_TCP_MAX_TASK_COUNT          2           // Максимальное количество задач (портов)
+#define TRANSPARENT_TCP_MAX_TASK_COUNT      BRIDGES_COUNT   // Максимальное количество задач (портов)
 
-//------------------------------------------------------------------------------
 
 typedef esp_err_t (*tcp_send_func_t)(tcp_desc_t *desc, uint8_t *data, size_t len);
 typedef esp_err_t (*tcp_connected_func_t)(tcp_desc_t *desc);
@@ -28,14 +27,12 @@ typedef struct {
     tcp_connected_func_t tcp_connected_func;
 } transp_tcp_task_ctx_t;
 
-//------------------------------------------------------------------------------
 
 static const char *TAG = "transparent_tcp";
 
 static transp_tcp_task_ctx_t transp_tcp_task_ctx[TRANSPARENT_TCP_MAX_TASK_COUNT] = {0};
 static int transp_tcp_task_count = 0;
 
-//------------------------------------------------------------------------------
 
 // Поиск контекста по дескриптору serial_desc_t
 static transp_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* serial_desc)
@@ -48,6 +45,7 @@ static transp_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* seria
     return 0;
 }
 
+
 // Поиск контекста по дескриптору tcp_desc_t
 static transp_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 {
@@ -59,7 +57,6 @@ static transp_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
     return 0;
 }
 
-//------------------------------------------------------------------------------
 
 // Callback-функция приема данных из последовательного порта
 static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t len)
@@ -94,7 +91,6 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
     }
 }
 
-//------------------------------------------------------------------------------
 
 // Callback-функция приема данных из TCP-сокета
 static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
@@ -127,7 +123,6 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
     }
 }
 
-//------------------------------------------------------------------------------
 
 esp_err_t transparent_tcp_init_port(int index, serial_config_t *config,
                                     bridge_mode_t mode, int port, uint32_t ip,
@@ -186,5 +181,3 @@ esp_err_t transparent_tcp_init_port(int index, serial_config_t *config,
 
     return ESP_OK;
 }
-
-//------------------------------------------------------------------------------

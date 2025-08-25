@@ -29,8 +29,6 @@
 
 #define RS485_BUSY_TIMEOUT_MS         5000
 
-#define BRIDGES_COUNT                 2
-
 #define RS485_BUSY_MONITOR_STACK_SIZE 1024
 #define RS485_BUSY_MONITOR_PRIORITY   1
 
@@ -57,7 +55,7 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
         ESP_LOGE(TAG, "Unknown server number: %d", server_num);
         return 0;
     }
-    if (!bridge_ctx[server_num].tcp_desc) {
+    if ((bridge_ctx[server_num].bridge_mode == BRIDGE_MODE_DISABLED) || !bridge_ctx[server_num].tcp_desc) {
         return 0;
     }
     return bridge_ctx[server_num].tcp_desc->active_connections;

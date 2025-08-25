@@ -2,6 +2,8 @@
 
 #include "esp_err.h"
 
+#define BRIDGES_COUNT                 2
+
 esp_err_t bridge_init(void);
 
 typedef enum {

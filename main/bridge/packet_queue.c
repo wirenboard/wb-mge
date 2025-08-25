@@ -4,18 +4,15 @@
 #include <string.h>
 #include <esp_log.h>
 
-//------------------------------------------------------------------------------
 
 typedef struct {
     size_t packet_len;
     uint8_t* data_buf;
 } packet_queue_elem_t;
 
-//------------------------------------------------------------------------------
 
 static const char* TAG = "packet_queue";
 
-//------------------------------------------------------------------------------
 
 packet_queue_handle packet_queue_create(const size_t max_len)
 {
@@ -26,7 +23,6 @@ packet_queue_handle packet_queue_create(const size_t max_len)
     return queue;
 }
 
-//------------------------------------------------------------------------------
 
 void packet_queue_delete(const packet_queue_handle handle)
 {
@@ -38,7 +34,6 @@ void packet_queue_delete(const packet_queue_handle handle)
     vQueueDelete(handle);
 }
 
-//------------------------------------------------------------------------------
 
 size_t packet_queue_count(const packet_queue_handle handle)
 {
@@ -50,7 +45,6 @@ size_t packet_queue_count(const packet_queue_handle handle)
     return count;
 }
 
-//------------------------------------------------------------------------------
 
 void packet_queue_clear(const packet_queue_handle handle)
 {
@@ -65,7 +59,6 @@ void packet_queue_clear(const packet_queue_handle handle)
     }
 }
 
-//------------------------------------------------------------------------------
 
 int packet_queue_push(const packet_queue_handle handle, const uint8_t* data, const size_t len)
 {
@@ -90,7 +83,7 @@ int packet_queue_push(const packet_queue_handle handle, const uint8_t* data, con
     queue_elem.packet_len = len;
 
     if (xQueueSend(handle, &queue_elem, 0) != pdPASS) {
-        ESP_LOGE(TAG, "Queue overflow");
+        ESP_LOGE(TAG, "Unable to push packet into queue");
         free(queue_elem.data_buf);
         return -1;
     }
@@ -98,12 +91,11 @@ int packet_queue_push(const packet_queue_handle handle, const uint8_t* data, con
     return 0;
 }
 
-//------------------------------------------------------------------------------
 
 size_t packet_queue_pop(const packet_queue_handle handle, uint8_t** buf_ptr, TickType_t timeout_ticks)
 {
     if (!handle) {
-        return -1;
+        return 0;
     }
 
     packet_queue_elem_t queue_elem = {0};
@@ -115,10 +107,9 @@ size_t packet_queue_pop(const packet_queue_handle handle, uint8_t** buf_ptr, Tic
     if (buf_ptr) {
         *buf_ptr = queue_elem.data_buf;
     } else {
+        ESP_LOGW(TAG, "Data discarded: buf_ptr is NULL, packet length: %zu", queue_elem.packet_len);
         free(queue_elem.data_buf);
     }
 
     return queue_elem.packet_len;
 }
-
-//------------------------------------------------------------------------------

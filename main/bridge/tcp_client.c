@@ -31,11 +31,11 @@ static void close_socket(int sock)
 
 static int create_socket(void)
 {
-    static int keepAlive = 1;
-    static int keepIdle = KEEPALIVE_IDLE;
-    static int keepInterval = KEEPALIVE_INTERVAL;
-    static int keepCount = KEEPALIVE_COUNT;
-    static int noDelayFlag = 1;
+    static int keep_alive = 1;
+    static int keep_idle = KEEPALIVE_IDLE;
+    static int keep_interval = KEEPALIVE_INTERVAL;
+    static int keep_count = KEEPALIVE_COUNT;
+    static int no_delay_flag = 1;
 
     int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
 
@@ -43,13 +43,14 @@ static int create_socket(void)
         ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
     } else {
         // Set tcp keepalive option
-        setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(keepAlive));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(keepIdle));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(keepInterval));
-        setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(keepCount));
+        setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keep_alive, sizeof(keep_alive));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keep_idle, sizeof(keep_idle));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keep_interval, sizeof(keep_interval));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keep_count, sizeof(keep_count));
 
         // No delay for send() function (disable Nagle's algorithm)
-        setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &noDelayFlag, sizeof(noDelayFlag));
+        // It is necessary that data packets are not combined when sent and to increase the performance
+        setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &no_delay_flag, sizeof(no_delay_flag));
 
         ESP_LOGI(TAG, "Socket created");
     }

@@ -4,11 +4,9 @@
 #include <stddef.h>
 #include "freertos/FreeRTOS.h"
 
-//------------------------------------------------------------------------------
 
 typedef QueueHandle_t packet_queue_handle;
 
-//------------------------------------------------------------------------------
 
 // Инициализация очереди с максимальной длиной max_len пакетов
 // Возвращает handle созданной очереди
@@ -34,5 +32,3 @@ int packet_queue_push(const packet_queue_handle handle, const uint8_t* data, con
 // Возвращает 0, если пакетов в очереди нет или произошел тайм-аут
 // Буфер после использования необходимо освободить через вызов free(buf_ptr)
 size_t packet_queue_pop(const packet_queue_handle handle, uint8_t** buf_ptr, const TickType_t timeout_ticks);
-
-//------------------------------------------------------------------------------

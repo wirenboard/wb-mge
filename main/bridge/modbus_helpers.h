@@ -3,7 +3,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-//------------------------------------------------------------------------------
 
 #define MODBUS_EXCEPTION_FLAG               0x80        // Флаг исключения Modbus (ставится по OR с кодом функции)
 
@@ -13,7 +12,6 @@
 
 #define MODBUS_TCP_PROTOCOL_ID              0x0000      // ID протокола Modbus TCP
 
-//------------------------------------------------------------------------------
 
 // Заголовок пакета Modbus RTU
 typedef struct __attribute__((packed)) {
@@ -42,7 +40,6 @@ typedef struct __attribute__((packed)) {
     uint8_t exception_code;
 } mb_tcp_exception_response_t;
 
-//------------------------------------------------------------------------------
 
 // Конвертация 16-битного слова (регистра) Little Endian <-> Big Endian
 static inline uint16_t modbus_swap16(uint16_t x) {return (x >> 8) | (x << 8);}
@@ -86,5 +83,3 @@ size_t modbus_rtu_exception_response(const mb_rtu_header_t* rtu_req_header, uint
 // Подготовка ответа Modbus TCP с кодом исключения (ошибки)
 // Возвращает размер пакета с исключением (mb_tcp_exception_response_t)
 size_t modbus_tcp_exception_response(const mb_tcp_header_t* tcp_req_header, uint8_t exception_code, uint8_t* out_buf, size_t out_buf_size);
-
-//------------------------------------------------------------------------------

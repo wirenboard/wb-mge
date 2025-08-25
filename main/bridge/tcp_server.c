@@ -20,11 +20,11 @@ static void tcp_server_task(void *pvParameters)
     char addr_str[128];
     char rx_buffer[RX_BUFFER_SIZE];
     int len;
-    static int keepAlive = 1;
-    static int keepIdle = KEEPALIVE_IDLE;
-    static int keepInterval = KEEPALIVE_INTERVAL;
-    static int keepCount = KEEPALIVE_COUNT;
-    static int noDelayFlag = 1;
+    static int keep_alive = 1;
+    static int keep_idle = KEEPALIVE_IDLE;
+    static int keep_interval = KEEPALIVE_INTERVAL;
+    static int keep_count = KEEPALIVE_COUNT;
+    static int no_delay_flag = 1;
 
     while (1) {
         struct sockaddr_in source_addr;
@@ -38,13 +38,14 @@ static void tcp_server_task(void *pvParameters)
 
         desc->active_connections++;
         // Set tcp keepalive option
-        setsockopt(desc->client_sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(keepAlive));
-        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(keepIdle));
-        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(keepInterval));
-        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(keepCount));
+        setsockopt(desc->client_sock, SOL_SOCKET, SO_KEEPALIVE, &keep_alive, sizeof(keep_alive));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPIDLE, &keep_idle, sizeof(keep_idle));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPINTVL, &keep_interval, sizeof(keep_interval));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPCNT, &keep_count, sizeof(keep_count));
 
         // No delay for send() function (disable Nagle's algorithm)
-        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_NODELAY, &noDelayFlag, sizeof(noDelayFlag));
+        // It is necessary that data packets are not combined when sent and to increase the performance
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_NODELAY, &no_delay_flag, sizeof(no_delay_flag));
 
         // Convert ip address to string
         if (source_addr.sin_family == PF_INET) {

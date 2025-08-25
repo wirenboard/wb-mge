@@ -39,7 +39,11 @@ static void uart_event_task(void *pvParameters)
 
             switch (event.type) {
                 case UART_DATA:
-                    ESP_LOGD(TAG, "[UART[%d] DATA]: %d", desc->port_num, event.size);
+                    if (SERIAL_BUF_SIZE < event.size) {
+                        ESP_LOGE(TAG, "UART[%d] receive buffer is too small, size: %u, expected: >= %u", desc->port_num, SERIAL_BUF_SIZE, event.size);
+                        break;
+                    }
+                    ESP_LOGD(TAG, "UART[%d] DATA: %d", desc->port_num, event.size);
                     uart_read_bytes(desc->port_num, dtmp, event.size, portMAX_DELAY);
                     ESP_LOG_BUFFER_HEX_LEVEL(TAG, dtmp, event.size, ESP_LOG_DEBUG);
                     desc->receive_handler(desc, dtmp, event.size);

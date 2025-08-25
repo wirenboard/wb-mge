@@ -4,14 +4,25 @@
 #include <esp_log.h>
 #include "modbus_helpers.h"
 
-//------------------------------------------------------------------------------
+
+#define MODBUS_RTU_CRC16_LEN                    sizeof(uint16_t)
+#define MODBUS_RTU_EXCEPTION_RESPONSE_MIN_LEN   (sizeof(mb_rtu_exception_response_t) + MODBUS_RTU_CRC16_LEN)
+#define MODBUS_RTU_NORMAL_RESPONSE_MIN_LEN      (sizeof(mb_rtu_header_t) + MODBUS_RTU_CRC16_LEN + sizeof(uint16_t))
+#define MODBUS_TCP_REQUEST_MIN_LEN              sizeof(mb_tcp_header_t)
+#define MODBUS_TCP_RESPONSE_MIN_LEN             sizeof(mb_tcp_exception_response_t)
+
 
 static const char *TAG = "modbus_helpers";
 
-//------------------------------------------------------------------------------
 
-uint16_t modbus_crc16(const uint8_t *data, uint16_t len) {
+uint16_t modbus_crc16(const uint8_t *data, uint16_t len)
+{
     uint16_t crc = 0xFFFF;
+
+    if (!data) {
+        return crc;
+    }
+
     for (uint16_t pos = 0; pos < len; pos++) {
         crc ^= (uint16_t)data[pos];
         for (int i = 0; i < 8; i++) {
@@ -23,13 +34,17 @@ uint16_t modbus_crc16(const uint8_t *data, uint16_t len) {
             }
         }
     }
+
     return crc;
 }
 
-//------------------------------------------------------------------------------
 
 int modbus_rtu_check_request(const uint8_t *data, size_t len)
 {
+    if (!data) {
+        return -1;
+    }
+
     mb_rtu_header_t* header = (mb_rtu_header_t*)data;
 
     if (len < 5) {
@@ -41,8 +56,8 @@ int modbus_rtu_check_request(const uint8_t *data, size_t len)
         return -1;
     }
 
-    uint16_t calc_crc = modbus_crc16(data, len - 2);
-    uint16_t packet_crc = *(uint16_t*)&data[len - 2];
+    uint16_t calc_crc = modbus_crc16(data, len - MODBUS_RTU_CRC16_LEN);
+    uint16_t packet_crc = *(uint16_t*)&data[len - MODBUS_RTU_CRC16_LEN];
     if (calc_crc != packet_crc) {
         ESP_LOGW(TAG, "Incorrect RTU request CRC: 0x%04x, expected: 0x%04x", packet_crc, calc_crc);
         return -1;
@@ -51,20 +66,29 @@ int modbus_rtu_check_request(const uint8_t *data, size_t len)
     return 0;
 }
 
-//------------------------------------------------------------------------------
 
-int modbus_rtu_check_response(const uint8_t *data, size_t len, const mb_rtu_header_t* rtu_req_header) {
+int modbus_rtu_check_response(const uint8_t *data, size_t len, const mb_rtu_header_t* rtu_req_header)
+{
+    if (!data) {
+        return -1;
+    }
+
     mb_rtu_header_t* header = (mb_rtu_header_t*)data;
 
-    size_t min_len = (header->function & MODBUS_EXCEPTION_FLAG) ? 5 : 6;
+    size_t min_len;
+    if (header->function & MODBUS_EXCEPTION_FLAG) {
+        min_len = MODBUS_RTU_EXCEPTION_RESPONSE_MIN_LEN;
+    } else {
+        min_len = MODBUS_RTU_NORMAL_RESPONSE_MIN_LEN;
+    }
 
     if (len < min_len) {
         ESP_LOGW(TAG, "Incorrect RTU response length: %u, expected >= %u", len, min_len);
         return -1;
     }
 
-    uint16_t calc_crc = modbus_crc16(data, len - 2);
-    uint16_t packet_crc = *(uint16_t*)&data[len - 2];
+    uint16_t calc_crc = modbus_crc16(data, len - MODBUS_RTU_CRC16_LEN);
+    uint16_t packet_crc = *(uint16_t*)&data[len - MODBUS_RTU_CRC16_LEN];
     if (calc_crc != packet_crc) {
         ESP_LOGW(TAG, "Incorrect RTU response CRC: 0x%04x, expected: 0x%04x", packet_crc, calc_crc);
         return -1;
@@ -86,12 +110,15 @@ int modbus_rtu_check_response(const uint8_t *data, size_t len, const mb_rtu_head
     return 0;
 }
 
-//------------------------------------------------------------------------------
 
 int modbus_tcp_check_request(const uint8_t *data, size_t len)
 {
-    if (len < 8) {
-        ESP_LOGW(TAG, "Incorrect TCP request ADU length: %u, expected >= 8", len);
+    if (!data) {
+        return -1;
+    }
+
+    if (len < MODBUS_TCP_REQUEST_MIN_LEN) {
+        ESP_LOGW(TAG, "Incorrect TCP request ADU length: %u, expected >= %u", len, MODBUS_TCP_REQUEST_MIN_LEN);
         return -1;
     }
 
@@ -112,12 +139,15 @@ int modbus_tcp_check_request(const uint8_t *data, size_t len)
     return 0;
 }
 
-//------------------------------------------------------------------------------
 
 int modbus_tcp_check_response(const uint8_t *data, size_t len, const mb_tcp_header_t* tcp_req_header)
 {
-    if (len < 8) {
-        ESP_LOGW(TAG, "Incorrect TCP response ADU length: %u, expected >= 8", len);
+    if (!data) {
+        return -1;
+    }
+
+    if (len < MODBUS_TCP_RESPONSE_MIN_LEN) {
+        ESP_LOGW(TAG, "Incorrect TCP response ADU length: %u, expected >= %u", len, MODBUS_TCP_RESPONSE_MIN_LEN);
         return -1;
     }
 
@@ -151,30 +181,36 @@ int modbus_tcp_check_response(const uint8_t *data, size_t len, const mb_tcp_head
     return 0;
 }
 
-//------------------------------------------------------------------------------
 
 size_t modbus_rtu_from_tcp(const uint8_t *data, size_t len, uint8_t* out_buf, size_t out_buf_size)
 {
+    if (!data || !out_buf) {
+        return 0;
+    }
+
     mb_tcp_header_t* header = (mb_tcp_header_t*)data;
 
-    uint16_t rtu_len = modbus_swap16(header->length) + 2;
+    uint16_t rtu_len = modbus_swap16(header->length) + MODBUS_RTU_CRC16_LEN;
     if (out_buf_size < rtu_len) {
         ESP_LOGE(TAG, "Output RTU packet buffer is too small, size: %u, required: %u", out_buf_size, rtu_len);
         return 0;
     }
 
-    memcpy(out_buf, &data[offsetof(mb_tcp_header_t, unit_id)], rtu_len - 2);
-    uint16_t crc = modbus_crc16(out_buf, rtu_len - 2);
-    *(uint16_t*)&out_buf[rtu_len - 2] = crc;
+    memcpy(out_buf, &data[offsetof(mb_tcp_header_t, unit_id)], rtu_len - MODBUS_RTU_CRC16_LEN);
+    uint16_t crc = modbus_crc16(out_buf, rtu_len - MODBUS_RTU_CRC16_LEN);
+    *(uint16_t*)&out_buf[rtu_len - MODBUS_RTU_CRC16_LEN] = crc;
 
     return rtu_len;
 }
 
-//------------------------------------------------------------------------------
 
 size_t modbus_tcp_from_rtu(uint16_t transaction_id, const uint8_t *data, size_t len, uint8_t* out_buf, size_t out_buf_size)
 {
-    size_t tcp_len = len + sizeof(mb_tcp_header_t) - sizeof(mb_rtu_header_t) - 2;
+    if (!data || !out_buf) {
+        return 0;
+    }
+
+    size_t tcp_len = len + sizeof(mb_tcp_header_t) - sizeof(mb_rtu_header_t) - MODBUS_RTU_CRC16_LEN;
 
     if (out_buf_size < tcp_len) {
         ESP_LOGE(TAG, "Output TCP packet buffer is too small, size: %u, required: %u", out_buf_size, tcp_len);
@@ -196,11 +232,14 @@ size_t modbus_tcp_from_rtu(uint16_t transaction_id, const uint8_t *data, size_t 
     return tcp_len;
 }
 
-//------------------------------------------------------------------------------
 
 size_t modbus_rtu_exception_response(const mb_rtu_header_t* rtu_req_header, uint8_t exception_code, uint8_t* out_buf, size_t out_buf_size)
 {
-    if (!out_buf || (out_buf_size < (sizeof(mb_rtu_exception_response_t) + 2))) {
+    if (!rtu_req_header || !out_buf) {
+        return 0;
+    }
+
+    if (out_buf_size < (sizeof(mb_rtu_exception_response_t) + MODBUS_RTU_CRC16_LEN)) {
         return 0;
     }
 
@@ -212,14 +251,17 @@ size_t modbus_rtu_exception_response(const mb_rtu_header_t* rtu_req_header, uint
     uint16_t crc = modbus_crc16(out_buf, sizeof(mb_rtu_exception_response_t));
     *(uint16_t*)&out_buf[sizeof(mb_rtu_exception_response_t)] = crc;
 
-    return (sizeof(mb_rtu_exception_response_t) + 2);
+    return (sizeof(mb_rtu_exception_response_t) + MODBUS_RTU_CRC16_LEN);
 }
 
-//------------------------------------------------------------------------------
 
 size_t modbus_tcp_exception_response(const mb_tcp_header_t* tcp_req_header, uint8_t exception_code, uint8_t* out_buf, size_t out_buf_size)
 {
-    if (!out_buf || (out_buf_size < sizeof(mb_tcp_exception_response_t))) {
+    if (!tcp_req_header || !out_buf) {
+        return 0;
+    }
+
+    if (out_buf_size < sizeof(mb_tcp_exception_response_t)) {
         return 0;
     }
 
@@ -231,5 +273,3 @@ size_t modbus_tcp_exception_response(const mb_tcp_header_t* tcp_req_header, uint
 
     return sizeof(mb_tcp_exception_response_t);
 }
-
-//------------------------------------------------------------------------------
