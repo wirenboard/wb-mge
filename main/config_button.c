@@ -87,7 +87,7 @@ static void config_button_task(void *arg)
     btn_state_t state = BTN_STATE_RELEASE;
     unsigned time_stamp = pdTICKS_TO_MS(xTaskGetTickCount());
     unsigned long_press_time_stamp = time_stamp;
-    bool pending_long_press = 0;
+    bool pending_long_press = false;
 
     while (1)
     {
@@ -100,13 +100,13 @@ static void config_button_task(void *arg)
         if (config_btn_ctx.bool_state && (config_btn_ctx.bool_state != old_bool_state)) { // Press event
             config_btn_ctx.press_counter++;
             long_press_time_stamp = sys_time;
-            pending_long_press = 1;
+            pending_long_press = true;
             ESP_LOGI(TAG, "Button press event, counter: %u", config_btn_ctx.press_counter);
             if (config_btn_ctx.press_callback) {
                 config_btn_ctx.press_callback(config_btn_ctx.press_counter);
             }
         } else if (!config_btn_ctx.bool_state) {
-            pending_long_press = 0;
+            pending_long_press = false;
         }
 
         unsigned hold_time = sys_time - long_press_time_stamp;
@@ -115,7 +115,7 @@ static void config_button_task(void *arg)
             if (config_btn_ctx.long_press_callback) {
                 config_btn_ctx.long_press_callback(hold_time);
             }
-            pending_long_press = 0;
+            pending_long_press = false;
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -150,7 +150,7 @@ esp_err_t config_button_init(void)
         return ESP_FAIL;
     }
 
-    config_btn_ctx.initialized = 1;
+    config_btn_ctx.initialized = true;
     ESP_LOGI(TAG, "Button initialized");
 
     return ESP_OK;

@@ -30,7 +30,7 @@ typedef struct {
 static const char* TAG = "indication";
 
 static status_led_ctx_t status_led_ctx = {0};
-static bool indication_initialized = 0;
+static bool indication_initialized = false;
 
 
 static struct netif* get_netif(const char* key)
@@ -54,26 +54,30 @@ static void network_led_control(bool* led_state, unsigned long* time_stamp, int*
                                 unsigned long sys_time, bool link, bool activity)
 {
     if (!link) {
-        *led_state = 0;
+        *led_state = false;
         *time_stamp = sys_time;
         *state = 0;
         return;
     }
 
     switch (*state) {
+        default: {
+            *state = 0;
+            __attribute__((fallthrough));
+        }
         case 0: {
-            *led_state = 1;
+            *led_state = true;
             if (((sys_time - *time_stamp) >= NETWORK_LED_ON_TIME_MS) && activity) {
-                *led_state = 0;
+                *led_state = false;
                 *time_stamp = sys_time;
                 *state = 1;
             }
             break;
         }
         case 1: {
-            *led_state = 0;
+            *led_state = false;
             if ((sys_time - *time_stamp) >= NETWORK_LED_OFF_TIME_MS) {
-                *led_state = 1;
+                *led_state = true;
                 *time_stamp += NETWORK_LED_OFF_TIME_MS;
                 *state = 0;
             }
@@ -89,19 +93,19 @@ static void blinking_led_control(bool* led_state, unsigned long* time_stamp, uns
     unsigned long delta_time = sys_time - *time_stamp;
 
     if (!*counter || !t_on) {
-        *led_state = 0;
+        *led_state = false;
         *time_stamp = sys_time;
         return;
     }
 
     if (!*led_state) {
         if (delta_time > t_on) {
-            *led_state = 1;
+            *led_state = true;
             *time_stamp += delta_time;
         }
     } else {
         if (delta_time > t_off) {
-            *led_state = 0;
+            *led_state = false;
             *time_stamp += delta_time;
             if (*counter != COUNT_UNLIMITED) {
                 (*counter)--;
@@ -114,14 +118,14 @@ static void blinking_led_control(bool* led_state, unsigned long* time_stamp, uns
 static void status_led_control(unsigned long sys_time)
 {
     static unsigned unlimited_count = COUNT_UNLIMITED;
-    static bool init = 1;
+    static bool init = true;
     static unsigned long time_stamp = 0;
-    static bool led_state = 0;
+    static bool led_state = false;
 
     if (init) {
         time_stamp = sys_time;
-        led_state = 0;
-        init = 0;
+        led_state = false;
+        init = false;
     }
 
     if (status_led_ctx.blink_counter) { // Especial count blinking
@@ -138,7 +142,7 @@ static void status_led_control(unsigned long sys_time)
 
 static void ethernet_led_control(unsigned long sys_time)
 {
-    static bool init = 1;
+    static bool init = true;
     static struct netif* netif = NULL;
     static unsigned long time_stamp = 0;
     static bool led_state = 0;
@@ -148,22 +152,22 @@ static void ethernet_led_control(unsigned long sys_time)
     if (init) {
         netif = get_netif("ETH_DEF");
         time_stamp = sys_time;
-        led_state = 0;
+        led_state = false;
         state = 0;
         rx_counter = 0;
-        init = 0;
+        init = false;
     }
 
     if (netif) {
         bool link = netif_is_link_up(netif);
-        bool activity = 0;
+        bool activity = false;
         if (rx_counter != netif->mib2_counters.ifinoctets) {
-            activity = 1;
+            activity = true;
             rx_counter = netif->mib2_counters.ifinoctets;
         }
         network_led_control(&led_state, &time_stamp, &state, sys_time, link, activity);
     } else {
-        led_state = 0;
+        led_state = false;
     }
 
     leds_control_set_eth_led(led_state);
@@ -172,11 +176,11 @@ static void ethernet_led_control(unsigned long sys_time)
 
 static void wifi_led_control(unsigned long sys_time)
 {
-    static bool init = 1;
+    static bool init = true;
     static struct netif* ap_netif = NULL;
     static struct netif* sta_netif = NULL;
     static unsigned long time_stamp = 0;
-    static bool led_state = 0;
+    static bool led_state = false;
     static int state = 0;
     static u32_t ap_counter = 0;
     static u32_t sta_counter = 0;
@@ -185,27 +189,27 @@ static void wifi_led_control(unsigned long sys_time)
         ap_netif = get_netif("WIFI_AP_DEF");
         sta_netif = get_netif("WIFI_STA_DEF");
         time_stamp = sys_time;
-        led_state = 0;
+        led_state = false;
         state = 0;
         ap_counter = 0;
         sta_counter = 0;
-        init = 0;
+        init = false;
     }
 
-    bool activity = 0;
+    bool activity = false;
     if (ap_netif && (ap_counter != ap_netif->mib2_counters.ifinoctets)) {
         ap_counter = ap_netif->mib2_counters.ifinoctets;
-        activity = 1;
+        activity = true;
     }
     if (sta_netif && (sta_counter != sta_netif->mib2_counters.ifinoctets)) {
         sta_counter = sta_netif->mib2_counters.ifinoctets;
-        activity = 1;
+        activity = true;
     }
 
     if (ap_netif || sta_netif) {
         network_led_control(&led_state, &time_stamp, &state, sys_time, 1, activity);
     } else {
-        led_state = 0;
+        led_state = false;
     }
 
     leds_control_set_wifi_led(led_state);
@@ -250,7 +254,7 @@ esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
     xTaskCreate(indication_task, "indication_task", INDICATION_TASK_STACK_SIZE, NULL, INDICATION_TASK_PRIORITY, NULL);
 
     ESP_LOGI(TAG, "Indication initialized");
-    indication_initialized = 1;
+    indication_initialized = true;
 
     return ESP_OK;
 }
