@@ -28,8 +28,8 @@
 
 #include "rs485_control.h"
 #include "mio_control.h"
-#include "leds_control.h"
 #include "update_rs485_mio_gpio_states.h"
+#include "indication.h"
 
 static const char *TAG = "main";
 
@@ -90,21 +90,6 @@ static void gpio_expander_init(void)
 
     esp_io_expander_print_state(io_expander);
     ESP_LOGI(TAG, "GPIO expander initialized successfully");
-}
-
-// task to toggle P04/P05/P07 every 500 ms // TODO: according to requirements https://wirenboard.youtrack.cloud/issue/FW-933
-static void blink_task(void *arg)
-{
-    while (1) {
-        leds_control_set_eth_led(true);
-        leds_control_set_wifi_led(true);
-        leds_control_set_unknown_led(true);
-        vTaskDelay(pdMS_TO_TICKS(LEDS_TOGGLE_PERIOD_MS));
-        leds_control_set_eth_led(false);
-        leds_control_set_wifi_led(false);
-        leds_control_set_unknown_led(false);
-        vTaskDelay(pdMS_TO_TICKS(LEDS_TOGGLE_PERIOD_MS));
-    }
 }
 
 // Выводит все настройки в лог.
@@ -353,17 +338,14 @@ void app_main(void)
 
     gpio_expander_init();
     rs485_control_init(io_expander);
-    leds_control_init(io_expander);
     mio_control_init(io_expander);
+    indication_init(io_expander);
 
     config_button_init(config_button_callback);
     system_voltage_init();
 
     update_rs485_control();
     update_io_bus_control();
-
-    // init and start blink task to indicate that we are in bootloader mode
-    xTaskCreate(blink_task, "blink_task", 2048, NULL, 1, NULL);
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 
