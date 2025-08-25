@@ -2,15 +2,25 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
-#include <stdint.h>
 
-typedef void (*config_button_callback_t)(uint32_t press_count, uint32_t press_duration);
+typedef void (*config_button_press_callback_t)(unsigned press_counter);
+typedef void (*config_button_longpress_callback_t)(unsigned press_time_ms);
 
 // Initialize config button on GPIO34
-esp_err_t config_button_init(config_button_callback_t callback);
+esp_err_t config_button_init(void);
 
-uint32_t config_button_get_press_count(void);
+// Set or update the button single press callback. Can be NULL to disable
+void config_button_set_press_callback(config_button_press_callback_t callback);
+
+// Set or update the button long press callback. Can be NULL to disable
+// Provide hold_time_ms to set long press duration
+void config_button_set_longpress_callback(config_button_longpress_callback_t callback, unsigned hold_time_ms);
+
+// Get current button state (with debounce filtering)
+bool config_button_is_pressed(void);
+
+// Get button press counter
+unsigned config_button_get_press_count(void);
+
+// Reset button press counter
 void config_button_reset_counter(void);
-
-// Set or update the button press callback. Can be NULL to disable
-void config_button_set_callback(config_button_callback_t callback);

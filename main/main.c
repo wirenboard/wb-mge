@@ -63,15 +63,11 @@ static void factory_reset(void)
     ESP_LOGI(TAG, "Device will continue running with default configuration.");
 }
 
-// Button callback for factory reset
-static void config_button_callback(uint32_t press_count, uint32_t press_duration_ms)
+// Button long press callback for factory reset
+static void config_button_longpress_callback(unsigned press_time_ms)
 {
-    ESP_LOGI(TAG, "Button pressed %lu times, held for %lu ms", press_count, press_duration_ms);
-
-    if (press_duration_ms >= FACTORY_RESET_HOLD_TIME_MS) {
-        ESP_LOGW(TAG, "Factory reset triggered by 5-second button hold!");
-        factory_reset();
-    }
+    ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
+    factory_reset();
 }
 
 static void gpio_expander_init(void)
@@ -341,7 +337,9 @@ void app_main(void)
     mio_control_init(io_expander);
     indication_init(io_expander);
 
-    config_button_init(config_button_callback);
+    config_button_init();
+    config_button_set_longpress_callback(config_button_longpress_callback, FACTORY_RESET_HOLD_TIME_MS);
+
     system_voltage_init();
 
     update_rs485_control();
