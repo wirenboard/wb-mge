@@ -4,7 +4,6 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
-//------------------------------------------------------------------------------
 
 #define CONFIG_BUTTON_GPIO                  GPIO_NUM_34
 #define CONFIG_BUTTON_DEBOUNCE_TIME_MS      50
@@ -12,7 +11,6 @@
 #define CONFIG_BUTTON_TASK_STACK_SIZE       3072
 #define CONFIG_BUTTON_TASK_PRIORITY         2
 
-//------------------------------------------------------------------------------
 
 typedef enum {
     BTN_STATE_RELEASE = 0,
@@ -30,13 +28,11 @@ typedef struct {
     bool bool_state;
 } config_btn_ctx_t;
 
-//------------------------------------------------------------------------------
 
 static const char* TAG = "config_button";
 
 static config_btn_ctx_t config_btn_ctx = {0};
 
-//------------------------------------------------------------------------------
 
 static bool debounce_filter(btn_state_t* state, unsigned* time_stamp, const unsigned sys_time, const bool is_pressed)
 {
@@ -85,7 +81,6 @@ static bool debounce_filter(btn_state_t* state, unsigned* time_stamp, const unsi
     return pressed;
 }
 
-//------------------------------------------------------------------------------
 
 static void config_button_task(void *arg)
 {
@@ -127,7 +122,6 @@ static void config_button_task(void *arg)
     }
 }
 
-//------------------------------------------------------------------------------
 
 esp_err_t config_button_init(void)
 {
@@ -162,7 +156,6 @@ esp_err_t config_button_init(void)
     return ESP_OK;
 }
 
-//------------------------------------------------------------------------------
 
 void config_button_set_press_callback(config_button_press_callback_t callback)
 {
@@ -175,14 +168,12 @@ void config_button_set_longpress_callback(config_button_longpress_callback_t cal
     config_btn_ctx.long_press_callback = callback;
 }
 
-//------------------------------------------------------------------------------
 
 bool config_button_is_pressed(void)
 {
     return config_btn_ctx.bool_state;
 }
 
-//------------------------------------------------------------------------------
 
 unsigned config_button_get_press_count(void)
 {
@@ -194,5 +185,3 @@ void config_button_reset_counter(void)
 {
     config_btn_ctx.press_counter = 0;
 }
-
-//------------------------------------------------------------------------------

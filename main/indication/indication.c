@@ -8,7 +8,6 @@
 #include "lwip/netif.h"
 #include "lwip/stats.h"
 
-//------------------------------------------------------------------------------
 
 #define INDICATION_TASK_STACK_SIZE      2048
 #define INDICATION_TASK_PRIORITY        1
@@ -18,7 +17,6 @@
 
 #define COUNT_UNLIMITED                 0xFFFFFFFF
 
-//------------------------------------------------------------------------------
 
 typedef struct {
     unsigned long time_on_ms;
@@ -28,14 +26,12 @@ typedef struct {
     unsigned blink_counter;
 } status_led_ctx_t;
 
-//------------------------------------------------------------------------------
 
 static const char* TAG = "indication";
 
 static status_led_ctx_t status_led_ctx = {0};
 static bool indication_initialized = 0;
 
-//------------------------------------------------------------------------------
 
 static struct netif* get_netif(const char* key)
 {
@@ -53,7 +49,6 @@ static struct netif* get_netif(const char* key)
     return netif;
 }
 
-//------------------------------------------------------------------------------
 
 static void network_led_control(bool* led_state, unsigned long* time_stamp, int* state,
                                 unsigned long sys_time, bool link, bool activity)
@@ -115,7 +110,6 @@ static void blinking_led_control(bool* led_state, unsigned long* time_stamp, uns
     }
 }
 
-//------------------------------------------------------------------------------
 
 static void status_led_control(unsigned long sys_time)
 {
@@ -217,7 +211,6 @@ static void wifi_led_control(unsigned long sys_time)
     leds_control_set_wifi_led(led_state);
 }
 
-//------------------------------------------------------------------------------
 
 static void indication_task(void *arg)
 {
@@ -235,7 +228,6 @@ static void indication_task(void *arg)
     }
 }
 
-//------------------------------------------------------------------------------
 
 esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
 {
@@ -263,7 +255,6 @@ esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
     return ESP_OK;
 }
 
-//------------------------------------------------------------------------------
 
 void indication_status_led_blink(unsigned period_ms)
 {
@@ -271,7 +262,6 @@ void indication_status_led_blink(unsigned period_ms)
     status_led_ctx.time_off_ms = period_ms - status_led_ctx.time_on_ms;
 }
 
-//------------------------------------------------------------------------------
 
 void indication_status_led_count_blink(unsigned period_ms, unsigned count)
 {
@@ -280,5 +270,3 @@ void indication_status_led_count_blink(unsigned period_ms, unsigned count)
     status_led_ctx.count_blink_off_ms = period_ms - status_led_ctx.count_blink_on_ms;
     status_led_ctx.blink_counter = count;
 }
-
-//------------------------------------------------------------------------------
