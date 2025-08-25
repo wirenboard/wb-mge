@@ -1,5 +1,11 @@
 2025-08-25 Maxim Toropov <maxim.toropov@wirenboard.com>
 
+    * version:  1.0.0-rc4
+    * added:    status indication (network activity, status led)
+    * rework:   config button module (use polling task)
+
+2025-08-25 Maxim Toropov <maxim.toropov@wirenboard.com>
+
     * version:  1.0.0-rc3
     * added:    modbus TCP support in server mode
     * fix:      tcp_client (destination ip), serial (receive timeout)
