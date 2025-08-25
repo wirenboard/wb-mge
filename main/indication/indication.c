@@ -13,14 +13,27 @@
 #define INDICATION_TASK_STACK_SIZE      2048
 #define INDICATION_TASK_PRIORITY        1
 
-#define STATUS_LED_BLINK_PERIOD_MS      1000
-
 #define NETWORK_LED_OFF_TIME_MS         50
 #define NETWORK_LED_ON_TIME_MS          50
+
+#define COUNT_UNLIMITED                 0xFFFFFFFF
+
+//------------------------------------------------------------------------------
+
+typedef struct {
+    unsigned long time_on_ms;
+    unsigned long time_off_ms;
+    unsigned long count_blink_on_ms;
+    unsigned long count_blink_off_ms;
+    unsigned blink_counter;
+} status_led_ctx_t;
 
 //------------------------------------------------------------------------------
 
 static const char* TAG = "indication";
+
+static status_led_ctx_t status_led_ctx = {0};
+static bool indication_initialized = 0;
 
 //------------------------------------------------------------------------------
 
@@ -74,12 +87,39 @@ static void network_led_control(bool* led_state, unsigned long* time_stamp, int*
     }
 }
 
+
+static void blinking_led_control(bool* led_state, unsigned long* time_stamp, unsigned* counter,
+                                unsigned long sys_time, unsigned long t_on, unsigned long t_off)
+{
+    unsigned long delta_time = sys_time - *time_stamp;
+
+    if (!*counter || !t_on) {
+        *led_state = 0;
+        *time_stamp = sys_time;
+        return;
+    }
+
+    if (!*led_state) {
+        if (delta_time > t_on) {
+            *led_state = 1;
+            *time_stamp += delta_time;
+        }
+    } else {
+        if (delta_time > t_off) {
+            *led_state = 0;
+            *time_stamp += delta_time;
+            if (*counter != COUNT_UNLIMITED) {
+                (*counter)--;
+            }
+        }
+    }
+}
+
 //------------------------------------------------------------------------------
 
 static void status_led_control(unsigned long sys_time)
 {
-    static const unsigned long t_on = STATUS_LED_BLINK_PERIOD_MS / 2;
-    static const unsigned long t_off = STATUS_LED_BLINK_PERIOD_MS - t_on;
+    static unsigned unlimited_count = COUNT_UNLIMITED;
     static bool init = 1;
     static unsigned long time_stamp = 0;
     static bool led_state = 0;
@@ -90,22 +130,17 @@ static void status_led_control(unsigned long sys_time)
         init = 0;
     }
 
-    unsigned long delta_time = sys_time - time_stamp;
-
-    if (!led_state) {
-        if (delta_time > t_on) {
-            led_state = 1;
-            time_stamp += delta_time;
-        }
-    } else {
-        if (delta_time > t_off) {
-            led_state = 0;
-            time_stamp += delta_time;
-        }
+    if (status_led_ctx.blink_counter) { // Especial count blinking
+        blinking_led_control(&led_state, &time_stamp, &status_led_ctx.blink_counter, sys_time,
+                            status_led_ctx.count_blink_on_ms, status_led_ctx.count_blink_off_ms);
+    } else { // Regular blinking
+        blinking_led_control(&led_state, &time_stamp, &unlimited_count, sys_time,
+                            status_led_ctx.time_on_ms, status_led_ctx.time_off_ms);
     }
 
     leds_control_set_status_led(led_state);
 }
+
 
 static void ethernet_led_control(unsigned long sys_time)
 {
@@ -139,6 +174,7 @@ static void ethernet_led_control(unsigned long sys_time)
 
     leds_control_set_eth_led(led_state);
 }
+
 
 static void wifi_led_control(unsigned long sys_time)
 {
@@ -203,17 +239,46 @@ static void indication_task(void *arg)
 
 esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
 {
+    if (indication_initialized) {
+        return ESP_OK;  // Already initialized
+    }
+
     if (!io_expander_handle) {
         ESP_LOGE(TAG, "IO expander handle is NULL");
         return ESP_FAIL;
     }
 
     leds_control_init(io_expander_handle);
+
+    // Status led context (init only minimum necessary fields)
+    status_led_ctx.time_on_ms = 0;
+    status_led_ctx.count_blink_on_ms = 0;
+    status_led_ctx.blink_counter = 0;
+
     xTaskCreate(indication_task, "indication_task", INDICATION_TASK_STACK_SIZE, NULL, INDICATION_TASK_PRIORITY, NULL);
 
     ESP_LOGI(TAG, "Indication initialized");
+    indication_initialized = 1;
 
     return ESP_OK;
+}
+
+//------------------------------------------------------------------------------
+
+void indication_status_led_blink(unsigned period_ms)
+{
+    status_led_ctx.time_on_ms = period_ms / 2;
+    status_led_ctx.time_off_ms = period_ms - status_led_ctx.time_on_ms;
+}
+
+//------------------------------------------------------------------------------
+
+void indication_status_led_count_blink(unsigned period_ms, unsigned count)
+{
+    status_led_ctx.blink_counter = 0;
+    status_led_ctx.count_blink_on_ms = period_ms / 2;
+    status_led_ctx.count_blink_off_ms = period_ms - status_led_ctx.count_blink_on_ms;
+    status_led_ctx.blink_counter = count;
 }
 
 //------------------------------------------------------------------------------
