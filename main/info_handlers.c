@@ -86,12 +86,12 @@ static cJSON *create_rs485_port_json(int port_num)
     }
 
     if (port_num == 1) {
-        cJSON_AddBoolToObject(rs485_port, "is_busy", sys_info.rs485_1_is_busy);
-        cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_1_error_percentage);
+        cJSON_AddBoolToObject(rs485_port, "is_busy", sys_info.rs485_is_busy[0]);
+        cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_error_percentage[0]);
         cJSON_AddNumberToObject(rs485_port, "server_connections_count", tcp_server_active_connections(TCP_SERVER_1));
     } else if (port_num == 2) {
-        cJSON_AddBoolToObject(rs485_port, "is_busy", sys_info.rs485_2_is_busy);
-        cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_2_error_percentage);
+        cJSON_AddBoolToObject(rs485_port, "is_busy", sys_info.rs485_is_busy[1]);
+        cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_error_percentage[1]);
         cJSON_AddNumberToObject(rs485_port, "server_connections_count", tcp_server_active_connections(TCP_SERVER_2));
     }
 

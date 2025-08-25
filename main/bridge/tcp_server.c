@@ -20,39 +20,45 @@ static void tcp_server_task(void *pvParameters)
     char addr_str[128];
     char rx_buffer[RX_BUFFER_SIZE];
     int len;
-    int keepAlive = 1;
-    int keepIdle = KEEPALIVE_IDLE;
-    int keepInterval = KEEPALIVE_INTERVAL;
-    int keepCount = KEEPALIVE_COUNT;
+    static int keep_alive = 1;
+    static int keep_idle = KEEPALIVE_IDLE;
+    static int keep_interval = KEEPALIVE_INTERVAL;
+    static int keep_count = KEEPALIVE_COUNT;
+    static int no_delay_flag = 1;
 
     while (1) {
-        struct sockaddr_storage source_addr;
+        struct sockaddr_in source_addr;
         socklen_t addr_len = sizeof(source_addr);
         desc->client_sock = accept(desc->listen_sock, (struct sockaddr *)&source_addr, &addr_len);
-        
+
         if (desc->client_sock < 0) {
             ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
             break;
         }
 
         desc->active_connections++;
-        
         // Set tcp keepalive option
-        setsockopt(desc->client_sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(int));
-        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(int));
-        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(int));
-        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
-        
+        setsockopt(desc->client_sock, SOL_SOCKET, SO_KEEPALIVE, &keep_alive, sizeof(keep_alive));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPIDLE, &keep_idle, sizeof(keep_idle));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPINTVL, &keep_interval, sizeof(keep_interval));
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_KEEPCNT, &keep_count, sizeof(keep_count));
+
+        // No delay for send() function (disable Nagle's algorithm)
+        // It is necessary that data packets are not combined when sent and to increase the performance
+        setsockopt(desc->client_sock, IPPROTO_TCP, TCP_NODELAY, &no_delay_flag, sizeof(no_delay_flag));
+
         // Convert ip address to string
-        if (source_addr.ss_family == PF_INET) {
+        if (source_addr.sin_family == PF_INET) {
             inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
+        } else {
+            addr_str[0] = 0;
         }
-        
-        ESP_LOGD(TAG, "Socket accepted ip address: %s", addr_str);
+
+        ESP_LOGI(TAG, "Socket accepted ip address: %s, port: %d", addr_str, htons(source_addr.sin_port));
 
         do {
             len = recv(desc->client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-        
+
             if (len < 0) {
                 ESP_LOGE(TAG, "Error occurred during receiving: errno %d", errno);
             } else if (len == 0) {
@@ -64,9 +70,9 @@ static void tcp_server_task(void *pvParameters)
             }
         } while (len > 0);
 
-        shutdown(desc->client_sock, 0);
+        shutdown(desc->client_sock, SHUT_RDWR);
         close(desc->client_sock);
-
+        desc->client_sock = -1;
         desc->active_connections--;
     }
 
@@ -77,6 +83,11 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, 
 {
     if (tcps_receive_handler == NULL) {
         ESP_LOGE(TAG, "tcps_receive_handler is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (out_desc == NULL) {
+        ESP_LOGE(TAG, "out_desc is NULL");
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -91,25 +102,25 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, 
     ip_protocol = IPPROTO_IP;
 
     int listen_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
-    
+
     if (listen_sock < 0) {
         ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
         return ESP_FAIL;
     }
-    
+
     int opt = 1;
     setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     ESP_LOGD(TAG, "Socket created");
 
     int err = bind(listen_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-    
+
     if (err != 0) {
         ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
         ESP_LOGE(TAG, "IPPROTO: %d", addr_family);
         close(listen_sock);
         return ESP_FAIL;
     }
-    
+
     ESP_LOGD(TAG, "Socket bound, port %d", port);
 
     err = listen(listen_sock, 1);
@@ -147,18 +158,30 @@ esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
         return ESP_FAIL;
     }
 
-    int to_write = len;
+    // Используется неблокирующая функция, чтобы не блокировать задачу uart_event_task()
+    // Иначе переполняется очередь событий UART и пакеты начинают склеиваться и дропаться
+    // В TCP под капотом есть свой буфер передачи и окно, проблем быть не должно
+    int res = send(desc->client_sock, data, len, MSG_DONTWAIT);
 
-    while (to_write > 0) {
-        int written = send(desc->client_sock, data + (len - to_write), to_write, 0);
-        
-        if (written < 0) {
-            ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-            return ESP_FAIL;
-        }
-        
-        to_write -= written;
+    if (res < 0) {
+        ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+        return ESP_FAIL;
     }
 
+    if (res != len) {
+        ESP_LOGW(TAG, "Not all data sent, required: %u, sent: %d", len, res);
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t tcp_server_connected(tcp_desc_t *desc)
+{
+    if (!desc || (desc->client_sock < 0)) {
+        return ESP_FAIL;
+    }
+    if (!desc->active_connections) {
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }

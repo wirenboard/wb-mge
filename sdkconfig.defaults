@@ -13,3 +13,22 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 # Serial flasher config
 #
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+#
+# FreeRTOS / Kernel
+#
+# Увеличена частота RTOS для увеличения скорости переключения задач и
+# повышения точности ожидания тайм-аутов и задержек (vTaskDelay)
+#
+CONFIG_FREERTOS_HZ=500
+
+#
+# Enable DEBUG log messages activated by esp_log_level_set()
+#
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_MAXIMUM_LEVEL=4
+
+#
+# LWIP
+#
+CONFIG_LWIP_MAX_SOCKETS=15

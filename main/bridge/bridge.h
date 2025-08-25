@@ -2,6 +2,8 @@
 
 #include "esp_err.h"
 
+#define BRIDGES_COUNT                 2
+
 esp_err_t bridge_init(void);
 
 typedef enum {
@@ -11,9 +13,9 @@ typedef enum {
 } tcp_server_num_t;
 
 typedef enum {
+    BRIDGE_MODE_DISABLED = 0,
     BRIDGE_MODE_SERVER,
     BRIDGE_MODE_CLIENT,
-    BRIDGE_MODE_DISABLED,
 } bridge_mode_t;
 
 int tcp_server_active_connections(tcp_server_num_t server_num);

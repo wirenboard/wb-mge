@@ -82,6 +82,7 @@ clean:
 	idf.py fullclean
 	rm -rf build
 	rm -rf main/frontend/dist
+	rm -rf sdkconfig
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
 			cd $$dir && $(MAKE) clean --no-print-directory; cd -; \

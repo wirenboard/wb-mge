@@ -1,3 +1,12 @@
+2025-08-25 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc3
+    * added:    modbus TCP support in server mode
+    * fix:      tcp_client (destination ip), serial (receive timeout)
+    * fix:      serial: uart queue overflow
+    * improve:  increase http connections count and increase lwip sockets count
+    * rework:   bridge module
+
 2025-08-14 Radmir Khakimov <radmir.khakimov@wirenboard.com>
 
     * version:  1.0.0-rc2
