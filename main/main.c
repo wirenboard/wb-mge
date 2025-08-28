@@ -33,11 +33,11 @@
 
 static const char *TAG = "main";
 
-#define STATUS_LED_REGULAR_PERIOD_MS            1000
-#define STATUS_LED_FACTORY_RESET_PERIOD_MS      200
-#define STATUS_LED_FACTORY_RESET_COUNT          5
+#define STATUS_LED_REGULAR_BLINK_PERIOD_MS          1000
+#define STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS    200
+#define STATUS_LED_FACTORY_RESET_BLINK_COUNT        5
 
-#define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS   5000
+#define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS       5000
 
 #define IO_EXPANDER_SDA_PIN         GPIO_NUM_32
 #define IO_EXPANDER_SCL_PIN         GPIO_NUM_33
@@ -70,7 +70,7 @@ static void factory_reset(void)
 static void config_button_longpress_callback(unsigned press_time_ms)
 {
     ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
-    indication_status_led_count_blink(STATUS_LED_FACTORY_RESET_PERIOD_MS, STATUS_LED_FACTORY_RESET_COUNT);
+    indication_status_led_count_blink(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
     factory_reset();
 }
 
@@ -341,7 +341,7 @@ void app_main(void)
     mio_control_init(io_expander);
 
     indication_init(io_expander);
-    indication_status_led_blink(STATUS_LED_REGULAR_PERIOD_MS);
+    indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
 
     config_button_init();
     config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);

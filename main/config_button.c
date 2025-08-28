@@ -7,6 +7,7 @@
 
 #define CONFIG_BUTTON_GPIO                  GPIO_NUM_34
 #define CONFIG_BUTTON_DEBOUNCE_TIME_MS      50
+#define CONFIG_BUTTON_POLL_PERIOD_MS        10
 
 #define CONFIG_BUTTON_TASK_STACK_SIZE       3072
 #define CONFIG_BUTTON_TASK_PRIORITY         2
@@ -34,7 +35,7 @@ static const char* TAG = "config_button";
 static config_btn_ctx_t config_btn_ctx = {0};
 
 
-static bool debounce_filter(btn_state_t* state, unsigned* time_stamp, const unsigned sys_time, const bool is_pressed)
+static bool debounce_filter(btn_state_t* state, TickType_t* time_stamp, const TickType_t sys_time, const bool is_pressed)
 {
     switch (*state) {
         default: {
@@ -53,7 +54,7 @@ static bool debounce_filter(btn_state_t* state, unsigned* time_stamp, const unsi
                 *state = BTN_STATE_RELEASE;
                 break;
             }
-            if ((sys_time - *time_stamp) >= CONFIG_BUTTON_DEBOUNCE_TIME_MS) {
+            if ((sys_time - *time_stamp) >= pdMS_TO_TICKS(CONFIG_BUTTON_DEBOUNCE_TIME_MS)) {
                 *state = BTN_STATE_ACTIVE;
             }
             break;
@@ -70,7 +71,7 @@ static bool debounce_filter(btn_state_t* state, unsigned* time_stamp, const unsi
                 *state = BTN_STATE_ACTIVE;
                 break;
             }
-            if ((sys_time - *time_stamp) >= CONFIG_BUTTON_DEBOUNCE_TIME_MS) {
+            if ((sys_time - *time_stamp) >= pdMS_TO_TICKS(CONFIG_BUTTON_DEBOUNCE_TIME_MS)) {
                 *state = BTN_STATE_RELEASE;
             }
             break;
@@ -85,13 +86,13 @@ static bool debounce_filter(btn_state_t* state, unsigned* time_stamp, const unsi
 static void config_button_task(void *arg)
 {
     btn_state_t state = BTN_STATE_RELEASE;
-    unsigned time_stamp = pdTICKS_TO_MS(xTaskGetTickCount());
-    unsigned long_press_time_stamp = time_stamp;
+    TickType_t time_stamp = xTaskGetTickCount();
+    TickType_t long_press_time_stamp = time_stamp;
     bool pending_long_press = false;
 
     while (1)
     {
-        unsigned sys_time = pdTICKS_TO_MS(xTaskGetTickCount());
+        TickType_t sys_time = xTaskGetTickCount();
         bool pressed = !gpio_get_level(CONFIG_BUTTON_GPIO);
 
         bool old_bool_state = config_btn_ctx.bool_state;
@@ -109,16 +110,16 @@ static void config_button_task(void *arg)
             pending_long_press = false;
         }
 
-        unsigned hold_time = sys_time - long_press_time_stamp;
-        if (pending_long_press && (hold_time >= config_btn_ctx.long_press_time)) { // Long press event
-            ESP_LOGI(TAG, "Button long press event, hold time: %u ms", hold_time);
+        TickType_t hold_time = sys_time - long_press_time_stamp;
+        if (pending_long_press && (hold_time >= pdMS_TO_TICKS(config_btn_ctx.long_press_time))) { // Long press event
+            ESP_LOGI(TAG, "Button long press event, hold time: %lu ms", pdTICKS_TO_MS(hold_time));
             if (config_btn_ctx.long_press_callback) {
                 config_btn_ctx.long_press_callback(hold_time);
             }
             pending_long_press = false;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_BUTTON_POLL_PERIOD_MS));
     }
 }
 
@@ -166,12 +167,6 @@ void config_button_set_longpress_callback(config_button_longpress_callback_t cal
 {
     config_btn_ctx.long_press_time = hold_time_ms;
     config_btn_ctx.long_press_callback = callback;
-}
-
-
-bool config_button_is_pressed(void)
-{
-    return config_btn_ctx.bool_state;
 }
 
 

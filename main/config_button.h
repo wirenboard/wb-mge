@@ -16,9 +16,6 @@ void config_button_set_press_callback(config_button_press_callback_t callback);
 // Provide hold_time_ms to set long press duration
 void config_button_set_longpress_callback(config_button_longpress_callback_t callback, unsigned hold_time_ms);
 
-// Get current button state (with debounce filtering)
-bool config_button_is_pressed(void);
-
 // Get button press counter
 unsigned config_button_get_press_count(void);
 
