@@ -28,13 +28,16 @@
 
 #include "rs485_control.h"
 #include "mio_control.h"
-#include "leds_control.h"
 #include "update_rs485_mio_gpio_states.h"
+#include "indication.h"
 
 static const char *TAG = "main";
 
-#define LEDS_TOGGLE_PERIOD_MS       500
-#define FACTORY_RESET_HOLD_TIME_MS  5000
+#define STATUS_LED_REGULAR_BLINK_PERIOD_MS          1000
+#define STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS    200
+#define STATUS_LED_FACTORY_RESET_BLINK_COUNT        5
+
+#define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS       5000
 
 #define IO_EXPANDER_SDA_PIN         GPIO_NUM_32
 #define IO_EXPANDER_SCL_PIN         GPIO_NUM_33
@@ -63,15 +66,12 @@ static void factory_reset(void)
     ESP_LOGI(TAG, "Device will continue running with default configuration.");
 }
 
-// Button callback for factory reset
-static void config_button_callback(uint32_t press_count, uint32_t press_duration_ms)
+// Button long press callback for factory reset
+static void config_button_longpress_callback(unsigned press_time_ms)
 {
-    ESP_LOGI(TAG, "Button pressed %lu times, held for %lu ms", press_count, press_duration_ms);
-
-    if (press_duration_ms >= FACTORY_RESET_HOLD_TIME_MS) {
-        ESP_LOGW(TAG, "Factory reset triggered by 5-second button hold!");
-        factory_reset();
-    }
+    ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
+    indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+    factory_reset();
 }
 
 static void gpio_expander_init(void)
@@ -90,21 +90,6 @@ static void gpio_expander_init(void)
 
     esp_io_expander_print_state(io_expander);
     ESP_LOGI(TAG, "GPIO expander initialized successfully");
-}
-
-// task to toggle P04/P05/P07 every 500 ms // TODO: according to requirements https://wirenboard.youtrack.cloud/issue/FW-933
-static void blink_task(void *arg)
-{
-    while (1) {
-        leds_control_set_eth_led(true);
-        leds_control_set_wifi_led(true);
-        leds_control_set_unknown_led(true);
-        vTaskDelay(pdMS_TO_TICKS(LEDS_TOGGLE_PERIOD_MS));
-        leds_control_set_eth_led(false);
-        leds_control_set_wifi_led(false);
-        leds_control_set_unknown_led(false);
-        vTaskDelay(pdMS_TO_TICKS(LEDS_TOGGLE_PERIOD_MS));
-    }
 }
 
 // Выводит все настройки в лог.
@@ -353,17 +338,18 @@ void app_main(void)
 
     gpio_expander_init();
     rs485_control_init(io_expander);
-    leds_control_init(io_expander);
     mio_control_init(io_expander);
 
-    config_button_init(config_button_callback);
+    indication_init(io_expander);
+    indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
+
+    config_button_init();
+    config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
+
     system_voltage_init();
 
     update_rs485_control();
     update_io_bus_control();
-
-    // init and start blink task to indicate that we are in bootloader mode
-    xTaskCreate(blink_task, "blink_task", 2048, NULL, 1, NULL);
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 

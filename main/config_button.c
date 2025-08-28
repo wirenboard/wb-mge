@@ -1,84 +1,132 @@
 #include "config_button.h"
-
 #include "esp_err.h"
 #include "driver/gpio.h"
-#include "esp_timer.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
 
-#define CONFIG_BUTTON_GPIO          GPIO_NUM_34
-#define BUTTON_DEBOUNCE_TIME_MS     50
-#define BUTTON_LONG_PRESS_TIME_MS   1000
 
-static volatile uint32_t button_press_count = 0;
-static config_button_callback_t button_callback = NULL;
-static volatile bool button_initialized = false;
-static volatile uint64_t button_press_start_time = 0;
-static volatile bool button_pressed = false;
-static volatile bool button_event_pending = false;
-static volatile uint32_t last_press_duration = 0;
+#define CONFIG_BUTTON_GPIO                  GPIO_NUM_34
+#define CONFIG_BUTTON_DEBOUNCE_TIME_MS      50
+#define CONFIG_BUTTON_POLL_PERIOD_MS        10
 
-bool config_button_check_event(uint32_t *press_count, uint32_t *press_duration)
+#define CONFIG_BUTTON_TASK_STACK_SIZE       3072
+#define CONFIG_BUTTON_TASK_PRIORITY         2
+
+
+typedef enum {
+    BTN_STATE_RELEASE = 0,
+    BTN_STATE_PRE_ACT,
+    BTN_STATE_ACTIVE,
+    BTN_STATE_PRE_REL
+} btn_state_t;
+
+typedef struct {
+    bool initialized;
+    unsigned press_counter;
+    config_button_press_callback_t press_callback;
+    config_button_longpress_callback_t long_press_callback;
+    unsigned long_press_time;
+    bool bool_state;
+} config_btn_ctx_t;
+
+
+static const char* TAG = "config_button";
+
+static config_btn_ctx_t config_btn_ctx = {0};
+
+
+static bool debounce_filter(btn_state_t* state, TickType_t* time_stamp, const TickType_t sys_time, const bool is_pressed)
 {
-    if (button_event_pending) {
-        button_event_pending = false;
-        if (press_count) {
-            *press_count = button_press_count;
+    switch (*state) {
+        default: {
+            *state = BTN_STATE_RELEASE;
+            __attribute__((fallthrough));
         }
-        if (press_duration) {
-            *press_duration = last_press_duration;
-        }
-        return true;
-    }
-    return false;
-}
-
-// Polling task for button events
-static void config_button_poll_task(void *arg)
-{
-    while (1) {
-        uint32_t press_count, press_duration;
-        if (config_button_check_event(&press_count, &press_duration)) {
-            if (button_callback) {
-                button_callback(press_count, press_duration);
+        case BTN_STATE_RELEASE: {
+            if (is_pressed) {
+                *time_stamp = sys_time;
+                *state = BTN_STATE_PRE_ACT;
             }
+            break;
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
+        case BTN_STATE_PRE_ACT: {
+            if (!is_pressed) {
+                *state = BTN_STATE_RELEASE;
+                break;
+            }
+            if ((sys_time - *time_stamp) >= pdMS_TO_TICKS(CONFIG_BUTTON_DEBOUNCE_TIME_MS)) {
+                *state = BTN_STATE_ACTIVE;
+            }
+            break;
+        }
+        case BTN_STATE_ACTIVE: {
+            if (!is_pressed) {
+                *time_stamp = sys_time;
+                *state = BTN_STATE_PRE_REL;
+            }
+            break;
+        }
+        case BTN_STATE_PRE_REL: {
+            if (is_pressed) {
+                *state = BTN_STATE_ACTIVE;
+                break;
+            }
+            if ((sys_time - *time_stamp) >= pdMS_TO_TICKS(CONFIG_BUTTON_DEBOUNCE_TIME_MS)) {
+                *state = BTN_STATE_RELEASE;
+            }
+            break;
+        }
+    }
+
+    bool pressed = (*state == BTN_STATE_ACTIVE) || (*state == BTN_STATE_PRE_REL);
+    return pressed;
+}
+
+
+static void config_button_task(void *arg)
+{
+    btn_state_t state = BTN_STATE_RELEASE;
+    TickType_t time_stamp = xTaskGetTickCount();
+    TickType_t long_press_time_stamp = time_stamp;
+    bool pending_long_press = false;
+
+    while (1)
+    {
+        TickType_t sys_time = xTaskGetTickCount();
+        bool pressed = !gpio_get_level(CONFIG_BUTTON_GPIO);
+
+        bool old_bool_state = config_btn_ctx.bool_state;
+        config_btn_ctx.bool_state = debounce_filter(&state, &time_stamp, sys_time, pressed);
+
+        if (config_btn_ctx.bool_state && (config_btn_ctx.bool_state != old_bool_state)) { // Press event
+            config_btn_ctx.press_counter++;
+            long_press_time_stamp = sys_time;
+            pending_long_press = true;
+            ESP_LOGI(TAG, "Button press event, counter: %u", config_btn_ctx.press_counter);
+            if (config_btn_ctx.press_callback) {
+                config_btn_ctx.press_callback(config_btn_ctx.press_counter);
+            }
+        } else if (!config_btn_ctx.bool_state) {
+            pending_long_press = false;
+        }
+
+        TickType_t hold_time = sys_time - long_press_time_stamp;
+        if (pending_long_press && (hold_time >= pdMS_TO_TICKS(config_btn_ctx.long_press_time))) { // Long press event
+            ESP_LOGI(TAG, "Button long press event, hold time: %lu ms", pdTICKS_TO_MS(hold_time));
+            if (config_btn_ctx.long_press_callback) {
+                config_btn_ctx.long_press_callback(hold_time);
+            }
+            pending_long_press = false;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_BUTTON_POLL_PERIOD_MS));
     }
 }
 
-static void IRAM_ATTR config_button_isr_handler(void* arg)
+
+esp_err_t config_button_init(void)
 {
-    static uint64_t last_interrupt_time = 0;
-    uint64_t current_time = esp_timer_get_time();
-
-    // Simple debouncing - ignore interrupts within debounce time
-    if (current_time - last_interrupt_time < (BUTTON_DEBOUNCE_TIME_MS * 1000)) {
-        return;
-    }
-    last_interrupt_time = current_time;
-
-    int button_state = gpio_get_level(CONFIG_BUTTON_GPIO);
-
-    if ((button_state == 0) && !button_pressed) {
-        // Button pressed (falling edge)
-        button_pressed = true;
-        button_press_start_time = current_time;
-    } else if ((button_state == 1) && button_pressed) {
-        // Button released (rising edge)
-        button_pressed = false;
-        button_press_count++;
-
-        // Calculate press duration and store it
-        last_press_duration = (current_time - button_press_start_time) / 1000;
-        button_event_pending = true;
-    }
-}
-
-esp_err_t config_button_init(config_button_callback_t callback)
-{
-    if (button_initialized) {
+    if (config_btn_ctx.initialized) {
         return ESP_OK;  // Already initialized
     }
 
@@ -86,52 +134,49 @@ esp_err_t config_button_init(config_button_callback_t callback)
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << CONFIG_BUTTON_GPIO),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE,          // GPIO34 has no build-in pull-up, using external pull-up resistor
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_ANYEDGE  // Trigger on both edges
+        .intr_type = GPIO_INTR_DISABLE
     };
 
     esp_err_t ret = gpio_config(&io_conf);
     if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to initialize GPIO");
         return ret;
     }
 
-    // Install GPIO ISR service if not already installed
-    ret = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-    if ((ret != ESP_OK) && (ret != ESP_ERR_INVALID_STATE)) {
-        // ESP_ERR_INVALID_STATE means ISR service already installed
-        return ret;
+    BaseType_t result = xTaskCreate(config_button_task, "config_button_task", CONFIG_BUTTON_TASK_STACK_SIZE, NULL, CONFIG_BUTTON_TASK_PRIORITY, NULL);
+    if (result != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create task");
+        return ESP_FAIL;
     }
 
-    ret = gpio_isr_handler_add(CONFIG_BUTTON_GPIO, config_button_isr_handler, NULL);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-
-    button_callback = callback;
-    button_press_count = 0;
-    button_pressed = false;
-    button_press_start_time = 0;
-    button_initialized = true;
-
-    if (callback) {
-        xTaskCreate(config_button_poll_task, "button_poll", 4096, NULL, 1, NULL);
-    }
+    config_btn_ctx.initialized = true;
+    ESP_LOGI(TAG, "Button initialized");
 
     return ESP_OK;
 }
 
-uint32_t config_button_get_press_count(void)
+
+void config_button_set_press_callback(config_button_press_callback_t callback)
 {
-    return button_press_count;
+    config_btn_ctx.press_callback = callback;
 }
+
+void config_button_set_longpress_callback(config_button_longpress_callback_t callback, unsigned hold_time_ms)
+{
+    config_btn_ctx.long_press_time = hold_time_ms;
+    config_btn_ctx.long_press_callback = callback;
+}
+
+
+unsigned config_button_get_press_count(void)
+{
+    return config_btn_ctx.press_counter;
+}
+
 
 void config_button_reset_counter(void)
 {
-    button_press_count = 0;
-}
-
-void config_button_set_callback(config_button_callback_t callback)
-{
-    button_callback = callback;
+    config_btn_ctx.press_counter = 0;
 }
