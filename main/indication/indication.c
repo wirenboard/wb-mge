@@ -286,7 +286,7 @@ void indication_status_led_blink(unsigned period_ms)
 }
 
 
-void indication_status_led_count_blink(unsigned period_ms, unsigned count)
+void indication_status_led_blink_n_times(unsigned period_ms, unsigned count)
 {
     if (!indication_initialized || !ctx_mutex) {
         return;

@@ -70,7 +70,7 @@ static void factory_reset(void)
 static void config_button_longpress_callback(unsigned press_time_ms)
 {
     ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
-    indication_status_led_count_blink(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+    indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
     factory_reset();
 }
 

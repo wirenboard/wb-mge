@@ -11,4 +11,4 @@ void indication_status_led_blink(unsigned period_ms);
 
 // Special mode: start status LED blinking with specified period and times count
 // After the specified number of blinks has elapsed, it returns to regular blinking mode
-void indication_status_led_count_blink(unsigned period_ms, unsigned count);
+void indication_status_led_blink_n_times(unsigned period_ms, unsigned count);
