@@ -24,11 +24,17 @@ typedef struct {
     char eth_gw[SYS_INFO_MAX_STR_LEN];
     char eth_mac[SYS_INFO_MAX_STR_LEN];
 
+    bool wifi_enabled;
+    char wifi_mode[SYS_INFO_MAX_STR_LEN];
     bool wifi_sta_is_connected;
     char wifi_sta_ip[SYS_INFO_MAX_STR_LEN];
     char wifi_sta_mask[SYS_INFO_MAX_STR_LEN];
     char wifi_sta_gw[SYS_INFO_MAX_STR_LEN];
     char wifi_sta_mac[SYS_INFO_MAX_STR_LEN];
+    char wifi_sta_con_ssid[SYS_INFO_MAX_STR_LEN];
+    char wifi_ap_ip[SYS_INFO_MAX_STR_LEN];
+    char wifi_ap_mask[SYS_INFO_MAX_STR_LEN];
+    char wifi_ap_gw[SYS_INFO_MAX_STR_LEN];
     char wifi_ap_mac[SYS_INFO_MAX_STR_LEN];
     int wifi_ap_connections_count;
 

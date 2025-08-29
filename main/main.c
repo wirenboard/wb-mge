@@ -171,27 +171,40 @@ static uint32_t str_to_ip(const char *ip_str) {
     return ip;
 }
 
-void app_main(void)
+
+static void ip_to_str(uint32_t ip, char* out_ip_str)
 {
-    ESP_ERROR_CHECK(nvs_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(setting_items_init());
+    uint8_t* ip_bytes = (uint8_t*)ip;
+    sprintf(out_ip_str, "%d.%d.%d.%d", ip_bytes[3], ip_bytes[2], ip_bytes[1], ip_bytes[0]);
+}
 
-    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
-    ESP_ERROR_CHECK(setting_items_read(KEY_HOSTNAME, hostname));
-    hostname[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-    ESP_LOGI(TAG, "Hostname: %s", hostname);
 
-    // Initialize mDNS
-    ESP_ERROR_CHECK(mdns_init());
-    ESP_ERROR_CHECK(mdns_hostname_set(hostname));
-    ESP_LOGI(TAG, "mdns hostname set to: [%s]", hostname);
-
+static void init_wifi(void)
+{
     // Configure WiFi using convenient wrapper functions
     wifi_apsta_config_t apsta_cfg = {0};
-    esp_netif_ip_info_t ap_ip_info;
+    esp_netif_ip_info_t ap_ip_info = {0};
+    esp_netif_ip_info_t sta_ip_info = {0};
 
     char temp_value[SETTING_ITEM_MAX_STR_LEN] = {0};
+
+    // Read WiFi mode using string function (enum conversion needed)
+    const char* wifi_mode_str = "";
+    if (setting_items_read(KEY_WIFI_MODE, temp_value) == ESP_OK) {
+        if (strcmp(temp_value, WIFI_MODE_AP_STR) == 0) {
+            apsta_cfg.wifi_mode = WIFI_MODE_AP;
+            wifi_mode_str = WIFI_MODE_AP_STR;
+        } else if (strcmp(temp_value, WIFI_MODE_STA_STR) == 0) {
+            apsta_cfg.wifi_mode = WIFI_MODE_STA;
+            wifi_mode_str = WIFI_MODE_STA_STR;
+        } else if (strcmp(temp_value, WIFI_MODE_APSTA_STR) == 0) {
+            apsta_cfg.wifi_mode = WIFI_MODE_APSTA;
+            wifi_mode_str = WIFI_MODE_APSTA_STR;
+        } else {
+            apsta_cfg.wifi_mode = WIFI_MODE_NULL;
+            wifi_mode_str = WIFI_MODE_NONE_STR;
+        }
+    }
 
     // Read AP IP configuration using string functions (for IP addresses)
     if (setting_items_read(KEY_AP_IP_STATIC, temp_value) == ESP_OK) {
@@ -205,6 +218,28 @@ void app_main(void)
     }
     apsta_cfg.ap_ip_info = &ap_ip_info;
 
+    if ((apsta_cfg.wifi_mode == WIFI_MODE_AP) || (apsta_cfg.wifi_mode == WIFI_MODE_APSTA)) {
+        ip_to_str(ap_ip_info.ip.addr, sys_info.wifi_ap_ip);
+        ip_to_str(ap_ip_info.netmask.addr, sys_info.wifi_ap_mask);
+        ip_to_str(ap_ip_info.gw.addr, sys_info.wifi_ap_gw);
+    }
+
+    bool sta_dhcpc = setting_items_read_bool(KEY_STA_DHCPC);
+    if (!sta_dhcpc) {
+        if (setting_items_read(KEY_STA_IP_STATIC, temp_value) == ESP_OK) {
+            sta_ip_info.ip.addr = str_to_ip(temp_value);
+        }
+        if (setting_items_read(KEY_STA_MASK_STATIC, temp_value) == ESP_OK) {
+            sta_ip_info.netmask.addr = str_to_ip(temp_value);
+        }
+        if (setting_items_read(KEY_STA_GW_STATIC, temp_value) == ESP_OK) {
+            sta_ip_info.gw.addr = str_to_ip(temp_value);
+        }
+        apsta_cfg.sta_ip_info = &sta_ip_info;
+    } else {
+        apsta_cfg.sta_ip_info = NULL;
+    }
+
     // Read WiFi credentials
     if (setting_items_read(KEY_AP_SSID, temp_value) == ESP_OK) {
         strncpy(apsta_cfg.ap_ssid, temp_value, sizeof(apsta_cfg.ap_ssid) - 1);
@@ -217,23 +252,12 @@ void app_main(void)
     if (setting_items_read(KEY_STA_SSID, temp_value) == ESP_OK) {
         strncpy(apsta_cfg.sta_ssid, temp_value, sizeof(apsta_cfg.sta_ssid) - 1);
         apsta_cfg.sta_ssid[sizeof(apsta_cfg.sta_ssid) - 1] = '\0';
+        strncpy(sys_info.wifi_sta_con_ssid, temp_value, sizeof(sys_info.wifi_sta_con_ssid) - 1);
+        sys_info.wifi_sta_con_ssid[sizeof(sys_info.wifi_sta_con_ssid) - 1] = 0;
     }
     if (setting_items_read(KEY_STA_PASS, temp_value) == ESP_OK) {
         strncpy(apsta_cfg.sta_pass, temp_value, sizeof(apsta_cfg.sta_pass) - 1);
         apsta_cfg.sta_pass[sizeof(apsta_cfg.sta_pass) - 1] = '\0';
-    }
-
-    // Read WiFi mode using string function (enum conversion needed)
-    if (setting_items_read(KEY_WIFI_MODE, temp_value) == ESP_OK) {
-        if (strcmp(temp_value, WIFI_MODE_AP_STR) == 0) {
-            apsta_cfg.wifi_mode = WIFI_MODE_AP;
-        } else if (strcmp(temp_value, WIFI_MODE_STA_STR) == 0) {
-            apsta_cfg.wifi_mode = WIFI_MODE_STA;
-        } else if (strcmp(temp_value, WIFI_MODE_APSTA_STR) == 0) {
-            apsta_cfg.wifi_mode = WIFI_MODE_APSTA;
-        } else {
-            apsta_cfg.wifi_mode = WIFI_MODE_NULL;
-        }
     }
 
     // Read WiFi auth modes using string functions
@@ -252,18 +276,14 @@ void app_main(void)
     wifi_ssid[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, wifi_ssid));
 
-    // Read and log WiFi STA and AP MAC addresses
-    uint8_t wifi_sta_mac[6] = {0};
-    uint8_t wifi_ap_mac[6] = {0};
-    esp_wifi_get_mac(WIFI_IF_STA, wifi_sta_mac);
-    esp_wifi_get_mac(WIFI_IF_AP, wifi_ap_mac);
-    ESP_LOGI(TAG, "WiFi STA MAC: " MACSTR, MAC2STR(wifi_sta_mac));
-    ESP_LOGI(TAG, "WiFi AP MAC:  " MACSTR, MAC2STR(wifi_ap_mac));
-    int ret1 = snprintf(sys_info.wifi_sta_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_sta_mac));
-    int ret2 = snprintf(sys_info.wifi_ap_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_ap_mac));
-    if ((ret1 >= SYS_INFO_MAX_STR_LEN) || (ret2 >= SYS_INFO_MAX_STR_LEN)) {
-        ESP_LOGW(TAG, "WiFi MAC address string was truncated");
-    }
+    snprintf(sys_info.wifi_mode, sizeof(sys_info.wifi_mode), "%s", wifi_mode_str);
+    sys_info.wifi_enabled = (apsta_cfg.wifi_mode != WIFI_MODE_NULL);
+}
+
+
+static void init_ethernet(char* hostname)
+{
+    char temp_value[SETTING_ITEM_MAX_STR_LEN] = {0};
 
     // Configure Ethernet
     bool eth_dhcpc = setting_items_read_bool(KEY_ETH_DHCPC);
@@ -285,6 +305,41 @@ void app_main(void)
         eth_ip_info = &static_ip_info;
     }
     ESP_ERROR_CHECK(ethernet_init(&eth_connect_event_handler, eth_ip_info, hostname));
+}
+
+
+void app_main(void)
+{
+    ESP_ERROR_CHECK(nvs_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(setting_items_init());
+
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    ESP_ERROR_CHECK(setting_items_read(KEY_HOSTNAME, hostname));
+    hostname[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+    ESP_LOGI(TAG, "Hostname: %s", hostname);
+
+    // Initialize mDNS
+    ESP_ERROR_CHECK(mdns_init());
+    ESP_ERROR_CHECK(mdns_hostname_set(hostname));
+    ESP_LOGI(TAG, "mDNS hostname set to: [%s]", hostname);
+
+    init_wifi();
+
+    // Read and log WiFi STA and AP MAC addresses
+    uint8_t wifi_sta_mac[6] = {0};
+    uint8_t wifi_ap_mac[6] = {0};
+    esp_wifi_get_mac(WIFI_IF_STA, wifi_sta_mac);
+    esp_wifi_get_mac(WIFI_IF_AP, wifi_ap_mac);
+    ESP_LOGI(TAG, "WiFi STA MAC: " MACSTR, MAC2STR(wifi_sta_mac));
+    ESP_LOGI(TAG, "WiFi AP MAC:  " MACSTR, MAC2STR(wifi_ap_mac));
+    int ret1 = snprintf(sys_info.wifi_sta_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_sta_mac));
+    int ret2 = snprintf(sys_info.wifi_ap_mac, SYS_INFO_MAX_STR_LEN, MACSTR, MAC2STR(wifi_ap_mac));
+    if ((ret1 >= SYS_INFO_MAX_STR_LEN) || (ret2 >= SYS_INFO_MAX_STR_LEN)) {
+        ESP_LOGW(TAG, "WiFi MAC address string was truncated");
+    }
+
+    init_ethernet(hostname);
 
     // Get Ethernet MAC address after initialization
     esp_eth_handle_t eth_handle = ethernet_get_handle();

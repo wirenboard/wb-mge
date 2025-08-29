@@ -51,11 +51,19 @@ static esp_err_t info_build_network_json(cJSON **network_json)
         return ESP_FAIL;
     }
 
+    cJSON_AddBoolToObject(wifi, "enabled", sys_info.wifi_enabled);
+    cJSON_AddStringToObject(wifi, "mode", sys_info.wifi_mode);
+
     cJSON_AddBoolToObject(wifi, "con_sta", sys_info.wifi_sta_is_connected);
+    cJSON_AddStringToObject(wifi, "con_sta_ssid", sys_info.wifi_sta_con_ssid);
     cJSON_AddStringToObject(wifi, "sta_ip", sys_info.wifi_sta_ip);
     cJSON_AddStringToObject(wifi, "sta_mask", sys_info.wifi_sta_mask);
     cJSON_AddStringToObject(wifi, "sta_gw", sys_info.wifi_sta_gw);
+
     cJSON_AddNumberToObject(wifi, "con_ap", sys_info.wifi_ap_connections_count);
+    cJSON_AddStringToObject(wifi, "ap_ip", sys_info.wifi_ap_ip);
+    cJSON_AddStringToObject(wifi, "ap_mask", sys_info.wifi_ap_mask);
+    cJSON_AddStringToObject(wifi, "ap_gw", sys_info.wifi_ap_gw);
 
     // Add WiFi STA RSSI
     if (sys_info.wifi_sta_is_connected) {
