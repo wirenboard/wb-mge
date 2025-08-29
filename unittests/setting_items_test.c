@@ -1,212 +1,230 @@
-#include "setting_items.h"  // Use new string-based implementation
-#include "ram_storage.h"     // Mock storage for testing
+#include "unity.h"
+#include "console_log.h"
+
 #include "array_size.h"
+#include "ram_storage.h"
+#include "setting_items.h"
 
-#include <stdio.h>
-#include <string.h>
-#include <stdbool.h>
-
-#define TEST_OK 0
-#define TEST_FAIL 1
-
-#define TEST_PASSED() do { printf("✅ TEST PASSED: %s\n", __func__); } while(0)
-#define TEST_FAILED(fmt, ...) do { printf("❌ TEST FAILED in %s: " fmt "\n", __func__, ##__VA_ARGS__); } while(0)
-
-int baudrate_test(void)
+void setUp(void)
 {
+
+}
+
+void tearDown(void)
+{
+
+}
+
+void test_baudrate(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test baudrate");
+    LOG_MESSAGE();
+
     const char* valid_test_baudrate[] = {"9600", "115200"};
     const char* invalid_test_baudrate[] = {"0", "299", "100", "1000000"};
     const char* keys[] = {KEY_BAUDRATE1, KEY_BAUDRATE2};
 
-    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
-        printf("Testing key: %s\n", keys[k]);
-
-        // Test valid values
-        for (int i = 0; i < ARRAY_SIZE(valid_test_baudrate); i++) {
-            printf("Testing valid baudrate: %s\n", valid_test_baudrate[i]);
-            if (setting_items_save(keys[k], valid_test_baudrate[i]) != ESP_OK) {
-                TEST_FAILED("Failed to save valid baudrate: %s", valid_test_baudrate[i]);
-                return TEST_FAIL;
-            }
+    for (size_t k = 0; k < ARRAY_SIZE(keys); k++) {
+        for (size_t i = 0; i < ARRAY_SIZE(valid_test_baudrate); i++) {
+            TEST_ASSERT_EQUAL_INT_MESSAGE(
+                ESP_OK,
+                setting_items_save(keys[k], valid_test_baudrate[i]),
+                "Failed to save valid baudrate"
+            );
 
             char got_baudrate_str[SETTING_ITEM_MAX_STR_LEN] = {0};
-            if (setting_items_read(keys[k], got_baudrate_str) != ESP_OK) {
-                TEST_FAILED("Failed to read baudrate");
-                return TEST_FAIL;
-            }
+            TEST_ASSERT_EQUAL_INT_MESSAGE(
+                ESP_OK,
+                setting_items_read(keys[k], got_baudrate_str),
+                "Failed to read baudrate"
+            );
 
-            if (strcmp(got_baudrate_str, valid_test_baudrate[i]) != 0) {
-                TEST_FAILED("Baudrate mismatch: expected %s, got %s",
-                           valid_test_baudrate[i], got_baudrate_str);
-                return TEST_FAIL;
-            }
+            TEST_ASSERT_EQUAL_STRING_MESSAGE(
+                valid_test_baudrate[i],
+                got_baudrate_str,
+                "Baudrate mismatch"
+            );
         }
 
-        // Test invalid values
-        for (int i = 0; i < ARRAY_SIZE(invalid_test_baudrate); i++) {
-            printf("Testing invalid baudrate: %s\n", invalid_test_baudrate[i]);
-            if (setting_items_save(keys[k], invalid_test_baudrate[i]) == ESP_OK) {
-                TEST_FAILED("Invalid baudrate %s was accepted", invalid_test_baudrate[i]);
-                return TEST_FAIL;
-            }
+        for (size_t i = 0; i < ARRAY_SIZE(invalid_test_baudrate); i++) {
+            TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(
+                ESP_OK,
+                setting_items_save(keys[k], invalid_test_baudrate[i]),
+                "Invalid baudrate was accepted"
+            );
         }
     }
-
-    TEST_PASSED();
-    return TEST_OK;
 }
 
-int hostname_test(void)
+void test_hostname(void)
 {
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test hostname");
+    LOG_MESSAGE();
+
     const char* valid_hostnames[] = {"WB-MGE", "device-123", "test"};
     const char* invalid_hostnames[] = {"", "device with spaces", "very-long-hostname-that-exceeds-maximum-length"};
 
-    for (int i = 0; i < ARRAY_SIZE(valid_hostnames); i++) {
-        if (setting_items_save(KEY_HOSTNAME, valid_hostnames[i]) != ESP_OK) {
-            TEST_FAILED("Failed to save valid hostname: %s", valid_hostnames[i]);
-            return TEST_FAIL;
-        }
+    for (size_t i = 0; i < ARRAY_SIZE(valid_hostnames); i++) {
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(KEY_HOSTNAME, valid_hostnames[i]),
+            "Failed to save valid hostname"
+        );
 
         char got_hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
-        if (setting_items_read(KEY_HOSTNAME, got_hostname) != ESP_OK) {
-            TEST_FAILED("Failed to read hostname");
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_read(KEY_HOSTNAME, got_hostname),
+            "Failed to read hostname"
+        );
 
-        if (strcmp(got_hostname, valid_hostnames[i]) != 0) {
-            TEST_FAILED("Hostname mismatch: expected %s, got %s", valid_hostnames[i], got_hostname);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(
+            valid_hostnames[i],
+            got_hostname,
+            "Hostname mismatch"
+        );
     }
 
-    // Test invalid hostnames
-    for (int i = 0; i < ARRAY_SIZE(invalid_hostnames); i++) {
-        if (setting_items_save(KEY_HOSTNAME, invalid_hostnames[i]) == ESP_OK) {
-            TEST_FAILED("Invalid hostname %s was accepted", invalid_hostnames[i]);
-            return TEST_FAIL;
-        }
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_hostnames); i++) {
+        TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(KEY_HOSTNAME, invalid_hostnames[i]),
+            "Invalid hostname was accepted"
+        );
     }
-
-    TEST_PASSED();
-    return TEST_OK;
 }
 
-int bool_test(void)
+void test_bool(void)
 {
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test boolean settings");
+    LOG_MESSAGE();
+
     const char* keys[] = {KEY_IO_BUS_ENABLED, KEY_485_VOUT, KEY_ETH_DHCPC};
 
-    for (int k = 0; k < ARRAY_SIZE(keys); k++) {
-        // Test valid boolean values
-        if (setting_items_save(keys[k], "true") != ESP_OK) {
-            TEST_FAILED("Failed to save 'true' for %s", keys[k]);
-            return TEST_FAIL;
-        }
+    for (size_t k = 0; k < ARRAY_SIZE(keys); k++) {
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(keys[k], "true"),
+            "Failed to save 'true'"
+        );
 
         char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-        if (setting_items_read(keys[k], value) != ESP_OK) {
-            TEST_FAILED("Failed to read %s", keys[k]);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_read(keys[k], value),
+            "Failed to read value"
+        );
 
-        if (strcmp(value, "true") != 0) {
-            TEST_FAILED("Expected 'true', got '%s' for %s", value, keys[k]);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(
+            "true",
+            value,
+            "Expected 'true'"
+        );
 
-        // Test false
-        if (setting_items_save(keys[k], "false") != ESP_OK) {
-            TEST_FAILED("Failed to save 'false' for %s", keys[k]);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(keys[k], "false"),
+            "Failed to save 'false'"
+        );
 
-        if (setting_items_read(keys[k], value) != ESP_OK) {
-            TEST_FAILED("Failed to read %s", keys[k]);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_read(keys[k], value),
+            "Failed to read value"
+        );
 
-        if (strcmp(value, "false") != 0) {
-            TEST_FAILED("Expected 'false', got '%s' for %s", value, keys[k]);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(
+            "false",
+            value,
+            "Expected 'false'"
+        );
 
-        // Test invalid boolean
-        if (setting_items_save(keys[k], "invalid") == ESP_OK) {
-            TEST_FAILED("Invalid boolean 'invalid' was accepted for %s", keys[k]);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(keys[k], "invalid"),
+            "Invalid boolean 'invalid' was accepted"
+        );
     }
-
-    TEST_PASSED();
-    return TEST_OK;
 }
 
-int wifi_test(void)
+void test_wifi(void)
 {
-    // Test WiFi mode
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test wifi");
+    LOG_MESSAGE();
+
     const char* valid_modes[] = {"ap", "sta", "apsta"};
     const char* invalid_modes[] = {"invalid", "", "AP", "Station"};
 
-    for (int i = 0; i < ARRAY_SIZE(valid_modes); i++) {
-        if (setting_items_save(KEY_WIFI_MODE, valid_modes[i]) != ESP_OK) {
-            TEST_FAILED("Failed to save valid WiFi mode: %s", valid_modes[i]);
-            return TEST_FAIL;
-        }
+    for (size_t i = 0; i < ARRAY_SIZE(valid_modes); i++) {
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(KEY_WIFI_MODE, valid_modes[i]),
+            "Failed to save valid WiFi mode"
+        );
 
         char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-        if (setting_items_read(KEY_WIFI_MODE, value) != ESP_OK) {
-            TEST_FAILED("Failed to read WiFi mode");
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_read(KEY_WIFI_MODE, value),
+            "Failed to read WiFi mode"
+        );
 
-        if (strcmp(value, valid_modes[i]) != 0) {
-            TEST_FAILED("WiFi mode mismatch: expected %s, got %s", valid_modes[i], value);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(
+            valid_modes[i],
+            value,
+            "WiFi mode mismatch"
+        );
     }
 
-    // Test invalid modes
-    for (int i = 0; i < ARRAY_SIZE(invalid_modes); i++) {
-        if (setting_items_save(KEY_WIFI_MODE, invalid_modes[i]) == ESP_OK) {
-            TEST_FAILED("Invalid WiFi mode %s was accepted", invalid_modes[i]);
-            return TEST_FAIL;
-        }
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_modes); i++) {
+        TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(KEY_WIFI_MODE, invalid_modes[i]),
+            "Invalid WiFi mode was accepted"
+        );
     }
-
-    TEST_PASSED();
-    return TEST_OK;
 }
 
-int rs485_test(void)
+void test_rs485(void)
 {
-    // Test termination and fail-safe booleans
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test RS485");
+    LOG_MESSAGE();
+
     const char* bool_keys[] = {KEY_485_TERM_1, KEY_485_FAIL_SAFE_1, KEY_485_TERM_2, KEY_485_FAIL_SAFE_2};
 
-    for (int k = 0; k < ARRAY_SIZE(bool_keys); k++) {
-        // Test true/false
-        if (setting_items_save(bool_keys[k], "true") != ESP_OK) {
-            TEST_FAILED("Failed to save 'true' for %s", bool_keys[k]);
-            return TEST_FAIL;
-        }
+    for (size_t k = 0; k < ARRAY_SIZE(bool_keys); k++) {
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(bool_keys[k], "true"),
+            "Failed to save 'true'"
+        );
 
-        if (setting_items_save(bool_keys[k], "false") != ESP_OK) {
-            TEST_FAILED("Failed to save 'false' for %s", bool_keys[k]);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(bool_keys[k], "false"),
+            "Failed to save 'false'"
+        );
 
         // Test invalid boolean
-        if (setting_items_save(bool_keys[k], "invalid") == ESP_OK) {
-            TEST_FAILED("Invalid boolean value accepted for %s", bool_keys[k]);
-            return TEST_FAIL;
-        }
+        TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(
+            ESP_OK,
+            setting_items_save(bool_keys[k], "invalid"),
+            "Invalid boolean value accepted"
+        );
     }
-
-    TEST_PASSED();
-    return TEST_OK;
 }
 
 int main(void)
 {
-    printf("=== Running String-Based Setting Items Tests ===\n");
+    UNITY_BEGIN();
+
+    LOG_COLORED_MESSAGE(CONS_COLOR_ORANGE, "Initializing RAM, storage interface and setting items");
+    LOG_MESSAGE();
 
     // Initialize RAM storage for testing
     rams_init();
@@ -219,38 +237,17 @@ int main(void)
     };
 
     // Initialize setting items with test storage
-    if (setting_items_init_with_storage(&test_storage) != ESP_OK) {
-        printf("❌ Failed to initialize setting items\n");
-        return 1;
-    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        setting_items_init_with_storage(&test_storage),
+        "Failed to initialize setting items"
+    );
 
-    // Run tests
-    if (baudrate_test() != TEST_OK) {
-        printf("❌ baudrate_test FAILED\n");
-        return 1;
-    }
+    RUN_TEST(test_baudrate);
+    RUN_TEST(test_hostname);
+    RUN_TEST(test_bool);
+    RUN_TEST(test_wifi);
+    RUN_TEST(test_rs485);
 
-    if (hostname_test() != TEST_OK) {
-        printf("❌ hostname_test FAILED\n");
-        return 1;
-    }
-
-    if (bool_test() != TEST_OK) {
-        printf("❌ bool_test FAILED\n");
-        return 1;
-    }
-
-    if (wifi_test() != TEST_OK) {
-        printf("❌ wifi_test FAILED\n");
-        return 1;
-    }
-
-    if (rs485_test() != TEST_OK) {
-        printf("❌ rs485_test FAILED\n");
-        return 1;
-    }
-
-    printf("✅ ALL TESTS PASSED!\n");
-    printf("=== String-Based Settings Migration Complete ===\n");
-    return 0;
+    return UNITY_END();
 }
