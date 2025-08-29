@@ -30,6 +30,7 @@
 #include "mio_control.h"
 #include "update_rs485_mio_gpio_states.h"
 #include "indication.h"
+#include "gpio_expander.h"
 
 static const char *TAG = "main";
 
@@ -39,18 +40,7 @@ static const char *TAG = "main";
 
 #define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS       5000
 
-#define IO_EXPANDER_SDA_PIN         GPIO_NUM_32
-#define IO_EXPANDER_SCL_PIN         GPIO_NUM_33
-#define IO_EXPANDER_I2C_ADDRESS     ESP_IO_EXPANDER_I2C_TCA9555_ADDRESS_000
-
-static i2c_master_bus_handle_t i2c_handle = NULL;
-const i2c_master_bus_config_t bus_config = {
-    .i2c_port = I2C_NUM_0,
-    .sda_io_num = IO_EXPANDER_SDA_PIN,
-    .scl_io_num = IO_EXPANDER_SCL_PIN,
-    .clk_source = I2C_CLK_SRC_DEFAULT,
-};
-static esp_io_expander_handle_t io_expander = NULL;
+static esp_io_expander_handle_t gpio_expander = NULL;
 
 static void factory_reset(void)
 {
@@ -74,23 +64,6 @@ static void config_button_longpress_callback(unsigned press_time_ms)
     factory_reset();
 }
 
-static void gpio_expander_init(void)
-{
-    esp_err_t ret = i2c_new_master_bus(&bus_config, &i2c_handle);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create I2C master bus: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    ret = esp_io_expander_new_i2c_tca95xx_16bit(i2c_handle, IO_EXPANDER_I2C_ADDRESS, &io_expander);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create GPIO expander: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    esp_io_expander_print_state(io_expander);
-    ESP_LOGI(TAG, "GPIO expander initialized successfully");
-}
 
 // Выводит все настройки в лог.
 // TODO: В релизе удалить
@@ -336,11 +309,11 @@ void app_main(void)
     sys_info_init();
     print_setting_items();
 
-    gpio_expander_init();
-    rs485_control_init(io_expander);
-    mio_control_init(io_expander);
+    gpio_expander_init(&gpio_expander);
+    rs485_control_init(gpio_expander);
+    mio_control_init(gpio_expander);
 
-    indication_init(io_expander);
+    indication_init(gpio_expander);
     indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
 
     config_button_init();
