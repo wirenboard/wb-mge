@@ -1,8 +1,8 @@
 #
 # Partition Table
 #
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
-CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_table.csv"
 
 #
 # HTTP Server

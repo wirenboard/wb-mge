@@ -3,7 +3,6 @@
 #define WIFI_CHAN_AP                9
 
 #define BASE_HOSTNAME               "WB-MGE" // генерируется в setting_items.c: get_dynamic_hostname
-#define FIRMWARE_VERSION            FW_VERSION_STRING
 
 // Значения по умолчанию
 #define DEFAULT_LOGIN               "admin"
@@ -34,3 +33,7 @@
 #define DEFAULT_485_FAIL_SAFE       "true"
 #define DEFAULT_IO_BUS_ENABLED      "true"
 #define DEFAULT_WEB_PORT            "80"
+
+#ifdef MODEL_MGEv3
+    #define DEVICE_MODEL            "WB-MGE v3"
+#endif
