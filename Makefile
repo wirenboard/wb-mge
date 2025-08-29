@@ -46,7 +46,6 @@ DEFS += FIRMWARE_VERSION=$(VERSION)
 GIT_HASH := $(shell git rev-parse HEAD | cut -c -7 )
 GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD | sed "s/\//_/")
 GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
-GIT_INFO := $(shell echo "\\\"$(GIT_INFO)\\\"")
 
 TARGET_PROJECT_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH))
 

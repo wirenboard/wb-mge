@@ -37,3 +37,6 @@
 #ifdef MODEL_MGEv3
     #define DEVICE_MODEL            "WB-MGE v3"
 #endif
+
+// Don't change
+#define DEVICE_SIGNATURE_LEN        12

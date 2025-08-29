@@ -24,7 +24,6 @@ static const char *TAG = "cmd_handler";
 typedef enum {
     CMD_REBOOT,
     CMD_SET_DEFAULT_SETTINGS,
-    CMD_WRITE_FACTORY_DATA,
 } cmd_code_t;
 
 typedef struct {
@@ -36,7 +35,6 @@ typedef struct {
 static const cmd_t available_commands[] = {
     {CMD_REBOOT, "reboot", "Restart the device"},
     {CMD_SET_DEFAULT_SETTINGS, "set_default_settings", "Reset all settings to factory defaults"},
-    {CMD_WRITE_FACTORY_DATA, "write_factory_data", "Write factory calibration data to storage"},
 };
 
 static void reboot_task(void *pvParameters)
@@ -84,15 +82,6 @@ static esp_err_t cmd_execute(int cmd_code)
             result = ESP_FAIL;
         } else {
             ESP_LOGI(TAG, "All default settings applied successfully");
-        }
-        break;
-
-    case CMD_WRITE_FACTORY_DATA:
-        if (sys_info_write_factory_data() != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to write factory data");
-            result = ESP_FAIL;
-        } else {
-            ESP_LOGI(TAG, "Factory data written successfully");
         }
         break;
 

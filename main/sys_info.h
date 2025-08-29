@@ -6,15 +6,17 @@
 
 #include "esp_err.h"
 #include "bridge.h"
+#include "config.h"
 
-#define SYS_INFO_MAX_STR_LEN    32
+#define SYS_INFO_MAX_STR_LEN    64
 
 typedef struct {
     uint64_t device_serial_num;
     char firmware_ver[SYS_INFO_MAX_STR_LEN];
+    char firmware_git_info[SYS_INFO_MAX_STR_LEN];
 
     char device_name[SYS_INFO_MAX_STR_LEN];
-    char hardware_ver[SYS_INFO_MAX_STR_LEN];
+    char device_signature[DEVICE_SIGNATURE_LEN + 1];
 
     bool eth_is_connected;
     char eth_ip[SYS_INFO_MAX_STR_LEN];

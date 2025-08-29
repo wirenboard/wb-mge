@@ -33,3 +33,10 @@ CONFIG_LOG_MAXIMUM_LEVEL=4
 #
 CONFIG_LWIP_MAX_SOCKETS=15
 CONFIG_LWIP_STATS=y
+
+#
+# eFuse Bit Manager
+#
+# Only for debug purposes
+# TODO: Delete it in production release
+CONFIG_EFUSE_VIRTUAL=y

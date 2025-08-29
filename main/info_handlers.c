@@ -225,46 +225,6 @@ static esp_err_t info_build_ap_clients_json(cJSON **clients_json)
     return ESP_OK;
 }
 
-static esp_err_t update_info_key_from_json(cJSON *req_json, const char *key, void *dest, int type)
-{
-    if (cJSON_HasObjectItem(req_json, key)) {
-        cJSON *item = cJSON_GetObjectItem(req_json, key);
-        if (item->type == type) {
-            if (type == cJSON_String) {
-                strncpy((char *)dest, item->valuestring, SYS_INFO_MAX_STR_LEN - 1);
-                ((char *)dest)[SYS_INFO_MAX_STR_LEN - 1] = '\0';
-            } else if (type == cJSON_Number) {
-                *(int *)dest = item->valueint;
-            } else {
-                ESP_LOGW(TAG, "Unknown type json item");
-                return ESP_FAIL;
-            }
-            return ESP_OK;
-        }
-    }
-    return ESP_FAIL;
-}
-
-static esp_err_t info_update_from_json(cJSON *request_json)
-{
-    if (request_json == NULL) {
-        return ESP_FAIL;
-    }
-
-    esp_err_t result = ESP_OK;
-
-    if (update_info_key_from_json(request_json, "device_name", sys_info.device_name, cJSON_String) != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to update device_name");
-        result = ESP_FAIL;
-    }
-
-    if (update_info_key_from_json(request_json, "hardware", sys_info.hardware_ver, cJSON_String) != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to update hardware");
-        result = ESP_FAIL;
-    }
-
-    return result;
-}
 
 esp_err_t info_get_handler(httpd_req_t *req)
 {
@@ -283,8 +243,9 @@ esp_err_t info_get_handler(httpd_req_t *req)
 
     // Build device info directly
     cJSON_AddStringToObject(response_json, "device_name", sys_info.device_name);
-    cJSON_AddStringToObject(response_json, "firmware", FIRMWARE_VERSION);
-    cJSON_AddStringToObject(response_json, "hardware", sys_info.hardware_ver);
+    cJSON_AddStringToObject(response_json, "signature", sys_info.device_signature);
+    cJSON_AddStringToObject(response_json, "firmware", sys_info.firmware_ver);
+    cJSON_AddStringToObject(response_json, "git_info", sys_info.firmware_git_info);
     cJSON_AddNumberToObject(response_json, "serial_num", sys_info.device_serial_num);
 
     // Add system voltage measurement
@@ -331,31 +292,6 @@ esp_err_t info_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-esp_err_t info_post_handler(httpd_req_t *req)
-{
-    ESP_LOGI(TAG, "System info POST request");
-
-    if (!auth_middleware_check(req)) {
-        return ESP_OK;
-    }
-
-    cJSON *request_json = json_utils_receive_json(req);
-    if (request_json == NULL) {
-        return ESP_FAIL;
-    }
-
-    esp_err_t result = info_update_from_json(request_json);
-
-    json_utils_cleanup(request_json, NULL);
-
-    if (result != ESP_OK) {
-        json_utils_send_error(req, "Failed to update system info");
-        return ESP_OK;
-    }
-
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
-}
 
 esp_err_t uptime_get_handler(httpd_req_t *req)
 {
