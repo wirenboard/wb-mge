@@ -21,6 +21,7 @@ typedef struct {
 static const setting_mapping_t top_level_mappings[] = {
     {"hostname", KEY_HOSTNAME},
     {"login", KEY_LOGIN},
+    {"pass", KEY_PASS},
     {"web_port", KEY_WEB_PORT},
     {"io_bus", KEY_IO_BUS_ENABLED},
     {"vout", KEY_485_VOUT},

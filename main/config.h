@@ -47,5 +47,5 @@
 
 
 #ifdef MODEL_MGEv3
-    #define DEVICE_MODEL            "WB-MGE v3"
+    #define DEVICE_MODEL            "WB-MGE v.3"
 #endif
