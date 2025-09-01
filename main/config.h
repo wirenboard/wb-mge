@@ -1,8 +1,10 @@
 #pragma once
 
+
 #define WIFI_CHAN_AP                9
 
 #define BASE_HOSTNAME               "WB-MGE" // генерируется в setting_items.c: get_dynamic_hostname
+
 
 // Значения по умолчанию
 
@@ -44,12 +46,6 @@
 #define DEFAULT_BRIDGE_MB           "false"
 
 
-
-
-
 #ifdef MODEL_MGEv3
     #define DEVICE_MODEL            "WB-MGE v3"
 #endif
-
-// Don't change
-#define DEVICE_SIGNATURE_LEN        12

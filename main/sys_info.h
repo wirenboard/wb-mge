@@ -7,6 +7,7 @@
 #include "esp_err.h"
 #include "bridge.h"
 #include "config.h"
+#include "wb_app_desc.h"
 
 #define SYS_INFO_MAX_STR_LEN    64
 

@@ -7,7 +7,11 @@
 
 
 #define SIGNATURE_EFUSE_BLOCK       EFUSE_BLK3
-#define SIGNATURE_EFUSE_OFFSET      0
+#define SIGNATURE_EFUSE_OFFSET      8
+
+// Auxilary macros
+#define STR_HELPER_MACRO(x)         #x
+#define STR_MACRO(x)                STR_HELPER_MACRO(x)
 
 
 static const char* TAG = "sys_info";
@@ -47,19 +51,19 @@ static uint64_t generate_serial_from_mac(void)
 
         esp_err_t err = esp_efuse_write_block(SIGNATURE_EFUSE_BLOCK, signature_buf, SIGNATURE_EFUSE_OFFSET * 8, sizeof(signature_buf) * 8);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Unable to write device signature to virtual eFuse bank 3");
+            ESP_LOGE(TAG, "Unable to write device signature to virtual " STR_MACRO(SIGNATURE_EFUSE_BLOCK));
             return;
         }
 
-        ESP_LOGW(TAG, "Device signature was written to virtual eFuse bank 3");
+        ESP_LOGW(TAG, "Device signature was written to virtual " STR_MACRO(SIGNATURE_EFUSE_BLOCK));
         char read_buf[32] = {0};
-        esp_err_t ret = esp_efuse_read_block(EFUSE_BLK3, read_buf, 0, sizeof(read_buf) * 8);
+        esp_err_t ret = esp_efuse_read_block(SIGNATURE_EFUSE_BLOCK, read_buf, 0, sizeof(read_buf) * 8);
 
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Unable to read virtual eFuse bank 3");
+            ESP_LOGE(TAG, "Unable to read virtual " STR_MACRO(SIGNATURE_EFUSE_BLOCK));
         }
 
-        ESP_LOGI(TAG, "Virtual eFuse bank 3 content:");
+        ESP_LOGI(TAG, "Virtual " STR_MACRO(SIGNATURE_EFUSE_BLOCK) " content:");
         ESP_LOG_BUFFER_HEX_LEVEL(TAG, read_buf, sizeof(read_buf), ESP_LOG_INFO);
     }
 #endif
@@ -72,14 +76,14 @@ static void get_device_signature(char out_buf[DEVICE_SIGNATURE_LEN + 1])
     bool is_empty = !strlen(out_buf);
 
     if (res != ESP_OK) {
-        ESP_LOGE(TAG, "Unable to read device signature");
+        ESP_LOGE(TAG, "Unable to read device signature from " STR_MACRO(SIGNATURE_EFUSE_BLOCK));
     } else if (is_empty) {
         ESP_LOGW(TAG, "Device signature is empty");
     }
 
     if (res != ESP_OK || is_empty) {
-        ESP_LOGW(TAG, "Defaulting signature to: %s", DEVICE_SIGNATURE);
-        sniprintf(out_buf, DEVICE_SIGNATURE_LEN + 1, DEVICE_SIGNATURE);
+        GET_APP_DESC_STR_FIELD(signature, out_buf);
+        ESP_LOGW(TAG, "Defaulting signature to: %s", out_buf);
     }
 }
 
@@ -88,9 +92,9 @@ esp_err_t sys_info_init(void)
 {
     sys_info.device_serial_num = generate_serial_from_mac();
 
-    snprintf(sys_info.firmware_ver, sizeof(sys_info.firmware_ver), "%s", FIRMWARE_VERSION);
-    snprintf(sys_info.firmware_git_info, sizeof(sys_info.firmware_git_info), "%s", FIRMWARE_GIT_INFO);
-    snprintf(sys_info.device_name, sizeof(sys_info.device_name), "%s", DEVICE_MODEL);
+    GET_APP_DESC_STR_FIELD(fw_version, sys_info.firmware_ver);
+    GET_APP_DESC_STR_FIELD(fw_git_info, sys_info.firmware_git_info);
+    GET_APP_DESC_STR_FIELD(device_model, sys_info.device_name);
 
     #if CONFIG_EFUSE_VIRTUAL
         write_device_signature_to_efuse();

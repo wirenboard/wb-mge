@@ -7,6 +7,8 @@ add_compile_definitions(DEVICE_SIGNATURE="${DEVICE_SIGNATURE}")
 add_compile_definitions(FIRMWARE_GIT_INFO="${FIRMWARE_GIT_INFO}")
 add_compile_definitions(FIRMWARE_VERSION="${FIRMWARE_VERSION}")
 
+set(PROJECT_VER "${FIRMWARE_VERSION}")
+
 # Enable lwip statistics
 add_compile_definitions(MIB2_STATS=1)
 
