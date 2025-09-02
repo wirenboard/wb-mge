@@ -2,7 +2,7 @@
 TEST_NAME = setting_items_test
 
 # Project root directory
-PROJ_DIR = ..
+PROJ_DIR = ../..
 
 # GCC compiler binary name
 GCC_BIN = gcc
@@ -43,12 +43,12 @@ run: $(addprefix RUN_, $(TEST_LIST))
 TESTED_SRC += $(PROJ_DIR)/main/setting_items.c
 
 # Auxiliary source files used in this test
-AUX_SRC += mocks/*.c
+AUX_SRC += ../mocks/*.c
 AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c
 
 # Include directories
-INC += .
-INC += mocks
+INC += ..
+INC += ../mocks
 INC += $(PROJ_DIR)/main/
 INC += $(IDF_PATH)/components/esp_common/include
 INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include/
