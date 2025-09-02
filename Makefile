@@ -49,7 +49,7 @@ DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
 # unittests
 #######################################
 
-UNITTESTS_DIRS += $(shell $(FIND) . -type d -name "*unittests*" 2>/dev/null)
+UNITTESTS_DIRS += $(shell $(FIND) . -type d | $(GREP) unittests)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
 
