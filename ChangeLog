@@ -5,7 +5,7 @@
     * added:    static ip / dhcp setting for wifi sta mode
     * added:    auth sessions storage in nvs
     * added:    support wifi scan in ap mode
-    * added:    some new fields in status and info structures
+    * added:    some new fields in settings and info structures
     * fix:      web password saving
     * fix:      wifi scan results (scan process was interrupted on first wifi_scan/results request)
 
