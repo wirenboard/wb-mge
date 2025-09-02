@@ -96,8 +96,13 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
 
     ESP_RETURN_ON_FALSE(esp_wifi_init(&cfg) == ESP_OK, ESP_FAIL, TAG, "esp_wifi_init failed");
     ESP_RETURN_ON_FALSE(esp_netif_init() == ESP_OK, ESP_FAIL, TAG, "esp_netif_init failed");
-    ESP_RETURN_ON_FALSE(esp_wifi_set_mode(apsta_cfg->wifi_mode) == ESP_OK, ESP_FAIL, TAG,
-                        "esp_wifi_set_mode failed");
+
+    wifi_mode_t real_mode = apsta_cfg->wifi_mode;
+    if (real_mode == WIFI_MODE_AP) {
+        // Use APSTA instead of AP mode to be able to scan WiFi networks
+        real_mode = WIFI_MODE_APSTA;
+    }
+    ESP_RETURN_ON_FALSE(esp_wifi_set_mode(real_mode) == ESP_OK, ESP_FAIL, TAG, "esp_wifi_set_mode failed");
 
     if ((apsta_cfg->wifi_mode == WIFI_MODE_AP) || (apsta_cfg->wifi_mode == WIFI_MODE_APSTA)) {
         esp_netif_t* esp_netif_ap = esp_netif_create_default_wifi_ap();
