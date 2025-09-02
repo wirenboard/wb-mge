@@ -122,15 +122,20 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
                 {
                     .channel = WIFI_CHAN_AP,
                     .max_connection = MAX_STA_CONN,
-                    .authmode = apsta_cfg->wifi_auth_mode_sta,      // TODO: Разобраться, зачем это и почему sta?
+                    .authmode = apsta_cfg->wifi_auth_mode_ap,
                 },
         };
         if (strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN) == 0) {
-            wifi_config_ap.ap.authmode = apsta_cfg->wifi_auth_mode_ap;
+            wifi_config_ap.ap.authmode = WIFI_AUTH_OPEN;
         }
         memcpy(&wifi_config_ap.ap.ssid, apsta_cfg->ap_ssid, strnlen(apsta_cfg->ap_ssid, WIFI_SSID_MAX_LEN));
         wifi_config_ap.ap.ssid_len = strnlen(apsta_cfg->ap_ssid, WIFI_SSID_MAX_LEN);
-        memcpy(&wifi_config_ap.ap.password, apsta_cfg->ap_pass, strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN));
+        if (wifi_config_ap.ap.authmode != WIFI_AUTH_OPEN) {
+            memcpy(&wifi_config_ap.ap.password, apsta_cfg->ap_pass, strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN));
+        } else {
+            wifi_config_ap.ap.password[0] = 0;
+            ESP_LOGW(TAG, "WiFi access point uses OPEN auth type");
+        }
         err = esp_wifi_set_config(WIFI_IF_AP, &wifi_config_ap);
         ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "esp_wifi_set_config failed");
         if (apsta_cfg->ap_event_handler != NULL) {
@@ -173,7 +178,7 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
         wifi_config_t wifi_config_sta = {
             .sta =
                 {
-                    .threshold.authmode = WIFI_AUTH_WPA2_PSK,       // TODO: Разобраться, нужен ли wifi_auth_mode_sta
+                    .threshold.authmode = apsta_cfg->wifi_auth_mode_sta,
                     .pmf_cfg =
                         {
                             .capable = true,
@@ -181,8 +186,16 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
                         },
                 },
         };
+
         memcpy(&wifi_config_sta.sta.ssid, apsta_cfg->sta_ssid, strnlen(apsta_cfg->sta_ssid, WIFI_SSID_MAX_LEN));
-        memcpy(&wifi_config_sta.sta.password, apsta_cfg->sta_pass, strnlen(apsta_cfg->sta_pass, WIFI_PASS_MAX_LEN));
+
+        if (wifi_config_sta.sta.threshold.authmode != WIFI_AUTH_OPEN) {
+            memcpy(&wifi_config_sta.sta.password, apsta_cfg->sta_pass, strnlen(apsta_cfg->sta_pass, WIFI_PASS_MAX_LEN));
+        } else {
+            wifi_config_sta.sta.password[0] = 0;
+            ESP_LOGW(TAG, "WiFi station uses OPEN auth type");
+        }
+
         err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta);
         ESP_RETURN_ON_FALSE(err == ESP_OK, ESP_FAIL, TAG, "esp_wifi_set_config failed");
 
