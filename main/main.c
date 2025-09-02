@@ -174,8 +174,8 @@ static uint32_t str_to_ip(const char *ip_str) {
 
 static void ip_to_str(uint32_t ip, char* out_ip_str)
 {
-    uint8_t* ip_bytes = (uint8_t*)ip;
-    sprintf(out_ip_str, "%d.%d.%d.%d", ip_bytes[3], ip_bytes[2], ip_bytes[1], ip_bytes[0]);
+    uint8_t* ip_bytes = (uint8_t*)&ip;
+    sprintf(out_ip_str, "%d.%d.%d.%d", ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
 }
 
 
