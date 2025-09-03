@@ -12,6 +12,8 @@
 
 #define SETTING_ITEMS_DEBUG_LOG_ENABLE      1           // TODO: Возможно, вынести в настройки
 
+#define MAX_HOSTNAME_LEN                    32
+#define MAX_SSID_LEN                        31          // In ESP-IDF there is ssid[32], terminating '\0' included
 
 static const char *TAG = "setting_items";
 
@@ -35,10 +37,17 @@ static const setting_storage_iface_t nvs_storage_iface = {
 };
 
 
-static bool validate_hostname_ssid(const char *value)
+// Validation functions
+bool validate_hostname(const char *value)
 {
-    // Basic hostname/ssid validation - only alphanumeric and hyphens
-    size_t len = strlen(value); // Calculate once for security
+    if (!value) {
+        return false;
+    }
+    size_t len = strlen(value);
+    if ((len == 0) || (len > MAX_HOSTNAME_LEN)) {
+        return false;
+    }
+    // Basic hostname validation, allow only alphanumeric and hyphens
     for (size_t i = 0; i < len; i++) {
         char c = value[i];
         if (!(((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) ||
@@ -49,21 +58,23 @@ static bool validate_hostname_ssid(const char *value)
     return true;
 }
 
-// Validation functions
-bool validate_hostname(const char *value)
-{
-    if ((!value) || (strlen(value) == 0) || (strlen(value) >= 32)) {
-        return false;
-    }
-    return validate_hostname_ssid(value);
-}
-
 bool validate_ssid(const char *value)
 {
-    if ((!value) || (strlen(value) >= 32)) {
+    if (!value) {
         return false;
     }
-    return validate_hostname_ssid(value);
+    size_t len = strlen(value);
+    if ((len == 0) || (len > MAX_SSID_LEN)) {
+        return false;
+    }
+    // Basic SSID validation, allow all printable symbols in range 0x20 - 0x7E
+    for (size_t i = 0; i < len; i++) {
+        char c = value[i];
+        if ((c < '\x20') || (c > '\x7E')) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool validate_port(const char *value)
