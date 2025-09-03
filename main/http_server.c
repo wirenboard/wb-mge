@@ -12,6 +12,10 @@
 #include "esp_log.h"
 #include "setting_items.h"
 
+#define MAX_URI_HANDLERS                    20       // TODO: Подобрать значение к релизу
+#define STACK_SIZE                          1024 * 6 // TODO: Проверить размер используемой памяти
+#define MAX_OPEN_SOCKETS                    12       // TODO: Подобрать значение к релизу
+
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 
 static const char *TAG = "http_server";
@@ -169,9 +173,9 @@ esp_err_t http_server_init(void)
 {
     static httpd_handle_t http_server = NULL;
     httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
-    httpd_config.max_uri_handlers = 20;  // TODO: Подобрать значение к релизу
-    httpd_config.stack_size = 1024 * 6;  // TODO: Проверить размер используемой памяти
-    httpd_config.max_open_sockets = 12;  // Увеличено, чтобы можно было одновременно подключиться хотя бы с 2-3 устройств
+    httpd_config.max_uri_handlers = MAX_URI_HANDLERS;
+    httpd_config.stack_size = STACK_SIZE;
+    httpd_config.max_open_sockets = MAX_OPEN_SOCKETS;
 
     uint16_t web_port = (uint16_t)setting_items_read_int(KEY_WEB_PORT);
     if (web_port == 0) {
