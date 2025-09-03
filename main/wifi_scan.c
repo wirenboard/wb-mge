@@ -8,9 +8,17 @@
 #include <freertos/semphr.h>
 #include <string.h>
 
+#include "wifi_apsta.h"
+
 
 #define WIFI_SCAN_MAX_RESULTS           20
 #define WIFI_SCAN_BSSID_STR_SIZE        18      // MAC address format (xx:xx:xx:xx:xx:xx + terminating '\0')
+
+#define WIFI_SCAN_TASK_STACK_SIZE       4096
+#define WIFI_SCAN_TASK_PRIORITY         1
+
+#define WIFI_SCAN_START_BIT             BIT0
+#define WIFI_SCAN_DONE_BIT              BIT1
 
 
 static struct {
@@ -30,6 +38,21 @@ static const char *TAG = "wifi_scan";
 
 static SemaphoreHandle_t wifi_scan_mutex = NULL;
 static esp_event_handler_instance_t wifi_scan_event_handler_instance = NULL;
+static EventGroupHandle_t wifi_scan_event_group = NULL;
+
+static const wifi_scan_config_t wifi_scan_config = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time = {
+            .active = {
+                .min = 100,
+                .max = 300
+            }
+        }
+    };
 
 
 static void wifi_scan_reset_state(void)
@@ -70,17 +93,43 @@ static void wifi_scan_event_handler(void *arg, esp_event_base_t event_base,
                                     int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
-        xSemaphoreTake(wifi_scan_mutex, portMAX_DELAY);
-        uint16_t ap_count = WIFI_SCAN_MAX_RESULTS;
-        esp_err_t result = esp_wifi_scan_get_ap_records(&ap_count, wifi_scan_state.ap_records);
-        if (result == ESP_OK) {
-            ESP_LOGI(TAG, "WiFi scan finished, networks found: %d", ap_count);
-            wifi_scan_handle_completion(ap_count, ESP_OK);
-        } else {
-            ESP_LOGE(TAG, "Failed to get WiFi scan results: %s", esp_err_to_name(result));
-            wifi_scan_handle_completion(0, ESP_FAIL);
+        xEventGroupSetBits(wifi_scan_event_group, WIFI_SCAN_DONE_BIT);
+    }
+}
+
+
+static void wifi_scan_task(void* pvParameter)
+{
+    while (1) {
+        EventBits_t bits_to_wait = WIFI_SCAN_START_BIT | WIFI_SCAN_DONE_BIT;
+        EventBits_t bits = xEventGroupWaitBits(wifi_scan_event_group, bits_to_wait, pdTRUE, pdFALSE, portMAX_DELAY);
+        if (bits & WIFI_SCAN_START_BIT) {
+            wifi_sta_connect_scan_lock();
+            esp_err_t scan_result = esp_wifi_scan_start(&wifi_scan_config, false);
+            if (scan_result != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to start WiFi scan: %s", esp_err_to_name(scan_result));
+                xSemaphoreTake(wifi_scan_mutex, portMAX_DELAY);
+                wifi_scan_handle_start_failure(scan_result);
+                xSemaphoreGive(wifi_scan_mutex);
+                wifi_sta_connect_scan_unlock();
+            } else {
+                ESP_LOGI(TAG, "WiFi networks scan started");
+            }
         }
-        xSemaphoreGive(wifi_scan_mutex);
+        if (bits & WIFI_SCAN_DONE_BIT) {
+            xSemaphoreTake(wifi_scan_mutex, portMAX_DELAY);
+            uint16_t ap_count = WIFI_SCAN_MAX_RESULTS;
+            esp_err_t result = esp_wifi_scan_get_ap_records(&ap_count, wifi_scan_state.ap_records);
+            if (result == ESP_OK) {
+                ESP_LOGI(TAG, "WiFi scan finished, networks found: %d", ap_count);
+                wifi_scan_handle_completion(ap_count, ESP_OK);
+            } else {
+                ESP_LOGE(TAG, "Failed to get WiFi scan results: %s", esp_err_to_name(result));
+                wifi_scan_handle_completion(0, ESP_FAIL);
+            }
+            wifi_sta_connect_scan_unlock();
+            xSemaphoreGive(wifi_scan_mutex);
+        }
     }
 }
 
@@ -98,6 +147,13 @@ esp_err_t wifi_scan_init(void)
         return ESP_FAIL;
     }
 
+    wifi_scan_event_group = xEventGroupCreate();
+    if (wifi_scan_event_group == NULL) {
+        ESP_LOGE(TAG, "Failed to create WiFi scan event group");
+        vSemaphoreDelete(wifi_scan_mutex);
+        return ESP_FAIL;
+    }
+
     wifi_scan_reset_state();
 
     esp_err_t ret = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_scan_event_handler,
@@ -105,58 +161,16 @@ esp_err_t wifi_scan_init(void)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register WiFi scan event handler");
         vSemaphoreDelete(wifi_scan_mutex);
+        vEventGroupDelete(wifi_scan_event_group);
         wifi_scan_mutex = NULL;
         return ESP_FAIL;
     }
 
+    xTaskCreate(wifi_scan_task, "wifi_scan_task", WIFI_SCAN_TASK_STACK_SIZE,
+                NULL, WIFI_SCAN_TASK_PRIORITY, NULL);
+
     ESP_LOGI(TAG, "WiFi scan module initialized");
     return ESP_OK;
-}
-
-
-static esp_err_t wifi_scan_start(void)
-{
-    if (wifi_scan_mutex == NULL) {
-        ESP_LOGE(TAG, "WiFi scan not initialized");
-        return ESP_FAIL;
-    }
-
-    xSemaphoreTake(wifi_scan_mutex, portMAX_DELAY);
-
-    if (wifi_scan_state.scan_in_progress) {
-        ESP_LOGW(TAG, "WiFi scan already in progress");
-        xSemaphoreGive(wifi_scan_mutex);
-        return ESP_FAIL;
-    }
-
-    wifi_scan_prepare_for_start();
-
-    wifi_scan_config_t scan_config = {
-        .ssid = NULL,
-        .bssid = NULL,
-        .channel = 0,
-        .show_hidden = false,
-        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
-        .scan_time = {
-            .active = {
-                .min = 100,
-                .max = 300
-            }
-        }
-    };
-
-    esp_err_t scan_result = esp_wifi_scan_start(&scan_config, false);
-
-    if (scan_result != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start WiFi scan: %s", esp_err_to_name(scan_result));
-        wifi_scan_handle_start_failure(scan_result);
-        scan_result = ESP_FAIL;
-    } else {
-        ESP_LOGI(TAG, "WiFi networks scan started");
-    }
-
-    xSemaphoreGive(wifi_scan_mutex);
-    return scan_result;
 }
 
 
@@ -175,6 +189,28 @@ static bool wifi_scan_is_completed(void)
     bool completed = wifi_scan_state.scan_completed;
     xSemaphoreGive(wifi_scan_mutex);
     return completed;
+}
+
+
+static esp_err_t wifi_scan_start(void)
+{
+    if (wifi_scan_mutex == NULL) {
+        ESP_LOGE(TAG, "WiFi scan not initialized");
+        return ESP_FAIL;
+    }
+
+    if (wifi_scan_is_in_progress()) {
+        ESP_LOGW(TAG, "WiFi scan already in progress");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(wifi_scan_mutex, portMAX_DELAY);
+    wifi_scan_prepare_for_start();
+    xSemaphoreGive(wifi_scan_mutex);
+
+    xEventGroupSetBits(wifi_scan_event_group, WIFI_SCAN_START_BIT);
+
+    return ESP_OK;
 }
 
 
@@ -225,6 +261,7 @@ static esp_err_t wifi_scan_get_results_json(cJSON **results_json)
     return ESP_OK;
 }
 
+
 static esp_err_t wifi_scan_get_status_json(cJSON **status_json)
 {
     if (status_json == NULL) {
@@ -257,6 +294,7 @@ static esp_err_t wifi_scan_get_status_json(cJSON **status_json)
     return ESP_OK;
 }
 
+
 esp_err_t wifi_scan_start_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "WiFi scan start request");
@@ -278,7 +316,7 @@ esp_err_t wifi_scan_start_handler(httpd_req_t *req)
         cJSON_AddStringToObject(resp_json, "message", "Scan started");
     } else {
         cJSON_AddBoolToObject(resp_json, "success", false);
-        if (wifi_scan_is_in_progress()) {
+        if (result == ESP_ERR_INVALID_STATE) {
             cJSON_AddStringToObject(resp_json, "error", "Scan already in progress");
         } else {
             cJSON_AddStringToObject(resp_json, "error", "Failed to start scan");
@@ -288,6 +326,7 @@ esp_err_t wifi_scan_start_handler(httpd_req_t *req)
     json_utils_send_response(req, NULL, resp_json);
     return ESP_OK;
 }
+
 
 esp_err_t wifi_scan_results_handler(httpd_req_t *req)
 {

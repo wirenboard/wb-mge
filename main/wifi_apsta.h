@@ -22,3 +22,6 @@ typedef struct {
 } wifi_apsta_config_t;
 
 esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname);
+
+esp_err_t wifi_sta_connect_scan_lock(void);
+esp_err_t wifi_sta_connect_scan_unlock(void);
