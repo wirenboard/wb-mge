@@ -207,8 +207,7 @@ paths:
                       con_sta_ssid:
                         type: string
                         minLength: 0
-                        maxLength: 32
-                        pattern: '^[a-zA-Z0-9-]*$'
+                        maxLength: 31
                       sta_ip:
                         type: string
                         format: ipv4
@@ -452,7 +451,7 @@ paths:
                       properties:
                         ssid:
                           type: string
-                          maxLength: 32
+                          maxLength: 31
                         rssi:
                           type: integer
                           minimum: -100
@@ -748,8 +747,9 @@ components:
         ap_ssid:
           type: string
           minLength: 1
-          maxLength: 32
-          pattern: '^[a-zA-Z0-9-]+$'
+          maxLength: 31
+          pattern: '^[\\x20-\\x7E]{1,31}$'
+          description: "Access point SSID, 1-31 printable ASCII characters"
         ap_pass:
           type: string
           minLength: 8
@@ -758,9 +758,10 @@ components:
           description: "WPA password, 8-63 printable ASCII characters"
         sta_ssid:
           type: string
-          minLength: 0
-          maxLength: 32
-          pattern: '^[a-zA-Z0-9-]*$'
+          minLength: 1
+          maxLength: 31
+          pattern: '^[\\x20-\\x7E]{1,31}$'
+          description: "Station network SSID, 1-31 printable ASCII characters"
         sta_pass:
           type: string
           minLength: 0
