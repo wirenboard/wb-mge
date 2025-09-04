@@ -52,6 +52,8 @@ DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
 UNITTESTS_DIRS += $(shell $(FIND) . -type d | $(GREP) unittests)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
+# C source files for coverage measurement (exclude frontend files)
+C_SOURCES = $(shell $(FIND) main -name "*.c" -not -path "*/frontend/*")
 
 #######################################
 # targets
@@ -88,3 +90,6 @@ clean:
 			cd $$dir && $(MAKE) clean --no-print-directory; cd -; \
 		fi; \
 	done
+
+# Include coverage definitions and targets
+include unittests/build_common_coverage.mk

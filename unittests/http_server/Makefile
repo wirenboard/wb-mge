@@ -20,4 +20,5 @@ INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include/
 # List of tests
 TEST_LIST = http_server_test
 
+# Include base unit test build system
 include $(PROJ_DIR)/unittests/build_unittests.mk
