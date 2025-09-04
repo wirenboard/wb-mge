@@ -1,27 +1,40 @@
 import { ref } from 'vue';
-import { Uptime } from '@/common/types';
+import { useRouter, useRoute } from 'vue-router';
+import type { Uptime } from '@/common/types';
 import { api } from '@/utils/api';
 
-const interval = ref<ReturnType<typeof setInterval> | null>(null);
+let intervalId: ReturnType<typeof setInterval> | null = null;
 const uptime = ref<Uptime>({ days: 0, hours: 0, minutes: 0, seconds: 0 });
 const isReconnecting = ref(false);
 
 export const useUptime = () => {
+  const router = useRouter();
+  const route = useRoute();
+
   const checkUptime = async () => {
     try {
-      uptime.value = await api<Uptime>('uptime');
+      uptime.value = await api<Uptime>('uptime', { priority: 'low' });
       isReconnecting.value = false;
-    } catch (e) {
-      isReconnecting.value = true;
+
+      if (route.name === 'login') {
+        await router.push({ name: 'dashboard' });
+      }
+    } catch (err: any) {
+      if (err.message === 'unauthorized') {
+        isReconnecting.value = false;
+        await router.push({ name: 'login' });
+      } else {
+        isReconnecting.value = true;
+      }
     }
   };
 
   const startPolling = async () => {
-    if (interval.value) return;
+    if (intervalId) return;
 
     await checkUptime();
 
-    interval.value = setInterval(() => {
+    intervalId = setInterval(() => {
       checkUptime();
     }, 10000);
   };

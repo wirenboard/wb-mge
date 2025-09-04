@@ -8,6 +8,7 @@ import { useInfo } from '@/common/info';
 import { documentation, email, support, website } from '@/common/links';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
+import type { CommandResponse, UpdateResponse } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Configuration from '@/components/Configuration.vue';
 import Heading from '@/components/Heading.vue';
@@ -19,9 +20,8 @@ import { api } from '@/utils/api';
 
 const { t, locale } = useI18n();
 const language = ref<Locale>(locale.value as Locale);
-const firmwareFile = ref();
+const firmwareFile = ref<File[]>();
 const loadedMethod = ref();
-const isChangePassword = ref(false);
 const { showAlert } = useAlerts();
 const { data: settings, isChanged, updateSettings } = useSettings();
 const { isReconnecting, uptime } = useUptime();
@@ -31,7 +31,7 @@ const updateFirmware = async () => {
   loadedMethod.value = 'firmware';
   showAlert(t('firmware_update_processed'), { type: 'success' });
 
-  await api('update', firmwareFile.value[0], true);
+  await api<UpdateResponse>('update', { method: 'POST', body: firmwareFile.value?.[0], timeout: 30000 });
   loadedMethod.value = null;
   location.reload();
 };
@@ -45,7 +45,7 @@ const cmd = async (command: string, confirmText?: string) => {
   }
 
   loadedMethod.value = command;
-  await api('cmd', { cmd: command });
+  await api<CommandResponse>('cmd', { method: 'POST', json: { cmd: command } });
   isReconnecting.value = true;
   loadedMethod.value = null;
   setTimeout(() => {
@@ -54,16 +54,13 @@ const cmd = async (command: string, confirmText?: string) => {
 };
 
 const updateInterface = () => {
-  const val: any = {
-    login: settings.value!.login,
-  };
-
-  if (isChangePassword.value) {
-    val.pass = settings.value!.pass;
+  if (isChanged(['login', 'pass', 'web_port'])) {
+    updateSettings({
+      login: settings.value!.login,
+      pass: settings.value!.pass,
+      web_port: settings.value!.web_port,
+    });
   }
-
-  updateSettings(val);
-  isChangePassword.value = false;
   changeLang(language.value);
 };
 </script>
@@ -88,16 +85,18 @@ const updateInterface = () => {
           {{ info!.serial_num }}
         </div>
 
-        <div>{{ t('uptime') }}</div>
-        <div class="system-data">
-          <template v-if="uptime.days">
-            <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
-          </template>
-          <template v-if="uptime.hours">
-            <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
-          </template>
-          <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
-        </div>
+        <template v-if="uptime">
+          <div>{{ t('uptime') }}</div>
+          <div class="system-data">
+            <template v-if="uptime.days">
+              <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
+            </template>
+            <template v-if="uptime.hours">
+              <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
+            </template>
+            <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+          </div>
+        </template>
 
         <div>{{ t('firmware_version') }}</div>
         <div class="system-data">
@@ -106,7 +105,13 @@ const updateInterface = () => {
 
         <div>{{ t('firmware_update') }}</div>
         <div class="system-data">
-          <FileUpload v-model="firmwareFile" :placeholder="t('choose_firmware')" :disabled="loadedMethod === 'firmware'" @upload="updateFirmware" />
+          <FileUpload
+            v-model="firmwareFile"
+            :placeholder="t('choose_firmware')"
+            accept=".bin"
+            :disabled="loadedMethod === 'firmware'"
+            @upload="updateFirmware"
+          />
         </div>
         <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
 
@@ -128,13 +133,22 @@ const updateInterface = () => {
 
           <label for="username">{{ t('login') }}</label>
           <div class="system-data">
-            <input id="username" v-model="settings!.login" type="text" name="username" autocomplete="username" required />
+            <input id="username" v-model="settings!.login" type="text" pattern="^[a-zA-Z0-9_\-]+$" name="username" autocomplete="username" required />
           </div>
 
           <label for="new-password">{{ t('password') }}</label>
           <div class="system-data">
-            <button v-if="!isChangePassword" class="system-textButton" type="button" @click="isChangePassword = true">{{ t('change_password') }}</button>
-            <input v-else id="new-password" v-model="settings!.pass" v-focus required :placeholder="t('pass_placeholder')" autocomplete="new-password" type="password" name="new-password" />
+            <input
+              id="new-password"
+              v-model="settings!.pass"
+              v-focus
+              :placeholder="t('pass_placeholder')"
+              autocomplete="new-password"
+              type="password"
+              name="new-password"
+              pattern="^[a-zA-Z0-9_\-]+$"
+              required
+            />
           </div>
 
           <label for="language">{{ t('language') }}</label>

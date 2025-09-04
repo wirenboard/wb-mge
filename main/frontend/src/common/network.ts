@@ -1,29 +1,29 @@
 import { ref } from 'vue';
-import type { WiFiNetwork, WifiScanResult } from '@/common/types';
+import type { WiFiNetwork, WifiScanResponce, WifiScanStartResponce } from '@/common/types';
 import { api } from '@/utils/api';
 
-const wifi = ref<WiFiNetwork[]>([]);
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 export const useWifi = () => {
+  const wifi = ref<WiFiNetwork[]>([]);
   const isPolling = ref(false);
 
   const startScan = async () => {
-    await api('wifi_scan/start', { method: 'POST' });
+    await api<WifiScanStartResponce>('wifi_scan/start', { method: 'POST', timeout: 15000 });
   };
 
   const fetchResults = async () => {
-    wifi.value = await api<WifiScanResult>('wifi_scan/results').then(res => {
-      if (res.scan_completed) {
+    try {
+      const res = await api<WifiScanResponce>('wifi_scan/results');
+
+      if (res.scan_completed || res.error || (!res.scan_completed && !res.scan_completed)) {
         stopPolling();
       }
 
-      if (res.networks) {
-        return res.networks;
-      } else {
-        return [];
-      }
-    }).catch(() => []);
+      wifi.value = res.networks ?? [];
+    } catch (e) {
+      stopPolling();
+    }
   };
 
   const startPolling = async () => {

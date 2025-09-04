@@ -6,7 +6,7 @@ import Logo from '@/assets/logo.svg?component';
 import { useAlerts } from '@/common/alert';
 import { changeLang, Locale } from '@/i18n';
 import { documentation } from '@/common/links';
-import { Auth } from '@/common/types';
+import type { Auth } from '@/common/types';
 import AlertsWrapper from '@/components/AlertsWrapper.vue';
 import { api } from '@/utils/api';
 
@@ -20,7 +20,7 @@ const isLoading = ref(false);
 const login = async () => {
   isLoading.value = true;
   try {
-    const { auth } = await api<Auth>('auth', data);
+    const { auth } = await api<Auth>('auth', { method: 'POST', json: data });
     if (auth) {
       await router.push(route.query.redirect ? `/${route.query.redirect}` : '/');
     } else {

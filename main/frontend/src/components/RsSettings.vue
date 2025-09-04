@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { computed, type ComputedRef } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
-import type { Baudrate, BridgeMode, Databits, Parity, RsSettings, Stopbits } from '@/common/types';
+import type { Baudrate, BridgeMode, Databits, Parity, RsSettings, Settings, Stopbits } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Info from '@/components/Info.vue';
 import InputNumber from '@/components/InputNumber.vue';
@@ -13,7 +14,7 @@ const props = defineProps<{ title: string; field: string; hasPortsConflict: bool
 const { t } = useI18n();
 const { isChanged, isLoading, updateSettings } = useSettings();
 const settings = defineModel<RsSettings>('settings');
-const ioBus = defineModel('io_bus', { required: false });
+const ioBus = defineModel<boolean>('io_bus', { required: false });
 
 const baudrateOptions: Baudrate[] = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
 
@@ -25,17 +26,16 @@ const dataBits: Databits[] = ['5', '6', '7', '8'];
 
 const bridgeModbus = [{ value: true, label: t('bridge_modbus') }, { value: false, label:  t('bridge_transparent') }];
 
-const bridgeMode: BridgeMode[] = ['client', 'server'];
+const bridgeMode: ComputedRef<BridgeMode[]> = computed(() => !settings.value!.bridge.modbus ? ['client', 'server'] : ['client']);
 
 const save = () => {
-  const data: any = {
+  const data: Partial<Settings> = {
     [props.field]: settings.value,
   };
 
   if (typeof ioBus.value !== 'undefined') {
     data['io_bus'] = ioBus.value;
   }
-  debugger;
   updateSettings(data);
 };
 </script>
@@ -106,14 +106,23 @@ const save = () => {
 
       <label :for="`${field}-bridge_mb`">{{ t('modbus_mode') }}</label>
       <div class="settings-data">
-        <select :id="`${field}-bridge_mb`" v-model="settings!.bridge.modbus" name="bridge_mb">
+        <select
+          :id="`${field}-bridge_mb`"
+          v-model="settings!.bridge.modbus"
+          name="bridge_mb"
+          @change="(ev: Event) => {
+            const target = ev.target as HTMLSelectElement;
+            if (target.value === 'true') {
+              settings!.bridge.mode = 'client';
+            }
+          }">
           <option v-for="item in bridgeModbus" :key="`bridge_mb_1${item}`" :value="item.value">{{ item.label }}</option>
         </select>
       </div>
 
       <label :for="`${field}-bridge_mode`">{{ t('bridge_mode') }}</label>
       <div class="settings-data">
-        <select :id="`${field}-bridge_mode`" v-model="settings!.bridge.mode" name="bridge_mode">
+        <select :id="`${field}-bridge_mode`" v-model="settings!.bridge.mode" :disabled="settings!.bridge.modbus" name="bridge_mode">
           <option v-for="item in bridgeMode" :key="`bridge_mode_1${item}`" :value="item">{{ t(item) }}</option>
         </select>
       </div>
@@ -168,14 +177,14 @@ const save = () => {
     "stopbits": "Stop bits",
     "databits": "Data bits",
     "failsafe": "Failsafe bias",
-    "terminator": "Terminator",
+    "terminator": "120Ω resistor-terminator",
     "modbus_mode": "Modbus mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Transparent",
     "bridge_ip": "IP address",
     "io_bus": "I/O Bus",
-    "io_bus_info": "Adds RS-485 support for WB-MIO side modules",
+    "io_bus_info": "Enables WB-MIO chip connected to RS485-2",
     "ports_conflict": "Port values must be unique"
   },
   "ru": {
@@ -186,14 +195,14 @@ const save = () => {
     "stopbits": "Стоп-бит",
     "databits": "Биты данных",
     "failsafe": "Failsafe bias",
-    "terminator": "Терминатор",
+    "terminator": "120Ω резистор-терминатор",
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Прозрачный",
     "bridge_ip": "IP-адрес сервера",
-    "io_bus": "Боковые модули",
-    "io_bus_info": "Добавляет поддержку боковых модулей WB-MIO по RS-485",
+    "io_bus": "I/O Bus",
+    "io_bus_info": "Включает чип WB-MIO, подключенный к RS485-2.\nАдрес по умолчанию 247",
     "ports_conflict": "Значение порта должно быть уникальным"
   }
 }
