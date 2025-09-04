@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define WEB_PORT                            8080
+#define URI_HANDLERS_COUNT                  17
 
 void mock_setting_items_set_web_port(int port);
 
@@ -266,12 +267,12 @@ void test_http_server_uri_handlers_registration(void)
     };
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(
-        17,
+        URI_HANDLERS_COUNT,
         mock_httpd_register_uri_handler_call_count,
         "All expected URI handlers should be registered"
     );
 
-    for (size_t i = 0; i < 17; i++) {
+    for (size_t i = 0; i < URI_HANDLERS_COUNT; i++) {
         bool found = false;
         for (int j = 0; j < mock_httpd_register_uri_handler_call_count; j++) {
             if (strcmp(mock_registered_uris[j], expected_uris[i]) == 0) {

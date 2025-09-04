@@ -138,8 +138,6 @@ bool mock_simulate_http_request(enum http_method method, const char* uri)
     TEST_ASSERT_LESS_THAN_INT_MESSAGE(HTTP_ANY, method, "Invalid method");
     TEST_ASSERT_NOT_NULL_MESSAGE(uri, "Invalid URI");
 
-    httpd_req_t mock_req = {0};
-
     for (int i = 0; i < mock_uri_registry_count; i++) {
         mock_uri_registry_entry_t *entry = &mock_uri_registry[i];
 
@@ -147,10 +145,8 @@ bool mock_simulate_http_request(enum http_method method, const char* uri)
             entry->method == method &&
             strcmp(entry->uri, uri) == 0) {
 
-            httpd_req_t temp_req = mock_create_request(uri, method);
-            temp_req.user_ctx = entry->user_ctx;
-
-            memcpy(&mock_req, &temp_req, sizeof(httpd_req_t));
+            httpd_req_t mock_req = mock_create_request(uri, method);
+            mock_req.user_ctx = entry->user_ctx;
 
             LOG_INFO("Found handler, executing...");
 
