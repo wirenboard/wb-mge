@@ -310,6 +310,8 @@ static void init_ethernet(char* hostname)
 
 void app_main(void)
 {
+    sys_info_init();
+
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(setting_items_init());
@@ -361,7 +363,6 @@ void app_main(void)
 
     ESP_ERROR_CHECK(http_server_init());
 
-    sys_info_init();
     print_setting_items();
 
     gpio_expander_init(&gpio_expander);
