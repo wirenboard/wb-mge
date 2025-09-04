@@ -16,6 +16,8 @@
 #define STACK_SIZE                          1024 * 6 // TODO: Проверить размер используемой памяти
 #define MAX_OPEN_SOCKETS                    12       // TODO: Подобрать значение к релизу
 
+#define WEB_PORT_DEFAULT                    80
+
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 
 static const char *TAG = "http_server";
@@ -179,7 +181,7 @@ esp_err_t http_server_init(void)
 
     uint16_t web_port = (uint16_t)setting_items_read_int(KEY_WEB_PORT);
     if (web_port == 0) {
-        web_port = 80;  // Fallback to default port
+        web_port = WEB_PORT_DEFAULT;  // Fallback to default port
         ESP_LOGW(TAG, "Using default web port: %u", web_port);
     }
 
