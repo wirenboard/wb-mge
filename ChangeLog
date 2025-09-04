@@ -3,7 +3,7 @@
     * version:  1.0.0-rc6
     * rework:   integrate Unity for setting_items unittest
     * added:    unittests for http_server
-    * added:    measuring coverage for unittests
+    * added:    measurement of code coverage
 
 2025-08-28 Maxim Toropov <maxim.toropov@wirenboard.com>
 
