@@ -7,6 +7,9 @@ sdkconfig
 sdkconfig.old
 dependencies.lock
 
+# Release
+release/
+
 # Dependencies
 managed_components/
 

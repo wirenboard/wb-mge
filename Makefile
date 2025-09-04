@@ -10,6 +10,13 @@ DEFS += DEVICE_SIGNATURE=$(TARGET)
 DEFS += MODEL_DEFINE=$(MODEL_DEFINE)
 
 #######################################
+# Directories
+#######################################
+
+BUILD_DIR = build
+RELEASE_DIR = release
+
+#######################################
 # OS detection and tool selection
 #######################################
 
@@ -43,13 +50,17 @@ DEFS += FIRMWARE_VERSION=$(VERSION)
 # git info
 #######################################
 
-GIT_HASH := $(shell git rev-parse HEAD | cut -c -7 )
-GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD | sed "s/\//_/")
+GIT_COMMIT ?= $(shell git rev-parse HEAD)
+GIT_HASH := $(shell echo $(GIT_COMMIT) | cut -c -7 )
+BRANCH_NAME ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+GIT_BRANCH := $(shell echo $(BRANCH_NAME) | sed "s/\//_/")
 GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
 
-TARGET_PROJECT_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH))
+# TARGET_PROJECT_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH))
+RELEASE_FILE_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH).bin)
 
-DEFS += TARGET_PROJECT_NAME=$(TARGET_PROJECT_NAME)
+# DEFS += TARGET_PROJECT_NAME=$(TARGET_PROJECT_NAME)
+DEFS += TARGET_PROJECT_NAME=$(TARGET)
 DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 
 #######################################
@@ -75,21 +86,35 @@ $(UNITTESTS_TARGETS):
 	fi
 
 build-frontend:
-	set -e; \
-	cd main/frontend/; \
-	npm install;\
-	npm run build; \
-	find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
-	find dist/ -type f -exec gzip -k {} \; ; \
+	@echo 'Building frontend'
+	@{ \
+		set -e; \
+		cd main/frontend/; \
+		npm install;\
+		npm run build; \
+		find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
+		find dist/ -type f -exec gzip -k {} \; ; \
+	}
 
 build-idf-project:
-	idf.py $(addprefix -D, $(DEFS)) build
+	@echo 'Building ESP-IDF project'
+	@idf.py $(addprefix -D, $(DEFS)) build
+	@$(MAKE) prepare_release
+
+prepare_release:
+	@mkdir -p $(RELEASE_DIR)
+	@rm -rf release/*
+	@cp $(BUILD_DIR)/$(TARGET).bin $(RELEASE_DIR)/$(RELEASE_FILE_NAME)
+	@echo 'Release firmware: $(RELEASE_DIR)/$(RELEASE_FILE_NAME)'
 
 clean:
-	idf.py fullclean
-	rm -rf build
-	rm -rf main/frontend/dist
-	rm -rf sdkconfig
+	@echo 'Cleaning project'
+	@idf.py fullclean
+	@rm -rf $(BUILD_DIR)
+	@rm -rf $(RELEASE_DIR)
+	@rm -rf main/frontend/dist
+	@rm -rf sdkconfig
+	@echo 'Cleaning unittests'
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
 			cd $$dir && $(MAKE) clean --no-print-directory; cd -; \
