@@ -126,7 +126,7 @@ httpd_req_t mock_create_request(const char* uri, enum http_method method)
     httpd_req_t req = {0};
     req.handle = mock_server_handle;
     req.method = method;
-    strncpy((char*)req.uri, uri, HTTPD_MAX_URI_LEN);
+    strncpy(req.uri, uri, HTTPD_MAX_URI_LEN);
     req.content_len = 0;
     req.aux = NULL;
     req.user_ctx = NULL;

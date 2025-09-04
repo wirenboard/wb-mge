@@ -69,7 +69,7 @@ typedef struct httpd_uri {
 struct httpd_req {
     httpd_handle_t handle;
     int method;
-    const char uri[HTTPD_MAX_URI_LEN + 1];
+    char uri[HTTPD_MAX_URI_LEN + 1];
     size_t content_len;
     void *aux;
     void *user_ctx;
