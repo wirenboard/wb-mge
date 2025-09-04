@@ -32,7 +32,7 @@ static void tcp_server_task(void *pvParameters)
         desc->client_sock = accept(desc->listen_sock, (struct sockaddr *)&source_addr, &addr_len);
 
         if (desc->client_sock < 0) {
-            ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
+            ESP_LOGE(TAG, "Unable to accept connection on port %d, errno: %d", desc->port, errno);
             break;
         }
 
@@ -54,17 +54,17 @@ static void tcp_server_task(void *pvParameters)
             addr_str[0] = 0;
         }
 
-        ESP_LOGI(TAG, "Socket accepted ip address: %s, port: %d", addr_str, htons(source_addr.sin_port));
+        ESP_LOGI(TAG, "Socket on port %d accepted connection from %s, port: %d", desc->port, addr_str, htons(source_addr.sin_port));
 
         do {
             len = recv(desc->client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
 
             if (len < 0) {
-                ESP_LOGE(TAG, "Error occurred during receiving: errno %d", errno);
+                ESP_LOGE(TAG, "Error occurred on port %d during receiving: errno %d", desc->port, errno);
             } else if (len == 0) {
-                ESP_LOGW(TAG, "Connection closed");
+                ESP_LOGW(TAG, "Connection on port %d closed", desc->port);
             } else {
-                ESP_LOGD(TAG, "Received %d bytes", len);
+                ESP_LOGD(TAG, "Port %d received %d bytes", desc->port, len);
                 ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
                 desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
             }
@@ -142,6 +142,8 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, 
 
     desc->listen_sock = listen_sock;
     desc->client_sock = -1;
+    desc->remote_ip = 0;
+    desc->port = port;
     desc->receive_handler = tcps_receive_handler;
     desc->active_connections = 0;
     *out_desc = desc;
