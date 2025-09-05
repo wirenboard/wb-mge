@@ -1,8 +1,9 @@
-2025-09-04 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-09-05 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc5
     * rework:   integrate Unity for setting_items unittest
     * added:    unittests for http_server
+    * fixed:    GIT_HASH and GIT_BRANCH detection in Makefile
 
 2025-08-28 Maxim Toropov <maxim.toropov@wirenboard.com>
 

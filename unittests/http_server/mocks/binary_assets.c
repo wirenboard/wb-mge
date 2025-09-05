@@ -17,31 +17,14 @@ static const uint8_t html_data[] = {
     0xFB, 0x23, 0x54, 0x99
 };
 
-#if defined(__x86_64__)
-/* x86_64: define underscore-prefixed symbols (server) */
-    const uint8_t * _binary_favicon_webp_gz_start = favicon_data;
-    const uint8_t * _binary_favicon_webp_gz_end = favicon_data + ARRAY_SIZE(favicon_data);
+const uint8_t * binary_favicon_webp_gz_start asm("_binary_favicon_webp_gz_start") = favicon_data;
+const uint8_t * binary_favicon_webp_gz_end asm("_binary_favicon_webp_gz_end") = favicon_data + ARRAY_SIZE(favicon_data);
 
-    const uint8_t * _binary_index_css_gz_start = css_data;
-    const uint8_t * _binary_index_css_gz_end = css_data + ARRAY_SIZE(css_data);
+const uint8_t * binary_index_css_gz_start asm("_binary_index_css_gz_start") = css_data;
+const uint8_t * binary_index_css_gz_end asm("_binary_index_css_gz_end") = css_data + ARRAY_SIZE(css_data);
 
-    const uint8_t * _binary_index_js_gz_start = js_data;
-    const uint8_t * _binary_index_js_gz_end = js_data + ARRAY_SIZE(js_data);
+const uint8_t * binary_index_js_gz_start asm("_binary_index_js_gz_start") = js_data;
+const uint8_t * binary_index_js_gz_end asm("_binary_index_js_gz_end") = js_data + ARRAY_SIZE(js_data);
 
-    const uint8_t * _binary_index_html_gz_start = html_data;
-    const uint8_t * _binary_index_html_gz_end = html_data + ARRAY_SIZE(html_data);
-
-#elif defined(__aarch64__) || defined(__arm64__)
-/* arm64: define non-underscored symbols (host Apple Silicon) */
-    const uint8_t * binary_favicon_webp_gz_start = favicon_data;
-    const uint8_t * binary_favicon_webp_gz_end = favicon_data + ARRAY_SIZE(favicon_data);
-
-    const uint8_t * binary_index_css_gz_start = css_data;
-    const uint8_t * binary_index_css_gz_end = css_data + ARRAY_SIZE(css_data);
-
-    const uint8_t * binary_index_js_gz_start = js_data;
-    const uint8_t * binary_index_js_gz_end = js_data + ARRAY_SIZE(js_data);
-
-    const uint8_t * binary_index_html_gz_start = html_data;
-    const uint8_t * binary_index_html_gz_end = html_data + ARRAY_SIZE(html_data);
-#endif
+const uint8_t * binary_index_html_gz_start asm("_binary_index_html_gz_start") = html_data;
+const uint8_t * binary_index_html_gz_end asm("_binary_index_html_gz_end") = html_data + ARRAY_SIZE(html_data);
