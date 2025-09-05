@@ -39,6 +39,7 @@ run: $(addprefix RUN_, $(TEST_LIST))
 $(TEST_LIST): $(TEST_BUILD_DIRS)
 	@echo "\nBuilding $(TEST_NAME) test..."
 	@{ \
+		echo "gcc --version"; \
 		test_dir=$(BUILD_DIR)/$@ && \
 		test_bin=$$test_dir/$@ && \
 		$(GCC_BIN) $(addprefix -D, $(DEFS)) $(addprefix -I, $(INC)) $@.c $(SRC) $(GCC_FLAGS) -o $$test_bin; \
