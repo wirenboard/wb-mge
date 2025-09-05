@@ -83,6 +83,7 @@ build-idf-project:
 clean:
 	idf.py fullclean
 	rm -rf build
+	rm -rf $(COVERAGE_REPORT_DIR)
 	rm -rf main/frontend/dist
 	rm -rf sdkconfig
 	@for dir in $(UNITTESTS_DIRS); do \
