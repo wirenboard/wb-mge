@@ -8,7 +8,7 @@
 #define HTTPD_MAX_URI_LEN                       1024
 #define MAX_URI_HANDLERS                        20
 
-#define STACK_SIZE                              1024 * 6
+#define STACK_SIZE                              (1024 * 6)
 #define MAX_OPEN_SOCKETS                        12
 #define WEB_PORT_DEFAULT                        80
 

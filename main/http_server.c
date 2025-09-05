@@ -12,11 +12,11 @@
 #include "esp_log.h"
 #include "setting_items.h"
 
-#define MAX_URI_HANDLERS                    20       // TODO: Подобрать значение к релизу
-#define STACK_SIZE                          1024 * 6 // TODO: Проверить размер используемой памяти
-#define MAX_OPEN_SOCKETS                    12       // TODO: Подобрать значение к релизу
+#define MAX_URI_HANDLERS                    20          // TODO: Подобрать значение к релизу
+#define STACK_SIZE                          (1024 * 6)  // TODO: Проверить размер используемой памяти
+#define MAX_OPEN_SOCKETS                    12          // Увеличено, чтобы можно было одновременно подключиться хотя бы с 2-3 устройств
 
-#define WEB_PORT_DEFAULT                    80
+#define WEB_PORT_DEFAULT                    80          // Используется, если не удается прочитать из настроек
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 
