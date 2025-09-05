@@ -37,9 +37,16 @@ all: clean run
 run: $(addprefix RUN_, $(TEST_LIST))
 
 $(TEST_LIST): $(TEST_BUILD_DIRS)
-	@echo "\nBuilding $(TEST_NAME) test..."
 	@{ \
-		gcc --version; \
+		echo "\n=== Platform Detection ===" && \
+		echo "OS: $$(uname -s)" && \
+		echo "Architecture: $$(uname -m)" && \
+		echo "Kernel: $$(uname -r)" && \
+		echo "Distribution: $$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'=' -f2 | tr -d '\"' || echo 'Unknown')" && \
+		echo "GCC version: $$($(GCC_BIN) --version | head -1)" && \
+		echo "GCC target: $$($(GCC_BIN) -dumpmachine)" && \
+		echo "==========================" && \
+		echo "\nBuilding $(TEST_NAME) test..." && \
 		test_dir=$(BUILD_DIR)/$@ && \
 		test_bin=$$test_dir/$@ && \
 		$(GCC_BIN) $(addprefix -D, $(DEFS)) $(addprefix -I, $(INC)) $@.c $(SRC) $(GCC_FLAGS) -o $$test_bin; \
