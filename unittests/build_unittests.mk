@@ -24,6 +24,7 @@ GCOVR_FILTERS_STR = $(foreach file,$(TESTED_SRC),-f '$(shell python3 -c "import 
 # Set source files list for compiler
 SRC = $(TESTED_SRC) $(AUX_SRC)
 
+# Add Unity source and include
 UNITY_DIR = $(IDF_PATH)/components/unity/unity
 SRC += $(UNITY_DIR)/src/unity.c
 INC += $(UNITY_DIR)/src

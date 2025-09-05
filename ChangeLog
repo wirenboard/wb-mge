@@ -1,6 +1,6 @@
 2025-09-04 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
-    * version:  1.0.0-rc6
+    * version:  1.0.0-rc5
     * rework:   integrate Unity for setting_items unittest
     * added:    unittests for http_server
     * added:    measurement of code coverage
