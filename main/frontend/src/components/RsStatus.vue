@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { RsSettings, RsStatus } from '@/common/types';
+import type { RsSettings, RsStatus } from '@/common/types';
 import Info from '@/components/Info.vue';
 
 defineProps<{ title: string; info: RsStatus; settings: RsSettings }>();
@@ -25,12 +25,13 @@ const { t } = useI18n();
   <div class="rsStatus-value">{{ info.server_connections_count }}</div>
 
   <div class="rsStatus-label">{{ t('status') }}</div>
-  <div class="rsStatus-value">{{ info.is_busy ? t('exchange') : t('no_exchange') }}</div>
+  <div class="rsStatus-value">{{ info.is_busy ? t('active') : t('not_active') }}</div>
   <Info class="rsStatus-info" :text="t('status_info')" />
 
   <template v-if="settings.bridge.modbus ">
     <div class="rsStatus-label">{{ t('error_rate') }}</div>
-    <div class="rsStatus-value">{{ info.error_percentage }} %</div>
+    <div class="rsStatus-value">{{ info.error_percentage }}%</div>
+    <Info class="rsStatus-info" :text="t('error_rate_description')" />
   </template>
 </template>
 
@@ -57,10 +58,11 @@ const { t } = useI18n();
     "tcp_port": "TCP port",
     "tcp_count": "TCP count",
     "status": "Status",
-    "status_info": "Enabled if there has been an exchange within the last 5 seconds",
-    "exchange": "Has exchange",
-    "no_exchange": "No exchange",
-    "error_rate": "Error rate"
+    "status_info": "Active if data has been transferred within the last 5 seconds",
+    "active": "Active",
+    "not_active": "Inactive",
+    "error_rate": "Error rate",
+    "error_rate_description": "Error rate for the last 100 requests"
   },
   "ru": {
     "modbus_mode": "Режим",
@@ -70,10 +72,11 @@ const { t } = useI18n();
     "tcp_port": "TCP-порт",
     "tcp_count": "TCP подключений",
     "status": "Статус",
-    "status_info": "Активен, если был обмен в течение последних 5 секунд",
-    "exchange": "Есть обмен",
-    "no_exchange": "Нет обмена",
-    "error_rate": "Процент ошибок"
+    "status_info": "Активен, если была передача данных в течение последних 5 секунд",
+    "active": "Активен",
+    "not_active": "Не активен",
+    "error_rate": "Процент ошибок",
+    "error_rate_description": "Процент ошибок по последним 100 запросам"
   }
 }
 </i18n>

@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory, } from 'vue-router';
 import { useInfo } from '@/common/info';
 import { hasSession } from '@/common/session';
 import { useSettings } from '@/common/settings';
+import type { LogoutResponse } from '@/common/types';
 import Dashboard from '@/views/Dashboard.vue';
 import Login from '@/views/Login.vue';
 import Settings from '@/views/Settings.vue';
@@ -63,15 +64,13 @@ const router = createRouter({
     },
     {
       path: '/logout',
-      redirect:  () => {
-        api('logout', {});
+      redirect: () => {
+        api<LogoutResponse>('logout', { method: 'POST' });
         hasSession.value = false;
         return { path: '/login' };
       },
     },
   ],
 });
-
-// router.beforeRouteLeave(setTitle);
 
 export default router;

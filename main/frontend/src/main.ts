@@ -1,4 +1,4 @@
-import { createApp } from 'vue';
+import { createApp, type Directive } from 'vue';
 import App from './App.vue';
 import router from './router';
 import { i18n } from './i18n';
@@ -7,9 +7,15 @@ import { createHead } from '@unhead/vue/client';
 
 const app = createApp(App);
 
-const vFocus = {
-  mounted: (el: any) =>
-    el.querySelector('input') ? el.querySelector('input').focus() : el.focus(),
+const vFocus: Directive<HTMLElement> = {
+  mounted: (el) => {
+    const input = el.querySelector<HTMLInputElement>('input');
+    if (input) {
+      input.focus();
+    } else {
+      el.focus();
+    }
+  },
 };
 
 const head = createHead();

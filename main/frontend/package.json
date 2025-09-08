@@ -12,7 +12,7 @@
     "@unhead/vue": "2.0.12",
     "ky": "1.8.1",
     "vue": "3.5.17",
-    "vue-i18n": "11.1.9",
+    "vue-i18n": "11.1.11",
     "vue-router": "4.5.1"
   },
   "devDependencies": {
