@@ -8,7 +8,7 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 
 export const useInfo = () => {
   const { isReconnecting } = useUptime();
-  const fetchInfo = async (priority: 'low' | 'high') => {
+  const fetchInfo = async (priority: 'low' | 'high' = 'high') => {
     info.value = await api<Info>('info', { timeout: 5000, priority });
   };
 
