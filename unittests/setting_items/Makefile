@@ -24,4 +24,5 @@ INC += $(IDF_PATH)/components/nvs_flash/include/
 # List of tests
 TEST_LIST = setting_items_test
 
+# Include base unit test build system
 include $(PROJ_DIR)/unittests/build_unittests.mk
