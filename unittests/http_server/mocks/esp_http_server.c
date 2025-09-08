@@ -14,8 +14,21 @@ esp_err_t mock_wifi_scan_init_return_value = ESP_OK;
 esp_err_t mock_auth_init_return_value = ESP_OK;
 
 httpd_config_t mock_captured_config = {0};
-char mock_registered_uris[MAX_URI_HANDLERS][HTTPD_MAX_URI_LEN] = {0};
 httpd_handle_t mock_server_handle = (httpd_handle_t)0x12345678;
+
+int mock_auth_login_handler_called = 0;
+int mock_auth_session_check_handler_called = 0;
+int mock_auth_logout_handler_called = 0;
+int mock_ota_update_post_handler_called = 0;
+int mock_info_get_handler_called = 0;
+int mock_info_post_handler_called = 0;
+int mock_settings_get_handler_called = 0;
+int mock_settings_post_handler_called = 0;
+int mock_cmd_post_handler_called = 0;
+int mock_wifi_scan_start_handler_called = 0;
+int mock_wifi_scan_results_handler_called = 0;
+int mock_ap_clients_get_handler_called = 0;
+int mock_uptime_get_handler_called = 0;
 
 int mock_httpd_resp_set_type_call_count = 0;
 int mock_httpd_resp_set_hdr_call_count = 0;
@@ -23,6 +36,14 @@ int mock_httpd_resp_send_call_count = 0;
 char mock_last_content_type[128] = {0};
 char mock_last_header_field[128] = {0};
 char mock_last_header_value[128] = {0};
+const char* mock_last_send_buf = NULL;
+ssize_t mock_last_send_buf_len = 0;
+httpd_req_t* mock_last_set_type_req = NULL;
+httpd_req_t* mock_last_set_hdr_req = NULL;
+httpd_req_t* mock_last_send_req = NULL;
+httpd_req_t* mock_current_request = NULL;
+
+static httpd_req_t mock_request_object;
 
 mock_uri_registry_entry_t mock_uri_registry[MAX_URI_HANDLERS];
 int mock_uri_registry_count = 0;
@@ -39,7 +60,6 @@ void esp_http_server_init(void)
     mock_auth_init_return_value = ESP_OK;
 
     memset(&mock_captured_config, 0, sizeof(mock_captured_config));
-    memset(mock_registered_uris, 0, sizeof(mock_registered_uris));
 
     mock_httpd_resp_set_type_call_count = 0;
     mock_httpd_resp_set_hdr_call_count = 0;
@@ -47,9 +67,32 @@ void esp_http_server_init(void)
     memset(mock_last_content_type, 0, sizeof(mock_last_content_type));
     memset(mock_last_header_field, 0, sizeof(mock_last_header_field));
     memset(mock_last_header_value, 0, sizeof(mock_last_header_value));
+    mock_last_send_buf = NULL;
+    mock_last_send_buf_len = 0;
+    mock_last_set_type_req = NULL;
+    mock_last_set_hdr_req = NULL;
+    mock_last_send_req = NULL;
+    mock_current_request = NULL;
 
     memset(mock_uri_registry, 0, sizeof(mock_uri_registry));
     mock_uri_registry_count = 0;
+}
+
+void mock_handlers_reset(void)
+{
+    mock_auth_login_handler_called = 0;
+    mock_auth_session_check_handler_called = 0;
+    mock_auth_logout_handler_called = 0;
+    mock_ota_update_post_handler_called = 0;
+    mock_info_get_handler_called = 0;
+    mock_info_post_handler_called = 0;
+    mock_settings_get_handler_called = 0;
+    mock_settings_post_handler_called = 0;
+    mock_cmd_post_handler_called = 0;
+    mock_wifi_scan_start_handler_called = 0;
+    mock_wifi_scan_results_handler_called = 0;
+    mock_ap_clients_get_handler_called = 0;
+    mock_uptime_get_handler_called = 0;
 }
 
 esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)
@@ -71,12 +114,6 @@ esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)
 
 esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *uri_handler)
 {
-    if (mock_httpd_register_uri_handler_call_count < MAX_URI_HANDLERS && uri_handler && uri_handler->uri) {
-        strncpy(mock_registered_uris[mock_httpd_register_uri_handler_call_count],
-                uri_handler->uri,
-                sizeof(mock_registered_uris[0]) - 1);
-    }
-
     if (mock_uri_registry_count < MAX_URI_HANDLERS && uri_handler) {
         mock_uri_registry_entry_t *entry = &mock_uri_registry[mock_uri_registry_count];
         strncpy(entry->uri, uri_handler->uri, sizeof(entry->uri) - 1);
@@ -85,8 +122,6 @@ esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *u
         entry->user_ctx = uri_handler->user_ctx;
         entry->registered = true;
         mock_uri_registry_count++;
-
-        LOG_INFO("Registered handler");
     }
 
     mock_httpd_register_uri_handler_call_count++;
@@ -96,6 +131,7 @@ esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *u
 esp_err_t httpd_resp_set_type(httpd_req_t *req, const char *type)
 {
     mock_httpd_resp_set_type_call_count++;
+    mock_last_set_type_req = req;
     if (type) {
         strncpy(mock_last_content_type, type, sizeof(mock_last_content_type) - 1);
     }
@@ -105,6 +141,7 @@ esp_err_t httpd_resp_set_type(httpd_req_t *req, const char *type)
 esp_err_t httpd_resp_set_hdr(httpd_req_t *req, const char *field, const char *value)
 {
     mock_httpd_resp_set_hdr_call_count++;
+    mock_last_set_hdr_req = req;
     if (field) {
         strncpy(mock_last_header_field, field, sizeof(mock_last_header_field) - 1);
     }
@@ -117,6 +154,9 @@ esp_err_t httpd_resp_set_hdr(httpd_req_t *req, const char *field, const char *va
 esp_err_t httpd_resp_send(httpd_req_t *req, const char *buf, ssize_t buf_len)
 {
     mock_httpd_resp_send_call_count++;
+    mock_last_send_req = req;
+    mock_last_send_buf = buf;
+    mock_last_send_buf_len = buf_len;
 
     return ESP_OK;
 }
@@ -133,10 +173,15 @@ httpd_req_t mock_create_request(const char* uri, enum http_method method)
     return req;
 }
 
-bool mock_simulate_http_request(enum http_method method, const char* uri)
+void mock_simulate_http_request(enum http_method method, const char* uri)
 {
-    TEST_ASSERT_LESS_THAN_INT_MESSAGE(HTTP_ANY, method, "Invalid method");
-    TEST_ASSERT_NOT_NULL_MESSAGE(uri, "Invalid URI");
+    char method_message[100];
+    snprintf(method_message, sizeof(method_message), "Invalid method: %d", method);
+    TEST_ASSERT_LESS_THAN_INT_MESSAGE(HTTP_ANY, method, method_message);
+
+    char uri_message[100];
+    snprintf(uri_message, sizeof(uri_message), "Invalid URI: %s", uri);
+    TEST_ASSERT_NOT_NULL_MESSAGE(uri, uri_message);
 
     for (int i = 0; i < mock_uri_registry_count; i++) {
         mock_uri_registry_entry_t *entry = &mock_uri_registry[i];
@@ -145,24 +190,15 @@ bool mock_simulate_http_request(enum http_method method, const char* uri)
             entry->method == method &&
             strcmp(entry->uri, uri) == 0) {
 
-            httpd_req_t mock_req = mock_create_request(uri, method);
-            mock_req.user_ctx = entry->user_ctx;
+            mock_request_object = mock_create_request(uri, method);
+            mock_request_object.user_ctx = entry->user_ctx;
+            mock_current_request = &mock_request_object;
 
-            LOG_INFO("Found handler, executing...");
+            esp_err_t result = entry->handler(&mock_request_object);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Handler returned error");
 
-            esp_err_t result = entry->handler(&mock_req);
-
-            LOG_INFO("Handler execution completed...");
-
-            if (result == ESP_OK) {
-                LOG_INFO("✓ HTTP request simulation successful");
-            } else {
-                LOG_INFO("❌ Handler returned error");
-            }
-            return true;
+            return;
         }
     }
-
-    LOG_INFO("❌ No handler found");
-    return false;
+    TEST_FAIL_MESSAGE("No handler found");
 }

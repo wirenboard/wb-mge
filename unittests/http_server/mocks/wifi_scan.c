@@ -1,5 +1,4 @@
 #include "wifi_scan.h"
-#include "esp_http_server.h"
 
 esp_err_t wifi_scan_init(void)
 {
@@ -9,10 +8,12 @@ esp_err_t wifi_scan_init(void)
 
 esp_err_t wifi_scan_start_handler(httpd_req_t *req)
 {
+    mock_wifi_scan_start_handler_called = 1;
     return ESP_OK;
 }
 
 esp_err_t wifi_scan_results_handler(httpd_req_t *req)
 {
+    mock_wifi_scan_results_handler_called = 1;
     return ESP_OK;
 }

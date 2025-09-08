@@ -1,5 +1,4 @@
 #include "auth.h"
-#include "esp_http_server.h"
 
 esp_err_t auth_init(void)
 {
@@ -9,16 +8,19 @@ esp_err_t auth_init(void)
 
 esp_err_t auth_login_handler(httpd_req_t *req)
 {
+    mock_auth_login_handler_called = 1;
     return ESP_OK;
 }
 
 esp_err_t auth_logout_handler(httpd_req_t *req)
 {
+    mock_auth_logout_handler_called = 1;
     return ESP_OK;
 }
 
 esp_err_t auth_session_check_handler(httpd_req_t *req)
 {
+    mock_auth_session_check_handler_called = 1;
     return ESP_OK;
 }
 

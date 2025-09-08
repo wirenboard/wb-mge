@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #include "esp_err.h"
 
-#define HTTPD_MAX_URI_LEN                       1024
+#define HTTPD_MAX_URI_LEN                       100
 #define MAX_URI_HANDLERS                        20
 
 #define STACK_SIZE                              (1024 * 6)
@@ -33,6 +33,21 @@ enum http_method
     HTTP_DELETE,
     HTTP_ANY
 };
+
+static inline const char* get_method_as_string(enum http_method method)
+{
+    switch (method) {
+        case HTTP_OPTIONS: return "OPTIONS";
+        case HTTP_GET:    return "GET";
+        case HTTP_HEAD:   return "HEAD";
+        case HTTP_POST:   return "POST";
+        case HTTP_PUT:    return "PUT";
+        case HTTP_PATCH:  return "PATCH";
+        case HTTP_DELETE: return "DELETE";
+        case HTTP_ANY:    return "ANY";
+        default:         return "UNKNOWN";
+    }
+}
 
 typedef struct httpd_req httpd_req_t;
 
@@ -103,8 +118,21 @@ extern esp_err_t mock_httpd_start_return_value;
 extern esp_err_t mock_wifi_scan_init_return_value;
 extern esp_err_t mock_auth_init_return_value;
 extern httpd_config_t mock_captured_config;
-extern char mock_registered_uris[MAX_URI_HANDLERS][HTTPD_MAX_URI_LEN];
 extern httpd_handle_t mock_server_handle;
+
+extern int mock_auth_login_handler_called;
+extern int mock_auth_session_check_handler_called;
+extern int mock_auth_logout_handler_called;
+extern int mock_ota_update_post_handler_called;
+extern int mock_info_get_handler_called;
+extern int mock_info_post_handler_called;
+extern int mock_settings_get_handler_called;
+extern int mock_settings_post_handler_called;
+extern int mock_cmd_post_handler_called;
+extern int mock_wifi_scan_start_handler_called;
+extern int mock_wifi_scan_results_handler_called;
+extern int mock_ap_clients_get_handler_called;
+extern int mock_uptime_get_handler_called;
 
 extern int mock_httpd_resp_set_type_call_count;
 extern int mock_httpd_resp_set_hdr_call_count;
@@ -112,6 +140,12 @@ extern int mock_httpd_resp_send_call_count;
 extern char mock_last_content_type[128];
 extern char mock_last_header_field[128];
 extern char mock_last_header_value[128];
+extern const char* mock_last_send_buf;
+extern ssize_t mock_last_send_buf_len;
+extern httpd_req_t* mock_last_set_type_req;
+extern httpd_req_t* mock_last_set_hdr_req;
+extern httpd_req_t* mock_last_send_req;
+extern httpd_req_t* mock_current_request;
 
 typedef struct {
     char uri[HTTPD_MAX_URI_LEN];
@@ -124,10 +158,11 @@ typedef struct {
 extern mock_uri_registry_entry_t mock_uri_registry[MAX_URI_HANDLERS];
 extern int mock_uri_registry_count;
 
-bool mock_simulate_http_request(enum http_method method, const char* uri);
+void mock_simulate_http_request(enum http_method method, const char* uri);
 httpd_req_t mock_create_request(const char* uri, enum http_method method);
 
 void esp_http_server_init(void);
+void mock_handlers_reset(void);
 
 esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config);
 esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *uri_handler);

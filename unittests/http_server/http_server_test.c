@@ -1,8 +1,9 @@
 #include "unity.h"
 #include "console_log.h"
 
-#include "http_server.h"
+#include "array_size.h"
 #include "esp_http_server.h"
+#include "http_server.h"
 #include "setting_items.h"
 
 #include <string.h>
@@ -10,11 +11,64 @@
 #define WEB_PORT                            8080
 #define URI_HANDLERS_COUNT                  17
 
+extern const uint8_t favicon_start[] asm("_binary_favicon_webp_gz_start");
+extern const uint8_t favicon_end[] asm("_binary_favicon_webp_gz_end");
+
+extern const uint8_t index_css_start[] asm("_binary_index_css_gz_start");
+extern const uint8_t index_css_end[] asm("_binary_index_css_gz_end");
+
+extern const uint8_t index_js_start[] asm("_binary_index_js_gz_start");
+extern const uint8_t index_js_end[] asm("_binary_index_js_gz_end");
+
+extern const uint8_t index_html_start[] asm("_binary_index_html_gz_start");
+extern const uint8_t index_html_end[] asm("_binary_index_html_gz_end");
+
+const char* expected_uris[] = {
+    "/auth",
+    "/session",
+    "/logout",
+    "/",
+    "/index.css",
+    "/index.js",
+    "/favicon.webp",
+    "/update",
+    "/info",
+    "/info",
+    "/settings",
+    "/settings",
+    "/cmd",
+    "/wifi_scan/start",
+    "/wifi_scan/results",
+    "/ap_clients",
+    "/uptime"
+};
+
+const enum http_method expected_methods[] = {
+    HTTP_POST,   // /auth
+    HTTP_GET,    // /session
+    HTTP_POST,   // /logout
+    HTTP_GET,    // /
+    HTTP_GET,    // /index.css
+    HTTP_GET,    // /index.js
+    HTTP_GET,    // /favicon.webp
+    HTTP_POST,   // /update
+    HTTP_GET,    // /info
+    HTTP_POST,   // /info
+    HTTP_GET,    // /settings
+    HTTP_POST,   // /settings
+    HTTP_POST,   // /cmd
+    HTTP_POST,   // /wifi_scan/start
+    HTTP_GET,    // /wifi_scan/results
+    HTTP_GET,    // /ap_clients
+    HTTP_GET     // /uptime
+};
+
 void mock_setting_items_set_web_port(int port);
 
 void setUp(void)
 {
     esp_http_server_init();
+    mock_handlers_reset();
 }
 
 void tearDown(void)
@@ -246,26 +300,6 @@ void test_http_server_uri_handlers_registration(void)
         "HTTP server initialization should succeed"
     );
 
-    const char* expected_uris[] = {
-        "/auth",
-        "/session",
-        "/logout",
-        "/",
-        "/index.css",
-        "/index.js",
-        "/favicon.webp",
-        "/update",
-        "/info",
-        "/info",
-        "/settings",
-        "/settings",
-        "/cmd",
-        "/wifi_scan/start",
-        "/wifi_scan/results",
-        "/ap_clients",
-        "/uptime"
-    };
-
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         URI_HANDLERS_COUNT,
         mock_httpd_register_uri_handler_call_count,
@@ -273,17 +307,15 @@ void test_http_server_uri_handlers_registration(void)
     );
 
     for (size_t i = 0; i < URI_HANDLERS_COUNT; i++) {
-        bool found = false;
-        for (int j = 0; j < mock_httpd_register_uri_handler_call_count; j++) {
-            if (strcmp(mock_registered_uris[j], expected_uris[i]) == 0) {
-                found = true;
-                break;
-            }
-        }
-
-        char message[100];
-        snprintf(message, sizeof(message), "URI '%s' should be registered", expected_uris[i]);
-        TEST_ASSERT_TRUE_MESSAGE(found, message);
+        char uri_message[200];
+        char method_message[100];
+        const char* method_name = get_method_as_string(expected_methods[i]);
+        snprintf(uri_message, sizeof(uri_message),
+                "URI '%s' should be registered as '%s'", expected_uris[i], mock_uri_registry[i].uri);
+        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(expected_uris[i], mock_uri_registry[i].uri, ARRAY_SIZE(mock_uri_registry[i].uri), uri_message);
+        snprintf(method_message, sizeof(method_message),
+                "URI '%s' should be registered with method %s", expected_uris[i], method_name);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(expected_methods[i], mock_uri_registry[i].method, method_message);
     }
 }
 
@@ -354,9 +386,14 @@ void test_http_request_index_html(void)
     esp_err_t result = http_server_init();
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
 
-    bool request_handled = mock_simulate_http_request(HTTP_GET, "/");
+    mock_simulate_http_request(HTTP_GET, "/");
 
-    TEST_ASSERT_TRUE_MESSAGE(request_handled, "GET / request should be handled");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_type_req,
+                                 "httpd_resp_set_type should be called with correct req parameter");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_hdr_req,
+                                 "httpd_resp_set_hdr should be called with correct req parameter");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_send_req,
+                                 "httpd_resp_send should be called with correct req parameter");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_set_type_call_count,
                                  "httpd_resp_set_type should be called once");
@@ -371,6 +408,10 @@ void test_http_request_index_html(void)
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
                                  "httpd_resp_send should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE((const char *)index_html_start, mock_last_send_buf,
+                                 "httpd_resp_send should be called with index_html_start as buffer");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(index_html_end - index_html_start, mock_last_send_buf_len,
+                                 "httpd_resp_send should be called with correct buffer length");
 }
 
 // Тестируем симуляцию HTTP запроса GET /index.css -> index_css_get_handler
@@ -385,9 +426,14 @@ void test_http_request_index_css(void)
     esp_err_t result = http_server_init();
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
 
-    bool request_handled = mock_simulate_http_request(HTTP_GET, "/index.css");
+    mock_simulate_http_request(HTTP_GET, "/index.css");
 
-    TEST_ASSERT_TRUE_MESSAGE(request_handled, "GET /index.css request should be handled");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_type_req,
+                                 "httpd_resp_set_type should be called with correct req parameter");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_hdr_req,
+                                 "httpd_resp_set_hdr should be called with correct req parameter");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_send_req,
+                                 "httpd_resp_send should be called with correct req parameter");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_set_type_call_count,
                                  "httpd_resp_set_type should be called once");
@@ -402,6 +448,10 @@ void test_http_request_index_css(void)
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
                                  "httpd_resp_send should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE((const char *)index_css_start, mock_last_send_buf,
+                                 "httpd_resp_send should be called with index_css_start as buffer");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(index_css_end - index_css_start, mock_last_send_buf_len,
+                                 "httpd_resp_send should be called with correct buffer length");
 }
 
 // Тестируем симуляцию HTTP запроса GET /index.js -> index_js_get_handler
@@ -416,9 +466,14 @@ void test_http_request_index_js(void)
     esp_err_t result = http_server_init();
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
 
-    bool request_handled = mock_simulate_http_request(HTTP_GET, "/index.js");
+    mock_simulate_http_request(HTTP_GET, "/index.js");
 
-    TEST_ASSERT_TRUE_MESSAGE(request_handled, "GET /index.js request should be handled");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_type_req,
+                                 "httpd_resp_set_type should be called with correct req parameter");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_hdr_req,
+                                 "httpd_resp_set_hdr should be called with correct req parameter");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_send_req,
+                                 "httpd_resp_send should be called with correct req parameter");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_set_type_call_count,
                                  "httpd_resp_set_type should be called once");
@@ -433,6 +488,10 @@ void test_http_request_index_js(void)
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
                                  "httpd_resp_send should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE((const char *)index_js_start, mock_last_send_buf,
+                                 "httpd_resp_send should be called with index_js_start as buffer");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(index_js_end - index_js_start, mock_last_send_buf_len,
+                                 "httpd_resp_send should be called with correct buffer length");
 }
 
 // Тестируем симуляцию HTTP запроса GET /favicon.webp -> favicon_get_handler
@@ -447,9 +506,14 @@ void test_http_request_favicon(void)
     esp_err_t result = http_server_init();
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
 
-    bool request_handled = mock_simulate_http_request(HTTP_GET, "/favicon.webp");
+    mock_simulate_http_request(HTTP_GET, "/favicon.webp");
 
-    TEST_ASSERT_TRUE_MESSAGE(request_handled, "GET /favicon.webp request should be handled");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_type_req,
+                                 "httpd_resp_set_type should be called with correct req parameter");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_hdr_req,
+                                 "httpd_resp_set_hdr should be called with correct req parameter");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_send_req,
+                                 "httpd_resp_send should be called with correct req parameter");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_set_type_call_count,
                                  "httpd_resp_set_type should be called once");
@@ -464,13 +528,17 @@ void test_http_request_favicon(void)
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
                                  "httpd_resp_send should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE((const char *)favicon_start, mock_last_send_buf,
+                                 "httpd_resp_send should be called with favicon_start as buffer");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(favicon_end - favicon_start, mock_last_send_buf_len,
+                                 "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем неправильные HTTP методы для статических файлов
-void test_http_request_invalid_method_index_html(void)
+// Тестируем симуляцию HTTP запросов для всех внешних обработчиков
+void test_http_request_external_handlers(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request - invalid method POST / (should be GET)");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request simulation - all external handlers");
     LOG_MESSAGE();
 
     mock_setting_items_set_web_port(WEB_PORT);
@@ -478,154 +546,73 @@ void test_http_request_invalid_method_index_html(void)
     esp_err_t result = http_server_init();
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
 
-    bool request_handled = mock_simulate_http_request(HTTP_POST, "/");
+    // Test authentication handlers
+    LOG_INFO("Testing authentication handlers...");
+    mock_simulate_http_request(HTTP_POST, "/auth");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_auth_login_handler_called,
+                                 "auth_login_handler should be called for POST /auth");
 
-    TEST_ASSERT_FALSE_MESSAGE(request_handled, "POST / request should not be handled (GET only)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_set_type_call_count,
-                                 "httpd_resp_set_type should not be called for invalid method");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_send_call_count,
-                                 "httpd_resp_send should not be called for invalid method");
-}
+    mock_simulate_http_request(HTTP_GET, "/session");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_auth_session_check_handler_called,
+                                 "auth_session_check_handler should be called for GET /session");
 
-void test_http_request_invalid_method_index_css(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request - invalid method POST /index.css (should be GET)");
-    LOG_MESSAGE();
+    mock_simulate_http_request(HTTP_POST, "/logout");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_auth_logout_handler_called,
+                                 "auth_logout_handler should be called for POST /logout");
 
-    mock_setting_items_set_web_port(WEB_PORT);
+    // Test OTA handler
+    LOG_INFO("Testing OTA handler...");
+    mock_simulate_http_request(HTTP_POST, "/update");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_ota_update_post_handler_called,
+                                 "ota_update_post_handler should be called for POST /update");
 
-    esp_err_t result = http_server_init();
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
+    // Test info handlers
+    LOG_INFO("Testing info handlers...");
+    mock_simulate_http_request(HTTP_GET, "/info");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_info_get_handler_called,
+                                 "info_get_handler should be called for GET /info");
 
-    bool request_handled = mock_simulate_http_request(HTTP_POST, "/index.css");
+    mock_simulate_http_request(HTTP_POST, "/info");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_info_post_handler_called,
+                                 "info_post_handler should be called for POST /info");
 
-    TEST_ASSERT_FALSE_MESSAGE(request_handled, "POST /index.css request should not be handled (GET only)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_set_type_call_count,
-                                 "httpd_resp_set_type should not be called for invalid method");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_send_call_count,
-                                 "httpd_resp_send should not be called for invalid method");
-}
+    // Test settings handlers
+    LOG_INFO("Testing settings handlers...");
+    mock_simulate_http_request(HTTP_GET, "/settings");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_settings_get_handler_called,
+                                 "settings_get_handler should be called for GET /settings");
 
-void test_http_request_invalid_method_index_js(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request - invalid method PUT /index.js (should be GET)");
-    LOG_MESSAGE();
+    mock_simulate_http_request(HTTP_POST, "/settings");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_settings_post_handler_called,
+                                 "settings_post_handler should be called for POST /settings");
 
-    mock_setting_items_set_web_port(WEB_PORT);
+    // Test command handler
+    LOG_INFO("Testing command handler...");
+    mock_simulate_http_request(HTTP_POST, "/cmd");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cmd_post_handler_called,
+                                 "cmd_post_handler should be called for POST /cmd");
 
-    esp_err_t result = http_server_init();
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
+    // Test WiFi scan handlers
+    LOG_INFO("Testing WiFi scan handlers...");
+    mock_simulate_http_request(HTTP_POST, "/wifi_scan/start");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_wifi_scan_start_handler_called,
+                                 "wifi_scan_start_handler should be called for POST /wifi_scan/start");
 
-    bool request_handled = mock_simulate_http_request(HTTP_PUT, "/index.js");
+    mock_simulate_http_request(HTTP_GET, "/wifi_scan/results");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_wifi_scan_results_handler_called,
+                                 "wifi_scan_results_handler should be called for GET /wifi_scan/results");
 
-    TEST_ASSERT_FALSE_MESSAGE(request_handled, "PUT /index.js request should not be handled (GET only)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_set_type_call_count,
-                                 "httpd_resp_set_type should not be called for invalid method");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_send_call_count,
-                                 "httpd_resp_send should not be called for invalid method");
-}
+    // Test utility handlers
+    LOG_INFO("Testing utility handlers...");
+    mock_simulate_http_request(HTTP_GET, "/ap_clients");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_ap_clients_get_handler_called,
+                                 "ap_clients_get_handler should be called for GET /ap_clients");
 
-void test_http_request_invalid_method_favicon(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request - invalid method DELETE /favicon.webp (should be GET)");
-    LOG_MESSAGE();
+    mock_simulate_http_request(HTTP_GET, "/uptime");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uptime_get_handler_called,
+                                 "uptime_get_handler should be called for GET /uptime");
 
-    mock_setting_items_set_web_port(WEB_PORT);
-
-    esp_err_t result = http_server_init();
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
-
-    bool request_handled = mock_simulate_http_request(HTTP_DELETE, "/favicon.webp");
-
-    TEST_ASSERT_FALSE_MESSAGE(request_handled, "DELETE /favicon.webp request should not be handled (GET only)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_set_type_call_count,
-                                 "httpd_resp_set_type should not be called for invalid method");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_send_call_count,
-                                 "httpd_resp_send should not be called for invalid method");
-}
-
-// Тестируем неправильные URI для статических файлов
-void test_http_request_malformed_uri_index_html(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request - malformed URI /index.html (should be /)");
-    LOG_MESSAGE();
-
-    mock_setting_items_set_web_port(WEB_PORT);
-
-    esp_err_t result = http_server_init();
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
-
-    bool request_handled = mock_simulate_http_request(HTTP_GET, "/index.html");
-
-    TEST_ASSERT_FALSE_MESSAGE(request_handled, "GET /index.html request should not be handled (/ only)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_set_type_call_count,
-                                 "httpd_resp_set_type should not be called for malformed URI");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_send_call_count,
-                                 "httpd_resp_send should not be called for malformed URI");
-}
-
-void test_http_request_malformed_uri_index_css(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request - malformed URI /css/index.css (should be /index.css)");
-    LOG_MESSAGE();
-
-    mock_setting_items_set_web_port(WEB_PORT);
-
-    esp_err_t result = http_server_init();
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
-
-    bool request_handled = mock_simulate_http_request(HTTP_GET, "/css/index.css");
-
-    TEST_ASSERT_FALSE_MESSAGE(request_handled, "GET /css/index.css request should not be handled (/index.css only)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_set_type_call_count,
-                                 "httpd_resp_set_type should not be called for malformed URI");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_send_call_count,
-                                 "httpd_resp_send should not be called for malformed URI");
-}
-
-void test_http_request_malformed_uri_index_js(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request - malformed URI /js/index.js (should be /index.js)");
-    LOG_MESSAGE();
-
-    mock_setting_items_set_web_port(WEB_PORT);
-
-    esp_err_t result = http_server_init();
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
-
-    bool request_handled = mock_simulate_http_request(HTTP_GET, "/js/index.js");
-
-    TEST_ASSERT_FALSE_MESSAGE(request_handled, "GET /js/index.js request should not be handled (/index.js only)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_set_type_call_count,
-                                 "httpd_resp_set_type should not be called for malformed URI");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_send_call_count,
-                                 "httpd_resp_send should not be called for malformed URI");
-}
-
-void test_http_request_malformed_uri_favicon(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request - malformed URI /favicon.ico (should be /favicon.webp)");
-    LOG_MESSAGE();
-
-    mock_setting_items_set_web_port(WEB_PORT);
-
-    esp_err_t result = http_server_init();
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
-
-    bool request_handled = mock_simulate_http_request(HTTP_GET, "/favicon.ico");
-
-    TEST_ASSERT_FALSE_MESSAGE(request_handled, "GET /favicon.ico request should not be handled (/favicon.webp only)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_set_type_call_count,
-                                 "httpd_resp_set_type should not be called for malformed URI");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_httpd_resp_send_call_count,
-                                 "httpd_resp_send should not be called for malformed URI");
+    LOG_INFO("All external handlers tested successfully");
 }
 
 int main(void)
@@ -645,14 +632,7 @@ int main(void)
     RUN_TEST(test_http_request_index_css);
     RUN_TEST(test_http_request_index_js);
     RUN_TEST(test_http_request_favicon);
-    RUN_TEST(test_http_request_invalid_method_index_html);
-    RUN_TEST(test_http_request_invalid_method_index_css);
-    RUN_TEST(test_http_request_invalid_method_index_js);
-    RUN_TEST(test_http_request_invalid_method_favicon);
-    RUN_TEST(test_http_request_malformed_uri_index_html);
-    RUN_TEST(test_http_request_malformed_uri_index_css);
-    RUN_TEST(test_http_request_malformed_uri_index_js);
-    RUN_TEST(test_http_request_malformed_uri_favicon);
+    RUN_TEST(test_http_request_external_handlers);
 
     return UNITY_END();
 }
