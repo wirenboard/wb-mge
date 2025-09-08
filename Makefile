@@ -81,7 +81,7 @@ build-idf-project:
 	idf.py $(addprefix -D, $(DEFS)) build
 
 clean:
-	idf.py fullclean
+	-idf.py fullclean
 	rm -rf build
 	rm -rf $(COVERAGE_REPORT_DIR)
 	rm -rf main/frontend/dist
