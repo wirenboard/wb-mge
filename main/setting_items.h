@@ -38,6 +38,10 @@
 #define KEY_AP_PASS                 "ap_pass"
 #define KEY_STA_SSID                "sta_ssid"
 #define KEY_STA_PASS                "sta_pass"
+#define KEY_STA_DHCPC               "sta_dhcpc"
+#define KEY_STA_IP_STATIC           "sta_ip_static"
+#define KEY_STA_MASK_STATIC         "sta_mask_static"
+#define KEY_STA_GW_STATIC           "sta_gw_static"
 
 #define KEY_BRIDGE_MODE1            "bridge_mode_1"
 #define KEY_BRIDGE_PORT1            "bridge_port_1"

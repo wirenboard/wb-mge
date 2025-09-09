@@ -7,9 +7,15 @@
 #include <esp_random.h>
 #include <string.h>
 #include <errno.h>
+#include "array_size.h"
+#include "nv_storage.h"
 
-#define MAX_SESSIONS 10
-#define COOKIE_MAX_LEN (11 + 10 + 1) // "session_id=" + uint32_max + '\0'
+
+#define AUTH_DEBUG_LOG_ENABLE   1               // TODO: Возможно, вынести в настройки
+
+#define MAX_SESSIONS            10
+#define COOKIE_MAX_LEN          (11 + 10 + 1)   // "session_id=" + uint32_max + '\0'
+
 
 typedef struct {
     uint32_t session_ids[MAX_SESSIONS];
@@ -19,17 +25,68 @@ typedef struct {
 static const char *TAG = "auth";
 
 static session_buffer_t session_buffer = {
+    .session_ids = {0},
     .current_index = 0,
 };
 
-static void add_session_id(session_buffer_t *buffer, uint32_t session_id)
+static const char* session_ids_key = "auth_sessions";
+
+
+static void defrag_session_buf(void)
 {
-    ESP_LOGI(TAG, "Adding session ID: %lu", session_id);
-    buffer->session_ids[buffer->current_index] = session_id;
-    buffer->current_index = (buffer->current_index + 1) % MAX_SESSIONS;
+    int write = 0;
+
+    for (int read = 0; read < ARRAY_SIZE(session_buffer.session_ids); read++) {
+        if (session_buffer.session_ids[read]) {
+            if (write != read) {
+                session_buffer.session_ids[write] = session_buffer.session_ids[read];
+                session_buffer.session_ids[read] = 0;
+            }
+            write++;
+        }
+    }
+
+    session_buffer.current_index = write % ARRAY_SIZE(session_buffer.session_ids);
+
+    ESP_LOGD(TAG, "Session IDs buffer was defragmented, current_index: %d", session_buffer.current_index);
 }
 
-static inline bool session_id_is_valid(uint32_t session_id)
+
+static void load_session_buf(void)
+{
+    size_t size = sizeof(session_buffer.session_ids);
+    esp_err_t ret = nvs_read_blob(session_ids_key, &session_buffer.session_ids[0], &size);
+    if ((ret != ESP_OK) || (size != sizeof(session_buffer.session_ids))) {
+        ESP_LOGW(TAG, "Unable to read session IDs from NVS");
+        memset(session_buffer.session_ids, 0, sizeof(session_buffer.session_ids));
+        session_buffer.current_index = 0;
+        return;
+    }
+
+    defrag_session_buf();
+    ESP_LOGD(TAG, "Session IDs was read from NVS");
+}
+
+
+static void save_session_buf(void)
+{
+    esp_err_t ret = nvs_write_blob(session_ids_key, &session_buffer.session_ids[0], sizeof(session_buffer.session_ids));
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Unable to write session IDs to NVS");
+    }
+    ESP_LOGD(TAG, "Session IDs was saved to NVS");
+}
+
+
+static void add_session_id(session_buffer_t *buffer, uint32_t session_id)
+{
+    ESP_LOGD(TAG, "Adding session ID: %lu", session_id);
+    buffer->session_ids[buffer->current_index] = session_id;
+    buffer->current_index = (buffer->current_index + 1) % MAX_SESSIONS;
+    save_session_buf();
+}
+
+static inline bool session_id_exists(uint32_t session_id)
 {
     for (int i = 0; i < MAX_SESSIONS; i++) {
         if (session_buffer.session_ids[i] == session_id) {
@@ -44,7 +101,9 @@ static inline void find_and_remove_session_id(uint32_t session_id)
     for (int i = 0; i < MAX_SESSIONS; i++) {
         if (session_buffer.session_ids[i] == session_id) {
             session_buffer.session_ids[i] = 0;
-            ESP_LOGI(TAG, "Session ID %lu removed", session_id);
+            defrag_session_buf();
+            save_session_buf();
+            ESP_LOGD(TAG, "Session ID %lu removed", session_id);
             break;
         }
     }
@@ -55,7 +114,7 @@ static uint32_t get_session_id_from_cookie(httpd_req_t *req)
     char session_id_str[COOKIE_MAX_LEN];
     size_t buf_len = sizeof(session_id_str);
     if (httpd_req_get_cookie_val(req, "session_id", session_id_str, &buf_len) == ESP_OK) {
-        ESP_LOGI(TAG, "Session ID from cookie: %s", session_id_str);
+        ESP_LOGD(TAG, "Session ID from cookie: %s", session_id_str);
 
         char *endptr;
         errno = 0;
@@ -66,7 +125,7 @@ static uint32_t get_session_id_from_cookie(httpd_req_t *req)
             return 0;
         }
         if (endptr == session_id_str) {
-            ESP_LOGE(TAG, "No digits were found");
+            ESP_LOGE(TAG, "No digits were found, session_id_str: '%s'", session_id_str);
             return 0;
         }
         if (*endptr != '\0') {
@@ -79,9 +138,22 @@ static uint32_t get_session_id_from_cookie(httpd_req_t *req)
     return 0;
 }
 
+
+static uint32_t generate_unique_session_id(void)
+{
+    uint32_t session_id = 0;
+
+    do {
+        session_id = esp_random();
+    } while (session_id == 0 || session_id_exists(session_id));
+
+    return session_id;
+}
+
+
 static uint32_t authorization(char *login_req, char *pass_req)
 {
-    ESP_LOGI(TAG, "Authorization attempt");
+    ESP_LOGD(TAG, "Authorization attempt");
 
     char login[SETTING_ITEM_MAX_STR_LEN] = {0};
     char pass[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -100,10 +172,7 @@ static uint32_t authorization(char *login_req, char *pass_req)
         return 0;
     }
 
-    uint32_t session_id;
-    do {
-        session_id = esp_random();
-    } while (session_id == 0);
+    uint32_t session_id = generate_unique_session_id();
     add_session_id(&session_buffer, session_id);
 
     return session_id;
@@ -112,7 +181,7 @@ static uint32_t authorization(char *login_req, char *pass_req)
 static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, char *cookie_header)
 {
     snprintf(cookie_header, COOKIE_MAX_LEN, "session_id=%lu", session_id);
-    ESP_LOGI(TAG, "Cookie header: %s", cookie_header);
+    ESP_LOGD(TAG, "Cookie header: %s", cookie_header);
     if (httpd_resp_set_hdr(req, "Set-Cookie", cookie_header) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set cookie header");
         return false;
@@ -124,8 +193,13 @@ static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, 
 
 esp_err_t auth_init(void)
 {
-    memset(session_buffer.session_ids, 0, sizeof(session_buffer.session_ids));
-    ESP_LOGI(TAG, "Initializing authentication");
+    if (AUTH_DEBUG_LOG_ENABLE) {
+        esp_log_level_set(TAG, ESP_LOG_DEBUG);
+    }
+
+    load_session_buf();
+
+    ESP_LOGI(TAG, "Authentication initialized");
     return ESP_OK;
 }
 
@@ -133,7 +207,7 @@ bool auth_middleware_check(httpd_req_t *req)
 {
     uint32_t session_id = get_session_id_from_cookie(req);
     if (session_id != 0) {
-        if (session_id_is_valid(session_id)) {
+        if (session_id_exists(session_id)) {
             return true;
         } else {
             ESP_LOGW(TAG, "Session ID %lu is not valid", session_id);
@@ -149,15 +223,15 @@ bool auth_middleware_check(httpd_req_t *req)
 
 esp_err_t auth_login_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "Login request received");
+    ESP_LOGD(TAG, "Login request received");
 
     if (req->content_len > JSON_UTILS_REQ_RECV_BUF_SIZE) {
-        return json_utils_send_error(req, "Request too large");
+        return json_utils_send_error(req, "Login request is too large");
     }
 
     cJSON *request_json = json_utils_receive_json(req);
     if (request_json == NULL) {
-        return json_utils_send_error(req, "Invalid JSON");
+        return json_utils_send_error(req, "Invalid login request JSON");
     }
 
     char cookie_header[COOKIE_MAX_LEN] = {0};
@@ -195,7 +269,7 @@ esp_err_t auth_logout_handler(httpd_req_t *req)
     if (session_id != 0) {
         find_and_remove_session_id(session_id);
     } else {
-        ESP_LOGW(TAG, "Session ID cookie not found");
+        ESP_LOGW(TAG, "Session ID cookie not found, skipping logout");
     }
 
     cJSON *response_json = cJSON_CreateObject();
@@ -209,7 +283,7 @@ esp_err_t auth_logout_handler(httpd_req_t *req)
 
 esp_err_t auth_session_check_handler(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "Session check request received");
+    ESP_LOGD(TAG, "Session check request received");
     if (!auth_middleware_check(req)) {
         return ESP_OK;
     }

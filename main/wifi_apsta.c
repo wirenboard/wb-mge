@@ -117,7 +117,7 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
                 {
                     .channel = WIFI_CHAN_AP,
                     .max_connection = MAX_STA_CONN,
-                    .authmode = apsta_cfg->wifi_auth_mode_sta,
+                    .authmode = apsta_cfg->wifi_auth_mode_sta,      // TODO: Разобраться, зачем это и почему sta?
                 },
         };
         if (strnlen(apsta_cfg->ap_pass, WIFI_PASS_MAX_LEN) == 0) {
@@ -152,10 +152,23 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
             }
         }
 
+        if (apsta_cfg->sta_ip_info != NULL) {
+            esp_netif_dhcpc_stop(esp_netif_sta);
+            err = esp_netif_set_ip_info(esp_netif_sta, apsta_cfg->sta_ip_info);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to set WiFi STA static IP: %s", esp_err_to_name(err));
+            }
+        } else {
+            err = esp_netif_dhcpc_start(esp_netif_sta);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to start WiFi STA DHCP client: %s", esp_err_to_name(err));
+            }
+        }
+
         wifi_config_t wifi_config_sta = {
             .sta =
                 {
-                    .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+                    .threshold.authmode = WIFI_AUTH_WPA2_PSK,       // TODO: Разобраться, нужен ли wifi_auth_mode_sta
                     .pmf_cfg =
                         {
                             .capable = true,

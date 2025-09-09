@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <esp_log.h>
 
+#define SETTING_ITEMS_DEBUG_LOG_ENABLE      1           // TODO: Возможно, вынести в настройки
+
 static const char *TAG = "setting_items";
 
 typedef bool (*setting_validator_t)(const char *value);
@@ -127,11 +129,15 @@ static const setting_item_t setting_items[] = {
     {KEY_WIFI_AUTH_STA, DEFAULT_WIFI_AUTH, validate_wifi_auth, SETTING_ITEM_TYPE_STRING},
     {KEY_AP_SSID, BASE_HOSTNAME, validate_ssid, SETTING_ITEM_TYPE_STRING},
     {KEY_AP_PASS, DEFAULT_AP_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
-    {KEY_STA_SSID, DEFAULT_STA_SSID, validate_ssid, SETTING_ITEM_TYPE_STRING},
-    {KEY_STA_PASS, DEFAULT_STA_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
     {KEY_AP_IP_STATIC, DEFAULT_AP_IP_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
     {KEY_AP_MASK_STATIC, DEFAULT_AP_MASK_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
     {KEY_AP_GW_STATIC, DEFAULT_AP_GW_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_SSID, DEFAULT_STA_SSID, validate_ssid, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_PASS, DEFAULT_STA_PASS, validate_password, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_DHCPC, DEFAULT_STA_DHCPC, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_STA_IP_STATIC, DEFAULT_STA_IP_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_MASK_STATIC, DEFAULT_STA_MASK_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_GW_STATIC, DEFAULT_STA_GW_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
 
     // Ethernet settings
     {KEY_ETH_IP_STATIC, DEFAULT_ETH_IP_STATIC, validate_ip, SETTING_ITEM_TYPE_STRING},
@@ -200,6 +206,10 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized)
 
 esp_err_t setting_items_init(void)
 {
+    if (SETTING_ITEMS_DEBUG_LOG_ENABLE) {
+        esp_log_level_set(TAG, ESP_LOG_DEBUG);
+    }
+
     ESP_LOGI(TAG, "Initializing settings with string storage");
     storage_iface = &nvs_storage_iface;
 
@@ -234,7 +244,7 @@ esp_err_t setting_items_save(const char *key, const char *value)
 
     esp_err_t result = storage_iface->write_str(key, value);
     if (result == ESP_OK) {
-        ESP_LOGI(TAG, "Saved setting %s = %s", key, value);
+        ESP_LOGD(TAG, "Saved setting %s = %s", key, value);
     } else {
         ESP_LOGE(TAG, "Failed to save setting %s: %s", key, esp_err_to_name(result));
     }
@@ -262,7 +272,7 @@ esp_err_t setting_items_read(const char *key, char *value)
 
             strncpy(value, default_value, SETTING_ITEM_MAX_STR_LEN - 1);
             value[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-            ESP_LOGI(TAG, "Using default value for %s: %s", key, value);
+            ESP_LOGW(TAG, "Using default value for %s: %s", key, value);
             return ESP_OK;
         }
         ESP_LOGE(TAG, "Failed to read setting %s: %s", key, esp_err_to_name(result));
@@ -274,7 +284,7 @@ esp_err_t setting_items_read(const char *key, char *value)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Read setting %s = %s", key, value);
+    ESP_LOGD(TAG, "Read setting %s = %s", key, value);
     return ESP_OK;
 }
 

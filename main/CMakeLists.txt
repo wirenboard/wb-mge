@@ -8,6 +8,7 @@ idf_component_register(SRCS "main.c"
                             "setting_validators.c"
                             "wifi_apsta.c"
                             "sys_info.c"
+                            "gpio_expander.c"
                             "rs485_control.c"
                             "mio_control.c"
                             "update_rs485_mio_gpio_states.c"
@@ -29,12 +30,16 @@ idf_component_register(SRCS "main.c"
                             "bridge/rs485_stats.c"
                             "indication/indication.c"
                             "indication/leds_control.c"
+                            "wb_app_desc/wb_app_desc.c"
                         INCLUDE_DIRS "."
                             "bridge"
                             "indication"
+                            "wb_app_desc"
                         EMBED_TXTFILES
                             frontend/dist/favicon.webp.gz
                             frontend/dist/index.css.gz
                             frontend/dist/index.html.gz
                             frontend/dist/index.js.gz
 )
+
+target_link_libraries(${COMPONENT_TARGET} "-u wb_app_desc")

@@ -122,12 +122,6 @@ static const httpd_uri_t info_get = {
     .handler = info_get_handler,
     .user_ctx = NULL,
 };
-static const httpd_uri_t info_post = {
-    .uri = "/info",
-    .method = HTTP_POST,
-    .handler = info_post_handler,
-    .user_ctx = NULL,
-};
 static const httpd_uri_t settings_get = {
     .uri = "/settings",
     .method = HTTP_GET,
@@ -211,7 +205,6 @@ esp_err_t http_server_init(void)
 
         httpd_register_uri_handler(http_server, &update_post);
         httpd_register_uri_handler(http_server, &info_get);
-        httpd_register_uri_handler(http_server, &info_post);
         httpd_register_uri_handler(http_server, &settings_get);
         httpd_register_uri_handler(http_server, &settings_post);
         httpd_register_uri_handler(http_server, &cmd_post);

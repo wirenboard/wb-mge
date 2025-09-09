@@ -21,6 +21,7 @@ typedef struct {
 static const setting_mapping_t top_level_mappings[] = {
     {"hostname", KEY_HOSTNAME},
     {"login", KEY_LOGIN},
+    {"pass", KEY_PASS},
     {"web_port", KEY_WEB_PORT},
     {"io_bus", KEY_IO_BUS_ENABLED},
     {"vout", KEY_485_VOUT},
@@ -37,6 +38,10 @@ static const setting_mapping_t wifi_mappings[] = {
     {"ap_ip_static", KEY_AP_IP_STATIC},
     {"ap_mask_static", KEY_AP_MASK_STATIC},
     {"ap_gw_static", KEY_AP_GW_STATIC},
+    {"sta_dhcpc", KEY_STA_DHCPC},
+    {"sta_ip_static", KEY_STA_IP_STATIC},
+    {"sta_mask_static", KEY_STA_MASK_STATIC},
+    {"sta_gw_static", KEY_STA_GW_STATIC},
 };
 
 static const setting_mapping_t ethernet_mappings[] = {

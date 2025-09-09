@@ -67,10 +67,12 @@ static esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_ha
         int recv_len = httpd_req_recv(req, buf, MIN(remaining, JSON_UTILS_REQ_RECV_BUF_SIZE));
 
         if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {  // Timeout Error: Just retry
+            ESP_LOGW(TAG, "Network timeout, trying to continue");
             continue;
 
         } else if (recv_len <= 0) {  // Serious Error: Abort OTA
             ESP_LOGE(TAG, "Network error during OTA upload, received: %d", recv_len);
+            ESP_LOGE(TAG, "Total received bytes: %d, total firmware size: %d", *total_received, (int)req->content_len);
             free(buf);
             return ESP_FAIL;
         }

@@ -1,5 +1,13 @@
+#######################################
+# device signature
+#######################################
 
-TARGET := MGE
+TARGET := MGEv3
+
+MODEL_DEFINE := $(shell echo MODEL_$(TARGET))
+
+DEFS += DEVICE_SIGNATURE=$(TARGET)
+DEFS += MODEL_DEFINE=$(MODEL_DEFINE)
 
 #######################################
 # OS detection and tool selection
@@ -28,7 +36,7 @@ VERSION_STRING ?= $(shell cat ChangeLog | $(GREP) version: | head -n 1 | $(SED) 
 # check version string format using regexp
 VERSION := $(shell echo $(VERSION_STRING) | awk '/[0-9]+\.[0-9]+\.[0-9]+(\+wb[1-9][0-9]*|-rc[1-9][0-9]*)?$$/{print $$0}')
 # global defines with version in different formats
-DEFS += FW_VERSION_STRING=$(VERSION)
+DEFS += FIRMWARE_VERSION=$(VERSION)
 
 #######################################
 # git info
@@ -39,11 +47,11 @@ GIT_HASH := $(shell echo $(GIT_COMMIT) | cut -c 1-7)
 BRANCH_NAME ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 GIT_BRANCH := $(shell echo $(BRANCH_NAME) | $(SED) "s/\//_/g")
 GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
-GIT_INFO := $(shell echo "\\\"$(GIT_INFO)\\\"")
 
-TARGET_GIT_INFO := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH))
+TARGET_PROJECT_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH))
 
-DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
+DEFS += TARGET_PROJECT_NAME=$(TARGET_PROJECT_NAME)
+DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 
 #######################################
 # unittests
