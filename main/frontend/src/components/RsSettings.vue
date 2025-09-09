@@ -26,7 +26,7 @@ const dataBits: Databits[] = ['5', '6', '7', '8'];
 
 const bridgeModbus = [{ value: true, label: t('bridge_modbus') }, { value: false, label:  t('bridge_transparent') }];
 
-const bridgeMode: ComputedRef<BridgeMode[]> = computed(() => !settings.value!.bridge.modbus ? ['client', 'server'] : ['client']);
+const bridgeMode: ComputedRef<BridgeMode[]> = computed(() => !settings.value!.bridge.modbus ? ['client', 'server'] : ['server']);
 
 const save = () => {
   const data: Partial<Settings> = {
@@ -113,7 +113,7 @@ const save = () => {
           @change="(ev: Event) => {
             const target = ev.target as HTMLSelectElement;
             if (target.value === 'true') {
-              settings!.bridge.mode = 'client';
+              settings!.bridge.mode = 'server';
             }
           }">
           <option v-for="item in bridgeModbus" :key="`bridge_mb_1${item}`" :value="item.value">{{ item.label }}</option>

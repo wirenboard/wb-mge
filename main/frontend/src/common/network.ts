@@ -16,7 +16,7 @@ export const useWifi = () => {
     try {
       const res = await api<WifiScanResponce>('wifi_scan/results');
 
-      if (res.scan_completed || res.error || (!res.scan_completed && !res.scan_completed)) {
+      if (res.error || (res.scan_completed && !res.scan_in_progress)) {
         stopPolling();
       }
 
