@@ -18,7 +18,7 @@ export const useInfo = () => {
     await fetchInfo('high');
 
     intervalId = setInterval(() => {
-      if (!isReconnecting.value) {
+      if (!isReconnecting.value && document.visibilityState === 'visible') {
         fetchInfo('low');
       }
     }, 5000);

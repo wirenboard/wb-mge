@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import { useFirmware } from '@/common/firmware';
 import type { Uptime } from '@/common/types';
 import { api } from '@/utils/api';
 
@@ -10,6 +11,7 @@ const isReconnecting = ref(false);
 export const useUptime = () => {
   const router = useRouter();
   const route = useRoute();
+  const { isUpdating } = useFirmware();
 
   const checkUptime = async () => {
     try {
@@ -35,7 +37,9 @@ export const useUptime = () => {
     await checkUptime();
 
     intervalId = setInterval(() => {
-      checkUptime();
+      if (document.visibilityState === 'visible' && !isUpdating.value) {
+        checkUptime();
+      }
     }, 10000);
   };
 

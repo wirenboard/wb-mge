@@ -9,7 +9,7 @@ export const api = async <T>(url: string, options: Options = {}): Promise<T> => 
     .json<T>()
     .catch((err) => {
       if (err.name === 'TimeoutError') {
-        return err.response;
+        throw new Error('timeout');
       }
       switch (err.response?.status) {
         case 404:
@@ -19,6 +19,6 @@ export const api = async <T>(url: string, options: Options = {}): Promise<T> => 
           hasSession.value = false;
           throw Error('unauthorized');
       }
-      return err.response;
+      throw err;
     });
 };

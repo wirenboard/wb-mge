@@ -141,7 +141,7 @@ const updateWifiSettings = async () => {
             <template v-if="data.wifi.ap_auth !== 'open'">
               <label for="ap_pass">{{ t('password') }}</label>
               <div class="settings-data">
-                <input id="ap_pass" v-model="data.wifi.ap_pass" v-focus required :placeholder="t('pass_placeholder')" pattern="[\x20-\x7E]{8,63}" minlength="8" maxlength="63" type="password" name="ap_ pass" />
+                <input id="ap_pass" v-model="data.wifi.ap_pass" required :placeholder="t('pass_placeholder')" pattern="[\x20-\x7E]{8,63}" minlength="8" maxlength="63" type="password" name="ap_ pass" />
               </div>
             </template>
 
@@ -186,7 +186,7 @@ const updateWifiSettings = async () => {
             <template v-if="data.wifi.sta_auth !== 'open'">
               <label for="sta_pass">{{ t('password') }}</label>
               <div class="settings-data">
-                <input id="sta_pass" v-model="data.wifi.sta_pass" v-focus required :placeholder="t('pass_placeholder')" type="password" name="sta_pass" />
+                <input id="sta_pass" v-model="data.wifi.sta_pass" required :placeholder="t('pass_placeholder')" type="password" name="sta_pass" />
               </div>
             </template>
 
