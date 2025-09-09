@@ -1,4 +1,5 @@
 #include "ram_storage.h"
+#include "esp_err.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,14 +8,6 @@
 #define MAX_ITEM_NUM    100
 #define MAX_KEY_LEN     32
 #define MAX_STR_LEN     64
-
-enum {
-    ESP_OK = 0,
-    ESP_ERR_NOT_FOUND,
-    ESP_ERR_NO_MEM,
-    ESP_ERR_INVALID_ARG,
-    ESP_ERR_NVS_NOT_FOUND = ESP_ERR_NOT_FOUND,  // Alias for compatibility
-};
 
 typedef struct {
     char key[MAX_KEY_LEN];

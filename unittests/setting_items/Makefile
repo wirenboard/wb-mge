@@ -9,7 +9,6 @@ TESTED_SRC += $(PROJ_DIR)/main/setting_items.c
 
 # Auxiliary source files used in this test
 AUX_SRC += mocks/*.c
-AUX_SRC += $(PROJ_DIR)/main/setting_validators.c
 AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c
 
 # Include directories
