@@ -26,6 +26,12 @@ typedef struct {
 
 static esp_err_t ota_validate_fw_desc(wb_app_desc_t* ota_fw_desc)
 {
+    // Check for device signature from eFuse is not empty
+    if (!strlen(sys_info.device_signature)) {
+        ESP_LOGE(TAG, "Device signature is empty, OTA not allowed");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
     // Check magic work constant
     if (ota_fw_desc->magic_word != WB_APP_DESC_MAGIC_WORD) {
         ESP_LOGE(TAG, "Incorrect magic word: 0x%08" PRIX32, ota_fw_desc->magic_word);

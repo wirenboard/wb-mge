@@ -82,11 +82,6 @@ static void get_device_signature(char out_buf[DEVICE_SIGNATURE_LEN + 1])
     } else if (is_empty) {
         ESP_LOGW(TAG, "Device signature is empty");
     }
-
-    if (res != ESP_OK || is_empty) {
-        GET_APP_DESC_STR_FIELD(signature, out_buf);
-        ESP_LOGW(TAG, "Defaulting signature to: %s", out_buf);
-    }
 }
 
 
@@ -109,7 +104,11 @@ esp_err_t sys_info_init(void)
     get_device_signature(sys_info.device_signature);
 
     ESP_LOGI(TAG, "Device name: %s", sys_info.device_name);
-    ESP_LOGI(TAG, "Device signature: %s", sys_info.device_signature);
+    if (strlen(sys_info.device_signature)) {
+        ESP_LOGI(TAG, "Device signature: %s", sys_info.device_signature);
+    } else {
+        ESP_LOGI(TAG, "Device signature: <EMPTY>");
+    }
     ESP_LOGI(TAG, "Serial number: %llu", sys_info.device_serial_num);
     ESP_LOGI(TAG, "Firmware version: %s", sys_info.firmware_ver);
     ESP_LOGI(TAG, "Firmware GIT info: %s", sys_info.firmware_git_info);

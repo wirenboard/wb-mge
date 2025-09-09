@@ -2,7 +2,7 @@
 # device signature
 #######################################
 
-TARGET := MGEv3
+TARGET := mge_v3
 
 MODEL_DEFINE := $(shell echo MODEL_$(TARGET))
 
@@ -45,7 +45,6 @@ VERSION := $(shell echo $(VERSION_STRING) | awk '/[0-9]+\.[0-9]+\.[0-9]+(\+wb[1-
 # global defines with version in different formats
 DEFS += FIRMWARE_VERSION=$(VERSION)
 
-
 #######################################
 # git info
 #######################################
@@ -56,10 +55,14 @@ BRANCH_NAME ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 GIT_BRANCH := $(shell echo $(BRANCH_NAME) | sed "s/\//_/")
 GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
 
-RELEASE_FILE_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH).bin)
-
 DEFS += TARGET_PROJECT_NAME=$(TARGET)
 DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
+
+#######################################
+# Release file name
+#######################################
+
+RELEASE_FILE_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH).bin)
 
 #######################################
 # unittests
@@ -67,7 +70,6 @@ DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 
 UNITTESTS_DIRS += $(shell $(FIND) . -type d -name "*unittests*" 2>/dev/null)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
-
 
 #######################################
 # targets

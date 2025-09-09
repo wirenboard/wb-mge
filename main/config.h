@@ -46,6 +46,8 @@
 #define DEFAULT_BRIDGE_MB           "false"
 
 
-#ifdef MODEL_MGEv3
+#ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"
+#else
+    #error "Unknown device signature"
 #endif
