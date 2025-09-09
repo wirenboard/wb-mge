@@ -23,13 +23,33 @@
 #include "config_button.h"
 #include "system_voltage.h"
 
-#include "esp_io_expander_tca95xx_16bit.h"
-#include "driver/gpio.h"
-
-#include "rs485_control.h"
-#include "mio_control.h"
-#include "update_rs485_mio_gpio_states.h"
-#include "indication.h"
+// QEMU build detection and conditional includes
+#ifdef CONFIG_ETH_USE_OPENETH
+    #define QEMU_BUILD 1
+    #include "wifi_qemu_mock.h"
+    // For QEMU, we disable hardware-specific components
+    #define ENABLE_GPIO_EXPANDER 0
+    #define ENABLE_RS485_CONTROL 0
+    #define ENABLE_MIO_CONTROL 0
+    #define ENABLE_SYSTEM_VOLTAGE 0
+    #define ENABLE_CONFIG_BUTTON 0
+    #define ENABLE_INDICATION 0
+#else
+    #define QEMU_BUILD 0
+    #include "esp_io_expander_tca95xx_16bit.h"
+    #include "driver/gpio.h"
+    #include "rs485_control.h"
+    #include "mio_control.h"
+    #include "update_rs485_mio_gpio_states.h"
+    #include "indication.h"
+    // For hardware builds, enable all components
+    #define ENABLE_GPIO_EXPANDER 1
+    #define ENABLE_RS485_CONTROL 1
+    #define ENABLE_MIO_CONTROL 1
+    #define ENABLE_SYSTEM_VOLTAGE 1
+    #define ENABLE_CONFIG_BUTTON 1
+    #define ENABLE_INDICATION 1
+#endif
 
 static const char *TAG = "main";
 
@@ -43,6 +63,7 @@ static const char *TAG = "main";
 #define IO_EXPANDER_SCL_PIN         GPIO_NUM_33
 #define IO_EXPANDER_I2C_ADDRESS     ESP_IO_EXPANDER_I2C_TCA9555_ADDRESS_000
 
+#if ENABLE_GPIO_EXPANDER
 static i2c_master_bus_handle_t i2c_handle = NULL;
 const i2c_master_bus_config_t bus_config = {
     .i2c_port = I2C_NUM_0,
@@ -51,6 +72,7 @@ const i2c_master_bus_config_t bus_config = {
     .clk_source = I2C_CLK_SRC_DEFAULT,
 };
 static esp_io_expander_handle_t io_expander = NULL;
+#endif
 
 static void factory_reset(void)
 {
@@ -70,12 +92,17 @@ static void factory_reset(void)
 static void config_button_longpress_callback(unsigned press_time_ms)
 {
     ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
+#if ENABLE_INDICATION
     indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+#else
+    ESP_LOGI(TAG, "LED indication disabled for QEMU build");
+#endif
     factory_reset();
 }
 
 static void gpio_expander_init(void)
 {
+#if ENABLE_GPIO_EXPANDER
     esp_err_t ret = i2c_new_master_bus(&bus_config, &i2c_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create I2C master bus: %s", esp_err_to_name(ret));
@@ -90,6 +117,9 @@ static void gpio_expander_init(void)
 
     esp_io_expander_print_state(io_expander);
     ESP_LOGI(TAG, "GPIO expander initialized successfully");
+#else
+    ESP_LOGI(TAG, "GPIO expander disabled for QEMU build");
+#endif
 }
 
 // Выводит все настройки в лог.
@@ -277,7 +307,14 @@ void app_main(void)
     char wifi_ssid[SETTING_ITEM_MAX_STR_LEN] = {0};
     ESP_ERROR_CHECK(setting_items_read(KEY_AP_SSID, wifi_ssid));
     wifi_ssid[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+
+#if QEMU_BUILD
+    ESP_LOGI(TAG, "Initializing WiFi mock for QEMU");
+    ESP_ERROR_CHECK(wifi_init_apsta_qemu(&apsta_cfg, wifi_ssid));
+#else
+    ESP_LOGI(TAG, "Initializing WiFi for hardware");
     ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, wifi_ssid));
+#endif
 
     // Read and log WiFi STA and AP MAC addresses
     uint8_t wifi_sta_mac[6] = {0};
@@ -337,19 +374,33 @@ void app_main(void)
     print_setting_items();
 
     gpio_expander_init();
+#if ENABLE_RS485_CONTROL
     rs485_control_init(io_expander);
+#endif
+#if ENABLE_MIO_CONTROL
     mio_control_init(io_expander);
+#endif
 
+#if ENABLE_INDICATION
     indication_init(io_expander);
     indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
+#endif
 
+#if ENABLE_CONFIG_BUTTON
     config_button_init();
     config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
+#endif
 
+#if ENABLE_SYSTEM_VOLTAGE
     system_voltage_init();
+#endif
 
+#if ENABLE_RS485_CONTROL
     update_rs485_control();
+#endif
+#if ENABLE_MIO_CONTROL
     update_io_bus_control();
+#endif
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 
