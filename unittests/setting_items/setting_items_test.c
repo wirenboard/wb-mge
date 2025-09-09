@@ -1,13 +1,15 @@
 #include "unity.h"
 #include "console_log.h"
-#include <string.h>
 
 #include "array_size.h"
+#include "esp_log.h"
 #include "ram_storage.h"
 #include "setting_items.h"
 #include "setting_validators.h"
 
-#define SETTING_ITEMS_COUNT                         40
+#include <string.h>
+
+#define SETTING_ITEMS_COUNT                         44
 
 setting_storage_iface_t test_storage = {
     .has_key = rams_has_key,
@@ -30,6 +32,12 @@ static int mock_storage_write_with_error(const char* key, const char* value)
     (void)key;
     (void)value;
     return mock_storage_write_error_code;
+}
+
+void esp_log_level_set(const char* tag, esp_log_level_t level)
+{
+    (void)tag;
+    (void)level;
 }
 
 void setUp(void)
@@ -113,6 +121,7 @@ void test_ip_validators(void)
     const char* ip_keys[] = {
         KEY_ETH_IP_STATIC, KEY_ETH_MASK_STATIC, KEY_ETH_GW_STATIC,
         KEY_AP_IP_STATIC, KEY_AP_MASK_STATIC, KEY_AP_GW_STATIC,
+        KEY_STA_IP_STATIC, KEY_STA_MASK_STATIC, KEY_STA_GW_STATIC,
         KEY_BRIDGE_IP1, KEY_BRIDGE_IP2
     };
 
@@ -217,7 +226,7 @@ void test_bridge_and_bool_validators(void)
 
     // Test boolean validators
     const char* bool_keys[] = {
-        KEY_ETH_DHCPC, KEY_IO_BUS_ENABLED, KEY_485_VOUT,
+        KEY_ETH_DHCPC, KEY_STA_DHCPC, KEY_IO_BUS_ENABLED, KEY_485_VOUT,
         KEY_485_TERM_1, KEY_485_FAIL_SAFE_1, KEY_BRIDGE_MB1,
         KEY_485_TERM_2, KEY_485_FAIL_SAFE_2, KEY_BRIDGE_MB2
     };
