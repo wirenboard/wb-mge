@@ -9,7 +9,7 @@ import json
 
 
 class WBMGEAPI:
-    def __init__(self, base_url="http://192.168.42.1"):
+    def __init__(self, base_url="http://192.168.5.1"):
         self.base_url = base_url
         self.session = requests.Session()
 
@@ -712,7 +712,7 @@ def quick_connection_test(base_url):
     print("🔍 Быстрая проверка подключения...")
 
     parsed = urlparse(base_url)
-    host = parsed.hostname or "192.168.42.1"
+    host = parsed.hostname or "192.168.5.1"
     port = parsed.port or 80
 
     try:
@@ -754,7 +754,7 @@ def main():
 
     # Парсинг аргументов командной строки
     parser = argparse.ArgumentParser(description='WB-MGE API Tests')
-    parser.add_argument('--ip', default='192.168.42.1', help='IP address of WB-MGE device')
+    parser.add_argument('--ip', default='192.168.5.1', help='IP address of WB-MGE device')
     parser.add_argument('--stop-on-failure', action='store_true', help='Stop on first test failure')
     parser.add_argument('--verbose', action='store_true', help='Verbose output')
 
