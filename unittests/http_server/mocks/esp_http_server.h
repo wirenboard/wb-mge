@@ -12,9 +12,6 @@
 #define MAX_OPEN_SOCKETS                        12
 #define WEB_PORT_DEFAULT                        80
 
-#define tskIDLE_PRIORITY                        0
-#define tskNO_AFFINITY                          -1
-
 typedef void* httpd_handle_t;
 typedef void (*httpd_free_ctx_fn_t)(void *ctx);
 typedef esp_err_t (*httpd_close_func_t)(httpd_handle_t hd, int sockfd);
@@ -75,7 +72,7 @@ typedef struct httpd_config {
 } httpd_config_t;
 
 typedef struct httpd_uri {
-    const char       *uri;
+    const char *uri;
     enum http_method  method;
     esp_err_t (*handler)(httpd_req_t *r);
     void *user_ctx;
@@ -91,9 +88,9 @@ struct httpd_req {
 };
 
 #define HTTPD_DEFAULT_CONFIG() {                \
-    .task_priority      = tskIDLE_PRIORITY+5,   \
+    .task_priority      = 5,                    \
     .stack_size         = STACK_SIZE,           \
-    .core_id            = tskNO_AFFINITY,       \
+    .core_id            = -1,                   \
     .server_port        = WEB_PORT_DEFAULT,     \
     .ctrl_port          = 32768,                \
     .max_open_sockets   = MAX_OPEN_SOCKETS,     \
@@ -158,7 +155,6 @@ extern mock_uri_registry_entry_t mock_uri_registry[MAX_URI_HANDLERS];
 extern int mock_uri_registry_count;
 
 esp_err_t mock_simulate_http_request(enum http_method method, const char* uri);
-httpd_req_t mock_create_request(const char* uri, enum http_method method);
 
 void esp_http_server_init(void);
 void mock_handlers_reset(void);

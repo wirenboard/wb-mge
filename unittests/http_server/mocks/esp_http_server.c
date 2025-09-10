@@ -116,6 +116,7 @@ esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *u
         if (mock_uri_registry_count < MAX_URI_HANDLERS) {
             mock_uri_registry_entry_t *entry = &mock_uri_registry[mock_uri_registry_count];
             strncpy(entry->uri, uri_handler->uri, sizeof(entry->uri) - 1);
+            entry->uri[sizeof(entry->uri) - 1] = '\0';
             entry->method = uri_handler->method;
             entry->handler = uri_handler->handler;
             entry->user_ctx = uri_handler->user_ctx;
@@ -165,12 +166,13 @@ esp_err_t httpd_resp_send(httpd_req_t *req, const char *buf, ssize_t buf_len)
     return ESP_OK;
 }
 
-httpd_req_t mock_create_request(const char* uri, enum http_method method)
+static httpd_req_t mock_create_request(const char* uri, enum http_method method)
 {
     httpd_req_t req = {0};
     req.handle = mock_server_handle;
     req.method = method;
-    strncpy(req.uri, uri, HTTPD_MAX_URI_LEN);
+    strncpy(req.uri, uri, sizeof(req.uri) - 1);
+    req.uri[sizeof(req.uri) - 1] = '\0';
     req.content_len = 0;
     req.aux = NULL;
     req.user_ctx = NULL;
