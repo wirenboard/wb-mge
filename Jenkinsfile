@@ -18,6 +18,7 @@ pipeline {
             steps {
                 script {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make clean"'
+                    sh 'rm -rf result/'
                 }
             }
         }
@@ -25,11 +26,13 @@ pipeline {
             steps {
                 script {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make"'
+                    // copy binaries to separate 'result' directory because s3_uploader job searches for files there
+                    sh 'mkdir -p result && cp release/*.bin result/'
                 }
             }
             post {
                 success {
-                    archiveArtifacts artifacts: "release/*.bin"
+                    archiveArtifacts artifacts: "result/*.bin"
                 }
             }
         }
