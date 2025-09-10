@@ -9,7 +9,6 @@
 #include <string.h>
 
 #define WEB_PORT                            8080
-#define URI_HANDLERS_COUNT                  17
 
 extern const uint8_t favicon_start[] asm("_binary_favicon_webp_gz_start");
 extern const uint8_t favicon_end[] asm("_binary_favicon_webp_gz_end");
@@ -23,45 +22,10 @@ extern const uint8_t index_js_end[] asm("_binary_index_js_gz_end");
 extern const uint8_t index_html_start[] asm("_binary_index_html_gz_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_gz_end");
 
-const char* expected_uris[] = {
-    "/auth",
-    "/session",
-    "/logout",
-    "/",
-    "/index.css",
-    "/index.js",
-    "/favicon.webp",
-    "/update",
-    "/info",
-    "/info",
-    "/settings",
-    "/settings",
-    "/cmd",
-    "/wifi_scan/start",
-    "/wifi_scan/results",
-    "/ap_clients",
-    "/uptime"
-};
-
-const enum http_method expected_methods[] = {
-    HTTP_POST,   // /auth
-    HTTP_GET,    // /session
-    HTTP_POST,   // /logout
-    HTTP_GET,    // /
-    HTTP_GET,    // /index.css
-    HTTP_GET,    // /index.js
-    HTTP_GET,    // /favicon.webp
-    HTTP_POST,   // /update
-    HTTP_GET,    // /info
-    HTTP_POST,   // /info
-    HTTP_GET,    // /settings
-    HTTP_POST,   // /settings
-    HTTP_POST,   // /cmd
-    HTTP_POST,   // /wifi_scan/start
-    HTTP_GET,    // /wifi_scan/results
-    HTTP_GET,    // /ap_clients
-    HTTP_GET     // /uptime
-};
+typedef struct {
+    char uri[HTTPD_MAX_URI_LEN];
+    enum http_method method;
+} expected_uri_registry_entry_t;
 
 void mock_setting_items_set_web_port(int port);
 
@@ -300,22 +264,51 @@ void test_http_server_uri_handlers_registration(void)
         "HTTP server initialization should succeed"
     );
 
+    const expected_uri_registry_entry_t expected_uri_registry[] = {
+        {"/auth",              HTTP_POST},
+        {"/session",           HTTP_GET},
+        {"/logout",            HTTP_POST},
+        {"/",                  HTTP_GET},
+        {"/index.css",         HTTP_GET},
+        {"/index.js",          HTTP_GET},
+        {"/favicon.webp",      HTTP_GET},
+        {"/update",            HTTP_POST},
+        {"/info",              HTTP_GET},
+        {"/info",              HTTP_POST},
+        {"/settings",          HTTP_GET},
+        {"/settings",          HTTP_POST},
+        {"/cmd",               HTTP_POST},
+        {"/wifi_scan/start",   HTTP_POST},
+        {"/wifi_scan/results", HTTP_GET},
+        {"/ap_clients",        HTTP_GET},
+        {"/uptime",            HTTP_GET}
+    };
+
+    size_t expected_count = ARRAY_SIZE(expected_uri_registry);
+
     TEST_ASSERT_EQUAL_INT_MESSAGE(
-        URI_HANDLERS_COUNT,
-        mock_httpd_register_uri_handler_call_count,
+        expected_count,
+        mock_uri_registry_count,
         "All expected URI handlers should be registered"
     );
 
-    for (size_t i = 0; i < URI_HANDLERS_COUNT; i++) {
-        char uri_message[200];
-        char method_message[100];
-        const char* method_name = get_method_as_string(expected_methods[i]);
-        snprintf(uri_message, sizeof(uri_message),
-                "URI '%s' should be registered as '%s'", expected_uris[i], mock_uri_registry[i].uri);
-        TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(expected_uris[i], mock_uri_registry[i].uri, ARRAY_SIZE(mock_uri_registry[i].uri), uri_message);
-        snprintf(method_message, sizeof(method_message),
-                "URI '%s' should be registered with method %s", expected_uris[i], method_name);
-        TEST_ASSERT_EQUAL_INT_MESSAGE(expected_methods[i], mock_uri_registry[i].method, method_message);
+    for (size_t i = 0; i < expected_count; i++) {
+        bool found = false;
+        for (size_t j = 0; j < mock_uri_registry_count; j++) {
+            if (strcmp(expected_uri_registry[i].uri, mock_uri_registry[j].uri) == 0) {
+                if (expected_uri_registry[i].method == mock_uri_registry[j].method) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            char search_message[200];
+            const char* method_name = get_method_as_string(expected_uri_registry[i].method);
+            snprintf(search_message, sizeof(search_message),
+                    "URI %s with method %s should be registered\n", expected_uri_registry[i].uri, method_name);
+            TEST_FAIL_MESSAGE(search_message);
+        }
     }
 }
 
@@ -327,7 +320,7 @@ void test_http_server_port_edge_cases(void)
     LOG_MESSAGE();
 
     const int test_ports[] = {1, 80, 443, WEB_PORT, 65535};
-    const size_t num_ports = sizeof(test_ports) / sizeof(test_ports[0]);
+    const size_t num_ports = ARRAY_SIZE(test_ports);
 
     for (size_t i = 0; i < num_ports; i++) {
         esp_http_server_init();

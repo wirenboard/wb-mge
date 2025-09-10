@@ -5,7 +5,6 @@
 #include <string.h>
 
 int mock_httpd_start_call_count = 0;
-int mock_httpd_register_uri_handler_call_count = 0;
 int mock_wifi_scan_init_call_count = 0;
 int mock_auth_init_call_count = 0;
 
@@ -51,7 +50,6 @@ int mock_uri_registry_count = 0;
 void esp_http_server_init(void)
 {
     mock_httpd_start_call_count = 0;
-    mock_httpd_register_uri_handler_call_count = 0;
     mock_wifi_scan_init_call_count = 0;
     mock_auth_init_call_count = 0;
 
@@ -114,17 +112,23 @@ esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)
 
 esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *uri_handler)
 {
-    if (mock_uri_registry_count < MAX_URI_HANDLERS && uri_handler) {
-        mock_uri_registry_entry_t *entry = &mock_uri_registry[mock_uri_registry_count];
-        strncpy(entry->uri, uri_handler->uri, sizeof(entry->uri) - 1);
-        entry->method = uri_handler->method;
-        entry->handler = uri_handler->handler;
-        entry->user_ctx = uri_handler->user_ctx;
-        entry->registered = true;
-        mock_uri_registry_count++;
-    }
+    if (uri_handler) {
+        if (mock_uri_registry_count < MAX_URI_HANDLERS) {
+            mock_uri_registry_entry_t *entry = &mock_uri_registry[mock_uri_registry_count];
+            strncpy(entry->uri, uri_handler->uri, sizeof(entry->uri) - 1);
+            entry->method = uri_handler->method;
+            entry->handler = uri_handler->handler;
+            entry->user_ctx = uri_handler->user_ctx;
+            entry->registered = true;
 
-    mock_httpd_register_uri_handler_call_count++;
+            char message[200];
+            const char* method_name = get_method_as_string(entry->method);
+            snprintf(message, sizeof(message), "Registered URI handler %s with method %s", entry->uri, method_name);
+            LOG_INFO("%s", message);
+
+            mock_uri_registry_count++;
+        }
+    }
     return ESP_OK;
 }
 
@@ -173,32 +177,38 @@ httpd_req_t mock_create_request(const char* uri, enum http_method method)
     return req;
 }
 
-void mock_simulate_http_request(enum http_method method, const char* uri)
+esp_err_t mock_simulate_http_request(enum http_method method, const char* uri)
 {
-    char method_message[100];
-    snprintf(method_message, sizeof(method_message), "Invalid method: %d", method);
+    char method_message[200];
+    const char* method_name = get_method_as_string(method);
+    snprintf(method_message, sizeof(method_message), "Invalid method: %s\n", method_name);
     TEST_ASSERT_LESS_THAN_INT_MESSAGE(HTTP_ANY, method, method_message);
 
-    char uri_message[100];
-    snprintf(uri_message, sizeof(uri_message), "Invalid URI: %s", uri);
+    char uri_message[200];
+    snprintf(uri_message, sizeof(uri_message), "Invalid URI: %s\n", uri);
     TEST_ASSERT_NOT_NULL_MESSAGE(uri, uri_message);
 
     for (int i = 0; i < mock_uri_registry_count; i++) {
         mock_uri_registry_entry_t *entry = &mock_uri_registry[i];
 
-        if (entry->registered &&
-            entry->method == method &&
-            strcmp(entry->uri, uri) == 0) {
+        if (entry->registered) {
+            if (entry->method == method) {
+                if (strcmp(entry->uri, uri) == 0) {
 
-            mock_request_object = mock_create_request(uri, method);
-            mock_request_object.user_ctx = entry->user_ctx;
-            mock_current_request = &mock_request_object;
+                    mock_request_object = mock_create_request(uri, method);
+                    mock_request_object.user_ctx = entry->user_ctx;
+                    mock_current_request = &mock_request_object;
 
-            esp_err_t result = entry->handler(&mock_request_object);
-            TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Handler returned error");
+                    esp_err_t result = entry->handler(&mock_request_object);
+                    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Handler returned error");
 
-            return;
+                    return ESP_OK;
+                }
+            }
         }
     }
-    TEST_FAIL_MESSAGE("No handler found");
+
+    char handler_message[200];
+    snprintf(handler_message, sizeof(handler_message), "No handler found for URI %s with method %s\n", uri, method_name);
+    TEST_FAIL_MESSAGE(handler_message);
 }

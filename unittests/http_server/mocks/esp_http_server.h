@@ -84,7 +84,7 @@ typedef struct httpd_uri {
 struct httpd_req {
     httpd_handle_t handle;
     int method;
-    char uri[HTTPD_MAX_URI_LEN + 1];
+    char uri[HTTPD_MAX_URI_LEN];
     size_t content_len;
     void *aux;
     void *user_ctx;
@@ -111,7 +111,6 @@ struct httpd_req {
 }
 
 extern int mock_httpd_start_call_count;
-extern int mock_httpd_register_uri_handler_call_count;
 extern int mock_wifi_scan_init_call_count;
 extern int mock_auth_init_call_count;
 extern esp_err_t mock_httpd_start_return_value;
@@ -158,7 +157,7 @@ typedef struct {
 extern mock_uri_registry_entry_t mock_uri_registry[MAX_URI_HANDLERS];
 extern int mock_uri_registry_count;
 
-void mock_simulate_http_request(enum http_method method, const char* uri);
+esp_err_t mock_simulate_http_request(enum http_method method, const char* uri);
 httpd_req_t mock_create_request(const char* uri, enum http_method method);
 
 void esp_http_server_init(void);
