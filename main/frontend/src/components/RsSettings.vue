@@ -90,7 +90,7 @@ const save = () => {
         />
       </div>
 
-      <template v-if="typeof ioBus === 'boolean'">
+      <template v-if="props.field === 'rs485_2'">
         <label :for="`${field}-io_bus`">{{ t('io_bus') }}</label>
         <div class="settings-data">
           <Switch

@@ -38,7 +38,7 @@ const getDisplayValue = (val: string | boolean | number) => {
         <legend>{{ t('ethernet') }}</legend>
 
         <div>{{ t('status') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.con_eth) }}</div>
+        <div>{{ info!.ethernet.con_eth ? t('connected') : t('not_connected') }}</div>
 
         <div>{{ t('ip') }}</div>
         <div>{{ getDisplayValue(info!.ethernet.ip) }}</div>
@@ -69,7 +69,7 @@ const getDisplayValue = (val: string | boolean | number) => {
 
         <template v-else-if="info!.wifi.mode === 'sta'">
           <div>{{ t('connection') }}</div>
-          <div>{{ info!.wifi.con_sta ? t('enabled') : t('not_enabled') }}</div>
+          <div>{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</div>
 
           <template v-if="info!.wifi.con_sta">
             <div>{{ t('ssid') }}</div>
@@ -82,8 +82,10 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div>{{ t('mac') }}</div>
           <div>{{ info!.wifi.sta_mac }}</div>
 
-          <div>{{ t('rssi') }}</div>
-          <div>{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</div>
+          <template v-if="info!.wifi.enabled && info!.wifi.con_sta">
+            <div>{{ t('rssi') }}</div>
+            <div>{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</div>
+          </template>
         </template>
       </fieldset>
 
@@ -161,6 +163,8 @@ const getDisplayValue = (val: string | boolean | number) => {
     "ip": "IP address",
     "mac": "MAC address",
     "enabled": "Enabled",
+    "connected": "Connected",
+    "not_connected": "Not connected",
     "disabled": "Disabled",
 
     "ethernet": "Ethernet",
@@ -185,8 +189,9 @@ const getDisplayValue = (val: string | boolean | number) => {
     "connection": "Подключение",
     "ip": "IP-адрес",
     "mac": "MAC-адрес",
-    "enabled": "Подключено",
-    "not_enabled": "Не подключено",
+    "enabled": "Включено",
+    "connected": "Подключено",
+    "not_connected": "Не подключено",
     "disabled": "Отключено",
 
     "ethernet": "Ethernet",

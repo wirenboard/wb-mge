@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { onUnmounted, watch } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import Loader from '@/assets/loader.svg?component';
+import Select from 'vue-multiselect';
 import { useWifi } from '@/common/network';
 import { useSettings } from '@/common/settings';
 import type { Settings, WiFiSecuityProtocol } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
-import Info from '@/components/Info.vue';
 import IpInput from '@/components/IpInput.vue';
 import RsSettings from '@/components/RsSettings.vue';
 import Switch from '@/components/Switch.vue';
@@ -16,12 +15,17 @@ import Switch from '@/components/Switch.vue';
 const { t } = useI18n();
 const { data, initData, isChanged, isLoading, updateSettings } = useSettings();
 const { wifi, isPolling, startPolling, stopPolling } = useWifi();
+const selectedWifi = ref();
 
 watch(() => data.value?.wifi.mode, () => {
   if (initData.value?.wifi.mode !== 'none') {
     startPolling();
   }
 }, { immediate: true });
+
+watch([() => data.value?.wifi.sta_ssid, () => wifi.value], () => {
+  selectedWifi.value = wifi.value.find(item => item.ssid === data.value?.wifi.sta_ssid);
+}, { once: true });
 
 onUnmounted(() => {
   stopPolling();
@@ -42,7 +46,7 @@ const updateWifiSettings = async () => {
     val.ap_mask_static = data.value!.wifi.ap_mask_static;
     val.ap_gw_static = data.value!.wifi.ap_gw_static;
   } else if (data.value!.wifi.mode === 'sta') {
-    val.sta_ssid = data.value!.wifi.sta_ssid;
+    val.sta_ssid = selectedWifi.value?.ssid;
     val.sta_auth = data.value!.wifi.sta_auth;
     val.sta_pass = val.sta_auth === 'open' ? '' : data.value!.wifi.sta_pass;
     val.sta_dhcpc = data.value!.wifi.sta_dhcpc;
@@ -164,17 +168,22 @@ const updateWifiSettings = async () => {
 
           <template v-if="data.wifi.mode === 'sta'">
             <label for="sta_ssid">{{ t('ssid') }}</label>
-            <div class="settings-data">
-              <div v-if="!wifi.length" class="settings-wifiInputWrapper">
-                <input id="sta_ssid" v-model="data.wifi.sta_ssid" class="settings-wifiInput" type="text" pattern="^[\x20-\x7E]{1,31}$" name="sta_ssid" required />
-                <Loader v-if="isPolling" class="settings-loader" fill="currentColor" />
-              </div>
-              <select v-else id="sta_ssid" v-model="data.wifi.sta_ssid" class="settings-wifi" name="sta_ssid" @click="startPolling">
-                <option v-for="item in wifi" :key="item.ssid" :value="item.ssid">{{ item.ssid }}</option>
-              </select>
-            </div>
-
-            <Info v-if="initData!.wifi.mode === 'none'" :text="t('scan_info')" />
+            <Select
+              v-model="selectedWifi"
+              class="settings-dropdown"
+              label="ssid"
+              track-by="ssid"
+              open-direction="bottom"
+              placeholder=""
+              :options="wifi"
+              :loading="isPolling"
+              :searchable="false"
+              :max-height="600"
+              :show-labels="false"
+              :show-no-results="false"
+              use-teleport
+              @open="startPolling"
+            />
 
             <label for="sta_auth">{{ t('wifi_pass_security') }}</label>
             <div class="settings-data">
@@ -206,12 +215,12 @@ const updateWifiSettings = async () => {
 
               <label for="sta_gw_static">{{ t('mask') }}</label>
               <div class="settings-data">
-                <IpInput id="sta_gw_static" v-model="data.wifi.sta_gw_static" name="sta_gw_static" />
+                <IpInput id="sta_mask_static" v-model="data.wifi.sta_mask_static" name="sta_mask_static" />
               </div>
 
               <label for="sta_mask_static">{{ t('gateway') }}</label>
               <div class="settings-data">
-                <IpInput id="sta_mask_static" v-model="data.wifi.sta_mask_static" name="sta_mask_static" />
+                <IpInput id="sta_gw_static" v-model="data.wifi.sta_gw_static" name="sta_gw_static" />
               </div>
             </template>
           </template>
@@ -278,11 +287,14 @@ const updateWifiSettings = async () => {
   height: 33px;
 }
 
-.settings-info div:nth-child(odd),
 .settings-data {
   width: calc(100% - 24px);
   display: flex;
   justify-content: end;
+}
+
+.settings-dropdown {
+  max-width: calc(100% - 24px);
 }
 
 .settings-info label {
@@ -297,25 +309,6 @@ const updateWifiSettings = async () => {
 
 .settings-wifi {
   width: 100%;
-}
-
-.settings-wifiInputWrapper {
-  position: relative;
-  width: 100% !important;
-}
-
-.settings-wifiInput {
-  width: 100% !important;
-}
-
-.settings-loader {
-  min-width: 16px;
-  height: 16px;
-  position: absolute;
-  top: 8px;
-  right: -6px;
-  z-index: 1000;
-  animation: rotate 1s linear infinite;
 }
 </style>
 
@@ -333,7 +326,6 @@ const updateWifiSettings = async () => {
     "wifi_settings": "Wi-Fi",
     "wifi_mode": "Mode",
     "wifi_pass_security": "Network protection",
-    "scan_info": "Scanning will be available when the access point or client mode is set and saved",
     "open": "Unsecured",
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK"
@@ -350,7 +342,6 @@ const updateWifiSettings = async () => {
     "wifi_settings": "Wi-Fi",
     "wifi_mode": "Роль",
     "wifi_pass_security": "Защита сети",
-    "scan_info": "Сканирование будет доступно когда будет установлен и сохранён режим точка доступа или клиент",
     "open": "Без защиты",
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK"
