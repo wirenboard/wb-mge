@@ -5,7 +5,7 @@
     * rework:   move setting validators to separate module
     * added:    more unittests for setting_items
     * added:    unittests for http_server
-    * added:    measurement of code coverage
+    * added:    code coverage measurement
     * fixed:    GIT_HASH and GIT_BRANCH detection in Makefile
 
 2025-08-28 Maxim Toropov <maxim.toropov@wirenboard.com>
