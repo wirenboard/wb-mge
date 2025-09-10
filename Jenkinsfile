@@ -38,7 +38,6 @@ pipeline {
                 build job: 's3_uploader_test', parameters: [
                     string(name: 'UPSTREAM_JOB_NAME', value: env.JOB_NAME),
                     string(name: 'BUILD', value: env.BUILD_NUMBER),
-                    string(name: 'PROJECT', value: 'WB-MGE'),
                     booleanParam(name: 'UPLOAD_FROM_BRANCH', value: params.UPLOAD_FROM_BRANCH)
                 ]
             }
