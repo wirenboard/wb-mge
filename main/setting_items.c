@@ -172,6 +172,10 @@ static const setting_item_t setting_items[] = {
 
 static const setting_item_t *find_setting_item(const char *key)
 {
+    if (!key) {
+        return NULL;
+    }
+
     for (size_t i = 0; i < ARRAY_SIZE(setting_items); i++) {
         if (strncmp(setting_items[i].key, key, SETTING_ITEM_MAX_STR_LEN) == 0) {
             return &setting_items[i];
@@ -362,6 +366,17 @@ int setting_items_read_int(const char *key)
     return (int)read_numeric_value(key);
 }
 
+esp_err_t setting_items_save_int(const char *key, int value)
+{
+    char str_value[SETTING_ITEM_MAX_STR_LEN];
+    int ret = snprintf(str_value, sizeof(str_value), "%d", value);
+    if (ret >= sizeof(str_value)) {
+        ESP_LOGE(TAG, "Value too large for buffer when saving %s", key);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return setting_items_save(key, str_value);
+}
+
 bool setting_items_read_bool(const char *key)
 {
     const setting_item_t *item = validate_bool_setting(key);
@@ -383,17 +398,6 @@ esp_err_t setting_items_save_bool(const char *key, bool value)
     } else {
         return setting_items_save(key, "false");
     }
-}
-
-esp_err_t setting_items_save_int(const char *key, int value)
-{
-    char str_value[SETTING_ITEM_MAX_STR_LEN];
-    int ret = snprintf(str_value, sizeof(str_value), "%d", value);
-    if (ret >= sizeof(str_value)) {
-        ESP_LOGE(TAG, "Value too large for buffer when saving %s", key);
-        return ESP_ERR_INVALID_SIZE;
-    }
-    return setting_items_save(key, str_value);
 }
 
 // Type introspection functions

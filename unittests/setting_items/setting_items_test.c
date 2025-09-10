@@ -454,6 +454,195 @@ void test_setting_items_get_key_at(void)
     }
 }
 
+// Тестируем функцию setting_items_read_int
+void test_setting_items_read_int(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_read_int function");
+    LOG_MESSAGE();
+
+    int read_value = 0;
+
+    // Test 1: NULL key parameter
+    read_value = setting_items_read_int(NULL);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, read_value, "Should return 0 for NULL key");
+
+    // Test 2: Unknown/invalid key - should return 0
+    read_value = setting_items_read_int("nonexistent_key");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, read_value, "Should return 0 for unknown key");
+
+    // Test 3: Read integer setting that was saved
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        setting_items_save(KEY_WEB_PORT, "8080"),
+        "Should successfully save web port"
+    );
+
+    read_value = setting_items_read_int(KEY_WEB_PORT);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(8080, read_value, "Should read the correct integer value");
+
+    // Test 4: Test non-numeric key (should return 0)
+    read_value = setting_items_read_int(KEY_HOSTNAME);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, read_value, "Should return 0 for non-numeric setting");
+}
+
+// Тестируем функцию setting_items_read_bool
+void test_setting_items_read_bool(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_read_bool function");
+    LOG_MESSAGE();
+
+    bool read_value = false;
+
+    // Test 1: NULL key parameter
+    read_value = setting_items_read_bool(NULL);
+    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return false for NULL key");
+
+    // Test 2: Unknown/invalid key - should return false
+    read_value = setting_items_read_bool("nonexistent_key");
+    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return false for unknown key");
+
+    // Test 3: Non-boolean key (should return false due to type mismatch)
+    read_value = setting_items_read_bool(KEY_HOSTNAME);
+    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return false for non-boolean setting");
+
+    // Test 4: Test boolean key that defaults to false
+    read_value = setting_items_read_bool(KEY_BRIDGE_MB1);
+    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return default bridge_modbus_1 value (false) from default_value");
+}
+
+// Тестируем функцию setting_items_save_int
+void test_setting_items_save_int(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_save_int function");
+    LOG_MESSAGE();
+
+    esp_err_t result = ESP_OK;
+    int read_value = 0;
+
+    // Test 1: NULL key parameter
+    result = setting_items_save_int(NULL, 123);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_ERR_INVALID_ARG, result, "Should return ESP_ERR_INVALID_ARG for NULL key");
+
+    // Test 2: Unknown/invalid key
+    result = setting_items_save_int("nonexistent_key", 456);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_ERR_NOT_FOUND, result, "Should return ESP_ERR_NOT_FOUND for unknown key");
+
+    // Test 3: Save positive integer value
+    result = setting_items_save_int(KEY_WEB_PORT, 8080);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should successfully save positive integer");
+
+    read_value = setting_items_read_int(KEY_WEB_PORT);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(8080, read_value, "Should read back the same positive integer value");
+
+
+}
+
+// Тестируем функцию setting_items_save_bool
+void test_setting_items_save_bool(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_save_bool function");
+    LOG_MESSAGE();
+
+    esp_err_t result = ESP_OK;
+    bool read_value = false;
+
+    // Test 1: NULL key parameter
+    result = setting_items_save_bool(NULL, true);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_ERR_INVALID_ARG, result, "Should return ESP_ERR_INVALID_ARG for NULL key");
+
+    // Test 2: Unknown/invalid key
+    result = setting_items_save_bool("nonexistent_key", false);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_ERR_NOT_FOUND, result, "Should return ESP_ERR_NOT_FOUND for unknown key");
+
+    // Test 3: Save true value to boolean setting
+    result = setting_items_save_bool(KEY_IO_BUS_ENABLED, true);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should successfully save true value");
+
+    read_value = setting_items_read_bool(KEY_IO_BUS_ENABLED);
+    TEST_ASSERT_TRUE_MESSAGE(read_value, "Should read back true value");
+
+    // Test 4: Save false value to boolean setting
+    result = setting_items_save_bool(KEY_485_VOUT, false);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should successfully save false value");
+
+    read_value = setting_items_read_bool(KEY_485_VOUT);
+    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should read back false value");
+}
+
+// Тестируем функцию setting_items_get_type
+void test_setting_items_get_type(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_get_type function");
+    LOG_MESSAGE();
+
+    setting_item_type_t type = SETTING_ITEM_TYPE_STRING;
+
+    // Test 1: NULL key parameter
+    type = setting_items_get_type(NULL);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEM_TYPE_INVALID, type, "Should return SETTING_ITEM_TYPE_INVALID for NULL key");
+
+    // Test 2: Unknown/invalid key
+    type = setting_items_get_type("nonexistent_key");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEM_TYPE_INVALID, type, "Should return SETTING_ITEM_TYPE_INVALID for unknown key");
+
+    // Test 3: String type settings
+    type = setting_items_get_type(KEY_HOSTNAME);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEM_TYPE_STRING, type, "KEY_HOSTNAME should be STRING type");
+
+    // Test 4: Boolean type settings
+    type = setting_items_get_type(KEY_IO_BUS_ENABLED);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEM_TYPE_BOOL, type, "KEY_IO_BUS_ENABLED should be BOOL type");
+
+    // Test 5: Integer type settings
+    type = setting_items_get_type(KEY_WEB_PORT);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEM_TYPE_INT, type, "KEY_WEB_PORT should be INT type");
+}
+
+// Тестируем функцию setting_items_type_to_string
+void test_setting_items_type_to_string(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_type_to_string function");
+    LOG_MESSAGE();
+
+    const char* type_string;
+
+    // Test 1: STRING type
+    type_string = setting_items_type_to_string(SETTING_ITEM_TYPE_STRING);
+    TEST_ASSERT_NOT_NULL_MESSAGE(type_string, "Should return non-NULL string for STRING type");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("STRING", type_string, "Should return 'STRING' for SETTING_ITEM_TYPE_STRING");
+
+    // Test 2: BOOL type
+    type_string = setting_items_type_to_string(SETTING_ITEM_TYPE_BOOL);
+    TEST_ASSERT_NOT_NULL_MESSAGE(type_string, "Should return non-NULL string for BOOL type");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("BOOL", type_string, "Should return 'BOOL' for SETTING_ITEM_TYPE_BOOL");
+
+    // Test 3: INT type
+    type_string = setting_items_type_to_string(SETTING_ITEM_TYPE_INT);
+    TEST_ASSERT_NOT_NULL_MESSAGE(type_string, "Should return non-NULL string for INT type");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("INT", type_string, "Should return 'INT' for SETTING_ITEM_TYPE_INT");
+
+    // Test 4: INVALID type
+    type_string = setting_items_type_to_string(SETTING_ITEM_TYPE_INVALID);
+    TEST_ASSERT_NOT_NULL_MESSAGE(type_string, "Should return non-NULL string for INVALID type");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("INVALID", type_string, "Should return 'INVALID' for SETTING_ITEM_TYPE_INVALID");
+
+    // Test 5: Unknown/out-of-range type (should return "UNKNOWN")
+    type_string = setting_items_type_to_string((setting_item_type_t)999);
+    TEST_ASSERT_NOT_NULL_MESSAGE(type_string, "Should return non-NULL string for unknown type");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("UNKNOWN", type_string, "Should return 'UNKNOWN' for unknown type value");
+
+    // Test 6: Another unknown type (negative value)
+    type_string = setting_items_type_to_string((setting_item_type_t)-1);
+    TEST_ASSERT_NOT_NULL_MESSAGE(type_string, "Should return non-NULL string for negative type");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("UNKNOWN", type_string, "Should return 'UNKNOWN' for negative type value");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -470,6 +659,12 @@ int main(void)
     RUN_TEST(test_setting_items_read_error_conditions);
     RUN_TEST(test_setting_items_get_count);
     RUN_TEST(test_setting_items_get_key_at);
+    RUN_TEST(test_setting_items_read_int);
+    RUN_TEST(test_setting_items_read_bool);
+    RUN_TEST(test_setting_items_save_int);
+    RUN_TEST(test_setting_items_save_bool);
+    RUN_TEST(test_setting_items_get_type);
+    RUN_TEST(test_setting_items_type_to_string);
 
     return UNITY_END();
 }
