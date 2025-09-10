@@ -5,6 +5,8 @@
 #include <sys/types.h>
 #include "esp_err.h"
 
+#define MESSAGE_BUFFER_SIZE                     300
+
 #define HTTPD_MAX_URI_LEN                       100
 #define MAX_URI_HANDLERS                        20
 

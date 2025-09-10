@@ -122,7 +122,7 @@ esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *u
             entry->user_ctx = uri_handler->user_ctx;
             entry->registered = true;
 
-            char message[200];
+            char message[MESSAGE_BUFFER_SIZE];
             const char* method_name = get_method_as_string(entry->method);
             snprintf(message, sizeof(message), "Registered URI handler %s with method %s", entry->uri, method_name);
             LOG_INFO("%s", message);
@@ -181,12 +181,12 @@ static httpd_req_t mock_create_request(const char* uri, enum http_method method)
 
 esp_err_t mock_simulate_http_request(enum http_method method, const char* uri)
 {
-    char method_message[200];
+    char method_message[MESSAGE_BUFFER_SIZE];
     const char* method_name = get_method_as_string(method);
     snprintf(method_message, sizeof(method_message), "Invalid method: %s\n", method_name);
     TEST_ASSERT_LESS_THAN_INT_MESSAGE(HTTP_ANY, method, method_message);
 
-    char uri_message[200];
+    char uri_message[MESSAGE_BUFFER_SIZE];
     snprintf(uri_message, sizeof(uri_message), "Invalid URI: %s\n", uri);
     TEST_ASSERT_NOT_NULL_MESSAGE(uri, uri_message);
 
@@ -210,7 +210,7 @@ esp_err_t mock_simulate_http_request(enum http_method method, const char* uri)
         }
     }
 
-    char handler_message[200];
+    char handler_message[MESSAGE_BUFFER_SIZE];
     snprintf(handler_message, sizeof(handler_message), "No handler found for URI %s with method %s\n", uri, method_name);
     TEST_FAIL_MESSAGE(handler_message);
 }
