@@ -4,6 +4,7 @@ import router from './router';
 import { i18n } from './i18n';
 import './style.css';
 import { createHead } from '@unhead/vue/client';
+import 'vue-multiselect/dist/vue-multiselect.min.css';
 
 const app = createApp(App);
 const head = createHead();
