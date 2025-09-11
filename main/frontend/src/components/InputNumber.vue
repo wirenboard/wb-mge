@@ -1,6 +1,6 @@
 <template>
   <input
-    v-model="model"
+    v-model.number="model"
     :class="{
       'input-invalid': invalid
     }"
@@ -18,7 +18,18 @@ const attrs = useAttrs();
 const props = defineProps<{ float?: boolean; invalid?: boolean }>();
 
 const onKeydown = (ev: KeyboardEvent) => {
-  if ((ev.key === '-' && +(attrs?.min as string) <= 1) || ev.key === 'e' || !props.float && ev.key === '.') {
+  const allowedKeys = [
+    'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Enter'
+  ];
+
+  if (allowedKeys.includes(ev.key)) return;
+
+  if (
+    (ev.key === '-' && +(attrs?.min as string) <= 1) ||
+    ev.key === 'e' ||
+    (!props.float && ev.key === '.') ||
+    !/^\d$/.test(ev.key)
+  ) {
     ev.preventDefault();
   }
 
