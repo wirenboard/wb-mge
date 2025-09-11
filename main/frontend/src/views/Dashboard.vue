@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
@@ -8,10 +9,18 @@ import Switch from '@/components/Switch.vue';
 import RsStatus from '@/components/RsStatus.vue';
 
 const { t } = useI18n();
-const { info } = useInfo();
+const { info, startPolling, stopPolling } = useInfo();
 const { data: settings, updateSettings } = useSettings();
 
-const getDisplayValue = (val: any) => {
+onMounted(() => {
+  startPolling();
+});
+
+onUnmounted(() => {
+  stopPolling();
+});
+
+const getDisplayValue = (val: string | boolean | number) => {
   if (typeof val === 'boolean') {
     return val ? t('enabled') : t('disabled');
   } else {
@@ -28,8 +37,8 @@ const getDisplayValue = (val: any) => {
       <fieldset class="dashboard-container">
         <legend>{{ t('ethernet') }}</legend>
 
-        <div>{{ t('connection') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.con_eth) }}</div>
+        <div>{{ t('status') }}</div>
+        <div>{{ info!.ethernet.con_eth ? t('connected') : t('not_connected') }}</div>
 
         <div>{{ t('ip') }}</div>
         <div>{{ getDisplayValue(info!.ethernet.ip) }}</div>
@@ -41,46 +50,43 @@ const getDisplayValue = (val: any) => {
       <fieldset class="dashboard-container">
         <legend>{{ t('wifi') }}</legend>
 
-        <div>{{ t('connection') }}</div>
-        <div>{{ getDisplayValue(info!.wifi.con_sta) }}</div>
+        <div>{{ t('status') }}</div>
+        <div>{{ getDisplayValue(info!.wifi.enabled) }}</div>
 
         <div>{{ t('wifi_mode') }}</div>
-        <div>{{ t(settings!.wifi.mode) }}</div>
+        <div>{{ t(info!.wifi.mode) }}</div>
 
-        <div><b>{{ t('access_point') }}</b></div>
-        <div></div>
+        <template v-if="info!.wifi.mode === 'ap'">
+          <div>{{ t('connections_count') }}</div>
+          <div>{{ info!.wifi.con_ap }}</div>
 
-        <template v-if="settings!.wifi.mode === 'apsta'">
           <div>{{ t('ip') }}</div>
-          <div>{{ settings!.wifi.ap_ip_static }}</div>
+          <div>{{ info!.wifi.ap_ip }}</div>
 
           <div>{{ t('mac') }}</div>
           <div>{{ info!.wifi.ap_mac }}</div>
         </template>
-        <template v-else>
+
+        <template v-else-if="info!.wifi.mode === 'sta'">
+          <div>{{ t('connection') }}</div>
+          <div>{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</div>
+
+          <template v-if="info!.wifi.con_sta">
+            <div>{{ t('ssid') }}</div>
+            <div>{{ info!.wifi.con_sta_ssid }}</div>
+          </template>
+
           <div>{{ t('ip') }}</div>
-          <div>{{ getDisplayValue(settings!.wifi.mode === 'sta' ? info!.wifi.sta_ip : settings!.wifi.ap_ip_static) }}</div>
+          <div>{{ info!.wifi.sta_ip }}</div>
 
           <div>{{ t('mac') }}</div>
-          <div>{{ getDisplayValue(settings!.wifi.mode === 'sta' ? info!.wifi.sta_mac : info!.wifi.ap_mac) }}</div>
+          <div>{{ info!.wifi.sta_mac }}</div>
+
+          <template v-if="info!.wifi.enabled && info!.wifi.con_sta">
+            <div>{{ t('rssi') }}</div>
+            <div>{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</div>
+          </template>
         </template>
-
-        <template v-if="['sta', 'apsta'].includes(settings!.wifi.mode)">
-          <div>{{ t('connections_count') }}</div>
-          <div>{{ info!.wifi.con_ap }}</div>
-
-          <div>{{ t('rssi') }}</div>
-          <div>{{ info?.wifi.sta_rssi }}</div>
-        </template>
-
-        <div><b>{{ t('router') }}</b></div>
-        <div></div>
-
-        <div>{{ t('ip') }}</div>
-        <div>{{ info!.wifi.sta_ip }}</div>
-
-        <div>{{ t('mac') }}</div>
-        <div>{{ info!.wifi.sta_mac }}</div>
       </fieldset>
 
       <fieldset class="dashboard-container">
@@ -152,20 +158,24 @@ const getDisplayValue = (val: any) => {
   "en": {
     "title": "Dashboard",
 
+    "status": "Status",
     "connection": "Connection",
     "ip": "IP address",
     "mac": "MAC address",
     "enabled": "Enabled",
+    "connected": "Connected",
+    "not_connected": "Not connected",
     "disabled": "Disabled",
 
     "ethernet": "Ethernet",
 
     "wifi": "Wi-Fi",
     "wifi_mode": "Mode",
-    "router": "Router",
+    "client": "Client",
     "access_point": "Access Point",
     "connections_count": "Number of connections",
     "rssi": "RSSI",
+    "dbm": "dBm",
 
     "gateway": "Gateway",
     "power_vout": "Power Vout",
@@ -175,20 +185,24 @@ const getDisplayValue = (val: any) => {
   "ru": {
     "title": "Обзор",
 
-    "connection": "Состояние",
+    "status": "Состояние",
+    "connection": "Подключение",
     "ip": "IP-адрес",
     "mac": "MAC-адрес",
-    "enabled": "Подключено",
+    "enabled": "Включено",
+    "connected": "Подключено",
+    "not_connected": "Не подключено",
     "disabled": "Отключено",
 
     "ethernet": "Ethernet",
 
     "wifi": "Wi-Fi",
-    "router": "Роутер",
+    "client": "Клиент",
     "access_point": "Точка доступа",
     "wifi_mode": "Роль",
     "connections_count": "Количество подключений",
     "rssi": "RSSI",
+    "dbm": "дБ",
 
     "gateway": "Шлюз",
     "power_vout": "Питание Vout",

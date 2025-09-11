@@ -1,25 +1,30 @@
 <script setup lang="ts">
-import { onUnmounted, ref, onMounted } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import Select from 'vue-multiselect';
 import { useWifi } from '@/common/network';
 import { useSettings } from '@/common/settings';
-import type { WiFiSecuityProtocol } from '@/common/types';
+import type { Settings, WiFiNetwork, WiFiSecuityProtocol } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
-import Info from '@/components/Info.vue';
 import IpInput from '@/components/IpInput.vue';
 import RsSettings from '@/components/RsSettings.vue';
 import Switch from '@/components/Switch.vue';
 
 const { t } = useI18n();
 const { data, initData, isChanged, isLoading, updateSettings } = useSettings();
-const { wifi, startPolling, stopPolling } = useWifi();
-const isChangeApPassword = ref(false);
-const isChangeStaPassword = ref(false);
+const { wifi, isPolling, startPolling, stopPolling } = useWifi();
+const selectedWifi = ref();
 
-onMounted(() =>{
-  startPolling();
+watch(() => data.value?.wifi.mode, () => {
+  if (initData.value?.wifi.mode !== 'none') {
+    startPolling();
+  }
+}, { immediate: true });
+
+watch([() => data.value?.wifi.sta_ssid, () => wifi.value], () => {
+  selectedWifi.value = wifi.value.find(item => item.ssid === data.value?.wifi.sta_ssid);
 });
 
 onUnmounted(() => {
@@ -29,31 +34,35 @@ onUnmounted(() => {
 const securityProtocol: WiFiSecuityProtocol[] = ['open', 'wpa2_psk', 'wpa3_psk'];
 
 const updateWifiSettings = async () => {
-  const val: any = {
+  const val: Partial<Settings['wifi']> = {
     mode: data.value!.wifi.mode,
-    ap_ip_static: data.value!.wifi.ap_ip_static,
-    ap_mask_static: data.value!.wifi.ap_mask_static,
-    ap_gw_static: data.value!.wifi.ap_gw_static,
-    ap_ssid: data.value!.wifi.ap_ssid,
-    sta_auth: data.value!.wifi.sta_auth,
-    sta_ssid: data.value!.wifi.sta_ssid,
-    ap_auth: data.value!.wifi.ap_auth,
   };
 
-  if (data.value!.wifi.ap_auth === 'open') {
-    val.ap_pass = '';
-  } else if (isChangeApPassword.value) {
-    val.ap_pass = data.value!.wifi.ap_pass;
+  if (data.value!.wifi.mode === 'ap') {
+    val.ap_ssid = data.value!.wifi.ap_ssid;
+    val.ap_auth = data.value!.wifi.ap_auth;
+    val.ap_pass = data.value!.wifi.ap_auth === 'open' ? '' : data.value!.wifi.ap_pass;
+    val.ap_ip_static = data.value!.wifi.ap_ip_static;
+    val.ap_mask_static = data.value!.wifi.ap_mask_static;
+    val.ap_gw_static = data.value!.wifi.ap_gw_static;
+  } else if (data.value!.wifi.mode === 'sta') {
+    val.sta_ssid = data.value?.wifi.sta_ssid;
+    val.sta_auth = data.value!.wifi.sta_auth;
+    val.sta_pass = val.sta_auth === 'open' ? '' : data.value!.wifi.sta_pass;
+    val.sta_dhcpc = data.value!.wifi.sta_dhcpc;
+
+    if (!val.sta_dhcpc) {
+      val.sta_ip_static = data.value!.wifi.sta_ip_static;
+      val.sta_gw_static = data.value!.wifi.sta_gw_static;
+      val.sta_mask_static = data.value!.wifi.sta_mask_static;
+    }
   }
 
-  if (data.value!.wifi.sta_auth === 'open') {
-    val.sta_pass = '';
-  } else if (isChangeStaPassword.value) {
-    val.sta_pass = data.value!.wifi.sta_pass;
-  }
   await updateSettings({ wifi: val });
-  isChangeApPassword.value = false;
-  isChangeStaPassword.value = false;
+};
+
+const changeWifi = ({ ssid }: WiFiNetwork) => {
+  data.value!.wifi.sta_ssid = ssid;
 };
 </script>
 
@@ -74,7 +83,7 @@ const updateWifiSettings = async () => {
               gw_static: data.ethernet.gw_static,
             }
           })">
-          <label for="eth_dhcpc">{{ t('eth_dhcpc') }}</label>
+          <label for="eth_dhcpc">{{ t('dhcp_client') }}</label>
           <div class="settings-data">
             <Switch
               id="eth_dhcpc"
@@ -118,86 +127,106 @@ const updateWifiSettings = async () => {
           <label for="wifi_mode">{{ t('wifi_mode') }}</label>
           <div class="settings-data">
             <select id="wifi_mode" v-model="data.wifi.mode" class="settings-wifi" name="wifi_mode">
-              <option value="none">{{ t('none') }}</option>
+              <option value="none">{{ t('disabled') }}</option>
               <option value="ap">{{ t('ap') }}</option>
               <option value="sta">{{ t('sta') }}</option>
-              <option value="apsta">{{ t('apsta') }}</option>
             </select>
           </div>
 
-          <template v-if="data.wifi.mode !== 'none'">
-            <template v-if="data.wifi.mode === 'ap' || data.wifi.mode === 'apsta'">
-              <template v-if="data.wifi.mode === 'apsta'">
-                <b>{{ t('ap') }}</b>
-                <div></div>
-              </template>
+          <template v-if="data.wifi.mode === 'ap'">
+            <label for="ap_ssid">{{ t('ssid') }}</label>
+            <div class="settings-data">
+              <input id="ap_ssid" v-model="data.wifi.ap_ssid" type="text" name="ap_ssid" pattern="^[\x20-\x7E]{1,31}$" minlength="1" maxlength="32" required />
+            </div>
 
-              <label for="ap_ip_static">{{ t('ip') }}</label>
+            <label for="ap_auth">{{ t('wifi_pass_security') }}</label>
+            <div class="settings-data">
+              <select id="ap_auth" v-model="data.wifi.ap_auth" name="ap_auth">
+                <option v-for="item in securityProtocol" :key="item" :value="item">{{ t(item) }}</option>
+              </select>
+            </div>
+
+            <template v-if="data.wifi.ap_auth !== 'open'">
+              <label for="ap_pass">{{ t('password') }}</label>
               <div class="settings-data">
-                <IpInput id="ap_ip_static" v-model="data.wifi.ap_ip_static" name="ap_ip_static" />
+                <input id="ap_pass" v-model="data.wifi.ap_pass" required :placeholder="t('pass_placeholder')" pattern="[\x20-\x7E]{8,63}" minlength="8" maxlength="63" type="password" name="ap_ pass" />
               </div>
-
-              <label for="ap_mask_static">{{ t('mask') }}</label>
-
-              <div class="settings-data">
-                <IpInput id="ap_mask_static" v-model="data.wifi.ap_mask_static" name="ap_mask_static" />
-              </div>
-
-              <label for="ap_gw_static">{{ t('gateway') }}</label>
-              <div class="settings-data">
-                <IpInput id="ap_gw_static" v-model="data.wifi.ap_gw_static" name="ap_gw_static" />
-              </div>
-
-              <label for="ap_ssid">{{ t('ssid') }}</label>
-              <div class="settings-data">
-                <input id="ap_ssid" v-model="data.wifi.ap_ssid" type="text" name="ap_ssid" pattern="[\x20-\x7E]{1,32}" minlength="1" maxlength="32" required />
-              </div>
-
-              <label for="ap_auth">{{ t('wifi_pass_security') }}</label>
-              <div class="settings-data">
-                <select id="ap_auth" v-model="data.wifi.ap_auth" name="ap_auth">
-                  <option v-for="item in securityProtocol" :key="item" :value="item">{{ t(item) }}</option>
-                </select>
-              </div>
-
-              <template v-if="data.wifi.ap_auth !== 'open'">
-                <label for="ap_pass">{{ t('password') }}</label>
-                <div class="settings-data">
-                  <button v-if="!isChangeApPassword" class="settings-textButton" type="button" @click="isChangeApPassword = true">{{ t('change_password') }}</button>
-                  <input v-else id="ap_pass" v-model="data.wifi.ap_pass" v-focus required :placeholder="t('pass_placeholder')" pattern="[\x20-\x7E]{8,63}" minlength="8" maxlength="63" type="password" name="ap_ pass" />
-                </div>
-              </template>
             </template>
 
-            <template v-if="data.wifi.mode === 'sta' || data.wifi.mode === 'apsta'">
-              <template v-if="data.wifi.mode === 'apsta'">
-                <b>{{ t('sta') }}</b>
-                <div></div>
-              </template>
+            <label for="ap_ip_static">{{ t('ip') }}</label>
+            <div class="settings-data">
+              <IpInput id="ap_ip_static" v-model="data.wifi.ap_ip_static" name="ap_ip_static" />
+            </div>
 
-              <label for="sta_ssid">{{ t('ssid') }}</label>
+            <label for="ap_mask_static">{{ t('mask') }}</label>
+
+            <div class="settings-data">
+              <IpInput id="ap_mask_static" v-model="data.wifi.ap_mask_static" name="ap_mask_static" />
+            </div>
+
+            <label for="ap_gw_static">{{ t('gateway') }}</label>
+            <div class="settings-data">
+              <IpInput id="ap_gw_static" v-model="data.wifi.ap_gw_static" name="ap_gw_static" />
+            </div>
+          </template>
+
+          <template v-if="data.wifi.mode === 'sta'">
+            <label for="sta_ssid">{{ t('ssid') }}</label>
+            <Select
+              v-model="selectedWifi"
+              class="settings-dropdown"
+              label="ssid"
+              track-by="ssid"
+              open-direction="bottom"
+              :placeholder="isPolling ? (data?.wifi.sta_ssid || '') : ''"
+              :options="wifi"
+              :loading="isPolling"
+              :searchable="false"
+              :max-height="600"
+              :show-labels="false"
+              :show-no-results="false"
+              use-teleport
+              @open="startPolling"
+              @select="changeWifi"
+            />
+
+            <label for="sta_auth">{{ t('wifi_pass_security') }}</label>
+            <div class="settings-data">
+              <select id="sta_auth" v-model="data.wifi.sta_auth" name="sta_auth">
+                <option v-for="item in securityProtocol" :key="item" :value="item">{{ t(item) }}</option>
+              </select>
+            </div>
+
+            <template v-if="data.wifi.sta_auth !== 'open'">
+              <label for="sta_pass">{{ t('password') }}</label>
               <div class="settings-data">
-                <input v-if="!wifi.length" id="sta_ssid" v-model="data.wifi.sta_ssid" type="text" name="sta_ssid" required />
-                <select v-else id="sta_ssid" v-model="data.wifi.sta_ssid" class="settings-wifi" name="sta_ssid" @click="startPolling">
-                  <option v-for="item in wifi" :key="item.ssid" :value="item.ssid">{{ item.ssid }}</option>
-                </select>
+                <input id="sta_pass" v-model="data.wifi.sta_pass" required :placeholder="t('pass_placeholder')" type="password" name="sta_pass" />
               </div>
-              <Info v-if="!['sta', 'apsta'].includes(initData!.wifi.mode)" :text="t('scan_info')" />
+            </template>
 
-              <label for="sta_auth">{{ t('wifi_pass_security') }}</label>
+            <label for="sta_dhcpc">{{ t('dhcp_client') }}</label>
+            <div class="settings-data">
+              <Switch
+                id="sta_dhcpc"
+                v-model="data.wifi.sta_dhcpc"
+              />
+            </div>
+
+            <template v-if="!data.wifi.sta_dhcpc">
+              <label for="sta_ip_static">{{ t('ip') }}</label>
               <div class="settings-data">
-                <select id="sta_auth" v-model="data.wifi.sta_auth" name="sta_auth">
-                  <option v-for="item in securityProtocol" :key="item" :value="item">{{ t(item) }}</option>
-                </select>
+                <IpInput id="sta_ip_static" v-model="data.wifi.sta_ip_static" name="sta_ip_static" />
               </div>
 
-              <template v-if="data.wifi.sta_auth !== 'open'">
-                <label for="sta_pass">{{ t('password') }}</label>
-                <div class="settings-data">
-                  <button v-if="!isChangeStaPassword" class="settings-textButton" type="button" @click="isChangeStaPassword = true">{{ t('change_password') }}</button>
-                  <input v-else id="sta_pass" v-model="data.wifi.sta_pass" v-focus required :placeholder="t('pass_placeholder')" type="password" name="ap_ sta_pass" />
-                </div>
-              </template>
+              <label for="sta_gw_static">{{ t('mask') }}</label>
+              <div class="settings-data">
+                <IpInput id="sta_mask_static" v-model="data.wifi.sta_mask_static" name="sta_mask_static" />
+              </div>
+
+              <label for="sta_mask_static">{{ t('gateway') }}</label>
+              <div class="settings-data">
+                <IpInput id="sta_gw_static" v-model="data.wifi.sta_gw_static" name="sta_gw_static" />
+              </div>
             </template>
           </template>
 
@@ -205,7 +234,7 @@ const updateWifiSettings = async () => {
             class="settings-submit"
             type="submit"
             :is-loading="isLoading && isChanged(['wifi'])"
-            :disabled="isLoading || (!isChanged(['wifi']) && !isChangeStaPassword && !isChangeApPassword)"
+            :disabled="isLoading || !isChanged(['wifi'])"
           >
             {{ t('save') }}
           </Button>
@@ -252,7 +281,7 @@ const updateWifiSettings = async () => {
 .settings-info {
   display: grid;
   gap: 6px 24px;
-  grid-template-columns: 45% 55%;
+  grid-template-columns: 48% 52%;
   align-items: center;
   justify-items: flex-start;
   page-break-inside: avoid;
@@ -263,11 +292,14 @@ const updateWifiSettings = async () => {
   height: 33px;
 }
 
-.settings-info div:nth-child(odd),
 .settings-data {
   width: calc(100% - 24px);
   display: flex;
   justify-content: end;
+}
+
+.settings-dropdown {
+  max-width: calc(100% - 24px);
 }
 
 .settings-info label {
@@ -283,21 +315,6 @@ const updateWifiSettings = async () => {
 .settings-wifi {
   width: 100%;
 }
-
-.settings-textButton {
-  appearance: none;
-  background: transparent;
-  color: var(--text-color);
-  text-decoration: underline;
-}
-
-.settings-textButton:hover,
-.settings-textButton:focus{
-  background: transparent !important;
-  outline: none;
-  box-shadow: none;
-  color: var(--link-color);
-}
 </style>
 
 <i18n>
@@ -306,7 +323,7 @@ const updateWifiSettings = async () => {
     "title": "Settings",
 
     "ethernet": "Ethernet",
-    "eth_dhcpc": "DHCP",
+    "dhcp_client": "DHCP client",
     "ip": "Static IP",
     "gateway": "Gateway",
     "mask": "Submask",
@@ -314,18 +331,15 @@ const updateWifiSettings = async () => {
     "wifi_settings": "Wi-Fi",
     "wifi_mode": "Mode",
     "wifi_pass_security": "Network protection",
-    "scan_info": "Scanning will be available when the access point or access point and client mode is set and saved",
     "open": "Unsecured",
     "wpa2_psk": "WPA2-PSK",
-    "wpa3_psk": "WPA3-PSK",
-
-    "ssid": "Network name (SSID)"
+    "wpa3_psk": "WPA3-PSK"
   },
   "ru": {
     "title": "Настройки",
 
     "ethernet": "Ethernet",
-    "eth_dhcpc": "DHCP",
+    "dhcp_client": "Клиент DHCP",
     "ip": "IP",
     "gateway": "Шлюз",
     "mask": "Маска",
@@ -333,12 +347,9 @@ const updateWifiSettings = async () => {
     "wifi_settings": "Wi-Fi",
     "wifi_mode": "Роль",
     "wifi_pass_security": "Защита сети",
-    "scan_info": "Сканирование будет доступно когда будет установлен и сохранён режим точка доступа или точка доступа и клиент",
     "open": "Без защиты",
     "wpa2_psk": "WPA2-PSK",
-    "wpa3_psk": "WPA3-PSK",
-
-    "ssid": "Имя сети (SSID)"
+    "wpa3_psk": "WPA3-PSK"
   }
 }
 </i18n>

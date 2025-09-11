@@ -105,7 +105,8 @@ watch(
   cursor: pointer;
 }
 
-.sidebar-navigation a:hover {
+.sidebar-navigation a:hover,
+.sidebar-navigation a:focus {
   background: var(--primary-color-hover);
   color: #fff;
 }

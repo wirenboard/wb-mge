@@ -1,13 +1,13 @@
 import { ref } from 'vue';
-import { Session } from '@/common/types';
+import type { Session } from '@/common/types';
 import { api } from '@/utils/api';
 
 export const hasSession = ref(false);
 
-export const useSession = async () => {
+export const useSession = async (): Promise<boolean> => {
   if (!hasSession.value) {
     hasSession.value = await api<Session>('session')
-      .then((res: any) => res?.status !== 401)
+      .then(() => true)
       .catch(() => false);
   }
 
