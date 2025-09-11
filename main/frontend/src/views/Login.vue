@@ -40,14 +40,14 @@ const login = async () => {
       <form class="login-form" @submit.prevent="login">
         <div class="login-fields">
           <label for="username">{{ t('login') }}</label>
-          <input id="username" v-model="data.login" name="username" type="text" autocomplete="username" required autofocus />
+          <input id="username" v-model="data.login" name="username" type="text" autocomplete="username" :required="!!data.login" autofocus />
 
           <label for="password">{{ t('password') }}</label>
-          <input id="password" v-model="data.pass" name="pass" type="password" autocomplete="current-password" required />
+          <input id="password" v-model="data.pass" name="pass" type="password" autocomplete="current-password" :required="!!data.pass" />
         </div>
 
         <div class="login-actions">
-          <button type="submit" :disabled="isLoading">{{ t('sign_in') }}</button>
+          <button type="submit" :disabled="isLoading || !data.login || !data.pass">{{ t('sign_in') }}</button>
         </div>
       </form>
     </fieldset>

@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import Select from 'vue-multiselect';
 import { useWifi } from '@/common/network';
 import { useSettings } from '@/common/settings';
-import type { Settings, WiFiSecuityProtocol } from '@/common/types';
+import type { Settings, WiFiNetwork, WiFiSecuityProtocol } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
@@ -25,7 +25,7 @@ watch(() => data.value?.wifi.mode, () => {
 
 watch([() => data.value?.wifi.sta_ssid, () => wifi.value], () => {
   selectedWifi.value = wifi.value.find(item => item.ssid === data.value?.wifi.sta_ssid);
-}, { once: true });
+});
 
 onUnmounted(() => {
   stopPolling();
@@ -46,7 +46,7 @@ const updateWifiSettings = async () => {
     val.ap_mask_static = data.value!.wifi.ap_mask_static;
     val.ap_gw_static = data.value!.wifi.ap_gw_static;
   } else if (data.value!.wifi.mode === 'sta') {
-    val.sta_ssid = selectedWifi.value?.ssid;
+    val.sta_ssid = data.value?.wifi.sta_ssid;
     val.sta_auth = data.value!.wifi.sta_auth;
     val.sta_pass = val.sta_auth === 'open' ? '' : data.value!.wifi.sta_pass;
     val.sta_dhcpc = data.value!.wifi.sta_dhcpc;
@@ -59,6 +59,10 @@ const updateWifiSettings = async () => {
   }
 
   await updateSettings({ wifi: val });
+};
+
+const changeWifi = ({ ssid }: WiFiNetwork) => {
+  data.value!.wifi.sta_ssid = ssid;
 };
 </script>
 
@@ -174,7 +178,7 @@ const updateWifiSettings = async () => {
               label="ssid"
               track-by="ssid"
               open-direction="bottom"
-              placeholder=""
+              :placeholder="isPolling ? (data?.wifi.sta_ssid || '') : ''"
               :options="wifi"
               :loading="isPolling"
               :searchable="false"
@@ -183,6 +187,7 @@ const updateWifiSettings = async () => {
               :show-no-results="false"
               use-teleport
               @open="startPolling"
+              @select="changeWifi"
             />
 
             <label for="sta_auth">{{ t('wifi_pass_security') }}</label>

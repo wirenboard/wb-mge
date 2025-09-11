@@ -139,7 +139,7 @@ const updateInterface = () => {
           @submit.prevent="updateInterface">
           <label for="port">{{ t('port') }}</label>
           <div class="system-data">
-            <InputNumber id="port" v-model="settings!.web_port" type="text" name="port" autocomplete="port" required />
+            <InputNumber id="port" v-model="settings!.web_port" type="text" name="port" min="1" max="65535" required />
           </div>
 
           <label for="username">{{ t('login') }}</label>
@@ -180,7 +180,7 @@ const updateInterface = () => {
           <Button
             class="system-submit"
             type="submit"
-            :disabled="!isChanged(['login', 'pass']) && language === locale"
+            :disabled="!isChanged(['login', 'pass', 'web_port']) && language === locale"
           >
             {{ t('save') }}
           </Button>
