@@ -23,14 +23,34 @@
 #include "config_button.h"
 #include "system_voltage.h"
 
-#include "esp_io_expander_tca95xx_16bit.h"
-#include "driver/gpio.h"
-
-#include "rs485_control.h"
-#include "mio_control.h"
-#include "update_rs485_mio_gpio_states.h"
-#include "indication.h"
-#include "gpio_expander.h"
+// QEMU build detection and conditional includes
+#ifdef CONFIG_ETH_USE_OPENETH
+    #include "wifi_qemu_mock.h"
+    // For QEMU, we disable hardware-specific components
+    #define QEMU_BUILD                  1
+    #define ENABLE_GPIO_EXPANDER        0
+    #define ENABLE_RS485_CONTROL        0
+    #define ENABLE_MIO_CONTROL          0
+    #define ENABLE_SYSTEM_VOLTAGE       0
+    #define ENABLE_CONFIG_BUTTON        0
+    #define ENABLE_INDICATION           0
+#else
+    #include "esp_io_expander_tca95xx_16bit.h"
+    #include "driver/gpio.h"
+    #include "rs485_control.h"
+    #include "mio_control.h"
+    #include "update_rs485_mio_gpio_states.h"
+    #include "indication.h"
+    #include "gpio_expander.h"
+    // For hardware builds, enable all components
+    #define QEMU_BUILD                  0
+    #define ENABLE_GPIO_EXPANDER        1
+    #define ENABLE_RS485_CONTROL        1
+    #define ENABLE_MIO_CONTROL          1
+    #define ENABLE_SYSTEM_VOLTAGE       1
+    #define ENABLE_CONFIG_BUTTON        1
+    #define ENABLE_INDICATION           1
+#endif
 
 static const char *TAG = "main";
 
@@ -40,7 +60,9 @@ static const char *TAG = "main";
 
 #define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS       5000
 
-static esp_io_expander_handle_t gpio_expander = NULL;
+#if (ENABLE_GPIO_EXPANDER)
+    static esp_io_expander_handle_t gpio_expander = NULL;
+#endif
 
 static void factory_reset(void)
 {
@@ -60,7 +82,13 @@ static void factory_reset(void)
 static void config_button_longpress_callback(unsigned press_time_ms)
 {
     ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
-    indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+
+    #if (ENABLE_INDICATION)
+        indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+    #else
+        ESP_LOGI(TAG, "LED indication disabled for QEMU build");
+    #endif
+
     factory_reset();
 }
 
@@ -274,7 +302,14 @@ static void init_wifi(void)
     char wifi_ssid[SETTING_ITEM_MAX_STR_LEN] = {0};
     ESP_ERROR_CHECK(setting_items_read(KEY_AP_SSID, wifi_ssid));
     wifi_ssid[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-    ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, wifi_ssid));
+
+    #if QEMU_BUILD
+        ESP_LOGI(TAG, "Initializing WiFi mock for QEMU");
+        ESP_ERROR_CHECK(wifi_init_apsta_qemu(&apsta_cfg, wifi_ssid));
+    #else
+        ESP_LOGI(TAG, "Initializing WiFi for hardware");
+        ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, wifi_ssid));
+    #endif
 
     snprintf(sys_info.wifi_mode, sizeof(sys_info.wifi_mode), "%s", wifi_mode_str);
     sys_info.wifi_enabled = (apsta_cfg.wifi_mode != WIFI_MODE_NULL);
@@ -365,20 +400,33 @@ void app_main(void)
 
     print_setting_items();
 
-    gpio_expander_init(&gpio_expander);
-    rs485_control_init(gpio_expander);
-    mio_control_init(gpio_expander);
+    #if (ENABLE_GPIO_EXPANDER)
+        gpio_expander_init(&gpio_expander);
+    #endif
 
-    indication_init(gpio_expander);
-    indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
+    #if (ENABLE_RS485_CONTROL)
+        rs485_control_init(gpio_expander);
+        update_rs485_control();
+    #endif
 
-    config_button_init();
-    config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
+    #if (ENABLE_MIO_CONTROL)
+        mio_control_init(gpio_expander);
+        update_io_bus_control();
+    #endif
 
-    system_voltage_init();
+    #if (ENABLE_INDICATION)
+        indication_init(gpio_expander);
+        indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
+    #endif
 
-    update_rs485_control();
-    update_io_bus_control();
+    #if (ENABLE_CONFIG_BUTTON)
+        config_button_init();
+        config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
+    #endif
+
+    #if (ENABLE_SYSTEM_VOLTAGE)
+        system_voltage_init();
+    #endif
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 

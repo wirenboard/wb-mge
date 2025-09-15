@@ -270,7 +270,7 @@ esp_err_t ota_update_post_handler(httpd_req_t *req)
     }
 
     // Perform OTA update
-    ota_result_t result;
+    ota_result_t result = {0};
     esp_err_t update_result = ota_update_from_http(req, &result);
 
     if (update_result != ESP_OK) {

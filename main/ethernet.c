@@ -6,19 +6,38 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_check.h"
-#include "driver/gpio.h"
 
+// QEMU build detection and conditional includes
+#ifdef CONFIG_ETH_USE_OPENETH
+    #define QEMU_BUILD 1
+    #include "ethernet_qemu.h"
+#else
+    #define QEMU_BUILD 0
+    #include "driver/gpio.h"
+#endif
+
+#if !QEMU_BUILD
 #define ETH_PHY_RTL8201     1
 #define ETH_MDC_GPIO        GPIO_NUM_23
 #define ETH_MDIO_GPIO       GPIO_NUM_18
 #define ETH_PHY_RST_GPIO    GPIO_NUM_5
 #define ETH_PHY_ADDR        0           // LED0, LED1 are pulled down
 #define ETH_EXT_CLK_GPIO    GPIO_NUM_0  // External clock on GPIO0
+#endif
 
+static const char *TAG = "ethernet";
 static esp_eth_handle_t s_eth_handle = NULL;
 
+#if QEMU_BUILD
 esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip, char * netif_hostname)
 {
+    ESP_LOGI(TAG, "Initializing Ethernet for QEMU environment");
+    return ethernet_init_qemu(eth_event_handler, static_ip, netif_hostname);
+}
+#else
+esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip, char * netif_hostname)
+{
+    ESP_LOGI(TAG, "Initializing Ethernet for hardware");
     esp_err_t err = ESP_OK;
 
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
@@ -104,6 +123,7 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
 
     return ESP_OK;
 }
+#endif
 
 esp_eth_handle_t ethernet_get_handle(void)
 {

@@ -50,9 +50,9 @@ DEFS += FIRMWARE_VERSION=$(VERSION)
 #######################################
 
 GIT_COMMIT ?= $(shell git rev-parse HEAD)
-GIT_HASH := $(shell echo $(GIT_COMMIT) | cut -c -7 )
+GIT_HASH := $(shell echo $(GIT_COMMIT) | cut -c 1-7)
 BRANCH_NAME ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
-GIT_BRANCH := $(shell echo $(BRANCH_NAME) | sed "s/\//_/")
+GIT_BRANCH := $(shell echo $(BRANCH_NAME) | $(SED) "s/\//_/g")
 GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
 
 DEFS += TARGET_PROJECT_NAME=$(TARGET)
@@ -70,6 +70,9 @@ RELEASE_FILE_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH
 
 UNITTESTS_DIRS += $(shell $(FIND) . -type d -name "*unittests*" 2>/dev/null)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
+
+# C source files for coverage measurement (exclude frontend files)
+C_SOURCES = $(shell $(FIND) main -name "*.c" -not -path "*/frontend/*")
 
 #######################################
 # targets
@@ -112,6 +115,7 @@ clean:
 	@idf.py fullclean
 	@rm -rf $(BUILD_DIR)
 	@rm -rf $(RELEASE_DIR)
+	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
 	@rm -rf sdkconfig
 	@echo 'Cleaning unittests'
@@ -120,3 +124,11 @@ clean:
 			cd $$dir && $(MAKE) clean --no-print-directory; cd -; \
 		fi; \
 	done
+
+.PHONY: all
+
+# Include coverage definitions and targets
+include unittests/build_common_coverage.mk
+
+# Include QEMU targets
+include qemu.mk
