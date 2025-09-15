@@ -30,20 +30,20 @@ VERSION := $(shell echo $(VERSION_STRING) | awk '/[0-9]+\.[0-9]+\.[0-9]+(\+wb[1-
 # global defines with version in different formats
 DEFS += FW_VERSION_STRING=$(VERSION)
 
-
 #######################################
 # git info
 #######################################
 
-GIT_HASH := $(shell git rev-parse HEAD | cut -c -7 )
-GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD | sed "s/\//_/")
+GIT_COMMIT ?= $(shell git rev-parse HEAD)
+GIT_HASH := $(shell echo $(GIT_COMMIT) | cut -c 1-7)
+BRANCH_NAME ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+GIT_BRANCH := $(shell echo $(BRANCH_NAME) | $(SED) "s/\//_/g")
 GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
 GIT_INFO := $(shell echo "\\\"$(GIT_INFO)\\\"")
 
 TARGET_GIT_INFO := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH))
 
 DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
-
 
 #######################################
 # unittests
@@ -52,6 +52,8 @@ DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
 UNITTESTS_DIRS += $(shell $(FIND) . -type d | $(GREP) unittests)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
+# C source files for coverage measurement (exclude frontend files)
+C_SOURCES = $(shell $(FIND) main -name "*.c" -not -path "*/frontend/*")
 
 #######################################
 # targets
@@ -121,6 +123,7 @@ build-idf-project:
 clean:
 	idf.py fullclean
 	rm -rf build
+	rm -rf $(COVERAGE_REPORT_DIR)
 	rm -rf main/frontend/dist
 	rm -rf sdkconfig
 	@for dir in $(UNITTESTS_DIRS); do \
@@ -134,3 +137,6 @@ clean-qemu:
 	rm -rf build
 
 .PHONY: all build-qemu build-idf-project-qemu qemu-flash qemu-monitor qemu-run clean-qemu
+
+# Include coverage definitions and targets
+include unittests/build_common_coverage.mk

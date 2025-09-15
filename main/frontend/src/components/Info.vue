@@ -25,6 +25,7 @@ defineProps<{ text: string; severity?: 'info' | 'error' }>();
   align-items: center;
   gap: 4px;
   width: 100%;
+  white-space: break-spaces;
 }
 
 .info-icon {

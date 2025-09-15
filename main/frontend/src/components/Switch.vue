@@ -13,7 +13,7 @@ const value = defineModel<boolean>();
       type="checkbox"
       :checked="value"
       :aria-label="ariaLabel"
-      @change="(ev: any) => value = ev.target.checked"
+      @change="(ev: Event) => value = (ev.target as HTMLInputElement).checked"
     />
     <span class="toggle">
       <span class="switch" />

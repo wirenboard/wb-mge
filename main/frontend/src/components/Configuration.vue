@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
+import type { Settings } from '@/common/types';
 import Button from '@/components/Button.vue';
 import { downloadFile } from '@/utils/downloadFile';
 
@@ -24,7 +25,7 @@ const downloadSettings = () => {
 const handleFileChange = () => {
   const reader = new FileReader();
   reader.onload = async () => {
-    await updateSettings(JSON.parse(reader.result as string));
+    await updateSettings(JSON.parse(reader.result as string) as Settings);
     fileInput.value!.value = null;
   };
   reader.readAsText(fileInput.value.files[0]);

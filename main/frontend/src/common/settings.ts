@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import { useAlerts } from '@/common/alert';
-import { Settings } from '@/common/types';
+import type { DeepPartial, Settings, UpdateSettingsResponse } from '@/common/types';
 import { api } from '@/utils/api';
 
 const isDeepEqual = (a: any, b: any): boolean => {
@@ -41,26 +41,16 @@ export const useSettings = () => {
     });
   };
 
-  const updateSettings = async (body: any) => {
+  const updateSettings = async (json: DeepPartial<Settings>) => {
     isLoading.value = true;
-    return api('settings', body).then(async (res: any) => {
-      let invalidFieldsText = '';
-      const invalidFields = Object.keys(res).filter(key => !res[key]);
-      if (invalidFields.length) {
-        invalidFields.forEach((field, i) => {
-          invalidFieldsText += field;
-          if (i !== invalidFields.length - 1) {
-            invalidFieldsText += ', ';
-          }
-        });
-        showAlert('invalid_fields', { type: 'success', interpolation: invalidFieldsText });
-      } else {
+    return api<UpdateSettingsResponse>('settings', { method: 'POST', json })
+      .then(async () => {
         showAlert('data_updated', { type: 'success' });
-      }
-    }).finally(async () => {
-      isLoading.value = false;
-      await refresh();
-    });
+      })
+      .finally(async () => {
+        isLoading.value = false;
+        await refresh();
+      });
   };
 
   return {
