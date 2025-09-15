@@ -26,9 +26,9 @@ set(COMPONENT_SRCS "main.c"
 if(CONFIG_ETH_USE_OPENETH)
     # QEMU build - add QEMU-specific files only
     set(CONDITIONAL_SRCS
-        "ethernet_qemu.c"
-        "wifi_qemu_mock.c"
-        "hardware_mocks_qemu.c")
+        "qemu/ethernet_qemu.c"
+        "qemu/wifi_qemu_mock.c"
+        "qemu/hardware_mocks_qemu.c")
     message(STATUS "Building for QEMU - including QEMU-specific files only")
 else()
     # Hardware build - add hardware-specific files only
@@ -50,6 +50,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                         INCLUDE_DIRS "."
                             "bridge"
                             "indication"
+                            "qemu"
                         EMBED_TXTFILES
                             frontend/dist/favicon.webp.gz
                             frontend/dist/index.css.gz
