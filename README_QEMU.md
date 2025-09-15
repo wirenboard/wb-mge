@@ -2,6 +2,9 @@
 
 ## 🚀 Quick Start
 
+Install QEMU:
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/tools/qemu.html
+
 Run the WB-MGE firmware in QEMU with web access:
 
 ```bash
