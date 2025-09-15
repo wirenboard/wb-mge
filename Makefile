@@ -98,5 +98,3 @@ include unittests/build_common_coverage.mk
 
 # Include QEMU targets
 include qemu.mk
-	@echo ""
-	@echo "Quick start: make qemu-web"
