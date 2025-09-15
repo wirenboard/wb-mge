@@ -1,4 +1,3 @@
-
 TARGET := MGE
 
 #######################################
@@ -92,5 +91,10 @@ clean:
 		fi; \
 	done
 
+.PHONY: all
+
 # Include coverage definitions and targets
 include unittests/build_common_coverage.mk
+
+# Include QEMU targets
+include qemu.mk
