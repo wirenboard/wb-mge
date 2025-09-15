@@ -2,6 +2,7 @@
 #include "console_log.h"
 
 #include "array_size.h"
+#include "config.h"
 #include "esp_log.h"
 #include "ram_storage.h"
 #include "setting_items.h"
@@ -17,22 +18,119 @@ setting_storage_iface_t test_storage = {
     .read_str = rams_read_str,
 };
 
-static int mock_storage_read_error_code = ESP_OK;
-static int mock_storage_write_error_code = ESP_OK;
+typedef struct {
+    const char *key;
+    const char *default_value;
+    setting_item_type_t type;
+} mock_setting_item_t;
 
-static int mock_storage_read_with_error(const char* key, char* value)
-{
-    (void)key;
-    (void)value;
-    return mock_storage_read_error_code;
-}
+const mock_setting_item_t expected_items[] = {
+    {"hostname", "WB-MGE", SETTING_ITEM_TYPE_STRING},
+    {"login", "admin", SETTING_ITEM_TYPE_STRING},
+    {"pass", "admin", SETTING_ITEM_TYPE_STRING},
+    {"web_port", "80", SETTING_ITEM_TYPE_INT},
+    {"io_bus", "true", SETTING_ITEM_TYPE_BOOL},
+    {"vout", "true", SETTING_ITEM_TYPE_BOOL},
 
-static int mock_storage_write_with_error(const char* key, const char* value)
-{
-    (void)key;
-    (void)value;
-    return mock_storage_write_error_code;
-}
+    {"wifi_mode", "ap", SETTING_ITEM_TYPE_STRING},
+    {"ap_auth", "open", SETTING_ITEM_TYPE_STRING},
+    {"sta_auth", "open", SETTING_ITEM_TYPE_STRING},
+    {"ap_ssid", "WB-MGE", SETTING_ITEM_TYPE_STRING},
+    {"ap_pass", "", SETTING_ITEM_TYPE_STRING},
+    {"ap_ip_static", "192.168.5.1", SETTING_ITEM_TYPE_STRING},
+    {"ap_mask_static", "255.255.255.0", SETTING_ITEM_TYPE_STRING},
+    {"ap_gw_static", "192.168.5.1", SETTING_ITEM_TYPE_STRING},
+    {"sta_ssid", "", SETTING_ITEM_TYPE_STRING},
+    {"sta_pass", "", SETTING_ITEM_TYPE_STRING},
+    {"sta_dhcpc", "true", SETTING_ITEM_TYPE_BOOL},
+    {"sta_ip_static", "192.168.1.7", SETTING_ITEM_TYPE_STRING},
+    {"sta_mask_static", "255.255.255.0", SETTING_ITEM_TYPE_STRING},
+    {"sta_gw_static", "192.168.1.1", SETTING_ITEM_TYPE_STRING},
+
+    {"eth_ip_static", "192.168.0.7", SETTING_ITEM_TYPE_STRING},
+    {"eth_mask_static", "255.255.255.0", SETTING_ITEM_TYPE_STRING},
+    {"eth_gw_static", "192.168.0.1", SETTING_ITEM_TYPE_STRING},
+    {"eth_dhcpc", "true", SETTING_ITEM_TYPE_BOOL},
+
+    {"baudrate_1", "9600", SETTING_ITEM_TYPE_INT},
+    {"stopbits_1", "2", SETTING_ITEM_TYPE_STRING},
+    {"parity_1", "none", SETTING_ITEM_TYPE_STRING},
+    {"databits_1", "8", SETTING_ITEM_TYPE_STRING},
+    {"485_term_1", "true", SETTING_ITEM_TYPE_BOOL},
+    {"485_fail_safe_1", "true", SETTING_ITEM_TYPE_BOOL},
+    {"bridge_mode_1", "server", SETTING_ITEM_TYPE_STRING},
+    {"bridge_port_1", "502", SETTING_ITEM_TYPE_INT},
+    {"bridge_ip_1", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
+    {"bridge_modbus_1", "false", SETTING_ITEM_TYPE_BOOL},
+
+    {"baudrate_2", "9600", SETTING_ITEM_TYPE_INT},
+    {"stopbits_2", "2", SETTING_ITEM_TYPE_STRING},
+    {"parity_2", "none", SETTING_ITEM_TYPE_STRING},
+    {"databits_2", "8", SETTING_ITEM_TYPE_STRING},
+    {"485_term_2", "true", SETTING_ITEM_TYPE_BOOL},
+    {"485_fail_safe_2", "true", SETTING_ITEM_TYPE_BOOL},
+    {"bridge_mode_2", "server", SETTING_ITEM_TYPE_STRING},
+    {"bridge_port_2", "503", SETTING_ITEM_TYPE_INT},
+    {"bridge_ip_2", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
+    {"bridge_modbus_2", "false", SETTING_ITEM_TYPE_BOOL},
+};
+
+const mock_setting_item_t setting_items[] = {
+    {KEY_HOSTNAME, BASE_HOSTNAME, SETTING_ITEM_TYPE_STRING},
+    {KEY_LOGIN, DEFAULT_LOGIN, SETTING_ITEM_TYPE_STRING},
+    {KEY_PASS, DEFAULT_PASS, SETTING_ITEM_TYPE_STRING},
+    {KEY_WEB_PORT, DEFAULT_WEB_PORT, SETTING_ITEM_TYPE_INT},
+    {KEY_IO_BUS_ENABLED, DEFAULT_IO_BUS_ENABLED, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_VOUT, DEFAULT_485_VOUT, SETTING_ITEM_TYPE_BOOL},
+
+    {KEY_WIFI_MODE, DEFAULT_WIFI_MODE, SETTING_ITEM_TYPE_STRING},
+    {KEY_WIFI_AUTH_AP, DEFAULT_WIFI_AUTH, SETTING_ITEM_TYPE_STRING},
+    {KEY_WIFI_AUTH_STA, DEFAULT_WIFI_AUTH, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_SSID, BASE_HOSTNAME, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_PASS, DEFAULT_AP_PASS, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_IP_STATIC, DEFAULT_AP_IP_STATIC, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_MASK_STATIC, DEFAULT_AP_MASK_STATIC, SETTING_ITEM_TYPE_STRING},
+    {KEY_AP_GW_STATIC, DEFAULT_AP_GW_STATIC, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_SSID, DEFAULT_STA_SSID, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_PASS, DEFAULT_STA_PASS, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_DHCPC, DEFAULT_STA_DHCPC, SETTING_ITEM_TYPE_BOOL},
+    {KEY_STA_IP_STATIC, DEFAULT_STA_IP_STATIC, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_MASK_STATIC, DEFAULT_STA_MASK_STATIC, SETTING_ITEM_TYPE_STRING},
+    {KEY_STA_GW_STATIC, DEFAULT_STA_GW_STATIC, SETTING_ITEM_TYPE_STRING},
+
+    {KEY_ETH_IP_STATIC, DEFAULT_ETH_IP_STATIC, SETTING_ITEM_TYPE_STRING},
+    {KEY_ETH_MASK_STATIC, DEFAULT_ETH_MASK_STATIC, SETTING_ITEM_TYPE_STRING},
+    {KEY_ETH_GW_STATIC, DEFAULT_ETH_GW_STATIC, SETTING_ITEM_TYPE_STRING},
+    {KEY_ETH_DHCPC, DEFAULT_ETH_DHCPC, SETTING_ITEM_TYPE_BOOL},
+
+    {KEY_BAUDRATE1, DEFAULT_BAUDRATE, SETTING_ITEM_TYPE_INT},
+    {KEY_STOPBITS1, DEFAULT_STOPBITS, SETTING_ITEM_TYPE_STRING},
+    {KEY_PARITY1, DEFAULT_PARITY, SETTING_ITEM_TYPE_STRING},
+    {KEY_DATABITS1, DEFAULT_DATABITS, SETTING_ITEM_TYPE_STRING},
+    {KEY_485_TERM_1, DEFAULT_485_TERM, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_FAIL_SAFE_1, DEFAULT_485_FAIL_SAFE, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BRIDGE_MODE1, DEFAULT_BRIDGE_MODE, SETTING_ITEM_TYPE_STRING},
+    {KEY_BRIDGE_PORT1, DEFAULT_BRIDGE_PORT, SETTING_ITEM_TYPE_INT},
+    {KEY_BRIDGE_IP1, DEFAULT_BRIDGE_IP, SETTING_ITEM_TYPE_STRING},
+    {KEY_BRIDGE_MB1, DEFAULT_BRIDGE_MB, SETTING_ITEM_TYPE_BOOL},
+
+    {KEY_BAUDRATE2, DEFAULT_BAUDRATE, SETTING_ITEM_TYPE_INT},
+    {KEY_STOPBITS2, DEFAULT_STOPBITS, SETTING_ITEM_TYPE_STRING},
+    {KEY_PARITY2, DEFAULT_PARITY, SETTING_ITEM_TYPE_STRING},
+    {KEY_DATABITS2, DEFAULT_DATABITS, SETTING_ITEM_TYPE_STRING},
+    {KEY_485_TERM_2, DEFAULT_485_TERM, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_FAIL_SAFE_2, DEFAULT_485_FAIL_SAFE, SETTING_ITEM_TYPE_BOOL},
+    {KEY_BRIDGE_MODE2, DEFAULT_BRIDGE_MODE, SETTING_ITEM_TYPE_STRING},
+    {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, SETTING_ITEM_TYPE_INT},
+    {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, SETTING_ITEM_TYPE_STRING},
+    {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, SETTING_ITEM_TYPE_BOOL},
+};
+
+const size_t expected_items_count = ARRAY_SIZE(expected_items);
+const size_t actual_count = ARRAY_SIZE(setting_items);
+
+const char* hostname_default = "WB-MGE-030405";
+const char* ap_pass_default = "0033752069";
 
 void esp_log_level_set(const char* tag, esp_log_level_t level)
 {
@@ -58,13 +156,105 @@ void tearDown(void)
 }
 
 // Тестируем инициализацию setting_items, write_str возвращает ошибку -> setting_items_init должен вернуть ошибку
-void test_setting_items_init_function(void) {
+void test_setting_items_init_function(void)
+{
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_init function");
     LOG_MESSAGE();
 
-    esp_err_t result = setting_items_init();
-    TEST_ASSERT_EQUAL_INT(ESP_FAIL, result);
+    TEST_ASSERT_EQUAL_INT(ESP_FAIL, setting_items_init());
+}
+
+// Тестируем, что при инициализации и отсутствии ключей в хранилище записываются значения по умолчанию
+void test_setting_items_init_with_storage(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_init_with_storage function");
+    LOG_MESSAGE();
+
+    rams_init();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT(ESP_OK, result);
+
+    for (size_t i = 0; i < SETTING_ITEMS_COUNT; i++) {
+        const char *key = setting_items_get_key_at(i);
+        TEST_ASSERT_NOT_NULL_MESSAGE(key, "Key should not be NULL");
+
+        char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+        result = setting_items_read(key, value);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Reading of setting should succeed");
+
+        if (strncmp(key, KEY_AP_PASS, SETTING_ITEM_MAX_STR_LEN) == 0) {
+            TEST_ASSERT_EQUAL_STRING_MESSAGE(
+                ap_pass_default,
+                value,
+                "The value read for ap_pass should match the expected default value"
+            );
+            continue;
+        } else if (strncmp(key, KEY_HOSTNAME, SETTING_ITEM_MAX_STR_LEN) == 0) {
+            TEST_ASSERT_EQUAL_STRING_MESSAGE(
+                hostname_default,
+                value,
+                "The value read for hostname should match the expected default value"
+            );
+            continue;
+        } else if (strncmp(key, KEY_AP_SSID, SETTING_ITEM_MAX_STR_LEN) == 0) {
+            TEST_ASSERT_EQUAL_STRING_MESSAGE(
+                hostname_default,
+                value,
+                "The value read for ap_ssid should match the expected default value"
+            );
+            continue;
+        }
+
+        for (size_t j = 0; j < expected_items_count; j++) {
+            if (strcmp(expected_items[j].key, key) == 0) {
+                TEST_ASSERT_EQUAL_STRING_MESSAGE(
+                    expected_items[j].default_value,
+                    value,
+                    "The value read should match the expected default value"
+                );
+                break;
+            }
+        }
+    }
+}
+
+// Тестируем содержимое массива setting_items
+void test_setting_items_array_contents(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items array contents");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        expected_items_count,
+        actual_count,
+        "The number of setting items should match the expected count"
+    );
+
+    for (size_t i = 0; i < expected_items_count; i++) {
+        bool found = false;
+        for (size_t j = 0; j < actual_count; j++) {
+            if (strcmp(expected_items[i].key, setting_items[j].key) == 0) {
+                if (strcmp(expected_items[i].default_value, setting_items[j].default_value) == 0) {
+                    if (expected_items[i].type == setting_items[j].type) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!found) {
+            char search_message[300];
+            snprintf(search_message, sizeof(search_message),
+                    "Setting item %s should have default value of %s type %d",
+                    expected_items[i].key, expected_items[i].default_value, expected_items[i].type
+            );
+            TEST_FAIL_MESSAGE(search_message);
+        }
+    }
 }
 
 // Тестируем, что нужные валидаторы вызываются для соответствующих настроек
@@ -258,36 +448,84 @@ void test_setting_items_save_error_conditions(void)
     );
 
     // Test 2: NULL value parameter
+    char read_buffer_before[128];
+    char read_buffer_after[128];
+    memset(read_buffer_before, 0, sizeof(read_buffer_before));
+    memset(read_buffer_after, 0, sizeof(read_buffer_after));
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        setting_items_read(valid_key, read_buffer_before),
+        "Should return ESP_OK for successful read"
+    );
+
+    mock_rams_write_str_called = false;
+
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         ESP_ERR_INVALID_ARG,
         setting_items_save(valid_key, NULL),
         "Should return ESP_ERR_INVALID_ARG for NULL value"
     );
 
+    TEST_ASSERT_FALSE_MESSAGE(mock_rams_write_str_called, "RAM storage write should not be called");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        setting_items_read(valid_key, read_buffer_after),
+        "Should return ESP_OK for successful read"
+    );
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(
+        read_buffer_before,
+        read_buffer_after,
+        "Value should remain unchanged after failed save with NULL value"
+    );
+
     // Test 3: Unknown/invalid key
+    mock_rams_write_str_called = false;
+
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         ESP_ERR_NOT_FOUND,
         setting_items_save(invalid_key, valid_value),
         "Should return ESP_ERR_NOT_FOUND for unknown key"
     );
 
+    TEST_ASSERT_FALSE_MESSAGE(mock_rams_write_str_called, "RAM storage write should not be called");
+
     // Test 4: Validator rejects the value
     mock_reset_validator_flags();
+    mock_rams_write_str_called = false;
+    memset(read_buffer_before, 0, sizeof(read_buffer_before));
+    memset(read_buffer_after, 0, sizeof(read_buffer_after));
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        setting_items_read(valid_key, read_buffer_before),
+        "Should return ESP_OK for successful read"
+    );
+
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         ESP_ERR_INVALID_ARG,
         setting_items_save(valid_key, invalid_value),
         "Should return ESP_ERR_INVALID_ARG when validator rejects value"
     );
+
+    TEST_ASSERT_FALSE_MESSAGE(mock_rams_write_str_called, "RAM storage write should not be called");
     TEST_ASSERT_TRUE_MESSAGE(mock_validate_hostname_called, "Validator should be called even when it fails");
 
-    // Test storage write error
-    setting_storage_iface_t error_storage = {
-        .has_key = rams_has_key,
-        .write_str = mock_storage_write_with_error,
-        .read_str = rams_read_str,
-    };
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        setting_items_read(valid_key, read_buffer_after),
+        "Should return ESP_OK for successful read"
+    );
 
-    setting_items_init_with_storage(&error_storage);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(
+        read_buffer_before,
+        read_buffer_after,
+        "Value should remain unchanged after failed save with invalid value"
+    );
+
+    // Test 5: Storage write error
     mock_reset_validator_flags();
     mock_storage_write_error_code = ESP_ERR_NO_MEM;
 
@@ -335,7 +573,6 @@ void test_setting_items_read_error_conditions(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_read error conditions");
     LOG_MESSAGE();
 
-
     // Valid parameters for comparison
     const char* valid_key = KEY_HOSTNAME;
     const char* invalid_key = "nonexistent_key";
@@ -363,38 +600,19 @@ void test_setting_items_read_error_conditions(void)
     );
 
     // Test 4: Storage read error
-    setting_storage_iface_t error_storage = {
-        .has_key = rams_has_key,
-        .write_str = rams_write_str,
-        .read_str = mock_storage_read_with_error,
-    };
-
-    setting_items_init_with_storage(&error_storage);
-
     mock_storage_read_error_code = ESP_ERR_NO_MEM;
     memset(read_buffer, 0, sizeof(read_buffer));
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         ESP_OK,
         setting_items_read(valid_key, read_buffer),
-        "Should return ESP_OK even when storage returns ESP_ERR_NO_MEM"
-    );
-    TEST_ASSERT_TRUE_MESSAGE(
-        strlen(read_buffer) > 0,
-        "Should return default value"
+        "Should return ESP_OK even when storage returns error"
     );
 
-    mock_storage_read_error_code = ESP_ERR_NOT_FOUND;
-    memset(read_buffer, 0, sizeof(read_buffer));
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        ESP_OK,
-        setting_items_read(valid_key, read_buffer),
-        "Should return ESP_OK when storage returns ESP_ERR_NOT_FOUND"
-    );
-    TEST_ASSERT_TRUE_MESSAGE(
-        strlen(read_buffer) > 0,
-        "Should return default value when key is not found in storage"
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(
+        hostname_default,
+        read_buffer,
+        "Should return default value when storage read fails"
     );
 
     mock_storage_read_error_code = ESP_OK;
@@ -510,6 +728,10 @@ void test_setting_items_read_bool(void)
     // Test 4: Test boolean key that defaults to false
     read_value = setting_items_read_bool(KEY_BRIDGE_MB1);
     TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return default bridge_modbus_1 value (false) from default_value");
+
+    // Test 5: Test boolean key that defaults to true
+    read_value = setting_items_read_bool(KEY_485_TERM_1);
+    TEST_ASSERT_TRUE_MESSAGE(read_value, "Should return default 485_term_1 value (true) from default_value");
 }
 
 // Тестируем функцию setting_items_save_int
@@ -559,11 +781,11 @@ void test_setting_items_save_bool(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_ERR_NOT_FOUND, result, "Should return ESP_ERR_NOT_FOUND for unknown key");
 
     // Test 3: Save true value to boolean setting
-    result = setting_items_save_bool(KEY_IO_BUS_ENABLED, true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should successfully save true value");
+    result = setting_items_save_bool(KEY_BRIDGE_MB1, false);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should successfully save false value");
 
-    read_value = setting_items_read_bool(KEY_IO_BUS_ENABLED);
-    TEST_ASSERT_TRUE_MESSAGE(read_value, "Should read back true value");
+    read_value = setting_items_read_bool(KEY_BRIDGE_MB1);
+    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should read back false value");
 
     // Test 4: Save false value to boolean setting
     result = setting_items_save_bool(KEY_485_VOUT, false);
@@ -648,6 +870,8 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_setting_items_init_function);
+    RUN_TEST(test_setting_items_init_with_storage);
+    RUN_TEST(test_setting_items_array_contents);
     RUN_TEST(test_authentication_validators);
     RUN_TEST(test_port_validators);
     RUN_TEST(test_ip_validators);

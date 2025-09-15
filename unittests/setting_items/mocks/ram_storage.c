@@ -14,6 +14,11 @@ typedef struct {
     char value[MAX_STR_LEN];
 } storage_item_t;
 
+bool mock_rams_write_str_called = false;
+
+int mock_storage_read_error_code = ESP_OK;
+int mock_storage_write_error_code = ESP_OK;
+
 static storage_item_t storage[MAX_ITEM_NUM];
 
 void rams_init()
@@ -22,6 +27,7 @@ void rams_init()
         storage[i].key[0] = '\0';
         storage[i].value[0] = '\0';
     }
+    mock_rams_write_str_called = false;
 }
 
 bool rams_has_key(const char* key)
@@ -38,6 +44,12 @@ bool rams_has_key(const char* key)
 
 int rams_write_str(const char* key, const char* value)
 {
+    mock_rams_write_str_called = true;
+
+    if (mock_storage_write_error_code != ESP_OK) {
+        return mock_storage_write_error_code;
+    }
+
     if (!key || !value) return ESP_ERR_INVALID_ARG;
 
     // Try to find existing key first
@@ -64,6 +76,10 @@ int rams_write_str(const char* key, const char* value)
 
 int rams_read_str(const char* key, char* value)
 {
+    if (mock_storage_read_error_code != ESP_OK) {
+        return mock_storage_read_error_code;
+    }
+
     if (!key || !value) return ESP_ERR_INVALID_ARG;
 
     for (int i = 0; i < MAX_ITEM_NUM; i++) {

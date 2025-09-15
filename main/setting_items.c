@@ -270,21 +270,12 @@ esp_err_t setting_items_read(const char *key, char *value)
 
     esp_err_t result = storage_iface->read_str(key, value);
     if (result != ESP_OK) {
-        // Use default value if not found in storage
-        if (result == ESP_ERR_NOT_FOUND) {
-            const char *default_value = get_setting_default_value(item);
+        // Use default value
+        const char *default_value = get_setting_default_value(item);
 
-            strncpy(value, default_value, SETTING_ITEM_MAX_STR_LEN - 1);
-            value[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-            ESP_LOGW(TAG, "Using default value for %s: %s", key, value);
-            return ESP_OK;
-        }
-        ESP_LOGE(TAG, "Failed to read setting %s: %s", key, esp_err_to_name(result));
-
-        // For other errors, still try to use default value as fallback
-        strncpy(value, item->default_value, SETTING_ITEM_MAX_STR_LEN - 1);
+        strncpy(value, default_value, SETTING_ITEM_MAX_STR_LEN - 1);
         value[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-        ESP_LOGW(TAG, "Using default value for %s due to read error", key);
+        ESP_LOGW(TAG, "Reading error. Using default value for %s: %s", key, value);
         return ESP_OK;
     }
 
