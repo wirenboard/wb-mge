@@ -28,12 +28,15 @@
 static const char *TAG = "ethernet";
 static esp_eth_handle_t s_eth_handle = NULL;
 
+#if QEMU_BUILD
 esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip, char * netif_hostname)
 {
-#if QEMU_BUILD
     ESP_LOGI(TAG, "Initializing Ethernet for QEMU environment");
     return ethernet_init_qemu(eth_event_handler, static_ip, netif_hostname);
+}
 #else
+esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip, char * netif_hostname)
+{
     ESP_LOGI(TAG, "Initializing Ethernet for hardware");
     esp_err_t err = ESP_OK;
 
@@ -119,8 +122,8 @@ esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info
     }
 
     return ESP_OK;
-#endif
 }
+#endif
 
 esp_eth_handle_t ethernet_get_handle(void)
 {
