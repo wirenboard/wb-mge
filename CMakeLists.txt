@@ -12,7 +12,7 @@ idf_build_set_property(COMPILE_DEFINITIONS ESP_IDF_LWIP_HOOK_FILENAME=\"lwip_hoo
 
 # Set default project name if TARGET_GIT_INFO is not provided
 if(NOT DEFINED TARGET_GIT_INFO)
-    set(TARGET_GIT_INFO "mge_no_git_info")
+    set(TARGET_GIT_INFO "mge")
 endif()
 
 project(${TARGET_GIT_INFO})
