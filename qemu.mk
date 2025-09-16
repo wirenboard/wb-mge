@@ -14,7 +14,7 @@ qemu-flash-image: build-qemu
 	CONFIG_ETH_USE_OPENETH=1 idf.py -DSDKCONFIG=sdkconfig.qemu.minimal qemu || \
 	(cd build && python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin \
 	 --fill-flash-size=4MB --flash_mode dio --flash_freq 40m --flash_size 4MB \
-	 0x1000 bootloader/bootloader.bin 0x10000 mge.bin 0x8000 partition_table/partition-table.bin)
+	 0x1000 bootloader/bootloader.bin 0x10000 qemu_mge.bin 0x8000 partition_table/partition-table.bin)
 
 qemu-monitor: build-qemu
 	@echo "Starting QEMU monitor..."

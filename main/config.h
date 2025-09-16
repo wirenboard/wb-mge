@@ -51,7 +51,12 @@
 
 #elif defined(CONFIG_ETH_USE_OPENETH)
     // QEMU build
-    #define DEVICE_MODEL            "WB-MGE v.3"
+    #define DEVICE_MODEL            "QEMU WB-MGE v.3"
+
+#elif defined(__unittest_env__)
+    // Unit tests build
+    #define DEVICE_MODEL            "TEST WB-MGE v.3"
+
 #else
     #error "Unknown device signature"
 #endif

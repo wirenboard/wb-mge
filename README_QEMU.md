@@ -56,7 +56,7 @@ CONFIG_ETH_USE_OPENETH=1 idf.py build
 cd build
 python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin \
   --fill-flash-size=4MB --flash_mode dio --flash_freq 40m --flash_size 4MB \
-  0x1000 bootloader/bootloader.bin 0x10000 mge.bin 0x8000 partition_table/partition-table.bin
+  0x1000 bootloader/bootloader.bin 0x10000 qemu_mge.bin 0x8000 partition_table/partition-table.bin
 
 # Run QEMU with port forwarding
 ~/.espressif/tools/qemu-xtensa/esp_develop_9.0.0_20240606/qemu/bin/qemu-system-xtensa \

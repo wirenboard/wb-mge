@@ -20,7 +20,6 @@ int mock_auth_session_check_handler_called = 0;
 int mock_auth_logout_handler_called = 0;
 int mock_ota_update_post_handler_called = 0;
 int mock_info_get_handler_called = 0;
-int mock_info_post_handler_called = 0;
 int mock_settings_get_handler_called = 0;
 int mock_settings_post_handler_called = 0;
 int mock_cmd_post_handler_called = 0;
@@ -83,7 +82,6 @@ void mock_handlers_reset(void)
     mock_auth_logout_handler_called = 0;
     mock_ota_update_post_handler_called = 0;
     mock_info_get_handler_called = 0;
-    mock_info_post_handler_called = 0;
     mock_settings_get_handler_called = 0;
     mock_settings_post_handler_called = 0;
     mock_cmd_post_handler_called = 0;

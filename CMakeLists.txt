@@ -17,8 +17,8 @@ idf_build_set_property(INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/main/lwi
 idf_build_set_property(COMPILE_DEFINITIONS ESP_IDF_LWIP_HOOK_FILENAME=\"lwip_hook.h\" APPEND)
 
 # Set default project name if TARGET_PROJECT_NAME is not provided
-if(NOT DEFINED TARGET_PROJECT_NAME)
-    set(TARGET_PROJECT_NAME "mge")
+if($ENV{CONFIG_ETH_USE_OPENETH})
+    set(TARGET_PROJECT_NAME "qemu_mge")
 endif()
 
 project(${TARGET_PROJECT_NAME})
