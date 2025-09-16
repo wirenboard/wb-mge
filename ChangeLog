@@ -4,10 +4,13 @@
     * added:    device signature, firmware version, git info, device name storage at fixed offset in .bin image
     * added:    static ip / dhcp setting for wifi sta mode
     * added:    auth sessions storage in nvs
-    * added:    support wifi scan in ap mode
+    * added:    support wifi scan in all modes
     * added:    some new fields in settings and info structures
     * fix:      web password saving
     * fix:      wifi scan results (scan process was interrupted on first wifi_scan/results request)
+    * fix:      wifi sta in client mode now always tries to connect to specified access point
+    * delete:   POST /info request
+    * improve:  logs in diferent modules
 
 2025-09-09 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
