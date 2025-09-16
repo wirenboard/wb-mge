@@ -68,7 +68,7 @@ RELEASE_FILE_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH
 # unittests
 #######################################
 
-UNITTESTS_DIRS += $(shell $(FIND) . -type d -name "*unittests*" 2>/dev/null)
+UNITTESTS_DIRS += $(shell $(FIND) . -type d | $(GREP) unittests)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
 # C source files for coverage measurement (exclude frontend files)
@@ -91,12 +91,12 @@ $(UNITTESTS_TARGETS):
 build-frontend:
 	@echo 'Building frontend'
 	@{ \
-		set -e; \
-		cd main/frontend/; \
-		npm install;\
-		npm run build; \
-		find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
-		find dist/ -type f -exec gzip -k {} \; ; \
+		set -e && \
+		cd main/frontend/ && \
+		npm install &&\
+		npm run build && \
+		$(FIND) dist/ -type f -name "*.gz" -exec rm -f {} \; && \
+		$(FIND) dist/ -type f -exec gzip -k {} \; ; \
 	}
 
 build-idf-project:
@@ -125,7 +125,7 @@ clean:
 		fi; \
 	done
 
-.PHONY: all
+.PHONY: all unittests build-frontend build-idf-project prepare_release clean
 
 # Include coverage definitions and targets
 include unittests/build_common_coverage.mk
