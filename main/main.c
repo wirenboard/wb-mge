@@ -48,21 +48,22 @@ static const char *TAG = "main";
     static esp_io_expander_handle_t gpio_expander = NULL;
 #endif
 
-static void factory_reset(void)
-{
-    ESP_LOGI(TAG, "Factory reset initiated!");
-
-    // Stop blinking to indicate factory reset in progress
-    // TODO: Set specific LED pattern for factory reset
-
-    ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
-    ESP_ERROR_CHECK(setting_items_set_defaults(false));
-
-    ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
-    ESP_LOGI(TAG, "Device will continue running with default configuration.");
-}
 
 #if (!QEMU_BUILD)
+    static void factory_reset(void)
+    {
+        ESP_LOGI(TAG, "Factory reset initiated!");
+
+        // Stop blinking to indicate factory reset in progress
+        // TODO: Set specific LED pattern for factory reset
+
+        ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
+        ESP_ERROR_CHECK(setting_items_set_defaults(false));
+
+        ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
+        ESP_LOGI(TAG, "Device will continue running with default configuration.");
+    }
+
     // Button long press callback for factory reset
     static void config_button_longpress_callback(unsigned press_time_ms)
     {
