@@ -11,8 +11,8 @@ Run the WB-MGE firmware in QEMU with web access:
 ./run_qemu_with_web.sh
 ```
 
-**Web Interface:** http://localhost:8080  
-**Login:** admin / admin
+**Web Interface:** http://localhost:8080
+**Login / Password:** admin / admin
 
 ## 📋 What It Does
 
@@ -73,10 +73,11 @@ python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin \
 
 Once running, access these endpoints:
 - **Main Interface:** http://localhost:8080
-- **System Info:** http://localhost:8080/api/info
-- **Settings:** http://localhost:8080/api/settings
-- **WiFi Scan:** http://localhost:8080/api/wifi/scan
-- **Firmware Update:** http://localhost:8080/api/update
+- **System Info:** http://localhost:8080/info
+- **Settings:** http://localhost:8080/settings
+- **WiFi Scan Start:** http://localhost:8080/wifi_scan/start
+- **WiFi Scan Results:** http://localhost:8080/wifi_scan/results
+- **Firmware Update:** http://localhost:8080/update
 
 ## 🔍 Troubleshooting
 

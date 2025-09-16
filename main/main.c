@@ -23,17 +23,9 @@
 #include "config_button.h"
 #include "system_voltage.h"
 
-// QEMU build detection and conditional includes
-#ifdef CONFIG_ETH_USE_OPENETH
+// QEMU build conditional includes
+#if (QEMU_BUILD)
     #include "wifi_qemu_mock.h"
-    // For QEMU, we disable hardware-specific components
-    #define QEMU_BUILD                  1
-    #define ENABLE_GPIO_EXPANDER        0
-    #define ENABLE_RS485_CONTROL        0
-    #define ENABLE_MIO_CONTROL          0
-    #define ENABLE_SYSTEM_VOLTAGE       0
-    #define ENABLE_CONFIG_BUTTON        0
-    #define ENABLE_INDICATION           0
 #else
     #include "esp_io_expander_tca95xx_16bit.h"
     #include "driver/gpio.h"
@@ -42,14 +34,6 @@
     #include "update_rs485_mio_gpio_states.h"
     #include "indication.h"
     #include "gpio_expander.h"
-    // For hardware builds, enable all components
-    #define QEMU_BUILD                  0
-    #define ENABLE_GPIO_EXPANDER        1
-    #define ENABLE_RS485_CONTROL        1
-    #define ENABLE_MIO_CONTROL          1
-    #define ENABLE_SYSTEM_VOLTAGE       1
-    #define ENABLE_CONFIG_BUTTON        1
-    #define ENABLE_INDICATION           1
 #endif
 
 static const char *TAG = "main";
@@ -60,7 +44,7 @@ static const char *TAG = "main";
 
 #define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS       5000
 
-#if (ENABLE_GPIO_EXPANDER)
+#if (!QEMU_BUILD)
     static esp_io_expander_handle_t gpio_expander = NULL;
 #endif
 
@@ -78,19 +62,21 @@ static void factory_reset(void)
     ESP_LOGI(TAG, "Device will continue running with default configuration.");
 }
 
-// Button long press callback for factory reset
-static void config_button_longpress_callback(unsigned press_time_ms)
-{
-    ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
+#if (!QEMU_BUILD)
+    // Button long press callback for factory reset
+    static void config_button_longpress_callback(unsigned press_time_ms)
+    {
+        ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
 
-    #if (ENABLE_INDICATION)
-        indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
-    #else
-        ESP_LOGI(TAG, "LED indication disabled for QEMU build");
-    #endif
+        #if (ENABLE_INDICATION)
+            indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+        #else
+            ESP_LOGI(TAG, "LED indication disabled for QEMU build");
+        #endif
 
-    factory_reset();
-}
+        factory_reset();
+    }
+#endif
 
 
 // Выводит все настройки в лог.
@@ -400,33 +386,18 @@ void app_main(void)
 
     print_setting_items();
 
-    #if (ENABLE_GPIO_EXPANDER)
+    #if (!QEMU_BUILD)
         gpio_expander_init(&gpio_expander);
-    #endif
-
-    #if (ENABLE_RS485_CONTROL)
         rs485_control_init(gpio_expander);
         update_rs485_control();
-    #endif
-
-    #if (ENABLE_MIO_CONTROL)
         mio_control_init(gpio_expander);
         update_io_bus_control();
-    #endif
-
-    #if (ENABLE_INDICATION)
         indication_init(gpio_expander);
         indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
-    #endif
-
-    #if (ENABLE_CONFIG_BUTTON)
         config_button_init();
         config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
-    #endif
-
-    #if (ENABLE_SYSTEM_VOLTAGE)
         system_voltage_init();
-    #endif
+    #endif // QEMU_BUILD
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 

@@ -49,7 +49,7 @@
 #ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"
 
-#elif defined(CONFIG_ETH_USE_OPENETH)
+#elif QEMU_BUILD
     // QEMU build
     #define DEVICE_MODEL            "QEMU WB-MGE v.3"
 
