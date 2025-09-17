@@ -2,7 +2,6 @@
 #include <stdbool.h>
 
 bool mock_esp_read_mac_should_fail = false;
-bool mock_esp_read_mac_use_small_mac = false;
 
 esp_err_t esp_read_mac(uint8_t *mac, esp_mac_type_t type)
 {

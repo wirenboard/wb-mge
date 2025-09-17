@@ -14,7 +14,6 @@ setting_storage_iface_t test_storage = {
 };
 
 extern bool mock_esp_read_mac_should_fail;
-extern bool mock_esp_read_mac_use_small_mac;
 
 void setUp(void)
 {
