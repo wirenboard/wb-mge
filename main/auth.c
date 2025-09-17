@@ -8,7 +8,6 @@
 #include <string.h>
 #include <errno.h>
 #include "array_size.h"
-#include "nv_storage.h"
 
 
 #define AUTH_DEBUG_LOG_ENABLE   1               // TODO: Возможно, вынести в настройки
@@ -29,7 +28,10 @@ static session_buffer_t session_buffer = {
     .current_index = 0,
 };
 
-static const char* session_ids_key = "auth_sessions";
+// Backup session IDs buffer is used to restore sessions only
+// when reset reason is ESP_RST_SW (esp_restart() called)
+// Separate buffer is used to increase session search speed
+static RTC_NOINIT_ATTR uint32_t backup_session_ids[MAX_SESSIONS];
 
 
 static void defrag_session_buf(void)
@@ -54,27 +56,16 @@ static void defrag_session_buf(void)
 
 static void load_session_buf(void)
 {
-    size_t size = sizeof(session_buffer.session_ids);
-    esp_err_t ret = nvs_read_blob(session_ids_key, &session_buffer.session_ids[0], &size);
-    if ((ret != ESP_OK) || (size != sizeof(session_buffer.session_ids))) {
-        ESP_LOGW(TAG, "Unable to read session IDs from NVS");
-        memset(session_buffer.session_ids, 0, sizeof(session_buffer.session_ids));
-        session_buffer.current_index = 0;
-        return;
-    }
-
+    memcpy(&session_buffer.session_ids[0], &backup_session_ids[0], sizeof(session_buffer.session_ids));
     defrag_session_buf();
-    ESP_LOGD(TAG, "Session IDs was read from NVS");
+    ESP_LOGD(TAG, "Session IDs was read from backup buffer");
 }
 
 
 static void save_session_buf(void)
 {
-    esp_err_t ret = nvs_write_blob(session_ids_key, &session_buffer.session_ids[0], sizeof(session_buffer.session_ids));
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Unable to write session IDs to NVS");
-    }
-    ESP_LOGD(TAG, "Session IDs was saved to NVS");
+    memcpy(&backup_session_ids[0], &session_buffer.session_ids[0], sizeof(backup_session_ids));
+    ESP_LOGD(TAG, "Session IDs was saved to backup buffer");
 }
 
 
@@ -197,9 +188,18 @@ esp_err_t auth_init(void)
         esp_log_level_set(TAG, ESP_LOG_DEBUG);
     }
 
-    load_session_buf();
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    ESP_LOGD(TAG, "Reset reason: %d", reset_reason);
 
-    ESP_LOGI(TAG, "Authentication initialized");
+    // Load auth sessions only when restart initiated by esp_restart()
+    if (reset_reason == ESP_RST_SW) {
+        load_session_buf();
+        ESP_LOGI(TAG, "Saved auth sessions were loaded");
+    } else {
+        ESP_LOGI(TAG, "Auth sessions were reset");
+    }
+
+    ESP_LOGI(TAG, "Auth initialized");
     return ESP_OK;
 }
 
