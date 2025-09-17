@@ -4,6 +4,7 @@
 #include "auth.h"
 #include "update_rs485_mio_gpio_states.h"
 #include "array_size.h"
+#include "settings_update.h"
 
 #include <esp_log.h>
 #include <string.h>
@@ -345,6 +346,8 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
 
     update_rs485_control();
     update_io_bus_control();
+
+    settings_update();
 
     // Add success flag
     cJSON_AddBoolToObject(*response_json, "success", true);
