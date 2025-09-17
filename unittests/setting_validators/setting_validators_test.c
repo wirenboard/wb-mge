@@ -49,15 +49,14 @@ void test_validate_ssid(void)
     TEST_ASSERT_TRUE_MESSAGE(validate_ssid("WB-MGE"), "Simple SSID should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_ssid("wifi123"), "Alphanumeric SSID should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_ssid("test-wifi-01"), "SSID with hyphens should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_ssid(""), "Empty SSID should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_ssid("1234567890123456789012345678901"), "31-character SSID should be valid");
 
     // Invalid SSIDs
     TEST_ASSERT_FALSE_MESSAGE(validate_ssid(NULL), "NULL SSID should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ssid(""), "Empty SSID should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_ssid("12345678901234567890123456789012"), "32-character SSID should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi.network"), "SSID with dots should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi_network"), "SSID with underscores should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi network"), "SSID with spaces should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\tssid"), "SSID with tab should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\x7Fssid"), "SSID with extended ASCII should be invalid");
 }
 
 // Test validate_port function
@@ -184,12 +183,18 @@ void test_validate_ip(void)
     // Invalid IP addresses
     TEST_ASSERT_FALSE_MESSAGE(validate_ip(NULL), "NULL IP should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_ip(""), "Empty IP should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("-1.1.1.1"), "IP with negative first octet should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_ip("256.1.1.1"), "IP with octet > 255 should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_ip("192.168.1"), "Incomplete IP should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_ip("192.168.1.1.1"), "IP with extra octet should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_ip("192.168.-1.1"), "IP with negative octet should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("1.-1.1.1"), "IP with negative second octet should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("1.256.1.1"), "IP with second octet > 255 should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("1.1.-1.1"), "IP with negative third octet should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("1.1.256.1"), "IP with third octet > 255 should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("1.1.1.-1"), "IP with negative fourth octet should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("1.1.1.256"), "IP with fourth octet > 255 should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_ip("192.168.abc.1"), "IP with non-numeric octet should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_ip("192.168.1.1 "), "IP with trailing space should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("192.168.1"), "Incomplete IP should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ip("192.168.1.1.1"), "IP with extra octet should be invalid");
 }
 
 // Test validate_wifi_mode function

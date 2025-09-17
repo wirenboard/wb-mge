@@ -12,9 +12,6 @@
 
 #define SETTING_ITEMS_DEBUG_LOG_ENABLE      1           // TODO: Возможно, вынести в настройки
 
-#define MAX_HOSTNAME_LEN                    32
-#define MAX_SSID_LEN                        31          // In ESP-IDF there is ssid[32], terminating '\0' included
-
 static const char *TAG = "setting_items";
 
 typedef bool (*setting_validator_t)(const char *value);
@@ -391,6 +388,17 @@ esp_err_t setting_items_save_bool(const char *key, bool value)
         return setting_items_save(key, "true");
     } else {
         return setting_items_save(key, "false");
+    }
+}
+
+// Get default value for specified key from setting_items array
+const char *setting_items_get_default_value(const char *key)
+{
+    const setting_item_t *item = find_setting_item(key);
+    if (item) {
+        return item->default_value;
+    } else {
+        return NULL;
     }
 }
 

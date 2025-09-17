@@ -1,8 +1,18 @@
 #include "esp_mac.h"
+#include <stdbool.h>
+
+bool mock_esp_read_mac_should_fail = false;
+bool mock_esp_read_mac_use_small_mac = false;
 
 esp_err_t esp_read_mac(uint8_t *mac, esp_mac_type_t type)
 {
-    for (uint8_t i = 0; i < 6; i++) {
+    (void)type;
+
+    if (mock_esp_read_mac_should_fail) {
+        return ESP_FAIL;
+    }
+
+    for (int i = 0; i < 6; i++) {
         mac[i] = i;
     }
     return ESP_OK;

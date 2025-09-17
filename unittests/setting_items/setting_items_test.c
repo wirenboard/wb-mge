@@ -75,70 +75,10 @@ const mock_setting_item_t expected_items[] = {
     {"bridge_modbus_2", "false", SETTING_ITEM_TYPE_BOOL},
 };
 
-const mock_setting_item_t setting_items[] = {
-    {KEY_HOSTNAME, BASE_HOSTNAME, SETTING_ITEM_TYPE_STRING},
-    {KEY_LOGIN, DEFAULT_LOGIN, SETTING_ITEM_TYPE_STRING},
-    {KEY_PASS, DEFAULT_PASS, SETTING_ITEM_TYPE_STRING},
-    {KEY_WEB_PORT, DEFAULT_WEB_PORT, SETTING_ITEM_TYPE_INT},
-    {KEY_IO_BUS_ENABLED, DEFAULT_IO_BUS_ENABLED, SETTING_ITEM_TYPE_BOOL},
-    {KEY_485_VOUT, DEFAULT_485_VOUT, SETTING_ITEM_TYPE_BOOL},
-
-    {KEY_WIFI_MODE, DEFAULT_WIFI_MODE, SETTING_ITEM_TYPE_STRING},
-    {KEY_WIFI_AUTH_AP, DEFAULT_WIFI_AUTH, SETTING_ITEM_TYPE_STRING},
-    {KEY_WIFI_AUTH_STA, DEFAULT_WIFI_AUTH, SETTING_ITEM_TYPE_STRING},
-    {KEY_AP_SSID, BASE_HOSTNAME, SETTING_ITEM_TYPE_STRING},
-    {KEY_AP_PASS, DEFAULT_AP_PASS, SETTING_ITEM_TYPE_STRING},
-    {KEY_AP_IP_STATIC, DEFAULT_AP_IP_STATIC, SETTING_ITEM_TYPE_STRING},
-    {KEY_AP_MASK_STATIC, DEFAULT_AP_MASK_STATIC, SETTING_ITEM_TYPE_STRING},
-    {KEY_AP_GW_STATIC, DEFAULT_AP_GW_STATIC, SETTING_ITEM_TYPE_STRING},
-    {KEY_STA_SSID, DEFAULT_STA_SSID, SETTING_ITEM_TYPE_STRING},
-    {KEY_STA_PASS, DEFAULT_STA_PASS, SETTING_ITEM_TYPE_STRING},
-    {KEY_STA_DHCPC, DEFAULT_STA_DHCPC, SETTING_ITEM_TYPE_BOOL},
-    {KEY_STA_IP_STATIC, DEFAULT_STA_IP_STATIC, SETTING_ITEM_TYPE_STRING},
-    {KEY_STA_MASK_STATIC, DEFAULT_STA_MASK_STATIC, SETTING_ITEM_TYPE_STRING},
-    {KEY_STA_GW_STATIC, DEFAULT_STA_GW_STATIC, SETTING_ITEM_TYPE_STRING},
-
-    {KEY_ETH_IP_STATIC, DEFAULT_ETH_IP_STATIC, SETTING_ITEM_TYPE_STRING},
-    {KEY_ETH_MASK_STATIC, DEFAULT_ETH_MASK_STATIC, SETTING_ITEM_TYPE_STRING},
-    {KEY_ETH_GW_STATIC, DEFAULT_ETH_GW_STATIC, SETTING_ITEM_TYPE_STRING},
-    {KEY_ETH_DHCPC, DEFAULT_ETH_DHCPC, SETTING_ITEM_TYPE_BOOL},
-
-    {KEY_BAUDRATE1, DEFAULT_BAUDRATE, SETTING_ITEM_TYPE_INT},
-    {KEY_STOPBITS1, DEFAULT_STOPBITS, SETTING_ITEM_TYPE_STRING},
-    {KEY_PARITY1, DEFAULT_PARITY, SETTING_ITEM_TYPE_STRING},
-    {KEY_DATABITS1, DEFAULT_DATABITS, SETTING_ITEM_TYPE_STRING},
-    {KEY_485_TERM_1, DEFAULT_485_TERM, SETTING_ITEM_TYPE_BOOL},
-    {KEY_485_FAIL_SAFE_1, DEFAULT_485_FAIL_SAFE, SETTING_ITEM_TYPE_BOOL},
-    {KEY_BRIDGE_MODE1, DEFAULT_BRIDGE_MODE, SETTING_ITEM_TYPE_STRING},
-    {KEY_BRIDGE_PORT1, DEFAULT_BRIDGE_PORT, SETTING_ITEM_TYPE_INT},
-    {KEY_BRIDGE_IP1, DEFAULT_BRIDGE_IP, SETTING_ITEM_TYPE_STRING},
-    {KEY_BRIDGE_MB1, DEFAULT_BRIDGE_MB, SETTING_ITEM_TYPE_BOOL},
-
-    {KEY_BAUDRATE2, DEFAULT_BAUDRATE, SETTING_ITEM_TYPE_INT},
-    {KEY_STOPBITS2, DEFAULT_STOPBITS, SETTING_ITEM_TYPE_STRING},
-    {KEY_PARITY2, DEFAULT_PARITY, SETTING_ITEM_TYPE_STRING},
-    {KEY_DATABITS2, DEFAULT_DATABITS, SETTING_ITEM_TYPE_STRING},
-    {KEY_485_TERM_2, DEFAULT_485_TERM, SETTING_ITEM_TYPE_BOOL},
-    {KEY_485_FAIL_SAFE_2, DEFAULT_485_FAIL_SAFE, SETTING_ITEM_TYPE_BOOL},
-    {KEY_BRIDGE_MODE2, DEFAULT_BRIDGE_MODE, SETTING_ITEM_TYPE_STRING},
-    {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, SETTING_ITEM_TYPE_INT},
-    {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, SETTING_ITEM_TYPE_STRING},
-    {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, SETTING_ITEM_TYPE_BOOL},
-};
-
-#define SETTING_ITEMS_COUNT                         (ARRAY_SIZE(setting_items))
-
-const size_t expected_items_count = ARRAY_SIZE(expected_items);
-const size_t actual_count = ARRAY_SIZE(setting_items);
+#define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))
 
 const char* hostname_default = "WB-MGE-030405";
 const char* ap_pass_default = "0033752069";
-
-void esp_log_level_set(const char* tag, esp_log_level_t level)
-{
-    (void)tag;
-    (void)level;
-}
 
 void setUp(void)
 {
@@ -147,6 +87,9 @@ void setUp(void)
     LOG_MESSAGE();
 
     mock_reset_validator_flags();
+
+    mock_storage_read_error_code = ESP_OK;
+    mock_storage_write_error_code = ESP_OK;
 
     rams_init();
     setting_items_init_with_storage(&test_storage);
@@ -210,7 +153,7 @@ void test_setting_items_init_with_storage(void)
             continue;
         }
 
-        for (size_t j = 0; j < expected_items_count; j++) {
+        for (size_t j = 0; j < SETTING_ITEMS_COUNT; j++) {
             if (strcmp(expected_items[j].key, key) == 0) {
                 if (strcmp(expected_items[j].default_value, value) == 0) {
                     break;
@@ -221,7 +164,7 @@ void test_setting_items_init_with_storage(void)
                 }
                 break;
             } else {
-                if (j == expected_items_count - 1) {
+                if (j == SETTING_ITEMS_COUNT - 1) {
                     char log_message[TEST_BUFFER_SIZE];
                     snprintf(log_message, sizeof(log_message), "Key %s not found in expected_items array", key);
                     TEST_FAIL_MESSAGE(log_message);
@@ -238,18 +181,16 @@ void test_setting_items_array_contents(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items array contents");
     LOG_MESSAGE();
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        expected_items_count,
-        actual_count,
-        "The number of setting items should match the expected count"
-    );
+    size_t actual_items_count = setting_items_get_count();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEMS_COUNT, actual_items_count, "Items count should match expected");
 
-    for (size_t i = 0; i < expected_items_count; i++) {
+    for (size_t i = 0; i < SETTING_ITEMS_COUNT; i++) {
         bool found = false;
-        for (size_t j = 0; j < actual_count; j++) {
-            if (strcmp(expected_items[i].key, setting_items[j].key) == 0) {
-                if (strcmp(expected_items[i].default_value, setting_items[j].default_value) == 0) {
-                    if (expected_items[i].type == setting_items[j].type) {
+        for (size_t j = 0; j < actual_items_count; j++) {
+            const char *key = setting_items_get_key_at(j);
+            if (strcmp(expected_items[i].key, key) == 0) {
+                if (strcmp(expected_items[i].default_value, setting_items_get_default_value(key)) == 0) {
+                    if (expected_items[i].type == setting_items_get_type(key)) {
                         found = true;
                         break;
                     }
@@ -259,8 +200,9 @@ void test_setting_items_array_contents(void)
         if (!found) {
             char search_message[TEST_BUFFER_SIZE];
             snprintf(search_message, sizeof(search_message),
-                    "Setting item %s should have default value of %s type %d",
-                    expected_items[i].key, expected_items[i].default_value, expected_items[i].type
+                    "Setting item %s should have default value of %s type %s",
+                    expected_items[i].key, expected_items[i].default_value,
+                    setting_items_type_to_string(expected_items[i].type)
             );
             TEST_FAIL_MESSAGE(search_message);
         }
@@ -545,8 +487,6 @@ void test_setting_items_save_error_conditions(void)
         "Should return ESP_ERR_NO_MEM when storage write fails"
     );
     TEST_ASSERT_TRUE_MESSAGE(mock_validate_hostname_called, "Validator should be called even when write fails");
-
-    mock_storage_write_error_code = ESP_OK;
 }
 
 // Тестируем успешное чтение настроек
@@ -624,19 +564,6 @@ void test_setting_items_read_error_conditions(void)
         read_buffer,
         "Should return default value when storage read fails"
     );
-
-    mock_storage_read_error_code = ESP_OK;
-}
-
-// Тестируем функцию setting_items_get_count
-void test_setting_items_get_count(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_get_count function");
-    LOG_MESSAGE();
-
-    size_t count = setting_items_get_count();
-    TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEMS_COUNT, count, "Should return correct number of setting items");
 }
 
 // Тестируем функцию setting_items_get_key_at
@@ -768,8 +695,6 @@ void test_setting_items_save_int(void)
 
     read_value = setting_items_read_int(KEY_WEB_PORT);
     TEST_ASSERT_EQUAL_INT_MESSAGE(8080, read_value, "Should read back the same positive integer value");
-
-
 }
 
 // Тестируем функцию setting_items_save_bool
@@ -803,6 +728,26 @@ void test_setting_items_save_bool(void)
 
     read_value = setting_items_read_bool(KEY_485_VOUT);
     TEST_ASSERT_FALSE_MESSAGE(read_value, "Should read back false value");
+}
+
+// Тестируем функцию setting_items_get_default_value
+void test_setting_items_get_default_value(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_get_default_value function");
+    LOG_MESSAGE();
+
+    // Test 1: NULL key parameter
+    const char* default_value = setting_items_get_default_value(NULL);
+    TEST_ASSERT_NULL_MESSAGE(default_value, "Should return NULL for NULL key");
+
+    // Test 2: Unknown/invalid key
+    default_value = setting_items_get_default_value("nonexistent_key");
+    TEST_ASSERT_NULL_MESSAGE(default_value, "Should return NULL for unknown key");
+
+    // Test 3: Valid key - hostname
+    default_value = setting_items_get_default_value(KEY_HOSTNAME);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("WB-MGE", default_value, "Default value for hostname should match expected");
 }
 
 // Тестируем функцию setting_items_get_type
@@ -891,12 +836,12 @@ int main(void)
     RUN_TEST(test_setting_items_save_error_conditions);
     RUN_TEST(test_setting_items_read_success);
     RUN_TEST(test_setting_items_read_error_conditions);
-    RUN_TEST(test_setting_items_get_count);
     RUN_TEST(test_setting_items_get_key_at);
     RUN_TEST(test_setting_items_read_int);
     RUN_TEST(test_setting_items_read_bool);
     RUN_TEST(test_setting_items_save_int);
     RUN_TEST(test_setting_items_save_bool);
+    RUN_TEST(test_setting_items_get_default_value);
     RUN_TEST(test_setting_items_get_type);
     RUN_TEST(test_setting_items_type_to_string);
 

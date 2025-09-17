@@ -4,10 +4,29 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool validate_hostname_ssid(const char *value)
+#define MAX_HOSTNAME_LEN                    31
+#define MAX_SSID_LEN                        31          // In ESP-IDF there is ssid[32], terminating '\0' included
+#define MAX_LOGIN_LEN                       31
+#define MAX_PASS_LEN                        31
+#define BAUDRATE_MIN                        1200
+#define BAUDRATE_MAX                        115200
+
+// Validation functions
+bool validate_hostname(const char *value)
 {
-    // Basic hostname/ssid validation - only alphanumeric and hyphens
-    size_t len = strlen(value); // Calculate once for security
+    if (!value) {
+        return false;
+    }
+
+    size_t len = strlen(value);
+    if (len == 0) {
+        return false;
+    }
+    if (len > MAX_HOSTNAME_LEN) {
+        return false;
+    }
+
+    // Basic hostname validation, allow only alphanumeric and hyphens
     for (size_t i = 0; i < len; i++) {
         char c = value[i];
         if (c >= 'a') {
@@ -33,34 +52,31 @@ static bool validate_hostname_ssid(const char *value)
     return true;
 }
 
-// Validation functions
-bool validate_hostname(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-
-    if (strlen(value) == 0) {
-        return false;
-    }
-
-    if (strlen(value) >= 32) {
-        return false;
-    }
-
-    return validate_hostname_ssid(value);
-}
-
 bool validate_ssid(const char *value)
 {
     if (!value) {
         return false;
     }
 
-    if (strlen(value) >= 32) {
+    size_t len = strlen(value);
+    if (len == 0) {
         return false;
     }
-    return validate_hostname_ssid(value);
+    if (len > MAX_SSID_LEN) {
+        return false;
+    }
+
+    // Basic SSID validation, allow all printable symbols in range 0x20 - 0x7E
+    for (size_t i = 0; i < len; i++) {
+        char c = value[i];
+        if (c < '\x20') {
+            return false;
+        }
+        if (c > '\x7E') {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool validate_port(const char *value)
@@ -68,6 +84,7 @@ bool validate_port(const char *value)
     if (!value) {
         return false;
     }
+
     char *endptr;
     long port = strtol(value, &endptr, 10);
     if ((*endptr == '\0') && (port >= 1) && (port <= 65535)) {
@@ -82,9 +99,10 @@ bool validate_baudrate(const char *value)
     if (!value) {
         return false;
     }
+
     char *endptr;
     long baudrate = strtol(value, &endptr, 10);
-    if ((*endptr == '\0') && (baudrate >= 1200) && (baudrate <= 115200)) {
+    if ((*endptr == '\0') && (baudrate >= BAUDRATE_MIN) && (baudrate <= BAUDRATE_MAX)) {
         return true;
     } else {
         return false;
@@ -155,8 +173,8 @@ bool validate_ip(const char *value)
     }
 
     // Enhanced IP validation with proper range checking
-    int a, b, c, d;
-    char extra;
+    int a = 0, b = 0, c = 0, d = 0;
+    char extra = 0;
 
     // Check format and ensure no extra characters
     if (sscanf(value, "%d.%d.%d.%d%c", &a, &b, &c, &d, &extra) != 4) {
@@ -164,8 +182,28 @@ bool validate_ip(const char *value)
     }
 
     // Check ranges (0-255 for each octet)
-    if ((a < 0) || (a > 255) || (b < 0) || (b > 255) ||
-        (c < 0) || (c > 255) || (d < 0) || (d > 255)) {
+    if (a < 0) {
+        return false;
+    }
+    if (a > 255) {
+        return false;
+    }
+    if (b < 0) {
+        return false;
+    }
+    if (b > 255) {
+        return false;
+    }
+    if (c < 0) {
+        return false;
+    }
+    if (c > 255) {
+        return false;
+    }
+    if (d < 0) {
+        return false;
+    }
+    if (d > 255) {
         return false;
     }
 
@@ -244,11 +282,12 @@ bool validate_login(const char *value)
     if (!value) {
         return false;
     }
+
     size_t len = strlen(value);
     if (len == 0) {
         return false;
     }
-    if (len >= 32) {
+    if (len > MAX_LOGIN_LEN) {
         return false;
     }
 
@@ -286,20 +325,21 @@ bool validate_password(const char *value)
     if (!value) {
         return false;
     }
+
     size_t len = strlen(value);
-    if (len >= 32) { // пока минимальную длину не задаём
-        return false;  // Password must be not longer than 32 characters
+    if (len > MAX_PASS_LEN) {
+        return false;
     }
 
     // Basic password validation - can be enhanced with regex or additional rules
     for (size_t i = 0; i < len; i++) {
         char c = value[i];
-        if (c >= ' ') {
-            if (c <= '~') {
-                continue;
-            }
+        if (c < ' ') {
+            return false;
         }
-        return false;
+        if (c > '~') {
+            return false;
+        }
     }
     return true;
 }
