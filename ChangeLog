@@ -1,3 +1,7 @@
+2025-09-17 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+    * version:  1.0.0-rc7
+    * added:    Task Watchdog Timer panic on timeout (reset system)
+
 2025-09-17 Maxim Toropov <maxim.toropov@wirenboard.com>
 
     * version:  1.0.0-rc6
