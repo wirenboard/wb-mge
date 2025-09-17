@@ -4,10 +4,12 @@ import { useI18n } from 'vue-i18n';
 import { changeLang, type Locale } from '@/i18n';
 import SaveIcon from '@/assets/save.svg?component';
 import { useAlerts } from '@/common/alert';
+import { useFirmware } from '@/common/firmware';
 import { useInfo } from '@/common/info';
 import { documentation, email, support, website } from '@/common/links';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
+import type { CommandResponse } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Configuration from '@/components/Configuration.vue';
 import Heading from '@/components/Heading.vue';
@@ -19,9 +21,9 @@ import { api } from '@/utils/api';
 
 const { t, locale } = useI18n();
 const language = ref<Locale>(locale.value as Locale);
-const firmwareFile = ref();
+const firmwareFile = ref<File[]>();
 const loadedMethod = ref();
-const isChangePassword = ref(false);
+const { isUpdating, update } = useFirmware();
 const { showAlert } = useAlerts();
 const { data: settings, isChanged, updateSettings } = useSettings();
 const { isReconnecting, uptime } = useUptime();
@@ -31,9 +33,15 @@ const updateFirmware = async () => {
   loadedMethod.value = 'firmware';
   showAlert(t('firmware_update_processed'), { type: 'success' });
 
-  await api('update', firmwareFile.value[0], true);
-  loadedMethod.value = null;
-  location.reload();
+  try {
+    await update(firmwareFile.value?.[0] as File);
+    location.reload();
+  } catch (err) {
+    firmwareFile.value = [];
+    showAlert(t('wirmware_update_error'), { type: 'error' });
+  } finally {
+    loadedMethod.value = null;
+  }
 };
 
 const cmd = async (command: string, confirmText?: string) => {
@@ -45,7 +53,7 @@ const cmd = async (command: string, confirmText?: string) => {
   }
 
   loadedMethod.value = command;
-  await api('cmd', { cmd: command });
+  await api<CommandResponse>('cmd', { method: 'POST', json: { cmd: command } });
   isReconnecting.value = true;
   loadedMethod.value = null;
   setTimeout(() => {
@@ -54,16 +62,13 @@ const cmd = async (command: string, confirmText?: string) => {
 };
 
 const updateInterface = () => {
-  const val: any = {
-    login: settings.value!.login,
-  };
-
-  if (isChangePassword.value) {
-    val.pass = settings.value!.pass;
+  if (isChanged(['login', 'pass', 'web_port'])) {
+    updateSettings({
+      login: settings.value!.login,
+      pass: settings.value!.pass,
+      web_port: settings.value!.web_port,
+    });
   }
-
-  updateSettings(val);
-  isChangePassword.value = false;
   changeLang(language.value);
 };
 </script>
@@ -76,7 +81,7 @@ const updateInterface = () => {
       <fieldset class="system-container">
         <legend>{{ t('device') }}</legend>
         <div>{{ t('hostname') }}</div>
-        <form class="system-data system-saveWrapper" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
+        <form class="system-data system-saveWrapper" autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
           <input v-model="settings!.hostname" type="text" name="hostname">
           <button type="submit" :disabled="!settings!.hostname || !isChanged(['hostname'])">
             <SaveIcon class="system-save" />
@@ -88,16 +93,18 @@ const updateInterface = () => {
           {{ info!.serial_num }}
         </div>
 
-        <div>{{ t('uptime') }}</div>
-        <div class="system-data">
-          <template v-if="uptime.days">
-            <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
-          </template>
-          <template v-if="uptime.hours">
-            <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
-          </template>
-          <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
-        </div>
+        <template v-if="uptime">
+          <div>{{ t('uptime') }}</div>
+          <div class="system-data">
+            <template v-if="uptime.days">
+              <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
+            </template>
+            <template v-if="uptime.hours">
+              <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
+            </template>
+            <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+          </div>
+        </template>
 
         <div>{{ t('firmware_version') }}</div>
         <div class="system-data">
@@ -106,7 +113,15 @@ const updateInterface = () => {
 
         <div>{{ t('firmware_update') }}</div>
         <div class="system-data">
-          <FileUpload v-model="firmwareFile" :placeholder="t('choose_firmware')" :disabled="loadedMethod === 'firmware'" @upload="updateFirmware" />
+          <FileUpload
+            v-model="firmwareFile"
+            :placeholder="t('choose_firmware')"
+            accept=".bin"
+            :uploading-placeholder="isUpdating ? t('firmware_updating') : ''"
+            :is-loading="isUpdating"
+            :disabled="loadedMethod === 'firmware'"
+            @upload="updateFirmware"
+          />
         </div>
         <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
 
@@ -120,21 +135,38 @@ const updateInterface = () => {
         <legend>{{ t('interface') }}</legend>
         <form
           class="system-container"
+          :autocomplete="isChanged(['login', 'pass']) ? 'on' : 'off'"
           @submit.prevent="updateInterface">
           <label for="port">{{ t('port') }}</label>
           <div class="system-data">
-            <InputNumber id="port" v-model="settings!.web_port" type="text" name="port" autocomplete="port" required />
+            <InputNumber id="port" v-model="settings!.web_port" type="text" name="port" min="1" max="65535" required />
           </div>
 
           <label for="username">{{ t('login') }}</label>
           <div class="system-data">
-            <input id="username" v-model="settings!.login" type="text" name="username" autocomplete="username" required />
+            <input
+              id="username"
+              v-model="settings!.login"
+              type="text"
+              pattern="^[a-zA-Z0-9_\-]+$"
+              name="username"
+              :autocomplete="isChanged(['login']) ? 'username' : 'off'"
+              required
+            />
           </div>
 
           <label for="new-password">{{ t('password') }}</label>
           <div class="system-data">
-            <button v-if="!isChangePassword" class="system-textButton" type="button" @click="isChangePassword = true">{{ t('change_password') }}</button>
-            <input v-else id="new-password" v-model="settings!.pass" v-focus required :placeholder="t('pass_placeholder')" autocomplete="new-password" type="password" name="new-password" />
+            <input
+              id="new-password"
+              v-model="settings!.pass"
+              :placeholder="t('pass_placeholder')"
+              :autocomplete="isChanged(['pass']) ? 'new-password' : 'off'"
+              type="password"
+              name="new-password"
+              pattern="^[a-zA-Z0-9_\-]+$"
+              required
+            />
           </div>
 
           <label for="language">{{ t('language') }}</label>
@@ -148,7 +180,7 @@ const updateInterface = () => {
           <Button
             class="system-submit"
             type="submit"
-            :disabled="!isChanged(['login', 'pass']) && language === locale"
+            :disabled="!isChanged(['login', 'pass', 'web_port']) && language === locale"
           >
             {{ t('save') }}
           </Button>
@@ -220,21 +252,6 @@ const updateInterface = () => {
   margin-top: 14px;
 }
 
-.system-textButton {
-  appearance: none;
-  background: transparent;
-  color: var(--text-color);
-  text-decoration: underline;
-}
-
-.system-textButton:hover,
-.system-textButton:focus{
-  background: transparent;
-  outline: none;
-  box-shadow: none;
-  color: var(--link-color);
-}
-
 .system-info * {
   width: fit-content;
 }
@@ -270,8 +287,10 @@ const updateInterface = () => {
     "firmware_version": "Firmware version",
     "firmware_update": "Firmware update",
     "wirmware_update_info": "The device will reboot after the update",
-    "choose_firmware": "Choose file",
     "firmware_update_processed": "Firmware update in progress",
+    "wirmware_update_error": "Firmware update error",
+    "choose_firmware": "Choose file",
+    "firmware_updating": "Updating",
     "reboot": "Reboot",
     "restart": "Reboot device",
     "links": "Links",
@@ -293,8 +312,10 @@ const updateInterface = () => {
     "firmware_version": "Версия ПО",
     "firmware_update": "Обновление ПО",
     "wirmware_update_info": "После обновления устройство будет перезагружено",
-    "choose_firmware": "Выбрать файл",
     "firmware_update_processed": "Обновление ПО в процессе",
+    "wirmware_update_error": "Ошибка обновления прошивки",
+    "choose_firmware": "Выбрать файл",
+    "firmware_updating": "Обновление",
     "reboot": "Перезагрузка",
     "restart": "Перезагрузить",
     "links": "Ссылки",

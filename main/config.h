@@ -46,6 +46,17 @@
 #define DEFAULT_BRIDGE_MB           "false"
 
 
-#ifdef MODEL_MGEv3
+#ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"
+
+#elif QEMU_BUILD
+    // QEMU build
+    #define DEVICE_MODEL            "QEMU WB-MGE v.3"
+
+#elif defined(__unittest_env__)
+    // Unit tests build
+    #define DEVICE_MODEL            "TEST WB-MGE v.3"
+
+#else
+    #error "Unknown device signature"
 #endif

@@ -2,8 +2,14 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "esp_app_format.h"
+#include "esp_app_desc.h"
 
 // Don't change these definitions
+
+#define WB_APP_DESC_OFFSET              (sizeof(esp_image_header_t) \
+                                        + sizeof(esp_image_segment_header_t) \
+                                        + sizeof(esp_app_desc_t))
 
 #define WB_APP_DESC_MAGIC_WORD          0xDACBBCAB
 

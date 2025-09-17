@@ -145,28 +145,34 @@ paths:
                 properties:
                   device_name:
                     type: string
-                    maxLength: 32
+                    maxLength: 20
+                    example: "WB-MGE v.3"
+                  signature:
+                    type: string
+                    maxLength: 12
                     pattern: '^[a-zA-Z0-9\s\-_.]+$'
                   firmware:
                     type: string
+                    maxLength: 16
                     pattern: '^\d+\.\d+\.\d+$'
                     example: "1.0.0"
-                  hardware:
+                  git_info:
                     type: string
-                    maxLength: 32
-                    pattern: '^[a-zA-Z0-9\s\-_.]+$'
+                    maxLength: 50
+                    pattern: '^[0-9a-f]{7}_[A-Za-z0-9_-]+$'
+                    example: "123abcd_main"
                   serial_num:
                     type: integer
                     format: int64
                     minimum: 1
                     maximum: 18446744073709551615
-                  system_voltage: 
+                  system_voltage:
                     type: number
                     format: float
                     minimum: 0.0
                     maximum: 100.0
                     description: "System voltage in volts"
-                  config_button_presses: 
+                  config_button_presses:
                     type: integer
                     minimum: 0
                     maximum: 1000
@@ -175,94 +181,80 @@ paths:
                     type: object
                     properties:
                       con_eth: { type: boolean }
-                      ip: 
+                      ip:
                         type: string
                         format: ipv4
                         nullable: true
-                      mask: 
+                      mask:
                         type: string
                         format: ipv4
                         nullable: true
-                      gw: 
+                      gw:
                         type: string
                         format: ipv4
                         nullable: true
-                      mac: 
+                      mac:
                         type: string
                         pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
                   wifi:
                     type: object
                     properties:
+                      enabled: { type: boolean }
+                      mode:
+                        type: string
+                        enum: ["ap", "sta", "none"]
                       con_sta: { type: boolean }
-                      con_ap: 
+                      con_sta_ssid:
+                        type: string
+                        minLength: 0
+                        maxLength: 31
+                      sta_ip:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      sta_mask:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      sta_gw:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      con_ap:
                         type: integer
                         minimum: 0
                         maximum: 10
-                      sta_ip: 
+                      ap_ip:
                         type: string
                         format: ipv4
                         nullable: true
-                      sta_mask: 
+                      ap_mask:
                         type: string
                         format: ipv4
                         nullable: true
-                      sta_gw: 
+                      ap_gw:
                         type: string
                         format: ipv4
                         nullable: true
-                      sta_rssi: 
+                      sta_rssi:
                         type: integer
-                        minimum: -100
-                        maximum: 0
+                        minimum: -128
+                        maximum: 127
                         nullable: true
-                      sta_mac: 
-                        type: string
-                        pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
-                      ap_mac: 
-                        type: string
-                        pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
-                      ap_channel: 
+                      ap_channel:
                         type: integer
                         minimum: 1
                         maximum: 14
+                      sta_mac:
+                        type: string
+                        pattern: '^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$'
+                      ap_mac:
+                        type: string
+                        pattern: '^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$'
                   rs485_1:
                     $ref: '#/components/schemas/RS485Status'
                   rs485_2:
                     $ref: '#/components/schemas/RS485Status'
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-    post:
-      summary: Update device info
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                device_name: # TODO: подумать надо ли это записывать или просто проиписать в конфиг
-                  type: string
-                  maxLength: 32
-                  pattern: '^[a-zA-Z0-9\s\-_.]+$'
-                hardware: # TODO: подумать надо ли это записывать или просто проиписать в конфиг
-                  type: string
-                  maxLength: 32
-                  pattern: '^[a-zA-Z0-9\s\-_.]+$'
-      responses:
-        '200':
-          description: Updated
         '400':
           description: Bad request
           content:
@@ -309,16 +301,7 @@ paths:
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '#/components/schemas/DeviceSettings'
-                - type: object
-                  properties:
-                    pass: 
-                      type: string
-                      minLength: 0
-                      maxLength: 32
-                      pattern: '^[ -~]*$'
-                      description: "Password, printable ASCII characters"
+              $ref: '#/components/schemas/DeviceSettings'
       responses:
         '200':
           description: Update result
@@ -458,7 +441,7 @@ paths:
                 properties:
                   scan_in_progress: { type: boolean }
                   scan_completed: { type: boolean }
-                  error: 
+                  error:
                     type: string
                     maxLength: 255
                   networks:
@@ -466,17 +449,17 @@ paths:
                     items:
                       type: object
                       properties:
-                        ssid: 
+                        ssid:
                           type: string
-                          maxLength: 32
-                        rssi: 
+                          maxLength: 31
+                        rssi:
                           type: integer
                           minimum: -100
                           maximum: 0
-                        bssid: 
+                        bssid:
                           type: string
                           pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
-                        channel: 
+                        channel:
                           type: integer
                           minimum: 1
                           maximum: 14
@@ -530,14 +513,14 @@ paths:
                 items:
                   type: object
                   properties:
-                    mac: 
+                    mac:
                       type: string
                       pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
-                    rssi: 
+                    rssi:
                       type: integer
                       minimum: -100
                       maximum: 0
-                    ip: 
+                    ip:
                       type: string
                       format: ipv4
         '400':
@@ -566,19 +549,19 @@ paths:
               schema:
                 type: object
                 properties:
-                  days: 
+                  days:
                     type: integer
                     minimum: 0
                     maximum: 2147483647
-                  hours: 
+                  hours:
                     type: integer
                     minimum: 0
                     maximum: 23
-                  minutes: 
+                  minutes:
                     type: integer
                     minimum: 0
                     maximum: 59
-                  seconds: 
+                  seconds:
                     type: integer
                     minimum: 0
                     maximum: 59
@@ -688,11 +671,11 @@ components:
       type: object
       properties:
         is_busy: { type: boolean }
-        error_percentage: 
+        error_percentage:
           type: integer
           minimum: 0
           maximum: 100
-        server_connections_count: 
+        server_connections_count:
           type: integer
           minimum: 0
           maximum: 10
@@ -702,7 +685,7 @@ components:
       properties:
         term: { type: boolean }
         fail_safe: { type: boolean }
-        baudrate: 
+        baudrate:
           type: integer
           minimum: 1200
           maximum: 115200
@@ -722,31 +705,31 @@ components:
             mode:
               type: string
               enum: ["server", "client"]
-            port: 
+            port:
               type: integer
               minimum: 1
               maximum: 65535
-            ip: 
+            ip:
               type: string
               format: ipv4
-              pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
+              pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
             modbus: { type: boolean }
 
     EthernetSettings:
       type: object
       properties:
-        ip_static: 
+        ip_static:
           type: string
           format: ipv4
-          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
-        mask_static: 
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        mask_static:
           type: string
           format: ipv4
-          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
-        gw_static: 
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        gw_static:
           type: string
           format: ipv4
-          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
         dhcpc: { type: boolean }
 
     WiFiSettings:
@@ -754,63 +737,84 @@ components:
       properties:
         mode:
           type: string
-          enum: ["ap", "sta", "apsta", "none"]
+          enum: ["ap", "sta", "none"]
         ap_auth:
           type: string
           enum: ["open", "wpa2_psk", "wpa3_psk"]
         sta_auth:
           type: string
           enum: ["open", "wpa2_psk", "wpa3_psk"]
-        ap_ip_static: 
-          type: string
-          format: ipv4
-          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
-        ap_mask_static: 
-          type: string
-          format: ipv4
-          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
-        ap_gw_static: 
-          type: string
-          format: ipv4
-          pattern: '^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$'
-        ap_ssid: 
+        ap_ssid:
           type: string
           minLength: 1
-          maxLength: 32
-          pattern: '^[a-zA-Z0-9-]+$'
-        ap_pass: 
+          maxLength: 31
+          pattern: '^[\\x20-\\x7E]{1,31}$'
+          description: "Access point SSID, 1-31 printable ASCII characters"
+        ap_pass:
           type: string
           minLength: 8
           maxLength: 63
           pattern: '^[ -~]+$'
           description: "WPA password, 8-63 printable ASCII characters"
-        sta_ssid: 
+        sta_ssid:
           type: string
-          minLength: 0
-          maxLength: 32
-          pattern: '^[a-zA-Z0-9-]*$'
-        sta_pass: 
+          minLength: 1
+          maxLength: 31
+          pattern: '^[\\x20-\\x7E]{1,31}$'
+          description: "Station network SSID, 1-31 printable ASCII characters"
+        sta_pass:
           type: string
           minLength: 0
           maxLength: 63
           pattern: '^[ -~]*$'
           description: "WPA password, printable ASCII characters"
+        ap_ip_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        ap_mask_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        ap_gw_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        sta_dhcpc: { type: boolean }
+        sta_ip_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        sta_mask_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        sta_gw_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
 
     DeviceSettings:
       type: object
       properties:
-        hostname: 
+        hostname:
           type: string
           minLength: 1
           maxLength: 32
           pattern: '^[a-zA-Z0-9-]+$'
           description: "Valid hostname, alphanumeric and hyphens only"
-        login: 
+        login:
           type: string
           minLength: 1
           maxLength: 32
           pattern: '^[a-zA-Z0-9_-]+$'
           description: "Username, alphanumeric, underscore and hyphen"
+        pass:
+          type: string
+          minLength: 0
+          maxLength: 32
+          pattern: '^[ -~]*$'
+          description: "Password, printable ASCII characters"
         wifi:
           $ref: '#/components/schemas/WiFiSettings'
         ethernet:
@@ -820,7 +824,7 @@ components:
         rs485_2:
           $ref: '#/components/schemas/RS485Settings'
         vout: { type: boolean }
-        web_port: 
+        web_port:
           type: integer
           minimum: 1
           maximum: 65535

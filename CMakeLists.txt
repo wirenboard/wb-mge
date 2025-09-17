@@ -16,4 +16,14 @@ add_compile_definitions(MIB2_STATS=1)
 idf_build_set_property(INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/main/lwip_hook" APPEND)
 idf_build_set_property(COMPILE_DEFINITIONS ESP_IDF_LWIP_HOOK_FILENAME=\"lwip_hook.h\" APPEND)
 
+# Set project name and QEMU_BUILD define for QEMU build
+if($ENV{CONFIG_ETH_USE_OPENETH})
+    set(TARGET_PROJECT_NAME "qemu_mge")
+    add_compile_definitions(QEMU_BUILD=1)
+    message(STATUS "Building for QEMU, using project name 'qemu_mge' and setting QEMU_BUILD = 1")
+else()
+    add_compile_definitions(QEMU_BUILD=0)
+    message(STATUS "Building for hardware, setting QEMU_BUILD = 0")
+endif()
+
 project(${TARGET_PROJECT_NAME})

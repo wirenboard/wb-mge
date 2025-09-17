@@ -1,3 +1,7 @@
+export type DeepPartial<T> = T extends object ? {
+  [P in keyof T]? : DeepPartial<T[P]>
+} : T;
+
 export interface Auth {
   auth: boolean;
   error?: string;
@@ -34,13 +38,17 @@ export interface Info {
     mac: string;
   };
   wifi: {
+    mode: WiFiMode;
     con_ap: number;
     con_sta: boolean;
+    con_sta_ssid: string;
+    enabled: boolean;
     sta_ip: string;
     sta_mask: string;
     sta_gw: string;
     sta_mac: string;
     sta_rssi?: number;
+    ap_ip: string;
     ap_channel: number;
     ap_mac: string;
   };
@@ -60,7 +68,7 @@ export type Parity = 'none' | 'even' | 'odd';
 
 export type BridgeMode = 'client' | 'server';
 
-export type WiFiMode = 'none' | 'ap' | 'sta' | 'apsta';
+export type WiFiMode = 'none' | 'ap' | 'sta';
 
 export interface RsSettings {
   term: boolean;
@@ -95,6 +103,10 @@ export interface Settings {
     sta_ssid: string;
     sta_auth: WiFiSecuityProtocol;
     sta_pass: string;
+    sta_dhcpc: boolean;
+    sta_ip_static: string;
+    sta_gw_static: string;
+    sta_mask_static: string;
   };
   ethernet: {
     ip_static: string;
@@ -106,10 +118,16 @@ export interface Settings {
   rs485_2: RsSettings;
 }
 
-export interface WifiScanResult {
+export interface WifiScanStartResponce {
+  message: string;
+  success: boolean;
+}
+
+export interface WifiScanResponce {
   networks: WiFiNetwork[];
   scan_completed: boolean;
   scan_in_progress: boolean;
+  error: string;
 }
 
 export interface WiFiNetwork {
@@ -117,4 +135,23 @@ export interface WiFiNetwork {
   rssi: number;
   bssid: string;
   channel: number;
+}
+
+export interface LogoutResponse {
+  logout: boolean;
+}
+
+export interface UpdateSettingsResponse {
+  success: boolean;
+}
+
+export interface CommandResponse {
+  command: string;
+  success: boolean;
+}
+
+export interface UpdateResponse {
+  message: string;
+  success: boolean;
+  bytes_written: number;
 }

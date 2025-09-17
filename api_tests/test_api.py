@@ -9,7 +9,7 @@ import json
 
 
 class WBMGEAPI:
-    def __init__(self, base_url="http://192.168.42.1"):
+    def __init__(self, base_url="http://192.168.5.1"):
         self.base_url = base_url
         self.session = requests.Session()
 
@@ -47,10 +47,6 @@ class WBMGEAPI:
     def get_info(self):
         """Получить информацию об устройстве"""
         return self.session.get(f"{self.base_url}/info", timeout=10)
-
-    def update_info(self, data):
-        """Обновить информацию об устройстве"""
-        return self.session.post(f"{self.base_url}/info", json=data, timeout=10)
 
     def get_settings(self):
         """Получить настройки"""
@@ -135,50 +131,66 @@ def test_info(api):
 
     # Проверить обязательные поля согласно новой структуре API
     required_fields = [
-        "device_name", "firmware", "hardware", "serial_num",
-        "system_voltage", "config_button_presses"
+        "device_name", "signature", "firmware", "git_info",
+        "serial_num", "system_voltage", "config_button_presses"
     ]
     for field in required_fields:
         assert field in data, f"Поле {field} отсутствует"
 
     # Проверить типы данных основных полей
-    assert isinstance(data["serial_num"], int)
-    assert isinstance(data["system_voltage"], (int, float))
-    assert isinstance(data["config_button_presses"], int)
+    assert isinstance(data["serial_num"], int), "Поле serial_num имеет неверный тип"
+    assert isinstance(data["system_voltage"], (int, float)), "Поле system_voltage имеет неверный тип"
+    assert isinstance(data["config_button_presses"], int), "Поле config_button_presses имеет неверный тип"
 
     # Проверить структуру ethernet
-    assert "ethernet" in data
+    assert "ethernet" in data, "Секция ethernet отсутствует"
     eth = data["ethernet"]
-    assert isinstance(eth["con_eth"], bool)
-    assert "mac" in eth
+
+    # Проверить поля структуры ethernet
+    ethernet_fields = [
+        "con_eth", "ip", "mask", "gw", "mac"
+    ]
+    for field in ethernet_fields:
+        assert field in eth, f"Поле {field} отсутствует"
+
+    assert isinstance(eth["con_eth"], bool), "Поле con_eth имеет неверный тип"
 
     # Проверить структуру wifi
-    assert "wifi" in data
+    assert "wifi" in data, "Секция wifi отсутствует"
     wifi = data["wifi"]
-    assert isinstance(wifi["con_sta"], bool)
-    assert isinstance(wifi["con_ap"], int)
-    assert 0 <= wifi["con_ap"] <= 10
-    assert "sta_mac" in wifi
-    assert "ap_mac" in wifi
+
+    # Проверить поля структуры wifi
+    wifi_fields = [
+        "enabled", "mode", "con_sta", "con_sta_ssid", "sta_ip", "sta_mask", "sta_gw",
+        "con_ap", "ap_ip", "ap_mask", "ap_gw", "sta_rssi", "ap_channel", "sta_mac", "ap_mac"
+    ]
+    for field in wifi_fields:
+        assert field in wifi, f"Поле {field} отсутствует"
+
+    assert isinstance(wifi["enabled"], bool), "Поле enabled имеет неверный тип"
+    assert isinstance(wifi["con_sta"], bool), "Поле con_sta имеет неверный тип"
+    assert isinstance(wifi["con_ap"], int), "Поле con_ap имеет неверный тип"
+    assert isinstance(wifi["sta_rssi"], int), "Поле sta_rssi имеет неверный тип"
+    assert isinstance(wifi["ap_channel"], int), "Поле ap_channel имеет неверный тип"
+
+    assert 0 <= wifi["con_ap"] <= 10, f"Поле con_ap имеет неверное значение: {wifi['con_ap']}"
+    assert -128 <= wifi["sta_rssi"] <= 127, f"Поле sta_rssi имеет неверное значение: {wifi['sta_rssi']}"
+    assert 1 <= wifi["ap_channel"] <= 13, f"Поле ap_channel имеет неверное значение: {wifi['ap_channel']}"
 
     # Проверить структуру rs485 портов
     for port in ["rs485_1", "rs485_2"]:
-        assert port in data
+        assert port in data, f"Секция {port} отсутствует"
         rs485 = data[port]
-        assert isinstance(rs485["is_busy"], bool)
-        assert isinstance(rs485["error_percentage"], (int, float))
-        assert isinstance(rs485["server_connections_count"], int)
+
+        assert "is_busy" in rs485, "Поле is_busy отсутствует"
+        assert "error_percentage" in rs485, "Поле error_percentage отсутствует"
+        assert "server_connections_count" in rs485, "Поле server_connections_count отсутствует"
+
+        assert isinstance(rs485["is_busy"], bool), "Поле is_busy имеет неверный тип"
+        assert isinstance(rs485["error_percentage"], int), "Поле error_percentage имеет неверный тип"
+        assert isinstance(rs485["server_connections_count"], int), "Поле server_connections_count имеет неверный тип"
 
     print("✓ Структура информации корректна")
-
-    # Тест записи параметров
-    update_data = {
-        "device_name": "Test Device",
-        "hardware": "Test Hardware"
-    }
-    response = api.update_info(update_data)
-    assert response.status_code == 200
-    print("✓ Запись параметров информации работает")
 
 
 def test_settings(api):
@@ -195,38 +207,78 @@ def test_settings(api):
     for section in required_sections:
         assert section in original_settings, f"Секция {section} отсутствует"
 
-    assert isinstance(original_settings["vout"], bool)
-    assert isinstance(original_settings["io_bus"], bool)
-    assert 1 <= original_settings["web_port"] <= 65535
+    assert "hostname" in original_settings, "Поле vout отсутствует"
+    assert "login" in original_settings, "Поле vout отсутствует"
+    assert "pass" in original_settings, "Поле vout отсутствует"
+    assert "vout" in original_settings, "Поле vout отсутствует"
+    assert "web_port" in original_settings, "Поле web_port отсутствует"
+    assert "io_bus" in original_settings, "Поле io_bus отсутствует"
+
+    assert isinstance(original_settings["vout"], bool), "Поле vout имеет неверный тип"
+    assert isinstance(original_settings["web_port"], int), "Поле web_port имеет неверный тип"
+    assert 1 <= original_settings["web_port"] <= 65535, f"Поле web_port имеет неверное значение: {original_settings['web_port']}"
+    assert isinstance(original_settings["io_bus"], bool), "Поле io_bus имеет неверный тип"
 
     # Проверить WiFi настройки
     wifi = original_settings["wifi"]
-    assert wifi["mode"] in ["ap", "sta", "apsta", "none"]
-    if "ap_auth" in wifi:
-        assert wifi["ap_auth"] in ["open", "wpa2_psk", "wpa3_psk"]
-    if "sta_auth" in wifi:
-        assert wifi["sta_auth"] in ["open", "wpa2_psk", "wpa3_psk"]
+    wifi_fields = [
+        "mode", "ap_auth", "sta_auth", "ap_ssid", "ap_pass", "sta_ssid", "sta_pass",
+        "ap_ip_static", "ap_mask_static", "ap_gw_static",
+        "sta_dhcpc", "sta_ip_static", "sta_mask_static", "sta_gw_static"
+    ]
+    for field in wifi_fields:
+        assert field in wifi, f"Поле {field} отсутствует"
+
+    assert isinstance(wifi["sta_dhcpc"], bool), "Поле sta_dhcpc имеет неверный тип"
+
+    assert wifi["mode"] in ["ap", "sta", "apsta", "none"], f"Поле mode имеет неверное значение: {wifi['mode']}"
+    assert wifi["ap_auth"] in ["open", "wpa2_psk", "wpa3_psk"], f"Поле ap_auth имеет неверное значение: {wifi['ap_auth']}"
+    assert wifi["sta_auth"] in ["open", "wpa2_psk", "wpa3_psk"], f"Поле sta_auth имеет неверное значение: {wifi['sta_auth']}"
 
     # Проверить Ethernet настройки
     eth = original_settings["ethernet"]
-    assert isinstance(eth["dhcpc"], bool)
+    eth_fields = [
+        "ip_static", "mask_static", "gw_static", "dhcpc"
+    ]
+    for field in eth_fields:
+        assert field in eth, f"Поле {field} отсутствует"
+
+    assert isinstance(eth["dhcpc"], bool), "Поле dhcpc имеет неверный тип"
 
     # Проверить RS485 настройки
     for port in ["rs485_1", "rs485_2"]:
         rs485 = original_settings[port]
-        assert isinstance(rs485["term"], bool)
-        assert isinstance(rs485["fail_safe"], bool)
-        assert isinstance(rs485["baudrate"], int)
-        assert rs485["baudrate"] in [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
-        assert rs485["stopbits"] in ["1", "1.5", "2"]
-        assert rs485["parity"] in ["none", "even", "odd"]
-        assert rs485["databits"] in ["5", "6", "7", "8"]
+        rs485_fields = [
+            "term", "fail_safe", "baudrate", "stopbits",
+            "parity", "databits", "bridge"
+        ]
+        for field in rs485_fields:
+            assert field in rs485, f"Поле {field} отсутствует"
+
+        assert isinstance(rs485["term"], bool), f"Поле term имеет неверный тип"
+        assert isinstance(rs485["fail_safe"], bool), f"Поле fail_safe имеет неверный тип"
+        assert isinstance(rs485["baudrate"], int), f"Поле baudrate имеет неверный тип"
+        assert rs485["baudrate"] in [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200], \
+            f"Поле baudrate имеет неверное значение: {rs485['baudrate']}"
+        assert rs485["stopbits"] in ["1", "1.5", "2"], \
+            f"Поле stopbits имеет неверное значение: {rs485['stopbits']}"
+        assert rs485["parity"] in ["none", "even", "odd"], \
+            f"Поле parity имеет неверное значение: {rs485['parity']}"
+        assert rs485["databits"] in ["5", "6", "7", "8"], \
+            f"Поле databits имеет неверное значение: {rs485['databits']}"
 
         # Проверить bridge настройки
         bridge = rs485["bridge"]
-        assert bridge["mode"] in ["server", "client"]
-        assert 1 <= bridge["port"] <= 65535
-        assert isinstance(bridge["modbus"], bool)
+        bridge_fields = [
+            "mode", "port", "ip", "modbus"
+        ]
+        for field in bridge_fields:
+            assert field in bridge, f"Поле {field} отсутствует"
+
+        assert bridge["mode"] in ["server", "client"], f"Поле mode имеет неверное значение: {bridge['mode']}"
+        assert isinstance(bridge["port"], int), "Поле port имеет неверный тип"
+        assert 1 <= bridge["port"] <= 65535, f"Поле port имеет неверное значение: {bridge['port']}"
+        assert isinstance(bridge["modbus"], bool), "Поле modbus имеет неверный тип"
 
         # Modbus TCP specific parameters removed from test
 
@@ -240,16 +292,20 @@ def test_settings(api):
         "vout": not original_settings["vout"],  # Переключить bool
         "io_bus": not original_settings["io_bus"],  # Переключить bool
         "wifi": {
-            "mode": "apsta",
+            "mode": "sta",
             "ap_auth": "wpa2_psk",
             "sta_auth": "wpa3_psk",
-            "ap_ssid": "TestSSID123",
-            "ap_pass": "testpass123",
-            "sta_ssid": "StationSSID",
-            "sta_pass": "stapass456",
+            "ap_ssid": "Test-SSID#123.",
+            "ap_pass": "testpass123#*~",
+            "sta_ssid": "Station-SSID",
+            "sta_pass": "#stapass.456",
             "ap_ip_static": "192.168.4.1",
             "ap_mask_static": "255.255.255.0",
-            "ap_gw_static": "192.168.4.1"
+            "ap_gw_static": "192.168.4.1",
+            "sta_dhcpc": not original_settings["wifi"]["sta_dhcpc"],
+            "sta_ip_static": "192.168.2.7",
+            "sta_mask_static": "255.255.255.0",
+            "sta_gw_static": "192.168.2.1"
         },
         "ethernet": {
             "dhcpc": not original_settings["ethernet"]["dhcpc"],
@@ -261,12 +317,13 @@ def test_settings(api):
             "term": not original_settings["rs485_1"]["term"],
             "fail_safe": not original_settings["rs485_1"]["fail_safe"],
             "baudrate": 115200,
-            "stopbits": "2",
+            "stopbits": "1.5",
             "parity": "even",
-            "databits": "8",
+            "databits": "7",
             "bridge": {
                 "mode": "server",
                 "port": 5020,
+                "ip": "192.168.1.49",
                 "modbus": True
             }
         },
@@ -276,7 +333,7 @@ def test_settings(api):
             "baudrate": 38400,
             "stopbits": "1",
             "parity": "odd",
-            "databits": "7",
+            "databits": "6",
             "bridge": {
                 "mode": "client",
                 "port": 5021,
@@ -298,65 +355,105 @@ def test_settings(api):
     new_settings = response.json()
 
     # Проверить основные параметры
-    assert new_settings["hostname"] == "test-device-123"
-    # assert new_settings["login"] == "testuser123"
-    assert new_settings["web_port"] == 8080
-    assert new_settings["vout"] == test_settings["vout"]
-    assert new_settings["io_bus"] == test_settings["io_bus"]
+    main_fields = [
+        "hostname", "vout", "web_port", "io_bus"
+        # "login", "pass"
+    ]
+    for field in main_fields:
+        assert new_settings[field] == test_settings[field], f"Неверное значение поля {field}: {new_settings[field]}"
 
     # Проверить WiFi настройки
     wifi = new_settings["wifi"]
-    assert wifi["mode"] == "apsta"
-    assert wifi["ap_auth"] == "wpa2_psk"
-    assert wifi["sta_auth"] == "wpa3_psk"
-    assert wifi["ap_ssid"] == "TestSSID123"
-    assert wifi["ap_pass"] == "testpass123"
-    assert wifi["sta_ssid"] == "StationSSID"
-    assert wifi["sta_pass"] == "stapass456"
-    assert wifi["ap_ip_static"] == "192.168.4.1"
-    assert wifi["ap_mask_static"] == "255.255.255.0"
-    assert wifi["ap_gw_static"] == "192.168.4.1"
+    for field in wifi_fields:
+        assert wifi[field] == test_settings["wifi"][field], f"Неверное значение поля {field}: {wifi[field]}"
 
     # Проверить Ethernet настройки
     eth = new_settings["ethernet"]
-    assert eth["dhcpc"] == test_settings["ethernet"]["dhcpc"]
-    assert eth["ip_static"] == "192.168.1.100"
-    assert eth["mask_static"] == "255.255.255.0"
-    assert eth["gw_static"] == "192.168.1.1"
+    for field in eth_fields:
+        assert eth[field] == test_settings["ethernet"][field], f"Неверное значение поля {field}: {eth[field]}"
 
     # Проверить RS485_1 настройки
     rs485_1 = new_settings["rs485_1"]
-    assert rs485_1["term"] == test_settings["rs485_1"]["term"]
-    assert rs485_1["fail_safe"] == test_settings["rs485_1"]["fail_safe"]
-    assert rs485_1["baudrate"] == 115200
-    assert rs485_1["stopbits"] == "2"
-    assert rs485_1["parity"] == "even"
-    assert rs485_1["databits"] == "8"
-    assert rs485_1["bridge"]["mode"] == "server"
-    assert rs485_1["bridge"]["port"] == 5020
-    assert rs485_1["bridge"]["modbus"] == True
+    rs485_main_fields = [
+        "term", "fail_safe", "baudrate", "stopbits", "parity", "databits"
+    ]
+    for field in rs485_main_fields:
+        assert rs485_1[field] == test_settings["rs485_1"][field], \
+            f"Неверное значение поля {field}: {rs485_1[field]}"
+
+    bridge_1 = new_settings["rs485_1"]["bridge"]
+    bridge_fields = [
+        "mode", "port", "ip", "modbus"
+    ]
+    for field in bridge_fields:
+        assert bridge_1[field] == test_settings["rs485_1"]["bridge"][field], \
+            f"Неверное значение поля {field}: {bridge_1[field]}"
 
     # Проверить RS485_2 настройки
     rs485_2 = new_settings["rs485_2"]
-    assert rs485_2["term"] == test_settings["rs485_2"]["term"]
-    assert rs485_2["fail_safe"] == test_settings["rs485_2"]["fail_safe"]
-    assert rs485_2["baudrate"] == 38400
-    assert rs485_2["stopbits"] == "1"
-    assert rs485_2["parity"] == "odd"
-    assert rs485_2["databits"] == "7"
-    assert rs485_2["bridge"]["mode"] == "client"
-    assert rs485_2["bridge"]["port"] == 5021
-    assert rs485_2["bridge"]["ip"] == "192.168.1.50"
-    assert rs485_2["bridge"]["modbus"] == False
+    for field in rs485_main_fields:
+        assert rs485_2[field] == test_settings["rs485_2"][field], \
+            f"Неверное значение поля {field}: {rs485_2[field]}"
+
+    bridge_2 = new_settings["rs485_2"]["bridge"]
+    for field in bridge_fields:
+        assert bridge_2[field] == test_settings["rs485_2"]["bridge"][field], \
+            f"Неверное значение поля {field}: {bridge_2[field]}"
 
     print("✓ Все настройки корректно сохраняются")
 
     # Тест с невалидными данными
     invalid_settings = {
-        "hostname": "invalid_hostname!",  # Недопустимые символы
-        "web_port": 70000,                # Превышение лимита
+        "hostname": "invalid_hostname!",            # Недопустимые символы
+        "web_port": 70000,                          # Превышение лимита
         "wifi": {
-            "ap_ssid": "a" * 50           # Слишком длинный SSID
+            "mode": "disabled",                     # Отсутствующий режим
+            "ap_auth": "close",                     # Отсутствующий режим
+            "sta_auth": "wep",                      # Отсутствующий режим
+            "ap_ssid": "a" * 50,                    # Слишком длинный SSID
+            "sta_ssid": "фыва123",                  # Недопустимые символы
+            "ap_ip_static": "123.456.789.101",      # Недопустимые значения байтов
+            "ap_mask_static": "abc.def.ghi.jkl",    # Недопустимые символы
+            "ap_gw_static": True,                   # Неверный тип
+            "sta_ip_static": "192.168.1.1.1",       # Неверный формат
+            "sta_mask_static": "123.aaa.1.1",       # Недопустимые символы
+            "sta_gw_static": 192                    # Неверный тип
+        },
+        "ethernet": {
+            "ip_static": "123.456.789.101",         # Недопустимые значения байтов
+            "mask_static": 456,                     # Неверный тип
+            "gw_static": 789,                       # Неверный тип
+            "dhcpc": 0                              # Неверный тип
+        },
+        "rs485_1": {
+            "term": 1,                              # Неверный тип
+            "fail_safe": "off",                     # Неверный тип
+            "baudrate": 123456,                     # Недопустимое значение
+            "stopbits": "2.5",                      # Недопустимое значение
+            "parity": "all",                        # Недопустимое значение
+            "databits": "2",                        # Недопустимое значение
+            "bridge": {
+                "mode": "station",                  # Недопустимое значение
+                "port": 0,                          # Недопустимое значение
+                "ip": "201.250.252.256",            # Недопустимые значения байтов
+                "modbus": "enabled"                 # Неверный тип
+            },
+        "rs485_2": {
+            "term": "true",                         # Неверный тип
+            "fail_safe": "true",                    # Неверный тип
+            "baudrate": 0,                          # Недопустимое значение
+            "stopbits": "0.5",                      # Недопустимое значение
+            "parity": "disabled",                   # Недопустимое значение
+            "databits": "4",                        # Недопустимое значение
+            "bridge": {
+                "mode": "server",                   # Недопустимое значение
+                "port": 65536,                      # Недопустимое значение
+                "ip": "102.abc.126.18",             # Недопустимые символы
+                "modbus": "disabled"                # Неверный тип
+            }
+        },
+        "vout": "true",                             # Неверный тип
+        "io_bus": "true"                            # Неверный тип
         }
     }
 
@@ -364,6 +461,18 @@ def test_settings(api):
     # API должен либо отклонить (400), либо принять но не сохранить неправильные значения
     assert response.status_code in [200, 400]
     print("✓ Обработка невалидных настроек работает")
+
+    # Проверка, что не сохраняются невалидные настройки
+    response = api.get_settings()
+    assert response.status_code == 200
+    valid_settings = response.json()
+    assert valid_settings == new_settings, "Были сохранены невалидные настройки"
+    print("✓ Невалидные настройки не сохраняются")
+
+    # Откат настроек
+    response = api.update_settings(original_settings)
+    assert response.status_code == 200
+    print("✓ Возвращены исходные настройки")
 
 
 def test_session_management(api):
@@ -619,6 +728,20 @@ def test_wifi_scanner(api):
     assert "scan_completed" in data
     assert isinstance(data["scan_in_progress"], bool)
     assert isinstance(data["scan_completed"], bool)
+    assert data["scan_in_progress"] == True, "scan_in_progress должен быть true"
+    assert data["scan_completed"] == False, "scan_in_progress должен быть false"
+
+    # Ожидание окончания сканирования
+    timeout = 0
+    while True:
+        time.sleep(1)
+        response = api.get_wifi_scan_results()
+        assert response.status_code == 200
+        data = response.json()
+        if data["scan_in_progress"] == False and data["scan_completed"] == True:
+            break
+        timeout = timeout + 1
+        assert timeout < 10, "Превышено время ожидания окончания сканирования"
 
     if "networks" in data:
         assert isinstance(data["networks"], list)
@@ -680,7 +803,8 @@ def test_unauthorized_access(api):
 
     protected_endpoints = [
         ("/info", "GET"), ("/settings", "GET"), ("/wifi_scan/start", "POST"),
-        ("/wifi_scan/results", "GET"), ("/ap_clients", "GET")
+        ("/wifi_scan/results", "GET"), ("/ap_clients", "GET"), ("/uptime", "GET"),
+        ("/session", "GET"), ("/update", "POST")
     ]
 
     for endpoint, method in protected_endpoints:
@@ -699,8 +823,14 @@ def test_unauthorized_access(api):
     print("✓ Защищенные эндпоинты требуют авторизацию")
 
     # Проверить что статические файлы доступны без авторизации
-    response = unauth_session.get(f"{api.base_url}/favicon.webp")
-    assert response.status_code == 200
+    static_endpoints = ["/", "/index.css", "/index.js", "/favicon.webp"]
+
+    for endpoint in static_endpoints:
+        response = unauth_session.get(f"{api.base_url}{endpoint}")
+        print(f"Тестируем GET {endpoint}:")
+        print(f"  Status Code: {response.status_code}")
+        assert response.status_code == 200
+
     print("✓ Статические файлы доступны без авторизации")
 
 
@@ -712,7 +842,7 @@ def quick_connection_test(base_url):
     print("🔍 Быстрая проверка подключения...")
 
     parsed = urlparse(base_url)
-    host = parsed.hostname or "192.168.42.1"
+    host = parsed.hostname or "192.168.5.1"
     port = parsed.port or 80
 
     try:
@@ -754,7 +884,7 @@ def main():
 
     # Парсинг аргументов командной строки
     parser = argparse.ArgumentParser(description='WB-MGE API Tests')
-    parser.add_argument('--ip', default='192.168.42.1', help='IP address of WB-MGE device')
+    parser.add_argument('--ip', default='192.168.5.1', help='IP address of WB-MGE device')
     parser.add_argument('--stop-on-failure', action='store_true', help='Stop on first test failure')
     parser.add_argument('--verbose', action='store_true', help='Verbose output')
 

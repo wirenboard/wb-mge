@@ -17,13 +17,14 @@
 #define RX_BUFFER_SIZE                  1024
 #define TCP_CLIENT_TASK_STACK_SIZE      4096
 #define TCP_CLIENT_TASK_PRIORITY        5
+#define TCP_CLIENT_FIRST_CONN_DELAY_MS  4000
 
 static const char *TAG = "tcp-client";
 
 static void close_socket(int sock)
 {
     if (sock != -1) {
-        ESP_LOGE(TAG, "Shutting down socket and restarting...");
+        ESP_LOGW(TAG, "Shutting down socket and restarting...");
         shutdown(sock, SHUT_RDWR);
         closesocket(sock);
     }
@@ -67,15 +68,15 @@ static int connect_socket(int sock, uint32_t ip, int port)
 
     char ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &dest_addr.sin_addr, ip_str, sizeof(ip_str));
-    ESP_LOGI(TAG, "Connecting to %s:%d", ip_str, port);
+    ESP_LOGI(TAG, "Connecting to %s, port: %d", ip_str, port);
 
     int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 
     if (err != 0) {
-        ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
+        ESP_LOGW(TAG, "Socket unable to connect to %s, port: %d, errno: %d", ip_str, port, errno);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     } else {
-        ESP_LOGI(TAG, "Successfully connected");
+        ESP_LOGI(TAG, "Successfully connected to %s, port: %d", ip_str, port);
     }
 
     return err;
@@ -83,6 +84,10 @@ static int connect_socket(int sock, uint32_t ip, int port)
 
 static void receive_data(tcp_desc_t *desc)
 {
+    char ip_str[INET_ADDRSTRLEN];
+    struct in_addr sin_addr = {.s_addr = desc->remote_ip};
+    inet_ntop(AF_INET, &sin_addr, ip_str, sizeof(ip_str));
+
     char rx_buffer[RX_BUFFER_SIZE];
     int len = 0;
 
@@ -90,13 +95,13 @@ static void receive_data(tcp_desc_t *desc)
         len = recv(desc->client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
 
         if (len < 0) {
-            ESP_LOGE(TAG, "Receive failed: errno %d", errno);
+            ESP_LOGE(TAG, "Receive from %s, port %d failed, errno: %d", ip_str, desc->port, errno);
             break;
         } else if (len == 0) {
-            ESP_LOGW(TAG, "Connection closed");
+            ESP_LOGW(TAG, "Connection to %s, port %d closed", ip_str, desc->port);
             break;
         } else {
-            ESP_LOGD(TAG, "Received %d bytes", len);
+            ESP_LOGD(TAG, "Received %d bytes from %s, port %d", len, ip_str, desc->port);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
             desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
         }
@@ -107,8 +112,12 @@ static void tcp_client_task(void *pvParameters)
 {
     tcp_desc_t *desc = (tcp_desc_t *)pvParameters;
 
+    char ip_str[INET_ADDRSTRLEN];
+    struct in_addr sin_addr = {.s_addr = desc->remote_ip};
+    inet_ntop(AF_INET, &sin_addr, ip_str, sizeof(ip_str));
+
     // Небольшая задержка, пока сеть заработает и можно будет подключаться к серверу
-    vTaskDelay(pdMS_TO_TICKS(3000));
+    vTaskDelay(pdMS_TO_TICKS(TCP_CLIENT_FIRST_CONN_DELAY_MS));
 
     while (1) {
         desc->listen_sock = -1; // not used for client
@@ -125,7 +134,7 @@ static void tcp_client_task(void *pvParameters)
         desc->active_connections++;
 
         receive_data(desc);
-        ESP_LOGW(TAG, "Disconnected from server");
+        ESP_LOGW(TAG, "Disconnected from server: %s, port: %d", ip_str, desc->port);
         close_socket(desc->client_sock);
         desc->active_connections = 0;
     }

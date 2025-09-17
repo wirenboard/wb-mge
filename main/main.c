@@ -23,14 +23,18 @@
 #include "config_button.h"
 #include "system_voltage.h"
 
-#include "esp_io_expander_tca95xx_16bit.h"
-#include "driver/gpio.h"
-
-#include "rs485_control.h"
-#include "mio_control.h"
-#include "update_rs485_mio_gpio_states.h"
-#include "indication.h"
-#include "gpio_expander.h"
+// QEMU build conditional includes
+#if (QEMU_BUILD)
+    #include "wifi_qemu_mock.h"
+#else
+    #include "esp_io_expander_tca95xx_16bit.h"
+    #include "driver/gpio.h"
+    #include "rs485_control.h"
+    #include "mio_control.h"
+    #include "update_rs485_mio_gpio_states.h"
+    #include "indication.h"
+    #include "gpio_expander.h"
+#endif
 
 static const char *TAG = "main";
 
@@ -40,29 +44,40 @@ static const char *TAG = "main";
 
 #define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS       5000
 
-static esp_io_expander_handle_t gpio_expander = NULL;
+#if (!QEMU_BUILD)
+    static esp_io_expander_handle_t gpio_expander = NULL;
+#endif
 
-static void factory_reset(void)
-{
-    ESP_LOGI(TAG, "Factory reset initiated!");
 
-    // Stop blinking to indicate factory reset in progress
-    // TODO: Set specific LED pattern for factory reset
+#if (!QEMU_BUILD)
+    static void factory_reset(void)
+    {
+        ESP_LOGI(TAG, "Factory reset initiated!");
 
-    ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
-    ESP_ERROR_CHECK(setting_items_set_defaults(false));
+        // Stop blinking to indicate factory reset in progress
+        // TODO: Set specific LED pattern for factory reset
 
-    ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
-    ESP_LOGI(TAG, "Device will continue running with default configuration.");
-}
+        ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
+        ESP_ERROR_CHECK(setting_items_set_defaults(false));
 
-// Button long press callback for factory reset
-static void config_button_longpress_callback(unsigned press_time_ms)
-{
-    ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
-    indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
-    factory_reset();
-}
+        ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
+        ESP_LOGI(TAG, "Device will continue running with default configuration.");
+    }
+
+    // Button long press callback for factory reset
+    static void config_button_longpress_callback(unsigned press_time_ms)
+    {
+        ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
+
+        #if (ENABLE_INDICATION)
+            indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+        #else
+            ESP_LOGI(TAG, "LED indication disabled for QEMU build");
+        #endif
+
+        factory_reset();
+    }
+#endif
 
 
 // Выводит все настройки в лог.
@@ -174,8 +189,8 @@ static uint32_t str_to_ip(const char *ip_str) {
 
 static void ip_to_str(uint32_t ip, char* out_ip_str)
 {
-    uint8_t* ip_bytes = (uint8_t*)ip;
-    sprintf(out_ip_str, "%d.%d.%d.%d", ip_bytes[3], ip_bytes[2], ip_bytes[1], ip_bytes[0]);
+    uint8_t* ip_bytes = (uint8_t*)&ip;
+    sprintf(out_ip_str, "%d.%d.%d.%d", ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
 }
 
 
@@ -274,7 +289,14 @@ static void init_wifi(void)
     char wifi_ssid[SETTING_ITEM_MAX_STR_LEN] = {0};
     ESP_ERROR_CHECK(setting_items_read(KEY_AP_SSID, wifi_ssid));
     wifi_ssid[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-    ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, wifi_ssid));
+
+    #if QEMU_BUILD
+        ESP_LOGI(TAG, "Initializing WiFi mock for QEMU");
+        ESP_ERROR_CHECK(wifi_init_apsta_qemu(&apsta_cfg, wifi_ssid));
+    #else
+        ESP_LOGI(TAG, "Initializing WiFi for hardware");
+        ESP_ERROR_CHECK(wifi_init_apsta(&apsta_cfg, wifi_ssid));
+    #endif
 
     snprintf(sys_info.wifi_mode, sizeof(sys_info.wifi_mode), "%s", wifi_mode_str);
     sys_info.wifi_enabled = (apsta_cfg.wifi_mode != WIFI_MODE_NULL);
@@ -310,6 +332,8 @@ static void init_ethernet(char* hostname)
 
 void app_main(void)
 {
+    sys_info_init();
+
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(setting_items_init());
@@ -361,23 +385,20 @@ void app_main(void)
 
     ESP_ERROR_CHECK(http_server_init());
 
-    sys_info_init();
     print_setting_items();
 
-    gpio_expander_init(&gpio_expander);
-    rs485_control_init(gpio_expander);
-    mio_control_init(gpio_expander);
-
-    indication_init(gpio_expander);
-    indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
-
-    config_button_init();
-    config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
-
-    system_voltage_init();
-
-    update_rs485_control();
-    update_io_bus_control();
+    #if (!QEMU_BUILD)
+        gpio_expander_init(&gpio_expander);
+        rs485_control_init(gpio_expander);
+        update_rs485_control();
+        mio_control_init(gpio_expander);
+        update_io_bus_control();
+        indication_init(gpio_expander);
+        indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
+        config_button_init();
+        config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
+        system_voltage_init();
+    #endif // QEMU_BUILD
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 

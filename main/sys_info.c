@@ -6,12 +6,14 @@
 #include "esp_efuse.h"
 
 
-#define SIGNATURE_EFUSE_BLOCK       EFUSE_BLK3
-#define SIGNATURE_EFUSE_OFFSET      8
+#define SYS_INFO_DEBUG_LOG_ENABLE       1           // TODO: Возможно, вынести в настройки
+
+#define SIGNATURE_EFUSE_BLOCK           EFUSE_BLK3
+#define SIGNATURE_EFUSE_OFFSET          8
 
 // Auxilary macros
-#define STR_HELPER_MACRO(x)         #x
-#define STR_MACRO(x)                STR_HELPER_MACRO(x)
+#define STR_HELPER_MACRO(x)             #x
+#define STR_MACRO(x)                    STR_HELPER_MACRO(x)
 
 
 static const char* TAG = "sys_info";
@@ -35,7 +37,7 @@ static uint64_t generate_serial_from_mac(void)
         mac_full = (mac_full << 8) | mac[i];
     }
     // Use full 48-bit MAC as 64-bit serial number
-    ESP_LOGI(TAG, "Generated serial number from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %llu",
+    ESP_LOGD(TAG, "Generated serial number from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %llu",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], mac_full);
 
     return mac_full;
@@ -63,8 +65,8 @@ static uint64_t generate_serial_from_mac(void)
             ESP_LOGE(TAG, "Unable to read virtual " STR_MACRO(SIGNATURE_EFUSE_BLOCK));
         }
 
-        ESP_LOGI(TAG, "Virtual " STR_MACRO(SIGNATURE_EFUSE_BLOCK) " content:");
-        ESP_LOG_BUFFER_HEX_LEVEL(TAG, read_buf, sizeof(read_buf), ESP_LOG_INFO);
+        ESP_LOGD(TAG, "Virtual " STR_MACRO(SIGNATURE_EFUSE_BLOCK) " content:");
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, read_buf, sizeof(read_buf), ESP_LOG_DEBUG);
     }
 #endif
 
@@ -80,16 +82,15 @@ static void get_device_signature(char out_buf[DEVICE_SIGNATURE_LEN + 1])
     } else if (is_empty) {
         ESP_LOGW(TAG, "Device signature is empty");
     }
-
-    if (res != ESP_OK || is_empty) {
-        GET_APP_DESC_STR_FIELD(signature, out_buf);
-        ESP_LOGW(TAG, "Defaulting signature to: %s", out_buf);
-    }
 }
 
 
 esp_err_t sys_info_init(void)
 {
+    if (SYS_INFO_DEBUG_LOG_ENABLE) {
+        esp_log_level_set(TAG, ESP_LOG_DEBUG);
+    }
+
     sys_info.device_serial_num = generate_serial_from_mac();
 
     GET_APP_DESC_STR_FIELD(fw_version, sys_info.firmware_ver);
@@ -103,7 +104,11 @@ esp_err_t sys_info_init(void)
     get_device_signature(sys_info.device_signature);
 
     ESP_LOGI(TAG, "Device name: %s", sys_info.device_name);
-    ESP_LOGI(TAG, "Device signature: %s", sys_info.device_signature);
+    if (strlen(sys_info.device_signature)) {
+        ESP_LOGI(TAG, "Device signature: %s", sys_info.device_signature);
+    } else {
+        ESP_LOGI(TAG, "Device signature: <EMPTY>");
+    }
     ESP_LOGI(TAG, "Serial number: %llu", sys_info.device_serial_num);
     ESP_LOGI(TAG, "Firmware version: %s", sys_info.firmware_ver);
     ESP_LOGI(TAG, "Firmware GIT info: %s", sys_info.firmware_git_info);
