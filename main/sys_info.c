@@ -51,7 +51,7 @@ static uint64_t generate_serial_from_mac(void)
         memset(signature_buf, 0, sizeof(signature_buf));
         snprintf(signature_buf, sizeof(signature_buf), "%s", DEVICE_SIGNATURE);
 
-        esp_err_t err = esp_efuse_write_block(SIGNATURE_EFUSE_BLOCK, signature_buf, SIGNATURE_EFUSE_OFFSET * 8, sizeof(signature_buf) * 8);
+        esp_err_t err = esp_efuse_write_block(SIGNATURE_EFUSE_BLOCK, signature_buf, SIGNATURE_EFUSE_OFFSET * 8, DEVICE_SIGNATURE_LEN * 8);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Unable to write device signature to virtual " STR_MACRO(SIGNATURE_EFUSE_BLOCK));
             return;
