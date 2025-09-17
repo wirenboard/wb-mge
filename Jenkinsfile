@@ -7,7 +7,7 @@ pipeline {
         }
     }
     options {
-        copyArtifactPermission('/s3_uploader_test');
+        copyArtifactPermission('/s3_uploader');
     }
     parameters {
         booleanParam(name: 'UPLOAD_FROM_BRANCH', description: 'Upload results to S3 even if it is not master branch', defaultValue: false)
@@ -38,7 +38,7 @@ pipeline {
         }
         stage('S3 Upload') {
             steps {
-                build job: 's3_uploader_test', parameters: [
+                build job: 's3_uploader', parameters: [
                     string(name: 'UPSTREAM_JOB_NAME', value: env.JOB_NAME),
                     string(name: 'BUILD', value: env.BUILD_NUMBER),
                     booleanParam(name: 'UPLOAD_FROM_BRANCH', value: params.UPLOAD_FROM_BRANCH)
