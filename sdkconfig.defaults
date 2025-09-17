@@ -40,3 +40,6 @@ CONFIG_LWIP_STATS=y
 # Only for debug purposes
 # TODO: Delete it in production release
 CONFIG_EFUSE_VIRTUAL=y
+
+# Task Watchdog Timer panic on timeout (reset system)
+CONFIG_ESP_TASK_WDT_PANIC=y
