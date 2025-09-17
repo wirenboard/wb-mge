@@ -54,9 +54,6 @@ static const char *TAG = "main";
     {
         ESP_LOGI(TAG, "Factory reset initiated!");
 
-        // Stop blinking to indicate factory reset in progress
-        // TODO: Set specific LED pattern for factory reset
-
         ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
         ESP_ERROR_CHECK(setting_items_set_defaults(false));
 
@@ -68,13 +65,7 @@ static const char *TAG = "main";
     static void config_button_longpress_callback(unsigned press_time_ms)
     {
         ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
-
-        #if (ENABLE_INDICATION)
-            indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
-        #else
-            ESP_LOGI(TAG, "LED indication disabled for QEMU build");
-        #endif
-
+        indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
         factory_reset();
     }
 #endif

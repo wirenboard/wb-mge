@@ -55,13 +55,6 @@ BRANCH_NAME ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 GIT_BRANCH := $(shell echo $(BRANCH_NAME) | $(SED) "s/\//_/g")
 GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
 
-<<<<<<< HEAD
-TARGET_PROJECT_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH))
-
-DEFS += TARGET_PROJECT_NAME=$(TARGET_PROJECT_NAME)
-DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
-
-=======
 DEFS += TARGET_PROJECT_NAME=$(TARGET)
 DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 
@@ -71,7 +64,6 @@ DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 
 RELEASE_FILE_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH).bin)
 
->>>>>>> feature/FW-1086_Revision_based_on_comments
 #######################################
 # unittests
 #######################################
