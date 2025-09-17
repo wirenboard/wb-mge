@@ -6,12 +6,21 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
+
+#define NV_STORAGE_DEBUG_LOG_ENABLE     0       // TODO: Возможно, вынести в настройки
+
+
 static const char *TAG = "nv_storage";
 static const char *NVS_NAMESPACE = "storage";
 
+
 esp_err_t nvs_init(void)
 {
-    ESP_LOGI(TAG, "Initializing NVS");
+    if (NV_STORAGE_DEBUG_LOG_ENABLE) {
+        esp_log_level_set(TAG, ESP_LOG_DEBUG);
+    }
+
+    ESP_LOGD(TAG, "Initializing NVS");
 
     esp_err_t ret = nvs_flash_init();
     if ((ret == ESP_ERR_NVS_NO_FREE_PAGES) || (ret == ESP_ERR_NVS_NEW_VERSION_FOUND)) {
@@ -35,9 +44,10 @@ esp_err_t nvs_init(void)
         ESP_LOGW(TAG, "Failed to get NVS stats: %s", esp_err_to_name(ret));
     }
 
-    ESP_LOGI(TAG, "NVS initialized successfully");
+    ESP_LOGI(TAG, "NVS initialized");
     return ESP_OK;
 }
+
 
 esp_err_t nvs_write_str(const char* key, const char* value)
 {
@@ -70,6 +80,7 @@ esp_err_t nvs_write_str(const char* key, const char* value)
     return ret;
 }
 
+
 esp_err_t nvs_read_str(const char* key, char* value)
 {
     if (!key || !value) {
@@ -98,6 +109,7 @@ esp_err_t nvs_read_str(const char* key, char* value)
     nvs_close(nvs_handle);
     return ret;
 }
+
 
 bool nvs_has_key(const char* key)
 {

@@ -11,8 +11,8 @@ Run the WB-MGE firmware in QEMU with web access:
 ./run_qemu_with_web.sh
 ```
 
-**Web Interface:** http://localhost:8080  
-**Login:** admin / admin
+**Web Interface:** http://localhost:8080
+**Login / Password:** admin / admin
 
 ## 📋 What It Does
 
@@ -56,7 +56,7 @@ CONFIG_ETH_USE_OPENETH=1 idf.py build
 cd build
 python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin \
   --fill-flash-size=4MB --flash_mode dio --flash_freq 40m --flash_size 4MB \
-  0x1000 bootloader/bootloader.bin 0x10000 mge.bin 0x8000 partition_table/partition-table.bin
+  0x1000 bootloader/bootloader.bin 0x10000 qemu_mge.bin 0x8000 partition_table/partition-table.bin
 
 # Run QEMU with port forwarding
 ~/.espressif/tools/qemu-xtensa/esp_develop_9.0.0_20240606/qemu/bin/qemu-system-xtensa \
@@ -73,10 +73,11 @@ python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin \
 
 Once running, access these endpoints:
 - **Main Interface:** http://localhost:8080
-- **System Info:** http://localhost:8080/api/info
-- **Settings:** http://localhost:8080/api/settings
-- **WiFi Scan:** http://localhost:8080/api/wifi/scan
-- **Firmware Update:** http://localhost:8080/api/update
+- **System Info:** http://localhost:8080/info
+- **Settings:** http://localhost:8080/settings
+- **WiFi Scan Start:** http://localhost:8080/wifi_scan/start
+- **WiFi Scan Results:** http://localhost:8080/wifi_scan/results
+- **Firmware Update:** http://localhost:8080/update
 
 ## 🔍 Troubleshooting
 

@@ -20,7 +20,8 @@ set(COMPONENT_SRCS "main.c"
                    "bridge/modbus_tcp.c"
                    "bridge/packet_queue.c"
                    "bridge/modbus_helpers.c"
-                   "bridge/rs485_stats.c")
+                   "bridge/rs485_stats.c"
+                   "wb_app_desc/wb_app_desc.c")
 
 # Conditionally add files based on build type
 if(CONFIG_ETH_USE_OPENETH)
@@ -33,6 +34,7 @@ if(CONFIG_ETH_USE_OPENETH)
 else()
     # Hardware build - add hardware-specific files only
     set(CONDITIONAL_SRCS
+        "gpio_expander.c"
         "rs485_control.c"
         "mio_control.c"
         "update_rs485_mio_gpio_states.c"
@@ -50,6 +52,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                         INCLUDE_DIRS "."
                             "bridge"
                             "indication"
+                            "wb_app_desc"
                             "qemu"
                         EMBED_TXTFILES
                             frontend/dist/favicon.webp.gz
@@ -57,3 +60,5 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             frontend/dist/index.html.gz
                             frontend/dist/index.js.gz
 )
+
+target_link_libraries(${COMPONENT_TARGET} "-u wb_app_desc")

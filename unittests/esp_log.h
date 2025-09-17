@@ -22,6 +22,12 @@ typedef enum {
 #define ESP_LOGD(tag, format, ...) printf("[DEBUG] %s: " format "\n", tag, ##__VA_ARGS__)
 #define ESP_LOGV(tag, format, ...) printf("[VERBOSE] %s: " format "\n", tag, ##__VA_ARGS__)
 
+static inline void esp_log_level_set(const char* tag, esp_log_level_t level)
+{
+    (void)tag;
+    (void)level;
+}
+
 #ifdef __cplusplus
 }
 #endif

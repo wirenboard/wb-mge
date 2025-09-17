@@ -49,7 +49,7 @@ if ! CONFIG_ETH_USE_OPENETH=1 idf.py build-qemu-flash-image; then
     echo "❌ Failed to generate QEMU flash image with build-qemu-flash-image, trying alternative..."
     # Alternative method - generate the flash image manually
     cd build
-    python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin --fill-flash-size=4MB --flash_mode dio --flash_freq 40m --flash_size 4MB 0x1000 bootloader/bootloader.bin 0x10000 mge.bin 0x8000 partition_table/partition-table.bin
+    python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin --fill-flash-size=4MB --flash_mode dio --flash_freq 40m --flash_size 4MB 0x1000 bootloader/bootloader.bin 0x10000 qemu_mge.bin 0x8000 partition_table/partition-table.bin
     cd ..
 fi
 
