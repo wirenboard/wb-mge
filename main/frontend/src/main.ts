@@ -1,35 +1,16 @@
 import { createApp } from 'vue';
-import { createI18n } from 'vue-i18n';
 import App from './App.vue';
 import router from './router';
+import { i18n } from './i18n';
 import './style.css';
+import { createHead } from '@unhead/vue/client';
+import 'vue-multiselect/dist/vue-multiselect.min.css';
 
-export const LOCALE = 'en';
+const app = createApp(App);
+const head = createHead();
 
-export const i18n = createI18n({
-  legacy: false,
-  locale: LOCALE,
-  fallbackLocale: 'en',
-  fallbackWarn: false,
-  missingWarn: false,
-  messages: {
-    en: {
-      connection_error: 'Controller connection error',
-      save: 'Save',
-      dashboard: 'Dashboard',
-      traffic: 'Traffic analysis',
-      serial: 'Serial',
-      bridge: 'Bridge',
-      network: 'Network',
-      system: 'System',
-      login: 'Login',
-      data_updated: 'Data updated',
-      invalid_fields: 'Fields were not updated: {0}',
-    }
-  }
-});
+app.use(i18n);
+app.use(head);
+app.use(router);
 
-createApp(App)
-  .use(i18n)
-  .use(router)
-  .mount('#app');
+app.mount('#app');

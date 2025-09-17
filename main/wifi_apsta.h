@@ -14,8 +14,14 @@ typedef struct {
     esp_event_handler_t ap_event_handler;
     char sta_ssid[WIFI_SSID_MAX_LEN];
     char sta_pass[WIFI_PASS_MAX_LEN];
+    esp_netif_ip_info_t* sta_ip_info;
     esp_event_handler_t sta_event_handler;
     wifi_mode_t wifi_mode;
+    wifi_auth_mode_t wifi_auth_mode_ap; // Authentication mode for AP
+    wifi_auth_mode_t wifi_auth_mode_sta; // Authentication mode for STA
 } wifi_apsta_config_t;
 
-esp_err_t wifi_init_apsta(wifi_apsta_config_t* wifi_cfg);
+esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname);
+
+esp_err_t wifi_sta_connect_scan_lock(void);
+esp_err_t wifi_sta_connect_scan_unlock(void);

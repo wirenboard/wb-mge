@@ -1,3 +1,46 @@
+2025-09-17 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc6
+    * added:    device signature, firmware version, git info, device name storage at fixed offset in .bin image
+    * added:    static ip / dhcp setting for wifi sta mode
+    * added:    auth sessions storage in backup RTC_NOINIT_ATTR memory
+    * added:    support wifi scan in all modes
+    * added:    some new fields in settings and info structures
+    * fix:      web password saving
+    * fix:      wifi scan results (scan process was interrupted on first wifi_scan/results request)
+    * fix:      wifi sta in client mode now always tries to connect to specified access point
+    * delete:   POST /info request
+    * improve:  logs in diferent modules
+
+2025-09-09 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc5
+    * rework:   integrate Unity for setting_items unittest
+    * added:    code coverage measurement
+    * added:    unittests for http_server
+    * fixed:    GIT_HASH and GIT_BRANCH detection in Makefile
+
+2025-08-28 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc4
+    * added:    status indication (network activity, status led)
+    * rework:   config button module (use polling task)
+
+2025-08-25 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc3
+    * added:    modbus TCP support in server mode
+    * fix:      tcp_client (destination ip), serial (receive timeout)
+    * fix:      serial: uart queue overflow
+    * improve:  increase http connections count and increase lwip sockets count
+    * rework:   bridge module
+
+2025-08-14 Radmir Khakimov <radmir.khakimov@wirenboard.com>
+
+    * version:  1.0.0-rc2
+    * rework:   update REST API, refactor http_server code
+    * added:    new HW support: ethernet, gpio expander, leds, second rs485 bus, rs485 terminators and pulls control, WB-MIO control
+
 2024-10-29 Alexey Strizhnev <alexey.strizhnev@wirenboard.com>
 
     * version:  1.0.0-rc1

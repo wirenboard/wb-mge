@@ -1,39 +1,78 @@
+#######################################
+# device signature
+#######################################
 
-TARGET := MGE
+TARGET := mge_v3
+
+MODEL_DEFINE := $(shell echo MODEL_$(TARGET))
+
+DEFS += DEVICE_SIGNATURE=$(TARGET)
+DEFS += MODEL_DEFINE=$(MODEL_DEFINE)
+
+#######################################
+# Directories
+#######################################
+
+BUILD_DIR = build
+RELEASE_DIR = release
+
+#######################################
+# OS detection and tool selection
+#######################################
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    # macOS - use GNU tools if available, fallback to BSD versions
+    SED := $(shell which gsed 2>/dev/null || which sed)
+    GREP := $(shell which ggrep 2>/dev/null || which grep)
+    # Try to find GNU find first, then use system find with compatible syntax
+    FIND := $(shell which gfind 2>/dev/null || echo "find")
+else
+    # Linux and other Unix-like systems
+    SED := sed
+    GREP := grep
+    FIND := find
+endif
 
 #######################################
 # version parsing
 #######################################
 
 # get version string from ChangeLog if VERSION_STRING is not defined
-VERSION_STRING ?= $(shell cat ChangeLog | grep version: | head -n 1 | sed 's/.*version:[ ]*//')
+VERSION_STRING ?= $(shell cat ChangeLog | $(GREP) version: | head -n 1 | $(SED) 's/.*version:[ ]*//')
 # check version string format using regexp
 VERSION := $(shell echo $(VERSION_STRING) | awk '/[0-9]+\.[0-9]+\.[0-9]+(\+wb[1-9][0-9]*|-rc[1-9][0-9]*)?$$/{print $$0}')
 # global defines with version in different formats
-DEFS += FW_VERSION_STRING=$(VERSION)
-
+DEFS += FIRMWARE_VERSION=$(VERSION)
 
 #######################################
 # git info
 #######################################
 
-GIT_HASH := $(shell git rev-parse HEAD | cut -c -7 )
-GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD | sed "s/\//_/")
+GIT_COMMIT ?= $(shell git rev-parse HEAD)
+GIT_HASH := $(shell echo $(GIT_COMMIT) | cut -c 1-7)
+BRANCH_NAME ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+GIT_BRANCH := $(shell echo $(BRANCH_NAME) | $(SED) "s/\//_/g")
 GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
-GIT_INFO := $(shell echo "\\\"$(GIT_INFO)\\\"")
 
-TARGET_GIT_INFO := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH))
+DEFS += TARGET_PROJECT_NAME=$(TARGET)
+DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 
-DEFS += TARGET_GIT_INFO=$(TARGET_GIT_INFO)
+#######################################
+# Release file name
+#######################################
 
+RELEASE_FILE_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH).bin)
 
 #######################################
 # unittests
 #######################################
 
-UNITTESTS_DIRS += $(shell find -type d | grep unittests)
+UNITTESTS_DIRS += $(shell $(FIND) . -type d | $(GREP) unittests)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
+# C source files for coverage measurement (exclude frontend files)
+C_SOURCES = $(shell $(FIND) main -name "*.c" -not -path "*/frontend/*")
 
 #######################################
 # targets
@@ -50,22 +89,46 @@ $(UNITTESTS_TARGETS):
 	fi
 
 build-frontend:
-	set -e; \
-	cd main/frontend/; \
-	npm install;\
-	npm run build; \
-	find dist/ -type f -name "*.gz" -exec rm -f {} \; ; \
-	find dist/ -type f -exec gzip -k {} \; ; \
+	@echo 'Building frontend'
+	@{ \
+		set -e && \
+		cd main/frontend/ && \
+		npm install &&\
+		npm run build && \
+		$(FIND) dist/ -type f -name "*.gz" -exec rm -f {} \; && \
+		$(FIND) dist/ -type f -exec gzip -k {} \; ; \
+	}
 
 build-idf-project:
-	idf.py $(addprefix -D, $(DEFS)) build
+	@echo 'Building ESP-IDF project'
+	@idf.py $(addprefix -D, $(DEFS)) build
+	@$(MAKE) prepare_release
+
+prepare_release:
+	@mkdir -p $(RELEASE_DIR)
+	@rm -rf release/*
+	@cp $(BUILD_DIR)/$(TARGET).bin $(RELEASE_DIR)/$(RELEASE_FILE_NAME)
+	@echo 'Release firmware: $(RELEASE_DIR)/$(RELEASE_FILE_NAME)'
 
 clean:
-	idf.py fullclean
-	rm -rf build
-	rm -rf main/frontend/dist
+	@echo 'Cleaning project'
+	@idf.py fullclean
+	@rm -rf $(BUILD_DIR)
+	@rm -rf $(RELEASE_DIR)
+	@rm -rf $(COVERAGE_REPORT_DIR)
+	@rm -rf main/frontend/dist
+	@rm -rf sdkconfig
+	@echo 'Cleaning unittests'
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
 			cd $$dir && $(MAKE) clean --no-print-directory; cd -; \
 		fi; \
 	done
+
+.PHONY: all unittests build-frontend build-idf-project prepare_release clean
+
+# Include coverage definitions and targets
+include unittests/build_common_coverage.mk
+
+# Include QEMU targets
+include qemu.mk

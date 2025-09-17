@@ -1,19 +1,42 @@
 #
 # Partition Table
 #
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
-CONFIG_PARTITION_TABLE_FILENAME="partitions_singleapp_large.csv"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_table.csv"
 
 #
 # HTTP Server
 #
-CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+
+#
+# Serial flasher config
+#
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+#
+# FreeRTOS / Kernel
+#
+# Увеличена частота RTOS для увеличения скорости переключения задач и
+# повышения точности ожидания тайм-аутов и задержек (vTaskDelay)
+#
+CONFIG_FREERTOS_HZ=500
+
+#
+# Enable DEBUG log messages activated by esp_log_level_set()
+#
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_MAXIMUM_LEVEL=4
+
+#
+# LWIP
+#
+CONFIG_LWIP_MAX_SOCKETS=15
+CONFIG_LWIP_STATS=y
 
 #
 # eFuse Bit Manager
 #
-CONFIG_EFUSE_CUSTOM_TABLE=y
-CONFIG_EFUSE_CUSTOM_TABLE_FILENAME="main/efuse_table.csv"
-CONFIG_EFUSE_VIRTUAL=y  # FIXME: в релизе отключить
-CONFIG_EFUSE_CODE_SCHEME_COMPAT_3_4=y
-CONFIG_EFUSE_MAX_BLK_LEN=192
+# Only for debug purposes
+# TODO: Delete it in production release
+CONFIG_EFUSE_VIRTUAL=y

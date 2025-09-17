@@ -1,9 +1,9 @@
 <script lang="ts" setup>
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '@/components/Button.vue';
 
-defineProps<{ accept?: string; placeholder: string; disabled?: boolean }>();
+defineProps<{ accept?: string; placeholder: string; uploadingPlaceholder: string; disabled?: boolean; isLoading: boolean }>();
 defineEmits(['upload']);
 
 const { t } = useI18n();
@@ -15,6 +15,12 @@ const handleFileChange = () => {
   files.value = fileInput.value?.files;
 };
 
+watch(files, () => {
+  if (!files.value?.length) {
+    fileInput.value!.value = null;
+  }
+});
+
 const cancelChoice = () => {
   files.value = null;
   fileInput.value!.value = null;
@@ -22,24 +28,20 @@ const cancelChoice = () => {
 </script>
 
 <template>
-  <form class="fileUpload">
+  <form class="fileUpload" autocomplete="off">
     <input ref="fileInput" class="fileUpload-input" type="file" required :accept="accept" @change="handleFileChange" />
     <Button v-if="!files?.length" type="button" @click="fileInput!.click()">{{ placeholder }}</Button>
     <div v-else>
       <div class="fileUpload-wrapper">
         <input v-show="false" v-model="destinationPath" type="text" name="destination_path" required>
         <Button type="button" variant="gray" :disabled="disabled" @click="cancelChoice">{{ t('cancel') }}</Button>
-        <Button type="button" :disabled="disabled" @click="$emit('upload')">{{ t('upload') }}</Button>
+        <Button type="button" :is-loading="isLoading" :disabled="disabled" @click="$emit('upload')">{{ uploadingPlaceholder ? uploadingPlaceholder : t('upload') }}</Button>
       </div>
     </div>
   </form>
 </template>
 
 <style scoped>
-.fileUpload {
-  padding-top: 12px;
-}
-
 .fileUpload-input {
   display: none;
 }
@@ -55,6 +57,10 @@ const cancelChoice = () => {
   "en": {
     "cancel": "Cancel choice",
     "upload": "Upload"
+  },
+  "ru": {
+    "cancel": "Отменить",
+    "upload": "Загрузить"
   }
 }
 </i18n>

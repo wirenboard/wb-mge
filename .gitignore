@@ -6,6 +6,16 @@ build/**
 sdkconfig
 sdkconfig.old
 dependencies.lock
+**/build/
+
+# Release
+release/
 
 # Dependencies
 managed_components/
+
+.clang-format
+.clang-tidy
+
+# Coverage reports
+**/covr_report/

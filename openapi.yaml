@@ -1,0 +1,842 @@
+openapi: 3.1.0
+info:
+  title: WB-MGE HTTP API
+  version: 1.0.0
+servers:
+  - url: http://localhost
+security:
+  - sessionCookie: []
+paths:
+  /auth:
+    post:
+      summary: Authenticate user
+      security: []  # Override global security - no auth required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                login:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                  pattern: '^[a-zA-Z0-9_-]+$'
+                  description: "Username, alphanumeric, underscore and hyphen"
+                pass:
+                  type: string
+                  minLength: 0
+                  maxLength: 32
+                  pattern: '^[ -~]*$'
+                  description: "Password, printable ASCII characters"
+              required: [login, pass]
+      responses:
+        '200':
+          description: Authentication result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth:
+                    type: boolean
+                  error:
+                    type: string
+                    maxLength: 255
+              examples:
+                success:
+                  summary: Successful authentication
+                  value:
+                    auth: true
+                failure:
+                  summary: Failed authentication
+                  value:
+                    auth: false
+                    error: "Invalid login or password"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /session:
+    get:
+      summary: Check session authentication
+      responses:
+        '200':
+          description: Authenticated
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /logout:
+    post:
+      summary: Logout current session
+      responses:
+        '200':
+          description: Logout result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logout:
+                    type: boolean
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /update:
+    post:
+      summary: OTA firmware update
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /info:
+    get:
+      summary: Get device/system info
+      responses:
+        '200':
+          description: Device info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device_name:
+                    type: string
+                    maxLength: 20
+                    example: "WB-MGE v.3"
+                  signature:
+                    type: string
+                    maxLength: 12
+                    pattern: '^[a-zA-Z0-9\s\-_.]+$'
+                  firmware:
+                    type: string
+                    maxLength: 16
+                    pattern: '^\d+\.\d+\.\d+$'
+                    example: "1.0.0"
+                  git_info:
+                    type: string
+                    maxLength: 50
+                    pattern: '^[0-9a-f]{7}_[A-Za-z0-9_-]+$'
+                    example: "123abcd_main"
+                  serial_num:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                    maximum: 18446744073709551615
+                  system_voltage:
+                    type: number
+                    format: float
+                    minimum: 0.0
+                    maximum: 100.0
+                    description: "System voltage in volts"
+                  config_button_presses:
+                    type: integer
+                    minimum: 0
+                    maximum: 1000
+                    description: "Number of config button presses"
+                  ethernet:
+                    type: object
+                    properties:
+                      con_eth: { type: boolean }
+                      ip:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      mask:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      gw:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      mac:
+                        type: string
+                        pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+                  wifi:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
+                      mode:
+                        type: string
+                        enum: ["ap", "sta", "none"]
+                      con_sta: { type: boolean }
+                      con_sta_ssid:
+                        type: string
+                        minLength: 0
+                        maxLength: 31
+                      sta_ip:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      sta_mask:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      sta_gw:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      con_ap:
+                        type: integer
+                        minimum: 0
+                        maximum: 10
+                      ap_ip:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      ap_mask:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      ap_gw:
+                        type: string
+                        format: ipv4
+                        nullable: true
+                      sta_rssi:
+                        type: integer
+                        minimum: -128
+                        maximum: 127
+                        nullable: true
+                      ap_channel:
+                        type: integer
+                        minimum: 1
+                        maximum: 14
+                      sta_mac:
+                        type: string
+                        pattern: '^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$'
+                      ap_mac:
+                        type: string
+                        pattern: '^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$'
+                  rs485_1:
+                    $ref: '#/components/schemas/RS485Status'
+                  rs485_2:
+                    $ref: '#/components/schemas/RS485Status'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /settings:
+    get:
+      summary: Get all device settings
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceSettings'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      summary: Update device settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceSettings'
+      responses:
+        '200':
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                additionalProperties:
+                  type: boolean
+                  description: Individual field update status (true/false for each field)
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /cmd:
+    post:
+      summary: Execute command
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cmd:
+                  type: string
+                  enum: [reboot, set_default_settings, write_factory_data]
+              required: [cmd]
+      responses:
+        '200':
+          description: Command executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  command:
+                    type: string
+                    maxLength: 32
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /wifi_scan/start:
+    post:
+      summary: Start Wi-Fi network scan
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              maxProperties: 0
+      responses:
+        '200':
+          description: Scan start result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: 
+                    type: string
+                    maxLength: 255
+                  error: 
+                    type: string
+                    maxLength: 255
+              examples:
+                success:
+                  summary: Scan started successfully
+                  value:
+                    success: true
+                    message: "Scan started"
+                already_running:
+                  summary: Scan already in progress
+                  value:
+                    success: false
+                    error: "Scan already in progress"
+                failed:
+                  summary: Failed to start scan
+                  value:
+                    success: false
+                    error: "Failed to start scan"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /wifi_scan/results:
+    get:
+      summary: Get Wi-Fi scan status and results
+      responses:
+        '200':
+          description: Wi-Fi scan status and results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scan_in_progress: { type: boolean }
+                  scan_completed: { type: boolean }
+                  error:
+                    type: string
+                    maxLength: 255
+                  networks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ssid:
+                          type: string
+                          maxLength: 31
+                        rssi:
+                          type: integer
+                          minimum: -100
+                          maximum: 0
+                        bssid:
+                          type: string
+                          pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+                        channel:
+                          type: integer
+                          minimum: 1
+                          maximum: 14
+              examples:
+                in_progress:
+                  summary: Scan in progress
+                  value:
+                    scan_in_progress: true
+                    scan_completed: false
+                completed:
+                  summary: Scan completed with results
+                  value:
+                    scan_in_progress: false
+                    scan_completed: true
+                    networks:
+                      - ssid: "MyWiFi"
+                        rssi: -45
+                        bssid: "AA:BB:CC:DD:EE:FF"
+                        channel: 6
+                failed:
+                  summary: Scan failed
+                  value:
+                    scan_in_progress: false
+                    scan_completed: false
+                    error: "Scan failed"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /ap_clients:
+    get:
+      summary: Get list of AP clients
+      responses:
+        '200':
+          description: AP clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    mac:
+                      type: string
+                      pattern: '^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'
+                    rssi:
+                      type: integer
+                      minimum: -100
+                      maximum: 0
+                    ip:
+                      type: string
+                      format: ipv4
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /uptime:
+    get:
+      summary: Get device uptime
+      responses:
+        '200':
+          description: Uptime
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days:
+                    type: integer
+                    minimum: 0
+                    maximum: 2147483647
+                  hours:
+                    type: integer
+                    minimum: 0
+                    maximum: 23
+                  minutes:
+                    type: integer
+                    minimum: 0
+                    maximum: 59
+                  seconds:
+                    type: integer
+                    minimum: 0
+                    maximum: 59
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /:
+    get:
+      summary: Get main application page
+      description: Serves the main HTML interface
+      responses:
+        '200':
+          description: Main HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Encoding:
+              schema:
+                type: string
+                enum: [gzip]
+
+  /index.css:
+    get:
+      summary: Get application CSS styles
+      description: Serves the compressed CSS stylesheet
+      responses:
+        '200':
+          description: CSS stylesheet
+          content:
+            text/css:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Encoding:
+              schema:
+                type: string
+                enum: [gzip]
+
+  /index.js:
+    get:
+      summary: Get application JavaScript
+      description: Serves the compressed JavaScript application
+      responses:
+        '200':
+          description: JavaScript application
+          content:
+            application/javascript:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Encoding:
+              schema:
+                type: string
+                enum: [gzip]
+
+  /favicon.webp:
+    get:
+      summary: Get website favicon
+      description: Serves the favicon in WebP format
+      security: []  # No authentication required for favicon
+      responses:
+        '200':
+          description: Favicon image
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session_id
+  responses:
+    UnauthorizedError:
+      description: Unauthorized - Session cookie required or invalid
+    SuccessResponse:
+      description: Operation successful
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+  schemas:
+    RS485Status:
+      type: object
+      properties:
+        is_busy: { type: boolean }
+        error_percentage:
+          type: integer
+          minimum: 0
+          maximum: 100
+        server_connections_count:
+          type: integer
+          minimum: 0
+          maximum: 10
+
+    RS485Settings:
+      type: object
+      properties:
+        term: { type: boolean }
+        fail_safe: { type: boolean }
+        baudrate:
+          type: integer
+          minimum: 1200
+          maximum: 115200
+          enum: [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
+        stopbits:
+          type: string
+          enum: ["1", "1.5", "2"]
+        parity:
+          type: string
+          enum: ["none", "even", "odd"]
+        databits:
+          type: string
+          enum: ["5", "6", "7", "8"]
+        bridge:
+          type: object
+          properties:
+            mode:
+              type: string
+              enum: ["server", "client"]
+            port:
+              type: integer
+              minimum: 1
+              maximum: 65535
+            ip:
+              type: string
+              format: ipv4
+              pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+            modbus: { type: boolean }
+
+    EthernetSettings:
+      type: object
+      properties:
+        ip_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        mask_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        gw_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        dhcpc: { type: boolean }
+
+    WiFiSettings:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: ["ap", "sta", "none"]
+        ap_auth:
+          type: string
+          enum: ["open", "wpa2_psk", "wpa3_psk"]
+        sta_auth:
+          type: string
+          enum: ["open", "wpa2_psk", "wpa3_psk"]
+        ap_ssid:
+          type: string
+          minLength: 1
+          maxLength: 31
+          pattern: '^[\\x20-\\x7E]{1,31}$'
+          description: "Access point SSID, 1-31 printable ASCII characters"
+        ap_pass:
+          type: string
+          minLength: 8
+          maxLength: 63
+          pattern: '^[ -~]+$'
+          description: "WPA password, 8-63 printable ASCII characters"
+        sta_ssid:
+          type: string
+          minLength: 1
+          maxLength: 31
+          pattern: '^[\\x20-\\x7E]{1,31}$'
+          description: "Station network SSID, 1-31 printable ASCII characters"
+        sta_pass:
+          type: string
+          minLength: 0
+          maxLength: 63
+          pattern: '^[ -~]*$'
+          description: "WPA password, printable ASCII characters"
+        ap_ip_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        ap_mask_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        ap_gw_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        sta_dhcpc: { type: boolean }
+        sta_ip_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        sta_mask_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+        sta_gw_static:
+          type: string
+          format: ipv4
+          pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
+
+    DeviceSettings:
+      type: object
+      properties:
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9-]+$'
+          description: "Valid hostname, alphanumeric and hyphens only"
+        login:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9_-]+$'
+          description: "Username, alphanumeric, underscore and hyphen"
+        pass:
+          type: string
+          minLength: 0
+          maxLength: 32
+          pattern: '^[ -~]*$'
+          description: "Password, printable ASCII characters"
+        wifi:
+          $ref: '#/components/schemas/WiFiSettings'
+        ethernet:
+          $ref: '#/components/schemas/EthernetSettings'
+        rs485_1:
+          $ref: '#/components/schemas/RS485Settings'
+        rs485_2:
+          $ref: '#/components/schemas/RS485Settings'
+        vout: { type: boolean }
+        web_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 80
+        io_bus: { type: boolean }
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+          maxLength: 255
