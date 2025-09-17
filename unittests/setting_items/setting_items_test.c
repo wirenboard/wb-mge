@@ -10,7 +10,7 @@
 
 #include <string.h>
 
-#define SETTING_ITEMS_COUNT                         44
+#define TEST_BUFFER_SIZE                            300
 
 setting_storage_iface_t test_storage = {
     .has_key = rams_has_key,
@@ -126,6 +126,8 @@ const mock_setting_item_t setting_items[] = {
     {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, SETTING_ITEM_TYPE_BOOL},
 };
 
+#define SETTING_ITEMS_COUNT                         (ARRAY_SIZE(setting_items))
+
 const size_t expected_items_count = ARRAY_SIZE(expected_items);
 const size_t actual_count = ARRAY_SIZE(setting_items);
 
@@ -162,7 +164,7 @@ void test_setting_items_init_function(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_init function");
     LOG_MESSAGE();
 
-    TEST_ASSERT_EQUAL_INT(ESP_FAIL, setting_items_init());
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, setting_items_init(), "Initialization should fail when write_str returns error");
 }
 
 // Тестируем, что при инициализации и отсутствии ключей в хранилище записываются значения по умолчанию
@@ -175,7 +177,7 @@ void test_setting_items_init_with_storage(void)
     rams_init();
 
     esp_err_t result = setting_items_init_with_storage(&test_storage);
-    TEST_ASSERT_EQUAL_INT(ESP_OK, result);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
 
     for (size_t i = 0; i < SETTING_ITEMS_COUNT; i++) {
         const char *key = setting_items_get_key_at(i);
@@ -210,12 +212,20 @@ void test_setting_items_init_with_storage(void)
 
         for (size_t j = 0; j < expected_items_count; j++) {
             if (strcmp(expected_items[j].key, key) == 0) {
-                TEST_ASSERT_EQUAL_STRING_MESSAGE(
-                    expected_items[j].default_value,
-                    value,
-                    "The value read should match the expected default value"
-                );
+                if (strcmp(expected_items[j].default_value, value) == 0) {
+                    break;
+                } else {
+                    char log_message[TEST_BUFFER_SIZE];
+                    snprintf(log_message, sizeof(log_message), "The value read for %s should match the expected default value", key);
+                    TEST_FAIL_MESSAGE(log_message);
+                }
                 break;
+            } else {
+                if (j == expected_items_count - 1) {
+                    char log_message[TEST_BUFFER_SIZE];
+                    snprintf(log_message, sizeof(log_message), "Key %s not found in expected_items array", key);
+                    TEST_FAIL_MESSAGE(log_message);
+                }
             }
         }
     }
@@ -247,7 +257,7 @@ void test_setting_items_array_contents(void)
             }
         }
         if (!found) {
-            char search_message[300];
+            char search_message[TEST_BUFFER_SIZE];
             snprintf(search_message, sizeof(search_message),
                     "Setting item %s should have default value of %s type %d",
                     expected_items[i].key, expected_items[i].default_value, expected_items[i].type
@@ -448,8 +458,8 @@ void test_setting_items_save_error_conditions(void)
     );
 
     // Test 2: NULL value parameter
-    char read_buffer_before[128];
-    char read_buffer_after[128];
+    char read_buffer_before[TEST_BUFFER_SIZE];
+    char read_buffer_after[TEST_BUFFER_SIZE];
     memset(read_buffer_before, 0, sizeof(read_buffer_before));
     memset(read_buffer_after, 0, sizeof(read_buffer_after));
 
@@ -548,7 +558,7 @@ void test_setting_items_read_success(void)
 
     const char* test_key = KEY_HOSTNAME;
     const char* test_value = "logged-hostname";
-    char read_buffer[128];
+    char read_buffer[TEST_BUFFER_SIZE];
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         ESP_OK,
@@ -576,7 +586,7 @@ void test_setting_items_read_error_conditions(void)
     // Valid parameters for comparison
     const char* valid_key = KEY_HOSTNAME;
     const char* invalid_key = "nonexistent_key";
-    char read_buffer[128];
+    char read_buffer[TEST_BUFFER_SIZE];
 
     // Test 1: NULL key parameter
     TEST_ASSERT_EQUAL_INT_MESSAGE(

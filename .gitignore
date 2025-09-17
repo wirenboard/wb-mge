@@ -3,6 +3,7 @@
 
 # Build
 build/**
+release/
 sdkconfig
 sdkconfig.old
 dependencies.lock

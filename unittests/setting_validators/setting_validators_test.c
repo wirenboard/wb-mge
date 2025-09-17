@@ -35,6 +35,7 @@ void test_validate_hostname(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_hostname("host_name"), "Hostname with underscores should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_hostname("host name"), "Hostname with spaces should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_hostname("host@name"), "Hostname with special characters should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_hostname("host{name"), "Hostname with brace character should be invalid");
 }
 
 // Test validate_ssid function
@@ -295,6 +296,7 @@ void test_validate_login(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_login("user name"), "Login with space should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_login("user@domain"), "Login with special characters should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_login("user.name"), "Login with dot should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_login("user|name"), "Login with pipe should be invalid");
 }
 
 // Test validate_password function
