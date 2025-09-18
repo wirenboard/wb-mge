@@ -3,6 +3,7 @@
 #include "esp_bit_defs.h"
 #include "freertos/FreeRTOS.h"
 #include "http_server.h"
+#include "bridge.h"
 
 
 #define SETTINGS_UPDATE_DEBUG_LOG_ENABLE    1               // TODO: Возможно, вынести в настройки
@@ -11,6 +12,8 @@
 #define SETTINGS_UPDATE_TASK_PRIORITY       5
 
 #define HTTP_SERVER_FLAG                    BIT0
+
+#define BRIDGE_FLAGS_BASE                   BIT24
 
 #define HTTP_SERVER_UPDATE_DELAY_MS         1000            // Задержка перед обновлением настроек HTTP сервера
 
@@ -27,6 +30,13 @@ static void settings_update_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(HTTP_SERVER_UPDATE_DELAY_MS));
         http_server_deinit();
         http_server_init();
+    }
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        if (flags & (BRIDGE_FLAGS_BASE << index)) {
+            bridge_port_deinit(index);
+            bridge_port_init(index);
+        }
     }
 
     ESP_LOGD(TAG, "Settings update task finished");
@@ -50,6 +60,13 @@ void settings_update(void)
     if (http_server_check_settings_changed()) {
         ESP_LOGD(TAG, "HTTP server settings were changed");
         flags |= HTTP_SERVER_FLAG;
+    }
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        if (bridge_port_check_settings_changed(index)) {
+            ESP_LOGD(TAG, "Bridge port %u settings were changed", index + 1);
+            flags |= BRIDGE_FLAGS_BASE << index;
+        }
     }
 
     if (flags) {
