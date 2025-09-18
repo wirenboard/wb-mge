@@ -1,4 +1,4 @@
-2025-09-17 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-09-18 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc8
     * rework:   move setting validators to separate module

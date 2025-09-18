@@ -362,7 +362,7 @@ void test_bridge_and_bool_validators(void)
     const char* bridge_mode_keys[] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
     for (size_t i = 0; i < ARRAY_SIZE(bridge_mode_keys); i++) {
         mock_reset_validator_flags();
-        TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(bridge_mode_keys[i], "tcp_client"));
+        TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(bridge_mode_keys[i], "client"));
         TEST_ASSERT_TRUE_MESSAGE(mock_validate_bridge_mode_called, "validate_bridge_mode should be called for bridge mode");
     }
 
