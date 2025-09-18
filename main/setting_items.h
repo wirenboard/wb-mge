@@ -3,9 +3,8 @@
 #include <esp_err.h>
 #include <stdbool.h>
 
-#define SETTING_ITEM_MAX_STR_LEN    64 // WPA2 passwords can be up to 63 characters + null terminator
-
-#define SETTING_ITEMS_NUM_MAX       50
+#define SETTING_ITEM_MAX_STR_LEN            64          // WPA2 passwords can be up to 63 characters + null terminator
+#define SETTING_ITEMS_NUM_MAX               50
 
 // Ключи для хранения настроек
 #define KEY_HOSTNAME                "hostname"
@@ -124,6 +123,9 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized);
 // Iterator functions for all settings
 size_t setting_items_get_count(void);
 const char *setting_items_get_key_at(size_t index);
+
+// Get default value for specified key from setting_items array
+const char *setting_items_get_default_value(const char *key);
 
 // Type introspection functions
 setting_item_type_t setting_items_get_type(const char *key);

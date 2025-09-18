@@ -1,4 +1,13 @@
+2025-09-18 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc8
+    * rework:   move setting validators to separate module
+    * added:    unittests for setting_items
+    * added:    unittests for setting_validators
+    * fixed:    setting_items_read function
+
 2025-09-17 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
     * version:  1.0.0-rc7
     * added:    Task Watchdog Timer panic on timeout (reset system)
 

@@ -305,7 +305,7 @@ void test_http_server_uri_handlers_registration(void)
             char search_message[MESSAGE_BUFFER_SIZE];
             const char* method_name = get_method_as_string(expected_uri_registry[i].method);
             snprintf(search_message, sizeof(search_message),
-                    "URI %s with method %s should be registered\n", expected_uri_registry[i].uri, method_name);
+                    "URI %s with method %s should be registered", expected_uri_registry[i].uri, method_name);
             TEST_FAIL_MESSAGE(search_message);
         }
     }
