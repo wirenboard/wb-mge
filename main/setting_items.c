@@ -10,7 +10,7 @@
 #include <esp_log.h>
 
 
-#define SETTING_ITEMS_DEBUG_LOG_ENABLE      1           // TODO: Возможно, вынести в настройки
+#define SETTING_ITEMS_DEBUG_LOG_ENABLE      0           // TODO: Возможно, вынести в настройки
 
 #define MAX_HOSTNAME_LEN                    32
 #define MAX_SSID_LEN                        31          // In ESP-IDF there is ssid[32], terminating '\0' included
