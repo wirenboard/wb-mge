@@ -22,6 +22,7 @@ set(COMPONENT_SRCS "main.c"
                    "bridge/packet_queue.c"
                    "bridge/modbus_helpers.c"
                    "bridge/rs485_stats.c"
+                   "bridge/fast_modbus.c"
                    "wb_app_desc/wb_app_desc.c")
 
 # Conditionally add files based on build type

@@ -1,12 +1,10 @@
 #include "modbus_tcp.h"
 #include <string.h>
 #include <esp_log.h>
-#include "serial.h"
 #include "tcp_server.h"
 #include "modbus_helpers.h"
-#include "packet_queue.h"
 #include "rs485_stats.h"
-#include "bridge.h"
+#include "fast_modbus.h"
 
 
 #define MODBUS_TCP_DEBUG_LOG_ENABLE         1               // TODO: Возможно, вынести в настройки
@@ -17,8 +15,6 @@
 
 #define MODBUS_TCP_QUEUE_LEN                10              // Длина очереди запросов от клиентов
 
-#define MODBUS_TCP_SEND_BUFFER_SIZE         1024            // Размер буфера передачи для TCP и RTU пакетов
-
 #define EVENT_SERIAL_RESPONSE_RECEIVED      (1 << 0)        // Флаг события: serial-порт получил пакет с ответом
 
 #define MODBUS_RTU_MAX_PACKET_LEN           256             // Максимальная длина пакета Modbus RTU (кадров)
@@ -26,20 +22,6 @@
 #define RS485_BITS_PER_FRAME                11              // Количество бит в кадре UART (8 бит данных + старт-бит + 2 стоп-бита)
 
 #define MODBUS_MGE_DETECT_FCODE             0x47            // Код функции Modbus для определения MGE (71)
-
-typedef struct {
-    bool initialized;
-    int index;
-    serial_desc_t* serial_desc;
-    tcp_desc_t* tcp_desc;
-    bridge_mode_t mode;
-    packet_queue_handle tcp_queue;
-    EventGroupHandle_t event_group;
-    uint16_t pending_tid;
-    uint8_t pending_slave_id;
-    unsigned resp_timeout_ticks;
-} mb_tcp_task_ctx_t;
-
 
 static const char *TAG = "modbus_tcp";
 
@@ -118,19 +100,14 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    // Удаляем байты 0xFF, предшествующие началу пакета в быстром Modbus
-    while (len && (*data == 0xFF)) {
-        ESP_LOGD(TAG, "Port[%d]: Skipping leading 0xFF bytes in Fast Modbus", ctx->index + 1);
-        data++;
-        len--;
-    }
+    size_t truncated_len = fast_modbus_truncate_ff(&data, len);
 
     ESP_LOGD(TAG, "Port[%d]: Processing data from serial port", ctx->index + 1);
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_DEBUG);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, truncated_len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);
 
-    int check_res = modbus_rtu_check_response(data, len, 0);
+    int check_res = modbus_rtu_check_response(data, truncated_len, 0);
     if (check_res != 0) {
         return;
     }
@@ -146,7 +123,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    size_t tcp_resp_len = modbus_tcp_from_rtu(ctx->pending_tid, data, len, tcp_resp_buf, MODBUS_TCP_SEND_BUFFER_SIZE);
+    size_t tcp_resp_len = modbus_tcp_from_rtu(ctx->pending_tid, data, truncated_len, tcp_resp_buf, MODBUS_TCP_SEND_BUFFER_SIZE);
     if (!tcp_resp_len) {
         free(tcp_resp_buf);
         return;
@@ -253,36 +230,6 @@ static esp_err_t send_rtu_request(mb_tcp_task_ctx_t* ctx, uint8_t* rtu_req_buf, 
     return send_result;
 }
 
-// Отправка ответа, что устройство поддерживает Быстрый Modbus
-static esp_err_t send_fast_modbus_probe_response(mb_tcp_task_ctx_t* ctx, const mb_tcp_header_t* tcp_req_header)
-{
-    ESP_LOGD(TAG, "Port[%d]: Fast Modbus support probe received", ctx->index + 1);
-
-    uint8_t* tcp_resp_buf = malloc(MODBUS_TCP_SEND_BUFFER_SIZE);
-    if (!tcp_resp_buf) {
-        ESP_LOGE(TAG, "Port[%d]: Failed to create Fast Modbus support TCP response buffer", ctx->index + 1);
-        return ESP_FAIL;
-    }
-
-    mb_tcp_header_t* tcp_resp_header = (mb_tcp_header_t*)tcp_resp_buf;
-    tcp_resp_header->transaction_id = tcp_req_header->transaction_id;
-    tcp_resp_header->protocol_id = tcp_req_header->protocol_id;
-    tcp_resp_header->length = 19;
-    tcp_resp_header->unit_id = tcp_req_header->unit_id;
-    tcp_resp_header->function = tcp_req_header->function;
-
-    // Add data payload: 'WB-FAST-MODBUS-OK'
-    const char* fast_modbus_data = "WB-FAST-MODBUS-OK";
-    memcpy(&tcp_resp_buf[sizeof(mb_tcp_header_t)], fast_modbus_data, strlen(fast_modbus_data));
-    size_t tcp_resp_len = sizeof(mb_tcp_header_t) + strlen(fast_modbus_data);
-
-    ESP_LOGD(TAG, "Port[%d]: Sending Fast Modbus support TCP response", ctx->index + 1);
-    tcp_server_send(ctx->tcp_desc, tcp_resp_buf, tcp_resp_len);
-
-    free(tcp_resp_buf);
-    return ESP_OK;
-}
-
 
 // Ожидание отправки RTU запроса и получения ответа
 // Возвращает результат ожидания ответа (true - ответ получен)
@@ -324,7 +271,7 @@ static void modbus_tcp_server_task(void *arg)
 
         if (tcp_req_header->function == MODBUS_MGE_DETECT_FCODE) {
             if (tcp_req_header->unit_id == 0) {
-                send_fast_modbus_probe_response(ctx, tcp_req_header);
+                fast_modbus_send_probe_response(ctx, tcp_req_header);
                 free(tcp_req_buf);
                 continue;
             }
