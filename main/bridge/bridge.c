@@ -257,7 +257,7 @@ esp_err_t bridge_port_deinit(unsigned index)
 
     ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
     if (cfg->bridge_mb) {
-        //modbus_tcp_deinit_port()
+        modbus_tcp_deinit_port(index);
     } else {
         transparent_tcp_deinit_port(index);
     }
