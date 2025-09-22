@@ -10,10 +10,3 @@ void* test_malloc(size_t size)
     }
     return malloc(size);
 }
-
-void test_free(void* ptr)
-{
-    if (ptr) {
-        free(ptr);
-    }
-}

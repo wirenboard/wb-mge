@@ -5,7 +5,7 @@ TEST_NAME = fast_modbus_test
 PROJ_DIR = ../..
 
 # Source files to be checked
-TESTED_SRC += fast_modbus_with_mock.c
+TESTED_SRC += ${PROJ_DIR}/main/bridge/fast_modbus.c
 
 # Auxiliary source files used in this test
 AUX_SRC += mocks/*.c

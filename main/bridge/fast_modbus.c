@@ -1,3 +1,7 @@
+#ifdef __unittest_env__
+    #define malloc test_malloc
+#endif
+
 #include "fast_modbus.h"
 #include "tcp_server.h"
 
