@@ -21,8 +21,6 @@
 #define MODBUS_RTU_RECV_RESERVE_LEN         10              // Запас на прием пакета с учетом интервала тишины и арбитража быстрого Modbus (кадров)
 #define RS485_BITS_PER_FRAME                11              // Количество бит в кадре UART (8 бит данных + старт-бит + 2 стоп-бита)
 
-#define MODBUS_MGE_DETECT_FCODE             0x47            // Код функции Modbus для определения MGE (71)
-
 static const char *TAG = "modbus_tcp";
 
 static mb_tcp_task_ctx_t mb_tcp_task_ctx[MODBUS_TCP_MAX_TASK_COUNT] = {0};
@@ -267,14 +265,12 @@ static void modbus_tcp_server_task(void *arg)
             continue;
         }
 
+        // Проверка является ли запрос поддержкой Быстрого Modbus
         mb_tcp_header_t* tcp_req_header = (mb_tcp_header_t*)tcp_req_buf;
-
-        if (tcp_req_header->function == MODBUS_MGE_DETECT_FCODE) {
-            if (tcp_req_header->unit_id == 0) {
-                fast_modbus_send_probe_response(ctx, tcp_req_header);
-                free(tcp_req_buf);
-                continue;
-            }
+        enum fast_modbus_probe_result probe_result = fast_modbus_send_probe_response(ctx, tcp_req_header);
+        if (probe_result != FAST_MODBUS_NOT_PROBE) {
+            free(tcp_req_buf);
+            continue;
         }
 
         uint8_t* rtu_req_buf = 0;
