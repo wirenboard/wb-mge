@@ -17,6 +17,9 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+
+#define BRIDGE_DEBUG_LOG_ENABLE       1           // TODO: Возможно, вынести в настройки
+
 #define SERIAL_PORT_NUM_1             1
 #define SERIAL_INPUT_PIN_1            GPIO_NUM_9
 #define SERIAL_OUTPUT_PIN_1           GPIO_NUM_10
@@ -32,10 +35,13 @@
 #define RS485_BUSY_MONITOR_STACK_SIZE 1024
 #define RS485_BUSY_MONITOR_PRIORITY   1
 
+
 static const char *TAG = "bridge";
+
 
 // Forward declarations
 static bridge_mode_t string_to_bridge_mode(const char *str);
+
 
 typedef struct {
     serial_config_t serial_config;
@@ -171,18 +177,19 @@ static esp_err_t read_tcp_bridge_config(const int index, bridge_mode_t* mode, ui
 
 esp_err_t bridge_init(void)
 {
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        bridge_port_init(index);
+    if (BRIDGE_DEBUG_LOG_ENABLE) {
+        esp_log_level_set(TAG, ESP_LOG_DEBUG);
     }
 
-    // TODO: Maybe delete it
-    /////
     // Start RS485 busy monitor task and init error percentage statistics
     rs485_busy_monitor_init();
     rs485_stats_init();
 
-    ESP_LOGI(TAG, "Bridge initialized");
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        bridge_port_init(index);
+    }
 
+    ESP_LOGI(TAG, "Bridge initialized");
     return ESP_OK;
 }
 
@@ -197,11 +204,13 @@ esp_err_t bridge_port_init(unsigned index)
         return ESP_ERR_NOT_ALLOWED;
     }
 
+    ESP_LOGD(TAG, "Port[%u]: Initializing...", index + 1);
+
     ESP_RETURN_ON_ERROR(read_serial_port_config(index, &bridge_current_cfg[index].serial_config),
-                        TAG, "Failed to read serial config for port %u", index + 1);
+                        TAG, "Port[%u]: Failed to read serial config for port", index + 1);
     ESP_RETURN_ON_ERROR(read_tcp_bridge_config(index, &bridge_current_cfg[index].bridge_mode, &bridge_current_cfg[index].bridge_ip,
                                                 &bridge_current_cfg[index].bridge_port, &bridge_current_cfg[index].bridge_mb),
-                        TAG, "Failed to read bridge config for port %u", index + 1);
+                        TAG, "Port[%u]: Failed to read bridge config", index + 1);
 
     if (bridge_current_cfg[index].bridge_mode == BRIDGE_MODE_DISABLED) {
         ESP_LOGW(TAG, "Port[%d] is disabled", bridge_current_cfg[index].serial_config.port_num);
@@ -222,10 +231,9 @@ esp_err_t bridge_port_init(unsigned index)
         ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", bridge_current_cfg[index].serial_config.port_num);
     }
 
-    // TODO: Add statistics and activity initialization
-    /////
-
     bridge_ctx[index].initialized = true;
+    ESP_LOGD(TAG, "Port[%u]: Initialized", index + 1);
+
     return ESP_OK;
 }
 
@@ -233,16 +241,33 @@ esp_err_t bridge_port_init(unsigned index)
 esp_err_t bridge_port_deinit(unsigned index)
 {
     if (index >= BRIDGES_COUNT) {
+        ESP_LOGE(TAG, "Port[%u]: Port number out of range", index + 1);
         return ESP_ERR_INVALID_ARG;
     }
     if (!bridge_ctx[index].initialized) {
-        ESP_LOGI(TAG, "Port %u is not initialized", index + 1);
+        ESP_LOGI(TAG, "Port[%u] is not initialized", index + 1);
         return ESP_OK;
     }
 
-    // TODO: Add port deinitialization and statistics reset
-    /////
+    bridge_config_t* cfg = &bridge_current_cfg[index];
+    if (cfg->bridge_mode == BRIDGE_MODE_DISABLED) {
+        ESP_LOGD(TAG, "Port[%u]: Nothing to deinitialize", index + 1);
+        return ESP_OK;
+    }
 
+    ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
+    if (cfg->bridge_mb) {
+        //modbus_tcp_deinit_port()
+    } else {
+        transparent_tcp_deinit_port(index);
+    }
+
+    bridge_ctx[index].initialized = false;
+
+    rs485_busy_monitor_reset(index);
+    rs485_stats_reset(index);
+
+    ESP_LOGD(TAG, "Port[%u]: Deinitialized", index + 1);
     return ESP_OK;
 }
 

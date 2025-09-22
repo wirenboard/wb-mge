@@ -2,6 +2,7 @@
 #include "freertos/FreeRTOS.h"
 #include <string.h>
 #include "bridge.h"
+#include "esp_log.h"
 
 
 #define RS485_BUSY_MONITOR_TIMEOUT_MS           5000            // Тайм-аут определения наличия обмена в порте RS-485
@@ -19,6 +20,10 @@ static TickType_t last_activity_tick[BRIDGES_COUNT] = {0, 0};   // FreeRTOS tick
 static bool stats_errors[BRIDGES_COUNT][RS485_STATS_WINDOW_SIZE] = {0};
 static unsigned stats_count[BRIDGES_COUNT] = {0, 0};
 static unsigned stats_ptr[BRIDGES_COUNT] = {0, 0};
+
+static TaskHandle_t busy_monitor_task_handle = NULL;
+
+static const char* TAG = "rs485_stats";
 
 
 static void rs485_busy_monitor_task(void *arg)
@@ -42,12 +47,20 @@ void rs485_busy_monitor_init(void)
 {
     memset(sys_info.rs485_is_busy, 0, sizeof(sys_info.rs485_is_busy));
 
-    xTaskCreate(rs485_busy_monitor_task, "rs485_busy_monitor_task", RS485_BUSY_MONITOR_TASK_STACK_SIZE,
-                NULL, RS485_BUSY_MONITOR_TASK_PRIORITY, NULL);
+    if (busy_monitor_task_handle == NULL) {
+        BaseType_t ret = xTaskCreate(rs485_busy_monitor_task, "rs485_busy_monitor_task", RS485_BUSY_MONITOR_TASK_STACK_SIZE,
+                                    NULL, RS485_BUSY_MONITOR_TASK_PRIORITY, &busy_monitor_task_handle);
+        if (ret != pdPASS) {
+            busy_monitor_task_handle = NULL;
+            ESP_LOGE(TAG, "Unable to create RS485 busy monitor task");
+        }
+    } else {
+        ESP_LOGW(TAG, "RS485 busy monitor already initialized");
+    }
 }
 
 
-void rs485_busy_monitor_update_activity(int index)
+void rs485_busy_monitor_update_activity(unsigned index)
 {
     if (index >= BRIDGES_COUNT) {
         return;
@@ -55,6 +68,15 @@ void rs485_busy_monitor_update_activity(int index)
 
     last_activity_tick[index] = xTaskGetTickCount();
     sys_info.rs485_is_busy[index] = true;
+}
+
+
+void rs485_busy_monitor_reset(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        return;
+    }
+    sys_info.rs485_is_busy[index] = false;
 }
 
 
@@ -95,7 +117,7 @@ static unsigned stats_get_errors_count(bool errors[RS485_STATS_WINDOW_SIZE], uns
 }
 
 
-void rs485_stats_update(int index, bool success)
+void rs485_stats_update(unsigned index, bool success)
 {
     if (index >= BRIDGES_COUNT) {
         return;
@@ -110,4 +132,16 @@ void rs485_stats_update(int index, bool success)
     }
 
     sys_info.rs485_error_percentage[index] = err_percent;
+}
+
+
+void rs485_stats_reset(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        return;
+    }
+
+    stats_count[index] = 0;
+    stats_ptr[index] = 0;
+    sys_info.rs485_error_percentage[index] = 0;
 }

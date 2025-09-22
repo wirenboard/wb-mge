@@ -20,6 +20,8 @@
 
 static const char *TAG = "settings_update";
 
+static TaskHandle_t update_task_handle = NULL;
+
 
 static void settings_update_task(void *arg)
 {
@@ -28,18 +30,21 @@ static void settings_update_task(void *arg)
 
     if (flags & HTTP_SERVER_FLAG) {
         vTaskDelay(pdMS_TO_TICKS(HTTP_SERVER_UPDATE_DELAY_MS));
+        ESP_LOGD(TAG, "Applying new settings to HTTP server");
         http_server_deinit();
         http_server_init();
     }
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         if (flags & (BRIDGE_FLAGS_BASE << index)) {
+            ESP_LOGD(TAG, "Applying new settings to bridge port %u", index + 1);
             bridge_port_deinit(index);
             bridge_port_init(index);
         }
     }
 
-    ESP_LOGD(TAG, "Settings update task finished");
+    ESP_LOGI(TAG, "Settings update task finished");
+    update_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
@@ -53,6 +58,13 @@ void settings_update(void)
             esp_log_level_set(TAG, ESP_LOG_DEBUG);
         }
         log_initialized = true;
+    }
+
+    if (update_task_handle != NULL) {
+        ESP_LOGW(TAG, "Previous settings have not yet been applied, waiting for setting update task finished");
+        while (update_task_handle != NULL) {
+            vTaskDelay(10);
+        }
     }
 
     uint32_t flags = 0;
@@ -71,6 +83,10 @@ void settings_update(void)
 
     if (flags) {
         ESP_LOGI(TAG, "Some settings were changed, starting settings update task");
-        xTaskCreate(settings_update_task, "settings_update_task", SETTINGS_UPDATE_TASK_STACK_SIZE, (void*)flags, SETTINGS_UPDATE_TASK_PRIORITY, NULL);
+        BaseType_t ret = xTaskCreate(settings_update_task, "settings_update_task", SETTINGS_UPDATE_TASK_STACK_SIZE,
+                                    (void*)flags, SETTINGS_UPDATE_TASK_PRIORITY, &update_task_handle);
+        if (ret != pdPASS) {
+            ESP_LOGE(TAG, "Unable to create settings update task");
+        }
     }
 }

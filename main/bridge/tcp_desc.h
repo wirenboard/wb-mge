@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "freertos/FreeRTOS.h"
 
 typedef struct tcp_desc_t tcp_desc_t;
 
@@ -14,4 +15,6 @@ typedef struct tcp_desc_t {
     int port;
     tcp_receive_handler_t receive_handler;
     int active_connections;                 // per-server active connections, only for server mode
+    TaskHandle_t task_handle;
+    EventGroupHandle_t event_group;
 } tcp_desc_t;
