@@ -18,7 +18,7 @@
 #include <sys/socket.h>
 
 
-#define BRIDGE_DEBUG_LOG_ENABLE       1           // TODO: Возможно, вынести в настройки
+#define BRIDGE_DEBUG_LOG_ENABLE       0           // TODO: Возможно, вынести в настройки
 
 #define SERIAL_PORT_NUM_1             1
 #define SERIAL_INPUT_PIN_1            GPIO_NUM_9

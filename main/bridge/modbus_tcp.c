@@ -9,7 +9,7 @@
 #include "bridge.h"
 
 
-#define MODBUS_TCP_DEBUG_LOG_ENABLE         1               // TODO: Возможно, вынести в настройки
+#define MODBUS_TCP_DEBUG_LOG_ENABLE         0               // TODO: Возможно, вынести в настройки
 
 #define MODBUS_TCP_TASK_STACK_SIZE          3072            // Размер стека каждой задачи
 #define MODBUS_TCP_TASK_PRIORITY            4               // Приоритет задач

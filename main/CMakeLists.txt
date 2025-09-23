@@ -22,7 +22,8 @@ set(COMPONENT_SRCS "main.c"
                    "bridge/modbus_helpers.c"
                    "bridge/rs485_stats.c"
                    "wb_app_desc/wb_app_desc.c"
-                   "settings_update.c")
+                   "settings_update.c"
+                   "settings_save_timer.c")
 
 # Conditionally add files based on build type
 if(CONFIG_ETH_USE_OPENETH)

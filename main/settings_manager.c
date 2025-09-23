@@ -5,6 +5,7 @@
 #include "update_rs485_mio_gpio_states.h"
 #include "array_size.h"
 #include "settings_update.h"
+#include "settings_save_timer.h"
 
 #include <esp_log.h>
 #include <string.h>
@@ -379,6 +380,8 @@ esp_err_t settings_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "Settings POST request");
 
+    settings_save_timer_auto_init();
+
     if (!auth_middleware_check(req)) {
         return ESP_OK;
     }
@@ -387,6 +390,8 @@ esp_err_t settings_post_handler(httpd_req_t *req)
     if (request_json == NULL) {
         return ESP_FAIL;
     }
+
+    settings_save_timer_wait();
 
     cJSON *response_json = NULL;
     esp_err_t result = settings_process_request_json(request_json, &response_json);

@@ -5,7 +5,7 @@
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 
-#define TCP_SERVER_DEBUG_LOG_ENABLE     1           // TODO: Возможно, вынести в настройки
+#define TCP_SERVER_DEBUG_LOG_ENABLE     0           // TODO: Возможно, вынести в настройки
 
 #define KEEPALIVE_IDLE                  5
 #define KEEPALIVE_INTERVAL              5

@@ -14,7 +14,7 @@
 #include "esp_bit_defs.h"
 
 
-#define SERIAL_DEBUG_LOG_ENABLE         1           // TODO: Возможно, вынести в настройки
+#define SERIAL_DEBUG_LOG_ENABLE         0           // TODO: Возможно, вынести в настройки
 
 // буфер должен быть больше, чем максимальный размер пакета modbus + байты арбитража быстрого modbus
 // но, так как устройство может работать в режиме "прозрачного" шлюза, то размер буфера стоит выбирать с запасом
@@ -108,7 +108,7 @@ static void uart_event_task(void *pvParameters)
 
 serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
 {
-    if(SERIAL_DEBUG_LOG_ENABLE) {
+    if (SERIAL_DEBUG_LOG_ENABLE) {
         esp_log_level_set(TAG, ESP_LOG_DEBUG);
     }
 
