@@ -217,7 +217,7 @@ void test_modbus_rtu_check_response_valid_normal(void)
     uint8_t buf[valid_rtu_response_len];
     memcpy(buf, valid_rtu_response, valid_rtu_response_len);
     mb_rtu_header_t req = { .slave_id = buf[0], .function = buf[1] };
-    TEST_ASSERT_EQUAL(0, modbus_rtu_check_response(buf, valid_rtu_response_len, &req));
+    TEST_ASSERT_EQUAL(ESP_OK, modbus_rtu_check_response(buf, valid_rtu_response_len, &req));
 }
 
 // Тестируем функцию modbus_tcp_check_request

@@ -9,7 +9,7 @@
 #define MODBUS_RTU_CRC_BASE                     0xFFFF
 #define MODBUS_RTU_CRC16_LEN                    sizeof(uint16_t)
 #define MODBUS_RTU_REQUEST_MIN_LEN              5
-#define MODBUS_RTU_EXCEPTION_RESPONSE_MIN_LEN   (sizeof(mb_rtu_exception_response_t) + MODBUS_RTU_CRC16_LEN)
+#define MODBUS_RTU_EXCEPTION_RESPONSE_MIN_LEN   (sizeof(mb_rtu_header_t) + sizeof(uint8_t) + MODBUS_RTU_CRC16_LEN)
 #define MODBUS_RTU_NORMAL_RESPONSE_MIN_LEN      (sizeof(mb_rtu_header_t) + MODBUS_RTU_CRC16_LEN + sizeof(uint16_t))
 
 #define MODBUS_TCP_REQUEST_MIN_LEN              sizeof(mb_tcp_header_t)

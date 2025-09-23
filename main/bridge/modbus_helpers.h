@@ -10,12 +10,6 @@ typedef struct __attribute__((packed)) {
     uint8_t function;
 } mb_rtu_header_t;
 
-// Пакет ответа Modbus RTU с кодом ошибки
-typedef struct __attribute__((packed)) {
-    mb_rtu_header_t header;
-    uint8_t exception_code;
-} mb_rtu_exception_response_t;
-
 // Заголовок пакета Modbus TCP
 typedef struct __attribute__((packed)) {
     uint16_t transaction_id;
