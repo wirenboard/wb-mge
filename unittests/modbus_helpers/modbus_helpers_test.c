@@ -95,7 +95,8 @@ void test_modbus_rtu_check_request_short_len(void)
     LOG_MESSAGE();
 
     const size_t short_len = MODBUS_RTU_REQUEST_MIN_LEN - 1;
-    uint8_t buf[short_len] = {0};
+    uint8_t buf[short_len];
+    memcpy(buf, valid_rtu_request, short_len);
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_request(buf, short_len));
 }
 
@@ -236,7 +237,8 @@ void test_modbus_tcp_check_request_short_len(void)
     LOG_MESSAGE();
 
     const size_t short_len = MODBUS_TCP_REQUEST_MIN_LEN - 1;
-    uint8_t buf[short_len] = {0};
+    uint8_t buf[short_len];
+    memcpy(buf, valid_tcp_request, short_len);
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_tcp_check_request(buf, short_len));
 }
 
