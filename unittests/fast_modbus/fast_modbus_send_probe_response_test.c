@@ -136,7 +136,7 @@ void test_fast_modbus_send_probe_response_not_probe_length(void)
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другой строка запроса)
+// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другая строка запроса)
 void test_fast_modbus_send_probe_response_not_probe_string(void)
 {
     LOG_MESSAGE();

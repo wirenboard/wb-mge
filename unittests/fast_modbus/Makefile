@@ -9,6 +9,7 @@ TESTED_SRC += ${PROJ_DIR}/main/bridge/fast_modbus.c
 
 # Auxiliary source files used in this test
 AUX_SRC += mocks/*.c
+AUX_SRC += ../malloc.c
 
 # Include directories
 INC += ..
