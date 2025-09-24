@@ -1,6 +1,10 @@
+#ifdef __unittest_env__
+    #define malloc test_malloc
+#endif
+
 #include "packet_queue.h"
-#include <stdint.h>
-#include <stddef.h>
+
+#include <stdlib.h>
 #include <string.h>
 #include <esp_log.h>
 
@@ -35,17 +39,6 @@ void packet_queue_delete(const packet_queue_handle handle)
 }
 
 
-size_t packet_queue_count(const packet_queue_handle handle)
-{
-    if (!handle) {
-        return 0;
-    }
-
-    UBaseType_t count = uxQueueMessagesWaiting(handle);
-    return count;
-}
-
-
 void packet_queue_clear(const packet_queue_handle handle)
 {
     if (!handle) {
@@ -60,23 +53,23 @@ void packet_queue_clear(const packet_queue_handle handle)
 }
 
 
-int packet_queue_push(const packet_queue_handle handle, const uint8_t* data, const size_t len)
+esp_err_t packet_queue_push(const packet_queue_handle handle, const uint8_t* data, const size_t len)
 {
     if (!handle) {
-        return -1;
+        return ESP_FAIL;
     }
 
     UBaseType_t space_avail = uxQueueSpacesAvailable(handle);
     if (!space_avail) {
         ESP_LOGW(TAG, "No space in the queue");
-        return -1;
+        return ESP_FAIL;
     }
 
     packet_queue_elem_t queue_elem = {0};
     queue_elem.data_buf = malloc(len);
     if (!queue_elem.data_buf) {
         ESP_LOGE(TAG, "Unable to allocate memory for packet data");
-        return -1;
+        return ESP_FAIL;
     }
 
     memcpy(queue_elem.data_buf, data, len);
@@ -85,10 +78,10 @@ int packet_queue_push(const packet_queue_handle handle, const uint8_t* data, con
     if (xQueueSend(handle, &queue_elem, 0) != pdPASS) {
         ESP_LOGE(TAG, "Unable to push packet into queue");
         free(queue_elem.data_buf);
-        return -1;
+        return ESP_FAIL;
     }
 
-    return 0;
+    return ESP_OK;
 }
 
 
