@@ -9,6 +9,9 @@
 #include "esp_log.h"
 
 
+#define NETWORK_DEBUG_LOG_ENABLE        1       // TODO: Возможно, вынести в настройки
+
+
 typedef struct {
     bool dhcp_client;
     esp_netif_ip_info_t static_ip;
@@ -456,6 +459,10 @@ static esp_err_t init_ethernet(ethernet_settings_t* eth_settings, char* hostname
 
 esp_err_t network_init(void)
 {
+    if (NETWORK_DEBUG_LOG_ENABLE) {
+        esp_log_level_set(TAG, ESP_LOG_DEBUG);
+    }
+
     if (read_hostname(current_settings.hostname) != ESP_OK) {
         ESP_LOGE(TAG, "Unable to read hostname, using default value");
         strncpy(current_settings.hostname, BASE_HOSTNAME, sizeof(current_settings.hostname) - 1);
@@ -487,5 +494,108 @@ esp_err_t network_init(void)
     update_sys_info_wifi_mac();
     update_sys_info_wifi_state(&current_settings.wifi_settings);
 
+    return ESP_OK;
+}
+
+
+bool network_check_eth_settings_changed(void)
+{
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    esp_err_t ret = read_hostname(hostname);
+    if (ret == ESP_OK) {
+        if (strncmp(current_settings.hostname, hostname, SETTING_ITEM_MAX_STR_LEN - 1) != 0) {
+            return true;
+        }
+    }
+
+    ethernet_settings_t eth_settings;
+    ret = read_ethernet_settings(&eth_settings);
+    if (ret != ESP_OK) {
+        return false;
+    }
+
+    if (current_settings.eth_settings.dhcp_client != eth_settings.dhcp_client) {
+        return true;
+    }
+
+    if (!current_settings.eth_settings.dhcp_client) {
+        if (memcmp(&current_settings.eth_settings.static_ip, &eth_settings.static_ip, sizeof(eth_settings.static_ip)) != 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+esp_err_t network_update_eth_settings(void)
+{
+    ESP_LOGD(TAG, "Updating Ethernet settings...");
+
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    esp_err_t ret = read_hostname(hostname);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to read hostname");
+        return ret;
+    }
+
+    ethernet_settings_t eth_settings;
+    ret = read_ethernet_settings(&eth_settings);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to read Ethernet settings");
+        return ret;
+    }
+
+    memcpy(current_settings.hostname, hostname, sizeof(current_settings.hostname));
+    memcpy(&current_settings.eth_settings, &eth_settings, sizeof(current_settings.eth_settings));
+
+    esp_netif_ip_info_t* static_ip = NULL;
+    if (!eth_settings.dhcp_client) {
+        static_ip = &eth_settings.static_ip;
+    }
+    ret = ethernet_set_ip_hostname(static_ip, hostname);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update Ethernet settings");
+        return ret;
+    }
+
+    ESP_LOGD(TAG, "Ethernet settings updated");
+    return ESP_OK;
+}
+
+
+bool network_check_mdns_settings_changed(void)
+{
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    esp_err_t ret = read_hostname(hostname);
+    if (ret == ESP_OK) {
+        if (strncmp(current_settings.hostname, hostname, SETTING_ITEM_MAX_STR_LEN - 1) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+esp_err_t network_update_mdns_settings(void)
+{
+    ESP_LOGD(TAG, "Updating mDNS settings...");
+
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    esp_err_t ret = read_hostname(hostname);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to read hostname");
+        return ret;
+    }
+
+    memcpy(current_settings.hostname, hostname, sizeof(current_settings.hostname));
+
+    if (mdns_hostname_set(hostname) == ESP_OK) {
+        ESP_LOGI(TAG, "mDNS hostname set to: %s", hostname);
+    } else {
+        ESP_LOGE(TAG, "Unable to set mDNS hostname");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGD(TAG, "mDNS settings updated");
     return ESP_OK;
 }

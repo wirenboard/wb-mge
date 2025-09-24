@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "http_server.h"
 #include "bridge.h"
+#include "network.h"
 
 
 #define SETTINGS_UPDATE_DEBUG_LOG_ENABLE    1               // TODO: Возможно, вынести в настройки
@@ -12,11 +13,13 @@
 #define SETTINGS_UPDATE_TASK_PRIORITY       5
 
 #define HTTP_SERVER_FLAG                    BIT0
+#define MDNS_FLAG                           BIT4
+#define ETHERNET_FLAG                       BIT8
 
 #define BRIDGE_FLAGS_BASE                   BIT24
 
 #define HTTP_SERVER_UPDATE_DELAY_MS         1000            // Задержка перед обновлением настроек HTTP сервера
-
+#define ETHERNET_UPDATE_DELAY_MS            1000            // Задержка перед обновлением настроек Ethernet
 
 static const char *TAG = "settings_update";
 
@@ -41,6 +44,17 @@ static void settings_update_task(void *arg)
             bridge_port_deinit(index);
             bridge_port_init(index);
         }
+    }
+
+    if (flags & MDNS_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to mDNS");
+        network_update_mdns_settings();
+    }
+
+    if (flags & ETHERNET_FLAG) {
+        vTaskDelay(pdMS_TO_TICKS(ETHERNET_UPDATE_DELAY_MS));
+        ESP_LOGD(TAG, "Applying new settings to Ethernet");
+        network_update_eth_settings();
     }
 
     ESP_LOGI(TAG, "Settings update task finished");
@@ -79,6 +93,16 @@ void settings_update(void)
             ESP_LOGD(TAG, "Bridge port %u settings were changed", index + 1);
             flags |= BRIDGE_FLAGS_BASE << index;
         }
+    }
+
+    if (network_check_mdns_settings_changed()) {
+        ESP_LOGD(TAG, "mDNS settings were changed");
+        flags |= MDNS_FLAG;
+    }
+
+    if (network_check_eth_settings_changed()) {
+        ESP_LOGD(TAG, "Ethernet settings were changed");
+        flags |= ETHERNET_FLAG;
     }
 
     if (flags) {
