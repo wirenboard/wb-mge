@@ -180,7 +180,7 @@ void test_modbus_rtu_check_response_crc_mismatch(void)
 
     uint8_t buf[valid_rtu_response_len];
     memcpy(buf, valid_rtu_response, valid_rtu_response_len);
-    buf[sizeof(buf) - 1] ^= 0xFF;
+    buf[valid_rtu_response_len - 1] ^= 0xFF;
 
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(buf, valid_rtu_response_len, NULL));
 }
