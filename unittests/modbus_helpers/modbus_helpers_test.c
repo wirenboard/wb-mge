@@ -1,13 +1,13 @@
 #include "unity.h"
 #include "console_log.h"
 
-#include "array_size.h"
 #include "bridge/modbus_helpers.h"
 
 #include <esp_err.h>
 #include <string.h>
 
 #define MODBUS_EXCEPTION_FLAG                       0x80
+#define MODBUS_TCP_PROTOCOL_ID                      0x0000
 
 #define MODBUS_RTU_CRC_BASE                         0xFFFF
 #define MODBUS_RTU_CRC16_LEN                        sizeof(uint16_t)
@@ -19,12 +19,12 @@
 #define MODBUS_TCP_TRANSACTION_ID                   0x1234
 
 const uint8_t valid_rtu_request[] = { 0x9F, 0x03, 0x00, 0xC8, 0x00, 0x06, 0x58, 0x48 };
-const size_t valid_rtu_request_len = ARRAY_SIZE(valid_rtu_request);
+const size_t valid_rtu_request_len = sizeof(valid_rtu_request);
 const uint8_t valid_rtu_response[] = { 0x9F, 0x03, 0x06, 0x57, 0x42, 0x4D, 0x52, 0x36, 0x43, 0x54, 0x17 };
-const size_t valid_rtu_response_len = ARRAY_SIZE(valid_rtu_response);
+const size_t valid_rtu_response_len = sizeof(valid_rtu_response);
 
 const uint8_t valid_tcp_request[] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x9F, 0x03, 0x00, 0xC8, 0x00, 0x06};
-const size_t valid_tcp_request_len = ARRAY_SIZE(valid_tcp_request);
+const size_t valid_tcp_request_len = sizeof(valid_tcp_request);
 
 void setUp(void)
 {
@@ -110,7 +110,7 @@ void test_modbus_rtu_check_request_exception_func(void)
     memcpy(buf, valid_rtu_request, valid_rtu_request_len);
 
     mb_rtu_header_t* header = (mb_rtu_header_t*)buf;
-    header->function = MODBUS_EXCEPTION_FLAG;
+    header->function |= MODBUS_EXCEPTION_FLAG;
 
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_request(buf, valid_rtu_request_len));
 }
@@ -167,7 +167,8 @@ void test_modbus_rtu_check_response_short_len(void)
     memcpy(buf_exc, valid_rtu_request, short_len);
 
     mb_rtu_header_t* header = (mb_rtu_header_t*)buf_exc;
-    header->function = MODBUS_EXCEPTION_FLAG;
+    header->function |= MODBUS_EXCEPTION_FLAG;
+
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(buf_exc, short_len, NULL));
 }
 
@@ -179,7 +180,7 @@ void test_modbus_rtu_check_response_crc_mismatch(void)
 
     uint8_t buf[valid_rtu_response_len];
     memcpy(buf, valid_rtu_response, valid_rtu_response_len);
-    buf[ARRAY_SIZE(buf) - 1] ^= 0xFF;
+    buf[sizeof(buf) - 1] ^= 0xFF;
 
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(buf, valid_rtu_response_len, NULL));
 }
@@ -192,7 +193,7 @@ void test_modbus_rtu_check_response_slave_id_mismatch(void)
 
     uint8_t buf[valid_rtu_response_len];
     memcpy(buf, valid_rtu_response, valid_rtu_response_len);
-    mb_rtu_header_t req = { .slave_id = 0x01, .function = buf[1] };
+    mb_rtu_header_t req = { .slave_id = buf[0] + 1, .function = buf[1] };
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(buf, valid_rtu_response_len, &req));
 }
 
@@ -204,7 +205,7 @@ void test_modbus_rtu_check_response_func_mismatch(void)
 
     uint8_t buf[valid_rtu_response_len];
     memcpy(buf, valid_rtu_response, valid_rtu_response_len);
-    mb_rtu_header_t req = { .slave_id = buf[0], .function = 0x04 };
+    mb_rtu_header_t req = { .slave_id = buf[0], .function = buf[1] + 1 };
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(buf, valid_rtu_response_len, &req));
 }
 
@@ -239,6 +240,7 @@ void test_modbus_tcp_check_request_short_len(void)
     const size_t short_len = MODBUS_TCP_REQUEST_MIN_LEN - 1;
     uint8_t buf[short_len];
     memcpy(buf, valid_tcp_request, short_len);
+
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_tcp_check_request(buf, short_len));
 }
 
@@ -252,7 +254,8 @@ void test_modbus_tcp_check_request_protocol_pid_mismatch(void)
     memcpy(buf, valid_tcp_request, valid_tcp_request_len);
 
     mb_tcp_header_t* header = (mb_tcp_header_t*)buf;
-    header->protocol_id = 0x1200;
+    header->protocol_id = MODBUS_TCP_PROTOCOL_ID + 1;
+
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_tcp_check_request(buf, valid_tcp_request_len));
 }
 
@@ -266,7 +269,8 @@ void test_modbus_tcp_check_request_length_mismatch(void)
     memcpy(buf, valid_tcp_request, valid_tcp_request_len);
 
     mb_tcp_header_t* header = (mb_tcp_header_t*)buf;
-    header->length = 0x0000;
+    header->length = valid_tcp_request_len;
+
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_tcp_check_request(buf, valid_tcp_request_len));
 }
 
@@ -287,7 +291,7 @@ void test_modbus_rtu_from_tcp_null_args(void)
     LOG_MESSAGE();
 
     uint8_t out[32];
-    const size_t out_len = ARRAY_SIZE(out);
+    const size_t out_len = sizeof(out);
     uint8_t tcp[12];
 
     TEST_ASSERT_EQUAL_UINT32(0, modbus_rtu_from_tcp(NULL, out, out_len));
@@ -301,7 +305,8 @@ void test_modbus_rtu_from_tcp_small_out_buf(void)
     LOG_MESSAGE();
 
     uint8_t out[4];
-    TEST_ASSERT_EQUAL_UINT32(0, modbus_rtu_from_tcp(valid_tcp_request, out, ARRAY_SIZE(out)));
+
+    TEST_ASSERT_EQUAL_UINT32(0, modbus_rtu_from_tcp(valid_tcp_request, out, sizeof(out)));
 }
 
 void test_modbus_rtu_from_tcp_valid(void)
@@ -311,7 +316,8 @@ void test_modbus_rtu_from_tcp_valid(void)
     LOG_MESSAGE();
 
     uint8_t out[32];
-    size_t rtu_len = modbus_rtu_from_tcp(valid_tcp_request, out, ARRAY_SIZE(out));
+    const size_t rtu_len = modbus_rtu_from_tcp(valid_tcp_request, out, sizeof(out));
+
     TEST_ASSERT_EQUAL_UINT32(8, rtu_len);
     TEST_ASSERT_EQUAL_HEX8(valid_tcp_request[6], out[0]);
     TEST_ASSERT_EQUAL_HEX8(valid_tcp_request[7], out[1]);
@@ -332,8 +338,9 @@ void test_modbus_tcp_from_rtu_null_args(void)
 
     uint8_t out[32];
     uint8_t rtu[8];
-    TEST_ASSERT_EQUAL_UINT32(0, modbus_tcp_from_rtu(MODBUS_TCP_TRANSACTION_ID, NULL, 8, out, ARRAY_SIZE(out)));
-    TEST_ASSERT_EQUAL_UINT32(0, modbus_tcp_from_rtu(MODBUS_TCP_TRANSACTION_ID, rtu, 8, NULL, ARRAY_SIZE(out)));
+
+    TEST_ASSERT_EQUAL_UINT32(0, modbus_tcp_from_rtu(MODBUS_TCP_TRANSACTION_ID, NULL, 8, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_UINT32(0, modbus_tcp_from_rtu(MODBUS_TCP_TRANSACTION_ID, rtu, 8, NULL, sizeof(out)));
 }
 
 void test_modbus_tcp_from_rtu_small_out_buf(void)
@@ -343,8 +350,9 @@ void test_modbus_tcp_from_rtu_small_out_buf(void)
     LOG_MESSAGE();
 
     uint8_t out[4];
+
     TEST_ASSERT_EQUAL_UINT32(
-        0, modbus_tcp_from_rtu(MODBUS_TCP_TRANSACTION_ID, valid_rtu_response, 8, out, ARRAY_SIZE(out))
+        0, modbus_tcp_from_rtu(MODBUS_TCP_TRANSACTION_ID, valid_rtu_response, 8, out, sizeof(out))
     );
 }
 
@@ -355,7 +363,10 @@ void test_modbus_tcp_from_rtu_valid(void)
     LOG_MESSAGE();
 
     uint8_t out[32];
-    size_t tcp_len = modbus_tcp_from_rtu(MODBUS_TCP_TRANSACTION_ID, valid_rtu_response, valid_rtu_response_len, out, ARRAY_SIZE(out));
+    const size_t tcp_len = modbus_tcp_from_rtu(
+        MODBUS_TCP_TRANSACTION_ID, valid_rtu_response, valid_rtu_response_len, out, sizeof(out)
+    );
+
     TEST_ASSERT_EQUAL_UINT32(15, tcp_len);
     TEST_ASSERT_EQUAL_HEX8(0x12, out[0]);
     TEST_ASSERT_EQUAL_HEX8(0x34, out[1]);

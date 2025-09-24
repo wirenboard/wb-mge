@@ -1,4 +1,4 @@
-2025-09-23 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-09-24 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc9
     * rework:   refactoring modbus_helpers
