@@ -52,11 +52,6 @@ typedef struct {
 } bridge_config_t;
 
 typedef struct {
-    // serial_config_t serial_config;
-    // bridge_mode_t bridge_mode;
-    // uint32_t bridge_ip;
-    // int bridge_port;
-    // bool bridge_mb;
     serial_desc_t* serial_desc;
     tcp_desc_t* tcp_desc;
     bool initialized;
