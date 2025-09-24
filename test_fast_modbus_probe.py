@@ -8,10 +8,18 @@ import socket
 import struct
 import sys
 
+MODBUS_TCP_PROTOCOL_ID = 0x0000
+MODBUS_MGE_DETECT_LENGTH = 17
+MODBUS_MGE_DETECT_UID = 0x00
+MODBUS_MGE_DETECT_FCODE = 0x47
+
 def test_fast_modbus_probe(ip, port):
     # Create Modbus TCP request for Fast Modbus probe
     data_payload = b'WB-FAST-MODBUS?'
-    request = struct.pack('>HHHBB', 0x0123, 0x0000, 17, 0, 0x47) + data_payload
+    request = struct.pack(
+        '>HHHBB', 0x0123, MODBUS_TCP_PROTOCOL_ID, MODBUS_MGE_DETECT_LENGTH,
+        MODBUS_MGE_DETECT_UID, MODBUS_MGE_DETECT_FCODE
+        ) + data_payload
 
     print(f"Connecting to {ip}:{port}...")
 
@@ -43,7 +51,7 @@ def test_fast_modbus_probe(ip, port):
                 print(f"Unit ID: {unit_id} (expected: 0)")
                 print(f"Function: 0x{function:02X} (expected: 0x47)")
 
-                if function == 0x47 and unit_id == 0:
+                if function == MODBUS_MGE_DETECT_FCODE and unit_id == 0:
                     print(f"\n✅ Valid Fast Modbus probe response!")
 
                     if len(response) > 8:

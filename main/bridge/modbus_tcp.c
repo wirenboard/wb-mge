@@ -15,17 +15,31 @@
 
 #define MODBUS_TCP_QUEUE_LEN                10              // Длина очереди запросов от клиентов
 
+#define MODBUS_TCP_SEND_BUFFER_SIZE         1024            // Размер буфера передачи для TCP и RTU пакетов
+
 #define EVENT_SERIAL_RESPONSE_RECEIVED      (1 << 0)        // Флаг события: serial-порт получил пакет с ответом
 
 #define MODBUS_RTU_MAX_PACKET_LEN           256             // Максимальная длина пакета Modbus RTU (кадров)
 #define MODBUS_RTU_RECV_RESERVE_LEN         10              // Запас на прием пакета с учетом интервала тишины и арбитража быстрого Modbus (кадров)
 #define RS485_BITS_PER_FRAME                11              // Количество бит в кадре UART (8 бит данных + старт-бит + 2 стоп-бита)
 
+typedef struct {
+    bool initialized;
+    int index;
+    serial_desc_t* serial_desc;
+    tcp_desc_t* tcp_desc;
+    bridge_mode_t mode;
+    packet_queue_handle tcp_queue;
+    EventGroupHandle_t event_group;
+    uint16_t pending_tid;
+    uint8_t pending_slave_id;
+    unsigned resp_timeout_ticks;
+} mb_tcp_task_ctx_t;
+
 static const char *TAG = "modbus_tcp";
 
 static mb_tcp_task_ctx_t mb_tcp_task_ctx[MODBUS_TCP_MAX_TASK_COUNT] = {0};
 static int mb_tcp_task_count = 0;
-
 
 // Поиск контекста по дескриптору serial_desc_t
 static mb_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* serial_desc)
@@ -99,6 +113,9 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
     }
 
     size_t truncated_len = fast_modbus_truncate_ff(&data, len);
+    if (truncated_len == 0) {
+        return;
+    }
 
     ESP_LOGD(TAG, "Port[%d]: Processing data from serial port", ctx->index + 1);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, truncated_len, ESP_LOG_DEBUG);
@@ -265,9 +282,11 @@ static void modbus_tcp_server_task(void *arg)
             continue;
         }
 
-        // Проверка является ли запрос поддержкой Быстрого Modbus
-        mb_tcp_header_t* tcp_req_header = (mb_tcp_header_t*)tcp_req_buf;
-        enum fast_modbus_probe_result probe_result = fast_modbus_send_probe_response(ctx, tcp_req_header);
+        // Принятый пакет с запросом уже проверен в колбэке process_data_from_tcp()
+        // Проверка того, является ли запрос запросом поддержки Быстрого Modbus
+        enum fast_modbus_probe_result probe_result = fast_modbus_send_probe_response(
+            ctx->index + 1, ctx->tcp_desc, tcp_req_buf, tcp_req_len
+        );
         if (probe_result != FAST_MODBUS_NOT_PROBE) {
             free(tcp_req_buf);
             continue;
@@ -325,6 +344,7 @@ esp_err_t modbus_tcp_init_port(int index, serial_config_t *config,
     if (MODBUS_TCP_DEBUG_LOG_ENABLE) {
         esp_log_level_set(TAG, ESP_LOG_DEBUG);
         esp_log_level_set("modbus_helpers", ESP_LOG_DEBUG);
+        esp_log_level_set("fast_modbus", ESP_LOG_DEBUG);
     }
 
     if (mb_tcp_task_count >= MODBUS_TCP_MAX_TASK_COUNT) {

@@ -1,7 +1,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-extern bool malloc_should_fail;
+bool malloc_should_fail = false;
 
 void* test_malloc(size_t size)
 {

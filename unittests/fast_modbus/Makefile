@@ -1,5 +1,5 @@
 # Name of test / tests group
-TEST_NAME = fast_modbus_test
+TEST_NAME = fast_modbus_tests
 
 # Project root directory
 PROJ_DIR = ../..
@@ -18,7 +18,7 @@ INC += $(IDF_PATH)/components/esp_common/include
 INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include
 
 # List of tests
-TEST_LIST = fast_modbus_test
+TEST_LIST = fast_modbus_send_probe_response_test fast_modbus_truncate_ff_test
 
 # Include base unit test build system
 include $(PROJ_DIR)/unittests/build_unittests.mk
