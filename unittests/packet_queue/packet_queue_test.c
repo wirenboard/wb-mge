@@ -4,7 +4,6 @@
 #include "bridge/packet_queue.h"
 #include "freertos/queue.h"
 
-#include <string.h>
 #include <stdbool.h>
 
 extern bool malloc_should_fail;

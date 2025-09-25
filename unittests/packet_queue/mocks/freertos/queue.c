@@ -7,8 +7,6 @@
 
 
 
-QueueHandle_t g_queue_handle = NULL;
-
 int g_queue_create_call_count = 0;
 int g_queue_delete_call_count = 0;
 int g_queue_receive_call_count = 0;
@@ -45,8 +43,7 @@ QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t ux
     queue->tail = 0;
     queue->count = 0;
 
-    g_queue_handle = queue;
-    return g_queue_handle;
+    return queue;
 }
 
 void vQueueDelete(QueueHandle_t xQueue)
@@ -136,8 +133,6 @@ BaseType_t xQueueSend(QueueHandle_t xQueue, const void *const pvItemToQueue, Tic
 
 void mock_freertos_queue_reset(void)
 {
-    g_queue_handle = NULL;
-
     g_queue_create_call_count = 0;
     g_queue_delete_call_count = 0;
     g_queue_receive_call_count = 0;

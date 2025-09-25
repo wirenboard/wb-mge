@@ -4,13 +4,17 @@ TEST_NAME = modbus_helpers_test
 # Project root directory
 PROJ_DIR = ../..
 
+# Unit test directory
+UNITTEST_DIR = ..
+
 # Source files to be checked
 TESTED_SRC += $(PROJ_DIR)/main/bridge/modbus_helpers.c
 
 # Auxiliary source files used in this test
 
 # Include directories
-INC += ..
+INC += $(UNITTEST_DIR)
+INC += $(UNITTEST_DIR)/mocks
 INC += $(PROJ_DIR)/main
 INC += $(IDF_PATH)/components/esp_common/include
 INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include/

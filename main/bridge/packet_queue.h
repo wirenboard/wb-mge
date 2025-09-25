@@ -22,7 +22,7 @@ void packet_queue_clear(const packet_queue_handle handle);
 
 // Добавление пакета в очередь, данные пакета копируются
 // data - данные пакета, len - длина пакета
-// Возвращает 0 в случае успеха
+// Возвращает ESP_OK в случае успеха
 esp_err_t packet_queue_push(const packet_queue_handle handle, const uint8_t* data, const size_t len);
 
 // Извлечение пакета из очереди с максимальным ожиданием timeout_ticks тиков RTOS
