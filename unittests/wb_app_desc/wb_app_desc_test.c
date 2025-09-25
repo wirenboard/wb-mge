@@ -38,7 +38,7 @@ void test_wb_app_desc_get_str_field(void)
     len = wb_app_desc_get_str_field(test_src2, 5, dest2);
     TEST_ASSERT_EQUAL(5, len);
     dest2[5] = 0; // ensure null-termination
-    TEST_ASSERT_EQUAL_STRING_LEN("12345", dest2, 5);
+    TEST_ASSERT_EQUAL_STRING("12345", dest2);
 
     // Test empty string
     char dest3[4];
@@ -57,10 +57,10 @@ void test_wb_app_desc_struct_fields(void)
     TEST_ASSERT_EQUAL_HEX32(WB_APP_DESC_MAGIC_WORD, wb_app_desc.magic_word);
 
     // Check signature, model, version, git info are not empty and null-terminated
-    TEST_ASSERT_EQUAL_STRING_LEN(wb_app_desc.signature, DEVICE_SIGNATURE, strlen(wb_app_desc.signature));
-    TEST_ASSERT_EQUAL_STRING_LEN(wb_app_desc.device_model, DEVICE_MODEL, strlen(wb_app_desc.device_model));
-    TEST_ASSERT_EQUAL_STRING_LEN(wb_app_desc.fw_version, FIRMWARE_VERSION, strlen(wb_app_desc.fw_version));
-    TEST_ASSERT_EQUAL_STRING_LEN(wb_app_desc.fw_git_info, FIRMWARE_GIT_INFO, strlen(wb_app_desc.fw_git_info));
+    TEST_ASSERT_EQUAL_STRING(wb_app_desc.signature, DEVICE_SIGNATURE);
+    TEST_ASSERT_EQUAL_STRING(wb_app_desc.device_model, DEVICE_MODEL);
+    TEST_ASSERT_EQUAL_STRING(wb_app_desc.fw_version, FIRMWARE_VERSION);
+    TEST_ASSERT_EQUAL_STRING(wb_app_desc.fw_git_info, FIRMWARE_GIT_INFO);
 
     for (size_t i = 0; i < sizeof(wb_app_desc.reserved); ++i) {
         TEST_ASSERT_EQUAL_HEX8(0, wb_app_desc.reserved[i]);
