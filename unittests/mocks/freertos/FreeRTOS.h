@@ -5,7 +5,6 @@
 #define pdPASS            1
 #define pdFAIL            0
 
-typedef void* QueueHandle_t;
 typedef uint32_t TickType_t;
 
 typedef int BaseType_t;

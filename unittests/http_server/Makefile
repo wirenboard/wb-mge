@@ -4,6 +4,9 @@ TEST_NAME = http_server_test
 # Project root directory
 PROJ_DIR = ../..
 
+# Unit test directory
+UNITTEST_DIR = ..
+
 # Source files to be checked
 TESTED_SRC += $(PROJ_DIR)/main/http_server.c
 
@@ -11,7 +14,8 @@ TESTED_SRC += $(PROJ_DIR)/main/http_server.c
 AUX_SRC += mocks/*.c
 
 # Include directories
-INC += ..
+INC += $(UNITTEST_DIR)
+INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main
 INC += $(IDF_PATH)/components/esp_common/include

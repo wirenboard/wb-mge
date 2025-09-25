@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "freertos/FreeRTOS.h"
-
+#include "freertos/queue.h"
 
 typedef QueueHandle_t packet_queue_handle;
 
