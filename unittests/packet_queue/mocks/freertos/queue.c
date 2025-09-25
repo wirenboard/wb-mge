@@ -5,8 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
-
 int g_queue_create_call_count = 0;
 int g_queue_delete_call_count = 0;
 int g_queue_receive_call_count = 0;

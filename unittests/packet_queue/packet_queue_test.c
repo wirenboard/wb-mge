@@ -33,19 +33,14 @@ void tearDown(void)
 void test_packet_queue_create_success(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_create and packet_queue_delete - success case");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_create - success case");
     LOG_MESSAGE();
 
     const size_t max_len = 10;
     g_test_handle = packet_queue_create(max_len);
 
     TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_create_call_count, "xQueueCreate should be called once");
-
-    packet_queue_delete(g_test_handle);
-    g_test_handle = NULL; // Clear since we manually deleted
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_delete_call_count, "vQueueDelete should be called once");
 }
 
 // Тестируем неуспешное создание очереди пакетов
@@ -60,6 +55,34 @@ void test_packet_queue_create_failure(void)
 
     TEST_ASSERT_NULL_MESSAGE(test_handle, "Queue handle should be NULL on failure");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_create_call_count, "xQueueCreate should be called once");
+}
+
+// Тестируем успешное удаление очереди пакетов
+void test_packet_queue_delete_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_delete - success case");
+    LOG_MESSAGE();
+
+    const size_t max_len = 5;
+    packet_queue_handle test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(test_handle, "Queue handle should not be NULL");
+
+    const uint8_t test_data1[] = {0x01, 0x02, 0x03};
+    const uint8_t test_data2[] = {0x04, 0x05, 0x06, 0x07};
+
+    esp_err_t result1 = packet_queue_push(test_handle, test_data1, sizeof(test_data1));
+    esp_err_t result2 = packet_queue_push(test_handle, test_data2, sizeof(test_data2));
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result1, "First push should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result2, "Second push should succeed");
+
+    packet_queue_delete(test_handle);
+
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, g_queue_receive_call_count,
+                                        "xQueueReceive should be called to clear items");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_delete_call_count,
+                                 "vQueueDelete should be called once");
 }
 
 // Тестируем удаление очереди пакетов с NULL дескриптором
@@ -325,6 +348,8 @@ int main(void)
 
     RUN_TEST(test_packet_queue_create_success);
     RUN_TEST(test_packet_queue_create_failure);
+
+    RUN_TEST(test_packet_queue_delete_success);
     RUN_TEST(test_packet_queue_delete_null_handle);
 
     RUN_TEST(test_packet_queue_clear_valid_handle);

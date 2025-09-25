@@ -11,7 +11,7 @@ typedef QueueHandle_t packet_queue_handle;
 
 // Инициализация очереди с максимальной длиной max_len пакетов
 // Возвращает handle созданной очереди
-// В случае ошибки возвращает 0
+// В случае ошибки возвращает NULL
 packet_queue_handle packet_queue_create(const size_t max_len);
 
 // Удаление очереди пакетов
