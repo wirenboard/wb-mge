@@ -2,6 +2,7 @@
 #include "console_log.h"
 
 #include "bridge/fast_modbus.h"
+#include "bridge/modbus_helpers.h"
 
 #include <string.h>
 

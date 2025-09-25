@@ -1,7 +1,7 @@
 #pragma once
 
-#include "modbus_helpers.h"
-#include "modbus_tcp.h"
+#include "tcp_desc.h"
+#include <stdbool.h>
 
 enum fast_modbus_probe_result
 {

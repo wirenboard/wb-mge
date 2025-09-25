@@ -3,6 +3,7 @@
 #endif
 
 #include "fast_modbus.h"
+#include "modbus_helpers.h"
 #include "tcp_server.h"
 
 #include <esp_log.h>
