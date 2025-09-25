@@ -1,3 +1,9 @@
+2025-09-25 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc9
+    * rework:   refactoring modbus_helpers
+    * added:    unittests for modbus_helpers
+
 2025-09-18 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc8

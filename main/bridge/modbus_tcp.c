@@ -84,7 +84,7 @@ static unsigned separate_and_push_requests_from_tcp(mb_tcp_task_ctx_t* ctx, cons
             ESP_LOGW(TAG, "Port[%d]: TCP packet with incorrect length will be skipped", ctx->index + 1);
             break;
         }
-        if (modbus_tcp_check_request(req_data, req_len) != 0) {
+        if (modbus_tcp_check_request(req_data, req_len) != ESP_OK) {
             ESP_LOGW(TAG, "Port[%d]: Incorrect TCP packet will be skipped", ctx->index + 1);
             break;
         }
@@ -124,8 +124,8 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 
     rs485_busy_monitor_update_activity(ctx->index);
 
-    int check_res = modbus_rtu_check_response(data, len, 0);
-    if (check_res != 0) {
+    esp_err_t check_res = modbus_rtu_check_response(data, len, NULL);
+    if (check_res != ESP_OK) {
         return;
     }
 
@@ -213,14 +213,14 @@ static size_t fetch_tcp_request(mb_tcp_task_ctx_t* ctx, uint8_t** tcp_req_buf)
 // Возвращает размер RTU запроса и устанавливает указатель rtu_req_buf на данные RTU пакета
 // В случае ошибки возвращает 0
 // После использования буфер rtu_req_buf необходимо освободить через free(rtu_req_buf)
-static size_t make_rtu_request_from_tcp(mb_tcp_task_ctx_t* ctx, uint8_t* tcp_req_buf, size_t tcp_req_len, uint8_t** rtu_req_buf)
+static size_t make_rtu_request_from_tcp(mb_tcp_task_ctx_t* ctx, uint8_t* tcp_req_buf, uint8_t** rtu_req_buf)
 {
     *rtu_req_buf = malloc(MODBUS_TCP_SEND_BUFFER_SIZE);
     if (!*rtu_req_buf) {
         ESP_LOGE(TAG, "Port[%d]: Unable to create TCP send buffer", ctx->index + 1);
         return 0;
     }
-    size_t rtu_req_len = modbus_rtu_from_tcp(tcp_req_buf, tcp_req_len, *rtu_req_buf, MODBUS_TCP_SEND_BUFFER_SIZE);
+    size_t rtu_req_len = modbus_rtu_from_tcp(tcp_req_buf, *rtu_req_buf, MODBUS_TCP_SEND_BUFFER_SIZE);
     if (!rtu_req_len) {
         ESP_LOGE(TAG, "Port[%d]: Failed to create RTU request from TCP", ctx->index + 1);
         free(*rtu_req_buf);
@@ -288,7 +288,7 @@ static void modbus_tcp_server_task(void *arg)
         // TODO: Add special commands detection and response (e.g. fast modbus support probe)
 
         uint8_t* rtu_req_buf = 0;
-        size_t rtu_req_len = make_rtu_request_from_tcp(ctx, tcp_req_buf, tcp_req_len, &rtu_req_buf);
+        size_t rtu_req_len = make_rtu_request_from_tcp(ctx, tcp_req_buf, &rtu_req_buf);
         free(tcp_req_buf);
 
         if (!rtu_req_len) {
