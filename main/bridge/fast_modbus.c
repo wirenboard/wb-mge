@@ -17,13 +17,7 @@ static const char *FAST_MODBUS_RESPONSE_STR = "WB-FAST-MODBUS-OK";
 
 static const char *TAG = "fast_modbus";
 
-// Проверка запроса на поддержку Быстрого Modbus и отправка ответа, что устройство его поддерживает
-enum fast_modbus_probe_result fast_modbus_send_probe_response(
-    uint8_t port,
-    tcp_desc_t *tcp_desc,
-    uint8_t *tcp_req_buf,
-    size_t tcp_req_len
-)
+enum fast_modbus_probe_result fast_modbus_send_probe_response(uint8_t port, tcp_desc_t *tcp_desc, uint8_t *tcp_req_buf)
 {
     mb_tcp_header_t *tcp_req_header = (mb_tcp_header_t *)tcp_req_buf;
     if ((tcp_req_header->function == MODBUS_MGE_DETECT_FCODE) &&
@@ -70,7 +64,6 @@ enum fast_modbus_probe_result fast_modbus_send_probe_response(
     return FAST_MODBUS_PROBE_SUCCESS;
 }
 
-// Удаляем байты 0xFF, предшествующие началу пакета в быстром Modbus
 size_t fast_modbus_truncate_ff(uint8_t **data, size_t len)
 {
     while (len && (**data == 0xFF)) {

@@ -64,7 +64,7 @@ void test_fast_modbus_send_probe_response_success(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request, test_request_header->length
+        test_ctx.index, test_ctx.tcp_desc, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SUCCESS, result);
@@ -86,7 +86,7 @@ void test_fast_modbus_send_probe_response_not_probe_function(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request, test_request_header->length
+        test_ctx.index, test_ctx.tcp_desc, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
@@ -101,14 +101,14 @@ void test_fast_modbus_send_probe_response_not_probe_unit_id(void)
 
     test_request_header->transaction_id = MODBUS_TCP_TRANSACTION_ID;
     test_request_header->protocol_id = MODBUS_TCP_PROTOCOL_ID;
-    test_request_header->length = MODBUS_MGE_DETECT_LENGTH;
+    test_request_header->length = modbus_swap16(MODBUS_MGE_DETECT_LENGTH);
     test_request_header->unit_id = 0x01;
     test_request_header->function = MODBUS_MGE_DETECT_FCODE;
 
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request, test_request_header->length
+        test_ctx.index, test_ctx.tcp_desc, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
@@ -130,7 +130,7 @@ void test_fast_modbus_send_probe_response_not_probe_length(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request, test_request_header->length
+        test_ctx.index, test_ctx.tcp_desc, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
@@ -152,7 +152,7 @@ void test_fast_modbus_send_probe_response_not_probe_string(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], "INVALID_STRING", tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request, test_request_header->length
+        test_ctx.index, test_ctx.tcp_desc, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
@@ -176,7 +176,7 @@ void test_fast_modbus_send_probe_response_send_fail(void)
     mock_tcp_send_result = ESP_FAIL;
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request, test_request_header->length
+        test_ctx.index, test_ctx.tcp_desc, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SEND_FAIL, result);
@@ -200,7 +200,7 @@ void test_fast_modbus_send_probe_response_malloc_fail(void)
     malloc_should_fail = true;
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request, test_request_header->length
+        test_ctx.index, test_ctx.tcp_desc, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_MALLOC_FAIL, result);

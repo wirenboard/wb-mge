@@ -285,7 +285,7 @@ static void modbus_tcp_server_task(void *arg)
         // Принятый пакет с запросом уже проверен в колбэке process_data_from_tcp()
         // Проверка того, является ли запрос запросом поддержки Быстрого Modbus
         enum fast_modbus_probe_result probe_result = fast_modbus_send_probe_response(
-            ctx->index + 1, ctx->tcp_desc, tcp_req_buf, tcp_req_len
+            ctx->index + 1, ctx->tcp_desc, tcp_req_buf
         );
         if (probe_result != FAST_MODBUS_NOT_PROBE) {
             free(tcp_req_buf);
