@@ -1,3 +1,12 @@
+2025-09-26 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc10
+    * added:    apply settings without restart
+    * added:    settings save minimum interval 1000 ms
+    * rework:   move wifi and ethernet initialization from main into network module
+    * rework:   serial, tcp_client, tcp_server, wifi_apsta
+    * fix:      GIT_INFO max length in Makefile
+
 2025-09-25 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc9
