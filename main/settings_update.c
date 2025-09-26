@@ -5,6 +5,7 @@
 #include "http_server.h"
 #include "bridge.h"
 #include "network.h"
+#include "update_rs485_mio_gpio_states.h"
 
 
 #define SETTINGS_UPDATE_DEBUG_LOG_ENABLE    1               // TODO: Возможно, вынести в настройки
@@ -81,6 +82,9 @@ void settings_update(void)
         }
         log_initialized = true;
     }
+
+    update_rs485_control();
+    update_io_bus_control();
 
     if (update_task_handle != NULL) {
         ESP_LOGW(TAG, "Previous settings have not yet been applied, waiting for setting update task finished");

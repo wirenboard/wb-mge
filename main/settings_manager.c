@@ -2,7 +2,6 @@
 #include "setting_items.h"
 #include "json_utils.h"
 #include "auth.h"
-#include "update_rs485_mio_gpio_states.h"
 #include "array_size.h"
 #include "settings_update.h"
 #include "settings_save_timer.h"
@@ -344,9 +343,6 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     }
 
     process_rs485_settings(request_json);
-
-    update_rs485_control();
-    update_io_bus_control();
 
     settings_update();
 
