@@ -171,7 +171,7 @@ static void ethernet_led_control(TickType_t sys_time)
     if (netif) {
         bool link = netif_is_link_up(netif);
         bool activity = false;
-        if (rx_counter != netif->mib2_counters.ifinoctets) {
+        if (led_state && (rx_counter != netif->mib2_counters.ifinoctets)) {
             activity = true;
             rx_counter = netif->mib2_counters.ifinoctets;
         }
@@ -221,13 +221,15 @@ static void wifi_led_control(TickType_t sys_time)
     bool link = (wifi_mode == WIFI_MODE_STA) || (wifi_mode == WIFI_MODE_AP) || (wifi_mode == WIFI_MODE_APSTA);
 
     bool activity = false;
-    if (ap_netif && (ap_counter != ap_netif->mib2_counters.ifinoctets)) {
-        ap_counter = ap_netif->mib2_counters.ifinoctets;
-        activity = true;
-    }
-    if (sta_netif && (sta_counter != sta_netif->mib2_counters.ifinoctets)) {
-        sta_counter = sta_netif->mib2_counters.ifinoctets;
-        activity = true;
+    if (led_state) {
+        if (ap_netif && (ap_counter != ap_netif->mib2_counters.ifinoctets)) {
+            ap_counter = ap_netif->mib2_counters.ifinoctets;
+            activity = true;
+        }
+        if (sta_netif && (sta_counter != sta_netif->mib2_counters.ifinoctets)) {
+            sta_counter = sta_netif->mib2_counters.ifinoctets;
+            activity = true;
+        }
     }
 
     if (ap_netif || sta_netif) {
