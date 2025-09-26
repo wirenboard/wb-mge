@@ -8,6 +8,7 @@
 
 #include <esp_http_server.h>
 #include <sys/param.h>
+#include <string.h>
 
 #include "esp_log.h"
 #include "setting_items.h"

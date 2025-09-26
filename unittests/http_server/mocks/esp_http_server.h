@@ -161,6 +161,7 @@ void esp_http_server_init(void);
 void mock_handlers_reset(void);
 
 esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config);
+esp_err_t httpd_stop(httpd_handle_t handle);
 esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *uri_handler);
 
 esp_err_t httpd_resp_set_type(httpd_req_t *r, const char *type);

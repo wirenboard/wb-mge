@@ -108,6 +108,11 @@ esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)
     return mock_httpd_start_return_value;
 }
 
+esp_err_t httpd_stop(httpd_handle_t handle)
+{
+    return ESP_OK;
+}
+
 esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *uri_handler)
 {
     if (uri_handler) {
