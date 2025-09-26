@@ -12,11 +12,13 @@
 
 #define INDICATION_DEBUG_LOG_ENABLE     1           // TODO: Возможно, вынести в настройки
 
-#define INDICATION_TASK_STACK_SIZE      2048
+#define INDICATION_TASK_STACK_SIZE      (3 * 1024)
 #define INDICATION_TASK_PRIORITY        1
 
 #define NETWORK_LED_OFF_TIME_MS         50
 #define NETWORK_LED_ON_TIME_MS          50
+
+#define WIFI_NETIF_UPDATE_DELAY_MS      100
 
 #define LEDS_STATE_UPDATE_PERIOD_MS     10
 
@@ -208,10 +210,12 @@ static void wifi_led_control(TickType_t sys_time)
 
     wifi_mode_t new_wifi_mode = network_get_wifi_mode();
     if (new_wifi_mode != wifi_mode) {
+        ESP_LOGD(TAG, "WiFi mode changed");
+        // Small delay for ESP IDF WiFi engine update network interfaces
+        vTaskDelay(pdMS_TO_TICKS(WIFI_NETIF_UPDATE_DELAY_MS));
         ap_netif = get_netif("WIFI_AP_DEF");
         sta_netif = get_netif("WIFI_STA_DEF");
         wifi_mode = new_wifi_mode;
-        ESP_LOGD(TAG, "WiFi mode changed");
     }
 
     bool link = (wifi_mode == WIFI_MODE_STA) || (wifi_mode == WIFI_MODE_AP) || (wifi_mode == WIFI_MODE_APSTA);
