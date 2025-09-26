@@ -4,6 +4,7 @@
 #include "nvs.h"
 #include "esp_mac.h"
 #include "array_size.h"
+#include "setting_validators.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -11,9 +12,6 @@
 
 
 #define SETTING_ITEMS_DEBUG_LOG_ENABLE      0           // TODO: Возможно, вынести в настройки
-
-#define MAX_HOSTNAME_LEN                    32
-#define MAX_SSID_LEN                        31          // In ESP-IDF there is ssid[32], terminating '\0' included
 
 static const char *TAG = "setting_items";
 
@@ -35,212 +33,6 @@ static const setting_storage_iface_t nvs_storage_iface = {
     .write_str = nvs_write_str,
     .read_str = nvs_read_str,
 };
-
-
-// Validation functions
-bool validate_hostname(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    size_t len = strlen(value);
-    if ((len == 0) || (len > MAX_HOSTNAME_LEN)) {
-        return false;
-    }
-    // Basic hostname validation, allow only alphanumeric and hyphens
-    for (size_t i = 0; i < len; i++) {
-        char c = value[i];
-        if (!(((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) ||
-              ((c >= '0') && (c <= '9')) || (c == '-'))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool validate_ssid(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    size_t len = strlen(value);
-    if ((len == 0) || (len > MAX_SSID_LEN)) {
-        return false;
-    }
-    // Basic SSID validation, allow all printable symbols in range 0x20 - 0x7E
-    for (size_t i = 0; i < len; i++) {
-        char c = value[i];
-        if ((c < '\x20') || (c > '\x7E')) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool validate_port(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    char *endptr;
-    long port = strtol(value, &endptr, 10);
-    if ((*endptr == '\0') && (port >= 1) && (port <= 65535)) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
-bool validate_baudrate(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    char *endptr;
-    long baudrate = strtol(value, &endptr, 10);
-    if ((*endptr == '\0') && (baudrate >= 1200) && (baudrate <= 115200)) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
-bool validate_stopbits(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    return (strncmp(value, UART_STOP_BITS_1_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, UART_STOP_BITS_1_5_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, UART_STOP_BITS_2_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-bool validate_parity(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    return (strncmp(value, UART_PARITY_DISABLE_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, UART_PARITY_EVEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, UART_PARITY_ODD_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-bool validate_databits(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    return (strncmp(value, UART_DATA_5_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, UART_DATA_6_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, UART_DATA_7_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, UART_DATA_8_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-bool validate_ip(const char *value)
-{
-    if ((!value) || (strlen(value) == 0)) {
-        return false;
-    }
-
-    // Enhanced IP validation with proper range checking
-    int a, b, c, d;
-    char extra;
-
-    // Check format and ensure no extra characters
-    if (sscanf(value, "%d.%d.%d.%d%c", &a, &b, &c, &d, &extra) != 4) {
-        return false;
-    }
-
-    // Check ranges (0-255 for each octet)
-    if ((a < 0) || (a > 255) || (b < 0) || (b > 255) ||
-        (c < 0) || (c > 255) || (d < 0) || (d > 255)) {
-        return false;
-    }
-
-    // Additional checks for reserved ranges could be added here
-    return true;
-}
-
-bool validate_wifi_mode(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    return (strncmp(value, WIFI_MODE_AP_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, WIFI_MODE_STA_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, WIFI_MODE_APSTA_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, WIFI_MODE_NONE_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-bool validate_wifi_auth(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    return (strncmp(value, WIFI_AUTH_OPEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, WIFI_AUTH_WPA2_PSK_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, WIFI_AUTH_WPA3_PSK_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-bool validate_bridge_mode(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    return (strncmp(value, BRIDGE_MODE_SERVER_STR, SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, BRIDGE_MODE_CLIENT_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-bool validate_bool(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    return (strncmp(value, "true", SETTING_ITEM_MAX_STR_LEN) == 0 ||
-            strncmp(value, "false", SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-// Add validation for login strings
-bool validate_login(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    size_t len = strlen(value);
-    if ((len == 0) || (len >= 32)) {
-        return false;
-    }
-
-    // Basic alphanumeric validation for login
-    for (size_t i = 0; i < len; i++) {
-        char c = value[i];
-        if (!(((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) ||
-              ((c >= '0') && (c <= '9')) || (c == '_') || (c == '-'))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool validate_password(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    size_t len = strlen(value);
-    if (len >= 32) { // пока минимальную длину не задаём
-        return false;  // Password must be not longer than 32 characters
-    }
-
-    // Basic password validation - can be enhanced with regex or additional rules
-    for (size_t i = 0; i < len; i++) {
-        char c = value[i];
-        if (!((c >= ' ') && (c <= '~'))) {  // Printable ASCII characters
-            return false;
-        }
-    }
-    return true;
-}
 
 // Generate dynamic default AP password from MAC address
 static const char *get_dynamic_ap_pass_default(void)
@@ -381,6 +173,10 @@ static const setting_item_t setting_items[] = {
 
 static const setting_item_t *find_setting_item(const char *key)
 {
+    if (!key) {
+        return NULL;
+    }
+
     for (size_t i = 0; i < ARRAY_SIZE(setting_items); i++) {
         if (strncmp(setting_items[i].key, key, SETTING_ITEM_MAX_STR_LEN) == 0) {
             return &setting_items[i];
@@ -475,21 +271,12 @@ esp_err_t setting_items_read(const char *key, char *value)
 
     esp_err_t result = storage_iface->read_str(key, value);
     if (result != ESP_OK) {
-        // Use default value if not found in storage
-        if (result == ESP_ERR_NOT_FOUND) {
-            const char *default_value = get_setting_default_value(item);
+        // Use default value
+        const char *default_value = get_setting_default_value(item);
 
-            strncpy(value, default_value, SETTING_ITEM_MAX_STR_LEN - 1);
-            value[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-            ESP_LOGW(TAG, "Using default value for %s: %s", key, value);
-            return ESP_OK;
-        }
-        ESP_LOGE(TAG, "Failed to read setting %s: %s", key, esp_err_to_name(result));
-
-        // For other errors, still try to use default value as fallback
-        strncpy(value, item->default_value, SETTING_ITEM_MAX_STR_LEN - 1);
+        strncpy(value, default_value, SETTING_ITEM_MAX_STR_LEN - 1);
         value[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-        ESP_LOGW(TAG, "Using default value for %s due to read error", key);
+        ESP_LOGW(TAG, "Reading error. Using default value for %s: %s", key, value);
         return ESP_OK;
     }
 
@@ -571,6 +358,17 @@ int setting_items_read_int(const char *key)
     return (int)read_numeric_value(key);
 }
 
+esp_err_t setting_items_save_int(const char *key, int value)
+{
+    char str_value[SETTING_ITEM_MAX_STR_LEN];
+    int ret = snprintf(str_value, sizeof(str_value), "%d", value);
+    if (ret >= sizeof(str_value)) {
+        ESP_LOGE(TAG, "Value too large for buffer when saving %s", key);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return setting_items_save(key, str_value);
+}
+
 bool setting_items_read_bool(const char *key)
 {
     const setting_item_t *item = validate_bool_setting(key);
@@ -594,15 +392,15 @@ esp_err_t setting_items_save_bool(const char *key, bool value)
     }
 }
 
-esp_err_t setting_items_save_int(const char *key, int value)
+// Get default value for specified key from setting_items array
+const char *setting_items_get_default_value(const char *key)
 {
-    char str_value[SETTING_ITEM_MAX_STR_LEN];
-    int ret = snprintf(str_value, sizeof(str_value), "%d", value);
-    if (ret >= sizeof(str_value)) {
-        ESP_LOGE(TAG, "Value too large for buffer when saving %s", key);
-        return ESP_ERR_INVALID_SIZE;
+    const setting_item_t *item = find_setting_item(key);
+    if (item) {
+        return item->default_value;
+    } else {
+        return NULL;
     }
-    return setting_items_save(key, str_value);
 }
 
 // Type introspection functions
