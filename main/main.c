@@ -94,14 +94,10 @@ static inline void print_setting_items(void)
 
 void app_main(void)
 {
-    sys_info_init();
-
+    ESP_ERROR_CHECK(sys_info_init());
     ESP_ERROR_CHECK(nvs_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(setting_items_init());
-
     ESP_ERROR_CHECK(network_init());
-
     ESP_ERROR_CHECK(http_server_init());
 
     print_setting_items();

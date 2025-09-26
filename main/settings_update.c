@@ -12,14 +12,14 @@
 #define SETTINGS_UPDATE_TASK_STACK_SIZE     (6 * 1024)
 #define SETTINGS_UPDATE_TASK_PRIORITY       5
 
-#define HTTP_SERVER_FLAG                    BIT0
-#define MDNS_FLAG                           BIT4
-#define ETHERNET_FLAG                       BIT8
+#define BRIDGE_FLAGS_BASE                   BIT0
+#define MDNS_FLAG                           BIT8
+#define HTTP_SERVER_FLAG                    BIT9
+#define ETHERNET_FLAG                       BIT10
+#define WIFI_FLAG                           BIT11
 
-#define BRIDGE_FLAGS_BASE                   BIT24
+#define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Задержка перед обновлением настроек HTTP / Ethernet / WiFi
 
-#define HTTP_SERVER_UPDATE_DELAY_MS         1000            // Задержка перед обновлением настроек HTTP сервера
-#define ETHERNET_UPDATE_DELAY_MS            1000            // Задержка перед обновлением настроек Ethernet
 
 static const char *TAG = "settings_update";
 
@@ -30,13 +30,6 @@ static void settings_update_task(void *arg)
 {
     uint32_t flags = (uint32_t)arg;
     ESP_LOGI(TAG, "Updating settings...");
-
-    if (flags & HTTP_SERVER_FLAG) {
-        vTaskDelay(pdMS_TO_TICKS(HTTP_SERVER_UPDATE_DELAY_MS));
-        ESP_LOGD(TAG, "Applying new settings to HTTP server");
-        http_server_deinit();
-        http_server_init();
-    }
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         if (flags & (BRIDGE_FLAGS_BASE << index)) {
@@ -51,10 +44,25 @@ static void settings_update_task(void *arg)
         network_update_mdns_settings();
     }
 
+    if (flags & (HTTP_SERVER_FLAG | ETHERNET_FLAG | WIFI_FLAG)) {
+        // Небольшая задержка, чтобы успел отправиться ответ клиенту
+        vTaskDelay(pdMS_TO_TICKS(HTTP_NETWORK_UPDATE_DELAY_MS));
+    }
+
+    if (flags & HTTP_SERVER_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to HTTP server");
+        http_server_deinit();
+        http_server_init();
+    }
+
     if (flags & ETHERNET_FLAG) {
-        vTaskDelay(pdMS_TO_TICKS(ETHERNET_UPDATE_DELAY_MS));
         ESP_LOGD(TAG, "Applying new settings to Ethernet");
         network_update_eth_settings();
+    }
+
+    if (flags & WIFI_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to WiFi");
+        network_update_wifi_settings();
     }
 
     ESP_LOGI(TAG, "Settings update task finished");
@@ -83,11 +91,6 @@ void settings_update(void)
 
     uint32_t flags = 0;
 
-    if (http_server_check_settings_changed()) {
-        ESP_LOGD(TAG, "HTTP server settings were changed");
-        flags |= HTTP_SERVER_FLAG;
-    }
-
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         if (bridge_port_check_settings_changed(index)) {
             ESP_LOGD(TAG, "Bridge port %u settings were changed", index + 1);
@@ -100,9 +103,19 @@ void settings_update(void)
         flags |= MDNS_FLAG;
     }
 
+    if (http_server_check_settings_changed()) {
+        ESP_LOGD(TAG, "HTTP server settings were changed");
+        flags |= HTTP_SERVER_FLAG;
+    }
+
     if (network_check_eth_settings_changed()) {
         ESP_LOGD(TAG, "Ethernet settings were changed");
         flags |= ETHERNET_FLAG;
+    }
+
+    if (network_check_wifi_settings_changed()) {
+        ESP_LOGD(TAG, "WiFi settings were changed");
+        flags |= WIFI_FLAG;
     }
 
     if (flags) {

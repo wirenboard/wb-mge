@@ -86,14 +86,11 @@ static esp_netif_t* s_eth_netif = NULL;
             return err;
         }
 
-        ESP_ERROR_CHECK(esp_netif_init());
-        esp_netif_t *eth_netif;
-        esp_eth_netif_glue_handle_t eth_netif_glue;
-
         esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
-        eth_netif = esp_netif_new(&cfg);
-        eth_netif_glue = esp_eth_new_netif_glue(s_eth_handle);
+        esp_netif_t* eth_netif = esp_netif_new(&cfg);
+        esp_eth_netif_glue_handle_t eth_netif_glue = esp_eth_new_netif_glue(s_eth_handle);
         ESP_ERROR_CHECK(esp_netif_attach(eth_netif, eth_netif_glue));
+
         esp_netif_set_hostname(eth_netif, netif_hostname);
         if (static_ip != NULL) {
             esp_netif_dhcpc_stop(eth_netif);

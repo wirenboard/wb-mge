@@ -7,7 +7,10 @@
 #include "ethernet.h"
 #include "lwip/netif.h"
 #include "lwip/stats.h"
+#include "network.h"
 
+
+#define INDICATION_DEBUG_LOG_ENABLE     1           // TODO: Возможно, вынести в настройки
 
 #define INDICATION_TASK_STACK_SIZE      2048
 #define INDICATION_TASK_PRIORITY        1
@@ -47,7 +50,7 @@ static struct netif* get_netif(const char* key)
     if (netif) {
         ESP_LOGD(TAG, "Got netif with '%s' key, index: %d", key, index);
     } else {
-        ESP_LOGW(TAG, "Unable to get netif with '%s' key, it seems that interface is disabled", key);
+        ESP_LOGD(TAG, "Unable to get netif with '%s' key, it seems that interface is disabled", key);
     }
     return netif;
 }
@@ -189,10 +192,12 @@ static void wifi_led_control(TickType_t sys_time)
     static int state = 0;
     static u32_t ap_counter = 0;
     static u32_t sta_counter = 0;
+    static wifi_mode_t wifi_mode = WIFI_MODE_NULL;
 
     if (init) {
         ap_netif = get_netif("WIFI_AP_DEF");
         sta_netif = get_netif("WIFI_STA_DEF");
+        wifi_mode = network_get_wifi_mode();
         time_stamp = sys_time;
         led_state = false;
         state = 0;
@@ -200,6 +205,16 @@ static void wifi_led_control(TickType_t sys_time)
         sta_counter = 0;
         init = false;
     }
+
+    wifi_mode_t new_wifi_mode = network_get_wifi_mode();
+    if (new_wifi_mode != wifi_mode) {
+        ap_netif = get_netif("WIFI_AP_DEF");
+        sta_netif = get_netif("WIFI_STA_DEF");
+        wifi_mode = new_wifi_mode;
+        ESP_LOGD(TAG, "WiFi mode changed");
+    }
+
+    bool link = (wifi_mode == WIFI_MODE_STA) || (wifi_mode == WIFI_MODE_AP) || (wifi_mode == WIFI_MODE_APSTA);
 
     bool activity = false;
     if (ap_netif && (ap_counter != ap_netif->mib2_counters.ifinoctets)) {
@@ -212,7 +227,7 @@ static void wifi_led_control(TickType_t sys_time)
     }
 
     if (ap_netif || sta_netif) {
-        network_led_control(&led_state, &time_stamp, &state, sys_time, true, activity);
+        network_led_control(&led_state, &time_stamp, &state, sys_time, link, activity);
     } else {
         led_state = false;
     }
@@ -242,6 +257,10 @@ esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
 {
     if (indication_initialized) {
         return ESP_OK;  // Already initialized
+    }
+
+    if (INDICATION_DEBUG_LOG_ENABLE) {
+        esp_log_level_set(TAG, ESP_LOG_DEBUG);
     }
 
     if (!io_expander_handle) {

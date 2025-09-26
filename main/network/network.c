@@ -212,17 +212,17 @@ static esp_err_t read_wifi_settings(wifi_settings_t* wifi_settings)
 
     // Read STA static IP configuration
     if (setting_items_read(KEY_STA_IP_STATIC, temp_value) == ESP_OK) {
-        wifi_settings->ap_static_ip.ip.addr = str_to_ip(temp_value);
+        wifi_settings->sta_static_ip.ip.addr = str_to_ip(temp_value);
     } else {
         result = ESP_FAIL;
     }
     if (setting_items_read(KEY_STA_MASK_STATIC, temp_value) == ESP_OK) {
-        wifi_settings->ap_static_ip.netmask.addr = str_to_ip(temp_value);
+        wifi_settings->sta_static_ip.netmask.addr = str_to_ip(temp_value);
     } else {
         result = ESP_FAIL;
     }
     if (setting_items_read(KEY_STA_GW_STATIC, temp_value) == ESP_OK) {
-        wifi_settings->ap_static_ip.gw.addr = str_to_ip(temp_value);
+        wifi_settings->sta_static_ip.gw.addr = str_to_ip(temp_value);
     } else {
         result = ESP_FAIL;
     }
@@ -390,36 +390,41 @@ static void wifi_ap_connect_event_handler(void *arg, esp_event_base_t event_base
 }
 
 
+static void make_wifi_apsta_cfg(wifi_settings_t* wifi_settings, wifi_apsta_config_t* apsta_cfg)
+{
+    apsta_cfg->wifi_mode = wifi_settings->wifi_mode;
+
+    apsta_cfg->ap_ip_info = &wifi_settings->ap_static_ip;
+    if (!wifi_settings->sta_dhcp_client) {
+        apsta_cfg->sta_ip_info = &wifi_settings->sta_static_ip;
+    } else {
+        apsta_cfg->sta_ip_info = NULL;
+    }
+
+    strncpy(apsta_cfg->ap_ssid, wifi_settings->ap_ssid, sizeof(apsta_cfg->ap_ssid) - 1);
+    apsta_cfg->ap_ssid[sizeof(apsta_cfg->ap_ssid) - 1] = '\0';
+
+    strncpy(apsta_cfg->ap_pass, wifi_settings->ap_pass, sizeof(apsta_cfg->ap_pass) - 1);
+    apsta_cfg->ap_pass[sizeof(apsta_cfg->ap_pass) - 1] = '\0';
+
+    strncpy(apsta_cfg->sta_ssid, wifi_settings->sta_ssid, sizeof(apsta_cfg->sta_ssid) - 1);
+    apsta_cfg->sta_ssid[sizeof(apsta_cfg->sta_ssid) - 1] = '\0';
+
+    strncpy(apsta_cfg->sta_pass, wifi_settings->sta_pass, sizeof(apsta_cfg->sta_pass) - 1);
+    apsta_cfg->sta_pass[sizeof(apsta_cfg->sta_pass) - 1] = '\0';
+
+    apsta_cfg->wifi_auth_mode_ap = wifi_settings->ap_auth_mode;
+    apsta_cfg->wifi_auth_mode_sta = wifi_settings->sta_auth_mode;
+
+    apsta_cfg->sta_event_handler = &wifi_sta_connect_event_handler;
+    apsta_cfg->ap_event_handler = &wifi_ap_connect_event_handler;
+}
+
+
 static esp_err_t init_wifi(wifi_settings_t* wifi_settings, char* hostname)
 {
     wifi_apsta_config_t apsta_cfg = {0};
-
-    apsta_cfg.wifi_mode = wifi_settings->wifi_mode;
-
-    apsta_cfg.ap_ip_info = &wifi_settings->ap_static_ip;
-    if (!wifi_settings->sta_dhcp_client) {
-        apsta_cfg.sta_ip_info = &wifi_settings->sta_static_ip;
-    } else {
-        apsta_cfg.sta_ip_info = NULL;
-    }
-
-    strncpy(apsta_cfg.ap_ssid, wifi_settings->ap_ssid, sizeof(apsta_cfg.ap_ssid) - 1);
-    apsta_cfg.ap_ssid[sizeof(apsta_cfg.ap_ssid) - 1] = '\0';
-
-    strncpy(apsta_cfg.ap_pass, wifi_settings->ap_pass, sizeof(apsta_cfg.ap_pass) - 1);
-    apsta_cfg.ap_pass[sizeof(apsta_cfg.ap_pass) - 1] = '\0';
-
-    strncpy(apsta_cfg.sta_ssid, wifi_settings->sta_ssid, sizeof(apsta_cfg.sta_ssid) - 1);
-    apsta_cfg.sta_ssid[sizeof(apsta_cfg.sta_ssid) - 1] = '\0';
-
-    strncpy(apsta_cfg.sta_pass, wifi_settings->sta_pass, sizeof(apsta_cfg.sta_pass) - 1);
-    apsta_cfg.sta_pass[sizeof(apsta_cfg.sta_pass) - 1] = '\0';
-
-    apsta_cfg.wifi_auth_mode_ap = wifi_settings->ap_auth_mode;
-    apsta_cfg.wifi_auth_mode_sta = wifi_settings->sta_auth_mode;
-
-    apsta_cfg.sta_event_handler = &wifi_sta_connect_event_handler;
-    apsta_cfg.ap_event_handler = &wifi_ap_connect_event_handler;
+    make_wifi_apsta_cfg(wifi_settings, &apsta_cfg);
 
     #if QEMU_BUILD
         ESP_LOGI(TAG, "Initializing WiFi mock for QEMU");
@@ -463,18 +468,15 @@ esp_err_t network_init(void)
         esp_log_level_set(TAG, ESP_LOG_DEBUG);
     }
 
+    if (esp_event_loop_create_default() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize default event loop");
+        return ESP_FAIL;
+    }
+
     if (read_hostname(current_settings.hostname) != ESP_OK) {
         ESP_LOGE(TAG, "Unable to read hostname, using default value");
         strncpy(current_settings.hostname, BASE_HOSTNAME, sizeof(current_settings.hostname) - 1);
         current_settings.hostname[sizeof(current_settings.hostname) - 1] = '\0';
-    }
-
-    if (read_ethernet_settings(&current_settings.eth_settings) != ESP_OK) {
-        ESP_LOGE(TAG, "Unable to read Ethernet settings");
-    }
-
-    if (read_wifi_settings(&current_settings.wifi_settings) != ESP_OK) {
-        ESP_LOGE(TAG, "Unable to read WiFi settings");
     }
 
     if (mdns_init() == ESP_OK) {
@@ -485,14 +487,28 @@ esp_err_t network_init(void)
         }
     } else {
         ESP_LOGE(TAG, "Failed to initialize mDNS");
+        // Not fatal error
     }
 
-    init_ethernet(&current_settings.eth_settings, current_settings.hostname);
-    update_sys_info_eth_mac();
+    if (esp_netif_init() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize ESP network interface");
+        return ESP_FAIL;
+    }
 
-    init_wifi(&current_settings.wifi_settings, current_settings.hostname);
-    update_sys_info_wifi_mac();
-    update_sys_info_wifi_state(&current_settings.wifi_settings);
+    if (read_ethernet_settings(&current_settings.eth_settings) == ESP_OK) {
+        init_ethernet(&current_settings.eth_settings, current_settings.hostname);
+        update_sys_info_eth_mac();
+    } else {
+        ESP_LOGE(TAG, "Unable to read Ethernet settings");
+    }
+
+    if (read_wifi_settings(&current_settings.wifi_settings) == ESP_OK) {
+        init_wifi(&current_settings.wifi_settings, current_settings.hostname);
+        update_sys_info_wifi_mac();
+        update_sys_info_wifi_state(&current_settings.wifi_settings);
+    } else {
+        ESP_LOGE(TAG, "Unable to read WiFi settings");
+    }
 
     return ESP_OK;
 }
@@ -564,6 +580,100 @@ esp_err_t network_update_eth_settings(void)
 }
 
 
+bool network_check_wifi_settings_changed(void)
+{
+    wifi_settings_t new_settings;
+    esp_err_t ret = read_wifi_settings(&new_settings);
+    if (ret != ESP_OK) {
+        return false;
+    }
+
+    wifi_settings_t* curr_settings = &current_settings.wifi_settings;
+    if (curr_settings->wifi_mode != new_settings.wifi_mode) {
+        return true;
+    }
+
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    ret = read_hostname(hostname);
+    if (ret == ESP_OK) {
+        if ((strncmp(current_settings.hostname, hostname, SETTING_ITEM_MAX_STR_LEN - 1) != 0) &&
+            (new_settings.wifi_mode != WIFI_MODE_NULL))
+        {
+            return true;
+        }
+    }
+
+    bool ap_enabled = (new_settings.wifi_mode == WIFI_MODE_AP) || (new_settings.wifi_mode == WIFI_MODE_APSTA);
+    if (ap_enabled) {
+        bool changed = (curr_settings->ap_auth_mode != new_settings.ap_auth_mode);
+        changed = changed || (strncmp(curr_settings->ap_ssid, new_settings.ap_ssid, sizeof(new_settings.ap_ssid) - 1) != 0);
+        changed = changed || (strncmp(curr_settings->ap_pass, new_settings.ap_pass, sizeof(new_settings.ap_pass) - 1) != 0);
+        changed = changed || (memcmp(&curr_settings->ap_static_ip, &new_settings.ap_static_ip, sizeof(new_settings.ap_static_ip)) != 0);
+        if (changed) {
+            return true;
+        }
+    }
+
+    bool sta_enabled = (new_settings.wifi_mode == WIFI_MODE_STA) || (new_settings.wifi_mode == WIFI_MODE_APSTA);
+    if (sta_enabled) {
+        bool changed = (curr_settings->sta_auth_mode != new_settings.sta_auth_mode);
+        changed = changed || (strncmp(curr_settings->sta_ssid, new_settings.sta_ssid, sizeof(new_settings.sta_ssid) - 1) != 0);
+        changed = changed || (strncmp(curr_settings->sta_pass, new_settings.sta_pass, sizeof(new_settings.sta_pass) - 1) != 0);
+        changed = changed || (curr_settings->sta_dhcp_client != new_settings.sta_dhcp_client);
+        if (!changed && new_settings.sta_dhcp_client) {
+            changed = changed || (memcmp(&curr_settings->sta_static_ip, &new_settings.sta_static_ip, sizeof(new_settings.sta_static_ip)) != 0);
+        }
+        if (changed) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+esp_err_t network_update_wifi_settings(void)
+{
+    ESP_LOGD(TAG, "Updating WiFi settings...");
+
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
+    esp_err_t ret = read_hostname(hostname);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to read hostname");
+        return ret;
+    }
+
+    wifi_settings_t wifi_settings;
+    ret = read_wifi_settings(&wifi_settings);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to read WiFi settings");
+        return ret;
+    }
+
+    #if QEMU_BUILD
+        ESP_LOGW(TAG, "WiFi config change is not supported in QEMU build");
+        ret = ESP_OK;
+    #else
+        wifi_apsta_config_t apsta_cfg = {0};
+        make_wifi_apsta_cfg(&wifi_settings, &apsta_cfg);
+        ret = wifi_set_apsta_config(&apsta_cfg, hostname);
+    #endif
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update WiFi settings");
+        return ret;
+    }
+
+    memcpy(current_settings.hostname, hostname, sizeof(current_settings.hostname));
+    memcpy(&current_settings.wifi_settings, &wifi_settings, sizeof(current_settings.wifi_settings));
+
+    update_sys_info_wifi_state(&current_settings.wifi_settings);
+
+    ESP_LOGD(TAG, "WiFi settings updated");
+    return ESP_OK;
+}
+
+
 bool network_check_mdns_settings_changed(void)
 {
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -598,4 +708,9 @@ esp_err_t network_update_mdns_settings(void)
 
     ESP_LOGD(TAG, "mDNS settings updated");
     return ESP_OK;
+}
+
+wifi_mode_t network_get_wifi_mode(void)
+{
+    return current_settings.wifi_settings.wifi_mode;
 }
