@@ -49,7 +49,7 @@ static inline bool check_task_exit_req(tcp_desc_t *desc)
 static void close_socket(int sock)
 {
     if (sock != -1) {
-        ESP_LOGD(TAG, "Shutting down socket");
+        ESP_LOGD(TAG, "Shutting down socket %d", sock);
         shutdown(sock, SHUT_RDWR);
         closesocket(sock);
     }

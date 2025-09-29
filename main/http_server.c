@@ -240,7 +240,7 @@ esp_err_t http_server_deinit(void)
     if (http_server != NULL) {
         esp_err_t ret = httpd_stop(http_server);
         if (ret == ESP_OK) {
-            ESP_LOGW(TAG, "HTTP server stoped");
+            ESP_LOGW(TAG, "HTTP server stopped");
         } else {
             ESP_LOGW(TAG, "Failed to stop HTTP server");
         }
