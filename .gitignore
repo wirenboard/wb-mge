@@ -1,6 +1,9 @@
 # VS Code Settings
 .vscode/
 
+# JetBrains IDEA
+.idea
+
 # Build
 build/**
 sdkconfig

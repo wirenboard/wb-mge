@@ -33,7 +33,7 @@ const save = () => {
     [props.field]: settings.value,
   };
 
-  if (typeof ioBus.value !== 'undefined') {
+  if (typeof ioBus.value !== 'undefined' && props.field === 'rs485_2') {
     data['io_bus'] = ioBus.value;
   }
   updateSettings(data);
@@ -90,7 +90,7 @@ const save = () => {
         />
       </div>
 
-      <template v-if="props.field === 'rs485_2'">
+      <template v-if="field === 'rs485_2'">
         <label :for="`${field}-io_bus`">{{ t('io_bus') }}</label>
         <div class="settings-data">
           <Switch
