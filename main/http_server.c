@@ -244,6 +244,7 @@ esp_err_t http_server_deinit(void)
         } else {
             ESP_LOGW(TAG, "Failed to stop HTTP server");
         }
+        http_server = NULL;
         return ret;
     }
     return ESP_OK;  // HTTP server not started -> deinitialized

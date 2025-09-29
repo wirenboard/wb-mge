@@ -5,15 +5,18 @@
 #include <string.h>
 
 int mock_httpd_start_call_count = 0;
+int mock_httpd_stop_call_count = 0;
 int mock_wifi_scan_init_call_count = 0;
 int mock_auth_init_call_count = 0;
 
 esp_err_t mock_httpd_start_return_value = ESP_OK;
+esp_err_t mock_httpd_stop_return_value = ESP_OK;
 esp_err_t mock_wifi_scan_init_return_value = ESP_OK;
 esp_err_t mock_auth_init_return_value = ESP_OK;
 
 httpd_config_t mock_captured_config = {0};
 httpd_handle_t mock_server_handle = (httpd_handle_t)0x12345678;
+httpd_handle_t mock_captured_httpd_stop_handle = NULL;
 
 int mock_auth_login_handler_called = 0;
 int mock_auth_session_check_handler_called = 0;
@@ -49,14 +52,17 @@ int mock_uri_registry_count = 0;
 void esp_http_server_init(void)
 {
     mock_httpd_start_call_count = 0;
+    mock_httpd_stop_call_count = 0;
     mock_wifi_scan_init_call_count = 0;
     mock_auth_init_call_count = 0;
 
     mock_httpd_start_return_value = ESP_OK;
+    mock_httpd_stop_return_value = ESP_OK;
     mock_wifi_scan_init_return_value = ESP_OK;
     mock_auth_init_return_value = ESP_OK;
 
     memset(&mock_captured_config, 0, sizeof(mock_captured_config));
+    mock_captured_httpd_stop_handle = NULL;
 
     mock_httpd_resp_set_type_call_count = 0;
     mock_httpd_resp_set_hdr_call_count = 0;
@@ -110,7 +116,11 @@ esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)
 
 esp_err_t httpd_stop(httpd_handle_t handle)
 {
-    return ESP_OK;
+    mock_httpd_stop_call_count++;
+
+    mock_captured_httpd_stop_handle = handle;
+
+    return mock_httpd_stop_return_value;
 }
 
 esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *uri_handler)
