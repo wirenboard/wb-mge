@@ -298,17 +298,29 @@ static void update_sys_info_wifi_mac(void)
 
 static void update_sys_info_eth_ip(esp_netif_ip_info_t* ip_info)
 {
-    snprintf(sys_info.eth_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->ip));
-    snprintf(sys_info.eth_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->netmask));
-    snprintf(sys_info.eth_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->gw));
+    if (ip_info != NULL) {
+        snprintf(sys_info.eth_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->ip));
+        snprintf(sys_info.eth_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->netmask));
+        snprintf(sys_info.eth_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->gw));
+    } else {
+        memset(sys_info.eth_ip, 0, sizeof(sys_info.eth_ip));
+        memset(sys_info.eth_mask, 0, sizeof(sys_info.eth_mask));
+        memset(sys_info.eth_gw, 0, sizeof(sys_info.eth_gw));
+    }
 }
 
 
 static void update_sys_info_wifi_sta_ip(esp_netif_ip_info_t* ip_info)
 {
-    snprintf(sys_info.wifi_sta_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->ip));
-    snprintf(sys_info.wifi_sta_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->netmask));
-    snprintf(sys_info.wifi_sta_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->gw));
+    if (ip_info != NULL) {
+        snprintf(sys_info.wifi_sta_ip, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->ip));
+        snprintf(sys_info.wifi_sta_mask, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->netmask));
+        snprintf(sys_info.wifi_sta_gw, SYS_INFO_MAX_STR_LEN, IPSTR, IP2STR(&ip_info->gw));
+    } else {
+        memset(sys_info.wifi_sta_ip, 0, sizeof(sys_info.wifi_sta_ip));
+        memset(sys_info.wifi_sta_mask, 0, sizeof(sys_info.wifi_sta_mask));
+        memset(sys_info.wifi_sta_gw, 0, sizeof(sys_info.wifi_sta_gw));
+    }
 }
 
 
@@ -347,6 +359,7 @@ static void eth_connect_event_handler(void *arg, esp_event_base_t event_base,
             break;
         case ETHERNET_EVENT_DISCONNECTED:
             update_sys_info_eth_conn(false);
+            update_sys_info_eth_ip(NULL);
             break;
         default:
             break;
@@ -367,6 +380,7 @@ static void wifi_sta_connect_event_handler(void *arg, esp_event_base_t event_bas
             break;
         case WIFI_EVENT_STA_DISCONNECTED:
             update_sys_info_wifi_sta_conn(false);
+            update_sys_info_wifi_sta_ip(NULL);
             break;
         default:
             break;
