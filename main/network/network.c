@@ -634,7 +634,7 @@ bool network_check_wifi_settings_changed(void)
         changed = changed || (strncmp(curr_settings->sta_ssid, new_settings.sta_ssid, sizeof(new_settings.sta_ssid) - 1) != 0);
         changed = changed || (strncmp(curr_settings->sta_pass, new_settings.sta_pass, sizeof(new_settings.sta_pass) - 1) != 0);
         changed = changed || (curr_settings->sta_dhcp_client != new_settings.sta_dhcp_client);
-        if (!changed && new_settings.sta_dhcp_client) {
+        if (!new_settings.sta_dhcp_client) {
             changed = changed || (memcmp(&curr_settings->sta_static_ip, &new_settings.sta_static_ip, sizeof(new_settings.sta_static_ip)) != 0);
         }
         if (changed) {
