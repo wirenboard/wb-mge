@@ -1,8 +1,11 @@
 #include <stdbool.h>
 #include <string.h>
 #include "esp_log.h"
-#include "debug_log.h"
 #include "array_size.h"
+
+
+#define DEBUG_LOG_ENABLE        0   // Global debug logs enable
+
 
 #if (DEBUG_LOG_ENABLE)
 
@@ -25,8 +28,8 @@
         {.tag = "modbus_tcp",           .enabled = false},
         {.tag = "modbus_helpers",       .enabled = false},
         {.tag = "serial",               .enabled = false},
-        {.tag = "tcp_client",           .enabled = true},
-        {.tag = "tcp_server",           .enabled = true},
+        {.tag = "tcp_client",           .enabled = false},
+        {.tag = "tcp_server",           .enabled = false},
         {.tag = "indication",           .enabled = true},
         {.tag = "network",              .enabled = true},
         {.tag = "wifi_apsta",           .enabled = true},
