@@ -10,8 +10,6 @@
 #include "lwip/ip4_addr.h"
 
 
-#define WIFI_APSTA_DEBUG_LOG_ENABLE         1       // TODO: Возможно, вынести в настройки
-
 #define MAX_STA_CONN                        5
 
 #define WIFI_STA_CONNECT_READY_BIT          BIT0
@@ -401,10 +399,6 @@ void stop_sta_connect_task(void)
 
 esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
 {
-    if (WIFI_APSTA_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     if (wifi_ctx.initialized) {
         ESP_LOGW(TAG, "Already initialized");
         return ESP_ERR_NOT_ALLOWED;

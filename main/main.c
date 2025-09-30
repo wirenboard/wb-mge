@@ -11,6 +11,7 @@
 #include "config_button.h"
 #include "system_voltage.h"
 #include "network.h"
+#include "debug_log.h"
 
 // QEMU build conditional includes
 #if (QEMU_BUILD)
@@ -68,7 +69,7 @@ static inline void print_setting_items(void)
 {
     char value[SETTING_ITEM_MAX_STR_LEN] = {0};
 
-    ESP_LOGI(TAG, "=== Current Settings ===");
+    ESP_LOGD(TAG, "=== Current Settings ===");
 
     size_t count = setting_items_get_count();
     for (size_t i = 0; i < count; i++) {
@@ -76,31 +77,36 @@ static inline void print_setting_items(void)
         if (key) {
             // Skip printing any setting that contains 'pass' for security
             if ((key != NULL) && (strstr(key, "pass") != NULL)) {
-                ESP_LOGI(TAG, "%s: [HIDDEN]", key);
+                ESP_LOGD(TAG, "%s: [HIDDEN]", key);
                 continue;
             }
 
             if (setting_items_read(key, value) == ESP_OK) {
-                ESP_LOGI(TAG, "%s: %s", key, value);
+                ESP_LOGD(TAG, "%s: %s", key, value);
             } else {
                 ESP_LOGW(TAG, "%s: [not found]", key);
             }
         }
     }
 
-    ESP_LOGI(TAG, "=== Settings printed (passwords hidden for security) ===");
+    ESP_LOGD(TAG, "=== Settings printed (passwords hidden for security) ===");
 }
 
 
 void app_main(void)
 {
+    debug_log_init();
+
     ESP_ERROR_CHECK(sys_info_init());
+
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
+    if (debug_log_is_enabled(TAG)) {
+        print_setting_items();
+    }
+
     ESP_ERROR_CHECK(network_init());
     ESP_ERROR_CHECK(http_server_init());
-
-    print_setting_items();
 
     #if (!QEMU_BUILD)
         gpio_expander_init(&gpio_expander);

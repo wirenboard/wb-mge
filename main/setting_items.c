@@ -10,9 +10,6 @@
 #include <stdlib.h>
 #include <esp_log.h>
 
-
-#define SETTING_ITEMS_DEBUG_LOG_ENABLE      0           // TODO: Возможно, вынести в настройки
-
 static const char *TAG = "setting_items";
 
 typedef bool (*setting_validator_t)(const char *value);
@@ -211,10 +208,6 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized)
 
 esp_err_t setting_items_init(void)
 {
-    if (SETTING_ITEMS_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     ESP_LOGI(TAG, "Initializing settings with string storage");
     storage_iface = &nvs_storage_iface;
 

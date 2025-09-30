@@ -18,8 +18,6 @@
 #include <sys/socket.h>
 
 
-#define BRIDGE_DEBUG_LOG_ENABLE       0           // TODO: Возможно, вынести в настройки
-
 #define SERIAL_PORT_NUM_1             1
 #define SERIAL_INPUT_PIN_1            GPIO_NUM_9
 #define SERIAL_OUTPUT_PIN_1           GPIO_NUM_10
@@ -172,10 +170,6 @@ static esp_err_t read_tcp_bridge_config(const int index, bridge_mode_t* mode, ui
 
 esp_err_t bridge_init(void)
 {
-    if (BRIDGE_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     // Start RS485 busy monitor task and init error percentage statistics
     rs485_busy_monitor_init();
     rs485_stats_init();

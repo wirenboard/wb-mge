@@ -31,9 +31,9 @@ void mio_control_io_bus_onoff(bool enabled)
 
     if (enabled) {
         esp_io_expander_set_level(io_expander, MIO_RESET_PIN, 1);
-        ESP_LOGI(TAG, "IO bus enabled");
+        ESP_LOGD(TAG, "IO bus enabled");
     } else {
         esp_io_expander_set_level(io_expander, MIO_RESET_PIN, 0);
-        ESP_LOGI(TAG, "IO bus disabled");
+        ESP_LOGD(TAG, "IO bus disabled");
     }
 }
