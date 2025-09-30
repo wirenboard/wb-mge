@@ -207,6 +207,10 @@ table th {
   color: #fff !important;
 }
 
+.multiselect__option:hover {
+  color: #fff;
+}
+
 .multiselect__content-wrapper {
   overflow-x: hidden !important;
 }
@@ -261,3 +265,22 @@ table th {
   transform: none !important;
 }
 
+.multiselect--disabled .multiselect__select {
+  background: none !important;
+  color: #a6a6a6;
+}
+
+.multiselect__placeholder {
+  font-size: 1rem !important;
+  padding-top: 0 !important;
+  padding-left: 2px !important;
+  margin-top: -1px !important;
+}
+
+.multiselect__input {
+  box-shadow: none !important;
+  border: none !important;
+  background: none !important;
+  padding-top: 0 !important;
+  padding-left: 2px !important;
+}

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Select from 'vue-multiselect';
+import ReloadIcon from '@/assets/reload.svg?component';
 import { useWifi } from '@/common/network';
 import { useSettings } from '@/common/settings';
 import type { Settings, WiFiNetwork, WiFiSecuityProtocol } from '@/common/types';
@@ -16,6 +17,17 @@ const { t } = useI18n();
 const { data, initData, isChanged, isLoading, updateSettings } = useSettings();
 const { wifi, isPolling, startPolling, stopPolling } = useWifi();
 const selectedWifi = ref();
+const wifiSelect = ref();
+const searhcValue = ref('');
+const addedWifiNetworks = ref([]);
+const computedWifiNetworks = computed(() => {
+  const networks: Partial<WiFiNetwork>[] = [...addedWifiNetworks.value, ...wifi.value];
+  // @ts-ignore
+  if (data.value?.wifi.sta_ssid && !networks.find((item: WiFiNetwork) => item?.ssid === data.value?.wifi.sta_ssid)) {
+    networks.unshift({ ssid: data.value?.wifi.sta_ssid });
+  }
+  return networks;
+});
 
 watch(() => data.value?.wifi.mode, () => {
   if (initData.value?.wifi.mode !== 'none') {
@@ -24,7 +36,7 @@ watch(() => data.value?.wifi.mode, () => {
 }, { immediate: true });
 
 watch([() => data.value?.wifi.sta_ssid, () => wifi.value], () => {
-  selectedWifi.value = wifi.value.find(item => item.ssid === data.value?.wifi.sta_ssid);
+  selectedWifi.value = computedWifiNetworks.value.find(item => item.ssid === data.value?.wifi.sta_ssid);
 });
 
 onUnmounted(() => {
@@ -63,6 +75,15 @@ const updateWifiSettings = async () => {
 
 const changeWifi = ({ ssid }: WiFiNetwork) => {
   data.value!.wifi.sta_ssid = ssid;
+};
+
+const addNetwork = () => {
+  const val = { ssid: searhcValue.value };
+  // @ts-ignore
+  addedWifiNetworks.value.push(val);
+  data.value!.wifi.sta_ssid = searhcValue.value;
+  wifiSelect.value.deactivate();
+  selectedWifi.value = val;
 };
 </script>
 
@@ -172,23 +193,48 @@ const changeWifi = ({ ssid }: WiFiNetwork) => {
 
           <template v-if="data.wifi.mode === 'sta'">
             <label for="sta_ssid">{{ t('ssid') }}</label>
-            <Select
-              v-model="selectedWifi"
-              class="settings-dropdown"
-              label="ssid"
-              track-by="ssid"
-              open-direction="bottom"
-              :placeholder="isPolling ? (data?.wifi.sta_ssid || '') : ''"
-              :options="wifi"
-              :loading="isPolling"
-              :searchable="false"
-              :max-height="600"
-              :show-labels="false"
-              :show-no-results="false"
-              use-teleport
-              @open="startPolling"
-              @select="changeWifi"
-            />
+            <div class="settings-dropdown">
+              <Select
+                ref="wifiSelect"
+                v-model="selectedWifi"
+                label="ssid"
+                track-by="ssid"
+                open-direction="bottom"
+                :placeholder="isPolling ? (data?.wifi.sta_ssid || '') : ''"
+                :options="computedWifiNetworks"
+                :disabled="isPolling"
+                :max-height="600"
+                :allow-empty="false"
+                :show-labels="false"
+                :show-no-results="true"
+                use-teleport
+                @search-change="(val: string) => {
+                  searhcValue = val;
+                }"
+                @select="changeWifi"
+              >
+                <template #noResult>
+                  <button type="button" class="settings-addWifiButton" @click="addNetwork">{{ t('add_ssid') }}</button>
+                </template>
+                <template #option="props">
+                  <div
+                    :class="{
+                      'settings-externalNetwrok': !wifi.find((item) => item.ssid === props.option.ssid)
+                    }">
+                    {{ props.option.ssid }}
+                  </div>
+                </template>
+              </Select>
+
+              <Button variant="outline" type="button" class="settings-reloadButton" :disalbed="isPolling" @click="startPolling">
+                <ReloadIcon
+                  class="settings-reload"
+                  :class="{
+                    'settings-loading': isPolling
+                  }"
+                />
+              </Button>
+            </div>
 
             <label for="sta_auth">{{ t('wifi_pass_security') }}</label>
             <div class="settings-data">
@@ -281,7 +327,7 @@ const changeWifi = ({ ssid }: WiFiNetwork) => {
 .settings-info {
   display: grid;
   gap: 6px 24px;
-  grid-template-columns: 48% 52%;
+  grid-template-columns: 1fr 1fr;
   align-items: center;
   justify-items: flex-start;
   page-break-inside: avoid;
@@ -293,13 +339,39 @@ const changeWifi = ({ ssid }: WiFiNetwork) => {
 }
 
 .settings-data {
-  width: calc(100% - 24px);
+  width: 100%;
   display: flex;
   justify-content: end;
 }
 
 .settings-dropdown {
-  max-width: calc(100% - 24px);
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  gap: 6px;
+}
+
+.settings-reloadButton {
+  padding: 6px 8px !important;
+}
+
+.settings-reload {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-loading {
+  animation: rotate 1s linear infinite;
+}
+
+.settings-addWifiButton {
+  all: unset;
+  width: 100%;
+}
+
+.settings-externalNetwrok::after {
+  content: '⚠️';
+  margin-left: 6px;
 }
 
 .settings-info label {
@@ -333,7 +405,8 @@ const changeWifi = ({ ssid }: WiFiNetwork) => {
     "wifi_pass_security": "Network protection",
     "open": "Unsecured",
     "wpa2_psk": "WPA2-PSK",
-    "wpa3_psk": "WPA3-PSK"
+    "wpa3_psk": "WPA3-PSK",
+    "add_ssid": "Add ssid"
   },
   "ru": {
     "title": "Настройки",
@@ -349,7 +422,8 @@ const changeWifi = ({ ssid }: WiFiNetwork) => {
     "wifi_pass_security": "Защита сети",
     "open": "Без защиты",
     "wpa2_psk": "WPA2-PSK",
-    "wpa3_psk": "WPA3-PSK"
+    "wpa3_psk": "WPA3-PSK",
+    "add_ssid": "Добавить ssid"
   }
 }
 </i18n>
