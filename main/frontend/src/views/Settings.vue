@@ -327,7 +327,7 @@ const addNetwork = () => {
 .settings-info {
   display: grid;
   gap: 6px 24px;
-  grid-template-columns: 48% 52%;
+  grid-template-columns: 1fr 1fr;
   align-items: center;
   justify-items: flex-start;
   page-break-inside: avoid;
@@ -339,14 +339,14 @@ const addNetwork = () => {
 }
 
 .settings-data {
-  width: calc(100% - 24px);
+  width: 100%;
   display: flex;
   justify-content: end;
 }
 
 .settings-dropdown {
   width: 100%;
-  max-width: calc(100% - 24px);
+  max-width: 100%;
   display: flex;
   gap: 6px;
 }
