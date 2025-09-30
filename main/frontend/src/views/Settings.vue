@@ -204,6 +204,7 @@ const addNetwork = () => {
                 :options="computedWifiNetworks"
                 :disabled="isPolling"
                 :max-height="600"
+                :allow-empty="false"
                 :show-labels="false"
                 :show-no-results="true"
                 use-teleport
