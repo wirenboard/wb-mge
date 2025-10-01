@@ -10,7 +10,7 @@
 #include "array_size.h"
 
 
-#define AUTH_DEBUG_LOG_ENABLE   1               // TODO: Возможно, вынести в настройки
+#define AUTH_DEBUG_LOG_ENABLE   0               // TODO: Возможно, вынести в настройки
 
 #define MAX_SESSIONS            10
 #define COOKIE_MAX_LEN          (11 + 10 + 1)   // "session_id=" + uint32_max + '\0'
