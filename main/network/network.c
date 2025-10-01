@@ -8,7 +8,9 @@
 #include "sys/socket.h"
 #include "esp_log.h"
 
+
 #define NETWORK_DEBUG_LOG_ENABLE        1       // TODO: Возможно, вынести в настройки
+
 
 typedef struct {
     bool dhcp_client;
@@ -34,9 +36,11 @@ typedef struct {
     wifi_settings_t wifi_settings;
 } network_settings_t;
 
+
 static network_settings_t current_settings = {0};
 
 static const char* TAG = "network";
+
 
 // Helper function to convert string IP to uint32_t
 static uint32_t str_to_ip(const char *ip_str) {
@@ -47,11 +51,13 @@ static uint32_t str_to_ip(const char *ip_str) {
     return ip;
 }
 
+
 static void ip_to_str(uint32_t ip, char* out_ip_str)
 {
     uint8_t* ip_bytes = (uint8_t*)&ip;
     sprintf(out_ip_str, "%d.%d.%d.%d", ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
 }
+
 
 static wifi_mode_t str_to_wifi_mode(const char *str)
 {
@@ -69,6 +75,7 @@ static wifi_mode_t str_to_wifi_mode(const char *str)
     }
 }
 
+
 static const char* wifi_mode_to_str(wifi_mode_t mode)
 {
     switch (mode) {
@@ -84,6 +91,7 @@ static const char* wifi_mode_to_str(wifi_mode_t mode)
     }
 }
 
+
 static wifi_auth_mode_t str_to_wifi_auth_mode(const char *str) {
     if (strcmp(str, WIFI_AUTH_WPA2_PSK_STR) == 0) {
         return WIFI_AUTH_WPA2_PSK;
@@ -96,6 +104,7 @@ static wifi_auth_mode_t str_to_wifi_auth_mode(const char *str) {
         return WIFI_AUTH_OPEN;
     }
 }
+
 
 static esp_err_t read_ethernet_settings(ethernet_settings_t* eth_settings)
 {
@@ -125,6 +134,7 @@ static esp_err_t read_ethernet_settings(ethernet_settings_t* eth_settings)
 
     return result;
 }
+
 
 static esp_err_t read_wifi_settings(wifi_settings_t* wifi_settings)
 {
@@ -220,10 +230,12 @@ static esp_err_t read_wifi_settings(wifi_settings_t* wifi_settings)
     return result;
 }
 
+
 static inline esp_err_t read_hostname(char hostname[SETTING_ITEM_MAX_STR_LEN])
 {
     return setting_items_read(KEY_HOSTNAME, hostname);
 }
+
 
 static void update_sys_info_wifi_state(wifi_settings_t* wifi_settings)
 {
@@ -246,6 +258,7 @@ static void update_sys_info_wifi_state(wifi_settings_t* wifi_settings)
     sys_info.wifi_enabled = (wifi_settings->wifi_mode != WIFI_MODE_NULL);
 }
 
+
 static void update_sys_info_eth_mac(void)
 {
     esp_eth_handle_t eth_handle = ethernet_get_handle();
@@ -266,6 +279,7 @@ static void update_sys_info_eth_mac(void)
     }
 }
 
+
 static void update_sys_info_wifi_mac(void)
 {
     uint8_t wifi_sta_mac[6] = {0};
@@ -281,6 +295,7 @@ static void update_sys_info_wifi_mac(void)
     }
 }
 
+
 static void update_sys_info_eth_ip(esp_netif_ip_info_t* ip_info)
 {
     if (ip_info != NULL) {
@@ -293,6 +308,7 @@ static void update_sys_info_eth_ip(esp_netif_ip_info_t* ip_info)
         memset(sys_info.eth_gw, 0, sizeof(sys_info.eth_gw));
     }
 }
+
 
 static void update_sys_info_wifi_sta_ip(esp_netif_ip_info_t* ip_info)
 {
@@ -307,15 +323,18 @@ static void update_sys_info_wifi_sta_ip(esp_netif_ip_info_t* ip_info)
     }
 }
 
+
 static inline void update_sys_info_eth_conn(bool connected)
 {
     sys_info.eth_is_connected = connected;
 }
 
+
 static inline void update_sys_info_wifi_sta_conn(bool connected)
 {
     sys_info.wifi_sta_is_connected = connected;
 }
+
 
 static inline void update_sys_info_wifi_ap_conn_count(bool inc_ndec)
 {
@@ -325,6 +344,7 @@ static inline void update_sys_info_wifi_ap_conn_count(bool inc_ndec)
         sys_info.wifi_ap_connections_count--;
     }
 }
+
 
 static void eth_connect_event_handler(void *arg, esp_event_base_t event_base,
     int32_t event_id, void *event_data)
@@ -346,6 +366,7 @@ static void eth_connect_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+
 static void wifi_sta_connect_event_handler(void *arg, esp_event_base_t event_base,
     int32_t event_id, void *event_data)
 {
@@ -366,6 +387,7 @@ static void wifi_sta_connect_event_handler(void *arg, esp_event_base_t event_bas
     }
 }
 
+
 static void wifi_ap_connect_event_handler(void *arg, esp_event_base_t event_base,
     int32_t event_id, void *event_data)
 {
@@ -380,6 +402,7 @@ static void wifi_ap_connect_event_handler(void *arg, esp_event_base_t event_base
             break;
     }
 }
+
 
 static void make_wifi_apsta_cfg(wifi_settings_t* wifi_settings, wifi_apsta_config_t* apsta_cfg)
 {
@@ -411,6 +434,7 @@ static void make_wifi_apsta_cfg(wifi_settings_t* wifi_settings, wifi_apsta_confi
     apsta_cfg->ap_event_handler = &wifi_ap_connect_event_handler;
 }
 
+
 static esp_err_t init_wifi(wifi_settings_t* wifi_settings, char* hostname)
 {
     wifi_apsta_config_t apsta_cfg = {0};
@@ -433,6 +457,7 @@ static esp_err_t init_wifi(wifi_settings_t* wifi_settings, char* hostname)
     return result;
 }
 
+
 static esp_err_t init_ethernet(ethernet_settings_t* eth_settings, char* hostname)
 {
     esp_netif_ip_info_t* eth_ip_info = NULL;
@@ -449,6 +474,7 @@ static esp_err_t init_ethernet(ethernet_settings_t* eth_settings, char* hostname
 
     return result;
 }
+
 
 esp_err_t network_init(void)
 {
@@ -501,6 +527,7 @@ esp_err_t network_init(void)
     return ESP_OK;
 }
 
+
 bool network_check_eth_settings_changed(void)
 {
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -529,6 +556,7 @@ bool network_check_eth_settings_changed(void)
 
     return false;
 }
+
 
 esp_err_t network_update_eth_settings(void)
 {
@@ -564,6 +592,7 @@ esp_err_t network_update_eth_settings(void)
     ESP_LOGD(TAG, "Ethernet settings updated");
     return ESP_OK;
 }
+
 
 bool network_check_wifi_settings_changed(void)
 {
@@ -616,6 +645,7 @@ bool network_check_wifi_settings_changed(void)
     return false;
 }
 
+
 esp_err_t network_update_wifi_settings(void)
 {
     ESP_LOGD(TAG, "Updating WiFi settings...");
@@ -656,6 +686,7 @@ esp_err_t network_update_wifi_settings(void)
     ESP_LOGD(TAG, "WiFi settings updated");
     return ESP_OK;
 }
+
 
 bool network_check_mdns_settings_changed(void)
 {
