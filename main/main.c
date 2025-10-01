@@ -96,21 +96,28 @@ void app_main(void)
 {
     debug_log_init();
 
+    #if (!QEMU_BUILD)
+        gpio_expander_init(&gpio_expander);
+        rs485_control_init(gpio_expander);
+        mio_control_init(gpio_expander);
+    #endif // QEMU_BUILD
+
     ESP_ERROR_CHECK(sys_info_init());
 
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
+
+    #if (!QEMU_BUILD)
+        update_io_bus_control();
+    #endif // QEMU_BUILD
+
     print_setting_items();
 
     ESP_ERROR_CHECK(network_init());
     ESP_ERROR_CHECK(http_server_init());
 
     #if (!QEMU_BUILD)
-        gpio_expander_init(&gpio_expander);
-        rs485_control_init(gpio_expander);
         update_rs485_control();
-        mio_control_init(gpio_expander);
-        update_io_bus_control();
         indication_init(gpio_expander);
         indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
         config_button_init();
