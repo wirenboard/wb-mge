@@ -18,6 +18,7 @@ static const i2c_master_bus_config_t bus_config = {
     .sda_io_num = GPIO_EXPANDER_SDA_PIN,
     .scl_io_num = GPIO_EXPANDER_SCL_PIN,
     .clk_source = I2C_CLK_SRC_DEFAULT,
+    .flags.enable_internal_pullup = 1
 };
 
 static esp_io_expander_handle_t gpio_expander = NULL;
