@@ -1,4 +1,8 @@
 2025-10-01 Maxim Toropov <maxim.toropov@wirenboard.com>
+    * version:  1.0.0-rc12
+    * fix:      MIO reset control (init GPIO expander and MIO control as quickly as posible)
+
+2025-10-01 Maxim Toropov <maxim.toropov@wirenboard.com>
 
     * version:  1.0.0-rc11
     * added:    apply settings without restart
