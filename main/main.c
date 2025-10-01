@@ -11,6 +11,7 @@
 #include "config_button.h"
 #include "system_voltage.h"
 #include "network.h"
+#include "settings_update.h"
 #include "debug_log.h"
 
 // QEMU build conditional includes
@@ -44,8 +45,6 @@ static const char *TAG = "main";
 #if (!QEMU_BUILD)
     static void factory_reset(void)
     {
-        ESP_LOGI(TAG, "Factory reset initiated!");
-
         ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
         ESP_ERROR_CHECK(setting_items_set_defaults(false));
 
@@ -59,6 +58,7 @@ static const char *TAG = "main";
         ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
         indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
         factory_reset();
+        settings_update();
     }
 #endif
 
