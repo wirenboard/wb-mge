@@ -1,9 +1,12 @@
-2025-10-01 Maxim Toropov <maxim.toropov@wirenboard.com>
+2025-10-02 Maxim Toropov <maxim.toropov@wirenboard.com>
     * version:  1.0.0-rc13
     * rework:   debug logs control (separate module)
     * added:    disabled virtual eFuses, now real eFuses used
     * added:    enabled default WiFi AP password
     * improve:  enabled binary size compiler optimization
+    * fix:      i2c_master warning on pull-ups
+    * fix:      apply new settings on factory reset triggered by config button
+    * fix:      WiFi STA initial connection to AP (appeared after disabling logs)
 
 2025-10-01 Maxim Toropov <maxim.toropov@wirenboard.com>
     * version:  1.0.0-rc12
