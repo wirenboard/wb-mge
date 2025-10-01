@@ -55,7 +55,7 @@ static const char *get_dynamic_ap_pass_default(void)
             if (ret >= sizeof(generated_password)) {
                 ESP_LOGW(TAG, "Generated password was truncated");
             }
-            ESP_LOGI(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
+            ESP_LOGD(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], generated_password);
         } else {
             // Fallback to default if MAC read fails
@@ -84,7 +84,7 @@ static const char *get_dynamic_hostname_default(void)
             if (ret >= sizeof(generated_hostname)) {
                 ESP_LOGW(TAG, "Generated hostname was truncated");
             }
-            ESP_LOGI(TAG, "Generated hostname from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
+            ESP_LOGD(TAG, "Generated hostname from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], generated_hostname);
         } else {
             // Fallback to base hostname if MAC read fails
