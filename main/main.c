@@ -9,7 +9,7 @@
 #include "setting_items.h"
 #include "sys_info.h"
 #include "config_button.h"
-#include "system_voltage.h"
+#include "voltage_monitor.h"
 #include "network.h"
 #include "settings_update.h"
 #include "debug_log.h"
@@ -60,6 +60,16 @@ static const char *TAG = "main";
         factory_reset();
         settings_update();
     }
+
+    // System voltage monitoring event
+    static void sys_voltage_event_callback(float voltage, bool is_ok)
+    {
+        if (!is_ok) {
+            ESP_LOGW(TAG, "System voltage protection alert, voltage: %.2f V", voltage);
+        } else {
+            ESP_LOGI(TAG, "System voltage protection release, voltage: %.2f V", voltage);
+        }
+    }
 #endif
 
 
@@ -97,7 +107,17 @@ void app_main(void)
     debug_log_init();
 
     #if (!QEMU_BUILD)
+        // Initialize GPIO expander before voltage monitoring
+        // to reset all GPIOs to default (Hi-Z) state anyway
         gpio_expander_init(&gpio_expander);
+
+        ESP_ERROR_CHECK(voltage_monitor_init(sys_voltage_event_callback));
+        if (!voltage_monitor_sys_voltage_is_ok()) {
+            ESP_LOGE(TAG, "System voltage is out of working range");
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            esp_restart();
+        }
+
         rs485_control_init(gpio_expander);
         mio_control_init(gpio_expander);
     #endif // QEMU_BUILD
@@ -122,7 +142,6 @@ void app_main(void)
         indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
         config_button_init();
         config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
-        system_voltage_init();
     #endif // QEMU_BUILD
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);

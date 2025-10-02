@@ -4,7 +4,7 @@
 #include "array_size.h"
 
 
-#define DEBUG_LOG_ENABLE        0   // Global debug logs enable
+#define DEBUG_LOG_ENABLE        1   // Global debug logs enable
 
 
 #if (DEBUG_LOG_ENABLE)
@@ -33,7 +33,8 @@
         {.tag = "indication",           .enabled = true},
         {.tag = "network",              .enabled = true},
         {.tag = "wifi_apsta",           .enabled = true},
-        {.tag = "mio_control",          .enabled = false}
+        {.tag = "mio_control",          .enabled = false},
+        {.tag = "voltage_monitor",      .enabled = true}
     };
 
     void debug_log_init(void)
