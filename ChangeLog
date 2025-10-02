@@ -1,5 +1,10 @@
 2025-10-02 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
+    * version:  1.0.0-rc15
+    * added:    unittests for sys_info
+
+2025-10-02 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
     * version:  1.0.0-rc14
     * added:    unittests for wb_app_desc
 

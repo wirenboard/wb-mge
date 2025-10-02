@@ -3,6 +3,8 @@
 #include "esp_err.h"
 #include <stddef.h>
 
+#define TEST_DEVICE_SIGNATURE                   "TEST_SIG"
+
 typedef enum {
     EFUSE_BLK0                 = 0,   /**< Number of eFuse BLOCK0. REPEAT_DATA */
 
@@ -22,6 +24,4 @@ typedef enum {
 
 esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offset_in_bits, size_t size_bits);
 
-// Mock control functions
 void mock_esp_efuse_set_signature(const char* signature);
-void mock_esp_efuse_set_read_return(esp_err_t ret);
