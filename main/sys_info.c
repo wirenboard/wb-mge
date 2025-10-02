@@ -6,8 +6,6 @@
 #include "esp_efuse.h"
 
 
-#define SYS_INFO_DEBUG_LOG_ENABLE       1           // TODO: Возможно, вынести в настройки
-
 #define SIGNATURE_EFUSE_BLOCK           EFUSE_BLK3
 #define SIGNATURE_EFUSE_OFFSET          8
 
@@ -87,10 +85,6 @@ static void get_device_signature(char out_buf[DEVICE_SIGNATURE_LEN + 1])
 
 esp_err_t sys_info_init(void)
 {
-    if (SYS_INFO_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     sys_info.device_serial_num = generate_serial_from_mac();
 
     GET_APP_DESC_STR_FIELD(fw_version, sys_info.firmware_ver);

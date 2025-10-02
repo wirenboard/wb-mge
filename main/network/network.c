@@ -9,9 +9,6 @@
 #include "esp_log.h"
 
 
-#define NETWORK_DEBUG_LOG_ENABLE        1       // TODO: Возможно, вынести в настройки
-
-
 typedef struct {
     bool dhcp_client;
     esp_netif_ip_info_t static_ip;
@@ -478,10 +475,6 @@ static esp_err_t init_ethernet(ethernet_settings_t* eth_settings, char* hostname
 
 esp_err_t network_init(void)
 {
-    if (NETWORK_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     if (esp_event_loop_create_default() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize default event loop");
         return ESP_FAIL;

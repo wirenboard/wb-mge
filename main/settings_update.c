@@ -8,8 +8,6 @@
 #include "update_rs485_mio_gpio_states.h"
 
 
-#define SETTINGS_UPDATE_DEBUG_LOG_ENABLE    1               // TODO: Возможно, вынести в настройки
-
 #define SETTINGS_UPDATE_TASK_STACK_SIZE     (6 * 1024)
 #define SETTINGS_UPDATE_TASK_PRIORITY       5
 
@@ -74,15 +72,6 @@ static void settings_update_task(void *arg)
 
 void settings_update(void)
 {
-    static bool log_initialized = false;
-
-    if (!log_initialized) {
-        if (SETTINGS_UPDATE_DEBUG_LOG_ENABLE) {
-            esp_log_level_set(TAG, ESP_LOG_DEBUG);
-        }
-        log_initialized = true;
-    }
-
     update_rs485_control();
     update_io_bus_control();
 
