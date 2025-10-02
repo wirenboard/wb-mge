@@ -10,7 +10,8 @@
 #include <stdlib.h>
 #include <esp_log.h>
 
-#define SETTING_ITEMS_DEBUG_LOG_ENABLE      1           // TODO: Возможно, вынести в настройки
+
+#define SETTING_ITEMS_DEBUG_LOG_ENABLE      0           // TODO: Возможно, вынести в настройки
 
 static const char *TAG = "setting_items";
 

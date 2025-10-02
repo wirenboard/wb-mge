@@ -53,7 +53,7 @@ GIT_COMMIT ?= $(shell git rev-parse HEAD)
 GIT_HASH := $(shell echo $(GIT_COMMIT) | cut -c 1-7)
 BRANCH_NAME ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 GIT_BRANCH := $(shell echo $(BRANCH_NAME) | $(SED) "s/\//_/g")
-GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 56)
+GIT_INFO := $(shell echo "$(GIT_HASH)"_"$(GIT_BRANCH)" | head -c 50)
 
 DEFS += TARGET_PROJECT_NAME=$(TARGET)
 DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)

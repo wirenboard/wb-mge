@@ -4,6 +4,8 @@
 #include "setting_items.h"
 #include "sys_info.h"
 #include "array_size.h"
+#include "settings_update.h"
+#include "settings_save_timer.h"
 
 #include <esp_log.h>
 #include <esp_system.h>
@@ -78,9 +80,12 @@ static esp_err_t cmd_execute(int cmd_code)
         break;
 
     case CMD_SET_DEFAULT_SETTINGS:
+        settings_save_timer_auto_init();
+        settings_save_timer_wait();
         if (setting_items_set_defaults(false) != ESP_OK) {
             result = ESP_FAIL;
         } else {
+            settings_update();
             ESP_LOGI(TAG, "All default settings applied successfully");
         }
         break;

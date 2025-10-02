@@ -25,6 +25,7 @@
 
 static const char *TAG = "ethernet";
 static esp_eth_handle_t s_eth_handle = NULL;
+static esp_netif_t* s_eth_netif = NULL;
 
 #if (QEMU_BUILD)
 
@@ -74,6 +75,7 @@ static esp_eth_handle_t s_eth_handle = NULL;
         if (err != ESP_OK){
             if (s_eth_handle != NULL) {
                 esp_eth_driver_uninstall(s_eth_handle);
+                s_eth_handle = NULL;
             }
             if (mac != NULL) {
                 mac->del(mac);
@@ -84,14 +86,11 @@ static esp_eth_handle_t s_eth_handle = NULL;
             return err;
         }
 
-        ESP_ERROR_CHECK(esp_netif_init());
-        esp_netif_t *eth_netif;
-        esp_eth_netif_glue_handle_t eth_netif_glue;
-
         esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
-        eth_netif = esp_netif_new(&cfg);
-        eth_netif_glue = esp_eth_new_netif_glue(s_eth_handle);
+        esp_netif_t* eth_netif = esp_netif_new(&cfg);
+        esp_eth_netif_glue_handle_t eth_netif_glue = esp_eth_new_netif_glue(s_eth_handle);
         ESP_ERROR_CHECK(esp_netif_attach(eth_netif, eth_netif_glue));
+
         esp_netif_set_hostname(eth_netif, netif_hostname);
         if (static_ip != NULL) {
             esp_netif_dhcpc_stop(eth_netif);
@@ -122,6 +121,8 @@ static esp_eth_handle_t s_eth_handle = NULL;
             return err;
         }
 
+        s_eth_netif = eth_netif;
+
         return ESP_OK;
     }
 
@@ -130,4 +131,45 @@ static esp_eth_handle_t s_eth_handle = NULL;
 esp_eth_handle_t ethernet_get_handle(void)
 {
     return s_eth_handle;
+}
+
+esp_err_t ethernet_set_ip_hostname(esp_netif_ip_info_t* static_ip, char * netif_hostname)
+{
+    if (s_eth_netif == NULL || s_eth_handle == NULL) {
+        ESP_LOGE(TAG, "Ethernet is not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t result = ESP_OK;
+    esp_err_t ret = esp_netif_set_hostname(s_eth_netif, netif_hostname);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to set hostname");
+        result = ESP_FAIL;
+    }
+
+    esp_netif_dhcpc_stop(s_eth_netif);
+
+    if (static_ip) {
+        ret = esp_netif_set_ip_info(s_eth_netif, static_ip);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Unable to set static IP address");
+            result = ESP_FAIL;
+        }
+    } else {
+        ret = esp_netif_dhcpc_start(s_eth_netif);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Unable to start DHCP client");
+            result = ESP_FAIL;
+        }
+    }
+
+    esp_eth_stop(s_eth_handle);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    ret = esp_eth_start(s_eth_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to restart Ethernet interface");
+        result = ESP_FAIL;
+    }
+
+    return result;
 }

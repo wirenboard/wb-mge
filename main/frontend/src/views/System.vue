@@ -228,7 +228,7 @@ const updateInterface = () => {
 .system-container {
   display: grid;
   gap: 6px 24px;
-  grid-template-columns: 45% 55%;
+  grid-template-columns: 1fr 1fr;
   align-items: center;
   justify-items: flex-start;
   page-break-inside: avoid;
@@ -243,7 +243,7 @@ const updateInterface = () => {
 
 .system-container div:nth-child(odd),
 .system-data {
-  width: calc(100% - 24px);
+  width: 100%;
   display: flex;
   justify-content: end;
 }
