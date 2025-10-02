@@ -4,7 +4,7 @@
 #include <string.h>
 
 esp_err_t mock_esp_efuse_read_block_return = ESP_OK;
-char mock_device_signature[DEVICE_SIGNATURE_LEN + 1] = TEST_DEVICE_SIGNATURE;
+static char mock_device_signature[DEVICE_SIGNATURE_LEN + 1] = TEST_DEVICE_SIGNATURE;
 
 void mock_esp_efuse_set_signature(const char* signature)
 {
@@ -17,15 +17,25 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
     (void)blk;
     (void)offset_in_bits;
 
-    if (mock_esp_efuse_read_block_return == ESP_OK && dst_key) {
-        size_t bytes_to_copy = size_bits / 8;
-        if (bytes_to_copy > strlen(mock_device_signature)) {
-            bytes_to_copy = strlen(mock_device_signature);
-        }
-        memcpy(dst_key, mock_device_signature, bytes_to_copy);
-        if (size_bits / 8 > bytes_to_copy) {
-            ((char*)dst_key)[bytes_to_copy] = '\0';
-        }
+    if (mock_esp_efuse_read_block_return != ESP_OK) {
+        return mock_esp_efuse_read_block_return;
     }
-    return mock_esp_efuse_read_block_return;
+
+    size_t requested_bytes = size_bits / 8;
+    size_t available_bytes = strlen(mock_device_signature);
+
+    size_t bytes_to_copy = 0;
+    if (requested_bytes < available_bytes) {
+        bytes_to_copy = requested_bytes;
+    } else {
+        bytes_to_copy = available_bytes;
+    }
+
+    memcpy(dst_key, mock_device_signature, bytes_to_copy);
+
+    if (bytes_to_copy < requested_bytes) {
+        ((char*)dst_key)[bytes_to_copy] = '\0';
+    }
+
+    return ESP_OK;
 }
