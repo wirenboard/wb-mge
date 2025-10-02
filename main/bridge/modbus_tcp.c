@@ -88,8 +88,8 @@ static unsigned separate_and_push_requests_from_tcp(mb_tcp_task_ctx_t* ctx, cons
             ESP_LOGW(TAG, "Port[%d]: Incorrect TCP packet will be skipped", ctx->index + 1);
             break;
         }
-        int queue_res = packet_queue_push(ctx->tcp_queue, req_data, req_len);
-        if (queue_res != 0) {
+        esp_err_t queue_res = packet_queue_push(ctx->tcp_queue, req_data, req_len);
+        if (queue_res != ESP_OK) {
             break;
         }
         pos += req_len;
