@@ -23,12 +23,11 @@ const value = defineModel<boolean>();
 
 <style>
 .toggle-switchy {color:#fff;}
-.toggle-switchy > input + .toggle > .switch {background:#fff;}
-.toggle-switchy > input + .toggle + .label {color:#000;}
-.toggle-switchy > input:checked + .toggle {background:var(--primary-color); transition:background 200ms linear;}
-.toggle-switchy > input:not(:checked) + .toggle {background:var(--gray-color);}
-.toggle-switchy > input:checked + .toggle > .switch {border:3px solid var(--primary-color);}
-.toggle-switchy > input:not(:checked) + .toggle > .switch {border:3px solid var(--gray-color);}
+.toggle-switchy > input + .toggle > .switch {background:#fff;transition:background 200ms linear, width 200ms linear, height 200ms linear, right 200ms linear;}
+.toggle-switchy > input:checked + .toggle {background:var(--primary-color);}
+.toggle-switchy > input + .toggle {transition:background 300ms ease;}
+.toggle-switchy > input:not(:checked) + .toggle {outline: 2px solid var(--primary-color);outline-offset:-2px;}
+.toggle-switchy > input:not(:checked) + .toggle > .switch {background:var(--primary-color);}
 .toggle-switchy > input:focus + .toggle,
   .toggle-switchy > input:active + .toggle {box-shadow:var(--input-focus-shadow);}
 
@@ -49,19 +48,16 @@ const value = defineModel<boolean>();
 .toggle-switchy > input + .toggle:after {display:flex; align-items:center; position:absolute; z-index:2; height:100%;}
 .toggle-switchy > input + .toggle:before {right:55%; font-size: 14px;}
 .toggle-switchy > input + .toggle:after {left:50%;}
-.toggle-switchy > input + .toggle + .label {margin-left:10px;}
 
 .toggle-switchy > input + .toggle:before {opacity:0;}
 .toggle-switchy > input:checked + .toggle:before {opacity:1;}
 .toggle-switchy > input:checked + .toggle:after {opacity:0;}
 
-.toggle-switchy > input + .toggle {transition:background 200ms linear, var(--input-focus-shadow);}
 .toggle-switchy > input + .toggle:before,
 .toggle-switchy > input + .toggle:after {transition:all 200ms linear;}
-.toggle-switchy > input + .toggle > .switch {transition:right 200ms linear, border-color 200ms linear;}
 
 .toggle-switchy > input + .toggle {width:34px; height:18px;}
-.toggle-switchy > input + .toggle > .switch {width:18px;}
+.toggle-switchy > input + .toggle > .switch {width:10px;height:10px;margin:4px}
 .toggle-switchy > input + .toggle:before,
 .toggle-switchy > input + .toggle:after {font-size:0.5rem;}
 .toggle-switchy > input:not(:checked) + .toggle > .switch {right:calc(100% - 18px);}

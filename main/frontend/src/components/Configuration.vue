@@ -62,7 +62,7 @@ const handleFileChange = () => {
 .configuration-container {
   display: grid;
   gap: 6px 24px;
-  grid-template-columns: 55% 45%;
+  grid-template-columns: 60fr 40fr;
   align-items: center;
   justify-items: flex-start;
   page-break-inside: avoid;
@@ -76,7 +76,7 @@ const handleFileChange = () => {
 }
 
 .system-container div:nth-child(odd)  {
-  width: calc(100% - 24px);
+  width: 100%;
   display: flex;
   justify-content: end;
 }
@@ -86,7 +86,7 @@ const handleFileChange = () => {
 }
 
 .configuration-button {
-  width: calc(100% - 24px);
+  width: 100%;
   display: flex;
   justify-content: end;
 }

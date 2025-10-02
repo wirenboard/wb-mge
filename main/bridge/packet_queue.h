@@ -17,6 +17,9 @@ packet_queue_handle packet_queue_create(const size_t max_len);
 // Удаление очереди пакетов
 void packet_queue_delete(const packet_queue_handle handle);
 
+// Получение количества пакетов, находящихся в очереди
+size_t packet_queue_count(const packet_queue_handle handle);
+
 // Удаление из очереди всех пакетов
 void packet_queue_clear(const packet_queue_handle handle);
 
