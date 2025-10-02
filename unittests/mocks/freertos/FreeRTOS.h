@@ -4,6 +4,7 @@
 
 #define pdPASS            1
 #define pdFAIL            0
+#define portMAX_DELAY     ( TickType_t ) 0xffff
 
 typedef uint32_t TickType_t;
 

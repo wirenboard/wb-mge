@@ -1,5 +1,6 @@
 #ifdef __unittest_env__
     #define malloc test_malloc
+    #define free test_free
 #endif
 
 #include "packet_queue.h"
@@ -36,6 +37,17 @@ void packet_queue_delete(const packet_queue_handle handle)
 
     packet_queue_clear(handle);
     vQueueDelete(handle);
+}
+
+
+size_t packet_queue_count(const packet_queue_handle handle)
+{
+    if (!handle) {
+        return 0;
+    }
+
+    UBaseType_t count = uxQueueMessagesWaiting(handle);
+    return count;
 }
 
 

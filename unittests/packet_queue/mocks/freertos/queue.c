@@ -1,20 +1,38 @@
-#define malloc test_malloc
-
 #include "queue.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 int g_queue_create_call_count = 0;
+BaseType_t g_queue_create_result = pdPASS;
+UBaseType_t g_queue_max_len = 0;
+UBaseType_t g_queue_item_size = 0;
+
 int g_queue_delete_call_count = 0;
+QueueHandle_t g_queue_delete_handle = NULL;
+
 int g_queue_receive_call_count = 0;
+TickType_t g_queue_receive_ticks = 0;
+
 int g_queue_space_call_count = 0;
+QueueHandle_t g_queue_spaces_handle = NULL;
+
 int g_queue_send_call_count = 0;
+QueueHandle_t g_queue_send_handle = NULL;
 BaseType_t g_queue_send_return_value = pdPASS;
+
+int g_queue_messages_waiting_call_count = 0;
+QueueHandle_t g_queue_messages_waiting_handle = NULL;
 
 QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t uxItemSize)
 {
     g_queue_create_call_count++;
+    g_queue_max_len = uxQueueLength;
+    g_queue_item_size = uxItemSize;
+
+    if (g_queue_create_result == pdFAIL) {
+        return NULL;
+    }
 
     if (uxQueueLength == 0) {
         return NULL;
@@ -47,6 +65,7 @@ QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t ux
 void vQueueDelete(QueueHandle_t xQueue)
 {
     g_queue_delete_call_count++;
+    g_queue_delete_handle = xQueue;
 
     if (!xQueue) {
         return;
@@ -64,8 +83,8 @@ void vQueueDelete(QueueHandle_t xQueue)
 
 BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t xTicksToWait)
 {
-    (void)xTicksToWait;
     g_queue_receive_call_count++;
+    g_queue_receive_ticks = xTicksToWait;
 
     if (!xQueue || !pvBuffer) {
         return pdFAIL;
@@ -90,6 +109,7 @@ BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t 
 UBaseType_t uxQueueSpacesAvailable(const QueueHandle_t xQueue)
 {
     g_queue_space_call_count++;
+    g_queue_spaces_handle = xQueue;
 
     if (!xQueue) {
         return 0;
@@ -102,6 +122,7 @@ BaseType_t xQueueSend(QueueHandle_t xQueue, const void *const pvItemToQueue, Tic
 {
     (void)xTicksToWait;
     g_queue_send_call_count++;
+    g_queue_send_handle = xQueue;
 
     if (g_queue_send_return_value != pdPASS) {
         return g_queue_send_return_value;
@@ -129,12 +150,33 @@ BaseType_t xQueueSend(QueueHandle_t xQueue, const void *const pvItemToQueue, Tic
     return pdPASS;
 }
 
+UBaseType_t uxQueueMessagesWaiting(const QueueHandle_t xQueue)
+{
+    g_queue_messages_waiting_call_count++;
+    g_queue_messages_waiting_handle = xQueue;
+
+    if (!xQueue) {
+        return 0;
+    }
+
+    return (UBaseType_t)xQueue->count;
+}
+
 void mock_freertos_queue_reset(void)
 {
     g_queue_create_call_count = 0;
+    g_queue_create_result = pdPASS;
+    g_queue_max_len = 0;
+    g_queue_item_size = 0;
     g_queue_delete_call_count = 0;
+    g_queue_delete_handle = NULL;
     g_queue_receive_call_count = 0;
+    g_queue_receive_ticks = 0;
     g_queue_space_call_count = 0;
+    g_queue_spaces_handle = NULL;
     g_queue_send_call_count = 0;
+    g_queue_send_handle = NULL;
     g_queue_send_return_value = pdPASS;
+    g_queue_messages_waiting_call_count = 0;
+    g_queue_messages_waiting_handle = NULL;
 }
