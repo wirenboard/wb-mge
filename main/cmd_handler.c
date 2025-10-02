@@ -6,6 +6,7 @@
 #include "array_size.h"
 #include "settings_update.h"
 #include "settings_save_timer.h"
+#include "rs485_control.h"
 
 #include <esp_log.h>
 #include <esp_system.h>
@@ -42,6 +43,9 @@ static const cmd_t available_commands[] = {
 static void reboot_task(void *pvParameters)
 {
     ESP_LOGI(TAG, "Executing reboot command");
+
+    rs485_bus_vout_set_allowed(false);
+    rs485_bus_vout_on_off(false);
 
     vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
     esp_restart();
