@@ -9,9 +9,7 @@
 extern bool malloc_should_fail;
 extern size_t last_malloc_size;
 
-// Malloc tracking functions
 extern void reset_malloc_tracking(void);
-extern int get_allocated_count(void);
 extern void* get_allocated_ptr(int index);
 extern bool was_ptr_freed(void* ptr);
 
@@ -132,10 +130,9 @@ void test_packet_queue_clear_valid_handle(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result2, "Second push should succeed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result3, "Third push should succeed");
 
-    int alloc_count_before = get_allocated_count();
-    void* ptr1 = get_allocated_ptr(alloc_count_before - 3);
-    void* ptr2 = get_allocated_ptr(alloc_count_before - 2);
-    void* ptr3 = get_allocated_ptr(alloc_count_before - 1);
+    void* buffer_ptr1 = get_allocated_ptr(0);
+    void* buffer_ptr2 = get_allocated_ptr(1);
+    void* buffer_ptr3 = get_allocated_ptr(2);
 
     UBaseType_t spaces_before = uxQueueSpacesAvailable(g_test_handle);
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, spaces_before, "Queue should have 2 spaces left (5 - 3 items)");
@@ -147,9 +144,9 @@ void test_packet_queue_clear_valid_handle(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(max_len, spaces_after, "Queue should be completely empty after clear");
     TEST_ASSERT_EQUAL_INT_MESSAGE(4, g_queue_receive_call_count, "xQueueReceive should be called 4 times");
 
-    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(ptr1), "First allocated buffer should be freed");
-    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(ptr2), "Second allocated buffer should be freed");
-    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(ptr3), "Third allocated buffer should be freed");
+    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr1), "First allocated buffer should be freed");
+    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr2), "Second allocated buffer should be freed");
+    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr3), "Third allocated buffer should be freed");
 }
 
 // Тестируем очистку очереди пакетов с NULL дескриптором
@@ -402,15 +399,14 @@ void test_packet_queue_pop_null_buffer_ptr(void)
     esp_err_t push_result = packet_queue_push(g_test_handle, test_data, test_len);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "Push should succeed");
 
-    int alloc_count_before = get_allocated_count();
-    void* allocated_buffer = get_allocated_ptr(alloc_count_before - 1);
-    TEST_ASSERT_NOT_NULL_MESSAGE(allocated_buffer, "Allocated buffer should not be NULL");
+    void* buffer_ptr = get_allocated_ptr(0);
+    TEST_ASSERT_NOT_NULL_MESSAGE(buffer_ptr, "Allocated buffer should not be NULL");
 
     size_t result = packet_queue_pop(g_test_handle, NULL, 0);
 
     TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "Should return correct packet length even with NULL buf_ptr");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_receive_call_count, "xQueueReceive should be called once");
-    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(allocated_buffer), "The correct allocated buffer should be freed");
+    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr), "The correct allocated buffer should be freed");
 }
 
 // Тестируем извлечение пакета с разным временем ожидания

@@ -49,11 +49,6 @@ void reset_malloc_tracking(void)
     memset(freed_ptrs, 0, sizeof(freed_ptrs));
 }
 
-int get_allocated_count(void)
-{
-    return allocated_count;
-}
-
 void* get_allocated_ptr(int index)
 {
     if (index >= 0 && index < allocated_count) {
