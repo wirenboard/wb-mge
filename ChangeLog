@@ -1,4 +1,12 @@
+2025-10-03 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc14
+    * added:    system voltage monitoring
+    * added:    RS485 bus Vout high and low voltage protection
+    * added:    disable RS485 bus Vout on restart
+
 2025-10-02 Maxim Toropov <maxim.toropov@wirenboard.com>
+
     * version:  1.0.0-rc13
     * rework:   debug logs control (separate module)
     * added:    disabled virtual eFuses, now real eFuses used
@@ -9,6 +17,7 @@
     * fix:      WiFi STA initial connection to AP (appeared after disabling logs)
 
 2025-10-01 Maxim Toropov <maxim.toropov@wirenboard.com>
+
     * version:  1.0.0-rc12
     * fix:      MIO reset control (init GPIO expander and MIO control as quickly as posible)
 
