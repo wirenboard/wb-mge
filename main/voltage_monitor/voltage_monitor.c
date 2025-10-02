@@ -7,8 +7,8 @@
 #define VM_TASK_STACK_SIZE                  4096
 #define VM_TASK_PRIORITY                    12
 
-#define VM_TASK_PERIOD_MS                   10
-#define VM_EXP_FILTER_TIME_MS               100
+#define VM_TASK_PERIOD_MS                   2       // Sample rate period
+#define VM_EXP_FILTER_RC_TIME_MS            10      // Exponential filter characteristic time
 
 #define SYS_VOLTAGE_MIN_OK                  8.0f
 #define SYS_VOLTAGE_MIN_FAIL                7.5f
@@ -16,7 +16,11 @@
 #define SYS_VOLTAGE_MAX_OK                  28.0f
 #define SYS_VOLTAGE_MAX_FAIL                29.0f
 
-#define SYS_VOLTAGE_PROT_RELEASE_DELAY_MS   2000
+#define SYS_VOLTAGE_PROT_RELEASE_DELAY_MS   2000    // Delay before protection release
+
+// More safety to prevent 0 time argument for vTaskDelay()
+#define MAX(a, b)                           (a > b ? a : b)
+#define VM_TASK_ACTUAL_PERIOD_MS            MAX(pdTICKS_TO_MS(1), VM_TASK_PERIOD_MS)
 
 
 typedef struct {
@@ -35,7 +39,7 @@ static const char* TAG = "voltage_monitor";
 
 static float exp_filter(float cur_value, float new_value)
 {
-    static const float alpha = (float)VM_TASK_PERIOD_MS / (float)(VM_EXP_FILTER_TIME_MS + VM_TASK_PERIOD_MS);
+    static const float alpha = (float)VM_TASK_ACTUAL_PERIOD_MS / (float)(VM_EXP_FILTER_RC_TIME_MS + VM_TASK_ACTUAL_PERIOD_MS);
     float value = cur_value + alpha * (new_value - cur_value);
     return value;
 }
@@ -95,8 +99,6 @@ static bool sys_voltage_prot_engine(bool bounds_ok)
 
 static void voltage_monitor_task(void *arg)
 {
-    // bool sys_voltage_prot_ok = vm_ctx.sys_voltage_is_ok;
-
     while (1) {
         float new_value = system_voltage_read();
 
@@ -109,16 +111,16 @@ static void voltage_monitor_task(void *arg)
 
         if (old_sys_voltage_is_ok != vm_ctx.sys_voltage_is_ok) {
             if (vm_ctx.sys_voltage_is_ok) {
-                ESP_LOGD(TAG, "System voltage protection FAIL -> OK, voltage: %.2f", vm_ctx.sys_voltage);
+                ESP_LOGD(TAG, "System voltage protection FAIL -> OK, voltage: %.2f V", vm_ctx.sys_voltage);
             } else {
-                ESP_LOGD(TAG, "System voltage protection OK -> FAIL, voltage: %.2f", vm_ctx.sys_voltage);
+                ESP_LOGD(TAG, "System voltage protection OK -> FAIL, voltage: %.2f V", vm_ctx.sys_voltage);
             }
             if (vm_ctx.sys_voltage_callback_fn != NULL) {
                 vm_ctx.sys_voltage_callback_fn(vm_ctx.sys_voltage, vm_ctx.sys_voltage_is_ok);
             }
         }
 
-        vTaskDelay(VM_TASK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(VM_TASK_ACTUAL_PERIOD_MS));
     }
 }
 

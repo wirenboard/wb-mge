@@ -64,6 +64,7 @@ static const char *TAG = "main";
     // System voltage monitoring event
     static void sys_voltage_event_callback(float voltage, bool is_ok)
     {
+        rs485_bus_vout_set_allowed(is_ok);
         if (!is_ok) {
             ESP_LOGW(TAG, "System voltage protection alert, voltage: %.2f V", voltage);
         } else {
