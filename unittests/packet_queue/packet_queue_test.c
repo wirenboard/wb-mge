@@ -3,15 +3,7 @@
 
 #include "bridge/packet_queue.h"
 #include "freertos/queue.h"
-
-#include <stdbool.h>
-
-extern bool malloc_should_fail;
-extern size_t last_malloc_size;
-
-extern void reset_malloc_tracking(void);
-extern void* get_allocated_ptr(int index);
-extern bool was_ptr_freed(void* ptr);
+#include "malloc.h"
 
 typedef struct {
     size_t packet_len;
