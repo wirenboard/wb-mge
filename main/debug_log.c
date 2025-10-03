@@ -4,7 +4,7 @@
 #include "array_size.h"
 
 
-#define DEBUG_LOG_ENABLE        1   // Global debug logs enable
+#define DEBUG_LOG_ENABLE        0   // Global debug logs enable
 
 
 #if (DEBUG_LOG_ENABLE)
