@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -7,8 +9,7 @@ extern "C" {
 // Hardware mock functions for QEMU builds
 
 // System voltage
-float system_voltage_read(void);
-void system_voltage_init(void);
+float voltage_monitor_get_sys_voltage(void);
 
 // Config button
 uint32_t config_button_get_press_count(void);

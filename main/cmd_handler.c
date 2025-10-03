@@ -44,8 +44,10 @@ static void reboot_task(void *pvParameters)
 {
     ESP_LOGI(TAG, "Executing reboot command");
 
-    rs485_bus_vout_set_allowed(false);
-    rs485_bus_vout_on_off(false);
+    #if (!QEMU_BUILD)
+        rs485_bus_vout_set_allowed(false);
+        rs485_bus_vout_on_off(false);
+    #endif
 
     vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
     esp_restart();
