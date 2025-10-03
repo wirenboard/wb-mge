@@ -19,8 +19,10 @@
 #define SYS_VOLTAGE_PROT_RELEASE_DELAY_MS   2000    // Delay before protection release
 
 // More safety to prevent 0 time argument for vTaskDelay()
-#define MAX(a, b)                           (a > b ? a : b)
+#define MAX(a, b)                           ((a) > (b) ? (a) : (b))
 #define VM_TASK_ACTUAL_PERIOD_MS            MAX(pdTICKS_TO_MS(1), VM_TASK_PERIOD_MS)
+
+#define EXP_FILTER_ALPHA_COEF               ((float)VM_TASK_ACTUAL_PERIOD_MS / (float)(VM_EXP_FILTER_RC_TIME_MS + VM_TASK_ACTUAL_PERIOD_MS))
 
 
 typedef struct {
@@ -39,8 +41,7 @@ static const char* TAG = "voltage_monitor";
 
 static float exp_filter(float cur_value, float new_value)
 {
-    static const float alpha = (float)VM_TASK_ACTUAL_PERIOD_MS / (float)(VM_EXP_FILTER_RC_TIME_MS + VM_TASK_ACTUAL_PERIOD_MS);
-    float value = cur_value + alpha * (new_value - cur_value);
+    float value = cur_value + EXP_FILTER_ALPHA_COEF * (new_value - cur_value);
     return value;
 }
 
