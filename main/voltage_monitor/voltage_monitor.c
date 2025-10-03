@@ -5,7 +5,7 @@
 
 
 #define VM_TASK_STACK_SIZE                  4096
-#define VM_TASK_PRIORITY                    12
+#define VM_TASK_PRIORITY                    13
 
 #define VM_TASK_PERIOD_MS                   2       // Sample rate period
 #define VM_EXP_FILTER_RC_TIME_MS            10      // Exponential filter characteristic time
