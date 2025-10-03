@@ -111,18 +111,20 @@ void app_main(void)
 
     #if (!QEMU_BUILD)
         // Initialize GPIO expander before voltage monitoring
-        // to reset all GPIOs to default (Hi-Z) state anyway
+        // to reset all GPIOs to safe state anyway
         gpio_expander_init(&gpio_expander);
-
-        ESP_ERROR_CHECK(voltage_monitor_init(sys_voltage_event_callback));
-        if (!voltage_monitor_sys_voltage_is_ok()) {
-            ESP_LOGE(TAG, "System voltage is out of working range");
-            vTaskDelay(pdMS_TO_TICKS(SYS_VOLTAGE_FAIL_REBOOT_DELAY_MS));
-            esp_restart();
-        }
-
         rs485_control_init(gpio_expander);
         mio_control_init(gpio_expander);
+
+        ESP_ERROR_CHECK(voltage_monitor_init(sys_voltage_event_callback));
+        float voltage = voltage_monitor_get_sys_voltage();
+        if (!voltage_monitor_sys_voltage_is_ok()) {
+            ESP_LOGE(TAG, "System voltage is out of working range, voltage: %.2f V", voltage);
+            vTaskDelay(pdMS_TO_TICKS(SYS_VOLTAGE_FAIL_REBOOT_DELAY_MS));
+            esp_restart();
+        } else {
+            ESP_LOGI(TAG, "System voltage: %.2f V", voltage);
+        }
     #endif // QEMU_BUILD
 
     ESP_ERROR_CHECK(sys_info_init());
