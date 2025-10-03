@@ -34,6 +34,8 @@
 
 #define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS       5000
 
+#define SYS_VOLTAGE_FAIL_REBOOT_DELAY_MS            3000
+
 
 static const char *TAG = "main";
 
@@ -115,7 +117,7 @@ void app_main(void)
         ESP_ERROR_CHECK(voltage_monitor_init(sys_voltage_event_callback));
         if (!voltage_monitor_sys_voltage_is_ok()) {
             ESP_LOGE(TAG, "System voltage is out of working range");
-            vTaskDelay(pdMS_TO_TICKS(3000));
+            vTaskDelay(pdMS_TO_TICKS(SYS_VOLTAGE_FAIL_REBOOT_DELAY_MS));
             esp_restart();
         }
 
