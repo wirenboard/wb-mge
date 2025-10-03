@@ -7,13 +7,16 @@
 #include "ethernet.h"
 #include "lwip/netif.h"
 #include "lwip/stats.h"
+#include "network.h"
 
 
-#define INDICATION_TASK_STACK_SIZE      2048
+#define INDICATION_TASK_STACK_SIZE      (3 * 1024)
 #define INDICATION_TASK_PRIORITY        1
 
 #define NETWORK_LED_OFF_TIME_MS         50
 #define NETWORK_LED_ON_TIME_MS          50
+
+#define WIFI_NETIF_UPDATE_DELAY_MS      100
 
 #define LEDS_STATE_UPDATE_PERIOD_MS     10
 
@@ -47,7 +50,7 @@ static struct netif* get_netif(const char* key)
     if (netif) {
         ESP_LOGD(TAG, "Got netif with '%s' key, index: %d", key, index);
     } else {
-        ESP_LOGW(TAG, "Unable to get netif with '%s' key, it seems that interface is disabled", key);
+        ESP_LOGD(TAG, "Unable to get netif with '%s' key, it seems that interface is disabled", key);
     }
     return netif;
 }
@@ -166,7 +169,7 @@ static void ethernet_led_control(TickType_t sys_time)
     if (netif) {
         bool link = netif_is_link_up(netif);
         bool activity = false;
-        if (rx_counter != netif->mib2_counters.ifinoctets) {
+        if (led_state && (rx_counter != netif->mib2_counters.ifinoctets)) {
             activity = true;
             rx_counter = netif->mib2_counters.ifinoctets;
         }
@@ -189,10 +192,12 @@ static void wifi_led_control(TickType_t sys_time)
     static int state = 0;
     static u32_t ap_counter = 0;
     static u32_t sta_counter = 0;
+    static wifi_mode_t wifi_mode = WIFI_MODE_NULL;
 
     if (init) {
         ap_netif = get_netif("WIFI_AP_DEF");
         sta_netif = get_netif("WIFI_STA_DEF");
+        wifi_mode = network_get_wifi_mode();
         time_stamp = sys_time;
         led_state = false;
         state = 0;
@@ -201,18 +206,32 @@ static void wifi_led_control(TickType_t sys_time)
         init = false;
     }
 
-    bool activity = false;
-    if (ap_netif && (ap_counter != ap_netif->mib2_counters.ifinoctets)) {
-        ap_counter = ap_netif->mib2_counters.ifinoctets;
-        activity = true;
+    wifi_mode_t new_wifi_mode = network_get_wifi_mode();
+    if (new_wifi_mode != wifi_mode) {
+        ESP_LOGD(TAG, "WiFi mode changed");
+        // Small delay for ESP IDF WiFi engine update network interfaces
+        vTaskDelay(pdMS_TO_TICKS(WIFI_NETIF_UPDATE_DELAY_MS));
+        ap_netif = get_netif("WIFI_AP_DEF");
+        sta_netif = get_netif("WIFI_STA_DEF");
+        wifi_mode = new_wifi_mode;
     }
-    if (sta_netif && (sta_counter != sta_netif->mib2_counters.ifinoctets)) {
-        sta_counter = sta_netif->mib2_counters.ifinoctets;
-        activity = true;
+
+    bool link = (wifi_mode == WIFI_MODE_STA) || (wifi_mode == WIFI_MODE_AP) || (wifi_mode == WIFI_MODE_APSTA);
+
+    bool activity = false;
+    if (led_state) {
+        if (ap_netif && (ap_counter != ap_netif->mib2_counters.ifinoctets)) {
+            ap_counter = ap_netif->mib2_counters.ifinoctets;
+            activity = true;
+        }
+        if (sta_netif && (sta_counter != sta_netif->mib2_counters.ifinoctets)) {
+            sta_counter = sta_netif->mib2_counters.ifinoctets;
+            activity = true;
+        }
     }
 
     if (ap_netif || sta_netif) {
-        network_led_control(&led_state, &time_stamp, &state, sys_time, true, activity);
+        network_led_control(&led_state, &time_stamp, &state, sys_time, link, activity);
     } else {
         led_state = false;
     }

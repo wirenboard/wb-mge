@@ -10,8 +10,6 @@
 #include "array_size.h"
 
 
-#define AUTH_DEBUG_LOG_ENABLE   1               // TODO: Возможно, вынести в настройки
-
 #define MAX_SESSIONS            10
 #define COOKIE_MAX_LEN          (11 + 10 + 1)   // "session_id=" + uint32_max + '\0'
 
@@ -184,10 +182,6 @@ static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, 
 
 esp_err_t auth_init(void)
 {
-    if (AUTH_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     esp_reset_reason_t reset_reason = esp_reset_reason();
     ESP_LOGD(TAG, "Reset reason: %d", reset_reason);
 

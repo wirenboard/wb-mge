@@ -1,18 +1,19 @@
 set(COMPONENT_SRCS "main.c"
-                   "ethernet.c"
                    "auth.c"
                    "http_server.c"
                    "info_handlers.c"
                    "nv_storage.c"
                    "setting_items.c"
                    "setting_validators.c"
-                   "wifi_apsta.c"
                    "sys_info.c"
                    "json_utils.c"
                    "wifi_scan.c"
                    "settings_manager.c"
                    "cmd_handler.c"
                    "ota_handler.c"
+                   "network/network.c"
+                   "network/ethernet.c"
+                   "network/wifi_apsta.c"
                    "bridge/bridge.c"
                    "bridge/serial.c"
                    "bridge/tcp_client.c"
@@ -23,7 +24,10 @@ set(COMPONENT_SRCS "main.c"
                    "bridge/modbus_helpers.c"
                    "bridge/rs485_stats.c"
                    "bridge/fast_modbus.c"
-                   "wb_app_desc/wb_app_desc.c")
+                   "wb_app_desc/wb_app_desc.c"
+                   "settings_update.c"
+                   "settings_save_timer.c"
+                   "debug_log.c")
 
 # Conditionally add files based on build type
 if(CONFIG_ETH_USE_OPENETH)
@@ -54,6 +58,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                         INCLUDE_DIRS "."
                             "bridge"
                             "indication"
+                            "network"
                             "wb_app_desc"
                             "qemu"
                         EMBED_TXTFILES

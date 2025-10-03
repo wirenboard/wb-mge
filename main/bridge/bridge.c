@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+
 #define SERIAL_PORT_NUM_1             1
 #define SERIAL_INPUT_PIN_1            GPIO_NUM_9
 #define SERIAL_OUTPUT_PIN_1           GPIO_NUM_10
@@ -32,10 +33,13 @@
 #define RS485_BUSY_MONITOR_STACK_SIZE 1024
 #define RS485_BUSY_MONITOR_PRIORITY   1
 
+
 static const char *TAG = "bridge";
+
 
 // Forward declarations
 static bridge_mode_t string_to_bridge_mode(const char *str);
+
 
 typedef struct {
     serial_config_t serial_config;
@@ -43,10 +47,15 @@ typedef struct {
     uint32_t bridge_ip;
     int bridge_port;
     bool bridge_mb;
+} bridge_config_t;
+
+typedef struct {
     serial_desc_t* serial_desc;
     tcp_desc_t* tcp_desc;
+    bool initialized;
 } bridge_ctx_t;
 
+static bridge_config_t bridge_current_cfg[BRIDGES_COUNT] = {0};
 static bridge_ctx_t bridge_ctx[BRIDGES_COUNT] = {0};
 
 int tcp_server_active_connections(tcp_server_num_t server_num)
@@ -55,7 +64,7 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
         ESP_LOGE(TAG, "Unknown server number: %d", server_num);
         return 0;
     }
-    if ((bridge_ctx[server_num].bridge_mode == BRIDGE_MODE_DISABLED) || !bridge_ctx[server_num].tcp_desc) {
+    if ((bridge_current_cfg[server_num].bridge_mode == BRIDGE_MODE_DISABLED) || !bridge_ctx[server_num].tcp_desc) {
         return 0;
     }
     return bridge_ctx[server_num].tcp_desc->active_connections;
@@ -161,35 +170,124 @@ static esp_err_t read_tcp_bridge_config(const int index, bridge_mode_t* mode, ui
 
 esp_err_t bridge_init(void)
 {
-    for (int i = 0; i < BRIDGES_COUNT; ++i) {
-
-        ESP_RETURN_ON_ERROR(read_serial_port_config(i, &bridge_ctx[i].serial_config), TAG, "Failed to read serial config for port %d", i + 1);
-        ESP_RETURN_ON_ERROR(read_tcp_bridge_config(i, &bridge_ctx[i].bridge_mode, &bridge_ctx[i].bridge_ip, &bridge_ctx[i].bridge_port, &bridge_ctx[i].bridge_mb),
-                                                    TAG, "Failed to read bridge config for port %d", i + 1);
-
-        if (bridge_ctx[i].bridge_mode == BRIDGE_MODE_DISABLED) {
-            ESP_LOGW(TAG, "Port[%d] is disabled", bridge_ctx[i].serial_config.port_num);
-            continue;
-        }
-
-        if (bridge_ctx[i].bridge_mb) {
-            ESP_RETURN_ON_ERROR(modbus_tcp_init_port(i, &bridge_ctx[i].serial_config, bridge_ctx[i].bridge_mode,
-                                bridge_ctx[i].bridge_port, bridge_ctx[i].bridge_ip, &bridge_ctx[i].serial_desc, &bridge_ctx[i].tcp_desc),
-                                TAG, "error initializing port %d in Modbus TCP mode", i + 1);
-            ESP_LOGI(TAG, "Port[%d] initialized in Modbus TCP mode", bridge_ctx[i].serial_config.port_num);
-        } else {
-            ESP_RETURN_ON_ERROR(transparent_tcp_init_port(i, &bridge_ctx[i].serial_config, bridge_ctx[i].bridge_mode,
-                                bridge_ctx[i].bridge_port, bridge_ctx[i].bridge_ip, &bridge_ctx[i].serial_desc, &bridge_ctx[i].tcp_desc),
-                                TAG, "error initializing port %d in transparent bridge mode", i + 1);
-            ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", bridge_ctx[i].serial_config.port_num);
-        }
-    }
-
     // Start RS485 busy monitor task and init error percentage statistics
     rs485_busy_monitor_init();
     rs485_stats_init();
 
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        bridge_port_init(index);
+    }
+
     ESP_LOGI(TAG, "Bridge initialized");
+    return ESP_OK;
+}
+
+
+esp_err_t bridge_port_init(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (bridge_ctx[index].initialized) {
+        ESP_LOGW(TAG, "Port %u already initialized", index + 1);
+        return ESP_ERR_NOT_ALLOWED;
+    }
+
+    ESP_LOGD(TAG, "Port[%u]: Initializing...", index + 1);
+
+    ESP_RETURN_ON_ERROR(read_serial_port_config(index, &bridge_current_cfg[index].serial_config),
+                        TAG, "Port[%u]: Failed to read serial config for port", index + 1);
+    ESP_RETURN_ON_ERROR(read_tcp_bridge_config(index, &bridge_current_cfg[index].bridge_mode, &bridge_current_cfg[index].bridge_ip,
+                                                &bridge_current_cfg[index].bridge_port, &bridge_current_cfg[index].bridge_mb),
+                        TAG, "Port[%u]: Failed to read bridge config", index + 1);
+
+    if (bridge_current_cfg[index].bridge_mode == BRIDGE_MODE_DISABLED) {
+        ESP_LOGW(TAG, "Port[%d] is disabled", bridge_current_cfg[index].serial_config.port_num);
+        return ESP_OK;
+    }
+
+    if (bridge_current_cfg[index].bridge_mb) {
+        ESP_RETURN_ON_ERROR(modbus_tcp_init_port(index, &bridge_current_cfg[index].serial_config, bridge_current_cfg[index].bridge_mode,
+                                                    bridge_current_cfg[index].bridge_port, bridge_current_cfg[index].bridge_ip,
+                                                    &bridge_ctx[index].serial_desc, &bridge_ctx[index].tcp_desc),
+                            TAG, "Failed to initialize port %u in Modbus TCP mode", index + 1);
+        ESP_LOGI(TAG, "Port[%d] initialized in Modbus TCP mode", bridge_current_cfg[index].serial_config.port_num);
+    } else {
+        ESP_RETURN_ON_ERROR(transparent_tcp_init_port(index, &bridge_current_cfg[index].serial_config, bridge_current_cfg[index].bridge_mode,
+                                                        bridge_current_cfg[index].bridge_port, bridge_current_cfg[index].bridge_ip,
+                                                        &bridge_ctx[index].serial_desc, &bridge_ctx[index].tcp_desc),
+                            TAG, "Failed to initialize port %u in transparent bridge mode", index + 1);
+        ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", bridge_current_cfg[index].serial_config.port_num);
+    }
+
+    bridge_ctx[index].initialized = true;
+    ESP_LOGD(TAG, "Port[%u]: Initialized", index + 1);
 
     return ESP_OK;
+}
+
+
+esp_err_t bridge_port_deinit(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        ESP_LOGE(TAG, "Port[%u]: Port number out of range", index + 1);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!bridge_ctx[index].initialized) {
+        ESP_LOGI(TAG, "Port[%u] is not initialized", index + 1);
+        return ESP_OK;
+    }
+
+    bridge_config_t* cfg = &bridge_current_cfg[index];
+    if (cfg->bridge_mode == BRIDGE_MODE_DISABLED) {
+        ESP_LOGD(TAG, "Port[%u]: Nothing to deinitialize", index + 1);
+        return ESP_OK;
+    }
+
+    ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
+    if (cfg->bridge_mb) {
+        modbus_tcp_deinit_port(index);
+    } else {
+        transparent_tcp_deinit_port(index);
+    }
+
+    bridge_ctx[index].initialized = false;
+
+    rs485_busy_monitor_reset(index);
+    rs485_stats_reset(index);
+
+    ESP_LOGD(TAG, "Port[%u]: Deinitialized", index + 1);
+    return ESP_OK;
+}
+
+
+bool bridge_port_check_settings_changed(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        return false;
+    }
+
+    bridge_config_t new_cfg = {0};
+    esp_err_t ret = read_serial_port_config(index, &new_cfg.serial_config);
+    if (ret != ESP_OK) {
+        return false;
+    }
+    ret = read_tcp_bridge_config(index, &new_cfg.bridge_mode, &new_cfg.bridge_ip, &new_cfg.bridge_port, &new_cfg.bridge_mb);
+    if (ret != ESP_OK) {
+        return false;
+    }
+
+    if (!bridge_ctx[index].initialized) {
+        if (new_cfg.bridge_mode == BRIDGE_MODE_DISABLED) {
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    if (memcmp(&bridge_current_cfg[index], &new_cfg, sizeof(new_cfg)) == 0) {
+        return false;
+    } else {
+        return true;
+    }
 }

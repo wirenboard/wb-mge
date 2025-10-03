@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+
 #define KEEPALIVE_IDLE                  5
 #define KEEPALIVE_INTERVAL              5
 #define KEEPALIVE_COUNT                 3
@@ -18,17 +19,41 @@
 #define TCP_CLIENT_TASK_STACK_SIZE      4096
 #define TCP_CLIENT_TASK_PRIORITY        5
 #define TCP_CLIENT_FIRST_CONN_DELAY_MS  4000
+#define TCP_CLIENT_RECONN_DELAY_MS      1000
 
-static const char *TAG = "tcp-client";
+#define EVENT_TASK_STARTED              BIT0
+#define EVENT_TASK_FINISHED             BIT1
+#define EVENT_TASK_EXIT_REQ             BIT8
+
+
+static const char *TAG = "tcp_client";
+
+
+static inline bool delay_until_exit_req(tcp_desc_t *desc, TickType_t ticks)
+{
+    EventBits_t bits = xEventGroupWaitBits(desc->event_group, EVENT_TASK_EXIT_REQ, pdFALSE, pdTRUE, ticks);
+    if (bits & EVENT_TASK_EXIT_REQ) {
+        return true;
+    }
+    return false;
+}
+
+
+static inline bool check_task_exit_req(tcp_desc_t *desc)
+{
+    return delay_until_exit_req(desc, 0);
+}
+
 
 static void close_socket(int sock)
 {
     if (sock != -1) {
-        ESP_LOGW(TAG, "Shutting down socket and restarting...");
+        ESP_LOGD(TAG, "Shutting down socket %d", sock);
         shutdown(sock, SHUT_RDWR);
         closesocket(sock);
     }
 }
+
 
 static int create_socket(void)
 {
@@ -37,6 +62,8 @@ static int create_socket(void)
     static int keep_interval = KEEPALIVE_INTERVAL;
     static int keep_count = KEEPALIVE_COUNT;
     static int no_delay_flag = 1;
+
+    ESP_LOGD(TAG, "Creating client socket");
 
     int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
 
@@ -53,11 +80,12 @@ static int create_socket(void)
         // It is necessary that data packets are not combined when sent and to increase the performance
         setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &no_delay_flag, sizeof(no_delay_flag));
 
-        ESP_LOGI(TAG, "Socket created");
+        ESP_LOGD(TAG, "Socket created");
     }
 
     return sock;
 }
+
 
 static int connect_socket(int sock, uint32_t ip, int port)
 {
@@ -74,13 +102,13 @@ static int connect_socket(int sock, uint32_t ip, int port)
 
     if (err != 0) {
         ESP_LOGW(TAG, "Socket unable to connect to %s, port: %d, errno: %d", ip_str, port, errno);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
     } else {
         ESP_LOGI(TAG, "Successfully connected to %s, port: %d", ip_str, port);
     }
 
     return err;
 }
+
 
 static void receive_data(tcp_desc_t *desc)
 {
@@ -95,7 +123,11 @@ static void receive_data(tcp_desc_t *desc)
         len = recv(desc->client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
 
         if (len < 0) {
-            ESP_LOGE(TAG, "Receive from %s, port %d failed, errno: %d", ip_str, desc->port, errno);
+            esp_log_level_t log_level = ESP_LOG_ERROR;
+            if (check_task_exit_req(desc)) {
+                log_level = ESP_LOG_DEBUG;
+            }
+            ESP_LOG_LEVEL(log_level, TAG, "Receive from %s, port %d failed, errno: %d", ip_str, desc->port, errno);
             break;
         } else if (len == 0) {
             ESP_LOGW(TAG, "Connection to %s, port %d closed", ip_str, desc->port);
@@ -108,19 +140,25 @@ static void receive_data(tcp_desc_t *desc)
     }
 }
 
+
 static void tcp_client_task(void *pvParameters)
 {
     tcp_desc_t *desc = (tcp_desc_t *)pvParameters;
+    xEventGroupSetBits(desc->event_group, EVENT_TASK_STARTED);
+    ESP_LOGD(TAG, "TCP client task started");
 
     char ip_str[INET_ADDRSTRLEN];
     struct in_addr sin_addr = {.s_addr = desc->remote_ip};
     inet_ntop(AF_INET, &sin_addr, ip_str, sizeof(ip_str));
 
     // Небольшая задержка, пока сеть заработает и можно будет подключаться к серверу
-    vTaskDelay(pdMS_TO_TICKS(TCP_CLIENT_FIRST_CONN_DELAY_MS));
+    delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_FIRST_CONN_DELAY_MS));
 
     while (1) {
-        desc->listen_sock = -1; // not used for client
+        if (check_task_exit_req(desc)) {
+            break;
+        }
+
         desc->client_sock = create_socket();
         if (desc->client_sock < 0) {
             continue;
@@ -128,6 +166,8 @@ static void tcp_client_task(void *pvParameters)
 
         if (connect_socket(desc->client_sock, desc->remote_ip, desc->port) != 0) {
             close_socket(desc->client_sock);
+            desc->client_sock = -1;
+            delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_RECONN_DELAY_MS));
             continue;
         }
 
@@ -136,9 +176,16 @@ static void tcp_client_task(void *pvParameters)
         receive_data(desc);
         ESP_LOGW(TAG, "Disconnected from server: %s, port: %d", ip_str, desc->port);
         close_socket(desc->client_sock);
+        desc->client_sock = -1;
+        delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_RECONN_DELAY_MS));
         desc->active_connections = 0;
     }
+
+    ESP_LOGI(TAG, "TCP client task finished");
+    xEventGroupSetBits(desc->event_group, EVENT_TASK_FINISHED);
+    vTaskDelete(NULL);
 }
+
 
 esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
                           tcp_receive_handler_t tcpc_receive_handler, tcp_desc_t **out_desc)
@@ -156,22 +203,41 @@ esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
     ESP_LOGD(TAG, "Remote IP: %d.%d.%d.%d", (int)((host_ip >> 0) & 0xFF), (int)((host_ip >> 8) & 0xFF), (int)((host_ip >> 16) & 0xFF), (int)((host_ip >> 24) & 0xFF));
 
     tcp_desc_t *desc = calloc(1, sizeof(tcp_desc_t));
-
     if (!desc) {
         return ESP_ERR_NO_MEM;
     }
 
-    desc->listen_sock = -1;
+    EventGroupHandle_t event_group = xEventGroupCreate();
+    if (event_group == NULL) {
+        ESP_LOGE(TAG, "Unable to create event group");
+        free(desc);
+        return ESP_ERR_NO_MEM;
+    }
+
+    desc->listen_sock = -1;     // not used for client
     desc->client_sock = -1;
     desc->remote_ip = host_ip;
     desc->port = host_port;
     desc->receive_handler = tcpc_receive_handler;
     desc->active_connections = 0;
+    desc->task_handle = NULL;
+    desc->event_group = event_group;
+
+    TaskHandle_t task_handle = NULL;
+    BaseType_t ret = xTaskCreate(tcp_client_task, "tcp_client", TCP_CLIENT_TASK_STACK_SIZE, desc, TCP_CLIENT_TASK_PRIORITY, &task_handle);
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Unable to create TCP client task");
+        vEventGroupDelete(event_group);
+        free(desc);
+        return ESP_ERR_NO_MEM;
+    }
+
+    desc->task_handle = task_handle;
     *out_desc = desc;
 
-    xTaskCreate(tcp_client_task, "tcp_client", TCP_CLIENT_TASK_STACK_SIZE, desc, TCP_CLIENT_TASK_PRIORITY, NULL);
     return ESP_OK;
 }
+
 
 esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
@@ -197,6 +263,7 @@ esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len)
     return ESP_OK;
 }
 
+
 esp_err_t tcp_client_connected(tcp_desc_t *desc)
 {
     if (!desc || (desc->client_sock < 0)) {
@@ -205,5 +272,34 @@ esp_err_t tcp_client_connected(tcp_desc_t *desc)
     if (!desc->active_connections) {
         return ESP_FAIL;
     }
+    return ESP_OK;
+}
+
+
+esp_err_t tcp_client_deinit(tcp_desc_t *desc)
+{
+    if (desc == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (desc->task_handle == NULL || desc->event_group == NULL) {
+        ESP_LOGE(TAG, "TCP client not initialized");
+        return ESP_ERR_NOT_ALLOWED;
+    }
+
+    ESP_LOGD(TAG, "Deinitializing...");
+
+    xEventGroupSetBits(desc->event_group, EVENT_TASK_EXIT_REQ);
+    if (desc->client_sock >= 0) {
+        ESP_LOGD(TAG, "Closing TCP client socket");
+        close(desc->client_sock);
+    }
+
+    ESP_LOGD(TAG, "Waiting for TCP client task finished...");
+    xEventGroupWaitBits(desc->event_group, EVENT_TASK_FINISHED, pdFALSE, pdTRUE, portMAX_DELAY);
+
+    vEventGroupDelete(desc->event_group);
+    free(desc);
+
+    ESP_LOGD(TAG, "Deinitialized");
     return ESP_OK;
 }

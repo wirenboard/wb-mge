@@ -12,8 +12,6 @@ static const char *TAG = "update_rs485_mio_gpio_states";
 // обновляет состояние подтяжек, питания и терминаторов RS485 в соответствии с текущими настройками
 void update_rs485_control(void)
 {
-    ESP_LOGI(TAG, "%s", __func__);
-
     bool pullup_1_enabled = setting_items_read_bool(KEY_485_FAIL_SAFE_1);
     bool pullup_2_enabled = setting_items_read_bool(KEY_485_FAIL_SAFE_2);
     bool term_1_enabled = setting_items_read_bool(KEY_485_TERM_1);
@@ -31,8 +29,6 @@ void update_rs485_control(void)
 
 void update_io_bus_control(void)
 {
-    ESP_LOGI(TAG, "%s", __func__);
-
     bool io_bus_enabled = setting_items_read_bool(KEY_IO_BUS_ENABLED);
 
     mio_control_io_bus_onoff(io_bus_enabled);

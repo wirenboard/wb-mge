@@ -8,6 +8,7 @@
 
 #include <esp_http_server.h>
 #include <sys/param.h>
+#include <string.h>
 
 #include "esp_log.h"
 #include "setting_items.h"
@@ -16,7 +17,7 @@
 #define STACK_SIZE                          (1024 * 6)  // TODO: Проверить размер используемой памяти
 #define MAX_OPEN_SOCKETS                    12          // Увеличено, чтобы можно было одновременно подключиться хотя бы с 2-3 устройств
 
-#define WEB_PORT_DEF                        80          // Используется, если не удается прочитать из настроек
+#define WEB_PORT_FALLBACK                   80          // Используется, если не удается прочитать из настроек
 
 // Размер буфера выбран таким образом, чтобы он был больше, чем размер заголовка HTTP
 
@@ -33,6 +34,13 @@ extern const uint8_t index_js_end[] asm("_binary_index_js_gz_end");
 
 extern const uint8_t index_html_start[] asm("_binary_index_html_gz_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_gz_end");
+
+
+static const httpd_config_t httpd_default_config = HTTPD_DEFAULT_CONFIG();
+
+static httpd_handle_t http_server = NULL;
+static httpd_config_t httpd_current_config = {0};
+
 
 static esp_err_t index_html_get_handler(httpd_req_t *req)
 {
@@ -165,22 +173,25 @@ static const httpd_uri_t uptime_get = {
     .user_ctx = NULL,
 };
 
-esp_err_t http_server_init(void)
-{
-    static httpd_handle_t http_server = NULL;
-    httpd_config_t httpd_config = HTTPD_DEFAULT_CONFIG();
-    httpd_config.max_uri_handlers = MAX_URI_HANDLERS;
-    httpd_config.stack_size = STACK_SIZE;
-    httpd_config.max_open_sockets = MAX_OPEN_SOCKETS;
 
+static uint16_t get_web_port_setting(void)
+{
     uint16_t web_port = (uint16_t)setting_items_read_int(KEY_WEB_PORT);
     if (web_port == 0) {
-        web_port = WEB_PORT_DEF;  // Fallback to default port
+        web_port = WEB_PORT_FALLBACK;   // Fallback to default port
         ESP_LOGW(TAG, "Using default web port: %u", web_port);
     }
+    return web_port;
+}
 
-    httpd_config.server_port = web_port;
-    ESP_LOGI(TAG, "HTTP server will start on port: %u", httpd_config.server_port);
+
+esp_err_t http_server_init(void)
+{
+    memcpy(&httpd_current_config, &httpd_default_config, sizeof(httpd_current_config));
+    httpd_current_config.max_uri_handlers = MAX_URI_HANDLERS;
+    httpd_current_config.stack_size = STACK_SIZE;
+    httpd_current_config.max_open_sockets = MAX_OPEN_SOCKETS;
+    httpd_current_config.server_port = get_web_port_setting();
 
     if (wifi_scan_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize WiFi scan module");
@@ -192,7 +203,7 @@ esp_err_t http_server_init(void)
         return ESP_FAIL;
     }
 
-    if (httpd_start(&http_server, &httpd_config) == ESP_OK) {
+    if (httpd_start(&http_server, &httpd_current_config) == ESP_OK) {
         httpd_register_uri_handler(http_server, &auth_post);
         httpd_register_uri_handler(http_server, &session_get);
         httpd_register_uri_handler(http_server, &logout_post);
@@ -219,5 +230,35 @@ esp_err_t http_server_init(void)
         return ESP_FAIL;
     }
 
+    ESP_LOGI(TAG, "HTTP server started on port: %u", httpd_current_config.server_port);
     return ESP_OK;
+}
+
+
+esp_err_t http_server_deinit(void)
+{
+    if (http_server != NULL) {
+        esp_err_t ret = httpd_stop(http_server);
+        if (ret == ESP_OK) {
+            ESP_LOGW(TAG, "HTTP server stopped");
+        } else {
+            ESP_LOGW(TAG, "Failed to stop HTTP server");
+        }
+        http_server = NULL;
+        return ret;
+    }
+    return ESP_OK;  // HTTP server not started -> deinitialized
+}
+
+
+bool http_server_check_settings_changed(void)
+{
+    if (http_server == NULL) {
+        return false;
+    }
+    uint16_t new_port = get_web_port_setting();
+    if (new_port != httpd_current_config.server_port) {
+        return true;
+    }
+    return false;
 }

@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <esp_log.h>
 
-#define SETTING_ITEMS_DEBUG_LOG_ENABLE      1           // TODO: Возможно, вынести в настройки
-
 static const char *TAG = "setting_items";
 
 typedef bool (*setting_validator_t)(const char *value);
@@ -57,7 +55,7 @@ static const char *get_dynamic_ap_pass_default(void)
             if (ret >= sizeof(generated_password)) {
                 ESP_LOGW(TAG, "Generated password was truncated");
             }
-            ESP_LOGI(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
+            ESP_LOGD(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], generated_password);
         } else {
             // Fallback to default if MAC read fails
@@ -86,7 +84,7 @@ static const char *get_dynamic_hostname_default(void)
             if (ret >= sizeof(generated_hostname)) {
                 ESP_LOGW(TAG, "Generated hostname was truncated");
             }
-            ESP_LOGI(TAG, "Generated hostname from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
+            ESP_LOGD(TAG, "Generated hostname from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], generated_hostname);
         } else {
             // Fallback to base hostname if MAC read fails
@@ -210,10 +208,6 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized)
 
 esp_err_t setting_items_init(void)
 {
-    if (SETTING_ITEMS_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     ESP_LOGI(TAG, "Initializing settings with string storage");
     storage_iface = &nvs_storage_iface;
 

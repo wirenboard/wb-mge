@@ -1,3 +1,32 @@
+2025-10-02 Maxim Toropov <maxim.toropov@wirenboard.com>
+    * version:  1.0.0-rc13
+    * rework:   debug logs control (separate module)
+    * added:    disabled virtual eFuses, now real eFuses used
+    * added:    enabled default WiFi AP password
+    * improve:  enabled binary size compiler optimization
+    * fix:      i2c_master warning on pull-ups
+    * fix:      apply new settings on factory reset triggered by config button
+    * fix:      WiFi STA initial connection to AP (appeared after disabling logs)
+
+2025-10-01 Maxim Toropov <maxim.toropov@wirenboard.com>
+    * version:  1.0.0-rc12
+    * fix:      MIO reset control (init GPIO expander and MIO control as quickly as posible)
+
+2025-10-01 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc11
+    * added:    apply settings without restart
+    * added:    settings save minimum interval 1000 ms
+    * rework:   move wifi and ethernet initialization from main into network module
+    * rework:   refactor serial, tcp_client, tcp_server, wifi_apsta
+    * improve:  wifi/ethernet status indication leds blinking
+    * fix:      GIT_INFO max length in Makefile
+
+2025-09-30 Victor Vedenin <victor.vedenin@wirenboard.com>
+
+    * version:  1.0.0-rc10
+    * rework:   wifi rerequest button
+
 2025-09-25 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc10
