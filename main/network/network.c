@@ -8,6 +8,10 @@
 #include "sys/socket.h"
 #include "esp_log.h"
 
+#if QEMU_BUILD
+    #include "wifi_qemu_mock.h"
+#endif
+
 
 typedef struct {
     bool dhcp_client;
