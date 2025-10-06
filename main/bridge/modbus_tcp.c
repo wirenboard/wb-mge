@@ -372,12 +372,6 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (MODBUS_TCP_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-        esp_log_level_set("modbus_helpers", ESP_LOG_DEBUG);
-        esp_log_level_set("fast_modbus", ESP_LOG_DEBUG);
-    }
-
     if (index >= MODBUS_TCP_MAX_TASK_COUNT) {
         ESP_LOGE(TAG, "Port[%u]: Port number out of range", index + 1);
         return ESP_ERR_INVALID_ARG;

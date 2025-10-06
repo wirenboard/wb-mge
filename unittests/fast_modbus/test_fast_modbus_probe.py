@@ -45,7 +45,7 @@ def test_fast_modbus_probe(ip, port):
                 tid, pid, length, unit_id, function = struct.unpack('>HHHBB', response[:8])
 
                 print(f"\n=== Response Analysis ===")
-                print(f"Transaction ID: 0x{tid:04X} (sent: 0x1234)")
+                print(f"Transaction ID: 0x{tid:04X} (sent: 0x0123)")
                 print(f"Protocol ID: 0x{pid:04X} (expected: 0x0000)")
                 print(f"Length: {length} (expected: 19)")
                 print(f"Unit ID: {unit_id} (expected: 0)")
