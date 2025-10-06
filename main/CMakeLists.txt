@@ -44,10 +44,11 @@ else()
         "rs485_control.c"
         "mio_control.c"
         "update_rs485_mio_gpio_states.c"
-        "system_voltage.c"
         "config_button.c"
         "indication/indication.c"
-        "indication/leds_control.c")
+        "indication/leds_control.c"
+        "voltage_monitor/system_voltage.c"
+        "voltage_monitor/voltage_monitor.c")
     message(STATUS "Building for hardware - including hardware-specific files only")
 endif()
 
@@ -60,6 +61,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "indication"
                             "network"
                             "wb_app_desc"
+                            "voltage_monitor"
                             "qemu"
                         EMBED_TXTFILES
                             frontend/dist/favicon.webp.gz

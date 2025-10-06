@@ -33,7 +33,8 @@
         {.tag = "indication",           .enabled = true},
         {.tag = "network",              .enabled = true},
         {.tag = "wifi_apsta",           .enabled = true},
-        {.tag = "mio_control",          .enabled = false}
+        {.tag = "mio_control",          .enabled = false},
+        {.tag = "voltage_monitor",      .enabled = true}
     };
 
     void debug_log_init(void)

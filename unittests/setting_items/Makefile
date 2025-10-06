@@ -4,6 +4,9 @@ TEST_NAME = setting_items_test
 # Project root directory
 PROJ_DIR = ../..
 
+# Unit test directory
+UNITTEST_DIR = ..
+
 # Source files to be checked
 TESTED_SRC += $(PROJ_DIR)/main/setting_items.c
 
@@ -12,7 +15,8 @@ AUX_SRC += mocks/*.c
 AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c
 
 # Include directories
-INC += ..
+INC += $(UNITTEST_DIR)
+INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main/
 INC += $(IDF_PATH)/components/esp_common/include

@@ -1,8 +1,25 @@
-2025-10-03 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
-    * version:  1.0.0-rc14
+    * version:  1.0.0-rc17
     * added:    support for Fast Modbus in Modbus TCP mode
     * added:    unittests for Fast Modbus in Modbus TCP mode
+
+2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc16
+    * added:    unittests for wb_app_desc
+
+2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc15
+    * added:    unittests for packet_queue
+
+2025-10-03 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc14
+    * added:    system voltage monitoring
+    * added:    RS485 bus Vout high and low voltage protection
+    * added:    disable RS485 bus Vout on restart
 
 2025-10-02 Maxim Toropov <maxim.toropov@wirenboard.com>
 

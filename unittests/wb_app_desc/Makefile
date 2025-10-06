@@ -1,5 +1,5 @@
 # Name of test / tests group
-TEST_NAME = http_server_test
+TEST_NAME = wb_app_desc_test
 
 # Project root directory
 PROJ_DIR = ../..
@@ -8,21 +8,19 @@ PROJ_DIR = ../..
 UNITTEST_DIR = ..
 
 # Source files to be checked
-TESTED_SRC += $(PROJ_DIR)/main/http_server.c
-
-# Auxiliary source files used in this test
-AUX_SRC += mocks/*.c
+TESTED_SRC += $(PROJ_DIR)/main/wb_app_desc/wb_app_desc.c
 
 # Include directories
 INC += $(UNITTEST_DIR)
-INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main
+INC += $(IDF_PATH)/components/bootloader_support/include
 INC += $(IDF_PATH)/components/esp_common/include
+INC += $(IDF_PATH)/components/esp_app_format/include
 INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include/
 
 # List of tests
-TEST_LIST = http_server_test http_server_deinit_test http_server_settings_changed_test
+TEST_LIST = wb_app_desc_test
 
 # Include base unit test build system
 include $(PROJ_DIR)/unittests/build_unittests.mk
