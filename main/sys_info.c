@@ -5,6 +5,7 @@
 #include "nv_storage.h"
 #include "esp_efuse.h"
 
+#include <inttypes.h>
 
 #define SIGNATURE_EFUSE_BLOCK           EFUSE_BLK3
 #define SIGNATURE_EFUSE_OFFSET          8
@@ -35,7 +36,7 @@ static uint64_t generate_serial_from_mac(void)
         mac_full = (mac_full << 8) | mac[i];
     }
     // Use full 48-bit MAC as 64-bit serial number
-    ESP_LOGD(TAG, "Generated serial number from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %llu",
+    ESP_LOGD(TAG, "Generated serial number from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %" PRIu64,
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], mac_full);
 
     return mac_full;
@@ -103,7 +104,7 @@ esp_err_t sys_info_init(void)
     } else {
         ESP_LOGI(TAG, "Device signature: <EMPTY>");
     }
-    ESP_LOGI(TAG, "Serial number: %llu", sys_info.device_serial_num);
+    ESP_LOGI(TAG, "Serial number: %" PRIu64, sys_info.device_serial_num);
     ESP_LOGI(TAG, "Firmware version: %s", sys_info.firmware_ver);
     ESP_LOGI(TAG, "Firmware GIT info: %s", sys_info.firmware_git_info);
 
