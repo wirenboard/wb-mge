@@ -8,12 +8,12 @@ PROJ_DIR = ../..
 TESTED_SRC += ${PROJ_DIR}/main/bridge/fast_modbus.c
 
 # Auxiliary source files used in this test
-AUX_SRC += mocks/*.c
-AUX_SRC += ../malloc.c
+AUX_SRC += mocks/tcp_server.c
+AUX_SRC += ../mocks/malloc.c
 
 # Include directories
 INC += ..
-INC += mocks
+INC += ../mocks
 INC += $(PROJ_DIR)/main
 INC += $(IDF_PATH)/components/esp_common/include
 INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include
