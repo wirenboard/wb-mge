@@ -5,7 +5,7 @@
 #include "wifi_apsta.h"
 #include "config.h"
 #include "sys_info.h"
-#include "system_voltage.h"
+#include "voltage_monitor.h"
 #include "config_button.h"
 
 #include <esp_log.h>
@@ -257,7 +257,7 @@ esp_err_t info_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(response_json, "serial_num", sys_info.device_serial_num);
 
     // Add system voltage measurement
-    float system_voltage = system_voltage_read();
+    float system_voltage = voltage_monitor_get_sys_voltage();
     cJSON_AddNumberToObject(response_json, "system_voltage", system_voltage);
 
     // Add config button press count

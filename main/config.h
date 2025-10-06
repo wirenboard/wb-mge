@@ -27,7 +27,7 @@
 #define DEFAULT_ETH_DHCPC           "true"
 
 #define DEFAULT_WIFI_MODE           WIFI_MODE_AP_STR
-#define DEFAULT_WIFI_AUTH           WIFI_AUTH_OPEN_STR // TODO: в релизе поменять на WIFI_AUTH_WPA2_PSK_STR. Пароль будет печататься на наклейке.
+#define DEFAULT_WIFI_AUTH           WIFI_AUTH_WPA2_PSK_STR
 #define DEFAULT_AP_IP_STATIC        "192.168.5.1"
 #define DEFAULT_AP_MASK_STATIC      "255.255.255.0"
 #define DEFAULT_AP_GW_STATIC        "192.168.5.1"

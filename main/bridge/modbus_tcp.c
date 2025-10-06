@@ -9,8 +9,6 @@
 #include "bridge.h"
 
 
-#define MODBUS_TCP_DEBUG_LOG_ENABLE         0               // TODO: Возможно, вынести в настройки
-
 #define MODBUS_TCP_TASK_STACK_SIZE          3072            // Размер стека каждой задачи
 #define MODBUS_TCP_TASK_PRIORITY            4               // Приоритет задач
 #define MODBUS_TCP_MAX_TASK_COUNT           BRIDGES_COUNT   // Максимальное количество задач (портов)
@@ -366,11 +364,6 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
     if (mode != BRIDGE_MODE_SERVER) {
         ESP_LOGE(TAG, "Port[%u]: Unsupported mode: %d, only Modbus TCP Server mode (%d) is suppurted", index + 1, mode, BRIDGE_MODE_SERVER);
         return ESP_ERR_INVALID_ARG;
-    }
-
-    if (MODBUS_TCP_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-        esp_log_level_set("modbus_helpers", ESP_LOG_DEBUG);
     }
 
     if (index >= MODBUS_TCP_MAX_TASK_COUNT) {
