@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define WB_APP_DESC_MAGIC_WORD                  0xDACBBCAB
+#define MAGIC_WORD                      0xDACBBCAB
 
 void setUp(void)
 {
@@ -91,7 +91,7 @@ void test_wb_app_desc_struct_fields(void)
     TEST_ASSERT_EQUAL_MESSAGE(RESERVED_OFFSET, offsetof(wb_app_desc_t, reserved), "reserved offset should be 102");
 
     // Check magic word
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(WB_APP_DESC_MAGIC_WORD, wb_app_desc.magic_word, "Magic word should match");
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MAGIC_WORD, wb_app_desc.magic_word, "Magic word should match");
 
     // Check signature, model, version, git info are not empty and null-terminated
     TEST_ASSERT_EQUAL_STRING_MESSAGE(wb_app_desc.signature, DEVICE_SIGNATURE, "Signature should match");
