@@ -1,12 +1,10 @@
 #include "modbus_tcp.h"
 #include <string.h>
 #include <esp_log.h>
-#include "serial.h"
 #include "tcp_server.h"
 #include "modbus_helpers.h"
-#include "packet_queue.h"
 #include "rs485_stats.h"
-#include "bridge.h"
+#include "fast_modbus.h"
 
 
 #define MODBUS_TCP_TASK_STACK_SIZE          3072            // Размер стека каждой задачи
@@ -43,7 +41,6 @@ typedef struct {
     unsigned resp_timeout_ticks;
 } mb_tcp_task_ctx_t;
 
-
 static const char *TAG = "modbus_tcp";
 
 static mb_tcp_task_ctx_t mb_tcp_task_ctx[MODBUS_TCP_MAX_TASK_COUNT] = {0};
@@ -57,7 +54,6 @@ static inline bool check_task_exit_req(const mb_tcp_task_ctx_t *ctx)
     }
     return false;
 }
-
 
 // Поиск контекста по дескриптору serial_desc_t
 static mb_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* serial_desc)
@@ -130,10 +126,13 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    // TODO: Add fast modbus support (0xFF truncation)
+    size_t truncated_len = fast_modbus_truncate_ff(&data, len);
+    if (truncated_len == 0) {
+        return;
+    }
 
-    ESP_LOGD(TAG, "Port[%u]: Processing data from serial port", ctx->index + 1);
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_DEBUG);
+    ESP_LOGD(TAG, "Port[%d]: Processing data from serial port", ctx->index + 1);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, truncated_len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);
 
@@ -153,7 +152,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    size_t tcp_resp_len = modbus_tcp_from_rtu(ctx->pending_tid, data, len, tcp_resp_buf, MODBUS_TCP_SEND_BUFFER_SIZE);
+    size_t tcp_resp_len = modbus_tcp_from_rtu(ctx->pending_tid, data, truncated_len, tcp_resp_buf, MODBUS_TCP_SEND_BUFFER_SIZE);
     if (!tcp_resp_len) {
         free(tcp_resp_buf);
         return;
@@ -311,7 +310,14 @@ static void modbus_tcp_server_task(void *arg)
         }
 
         // Принятый пакет с запросом уже проверен в колбэке process_data_from_tcp()
-        // TODO: Add special commands detection and response (e.g. fast modbus support probe)
+        // Проверка того, является ли запрос запросом поддержки Быстрого Modbus
+        enum fast_modbus_probe_result probe_result = fast_modbus_send_probe_response(
+            ctx->index + 1, ctx->tcp_desc, tcp_req_buf
+        );
+        if (probe_result != FAST_MODBUS_NOT_PROBE) {
+            free(tcp_req_buf);
+            continue;
+        }
 
         uint8_t* rtu_req_buf = 0;
         size_t rtu_req_len = make_rtu_request_from_tcp(ctx, tcp_req_buf, &rtu_req_buf);
