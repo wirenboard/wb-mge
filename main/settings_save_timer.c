@@ -2,8 +2,6 @@
 #include "esp_log.h"
 
 
-#define SETTING_SAVE_TIMER_DEBUG_LOG_ENABLE     1       // TODO: Возможно, вынести в настройки
-
 #define SETTING_SAVE_TIMER_INTERVAL_MS          1000    // Минимальный интервал между сохранением настроек
 #define EVENT_BIT_READY                         BIT0    // Бит (флаг) готовности таймера к следующему сохранению настроек
 
@@ -25,10 +23,6 @@ static void timer_callback(TimerHandle_t pxTimer)
 
 esp_err_t settings_save_timer_auto_init(void)
 {
-    if (SETTING_SAVE_TIMER_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     if (event_group == NULL) {
         event_group = xEventGroupCreate();
         if (event_group == NULL) {

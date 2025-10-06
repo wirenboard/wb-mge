@@ -33,8 +33,8 @@ const mock_setting_item_t expected_items[] = {
     {"vout", "true", SETTING_ITEM_TYPE_BOOL},
 
     {"wifi_mode", "ap", SETTING_ITEM_TYPE_STRING},
-    {"ap_auth", "open", SETTING_ITEM_TYPE_STRING},
-    {"sta_auth", "open", SETTING_ITEM_TYPE_STRING},
+    {"ap_auth", "wpa2_psk", SETTING_ITEM_TYPE_STRING},
+    {"sta_auth", "wpa2_psk", SETTING_ITEM_TYPE_STRING},
     {"ap_ssid", "WB-MGE", SETTING_ITEM_TYPE_STRING},
     {"ap_pass", "", SETTING_ITEM_TYPE_STRING},
     {"ap_ip_static", "192.168.5.1", SETTING_ITEM_TYPE_STRING},

@@ -11,7 +11,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define TCP_CLIENT_DEBUG_LOG_ENABLE     1           // TODO: Возможно, вынести в настройки
 
 #define KEEPALIVE_IDLE                  5
 #define KEEPALIVE_INTERVAL              5
@@ -27,7 +26,7 @@
 #define EVENT_TASK_EXIT_REQ             BIT8
 
 
-static const char *TAG = "tcp-client";
+static const char *TAG = "tcp_client";
 
 
 static inline bool delay_until_exit_req(tcp_desc_t *desc, TickType_t ticks)
@@ -191,10 +190,6 @@ static void tcp_client_task(void *pvParameters)
 esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
                           tcp_receive_handler_t tcpc_receive_handler, tcp_desc_t **out_desc)
 {
-    if (TCP_CLIENT_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     if (tcpc_receive_handler == NULL) {
         ESP_LOGE(TAG, "tcpc_receive_handler is NULL");
         return ESP_ERR_INVALID_ARG;

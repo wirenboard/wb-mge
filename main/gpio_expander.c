@@ -1,6 +1,7 @@
 #include "esp_io_expander_tca95xx_16bit.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "debug_log.h"
 
 
 #define GPIO_EXPANDER_I2C_PORT      I2C_NUM_0
@@ -17,6 +18,7 @@ static const i2c_master_bus_config_t bus_config = {
     .sda_io_num = GPIO_EXPANDER_SDA_PIN,
     .scl_io_num = GPIO_EXPANDER_SCL_PIN,
     .clk_source = I2C_CLK_SRC_DEFAULT,
+    .flags.enable_internal_pullup = 1
 };
 
 static esp_io_expander_handle_t gpio_expander = NULL;
@@ -37,9 +39,12 @@ esp_err_t gpio_expander_init(esp_io_expander_handle_t* handle)
         ESP_LOGE(TAG, "Unable to create GPIO expander object");
         return ESP_FAIL;
     }
-    if (esp_io_expander_print_state(gpio_expander) != ESP_OK) {
-        ESP_LOGE(TAG, "Unable to print GPIO expander state");
-        return ESP_FAIL;
+
+    if (debug_log_is_enabled(TAG)) {
+        if (esp_io_expander_print_state(gpio_expander) != ESP_OK) {
+            ESP_LOGE(TAG, "Unable to print GPIO expander state");
+            return ESP_FAIL;
+        }
     }
 
     if (handle) {

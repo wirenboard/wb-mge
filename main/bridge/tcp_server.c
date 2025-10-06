@@ -5,7 +5,6 @@
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 
-#define TCP_SERVER_DEBUG_LOG_ENABLE     0           // TODO: Возможно, вынести в настройки
 
 #define KEEPALIVE_IDLE                  5
 #define KEEPALIVE_INTERVAL              5
@@ -19,7 +18,7 @@
 #define EVENT_TASK_EXIT_REQ             BIT8
 
 
-static const char *TAG = "tcp-server";
+static const char *TAG = "tcp_server";
 
 
 static inline bool check_task_exit_req(tcp_desc_t *desc)
@@ -189,10 +188,6 @@ static void tcp_server_task(void *pvParameters)
 
 esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, tcp_desc_t **out_desc)
 {
-    if (TCP_SERVER_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     if (tcps_receive_handler == NULL) {
         ESP_LOGE(TAG, "tcps_receive_handler is NULL");
         return ESP_ERR_INVALID_ARG;

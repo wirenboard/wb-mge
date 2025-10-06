@@ -9,8 +9,10 @@
 #include "setting_items.h"
 #include "sys_info.h"
 #include "config_button.h"
-#include "system_voltage.h"
+#include "voltage_monitor.h"
 #include "network.h"
+#include "settings_update.h"
+#include "debug_log.h"
 
 // QEMU build conditional includes
 #if (QEMU_BUILD)
@@ -32,6 +34,8 @@
 
 #define CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS       5000
 
+#define SYS_VOLTAGE_FAIL_REBOOT_DELAY_MS            3000
+
 
 static const char *TAG = "main";
 
@@ -43,8 +47,6 @@ static const char *TAG = "main";
 #if (!QEMU_BUILD)
     static void factory_reset(void)
     {
-        ESP_LOGI(TAG, "Factory reset initiated!");
-
         ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
         ESP_ERROR_CHECK(setting_items_set_defaults(false));
 
@@ -58,12 +60,23 @@ static const char *TAG = "main";
         ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
         indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
         factory_reset();
+        settings_update();
+    }
+
+    // System voltage monitoring event
+    static void sys_voltage_event_callback(float voltage, bool is_ok)
+    {
+        rs485_bus_vout_set_allowed(is_ok);
+        if (!is_ok) {
+            ESP_LOGW(TAG, "System voltage protection alert, voltage: %.2f V", voltage);
+        } else {
+            ESP_LOGI(TAG, "System voltage protection release, voltage: %.2f V", voltage);
+        }
     }
 #endif
 
 
-// Выводит все настройки в лог.
-// TODO: В релизе удалить
+// Выводит все настройки в лог
 static inline void print_setting_items(void)
 {
     char value[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -94,13 +107,28 @@ static inline void print_setting_items(void)
 
 void app_main(void)
 {
+    debug_log_init();
+
     #if (!QEMU_BUILD)
+        // Initialize GPIO expander before voltage monitoring
+        // to reset all GPIOs to safe state anyway
         gpio_expander_init(&gpio_expander);
         rs485_control_init(gpio_expander);
         mio_control_init(gpio_expander);
+
+        ESP_ERROR_CHECK(voltage_monitor_init(sys_voltage_event_callback));
+        float voltage = voltage_monitor_get_sys_voltage();
+        if (!voltage_monitor_sys_voltage_is_ok()) {
+            ESP_LOGE(TAG, "System voltage is out of working range, voltage: %.2f V", voltage);
+            vTaskDelay(pdMS_TO_TICKS(SYS_VOLTAGE_FAIL_REBOOT_DELAY_MS));
+            esp_restart();
+        } else {
+            ESP_LOGI(TAG, "System voltage: %.2f V", voltage);
+        }
     #endif // QEMU_BUILD
 
     ESP_ERROR_CHECK(sys_info_init());
+
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
 
@@ -108,10 +136,10 @@ void app_main(void)
         update_io_bus_control();
     #endif // QEMU_BUILD
 
+    print_setting_items();
+
     ESP_ERROR_CHECK(network_init());
     ESP_ERROR_CHECK(http_server_init());
-
-    print_setting_items();
 
     #if (!QEMU_BUILD)
         update_rs485_control();
@@ -119,7 +147,6 @@ void app_main(void)
         indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
         config_button_init();
         config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
-        system_voltage_init();
     #endif // QEMU_BUILD
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
