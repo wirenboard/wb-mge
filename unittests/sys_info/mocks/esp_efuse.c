@@ -1,3 +1,4 @@
+#include "unity.h"
 
 #include "esp_efuse.h"
 #include "wb_app_desc.h"
@@ -47,8 +48,7 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
     size_t offset_bytes = offset_in_bits / 8;
     size_t size_bytes = size_bits / 8;
 
-    if (offset_bytes + size_bytes > BLOCK_SIZE)
-        return ESP_ERR_INVALID_ARG;
+    TEST_ASSERT_LESS_THAN_INT_MESSAGE(BLOCK_SIZE, offset_bytes + size_bytes, "Read exceeds block size");
 
     memcpy(dst_key, &efuse_blocks[blk][offset_bytes], size_bytes);
 

@@ -12,7 +12,7 @@ TESTED_SRC += $(PROJ_DIR)/main/wb_app_desc/wb_app_desc.c
 
 # Include directories
 INC += $(UNITTEST_DIR)
-INC += mocks
+INC += $(UNITTEST_DIR)/mocks
 INC += $(PROJ_DIR)/main
 INC += $(IDF_PATH)/components/bootloader_support/include
 INC += $(IDF_PATH)/components/esp_common/include

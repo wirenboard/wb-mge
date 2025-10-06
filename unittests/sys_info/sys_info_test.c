@@ -1,6 +1,7 @@
 #include "unity.h"
 #include "console_log.h"
 
+#include "config.h"
 #include "sys_info.h"
 #include "esp_mac.h"
 #include "esp_efuse.h"
@@ -49,11 +50,10 @@ void test_sys_info_init_success(void)
         SERIAL_FROM_MAC, sys_info.device_serial_num, "Device serial number should match MAC address conversion"
     );
 
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("TEST_SIG", sys_info.device_signature, "Device signature should match mock value");
-
-    TEST_ASSERT_TRUE_MESSAGE(strlen(sys_info.firmware_ver) > 0, "Firmware version should not be empty");
-    TEST_ASSERT_TRUE_MESSAGE(strlen(sys_info.firmware_git_info) > 0, "Firmware git info should not be empty");
-    TEST_ASSERT_TRUE_MESSAGE(strlen(sys_info.device_name) > 0, "Device name should not be empty");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
 }
 
 // Тестируем инициализацию sys_info при ошибке чтения MAC
@@ -71,6 +71,11 @@ void test_sys_info_init_mac_read_failure(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
     TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(0, sys_info.device_serial_num, "Device serial number should be 0 when MAC read fails");
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
 }
 
 // Тестируем инициализацию sys_info при ошибке чтения eFuse
@@ -93,6 +98,10 @@ void test_sys_info_init_efuse_read_failure(void)
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(
         SERIAL_FROM_MAC, sys_info.device_serial_num, "Serial number should still be populated"
     );
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
 // Тестируем инициализацию sys_info с пустой сигнатурой устройства
@@ -111,6 +120,10 @@ void test_sys_info_init_empty_device_signature(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
     TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(empty_signature, sys_info.device_signature, "Device signature should be empty string");
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
 // Тестируем инициализацию sys_info с максимально длинной сигнатурой устройства
@@ -134,6 +147,10 @@ void test_sys_info_init_long_device_signature(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         test_signature, sys_info.device_signature, "Device signature should match exactly"
     );
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
 // Тестируем инициализацию sys_info с обрезкой сигнатуры устройства
@@ -156,6 +173,9 @@ void test_sys_info_init_signature_truncation(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         "TOOLONGSIGNA", sys_info.device_signature, "Device signature should be truncated to first 12 chars"
     );
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
 int main(void)
