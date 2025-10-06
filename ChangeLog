@@ -1,3 +1,8 @@
+2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc15
+    * added:    unittests for packet_queue
+
 2025-10-03 Maxim Toropov <maxim.toropov@wirenboard.com>
 
     * version:  1.0.0-rc14
