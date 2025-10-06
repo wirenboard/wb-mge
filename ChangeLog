@@ -1,17 +1,35 @@
-2025-10-02 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
-    * version:  1.0.0-rc15
+    * version:  1.0.0-rc17
     * added:    unittests for sys_info
 
-2025-10-02 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
-    * version:  1.0.0-rc14
+    * version:  1.0.0-rc16
     * added:    unittests for wb_app_desc
 
-2025-10-02 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc15
+    * added:    unittests for packet_queue
+
+2025-10-03 Maxim Toropov <maxim.toropov@wirenboard.com>
+
+    * version:  1.0.0-rc14
+    * added:    system voltage monitoring
+    * added:    RS485 bus Vout high and low voltage protection
+    * added:    disable RS485 bus Vout on restart
+
+2025-10-02 Maxim Toropov <maxim.toropov@wirenboard.com>
 
     * version:  1.0.0-rc13
-    * added:    unittests for packet_queue
+    * rework:   debug logs control (separate module)
+    * added:    disabled virtual eFuses, now real eFuses used
+    * added:    enabled default WiFi AP password
+    * improve:  enabled binary size compiler optimization
+    * fix:      i2c_master warning on pull-ups
+    * fix:      apply new settings on factory reset triggered by config button
+    * fix:      WiFi STA initial connection to AP (appeared after disabling logs)
 
 2025-10-01 Maxim Toropov <maxim.toropov@wirenboard.com>
 

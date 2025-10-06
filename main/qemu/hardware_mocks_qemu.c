@@ -7,10 +7,10 @@ static const char *TAG = "hardware_mocks_qemu";
 // Mock functions for hardware-specific functionality that's not available in QEMU
 
 // System voltage mock
-float system_voltage_read(void)
+float voltage_monitor_get_sys_voltage(void)
 {
-    ESP_LOGD(TAG, "Mock system_voltage_read() called");
-    return 12.0f; // Return a mock voltage value
+    ESP_LOGD(TAG, "Mock voltage_monitor_get_sys_voltage() called");
+    return 12.3f;
 }
 
 // Config button mock
@@ -38,13 +38,6 @@ void update_io_bus_control(void)
 void mio_control_init(void)
 {
     ESP_LOGD(TAG, "Mock mio_control_init() called");
-    // No-op in QEMU
-}
-
-// System voltage init mock
-void system_voltage_init(void)
-{
-    ESP_LOGD(TAG, "Mock system_voltage_init() called");
     // No-op in QEMU
 }
 

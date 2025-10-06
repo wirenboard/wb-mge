@@ -7,19 +7,12 @@
 #include "nvs_flash.h"
 
 
-#define NV_STORAGE_DEBUG_LOG_ENABLE     0       // TODO: Возможно, вынести в настройки
-
-
 static const char *TAG = "nv_storage";
 static const char *NVS_NAMESPACE = "storage";
 
 
 esp_err_t nvs_init(void)
 {
-    if (NV_STORAGE_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    }
-
     ESP_LOGD(TAG, "Initializing NVS");
 
     esp_err_t ret = nvs_flash_init();

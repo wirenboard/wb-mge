@@ -10,8 +10,6 @@
 #include "network.h"
 
 
-#define INDICATION_DEBUG_LOG_ENABLE     1           // TODO: Возможно, вынести в настройки
-
 #define INDICATION_TASK_STACK_SIZE      (3 * 1024)
 #define INDICATION_TASK_PRIORITY        1
 
@@ -263,10 +261,6 @@ esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
 {
     if (indication_initialized) {
         return ESP_OK;  // Already initialized
-    }
-
-    if (INDICATION_DEBUG_LOG_ENABLE) {
-        esp_log_level_set(TAG, ESP_LOG_DEBUG);
     }
 
     if (!io_expander_handle) {
