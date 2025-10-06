@@ -4,6 +4,8 @@
 #include <stddef.h>
 
 #define TEST_DEVICE_SIGNATURE                   "TEST_SIG"
+#define SIGNATURE_BLOCK                         EFUSE_BLK3
+#define SIGNATURE_OFFSET_BITS                   64
 
 typedef enum {
     EFUSE_BLK0                 = 0,   /**< Number of eFuse BLOCK0. REPEAT_DATA */

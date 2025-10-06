@@ -10,6 +10,8 @@
 #define SERIAL_FROM_MAC                                 4328719365UL // MAC 00:01:02:03:04:05 converted to uint64
 
 extern bool mock_esp_read_mac_should_fail;
+extern esp_efuse_block_t mock_read_block;
+extern size_t mock_read_offset;
 extern esp_err_t mock_esp_efuse_read_block_return;
 
 extern void mock_esp_efuse_set_signature(const char* signature);
@@ -17,6 +19,8 @@ extern void mock_esp_efuse_set_signature(const char* signature);
 void setUp(void)
 {
     mock_esp_read_mac_should_fail = false;
+    mock_read_block = EFUSE_BLK0;
+    mock_read_offset = 0;
     mock_esp_efuse_read_block_return = ESP_OK;
     mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
 
@@ -38,6 +42,8 @@ void test_sys_info_init_success(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
 
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(
         SERIAL_FROM_MAC, sys_info.device_serial_num, "Device serial number should match MAC address conversion"
@@ -62,6 +68,8 @@ void test_sys_info_init_mac_read_failure(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK even when MAC read fails");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(0, sys_info.device_serial_num, "Device serial number should be 0 when MAC read fails");
 }
 
@@ -77,6 +85,8 @@ void test_sys_info_init_efuse_read_failure(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK even when eFuse read fails");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         "", sys_info.device_signature, "Device signature should be empty when eFuse read fails"
     );
@@ -85,7 +95,7 @@ void test_sys_info_init_efuse_read_failure(void)
     );
 }
 
-// Тестируем инициализацию sys_info с пустой подписью устройства
+// Тестируем инициализацию sys_info с пустой сигнатурой устройства
 void test_sys_info_init_empty_device_signature(void)
 {
     LOG_MESSAGE();
@@ -98,10 +108,12 @@ void test_sys_info_init_empty_device_signature(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with empty signature");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(empty_signature, sys_info.device_signature, "Device signature should be empty string");
 }
 
-// Тестируем инициализацию sys_info с максимально длинной подписью устройства
+// Тестируем инициализацию sys_info с максимально длинной сигнатурой устройства
 void test_sys_info_init_long_device_signature(void)
 {
     LOG_MESSAGE();
@@ -114,6 +126,8 @@ void test_sys_info_init_long_device_signature(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with long signature");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_MESSAGE(
         DEVICE_SIGNATURE_LEN, strlen(sys_info.device_signature), "Device signature should not exceed maximum length"
     );
@@ -122,7 +136,7 @@ void test_sys_info_init_long_device_signature(void)
     );
 }
 
-// Тестируем инициализацию sys_info с обрезкой подписи устройства
+// Тестируем инициализацию sys_info с обрезкой сигнатуры устройства
 void test_sys_info_init_signature_truncation(void)
 {
     LOG_MESSAGE();
@@ -134,6 +148,8 @@ void test_sys_info_init_signature_truncation(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with long signature");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_MESSAGE(
         DEVICE_SIGNATURE_LEN, strlen(sys_info.device_signature), "Device signature should be truncated"
     );
