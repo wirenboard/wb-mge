@@ -1,5 +1,10 @@
 2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
+    * version:  1.0.0-rc16
+    * added:    unittests for wb_app_desc
+
+2025-10-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
     * version:  1.0.0-rc15
     * added:    unittests for packet_queue
 

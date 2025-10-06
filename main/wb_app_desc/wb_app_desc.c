@@ -1,8 +1,13 @@
 #include "wb_app_desc.h"
 #include "config.h"
 
+#ifdef __unittest_env__
+    #define WB_APP_DESC_ATTR
+#else
+    #define WB_APP_DESC_ATTR __attribute__((section(".rodata_custom_desc")))
+#endif
 
-const __attribute__((section(".rodata_custom_desc"))) wb_app_desc_t wb_app_desc = {
+const WB_APP_DESC_ATTR wb_app_desc_t wb_app_desc = {
     .magic_word = WB_APP_DESC_MAGIC_WORD,
     .signature = DEVICE_SIGNATURE,
     .device_model = DEVICE_MODEL,
@@ -10,7 +15,6 @@ const __attribute__((section(".rodata_custom_desc"))) wb_app_desc_t wb_app_desc 
     .fw_git_info = FIRMWARE_GIT_INFO,
     .reserved = {0}
 };
-
 
 size_t wb_app_desc_get_str_field(const char* field, size_t field_len, char* dest_str_buf)
 {
