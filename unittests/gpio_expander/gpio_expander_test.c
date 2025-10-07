@@ -21,7 +21,6 @@ extern uint32_t mock_esp_io_expander_addr;
 
 extern esp_err_t mock_esp_io_expander_print_state_return;
 extern int mock_esp_io_expander_print_state_called;
-extern bool debug_log_enabled;
 
 extern void gpio_expander_test_reset(void);
 
@@ -39,7 +38,6 @@ void setUp(void)
 
     mock_esp_io_expander_print_state_return = ESP_OK;
     mock_esp_io_expander_print_state_called = 0;
-    debug_log_enabled = true;
 
     gpio_expander_test_reset();
 }

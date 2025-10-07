@@ -11,7 +11,6 @@ UNITTEST_DIR = ..
 TESTED_SRC += $(PROJ_DIR)/main/bridge/modbus_helpers.c
 
 # Auxiliary source files used in this test
-AUX_SRC += $(UNITTEST_DIR)/mocks/esp_log_level.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/esp_mac.c
 
 # Include directories

@@ -13,7 +13,6 @@ TESTED_SRC += $(PROJ_DIR)/main/sys_info.c
 # Auxiliary source files used in this test
 AUX_SRC += $(PROJ_DIR)/main/wb_app_desc/wb_app_desc.c
 AUX_SRC += mocks/esp_efuse.c
-AUX_SRC += $(UNITTEST_DIR)/mocks/esp_log_level.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/esp_mac.c
 
 # Include directories
