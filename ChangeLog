@@ -1,5 +1,10 @@
 2025-10-07 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
+    * version:  1.0.0-rc19
+    * added:    unittests for mio_control
+
+2025-10-07 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
     * version:  1.0.0-rc18
     * added:    unittests for gpio_expander
 

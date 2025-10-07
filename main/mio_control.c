@@ -1,6 +1,5 @@
 #include "mio_control.h"
 #include "esp_log.h"
-#include "esp_io_expander_tca95xx_16bit.h"
 #include "freertos/FreeRTOS.h"
 
 static const char *TAG = "mio_control";
@@ -37,3 +36,10 @@ void mio_control_io_bus_onoff(bool enabled)
         ESP_LOGD(TAG, "IO bus disabled");
     }
 }
+
+#ifdef __unittest_env__
+void mio_control_test_reset(void)
+{
+    io_expander = NULL;
+}
+#endif
