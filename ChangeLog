@@ -1,5 +1,10 @@
 2025-10-09 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
+    * version:  1.0.0-rc21
+    * fix:      unittests for rs485_control
+
+2025-10-09 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
     * version:  1.0.0-rc20
     * added:    unittests for mio_control
 

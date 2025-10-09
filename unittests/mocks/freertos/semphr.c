@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-SemaphoreHandle_t mock_xSemaphoreCreateMutex_return = NULL;
 bool mock_xSemaphoreCreateMutex_should_fail = false;
 int mock_xSemaphoreCreateMutex_called = 0;
 int mock_xSemaphoreTake_called = 0;
@@ -14,10 +13,6 @@ SemaphoreHandle_t xSemaphoreCreateMutex(void)
 
     if (mock_xSemaphoreCreateMutex_should_fail) {
         return NULL;
-    }
-
-    if (mock_xSemaphoreCreateMutex_return != NULL) {
-        return mock_xSemaphoreCreateMutex_return;
     }
 
     return (SemaphoreHandle_t)0xDEADBEEF;

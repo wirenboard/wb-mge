@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 
+#define MAX_CALLS                           20
 #define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCD1234)
 
 typedef enum {
