@@ -1,7 +1,7 @@
 #include "rs485_control.h"
 #include "esp_log.h"
-#include "esp_io_expander_tca95xx_16bit.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 
 static struct {
@@ -119,3 +119,13 @@ void rs485_control_init(esp_io_expander_handle_t io_expander_handle)
     rs485_pupd_on_off(RS485_1, false);
     rs485_pupd_on_off(RS485_2, false);
 }
+
+#ifdef __unittest_env__
+void rs485_control_test_reset(void)
+{
+    io_expander = NULL;
+    rs485_bus_vout_mutex = NULL;
+    rs485_bus_vout_ctrl.enabled = false;
+    rs485_bus_vout_ctrl.allowed = true;
+}
+#endif

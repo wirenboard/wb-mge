@@ -25,7 +25,6 @@ INC += $(PROJ_DIR)/main/wb_app_desc
 INC += $(IDF_PATH)/components/bootloader_support/include
 INC += $(IDF_PATH)/components/esp_app_format/include
 INC += $(IDF_PATH)/components/esp_common/include
-INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include/
 INC += $(IDF_PATH)/components/esp_hw_support/include/
 
 # List of tests

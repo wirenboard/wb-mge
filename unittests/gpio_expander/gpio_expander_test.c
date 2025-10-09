@@ -3,7 +3,6 @@
 
 #include "gpio_expander.h"
 #include "driver/i2c_master.h"
-#include "esp_io_expander.h"
 #include "esp_io_expander_tca95xx_16bit.h"
 
 #include <stdbool.h>

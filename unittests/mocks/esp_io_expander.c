@@ -3,6 +3,7 @@
 
 esp_err_t mock_esp_io_expander_print_state_return = ESP_OK;
 int mock_esp_io_expander_print_state_called = 0;
+esp_io_expander_handle_t mock_esp_io_expander_print_state_handle = NULL;
 
 int mock_esp_io_expander_set_dir_called = 0;
 esp_io_expander_handle_t mock_esp_io_expander_set_dir_handle = NULL;
@@ -16,8 +17,8 @@ uint8_t mock_esp_io_expander_set_level_level = 0;
 
 esp_err_t esp_io_expander_print_state(esp_io_expander_handle_t handle)
 {
-    (void)handle;
     mock_esp_io_expander_print_state_called++;
+    mock_esp_io_expander_print_state_handle = handle;
     return mock_esp_io_expander_print_state_return;
 }
 

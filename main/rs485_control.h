@@ -1,8 +1,7 @@
 #pragma once
 
-#include <stdint.h>
+#include "esp_io_expander.h"
 #include <stdbool.h>
-#include "esp_io_expander_tca95xx_16bit.h"
 
 typedef enum {
     RS485_1 = 1,
