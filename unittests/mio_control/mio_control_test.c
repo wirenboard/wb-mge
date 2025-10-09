@@ -6,7 +6,7 @@
 
 #include <stdbool.h>
 
-#define MOCK_IO_EXPANDER_HANDLE ((esp_io_expander_handle_t)0xABCDEF00)
+#define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCDEF00)
 
 extern int mock_esp_io_expander_set_dir_called;
 extern esp_io_expander_handle_t mock_esp_io_expander_set_dir_handle;
@@ -47,7 +47,8 @@ void test_mio_control_init_success(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_init - success case");
     LOG_MESSAGE();
 
-    mio_control_init(MOCK_IO_EXPANDER_HANDLE);
+    esp_err_t result = mio_control_init(MOCK_IO_EXPANDER_HANDLE);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init should return ESP_OK");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_dir_called,
         "esp_io_expander_set_dir should be called once");
@@ -75,7 +76,8 @@ void test_mio_control_init_null_handle(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_init - NULL handle");
     LOG_MESSAGE();
 
-    mio_control_init(NULL);
+    esp_err_t result = mio_control_init(NULL);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "mio_control_init should return ESP_FAIL");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_dir_called,
         "esp_io_expander_set_dir should not be called with NULL handle");
@@ -90,9 +92,11 @@ void test_mio_control_io_bus_onoff_enable(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff - enable");
     LOG_MESSAGE();
 
-    mio_control_init(MOCK_IO_EXPANDER_HANDLE);
+    esp_err_t result = mio_control_init(MOCK_IO_EXPANDER_HANDLE);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init should return ESP_OK");
 
-    mio_control_io_bus_onoff(true);
+    result = mio_control_io_bus_onoff(true);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff should return ESP_OK");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_io_expander_set_level_called,
         "esp_io_expander_set_level should be called twice");
@@ -111,9 +115,11 @@ void test_mio_control_io_bus_onoff_disable(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff - disable");
     LOG_MESSAGE();
 
-    mio_control_init(MOCK_IO_EXPANDER_HANDLE);
+    esp_err_t result = mio_control_init(MOCK_IO_EXPANDER_HANDLE);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init should return ESP_OK");
 
-    mio_control_io_bus_onoff(false);
+    result = mio_control_io_bus_onoff(false);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff should return ESP_OK");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_io_expander_set_level_called,
         "esp_io_expander_set_level should be called twice");
@@ -132,9 +138,12 @@ void test_mio_control_io_bus_onoff_toggle(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff - toggle");
     LOG_MESSAGE();
 
-    mio_control_init(MOCK_IO_EXPANDER_HANDLE);
+    esp_err_t result = mio_control_init(MOCK_IO_EXPANDER_HANDLE);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init should return ESP_OK");
 
-    mio_control_io_bus_onoff(true);
+    result = mio_control_io_bus_onoff(true);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff should return ESP_OK");
+
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_level,
         "Level should be 1 after enable");
 
@@ -157,7 +166,8 @@ void test_mio_control_io_bus_onoff_not_initialized(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff - not initialized");
     LOG_MESSAGE();
 
-    mio_control_io_bus_onoff(true);
+    esp_err_t result = mio_control_io_bus_onoff(true);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "mio_control_io_bus_onoff should return ESP_FAIL");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
         "esp_io_expander_set_level should not be called when not initialized");
