@@ -26,13 +26,13 @@ typedef void *esp_io_expander_handle_t;
 
 extern int mock_esp_io_expander_set_dir_called;
 extern esp_io_expander_handle_t mock_esp_io_expander_set_dir_handle;
-extern uint32_t mock_esp_io_expander_set_dir_pin_mask;
-extern esp_io_expander_dir_t mock_esp_io_expander_set_dir_direction;
+extern uint32_t mock_esp_io_expander_set_dir_pin_masks[MAX_CALLS];
+extern esp_io_expander_dir_t mock_esp_io_expander_set_dir_directions[MAX_CALLS];
 
 extern int mock_esp_io_expander_set_level_called;
 extern esp_io_expander_handle_t mock_esp_io_expander_set_level_handle;
-extern uint32_t mock_esp_io_expander_set_level_pin_mask;
-extern uint8_t mock_esp_io_expander_set_level_level;
+extern uint32_t mock_esp_io_expander_set_level_pin_masks[MAX_CALLS];
+extern uint8_t mock_esp_io_expander_set_level_levels[MAX_CALLS];
 
 esp_err_t esp_io_expander_print_state(esp_io_expander_handle_t handle);
 esp_err_t esp_io_expander_set_dir(esp_io_expander_handle_t handle, uint32_t pin_num_mask, esp_io_expander_dir_t direction);

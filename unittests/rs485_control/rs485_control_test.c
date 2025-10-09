@@ -16,32 +16,22 @@
 
 #define RS485_PINS_COUNT                5
 
-extern uint32_t mock_esp_io_expander_set_dir_pin_masks[MAX_CALLS];
-extern esp_io_expander_dir_t mock_esp_io_expander_set_dir_directions[MAX_CALLS];
-
-extern uint32_t mock_esp_io_expander_set_level_pin_masks[MAX_CALLS];
-extern uint8_t mock_esp_io_expander_set_level_levels[MAX_CALLS];
-
 extern bool mock_xSemaphoreCreateMutex_should_fail;
 extern int mock_xSemaphoreCreateMutex_called;
 extern int mock_xSemaphoreTake_called;
 extern int mock_xSemaphoreGive_called;
 
-extern void rs485_control_test_reset(void);
+void rs485_control_test_reset(void);
 
 void setUp(void)
 {
     mock_esp_io_expander_set_dir_called = 0;
     mock_esp_io_expander_set_dir_handle = NULL;
-    mock_esp_io_expander_set_dir_pin_mask = 0;
-    mock_esp_io_expander_set_dir_direction = IO_EXPANDER_INPUT;
     memset(mock_esp_io_expander_set_dir_pin_masks, 0, sizeof(mock_esp_io_expander_set_dir_pin_masks));
     memset(mock_esp_io_expander_set_dir_directions, 0, sizeof(mock_esp_io_expander_set_dir_directions));
 
     mock_esp_io_expander_set_level_called = 0;
     mock_esp_io_expander_set_level_handle = NULL;
-    mock_esp_io_expander_set_level_pin_mask = 0;
-    mock_esp_io_expander_set_level_level = 0;
     memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
     memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
 
@@ -322,8 +312,6 @@ void test_rs485_pupd_on_off_invalid_port(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
     mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
 
     result = rs485_pupd_on_off((rs485_port_t)5, true);
 
