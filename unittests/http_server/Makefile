@@ -19,7 +19,6 @@ INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main
 INC += $(IDF_PATH)/components/esp_common/include
-INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include/
 
 # List of tests
 TEST_LIST = http_server_test http_server_deinit_test http_server_settings_changed_test

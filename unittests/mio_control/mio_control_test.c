@@ -5,6 +5,9 @@
 #include "esp_io_expander.h"
 
 #include <stdbool.h>
+#include <string.h>
+
+#define MIO_RESET_PIN                   IO_EXPANDER_PIN_NUM_8
 
 void mio_control_test_reset(void);
 
@@ -12,13 +15,13 @@ void setUp(void)
 {
     mock_esp_io_expander_set_dir_called = 0;
     mock_esp_io_expander_set_dir_handle = NULL;
-    mock_esp_io_expander_set_dir_pin_mask = 0;
-    mock_esp_io_expander_set_dir_direction = IO_EXPANDER_INPUT;
+    memset(mock_esp_io_expander_set_dir_pin_masks, 0, sizeof(mock_esp_io_expander_set_dir_pin_masks));
+    memset(mock_esp_io_expander_set_dir_directions, 0, sizeof(mock_esp_io_expander_set_dir_directions));
 
     mock_esp_io_expander_set_level_called = 0;
     mock_esp_io_expander_set_level_handle = NULL;
-    mock_esp_io_expander_set_level_pin_mask = 0;
-    mock_esp_io_expander_set_level_level = 0;
+    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
+    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
 
     mio_control_test_reset();
 }
@@ -42,18 +45,18 @@ void test_mio_control_init_success(void)
         "esp_io_expander_set_dir should be called once");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_IO_EXPANDER_HANDLE, mock_esp_io_expander_set_dir_handle,
         "Handle passed to set_dir should match");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(IO_EXPANDER_PIN_NUM_8, mock_esp_io_expander_set_dir_pin_mask,
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MIO_RESET_PIN, mock_esp_io_expander_set_dir_pin_masks[0],
         "Pin mask should be IO_EXPANDER_PIN_NUM_8");
-    TEST_ASSERT_EQUAL_MESSAGE(IO_EXPANDER_OUTPUT, mock_esp_io_expander_set_dir_direction,
+    TEST_ASSERT_EQUAL_MESSAGE(IO_EXPANDER_OUTPUT, mock_esp_io_expander_set_dir_directions[0],
         "Direction should be OUTPUT");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
         "esp_io_expander_set_level should be called once");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_IO_EXPANDER_HANDLE, mock_esp_io_expander_set_level_handle,
         "Handle passed to set_level should match");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(IO_EXPANDER_PIN_NUM_8, mock_esp_io_expander_set_level_pin_mask,
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MIO_RESET_PIN, mock_esp_io_expander_set_level_pin_masks[0],
         "Pin mask should be IO_EXPANDER_PIN_NUM_8");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_level,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
         "Initial level should be 0 (disabled)");
 }
 
@@ -90,9 +93,9 @@ void test_mio_control_io_bus_onoff_enable(void)
         "esp_io_expander_set_level should be called twice");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_IO_EXPANDER_HANDLE, mock_esp_io_expander_set_level_handle,
         "Handle should match");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(IO_EXPANDER_PIN_NUM_8, mock_esp_io_expander_set_level_pin_mask,
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MIO_RESET_PIN, mock_esp_io_expander_set_level_pin_masks[1],
         "Pin mask should be IO_EXPANDER_PIN_NUM_8");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_level,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[1],
         "Level should be 1 (enabled)");
 }
 
@@ -113,9 +116,9 @@ void test_mio_control_io_bus_onoff_disable(void)
         "esp_io_expander_set_level should be called twice");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_IO_EXPANDER_HANDLE, mock_esp_io_expander_set_level_handle,
         "Handle should match");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(IO_EXPANDER_PIN_NUM_8, mock_esp_io_expander_set_level_pin_mask,
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MIO_RESET_PIN, mock_esp_io_expander_set_level_pin_masks[1],
         "Pin mask should be IO_EXPANDER_PIN_NUM_8");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_level,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[1],
         "Level should be 0 (disabled)");
 }
 
@@ -132,15 +135,15 @@ void test_mio_control_io_bus_onoff_toggle(void)
     result = mio_control_io_bus_onoff(true);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff should return ESP_OK");
 
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_level,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[1],
         "Level should be 1 after enable");
 
     mio_control_io_bus_onoff(false);
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_level,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[2],
         "Level should be 0 after disable");
 
     mio_control_io_bus_onoff(true);
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_level,
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[3],
         "Level should be 1 after re-enable");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(4, mock_esp_io_expander_set_level_called,
