@@ -2,12 +2,8 @@
 
 #include "esp_err.h"
 
-<<<<<<< HEAD
 #define MAX_CALLS                           20
 #define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCD1234)
-=======
-#define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCDEF00)
->>>>>>> unittests/FW-1111-mio-control
 
 typedef enum {
     IO_EXPANDER_INPUT,          /*!< Input direction */
