@@ -1,7 +1,6 @@
 #include "setting_items.h"
 #include "nv_storage.h"
 #include "config.h"
-#include "nvs.h"
 #include "esp_mac.h"
 #include "array_size.h"
 #include "setting_validators.h"

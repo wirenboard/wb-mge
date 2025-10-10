@@ -2,7 +2,6 @@
 #include "mio_control.h"
 #include "setting_items.h"
 #include "esp_log.h"
-#include "esp_err.h"
 
 #include <stdbool.h>
 #include <string.h>
