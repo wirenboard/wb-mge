@@ -31,7 +31,7 @@ void tearDown(void)
 
 }
 
-// Тестируем успешную инициализацию mio_control_init
+// Тестируем случай успешной инициализации mio_control_init
 void test_mio_control_init_success(void)
 {
     LOG_MESSAGE();

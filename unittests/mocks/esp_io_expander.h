@@ -2,8 +2,12 @@
 
 #include "esp_err.h"
 
+<<<<<<< HEAD
 #define MAX_CALLS                           20
 #define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCD1234)
+=======
+#define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCDEF00)
+>>>>>>> unittests/FW-1111-mio-control
 
 typedef enum {
     IO_EXPANDER_INPUT,          /*!< Input direction */
@@ -23,6 +27,10 @@ typedef enum {
 } esp_io_expander_pin_num_t;
 
 typedef void *esp_io_expander_handle_t;
+
+extern esp_err_t mock_esp_io_expander_print_state_return;
+extern int mock_esp_io_expander_print_state_called;
+extern esp_io_expander_handle_t mock_esp_io_expander_print_state_handle;
 
 extern int mock_esp_io_expander_set_dir_called;
 extern esp_io_expander_handle_t mock_esp_io_expander_set_dir_handle;

@@ -23,6 +23,11 @@ static esp_io_expander_handle_t gpio_expander = NULL;
 
 esp_err_t gpio_expander_init(esp_io_expander_handle_t* handle)
 {
+    if (!handle) {
+        ESP_LOGE(TAG, "handle is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+
     if (gpio_expander) {
         ESP_LOGW(TAG, "Already initialized");
         return ESP_OK;
