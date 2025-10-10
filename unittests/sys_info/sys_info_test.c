@@ -15,6 +15,8 @@ extern esp_efuse_block_t mock_read_block;
 extern size_t mock_read_offset;
 extern esp_err_t mock_esp_efuse_read_block_return;
 
+extern void mock_esp_efuse_set_signature(const char* signature);
+
 void setUp(void)
 {
     mock_esp_read_mac_should_fail = false;
