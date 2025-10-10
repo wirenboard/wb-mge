@@ -16,11 +16,6 @@
 
 #define RS485_PINS_COUNT                5
 
-extern bool mock_xSemaphoreCreateMutex_should_fail;
-extern int mock_xSemaphoreCreateMutex_called;
-extern int mock_xSemaphoreTake_called;
-extern int mock_xSemaphoreGive_called;
-
 void rs485_control_test_reset(void);
 
 void setUp(void)

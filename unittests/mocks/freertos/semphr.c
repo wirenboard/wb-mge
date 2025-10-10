@@ -1,6 +1,5 @@
 #include "semphr.h"
 #include <stdlib.h>
-#include <stdbool.h>
 
 bool mock_xSemaphoreCreateMutex_should_fail = false;
 int mock_xSemaphoreCreateMutex_called = 0;
