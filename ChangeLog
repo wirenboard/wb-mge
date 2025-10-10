@@ -1,4 +1,4 @@
-2025-10-09 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-10-10 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc21
     * fix:      unittests for rs485_control
