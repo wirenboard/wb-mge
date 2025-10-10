@@ -2,6 +2,8 @@
 
 #include "esp_err.h"
 
+#define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCDEF00)
+
 typedef enum {
     IO_EXPANDER_INPUT,          /*!< Input direction */
     IO_EXPANDER_OUTPUT,         /*!< Output direction */
@@ -16,6 +18,16 @@ typedef void *esp_io_expander_handle_t;
 extern esp_err_t mock_esp_io_expander_print_state_return;
 extern int mock_esp_io_expander_print_state_called;
 extern esp_io_expander_handle_t mock_esp_io_expander_print_state_handle;
+
+extern int mock_esp_io_expander_set_dir_called;
+extern esp_io_expander_handle_t mock_esp_io_expander_set_dir_handle;
+extern uint32_t mock_esp_io_expander_set_dir_pin_mask;
+extern esp_io_expander_dir_t mock_esp_io_expander_set_dir_direction;
+
+extern int mock_esp_io_expander_set_level_called;
+extern esp_io_expander_handle_t mock_esp_io_expander_set_level_handle;
+extern uint32_t mock_esp_io_expander_set_level_pin_mask;
+extern uint8_t mock_esp_io_expander_set_level_level;
 
 esp_err_t esp_io_expander_print_state(esp_io_expander_handle_t handle);
 esp_err_t esp_io_expander_set_dir(esp_io_expander_handle_t handle, uint32_t pin_num_mask, esp_io_expander_dir_t direction);

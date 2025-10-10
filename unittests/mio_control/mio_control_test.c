@@ -6,19 +6,7 @@
 
 #include <stdbool.h>
 
-#define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCDEF00)
-
-extern int mock_esp_io_expander_set_dir_called;
-extern esp_io_expander_handle_t mock_esp_io_expander_set_dir_handle;
-extern uint32_t mock_esp_io_expander_set_dir_pin_mask;
-extern esp_io_expander_dir_t mock_esp_io_expander_set_dir_direction;
-
-extern int mock_esp_io_expander_set_level_called;
-extern esp_io_expander_handle_t mock_esp_io_expander_set_level_handle;
-extern uint32_t mock_esp_io_expander_set_level_pin_mask;
-extern uint8_t mock_esp_io_expander_set_level_level;
-
-extern void mio_control_test_reset(void);
+void mio_control_test_reset(void);
 
 void setUp(void)
 {
@@ -40,7 +28,7 @@ void tearDown(void)
 
 }
 
-// Тестируем успешную инициализацию mio_control_init
+// Тестируем случай успешной инициализации mio_control_init
 void test_mio_control_init_success(void)
 {
     LOG_MESSAGE();

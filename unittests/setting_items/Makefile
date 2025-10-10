@@ -1,5 +1,5 @@
 # Name of test / tests group
-TEST_NAME = setting_items_tests
+TEST_NAME = setting_items_test
 
 # Project root directory
 PROJ_DIR = ../..
