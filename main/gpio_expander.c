@@ -1,14 +1,11 @@
 #include "esp_io_expander_tca95xx_16bit.h"
-#include "driver/gpio.h"
 #include "esp_log.h"
 #include "debug_log.h"
-
 
 #define GPIO_EXPANDER_I2C_PORT      I2C_NUM_0
 #define GPIO_EXPANDER_SDA_PIN       GPIO_NUM_32
 #define GPIO_EXPANDER_SCL_PIN       GPIO_NUM_33
 #define GPIO_EXPANDER_ADDR          ESP_IO_EXPANDER_I2C_TCA9555_ADDRESS_000
-
 
 static const char *TAG = "gpio_expander";
 
@@ -26,6 +23,11 @@ static esp_io_expander_handle_t gpio_expander = NULL;
 
 esp_err_t gpio_expander_init(esp_io_expander_handle_t* handle)
 {
+    if (!handle) {
+        ESP_LOGE(TAG, "handle is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+
     if (gpio_expander) {
         ESP_LOGW(TAG, "Already initialized");
         return ESP_OK;
@@ -54,3 +56,11 @@ esp_err_t gpio_expander_init(esp_io_expander_handle_t* handle)
     ESP_LOGI(TAG, "GPIO expander initialized");
     return ESP_OK;
 }
+
+#ifdef __unittest_env__
+    void gpio_expander_test_reset(void)
+    {
+        gpio_expander = NULL;
+        i2c_handle = NULL;
+    }
+#endif
