@@ -67,6 +67,101 @@ static bool find_pin_with_level(uint32_t pin_mask, uint8_t level)
     return false;
 }
 
+static void verify_rs485_term_on_off(rs485_port_t port, bool on, uint32_t expected_pin, const char *port_name)
+{
+    mock_esp_io_expander_set_level_called = 0;
+    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
+    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+
+    esp_err_t result = rs485_term_on_off(port, on);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_term_on_off should return ESP_OK");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        1, mock_esp_io_expander_set_level_called, "esp_io_expander_set_level should be called once"
+    );
+
+    char msg[128];
+
+    snprintf(msg, sizeof(msg), "%s should be set", port_name);
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(expected_pin, mock_esp_io_expander_set_level_pin_masks[0], msg);
+
+    snprintf(msg, sizeof(msg), "%s should be set to %s", port_name, on ? "HIGH (1)" : "LOW (0)");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(on ? 1 : 0, mock_esp_io_expander_set_level_levels[0], msg);
+}
+
+static void verify_rs485_pupd_on_off(rs485_port_t port, bool on, uint32_t expected_pin, const char *port_name)
+{
+    mock_esp_io_expander_set_level_called = 0;
+    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
+    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+
+    esp_err_t result = rs485_pupd_on_off(port, on);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_pupd_on_off should return ESP_OK");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        1, mock_esp_io_expander_set_level_called, "esp_io_expander_set_level should be called once"
+    );
+
+    char msg[128];
+
+    snprintf(msg, sizeof(msg), "%s should be set", port_name);
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(expected_pin, mock_esp_io_expander_set_level_pin_masks[0], msg);
+
+    snprintf(msg, sizeof(msg), "%s should be set to %s", port_name, on ? "HIGH (1)" : "LOW (0)");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(on ? 1 : 0, mock_esp_io_expander_set_level_levels[0], msg);
+}
+
+static void verify_rs485_bus_vout_on_off(bool on)
+{
+    mock_esp_io_expander_set_level_called = 0;
+    mock_xSemaphoreTake_called = 0;
+    mock_xSemaphoreGive_called = 0;
+    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
+    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+
+    esp_err_t result = rs485_bus_vout_on_off(on);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
+        "xSemaphoreTake should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
+        "xSemaphoreGive should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
+        "esp_io_expander_set_level should be called once");
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
+        "VOUT_485_PIN should be set");
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), "VOUT_485_PIN should be set to %s", on ? "HIGH (1)" : "LOW (0)");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(on ? 1 : 0, mock_esp_io_expander_set_level_levels[0], msg);
+}
+
+static void verify_rs485_bus_vout_set_allowed(bool allowed, uint8_t expected_level)
+{
+    mock_esp_io_expander_set_level_called = 0;
+    mock_xSemaphoreTake_called = 0;
+    mock_xSemaphoreGive_called = 0;
+    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
+    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+
+    esp_err_t result = rs485_bus_vout_set_allowed(allowed);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
+        "xSemaphoreTake should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
+        "xSemaphoreGive should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
+        "esp_io_expander_set_level should be called once");
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
+        "VOUT_485_PIN should be set");
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), "VOUT_485_PIN should be set to %d", expected_level);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(expected_level, mock_esp_io_expander_set_level_levels[0], msg);
+}
+
 // Тестируем успешную инициализацию rs485_control_init
 void test_rs485_control_init_success(void)
 {
@@ -232,7 +327,7 @@ void test_rs485_term_on_off_invalid_port(void)
 }
 
 // Тестируем rs485_term_on_off - включить и выключить для обоих портов
-void test_rs485_term_on_off_turn_on_off(void)
+void test_rs485_term_on_off_switch(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_term_on_off - turn on and off for both ports");
@@ -241,65 +336,11 @@ void test_rs485_term_on_off_turn_on_off(void)
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
-    // Test RS485_1 turn on
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+    verify_rs485_term_on_off(RS485_1, true, TERM485_1_PIN, "TERM485_1_PIN");
+    verify_rs485_term_on_off(RS485_1, false, TERM485_1_PIN, "TERM485_1_PIN");
 
-    result = rs485_term_on_off(RS485_1, true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_term_on_off should return ESP_OK for RS485_1 turn on");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once for RS485_1");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(TERM485_1_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "TERM485_1_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[0],
-        "TERM485_1_PIN should be set to HIGH (1)");
-
-    // Test RS485_1 turn off
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_term_on_off(RS485_1, false);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_term_on_off should return ESP_OK for RS485_1 turn off");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once for RS485_1");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(TERM485_1_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "TERM485_1_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "TERM485_1_PIN should be set to LOW (0)");
-
-    // Test RS485_2 turn on
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_term_on_off(RS485_2, true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_term_on_off should return ESP_OK for RS485_2 turn on");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once for RS485_2");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(TERM485_2_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "TERM485_2_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[0],
-        "TERM485_2_PIN should be set to HIGH (1)");
-
-    // Test RS485_2 turn off
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_term_on_off(RS485_2, false);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_term_on_off should return ESP_OK for RS485_2 turn off");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once for RS485_2");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(TERM485_2_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "TERM485_2_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "TERM485_2_PIN should be set to LOW (0)");
+    verify_rs485_term_on_off(RS485_2, true, TERM485_2_PIN, "TERM485_2_PIN");
+    verify_rs485_term_on_off(RS485_2, false, TERM485_2_PIN, "TERM485_2_PIN");
 }
 
 // Тестируем rs485_pupd_on_off - неинициализированный io_expander
@@ -338,7 +379,7 @@ void test_rs485_pupd_on_off_invalid_port(void)
 }
 
 // Тестируем rs485_pupd_on_off - включить и выключить для обоих портов
-void test_rs485_pupd_on_off_turn_on_off(void)
+void test_rs485_pupd_on_off_switch(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_pupd_on_off - turn on and off for both ports");
@@ -347,65 +388,11 @@ void test_rs485_pupd_on_off_turn_on_off(void)
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
-    // Test RS485_1 turn on
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+    verify_rs485_pupd_on_off(RS485_1, true, FAILSAFE_485_1_PIN, "FAILSAFE_485_1_PIN");
+    verify_rs485_pupd_on_off(RS485_1, false, FAILSAFE_485_1_PIN, "FAILSAFE_485_1_PIN");
 
-    result = rs485_pupd_on_off(RS485_1, true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_pupd_on_off should return ESP_OK for RS485_1 turn on");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once for RS485_1");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(FAILSAFE_485_1_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "FAILSAFE_485_1_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[0],
-        "FAILSAFE_485_1_PIN should be set to HIGH (1)");
-
-    // Test RS485_1 turn off
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_pupd_on_off(RS485_1, false);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_pupd_on_off should return ESP_OK for RS485_1 turn off");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once for RS485_1");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(FAILSAFE_485_1_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "FAILSAFE_485_1_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "FAILSAFE_485_1_PIN should be set to LOW (0)");
-
-    // Test RS485_2 turn on
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_pupd_on_off(RS485_2, true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_pupd_on_off should return ESP_OK for RS485_2 turn on");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once for RS485_2");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(FAILSAFE_485_2_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "FAILSAFE_485_2_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[0],
-        "FAILSAFE_485_2_PIN should be set to HIGH (1)");
-
-    // Test RS485_2 turn off
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_pupd_on_off(RS485_2, false);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_pupd_on_off should return ESP_OK for RS485_2 turn off");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once for RS485_2");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(FAILSAFE_485_2_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "FAILSAFE_485_2_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "FAILSAFE_485_2_PIN should be set to LOW (0)");
+    verify_rs485_pupd_on_off(RS485_2, true, FAILSAFE_485_2_PIN, "FAILSAFE_485_2_PIN");
+    verify_rs485_pupd_on_off(RS485_2, false, FAILSAFE_485_2_PIN, "FAILSAFE_485_2_PIN");
 }
 
 // Тестируем rs485_bus_vout_on_off - неинициализированный io_expander
@@ -456,7 +443,7 @@ void test_rs485_bus_vout_on_off_mutex_not_initialized(void)
 }
 
 // Тестируем rs485_bus_vout_on_off - включить и выключить
-void test_rs485_bus_vout_on_off_turn_on_off(void)
+void test_rs485_bus_vout_on_off_switch(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_on_off - turn on and off");
@@ -465,47 +452,8 @@ void test_rs485_bus_vout_on_off_turn_on_off(void)
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
-    // Test turn on
-    mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_bus_vout_on_off(true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "VOUT_485_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[0],
-        "VOUT_485_PIN should be set to HIGH (enabled=true AND allowed=true)");
-
-    // Test turn off
-    mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_bus_vout_on_off(false);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "VOUT_485_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "VOUT_485_PIN should be set to LOW (enabled=false)");
+    verify_rs485_bus_vout_on_off(true);
+    verify_rs485_bus_vout_on_off(false);
 }
 
 // Тестируем rs485_bus_vout_set_allowed - неинициализированный io_expander
@@ -565,93 +513,14 @@ void test_rs485_bus_vout_set_allowed(void)
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
-    // Test allowed=true (when enabled=false by default)
-    mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+    verify_rs485_bus_vout_set_allowed(true, 0);
+    verify_rs485_bus_vout_set_allowed(false, 0);
 
-    result = rs485_bus_vout_set_allowed(true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "VOUT_485_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "VOUT_485_PIN should be set to LOW (enabled=false AND allowed=true)");
-
-    // Test allowed=false (when enabled=false)
-    mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_bus_vout_set_allowed(false);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "VOUT_485_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "VOUT_485_PIN should be set to LOW (enabled=false AND allowed=false)");
-
-    // Enable VOUT first
     result = rs485_bus_vout_on_off(true);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off should return ESP_OK");
 
-    // Test allowed=true when enabled=true
-    mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_bus_vout_set_allowed(true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "VOUT_485_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[0],
-        "VOUT_485_PIN should be set to HIGH (enabled=true AND allowed=true)");
-
-    // Test allowed=false when enabled=true (should block output)
-    mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    result = rs485_bus_vout_set_allowed(false);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "VOUT_485_PIN should be set");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "VOUT_485_PIN should be set to LOW (enabled=true BUT allowed=false blocks it)");
+    verify_rs485_bus_vout_set_allowed(true, 1);
+    verify_rs485_bus_vout_set_allowed(false, 0);
 }
 
 int main(void)
@@ -665,15 +534,15 @@ int main(void)
 
     RUN_TEST(test_rs485_term_on_off_handler_not_initialized);
     RUN_TEST(test_rs485_term_on_off_invalid_port);
-    RUN_TEST(test_rs485_term_on_off_turn_on_off);
+    RUN_TEST(test_rs485_term_on_off_switch);
 
     RUN_TEST(test_rs485_pupd_on_off_handler_not_initialized);
     RUN_TEST(test_rs485_pupd_on_off_invalid_port);
-    RUN_TEST(test_rs485_pupd_on_off_turn_on_off);
+    RUN_TEST(test_rs485_pupd_on_off_switch);
 
     RUN_TEST(test_rs485_bus_vout_on_off_handler_not_initialized);
     RUN_TEST(test_rs485_bus_vout_on_off_mutex_not_initialized);
-    RUN_TEST(test_rs485_bus_vout_on_off_turn_on_off);
+    RUN_TEST(test_rs485_bus_vout_on_off_switch);
 
     RUN_TEST(test_rs485_bus_vout_set_allowed_handler_not_initialized);
     RUN_TEST(test_rs485_bus_vout_set_allowed_mutex_not_initialized);
