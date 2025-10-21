@@ -36,6 +36,8 @@ const login = async () => {
   <section class="login">
     <Logo alt="Wiren Board" />
 
+    <div class="login-title">{{ t('title') }}</div>
+
     <fieldset class="login-wrapper">
       <form class="login-form" @submit.prevent="login">
         <div class="login-fields">
@@ -73,7 +75,7 @@ const login = async () => {
   align-items: center;
   justify-content: center;
   height: 100dvh;
-  margin-top: -60px;
+  margin-top: -30px;
   padding: 0 24px;
 
   @media( max-height: 600px ) {
@@ -86,6 +88,12 @@ const login = async () => {
   padding: 0;
   max-width: 350px;
   width: 100%;
+}
+
+.login-title {
+  font-weight: bold;
+  font-size: 18px;
+  margin-top: 16px;
 }
 
 .login-fields {
@@ -146,11 +154,13 @@ const login = async () => {
 <i18n>
 {
   "en": {
+    "title": "WB-MGE gateway interface",
     "sign_in": "Sign in",
     "documentation": "Documentation",
     "wrong_credentials": "Please enter correct login and password"
   },
   "ru": {
+    "title": "Интерфейс шлюза WB-MGE",
     "sign_in": "Войти",
     "documentation": "Документация",
     "wrong_credentials": "Введены неверные логин или пароль"
