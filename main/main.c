@@ -25,6 +25,7 @@
     #include "update_rs485_mio_gpio_states.h"
     #include "indication.h"
     #include "gpio_expander.h"
+    #include "copy_protection.h"
 #endif
 
 
@@ -142,6 +143,7 @@ void app_main(void)
     ESP_ERROR_CHECK(http_server_init());
 
     #if (!QEMU_BUILD)
+        copy_protection_init(gpio_expander);
         update_rs485_control();
         indication_init(gpio_expander);
         indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);

@@ -48,7 +48,9 @@ else()
         "indication/indication.c"
         "indication/leds_control.c"
         "voltage_monitor/system_voltage.c"
-        "voltage_monitor/voltage_monitor.c")
+        "voltage_monitor/voltage_monitor.c"
+        "copy_protection/copy_protection.c"
+        "copy_protection/port_expander_tests.c")
     message(STATUS "Building for hardware - including hardware-specific files only")
 endif()
 
@@ -63,6 +65,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "wb_app_desc"
                             "voltage_monitor"
                             "qemu"
+                            "copy_protection"
                         EMBED_TXTFILES
                             frontend/dist/favicon.webp.gz
                             frontend/dist/index.css.gz
