@@ -172,6 +172,12 @@ static const httpd_uri_t uptime_get = {
     .handler = uptime_get_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t wb_status_get = {
+    .uri = "/wb_status",
+    .method = HTTP_GET,
+    .handler = wb_status_get_handler,
+    .user_ctx = NULL,
+};
 
 
 static uint16_t get_web_port_setting(void)
@@ -223,6 +229,7 @@ esp_err_t http_server_init(void)
         httpd_register_uri_handler(http_server, &wifi_scan_results_get);
         httpd_register_uri_handler(http_server, &ap_clients_get);
         httpd_register_uri_handler(http_server, &uptime_get);
+        httpd_register_uri_handler(http_server, &wb_status_get);
     }
 
     if (http_server == NULL) {
