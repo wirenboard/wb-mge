@@ -126,6 +126,7 @@ void app_main(void)
         } else {
             ESP_LOGI(TAG, "System voltage: %.2f V", voltage);
         }
+        copy_protection_init_keys();
     #endif // QEMU_BUILD
 
     ESP_ERROR_CHECK(sys_info_init());

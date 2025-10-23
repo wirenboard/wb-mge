@@ -50,6 +50,7 @@ else()
         "voltage_monitor/system_voltage.c"
         "voltage_monitor/voltage_monitor.c"
         "copy_protection/copy_protection.c"
+        "copy_protection/copy_protection_helpers.c"
         "copy_protection/port_expander_tests.c")
     message(STATUS "Building for hardware - including hardware-specific files only")
 endif()

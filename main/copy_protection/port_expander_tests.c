@@ -1,5 +1,7 @@
 #include "esp_io_expander.h"
 #include "array_size.h"
+#include "debug_log.h"
+#include "esp_log.h"
 
 
 #define PORT_EXPANDER_TEST_PINS_COUNT       3
@@ -32,8 +34,12 @@ static port_expander_test_t port_expander_tests[] = {
     {{  {IO_EXPANDER_INPUT,     0,      0   },  {IO_EXPANDER_OUTPUT,    0,      0   },  {IO_EXPANDER_INPUT,     0,      0   }  }},
     {{  {IO_EXPANDER_OUTPUT,    1,      0   },  {IO_EXPANDER_INPUT,     0,      1   },  {IO_EXPANDER_INPUT,     0,      0   }  }},
     {{  {IO_EXPANDER_OUTPUT,    0,      0   },  {IO_EXPANDER_INPUT,     0,      0   },  {IO_EXPANDER_INPUT,     0,      0   }  }},
-
 };
+
+#if DEBUG_LOG_ENABLE
+    static const char* TAG = "port_expander_tests";
+#endif
+
 
 esp_err_t port_expander_run_tests(esp_io_expander_handle_t io_expander_handle)
 {
@@ -64,12 +70,22 @@ esp_err_t port_expander_run_tests(esp_io_expander_handle_t io_expander_handle)
             uint32_t pin_levels = 0;
             esp_err_t ret = esp_io_expander_get_level(io_expander_handle, pin_num, &pin_levels);
             if (ret == ESP_OK) {
+                bool test_ok;
                 if (port_expander_tests[index].pins[pin].in_level) {
-                    ok = pin_levels && ok;
+                    test_ok = pin_levels;
                 } else {
-                    ok = !pin_levels && ok;
+                    test_ok = !pin_levels;
                 }
+                #if DEBUG_LOG_ENABLE
+                    if (!test_ok) {
+                        ESP_LOGE(TAG, "Test #%u, pin #%u: incorrect input state", index, pin);
+                    }
+                #endif
+                ok = test_ok && ok;
             } else {
+                #if DEBUG_LOG_ENABLE
+                    ESP_LOGE(TAG, "Test #%u, pin #%u: failed to read GPIO state", index, pin);
+                #endif
                 ok = false;
             }
         }

@@ -1,17 +1,15 @@
 #include "copy_protection.h"
-#include "mbedtls/md.h"
 #include "esp_err.h"
 #include "sys_info.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
-#include "esp_random.h"
 #include "esp_mac.h"
 #include "port_expander_tests.h"
+#include "debug_log.h"
+#include "esp_log.h"
+#include "copy_protection_helpers.h"
+#include "keys.h"
 
-
-#define MAC_ADDR_LEN                        6
-#define KEY_LEN                             32
-#define HMAC_LEN                            32
 
 #define SEC_CODE_TASK_STACK_SIZE            4096
 #define SEC_CODE_TASK_PRIORITY              14
@@ -43,99 +41,70 @@ typedef struct {
     TickType_t sys_monitor_task_delay;
     EventGroupHandle_t event_group;
     copy_protection_state_t prot_state;
+    uint8_t key[KEY_LEN];
+    uint8_t swap_table[SECURITY_CODE_LEN];
+    bool keys_initialized;
 } prot_ctx_t;
 
 static prot_ctx_t prot_ctx = {0};
 
+#pragma pack(push, 1)
+    typedef struct {
+        uint8_t hmac_key[KEY_LEN];
+        uint8_t dummy_1[35];
+        uint8_t hmac_key_table[KEY_LEN];
+        uint8_t dummy_2[14];
+        uint8_t prot_code_swap[SECURITY_CODE_LEN];
+        uint8_t dummy_3[27];
+        uint8_t prot_code_swap_table[SECURITY_CODE_LEN];
+    } stored_keys_t;
+#pragma pack(pop)
 
-static const uint8_t key[KEY_LEN] = {
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+static stored_keys_t stored_keys = {
+    .hmac_key = HMAC_KEY,
+    .hmac_key_table = HMAC_KEY_TABLE,
+    .prot_code_swap = PROT_CODE_SWAP,
+    .prot_code_swap_table = PROT_CODE_SWAP_TABLE,
+    .dummy_1 = {
+        0x3A, 0xD1, 0x8F, 0x25, 0x4B, 0x9C, 0x7E, 0x02,
+        0x6D, 0xE8, 0x43, 0x11, 0xBA, 0x74, 0x5F, 0xC3,
+        0xA9, 0x01, 0xD6, 0x2E, 0x80, 0x47, 0xB3, 0xF9,
+        0x0C, 0x68, 0x3E, 0x95, 0xD2, 0x7B, 0x44, 0x28,
+        0xAF, 0x1D, 0x63
+    },
+    .dummy_2 = {
+        0x7E, 0x3B, 0x90, 0x45, 0x1C, 0xD8, 0x52, 0xFA,
+        0x06, 0xB7, 0xE1, 0x34, 0x8A, 0xCB
+    },
+    .dummy_3 = {
+        0xF4, 0x69, 0x22, 0xA0, 0x17, 0xCC, 0x5D, 0x83,
+        0x1B, 0x9F, 0x40, 0xE7, 0x36, 0x52, 0xAD, 0x04,
+        0xB8, 0xC1, 0x6F, 0x93, 0x28, 0xD5, 0x79, 0x03,
+        0xEE, 0x61, 0x14
+    }
 };
 
-static const uint8_t swap_table[SECURITY_CODE_LEN] = {
-    1, 3, 5, 7, 9, 11, 13, 15, 19, 21, 23, 25
-};
-
-
-// static const char* TAG = "copy_protection";
-
-
-static void calc_hmac(const uint8_t mac_addr[MAC_ADDR_LEN], const uint8_t key[KEY_LEN], uint8_t out_hmac[HMAC_LEN])
-{
-    mbedtls_md_context_t ctx;
-    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-
-    mbedtls_md_init(&ctx);
-    mbedtls_md_setup(&ctx, info, 1); // 1 — enable HMAC mode
-    mbedtls_md_hmac_starts(&ctx, key, KEY_LEN);
-    mbedtls_md_hmac_update(&ctx, mac_addr, MAC_ADDR_LEN);
-    mbedtls_md_hmac_finish(&ctx, out_hmac);
-    mbedtls_md_free(&ctx);
-}
-
-
-static void truncate_hmac(const uint8_t hmac[HMAC_LEN], const uint8_t swap_table[SECURITY_CODE_LEN], uint8_t out_sec_code[SECURITY_CODE_LEN])
-{
-    for (unsigned index = 0; index < SECURITY_CODE_LEN; index++) {
-        unsigned pos = swap_table[index];
-        if (pos >= HMAC_LEN) {
-            pos = HMAC_LEN;
-        }
-        out_sec_code[index] = hmac[pos];
-    }
-}
-
-
-static TickType_t get_random_time(unsigned min_ms, unsigned max_ms)
-{
-    unsigned range = max_ms - min_ms;
-    unsigned value = min_ms + esp_random() % (range + 1);
-
-    return pdMS_TO_TICKS(value);
-}
-
-
-static bool consttime_memeq(const void *a, const void *b, size_t n)
-{
-    const uint8_t *x = a, *y = b;
-    uint8_t r = 0;
-    for (size_t i = 0; i < n; ++i) {
-        r |= x[i] ^ y[i];
-    }
-    return (r == 0);
-}
-
-
-// static bool port_expander_check(void)
-// {
-//     esp_io_expander_set_dir(prot_ctx.port_expander, PORT_EXPANDER_GROUNDED_PIN, IO_EXPANDER_INPUT);
-//     esp_io_expander_set_dir(prot_ctx.port_expander, PORT_EXPANDER_SHORTED_PIN_1, IO_EXPANDER_INPUT);
-//     esp_io_expander_set_dir(prot_ctx.port_expander, PORT_EXPANDER_SHORTED_PIN_2, IO_EXPANDER_OUTPUT);
-//     esp_io_expander_set_level(prot_ctx.port_expander, PORT_EXPANDER_SHORTED_PIN_2, 0);
-
-//     uint32_t pin_levels = 0;
-//     esp_io_expander_get_level(prot_ctx.port_expander, PORT_EXPANDER_GROUNDED_PIN, &pin_levels);
-//     bool ok = !pin_levels;
-
-//     pin_levels = 0;
-//     esp_io_expander_get_level(prot_ctx.port_expander, PORT_EXPANDER_SHORTED_PIN_1, &pin_levels);
-//     ok = !pin_levels && ok;
-
-
-
-// }
+#if DEBUG_LOG_ENABLE
+    static const char* TAG = "copy_protection";
+#endif
 
 
 static void security_code_task(void *arg)
 {
+    #if DEBUG_LOG_ENABLE
+        ESP_LOGD(TAG, "security_code_task() started");
+    #endif
     vTaskDelay(prot_ctx.sec_code_task_delay);
 
     uint8_t sec_code[SECURITY_CODE_LEN];
-    truncate_hmac(prot_ctx.hmac, swap_table, sec_code);
+    truncate_hmac(prot_ctx.hmac, prot_ctx.swap_table, sec_code);
     bool eq = consttime_memeq(sec_code, sys_info.security_code, SECURITY_CODE_LEN);
+
+    #if DEBUG_LOG_ENABLE
+        if (!eq) {
+            ESP_LOGE(TAG, "Security code check failed");
+        }
+    #endif
 
     EventBits_t event;
     if (eq) {
@@ -146,16 +115,28 @@ static void security_code_task(void *arg)
 
     xEventGroupSetBits(prot_ctx.event_group, event);
 
+    #if DEBUG_LOG_ENABLE
+        ESP_LOGD(TAG, "security_code_task() finished");
+    #endif
     vTaskDelete(NULL);
 }
 
 
 static void port_expander_task(void *arg)
 {
+    #if DEBUG_LOG_ENABLE
+        ESP_LOGD(TAG, "port_expander_task() started");
+    #endif
     vTaskDelay(prot_ctx.port_exp_task_delay);
 
     esp_err_t ret = port_expander_run_tests(prot_ctx.port_expander);
     bool ok = (ret == ESP_OK) && prot_ctx.port_expander_check_ok;
+
+    #if DEBUG_LOG_ENABLE
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Port expander tests failed");
+        }
+    #endif
 
     if (ok) {
         xEventGroupSetBits(prot_ctx.event_group, EVENT_PORT_EXPANDER_OK);
@@ -163,12 +144,18 @@ static void port_expander_task(void *arg)
         xEventGroupSetBits(prot_ctx.event_group, EVENT_PORT_EXPANDER_FAIL);
     }
 
+    #if DEBUG_LOG_ENABLE
+        ESP_LOGD(TAG, "port_expander_task() finished");
+    #endif
     vTaskDelete(NULL);
 }
 
 
 static void sys_monitor_task(void *arg)
 {
+    #if DEBUG_LOG_ENABLE
+        ESP_LOGD(TAG, "sys_monitor_task() started");
+    #endif
     vTaskDelay(prot_ctx.sys_monitor_task_delay);
 
     EventBits_t bits_to_wait = EVENT_SEC_CODE_OK | EVENT_SEC_CODE_FAIL;
@@ -181,12 +168,29 @@ static void sys_monitor_task(void *arg)
 
     if (!ok || fail) {
         prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+        #if DEBUG_LOG_ENABLE
+            ESP_LOGE(TAG, "Copy protection activated!");
+        #endif
         //TODO: do something bad
     } else {
         prot_ctx.prot_state = COPY_PROT_STATE_OK;
+        #if DEBUG_LOG_ENABLE
+            ESP_LOGD(TAG, "Copy protection checks passed!");
+        #endif
     }
 
+    #if DEBUG_LOG_ENABLE
+        ESP_LOGD(TAG, "sys_monitor_task() finished");
+    #endif
     vTaskDelete(NULL);
+}
+
+
+void copy_protection_init_keys(void)
+{
+    unswap_array_values(stored_keys.hmac_key, stored_keys.hmac_key_table, KEY_LEN, prot_ctx.key);
+    unswap_array_values(stored_keys.prot_code_swap, stored_keys.prot_code_swap_table, SECURITY_CODE_LEN, prot_ctx.swap_table);
+    prot_ctx.keys_initialized = true;
 }
 
 
@@ -194,8 +198,15 @@ esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
 {
     prot_ctx.prot_state = COPY_PROT_STATE_UNKNOWN;
 
+    if (!prot_ctx.keys_initialized) {
+        copy_protection_init_keys();
+    }
+
     if (io_expander_handle == NULL) {
         prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+        #if DEBUG_LOG_ENABLE
+            ESP_LOGE(TAG, "GPIO expander handle is NULL");
+        #endif
         return ESP_FAIL;
     }
     prot_ctx.port_expander = io_expander_handle;
@@ -204,14 +215,20 @@ esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
     esp_err_t ret = esp_efuse_mac_get_default(mac_addr);
     if (ret != ESP_OK) {
         prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+        #if DEBUG_LOG_ENABLE
+            ESP_LOGE(TAG, "Unable to get MAC address");
+        #endif
         return ESP_FAIL;
     }
 
-    calc_hmac(mac_addr, key, prot_ctx.hmac);
+    calc_hmac(mac_addr, prot_ctx.key, prot_ctx.hmac);
 
     prot_ctx.event_group = xEventGroupCreate();
     if (prot_ctx.event_group == NULL) {
         prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+        #if DEBUG_LOG_ENABLE
+            ESP_LOGE(TAG, "Unable to create Event Group");
+        #endif
         return ESP_FAIL;
     }
 
@@ -220,6 +237,11 @@ esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
     prot_ctx.sys_monitor_task_delay = get_random_time(SYSTEM_MONITOR_TASK_DELAY_MS_MIN, SYSTEM_MONITOR_TASK_DELAY_MS_MAX);
 
     prot_ctx.port_expander_check_ok = (port_expander_run_tests(io_expander_handle) == ESP_OK);
+    #if DEBUG_LOG_ENABLE
+        if (!prot_ctx.port_expander_check_ok) {
+            ESP_LOGE(TAG, "Port expander tests failed");
+        }
+    #endif
 
     xTaskCreate(sys_monitor_task, "", SYSTEM_MONITOR_TASK_STACK_SIZE, NULL, SYSTEM_MONITOR_TASK_PRIORITY, NULL);
     xTaskCreate(security_code_task, "", SEC_CODE_TASK_STACK_SIZE, NULL, SEC_CODE_TASK_PRIORITY, NULL);
@@ -246,8 +268,8 @@ copy_protection_state_t copy_protection_get_state(void)
         }
 
         uint8_t hmac[HMAC_LEN] = {0};
-        calc_hmac(mac_addr, key, hmac);
-        truncate_hmac(hmac, swap_table, out_buf);
+        calc_hmac(mac_addr, prot_ctx.key, hmac);
+        truncate_hmac(hmac, prot_ctx.swap_table, out_buf);
 
         return ESP_OK;
     }
