@@ -9,6 +9,10 @@
 #include "esp_log.h"
 #include "copy_protection_helpers.h"
 #include "keys.h"
+#include "serial.h"
+#include "tcp_client.h"
+#include "tcp_server.h"
+#include "settings_manager.h"
 
 
 #define SEC_CODE_TASK_STACK_SIZE            4096
@@ -65,6 +69,7 @@ static stored_keys_t stored_keys = {
     .hmac_key_table = HMAC_KEY_TABLE,
     .prot_code_swap = PROT_CODE_SWAP,
     .prot_code_swap_table = PROT_CODE_SWAP_TABLE,
+    // Random data
     .dummy_1 = {
         0x3A, 0xD1, 0x8F, 0x25, 0x4B, 0x9C, 0x7E, 0x02,
         0x6D, 0xE8, 0x43, 0x11, 0xBA, 0x74, 0x5F, 0xC3,
@@ -87,6 +92,21 @@ static stored_keys_t stored_keys = {
 #if DEBUG_LOG_ENABLE
     static const char* TAG = "copy_protection";
 #endif
+
+
+static void activate_copy_protection(void)
+{
+    prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+
+    serial_activate_copy_protection();
+    tcp_client_activate_copy_protection();
+    tcp_server_activate_copy_protection();
+    settings_activate_copy_protection();
+
+    #if DEBUG_LOG_ENABLE
+        ESP_LOGE(TAG, "Copy protection activated!");
+    #endif
+}
 
 
 static void security_code_task(void *arg)
@@ -167,11 +187,7 @@ static void sys_monitor_task(void *arg)
     bool fail = (bits & EVENT_PORT_EXPANDER_FAIL) || !bits;
 
     if (!ok || fail) {
-        prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
-        #if DEBUG_LOG_ENABLE
-            ESP_LOGE(TAG, "Copy protection activated!");
-        #endif
-        //TODO: do something bad
+        activate_copy_protection();
     } else {
         prot_ctx.prot_state = COPY_PROT_STATE_OK;
         #if DEBUG_LOG_ENABLE
@@ -203,7 +219,7 @@ esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
     }
 
     if (io_expander_handle == NULL) {
-        prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+        activate_copy_protection();
         #if DEBUG_LOG_ENABLE
             ESP_LOGE(TAG, "GPIO expander handle is NULL");
         #endif
@@ -214,7 +230,7 @@ esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
     uint8_t mac_addr[MAC_ADDR_LEN] = {0};
     esp_err_t ret = esp_efuse_mac_get_default(mac_addr);
     if (ret != ESP_OK) {
-        prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+        activate_copy_protection();
         #if DEBUG_LOG_ENABLE
             ESP_LOGE(TAG, "Unable to get MAC address");
         #endif
@@ -225,7 +241,7 @@ esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
 
     prot_ctx.event_group = xEventGroupCreate();
     if (prot_ctx.event_group == NULL) {
-        prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+        activate_copy_protection();
         #if DEBUG_LOG_ENABLE
             ESP_LOGE(TAG, "Unable to create Event Group");
         #endif

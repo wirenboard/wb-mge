@@ -31,6 +31,7 @@
 
 
 static const char *TAG = "serial";
+static bool copy_protection = false;
 
 
 static void handle_uart_event(serial_desc_t *desc, uart_event_t event, uint8_t buffer[SERIAL_BUF_SIZE])
@@ -45,7 +46,9 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, uint8_t b
             ESP_LOGD(TAG, "UART[%d] DATA: %d", desc->port_num, event.size);
             uart_read_bytes(desc->port_num, buffer, event.size, portMAX_DELAY);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, buffer, event.size, ESP_LOG_DEBUG);
-            desc->receive_handler(desc, buffer, event.size);
+            if (!copy_protection) {
+                desc->receive_handler(desc, buffer, event.size);
+            }
             break;
         case UART_FIFO_OVF:
             ESP_LOGW(TAG, "UART[%d] HW fifo overflow", desc->port_num);
@@ -204,6 +207,10 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
 
 esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 {
+    if (copy_protection) {
+        return ESP_OK;
+    }
+
     int written = uart_write_bytes(desc->port_num, (const char *)data, len);
 
     if (written != len) {
@@ -243,4 +250,9 @@ esp_err_t serial_deinit(serial_desc_t *desc)
     free(desc);
 
     return ESP_OK;
+}
+
+void serial_activate_copy_protection(void)
+{
+    copy_protection = true;
 }
