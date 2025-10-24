@@ -3,8 +3,11 @@
 #include "esp_mac.h"
 #include "nv_storage.h"
 #include "esp_efuse.h"
-#include "copy_protection.h"
 #include <inttypes.h>
+
+#if CONFIG_EFUSE_VIRTUAL
+    #include "copy_protection.h"
+#endif
 
 
 #define SIGNATURE_EFUSE_BLOCK           EFUSE_BLK3
@@ -121,13 +124,21 @@ static void get_security_code(uint8_t out_buf[SECURITY_CODE_LEN])
     memset(out_buf, 0, SECURITY_CODE_LEN);
     esp_err_t res = esp_efuse_read_block(SECURITY_CODE_EFUSE_BLOCK, out_buf, SECURITY_CODE_EFUSE_OFFSET * 8, SECURITY_CODE_LEN * 8);
 
-    if (res != ESP_OK) {
-        esp_log_level_t log_level = esp_log_level_get(TAG);
-        // Show error only when debug logs are enabled
-        if (log_level >= ESP_LOG_DEBUG) {
+    // Show status only when debug logs are enabled
+    #if DEBUG_LOG_ENABLE
+        if (res != ESP_OK) {
             ESP_LOGE(TAG, "Unable to read device secure code " STR_MACRO(SIGNATURE_EFUSE_BLOCK));
+        } else {
+            uint8_t zero_buf[SECURITY_CODE_LEN];
+            memset(zero_buf, 0, sizeof(zero_buf));
+            bool is_empty = (memcmp(zero_buf, out_buf, SECURITY_CODE_LEN) == 0);
+            if (is_empty) {
+                ESP_LOGW(TAG, "Device security code is empty");
+            }
         }
-    }
+    #else
+        (void)res;
+    #endif
 }
 
 

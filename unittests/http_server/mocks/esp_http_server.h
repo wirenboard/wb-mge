@@ -130,6 +130,7 @@ extern int mock_wifi_scan_start_handler_called;
 extern int mock_wifi_scan_results_handler_called;
 extern int mock_ap_clients_get_handler_called;
 extern int mock_uptime_get_handler_called;
+extern int mock_wb_status_get_handler_called;
 
 extern int mock_httpd_resp_set_type_call_count;
 extern int mock_httpd_resp_set_hdr_call_count;
