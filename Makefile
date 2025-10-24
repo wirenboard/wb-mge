@@ -99,7 +99,7 @@ build-frontend:
 		$(FIND) dist/ -type f -exec gzip -k {} \; ; \
 	}
 
-build-idf-project:
+build-idf-project: keys_header_file
 	@echo 'Building ESP-IDF project'
 	@idf.py $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
@@ -110,6 +110,12 @@ prepare_release:
 	@cp $(BUILD_DIR)/$(TARGET).bin $(RELEASE_DIR)/$(RELEASE_FILE_NAME)
 	@echo 'Release firmware: $(RELEASE_DIR)/$(RELEASE_FILE_NAME)'
 
+keys_header_file:
+	@{ \
+		cd copy_protection && \
+		./gen_keys_header.py; \
+	}
+
 clean:
 	@echo 'Cleaning project'
 	@idf.py fullclean
@@ -118,6 +124,7 @@ clean:
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
 	@rm -rf sdkconfig
+	@cp -f main/copy_protection/keys.h.default main/copy_protection/keys.h
 	@echo 'Cleaning unittests'
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
@@ -125,7 +132,7 @@ clean:
 		fi; \
 	done
 
-.PHONY: all unittests build-frontend build-idf-project prepare_release clean
+.PHONY: all unittests build-frontend build-idf-project prepare_release keys_header_file clean
 
 # Include coverage definitions and targets
 include unittests/build_common_coverage.mk
