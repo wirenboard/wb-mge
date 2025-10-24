@@ -1,3 +1,3 @@
 #pragma once
 
-#error "Please generate keys using 'copy_protection/gen_keys_header.py' script"
+#error "Please generate keys using 'copy_protection/copy_prot_helper.py' script"

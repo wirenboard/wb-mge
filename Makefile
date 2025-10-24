@@ -111,10 +111,7 @@ prepare_release:
 	@echo 'Release firmware: $(RELEASE_DIR)/$(RELEASE_FILE_NAME)'
 
 keys_header_file:
-	@{ \
-		cd copy_protection && \
-		./gen_keys_header.py; \
-	}
+	@copy_protection/copy_prot_helper.py --keys copy_protection/keys.txt --swap_tables copy_protection/swap_tables.txt --out_header main/copy_protection/keys.h
 
 clean:
 	@echo 'Cleaning project'
