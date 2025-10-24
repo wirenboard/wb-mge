@@ -1,7 +1,12 @@
 2025-10-24 Maxim Toropov <maxim.toropov@wirenboard.com>
 
-    * version:  1.0.0-rc21
+    * version:  1.0.0-rc23
     * added:    copy protection system
+
+2025-10-21 Victor Vedenin <victor.vedenin@wirenboard.com>
+
+    * version:  1.0.0-rc22
+    * added:    login page title
 
 2025-10-10 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
