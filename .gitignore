@@ -11,6 +11,9 @@ sdkconfig.old
 dependencies.lock
 **/build/
 
+# Generated security codes
+copy_protection/*.bin
+
 # Release
 release/
 
