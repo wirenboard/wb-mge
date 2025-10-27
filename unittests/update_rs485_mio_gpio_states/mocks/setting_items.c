@@ -14,20 +14,20 @@ char mock_setting_items_read_bool_keys[10][64];
 bool setting_items_read_bool(const char *key)
 {
     if (mock_setting_items_read_bool_called < 10) {
-        strncpy(mock_setting_items_read_bool_keys[mock_setting_items_read_bool_called], 
-                key, 
+        strncpy(mock_setting_items_read_bool_keys[mock_setting_items_read_bool_called],
+                key,
                 sizeof(mock_setting_items_read_bool_keys[0]) - 1);
         mock_setting_items_read_bool_keys[mock_setting_items_read_bool_called][63] = '\0';
     }
     mock_setting_items_read_bool_called++;
-    
+
     // Look up the value in our mock settings
     for (int i = 0; i < mock_settings_count; i++) {
         if (strcmp(mock_setting_keys[i], key) == 0) {
             return mock_settings[i];
         }
     }
-    
+
     return false;
 }
 
@@ -40,7 +40,7 @@ void mock_setting_items_set_bool(const char *key, bool value)
             return;
         }
     }
-    
+
     // Add new setting
     if (mock_settings_count < 10) {
         mock_setting_keys[mock_settings_count] = key;
