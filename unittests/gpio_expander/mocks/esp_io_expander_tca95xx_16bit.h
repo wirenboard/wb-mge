@@ -20,4 +20,9 @@ enum esp_io_expander_tca_95xx_16bit_address {
     ESP_IO_EXPANDER_I2C_TCA9555_ADDRESS_111 = 0b0100111,
 };
 
+extern esp_err_t mock_esp_io_expander_return;
+extern int mock_esp_io_expander_called;
+extern i2c_master_bus_handle_t mock_esp_io_expander_bus;
+extern uint32_t mock_esp_io_expander_addr;
+
 esp_err_t esp_io_expander_new_i2c_tca95xx_16bit(i2c_master_bus_handle_t i2c_bus, uint32_t dev_addr, esp_io_expander_handle_t *handle_ret);

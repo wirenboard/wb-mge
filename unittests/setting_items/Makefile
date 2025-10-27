@@ -21,6 +21,7 @@ INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main/
 INC += $(IDF_PATH)/components/esp_common/include
+INC += $(IDF_PATH)/components/nvs_flash/include/
 
 # List of tests
 TEST_LIST = setting_items_test setting_items_additional_test

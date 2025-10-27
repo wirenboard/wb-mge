@@ -24,6 +24,10 @@ typedef enum {
 
 typedef void *esp_io_expander_handle_t;
 
+extern esp_err_t mock_esp_io_expander_print_state_return;
+extern int mock_esp_io_expander_print_state_called;
+extern esp_io_expander_handle_t mock_esp_io_expander_print_state_handle;
+
 extern int mock_esp_io_expander_set_dir_called;
 extern esp_io_expander_handle_t mock_esp_io_expander_set_dir_handle;
 extern uint32_t mock_esp_io_expander_set_dir_pin_masks[MAX_CALLS];

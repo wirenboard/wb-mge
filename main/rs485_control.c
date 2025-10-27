@@ -77,8 +77,10 @@ esp_err_t rs485_bus_vout_on_off(bool on)
     rs485_bus_vout_ctrl.enabled = on;
 
     bool out_level = false;
-    if (rs485_bus_vout_ctrl.enabled == true && rs485_bus_vout_ctrl.allowed == true) {
-        out_level = true;
+    if (rs485_bus_vout_ctrl.enabled == true) {
+        if (rs485_bus_vout_ctrl.allowed == true) {
+            out_level = true;
+        }
     }
 
     esp_io_expander_set_level(io_expander, VOUT_485_PIN, out_level);
@@ -103,8 +105,10 @@ esp_err_t rs485_bus_vout_set_allowed(bool allowed)
     rs485_bus_vout_ctrl.allowed = allowed;
 
     bool out_level = false;
-    if (rs485_bus_vout_ctrl.enabled == true && rs485_bus_vout_ctrl.allowed == true) {
-        out_level = true;
+    if (rs485_bus_vout_ctrl.enabled == true) {
+        if (rs485_bus_vout_ctrl.allowed == true) {
+            out_level = true;
+        }
     }
 
     esp_io_expander_set_level(io_expander, VOUT_485_PIN, out_level);

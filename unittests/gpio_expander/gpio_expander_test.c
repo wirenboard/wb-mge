@@ -3,26 +3,13 @@
 
 #include "gpio_expander.h"
 #include "driver/i2c_master.h"
+#include "esp_io_expander.h"
 #include "esp_io_expander_tca95xx_16bit.h"
 
 #include <stdbool.h>
 #include <string.h>
 
-extern esp_err_t mock_i2c_new_master_bus_return;
-extern int mock_i2c_new_master_bus_called;
-extern i2c_master_bus_handle_t mock_i2c_bus_handle;
-extern i2c_master_bus_config_t mock_i2c_bus_config;
-
-extern esp_err_t mock_esp_io_expander_return;
-extern int mock_esp_io_expander_called;
-extern i2c_master_bus_handle_t mock_esp_io_expander_bus;
-extern uint32_t mock_esp_io_expander_addr;
-
-extern esp_err_t mock_esp_io_expander_print_state_return;
-extern int mock_esp_io_expander_print_state_called;
-extern esp_io_expander_handle_t mock_esp_io_expander_print_state_handle;
-
-extern void gpio_expander_test_reset(void);
+void gpio_expander_test_reset(void);
 
 void setUp(void)
 {
@@ -48,7 +35,7 @@ void tearDown(void)
 
 }
 
-// Тестируем успешную инициализацию gpio_expander_init
+// Тестируем случай успешной инициализации gpio_expander_init
 void test_gpio_expander_init_success(void)
 {
     LOG_MESSAGE();
@@ -139,12 +126,11 @@ void test_gpio_expander_init_null_handle(void)
     LOG_MESSAGE();
 
     esp_err_t result = gpio_expander_init(NULL);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "gpio_expander_init should return ESP_ERR_INVALID_ARG");
 
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "gpio_expander_init should return ESP_OK even with NULL handle");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_i2c_new_master_bus_called, "i2c_new_master_bus should be called");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_called, "esp_io_expander_new_i2c_tca95xx_16bit should be called");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_print_state_called, "esp_io_expander_print_state should be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_i2c_new_master_bus_called, "i2c_new_master_bus should not be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_called, "esp_io_expander_new_i2c_tca95xx_16bit should not be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_print_state_called, "esp_io_expander_print_state should not be called");
 }
 
 // Тестируем ошибку при создании I2C master bus

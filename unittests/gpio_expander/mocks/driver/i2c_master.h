@@ -102,4 +102,9 @@ typedef enum {
     I2C_NUM_MAX,                /*!< I2C port max */
 } i2c_port_t;
 
+extern esp_err_t mock_i2c_new_master_bus_return;
+extern int mock_i2c_new_master_bus_called;
+extern i2c_master_bus_handle_t mock_i2c_bus_handle;
+extern i2c_master_bus_config_t mock_i2c_bus_config;
+
 esp_err_t i2c_new_master_bus(const i2c_master_bus_config_t *bus_config, i2c_master_bus_handle_t *ret_bus_handle);

@@ -1,4 +1,14 @@
-2025-10-09 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-10-27 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc23
+    * fix:      unittests for update_rs485_mio_gpio_states
+
+2025-10-21 Victor Vedenin <victor.vedenin@wirenboard.com>
+
+    * version:  1.0.0-rc22
+    * added:    login page title
+
+2025-10-10 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc21
     * fix:      unittests for rs485_control

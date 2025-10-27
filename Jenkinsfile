@@ -36,14 +36,5 @@ pipeline {
                 }
             }
         }
-        stage('S3 Upload') {
-            steps {
-                build job: 's3_uploader', parameters: [
-                    string(name: 'UPSTREAM_JOB_NAME', value: env.JOB_NAME),
-                    string(name: 'BUILD', value: env.BUILD_NUMBER),
-                    booleanParam(name: 'UPLOAD_FROM_BRANCH', value: params.UPLOAD_FROM_BRANCH)
-                ]
-            }
-        }
     }
 }
