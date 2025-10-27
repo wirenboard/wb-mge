@@ -1,19 +1,18 @@
+#include "config.h"
 #include "setting_items.h"
-#include <string.h>
-#include <stdbool.h>
 
-// Storage for mock setting values
-static bool mock_settings[10];
-static const char* mock_setting_keys[10];
+#include <string.h>
+
+static bool mock_settings[MAX_FUNCTION_CALLS];
+static const char* mock_setting_keys[MAX_FUNCTION_CALLS];
 static int mock_settings_count = 0;
 
-// Mock tracking for setting_items_read_bool
 int mock_setting_items_read_bool_called = 0;
-char mock_setting_items_read_bool_keys[10][64];
+char mock_setting_items_read_bool_keys[MAX_FUNCTION_CALLS][64];
 
 bool setting_items_read_bool(const char *key)
 {
-    if (mock_setting_items_read_bool_called < 10) {
+    if (mock_setting_items_read_bool_called < MAX_FUNCTION_CALLS) {
         strncpy(mock_setting_items_read_bool_keys[mock_setting_items_read_bool_called],
                 key,
                 sizeof(mock_setting_items_read_bool_keys[0]) - 1);
@@ -21,7 +20,6 @@ bool setting_items_read_bool(const char *key)
     }
     mock_setting_items_read_bool_called++;
 
-    // Look up the value in our mock settings
     for (int i = 0; i < mock_settings_count; i++) {
         if (strcmp(mock_setting_keys[i], key) == 0) {
             return mock_settings[i];
@@ -33,7 +31,6 @@ bool setting_items_read_bool(const char *key)
 
 void mock_setting_items_set_bool(const char *key, bool value)
 {
-    // Check if key already exists
     for (int i = 0; i < mock_settings_count; i++) {
         if (strcmp(mock_setting_keys[i], key) == 0) {
             mock_settings[i] = value;
@@ -41,8 +38,7 @@ void mock_setting_items_set_bool(const char *key, bool value)
         }
     }
 
-    // Add new setting
-    if (mock_settings_count < 10) {
+    if (mock_settings_count < MAX_FUNCTION_CALLS) {
         mock_setting_keys[mock_settings_count] = key;
         mock_settings[mock_settings_count] = value;
         mock_settings_count++;

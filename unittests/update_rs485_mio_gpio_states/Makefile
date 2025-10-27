@@ -14,7 +14,6 @@ TESTED_SRC += $(PROJ_DIR)/main/update_rs485_mio_gpio_states.c
 AUX_SRC += mocks/rs485_control.c
 AUX_SRC += mocks/mio_control.c
 AUX_SRC += mocks/setting_items.c
-AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c
 
 # Include directories
 INC += $(UNITTEST_DIR)
