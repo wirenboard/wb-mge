@@ -1,6 +1,8 @@
 #include "esp_err.h"
 #include "esp_io_expander.h"
 
+#include <string.h>
+
 esp_err_t mock_esp_io_expander_print_state_return = ESP_OK;
 int mock_esp_io_expander_print_state_called = 0;
 esp_io_expander_handle_t mock_esp_io_expander_print_state_handle = NULL;
@@ -46,4 +48,17 @@ esp_err_t esp_io_expander_set_level(esp_io_expander_handle_t handle, uint32_t pi
 
     mock_esp_io_expander_set_level_called++;
     return ESP_OK;
+}
+
+void mock_esp_io_expander_reset(void)
+{
+    mock_esp_io_expander_set_dir_called = 0;
+    mock_esp_io_expander_set_dir_handle = NULL;
+    memset(mock_esp_io_expander_set_dir_pin_masks, 0, sizeof(mock_esp_io_expander_set_dir_pin_masks));
+    memset(mock_esp_io_expander_set_dir_directions, 0, sizeof(mock_esp_io_expander_set_dir_directions));
+
+    mock_esp_io_expander_set_level_called = 0;
+    mock_esp_io_expander_set_level_handle = NULL;
+    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
+    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
 }

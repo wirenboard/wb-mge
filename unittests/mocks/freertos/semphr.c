@@ -31,3 +31,11 @@ BaseType_t xSemaphoreGive(SemaphoreHandle_t xSemaphore)
     mock_xSemaphoreGive_called++;
     return pdPASS;
 }
+
+void mock_xSemaphore_reset(void)
+{
+    mock_xSemaphoreCreateMutex_should_fail = false;
+    mock_xSemaphoreCreateMutex_called = 0;
+    mock_xSemaphoreTake_called = 0;
+    mock_xSemaphoreGive_called = 0;
+}

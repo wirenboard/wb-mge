@@ -54,3 +54,12 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
 
     return ESP_OK;
 }
+
+void mock_esp_efuse_reset(void)
+{
+    mock_esp_read_mac_should_fail = false;
+    mock_read_block = EFUSE_BLK0;
+    mock_read_offset = 0;
+    mock_esp_efuse_read_block_return = ESP_OK;
+    mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
+}

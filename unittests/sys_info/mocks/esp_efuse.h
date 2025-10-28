@@ -1,6 +1,8 @@
 #pragma once
 
 #include "esp_err.h"
+
+#include <stdbool.h>
 #include <stddef.h>
 
 #define TEST_DEVICE_SIGNATURE                   "TEST_SIG"
@@ -25,6 +27,13 @@ typedef enum {
     EFUSE_BLK_MAX           = 4,
 } esp_efuse_block_t;
 
+extern bool mock_esp_read_mac_should_fail;
+extern esp_efuse_block_t mock_read_block;
+extern size_t mock_read_offset;
+extern esp_err_t mock_esp_efuse_read_block_return;
+
 esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offset_in_bits, size_t size_bits);
 
 void mock_esp_efuse_set_signature(const char* signature);
+
+void mock_esp_efuse_reset(void);

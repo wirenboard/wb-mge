@@ -20,21 +20,8 @@ void rs485_control_test_reset(void);
 
 void setUp(void)
 {
-    mock_esp_io_expander_set_dir_called = 0;
-    mock_esp_io_expander_set_dir_handle = NULL;
-    memset(mock_esp_io_expander_set_dir_pin_masks, 0, sizeof(mock_esp_io_expander_set_dir_pin_masks));
-    memset(mock_esp_io_expander_set_dir_directions, 0, sizeof(mock_esp_io_expander_set_dir_directions));
-
-    mock_esp_io_expander_set_level_called = 0;
-    mock_esp_io_expander_set_level_handle = NULL;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
-    mock_xSemaphoreCreateMutex_should_fail = false;
-    mock_xSemaphoreCreateMutex_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-
+    mock_esp_io_expander_reset();
+    mock_xSemaphore_reset();
     rs485_control_test_reset();
 }
 
@@ -69,9 +56,7 @@ static bool find_pin_with_level(uint32_t pin_mask, uint8_t level)
 
 static void verify_rs485_term_on_off(rs485_port_t port, bool on, uint32_t expected_pin, const char *port_name)
 {
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+    mock_esp_io_expander_reset();
 
     esp_err_t result = rs485_term_on_off(port, on);
 
@@ -91,9 +76,7 @@ static void verify_rs485_term_on_off(rs485_port_t port, bool on, uint32_t expect
 
 static void verify_rs485_pupd_on_off(rs485_port_t port, bool on, uint32_t expected_pin, const char *port_name)
 {
-    mock_esp_io_expander_set_level_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+    mock_esp_io_expander_reset();
 
     esp_err_t result = rs485_pupd_on_off(port, on);
 
@@ -113,11 +96,8 @@ static void verify_rs485_pupd_on_off(rs485_port_t port, bool on, uint32_t expect
 
 static void verify_rs485_bus_vout_on_off(bool on)
 {
-    mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+    mock_xSemaphore_reset();
+    mock_esp_io_expander_reset();
 
     esp_err_t result = rs485_bus_vout_on_off(on);
 
@@ -139,11 +119,8 @@ static void verify_rs485_bus_vout_on_off(bool on)
 
 static void verify_rs485_bus_vout_set_allowed(bool allowed, uint8_t expected_level)
 {
-    mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
+    mock_xSemaphore_reset();
+    mock_esp_io_expander_reset();
 
     esp_err_t result = rs485_bus_vout_set_allowed(allowed);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed should return ESP_OK");
@@ -422,12 +399,13 @@ void test_rs485_bus_vout_on_off_mutex_not_initialized(void)
     LOG_MESSAGE();
 
     mock_xSemaphoreCreateMutex_should_fail = true;
+
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
+    mock_xSemaphore_reset();
+
     mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
 
     result = rs485_bus_vout_on_off(true);
 
@@ -482,12 +460,13 @@ void test_rs485_bus_vout_set_allowed_mutex_not_initialized(void)
     LOG_MESSAGE();
 
     mock_xSemaphoreCreateMutex_should_fail = true;
+
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
+    mock_xSemaphore_reset();
+
     mock_esp_io_expander_set_level_called = 0;
-    mock_xSemaphoreTake_called = 0;
-    mock_xSemaphoreGive_called = 0;
 
     result = rs485_bus_vout_set_allowed(true);
 

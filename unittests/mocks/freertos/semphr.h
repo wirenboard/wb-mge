@@ -13,3 +13,5 @@ extern int mock_xSemaphoreGive_called;
 SemaphoreHandle_t xSemaphoreCreateMutex(void);
 BaseType_t xSemaphoreTake(SemaphoreHandle_t xSemaphore, TickType_t xTicksToWait);
 BaseType_t xSemaphoreGive(SemaphoreHandle_t xSemaphore);
+
+void mock_xSemaphore_reset(void);

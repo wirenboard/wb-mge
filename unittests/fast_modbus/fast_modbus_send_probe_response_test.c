@@ -3,6 +3,9 @@
 
 #include "bridge/fast_modbus.h"
 #include "bridge/modbus_helpers.h"
+#include "bridge/tcp_server.h"
+
+#include "malloc.h"
 
 #include <string.h>
 
@@ -21,9 +24,6 @@ const mb_tcp_task_ctx_t test_ctx = {
     .index = 1,
     .tcp_desc = NULL
 };
-
-extern esp_err_t mock_tcp_send_result;
-extern bool malloc_should_fail;
 
 static const char *FAST_MODBUS_REQUEST_STR = "WB-FAST-MODBUS?";
 static const size_t tcp_req_data_len = 15;
