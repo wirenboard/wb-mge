@@ -270,7 +270,7 @@ void test_system_voltage_read_not_initialized(void)
     TEST_ASSERT_EQUAL_FLOAT_MESSAGE(0.0f, voltage, "Read without init should return 0.0");
 
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_adc_oneshot_read_called, "ADC read should not be called when not initialized");
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_adc_cali_raw_to_voltage_called, "Calibration conversion should be attempted");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_adc_cali_raw_to_voltage_called, "Calibration conversion should not be attempted");
 }
 
 // Тестируем чтение напряжения с ошибкой чтения ADC
