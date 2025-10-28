@@ -12,3 +12,5 @@
 #ifndef FIRMWARE_GIT_INFO
     #define FIRMWARE_GIT_INFO "TEST_GIT_INFO"
 #endif
+
+#define MAX_FUNCTION_CALLS                           20
