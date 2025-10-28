@@ -72,6 +72,13 @@ static void verify_io_bus_call(bool expected)
         expected ? "IO bus should be enabled" : "IO bus should be disabled");
 }
 
+static void verify_rs485_function_not_called(void)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_rs485_pupd_on_off_called, "rs485_pupd_on_off should not be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_rs485_term_on_off_called, "rs485_term_on_off should not be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_rs485_bus_vout_on_off_called, "rs485_bus_vout_on_off should not be called");
+}
+
 // Тестируем update_rs485_control с включенными настройками
 void test_update_rs485_control_all_enabled(void)
 {
@@ -106,6 +113,10 @@ void test_update_rs485_control_all_enabled(void)
     verify_rs485_pupd_calls(true, true);
     verify_rs485_term_calls(true, true);
     verify_rs485_vout_call(true);
+
+    // Verify mio_control_io_bus_onoff is not called
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_mio_control_io_bus_onoff_called,
+        "mio_control_io_bus_onoff should not be called");
 }
 
 // Тестируем update_rs485_control с выключенными настройками
@@ -115,31 +126,213 @@ void test_update_rs485_control_all_disabled(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - all settings disabled");
     LOG_MESSAGE();
 
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, false);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, false);
+    mock_setting_items_set_bool(KEY_485_TERM_1, false);
+    mock_setting_items_set_bool(KEY_485_TERM_2, false);
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+
     update_rs485_control();
 
     verify_rs485_pupd_calls(false, false);
     verify_rs485_term_calls(false, false);
     verify_rs485_vout_call(false);
+
+    // Verify mio_control_io_bus_onoff is not called
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_mio_control_io_bus_onoff_called,
+        "mio_control_io_bus_onoff should not be called");
 }
 
-// Тестируем update_rs485_control с разными настройками
-void test_update_rs485_control_mixed_settings(void)
+// Тестируем "бегущую единицу" - только одна настройка включена
+void test_update_rs485_control_walking_one_failsafe_1(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - mixed settings");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking one: FAIL_SAFE_1");
     LOG_MESSAGE();
 
     mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, true);
     mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, false);
     mock_setting_items_set_bool(KEY_485_TERM_1, false);
+    mock_setting_items_set_bool(KEY_485_TERM_2, false);
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(true, false);
+    verify_rs485_term_calls(false, false);
+    verify_rs485_vout_call(false);
+}
+
+void test_update_rs485_control_walking_one_failsafe_2(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking one: FAIL_SAFE_2");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, false);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, true);
+    mock_setting_items_set_bool(KEY_485_TERM_1, false);
+    mock_setting_items_set_bool(KEY_485_TERM_2, false);
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(false, true);
+    verify_rs485_term_calls(false, false);
+    verify_rs485_vout_call(false);
+}
+
+void test_update_rs485_control_walking_one_term_1(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking one: TERM_1");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, false);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, false);
+    mock_setting_items_set_bool(KEY_485_TERM_1, true);
+    mock_setting_items_set_bool(KEY_485_TERM_2, false);
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(false, false);
+    verify_rs485_term_calls(true, false);
+    verify_rs485_vout_call(false);
+}
+
+void test_update_rs485_control_walking_one_term_2(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking one: TERM_2");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, false);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, false);
+    mock_setting_items_set_bool(KEY_485_TERM_1, false);
+    mock_setting_items_set_bool(KEY_485_TERM_2, true);
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(false, false);
+    verify_rs485_term_calls(false, true);
+    verify_rs485_vout_call(false);
+}
+
+void test_update_rs485_control_walking_one_vout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking one: VOUT");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, false);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, false);
+    mock_setting_items_set_bool(KEY_485_TERM_1, false);
+    mock_setting_items_set_bool(KEY_485_TERM_2, false);
+    mock_setting_items_set_bool(KEY_485_VOUT, true);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(false, false);
+    verify_rs485_term_calls(false, false);
+    verify_rs485_vout_call(true);
+}
+
+// Тестируем "бегущий ноль" - только одна настройка выключена
+void test_update_rs485_control_walking_zero_failsafe_1(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking zero: FAIL_SAFE_1");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, false);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, true);
+    mock_setting_items_set_bool(KEY_485_TERM_1, true);
+    mock_setting_items_set_bool(KEY_485_TERM_2, true);
+    mock_setting_items_set_bool(KEY_485_VOUT, true);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(false, true);
+    verify_rs485_term_calls(true, true);
+    verify_rs485_vout_call(true);
+}
+
+void test_update_rs485_control_walking_zero_failsafe_2(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking zero: FAIL_SAFE_2");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, true);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, false);
+    mock_setting_items_set_bool(KEY_485_TERM_1, true);
     mock_setting_items_set_bool(KEY_485_TERM_2, true);
     mock_setting_items_set_bool(KEY_485_VOUT, true);
 
     update_rs485_control();
 
     verify_rs485_pupd_calls(true, false);
+    verify_rs485_term_calls(true, true);
+    verify_rs485_vout_call(true);
+}
+
+void test_update_rs485_control_walking_zero_term_1(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking zero: TERM_1");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, true);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, true);
+    mock_setting_items_set_bool(KEY_485_TERM_1, false);
+    mock_setting_items_set_bool(KEY_485_TERM_2, true);
+    mock_setting_items_set_bool(KEY_485_VOUT, true);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(true, true);
     verify_rs485_term_calls(false, true);
     verify_rs485_vout_call(true);
+}
+
+void test_update_rs485_control_walking_zero_term_2(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking zero: TERM_2");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, true);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, true);
+    mock_setting_items_set_bool(KEY_485_TERM_1, true);
+    mock_setting_items_set_bool(KEY_485_TERM_2, false);
+    mock_setting_items_set_bool(KEY_485_VOUT, true);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(true, true);
+    verify_rs485_term_calls(true, false);
+    verify_rs485_vout_call(true);
+}
+
+void test_update_rs485_control_walking_zero_vout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_control - walking zero: VOUT");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_1, true);
+    mock_setting_items_set_bool(KEY_485_FAIL_SAFE_2, true);
+    mock_setting_items_set_bool(KEY_485_TERM_1, true);
+    mock_setting_items_set_bool(KEY_485_TERM_2, true);
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+
+    update_rs485_control();
+
+    verify_rs485_pupd_calls(true, true);
+    verify_rs485_term_calls(true, true);
+    verify_rs485_vout_call(false);
 }
 
 // Тестируем update_io_bus_control с включенной IO шиной
@@ -160,6 +353,7 @@ void test_update_io_bus_control_enabled(void)
         "Read should be for KEY_IO_BUS_ENABLED");
 
     verify_io_bus_call(true);
+    verify_rs485_function_not_called();
 }
 
 // Тестируем update_io_bus_control с выключенной IO шиной
@@ -180,6 +374,7 @@ void test_update_io_bus_control_disabled(void)
         "Read should be for KEY_IO_BUS_ENABLED");
 
     verify_io_bus_call(false);
+    verify_rs485_function_not_called();
 }
 
 int main(void)
@@ -188,7 +383,19 @@ int main(void)
 
     RUN_TEST(test_update_rs485_control_all_enabled);
     RUN_TEST(test_update_rs485_control_all_disabled);
-    RUN_TEST(test_update_rs485_control_mixed_settings);
+
+    RUN_TEST(test_update_rs485_control_walking_one_failsafe_1);
+    RUN_TEST(test_update_rs485_control_walking_one_failsafe_2);
+    RUN_TEST(test_update_rs485_control_walking_one_term_1);
+    RUN_TEST(test_update_rs485_control_walking_one_term_2);
+    RUN_TEST(test_update_rs485_control_walking_one_vout);
+
+    RUN_TEST(test_update_rs485_control_walking_zero_failsafe_1);
+    RUN_TEST(test_update_rs485_control_walking_zero_failsafe_2);
+    RUN_TEST(test_update_rs485_control_walking_zero_term_1);
+    RUN_TEST(test_update_rs485_control_walking_zero_term_2);
+    RUN_TEST(test_update_rs485_control_walking_zero_vout);
+
     RUN_TEST(test_update_io_bus_control_enabled);
     RUN_TEST(test_update_io_bus_control_disabled);
 

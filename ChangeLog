@@ -1,7 +1,7 @@
-2025-10-27 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-10-28 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc23
-    * fix:      unittests for update_rs485_mio_gpio_states
+    * added:    unittests for update_rs485_mio_gpio_states
 
 2025-10-21 Victor Vedenin <victor.vedenin@wirenboard.com>
 
