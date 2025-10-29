@@ -1,5 +1,6 @@
 #include "esp_log.h"
 #include "esp_bit_defs.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "http_server.h"
 #include "bridge.h"
