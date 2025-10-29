@@ -59,6 +59,13 @@ DEFS += TARGET_PROJECT_NAME=$(TARGET)
 DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 
 #######################################
+# Copy protection
+#######################################
+
+# Use keys file from Jenkins secrets or local file for internal build
+MGE_KEYS_FILE ?= copy_protection/keys.txt
+
+#######################################
 # Release file name
 #######################################
 
@@ -111,7 +118,7 @@ prepare_release:
 	@echo 'Release firmware: $(RELEASE_DIR)/$(RELEASE_FILE_NAME)'
 
 keys_header_file:
-	@copy_protection/copy_prot_helper.py --keys copy_protection/keys.txt --swap_tables copy_protection/swap_tables.txt --out_header main/copy_protection/keys.h
+	@copy_protection/copy_prot_helper.py --keys $(MGE_KEYS_FILE) --swap_tables copy_protection/swap_tables.txt --out_header main/copy_protection/keys.h
 
 clean:
 	@echo 'Cleaning project'
