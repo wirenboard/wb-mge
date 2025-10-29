@@ -14,6 +14,13 @@ dependencies.lock
 # Generated security codes
 copy_protection/*.bin
 
+# Generated random data
+copy_protection/swap_tables.txt
+copy_protection/dummy_data.txt
+
+# Keys
+copy_protection/keys.txt
+
 # Release
 release/
 

@@ -1,5 +1,0 @@
-# HMAC-SHA-256 key's swap table (32 unique bytes, values range 00..1F)
-17 04 1B 0A 12 07 1D 0B 13 16 00 05 08 1A 0E 01 1F 11 02 0C 18 1E 19 0F 09 0D 06 14 1C 03 10 15
-
-# Security code swap table's swap table (12 unique bytes, values range 00..0B)
-09 02 0A 05 00 07 0B 04 06 01 08 03

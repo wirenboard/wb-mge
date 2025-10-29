@@ -62,8 +62,25 @@ DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 # Copy protection
 #######################################
 
+# Scripts and data directory
+COPY_PROT_DIR = copy_protection
+
+# Scripts
+COPY_PROT_HELPER_SCRIPT = ${COPY_PROT_DIR}/copy_prot_helper.py
+COPY_PROT_RANDOM_SCRIPT = ${COPY_PROT_DIR}/gen_random_data.py
+
+# Generated data files with random data
+COPY_PROT_SWAP_TABLES_FILE = ${COPY_PROT_DIR}/swap_tables.txt
+COPY_PROT_DUMMY_DATA_FILE = ${COPY_PROT_DIR}/dummy_data.txt
+
+# Keys header file to build project with
+COPY_PROT_KEYS_HEADER_FILE = main/copy_protection/keys.h
+
+# Default keys headers file co cause compilation error
+COPY_PROT_DEFAULT_KEYS_HEADER_FILE = ${COPY_PROT_DIR}/keys.h.default
+
 # Use keys file from Jenkins secrets or local file for internal build
-MGE_KEYS_FILE ?= copy_protection/keys.txt
+MGE_KEYS_FILE ?= ${COPY_PROT_DIR}/keys.txt
 
 #######################################
 # Release file name
@@ -118,7 +135,9 @@ prepare_release:
 	@echo 'Release firmware: $(RELEASE_DIR)/$(RELEASE_FILE_NAME)'
 
 keys_header_file:
-	@copy_protection/copy_prot_helper.py --keys $(MGE_KEYS_FILE) --swap_tables copy_protection/swap_tables.txt --out_header main/copy_protection/keys.h
+	@${COPY_PROT_RANDOM_SCRIPT} --swap_tables ${COPY_PROT_SWAP_TABLES_FILE} --dummy_data ${COPY_PROT_DUMMY_DATA_FILE}
+	@${COPY_PROT_HELPER_SCRIPT} --keys $(MGE_KEYS_FILE) --swap_tables ${COPY_PROT_SWAP_TABLES_FILE} \
+		--dummy_data ${COPY_PROT_DUMMY_DATA_FILE} --out_header ${COPY_PROT_KEYS_HEADER_FILE}
 
 clean:
 	@echo 'Cleaning project'
@@ -128,7 +147,10 @@ clean:
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
 	@rm -rf sdkconfig
-	@cp -f main/copy_protection/keys.h.default main/copy_protection/keys.h
+	@echo 'Cleaning protection keys and data'
+	@cp -f ${COPY_PROT_DEFAULT_KEYS_HEADER_FILE} ${COPY_PROT_KEYS_HEADER_FILE}
+	@rm -f ${COPY_PROT_SWAP_TABLES_FILE}
+	@rm -f ${COPY_PROT_DUMMY_DATA_FILE}
 	@echo 'Cleaning unittests'
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \

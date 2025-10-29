@@ -54,13 +54,15 @@ static prot_ctx_t prot_ctx = {0};
 
 #pragma pack(push, 1)
     typedef struct {
+        uint8_t dummy_1[DUMMY_DATA_LEN_1];
         uint8_t hmac_key[KEY_LEN];
-        uint8_t dummy_1[35];
+        uint8_t dummy_2[DUMMY_DATA_LEN_2];
         uint8_t hmac_key_table[KEY_LEN];
-        uint8_t dummy_2[14];
+        uint8_t dummy_3[DUMMY_DATA_LEN_3];
         uint8_t prot_code_swap[SECURITY_CODE_LEN];
-        uint8_t dummy_3[27];
+        uint8_t dummy_4[DUMMY_DATA_LEN_4];
         uint8_t prot_code_swap_table[SECURITY_CODE_LEN];
+        uint8_t dummy_5[DUMMY_DATA_LEN_5];
     } stored_keys_t;
 #pragma pack(pop)
 
@@ -70,23 +72,11 @@ static stored_keys_t stored_keys = {
     .prot_code_swap = PROT_CODE_SWAP,
     .prot_code_swap_table = PROT_CODE_SWAP_TABLE,
     // Random data
-    .dummy_1 = {
-        0x3A, 0xD1, 0x8F, 0x25, 0x4B, 0x9C, 0x7E, 0x02,
-        0x6D, 0xE8, 0x43, 0x11, 0xBA, 0x74, 0x5F, 0xC3,
-        0xA9, 0x01, 0xD6, 0x2E, 0x80, 0x47, 0xB3, 0xF9,
-        0x0C, 0x68, 0x3E, 0x95, 0xD2, 0x7B, 0x44, 0x28,
-        0xAF, 0x1D, 0x63
-    },
-    .dummy_2 = {
-        0x7E, 0x3B, 0x90, 0x45, 0x1C, 0xD8, 0x52, 0xFA,
-        0x06, 0xB7, 0xE1, 0x34, 0x8A, 0xCB
-    },
-    .dummy_3 = {
-        0xF4, 0x69, 0x22, 0xA0, 0x17, 0xCC, 0x5D, 0x83,
-        0x1B, 0x9F, 0x40, 0xE7, 0x36, 0x52, 0xAD, 0x04,
-        0xB8, 0xC1, 0x6F, 0x93, 0x28, 0xD5, 0x79, 0x03,
-        0xEE, 0x61, 0x14
-    }
+    .dummy_1 = DUMMY_DATA_ARRAY_1,
+    .dummy_2 = DUMMY_DATA_ARRAY_2,
+    .dummy_3 = DUMMY_DATA_ARRAY_3,
+    .dummy_4 = DUMMY_DATA_ARRAY_4,
+    .dummy_5 = DUMMY_DATA_ARRAY_5
 };
 
 #if DEBUG_LOG_ENABLE
