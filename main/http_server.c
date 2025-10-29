@@ -5,7 +5,7 @@
 #include "info_handlers.h"
 #include "cmd_handler.h"
 #include "ota_handler.h"
-#include "clock_output.h"
+#include "wb_test.h"
 
 #include <esp_http_server.h>
 #include <sys/param.h>

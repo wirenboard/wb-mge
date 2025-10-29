@@ -50,7 +50,7 @@ gpio_config_t gpio_clk_en_config = {
     .intr_type = GPIO_INTR_DISABLE
 };
 
-static const char* TAG = "clock_output";
+static const char* TAG = "wb_test";
 
 
 static void start_clock_out(void)
