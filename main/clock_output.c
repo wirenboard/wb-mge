@@ -67,7 +67,7 @@ static void start_clock_out(void)
 
     gpio_set_level(CLK_OUT_EN_PIN, 1);
 
-    ESP_LOGW(TAG, "100 kHz clock output enabled on RS485-1 port");
+    ESP_LOGW(TAG, "100 kHz clock output on RS485-1 port enabled");
 }
 
 
@@ -85,7 +85,7 @@ static void stop_clock_out(void)
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_EN_PIN);
 
-    ESP_LOGW(TAG, "100 kHz clock output disabled on RS485-1 port");
+    ESP_LOGW(TAG, "100 kHz clock output on RS485-1 port disabled");
 }
 
 
