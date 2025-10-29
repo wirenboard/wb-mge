@@ -155,11 +155,7 @@ void test_settings_update_bridge_ports_changed(void)
     LOG_MESSAGE();
 
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        mock_bridge_reset();
-        mock_network_reset();
-        mock_http_server_reset();
-        mock_update_rs485_mio_gpio_states_reset();
-        mock_freertos_task_reset();
+        setUp();
 
         mock_bridge_port_check_settings_changed_return_value[i] = true;
 
