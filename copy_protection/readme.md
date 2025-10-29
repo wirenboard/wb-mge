@@ -42,6 +42,9 @@ MAC-адрес должен передаваться в виде массива 
 
 ## Пример генерации кода защиты
 
+<details>
+<summary><b><u>Посмотреть пример</u></b></summary>
+
 Содержимое файла с ключами `keys.txt`:
 ```
 # HMAC-SHA-256 key (32 bytes)
@@ -70,6 +73,7 @@ EA 91 FC 2C 8C 41 E3 A8 E5 28 C6 C7 59 B5 E6 74 78 F3 24 E7 B3 32 76 63 36 77 2B
 ```
 91 2C 41 A8 28 C7 B5 74 78 24 B3 C3
 ```
+</details>
 
 
 ## Хранение ключей в прошивке
@@ -82,12 +86,44 @@ EA 91 FC 2C 8C 41 E3 A8 E5 28 C6 C7 59 B5 E6 74 78 F3 24 E7 B3 32 76 63 36 77 2B
 
 Данные массивы храняется не подряд, а с некоторыми произвольными отступами.
 
+<details>
+<summary><b><u>Реализация хранения массивов в коде</u></b></summary>
+
+``` c
+#pragma pack(push, 1)
+    typedef struct {
+        uint8_t dummy_1[DUMMY_DATA_LEN_1];
+        uint8_t hmac_key[KEY_LEN];
+        uint8_t dummy_2[DUMMY_DATA_LEN_2];
+        uint8_t hmac_key_table[KEY_LEN];
+        uint8_t dummy_3[DUMMY_DATA_LEN_3];
+        uint8_t prot_code_swap[SECURITY_CODE_LEN];
+        uint8_t dummy_4[DUMMY_DATA_LEN_4];
+        uint8_t prot_code_swap_table[SECURITY_CODE_LEN];
+        uint8_t dummy_5[DUMMY_DATA_LEN_5];
+    } stored_keys_t;
+#pragma pack(pop)
+
+static stored_keys_t stored_keys = {
+    .hmac_key = HMAC_KEY,
+    .hmac_key_table = HMAC_KEY_TABLE,
+    .prot_code_swap = PROT_CODE_SWAP,
+    .prot_code_swap_table = PROT_CODE_SWAP_TABLE,
+    // Random data
+    .dummy_1 = DUMMY_DATA_ARRAY_1,
+    .dummy_2 = DUMMY_DATA_ARRAY_2,
+    .dummy_3 = DUMMY_DATA_ARRAY_3,
+    .dummy_4 = DUMMY_DATA_ARRAY_4,
+    .dummy_5 = DUMMY_DATA_ARRAY_5
+};
+```
+</details>
 
 ## Генерация заголовочного файла с ключами
 
 При сборке проекта для генерации заголовочного файла с ключами используется этот же скрипт `copy_prot_helper.py`.
 
-На входе скрипт получает те же ключи из файла `keys.txt`, а также таблицы перестановок из файла `swap_tables.txt`.
+На входе скрипт получает те же ключи из файла `keys.txt`, а также таблицы перестановок из файла `swap_tables.txt` и произвольные данные из файла `dummy_data.txt`
 
 Файл `swap_tables.txt` должен содержать 2 строки с 16-ричными значениями, разделенными пробелами.
 
@@ -97,17 +133,24 @@ EA 91 FC 2C 8C 41 E3 A8 E5 28 C6 C7 59 B5 E6 74 78 F3 24 E7 B3 32 76 63 36 77 2B
 
 В файле таблиц перестановок `swap_tables.txt` допускаются пустые строки и комментарии, начинающиеся с символа `#` в начале строки.
 
+Файл `dummy_data.txt` должен содержать 5 массивов с произвольными данным.
+
+В нечетной строке указывается размер очередного массива в десятичной системе, а далее в четной строке содержатся данные этого массива в виде 16-ричных значений, разделенных пробелами.
+
 Пример использования:
 
 ``` bash
 cd copy_protection
-./copy_prot_helper.py --keys keys.txt --swap_tables swap_tables.txt --out_header ../main/copy_protection/keys.h
+./copy_prot_helper.py --keys keys.txt --swap_tables swap_tables.txt --dummy_data dummy_data.txt --out_header ../main/copy_protection/keys.h
 ```
 
 В результате работы скрипта `copy_prot_helper.py` генерируется заголовочный файл `keys.h`, используемый при сборке проекта.
 
 
 ## Пример генерации заголовочного файла с ключами
+
+<details>
+<summary><b><u>Посмотреть пример</u></b></summary>
 
 Используем тот же файл с ключами `keys.txt`:
 ```
@@ -127,6 +170,42 @@ cd copy_protection
 01 03 05 07 09 0B 00 02 04 06 08 0A
 ```
 
+Содержимое файла с произвольными данными `dummy_data.txt`:
+
+  <details>
+  <summary><b><u>Посмотреть содержимое</u></b></summary>
+
+  ```
+  # Dummy array #1 size (decimal)
+  57
+  # Dummy array #1 data (hex)
+  33 CE 6B 79 B6 73 15 42 25 EF A8 23 01 0D BC 6D 5B B2 17 9C B9 A4 04 E1 76 C2 7A 2B E7 0E 3A 91 F8 29 A9 A5 E5 C1 CC 4F 83 8E 9A 7C 50 61 47 71 0B DB 87 3B 44 70 E0 82 6A
+
+  # Dummy array #2 size (decimal)
+  38
+  # Dummy array #2 data (hex)
+  84 53 CC 82 17 C8 0C C7 91 0F 4F 45 2C 37 06 1E 23 AC BB A1 4A A0 96 DE 38 CE 57 95 79 E2 48 A2 67 87 A9 CA 1A F2
+
+  # Dummy array #3 size (decimal)
+  58
+  # Dummy array #3 data (hex)
+  DF 81 AD D5 CF CB DD 3F FA 78 46 21 31 A7 28 84 F8 E4 49 B5 96 9D BA FD 12 05 6F C2 47 5F E7 17 43 2D B3 A5 3C E0 B4 74 B1 85 65 C0 2A 6A 7E 48 3E 8C 0B 07 45 DE 27 F3 8F D1
+
+  # Dummy array #4 size (decimal)
+  26
+  # Dummy array #4 data (hex)
+  01 CF 6D 3B 08 BB 23 81 9A 1D 46 19 FE 05 34 1F 94 F1 36 39 BF C8 4C 37 28 77
+
+  # Dummy array #5 size (decimal)
+  56
+  # Dummy array #5 data (hex)
+  C2 95 A8 E3 F9 79 49 EC 00 A5 74 39 8A D0 7E 04 26 4D 4A EE F6 59 43 5D D4 03 FA 72 B1 98 41 3D 06 88 F3 50 9E C8 0E 17 48 5A CA 18 81 6C 21 33 8D 56 B5 1F 63 7F 89 44
+  ```
+
+  </details>
+
+Последовательность действий:
+
 1) Формируем массив байтов ключа с учетом перестановки байтов (`HMAC_KEY`).
 
 Согласно таблице перестановок, в результирующем массиве сначала идут байты с номерами 00, 02, ..., 1E, а затем байты с номерами 01, 03, ..., 1F.
@@ -143,15 +222,16 @@ cd copy_protection
 03 07 0B 0F 12 1F 01 05 09 0D 10 14
 ```
 
-3) Формируем заголовочный файл `keys.h` с ключами и таблицами перестановок.
+3) Формируем заголовочный файл `keys.h` с ключами и таблицами перестановок, а также с добавлением случайных данных из файла `dummy_data.txt`.
 
-В файл помещаются:
+В заголовочный файл помещаются:
 - Ключ шифрования с учетом перестановки байтов (`HMAC_KEY`)
 - Таблица перестановок байтов в ключе шифрования (`HMAC_KEY_TABLE`, в том же виде, что и в `swap_tabes.txt`)
 - Таблица перестановок для получения защитного кода с учетом перестановки байтов (`PROT_CODE_SWAP`)
 - Таблица перестановок байтов, используемая при формировании `PROT_CODE_SWAP` (`PROT_CODE_SWAP_TABLE`, в том же виде, что и в `swap_tabes.txt`)
+- Массивы со случайными данными и их размеры (`DUMMY_DATA_ARRAY_x` и `DUMMY_DATA_LEN_x`, в том же виде, что и в `dummy_data.txt`)
 
-В итоге получаем заголовочный файл, содержащий следующие массивы:
+В итоге получаем заголовочный файл, содержащий следующие массивы и константы:
 ``` c
 #define HMAC_KEY                {0x20, 0x22, 0x24, 0x26, 0x28, 0x2A, 0x2C, 0x2E, 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A, 0x3C, 0x3E, \
                                  0x21, 0x23, 0x25, 0x27, 0x29, 0x2B, 0x2D, 0x2F, 0x31, 0x33, 0x35, 0x37, 0x39, 0x3B, 0x3D, 0x3F}
@@ -160,7 +240,39 @@ cd copy_protection
 
 #define PROT_CODE_SWAP          {0x03, 0x07, 0x0B, 0x0F, 0x12, 0x1F, 0x01, 0x05, 0x09, 0x0D, 0x10, 0x14}
 #define PROT_CODE_SWAP_TABLE    {0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x00, 0x02, 0x04, 0x06, 0x08, 0x0A}
+
+#define DUMMY_DATA_LEN_1        57
+#define DUMMY_DATA_ARRAY_1      {0x33, 0xCE, 0x6B, 0x79, 0xB6, 0x73, 0x15, 0x42, 0x25, 0xEF, 0xA8, 0x23, 0x01, 0x0D, 0xBC, 0x6D, 0x5B, 0xB2, 0x17, 0x9C, 0xB9, 0xA4, 0x04, 0xE1, 0x76, 0xC2, 0x7A, 0x2B, 0xE7, 0x0E, 0x3A, 0x91, 0xF8, 0x29, 0xA9, 0xA5, 0xE5, 0xC1, 0xCC, 0x4F, 0x83, 0x8E, 0x9A, 0x7C, 0x50, 0x61, 0x47, 0x71, 0x0B, 0xDB, 0x87, 0x3B, 0x44, 0x70, 0xE0, 0x82, 0x6A}
+
+#define DUMMY_DATA_LEN_2        38
+#define DUMMY_DATA_ARRAY_2      {0x84, 0x53, 0xCC, 0x82, 0x17, 0xC8, 0x0C, 0xC7, 0x91, 0x0F, 0x4F, 0x45, 0x2C, 0x37, 0x06, 0x1E, 0x23, 0xAC, 0xBB, 0xA1, 0x4A, 0xA0, 0x96, 0xDE, 0x38, 0xCE, 0x57, 0x95, 0x79, 0xE2, 0x48, 0xA2, 0x67, 0x87, 0xA9, 0xCA, 0x1A, 0xF2}
+
+#define DUMMY_DATA_LEN_3        58
+#define DUMMY_DATA_ARRAY_3      {0xDF, 0x81, 0xAD, 0xD5, 0xCF, 0xCB, 0xDD, 0x3F, 0xFA, 0x78, 0x46, 0x21, 0x31, 0xA7, 0x28, 0x84, 0xF8, 0xE4, 0x49, 0xB5, 0x96, 0x9D, 0xBA, 0xFD, 0x12, 0x05, 0x6F, 0xC2, 0x47, 0x5F, 0xE7, 0x17, 0x43, 0x2D, 0xB3, 0xA5, 0x3C, 0xE0, 0xB4, 0x74, 0xB1, 0x85, 0x65, 0xC0, 0x2A, 0x6A, 0x7E, 0x48, 0x3E, 0x8C, 0x0B, 0x07, 0x45, 0xDE, 0x27, 0xF3, 0x8F, 0xD1}
+
+#define DUMMY_DATA_LEN_4        26
+#define DUMMY_DATA_ARRAY_4      {0x01, 0xCF, 0x6D, 0x3B, 0x08, 0xBB, 0x23, 0x81, 0x9A, 0x1D, 0x46, 0x19, 0xFE, 0x05, 0x34, 0x1F, 0x94, 0xF1, 0x36, 0x39, 0xBF, 0xC8, 0x4C, 0x37, 0x28, 0x77}
+
+#define DUMMY_DATA_LEN_5        56
+#define DUMMY_DATA_ARRAY_5      {0xC2, 0x95, 0xA8, 0xE3, 0xF9, 0x79, 0x49, 0xEC, 0x00, 0xA5, 0x74, 0x39, 0x8A, 0xD0, 0x7E, 0x04, 0x26, 0x4D, 0x4A, 0xEE, 0xF6, 0x59, 0x43, 0x5D, 0xD4, 0x03, 0xFA, 0x72, 0xB1, 0x98, 0x41, 0x3D, 0x06, 0x88, 0xF3, 0x50, 0x9E, 0xC8, 0x0E, 0x17, 0x48, 0x5A, 0xCA, 0x18, 0x81, 0x6C, 0x21, 0x33, 0x8D, 0x56, 0xB5, 0x1F, 0x63, 0x7F, 0x89, 0x44}
+
 ```
+</details>
+
+## Генерация таблиц перестановок и случайных данных
+
+Для генерации таблиц перестановок `swap_tables.txt` и массивов со случайными данными `dummy_data.txt` при сборке проекта используется скрипт `gen_random_data.py`.
+
+Скрипт автоматически генерирует случайные данные с учетом требований, предъявляемых к данным (размеры массивов, диапазон значений и уникальность, указанные выше)
+
+Пример использования:
+
+``` bash
+cd copy_protection
+./gen_random_data.py --swap_tables swap_tables.txt --dummy_data dummy_data.txt
+```
+
+Использование данного скрипта при каждой сбоорке увеличивает степень защиты от копирования, усложнаяя поиск значений ключей и таблиц перестановок в бинарном файле скомпилированной прошивки.
 
 
 ## Логика проверки валидности устройства
