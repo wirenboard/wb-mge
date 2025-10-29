@@ -41,12 +41,12 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 #
 # Only for debug purposes, must be disabled in production!
 #
-CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
-CONFIG_LOG_MAXIMUM_LEVEL=4
+# CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+# CONFIG_LOG_MAXIMUM_LEVEL=4
 
 #
 # eFuse Bit Manager
 #
 # Only for debug purposes, must be disabled in production!
 #
-CONFIG_EFUSE_VIRTUAL=y
+# CONFIG_EFUSE_VIRTUAL=y
