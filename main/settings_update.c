@@ -1,7 +1,10 @@
 #include <stdbool.h>
+#include <stdint.h>
+
 #include "esp_log.h"
 #include "esp_bit_defs.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "http_server.h"
 #include "bridge.h"
 #include "network.h"
@@ -27,7 +30,7 @@ static TaskHandle_t update_task_handle = NULL;
 
 static void settings_update_task(void *arg)
 {
-    uint32_t flags = (uint32_t)arg;
+    uint32_t flags = (uint32_t)(uintptr_t)arg;
     ESP_LOGI(TAG, "Updating settings...");
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -114,9 +117,16 @@ void settings_update(void)
     if (flags) {
         ESP_LOGI(TAG, "Some settings were changed, starting settings update task");
         BaseType_t ret = xTaskCreate(settings_update_task, "settings_update_task", SETTINGS_UPDATE_TASK_STACK_SIZE,
-                                    (void*)flags, SETTINGS_UPDATE_TASK_PRIORITY, &update_task_handle);
+                                    (void*)(uintptr_t)flags, SETTINGS_UPDATE_TASK_PRIORITY, &update_task_handle);
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Unable to create settings update task");
         }
     }
 }
+
+#ifdef __unittest_env__
+    void settings_update_reset(void)
+    {
+        update_task_handle = NULL;
+    }
+#endif

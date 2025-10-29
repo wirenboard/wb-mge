@@ -1,0 +1,31 @@
+#pragma once
+
+#include <esp_err.h>
+#include <stdbool.h>
+
+extern int mock_network_update_mdns_settings_called;
+extern esp_err_t mock_network_update_mdns_settings_return_value;
+
+extern int mock_network_check_mdns_settings_changed_called;
+extern bool mock_network_check_mdns_settings_changed_return_value;
+
+extern int mock_network_update_eth_settings_called;
+extern esp_err_t mock_network_update_eth_settings_return_value;
+
+extern int mock_network_check_eth_settings_changed_called;
+extern bool mock_network_check_eth_settings_changed_return_value;
+
+extern int mock_network_update_wifi_settings_called;
+extern esp_err_t mock_network_update_wifi_settings_return_value;
+
+extern int mock_network_check_wifi_settings_changed_called;
+extern bool mock_network_check_wifi_settings_changed_return_value;
+
+void mock_network_reset(void);
+
+esp_err_t network_update_mdns_settings(void);
+bool network_check_mdns_settings_changed(void);
+esp_err_t network_update_eth_settings(void);
+bool network_check_eth_settings_changed(void);
+esp_err_t network_update_wifi_settings(void);
+bool network_check_wifi_settings_changed(void);
