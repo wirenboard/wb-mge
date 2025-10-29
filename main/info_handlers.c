@@ -246,20 +246,24 @@ static esp_err_t info_build_wb_status_json(cJSON **wb_status_json)
         return ESP_FAIL;
     }
 
-    copy_protection_state_t prot_state = copy_protection_get_state();
-    const char* prot_state_str;
-    switch (prot_state) {
-        case COPY_PROT_STATE_OK:
-            prot_state_str = "ok";
-            break;
-        case COPY_PROT_STATE_FAIL:
-            prot_state_str = "fail";
-            break;
-        default:
-        case COPY_PROT_STATE_UNKNOWN:
-            prot_state_str = "unknown";
-            break;
-    }
+    #if (!QEMU_BUILD)
+        copy_protection_state_t prot_state = copy_protection_get_state();
+        const char* prot_state_str;
+        switch (prot_state) {
+            case COPY_PROT_STATE_OK:
+                prot_state_str = "ok";
+                break;
+            case COPY_PROT_STATE_FAIL:
+                prot_state_str = "fail";
+                break;
+            default:
+            case COPY_PROT_STATE_UNKNOWN:
+                prot_state_str = "unknown";
+                break;
+        }
+    #else
+        const char* prot_state_str = "unknown";
+    #endif
 
     cJSON_AddStringToObject(*wb_status_json, "fw_status", prot_state_str);
 
