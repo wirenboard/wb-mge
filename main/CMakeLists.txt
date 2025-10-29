@@ -27,7 +27,8 @@ set(COMPONENT_SRCS "main.c"
                    "wb_app_desc/wb_app_desc.c"
                    "settings_update.c"
                    "settings_save_timer.c"
-                   "debug_log.c")
+                   "debug_log.c"
+                   "clock_output.c")
 
 # Conditionally add files based on build type
 if(CONFIG_ETH_USE_OPENETH)
