@@ -1,5 +1,10 @@
 2025-10-28 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
+    * version:  1.0.0-rc24
+    * added:    unittests for system_voltage
+
+2025-10-28 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
     * version:  1.0.0-rc23
     * added:    unittests for update_rs485_mio_gpio_states
 
