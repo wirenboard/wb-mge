@@ -21,7 +21,7 @@ void rs485_control_test_reset(void);
 void setUp(void)
 {
     mock_esp_io_expander_reset();
-    mock_xSemaphore_reset();
+    mock_freertos_semaphore_reset();
     rs485_control_test_reset();
 }
 
@@ -54,6 +54,27 @@ static bool find_pin_with_level(uint32_t pin_mask, uint8_t level)
     return false;
 }
 
+static void verify_semaphore_take_give(void)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
+        "xSemaphoreTake should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        MOCK_SEMAPHORE_HANDLE_T,
+        mock_xSemaphoreTake_Handle,
+        "xSemaphoreTake should be called with the correct semaphore handle"
+    );
+    TEST_ASSERT_EQUAL_INT_MESSAGE(portMAX_DELAY, mock_xSemaphoreTake_xTicksToWait,
+        "xSemaphoreTake should be called with portMAX_DELAY");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
+        "xSemaphoreGive should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        MOCK_SEMAPHORE_HANDLE_T,
+        mock_xSemaphoreGive_Handle,
+        "xSemaphoreGive should be called with the correct semaphore handle"
+    );
+}
+
 static void verify_rs485_term_on_off(rs485_port_t port, bool on, uint32_t expected_pin, const char *port_name)
 {
     mock_esp_io_expander_reset();
@@ -66,7 +87,6 @@ static void verify_rs485_term_on_off(rs485_port_t port, bool on, uint32_t expect
     );
 
     char msg[128];
-
     snprintf(msg, sizeof(msg), "%s should be set", port_name);
     TEST_ASSERT_EQUAL_HEX32_MESSAGE(expected_pin, mock_esp_io_expander_set_level_pin_masks[0], msg);
 
@@ -86,7 +106,6 @@ static void verify_rs485_pupd_on_off(rs485_port_t port, bool on, uint32_t expect
     );
 
     char msg[128];
-
     snprintf(msg, sizeof(msg), "%s should be set", port_name);
     TEST_ASSERT_EQUAL_HEX32_MESSAGE(expected_pin, mock_esp_io_expander_set_level_pin_masks[0], msg);
 
@@ -96,17 +115,15 @@ static void verify_rs485_pupd_on_off(rs485_port_t port, bool on, uint32_t expect
 
 static void verify_rs485_bus_vout_on_off(bool on)
 {
-    mock_xSemaphore_reset();
+    mock_freertos_semaphore_reset();
     mock_esp_io_expander_reset();
 
     esp_err_t result = rs485_bus_vout_on_off(on);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off should return ESP_OK");
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
+    verify_semaphore_take_give();
+
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
         "esp_io_expander_set_level should be called once");
     TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
@@ -117,18 +134,28 @@ static void verify_rs485_bus_vout_on_off(bool on)
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(on ? 1 : 0, mock_esp_io_expander_set_level_levels[0], msg);
 }
 
+static void verify_rs485_bus_vout_failed(esp_err_t result)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result,
+        "rs485_bus_vout_* should return ESP_FAIL when not initialized");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
+        "esp_io_expander_set_level should not be called when not initialized");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called,
+        "xSemaphoreTake should not be called when not initialized");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called,
+        "xSemaphoreGive should not be called when not initialized");
+}
+
 static void verify_rs485_bus_vout_set_allowed(bool allowed, uint8_t expected_level)
 {
-    mock_xSemaphore_reset();
+    mock_freertos_semaphore_reset();
     mock_esp_io_expander_reset();
 
     esp_err_t result = rs485_bus_vout_set_allowed(allowed);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed should return ESP_OK");
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
+    verify_semaphore_take_give();
+
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
         "esp_io_expander_set_level should be called once");
     TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
@@ -211,10 +238,8 @@ void test_rs485_control_init_null_handle(void)
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreCreateMutex_called,
         "xSemaphoreCreateMutex should not be called with NULL handle");
-
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_dir_called,
         "esp_io_expander_set_dir should not be called with NULL handle");
-
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
         "esp_io_expander_set_level should not be called with NULL handle");
 }
@@ -255,7 +280,7 @@ void test_rs485_control_init_mutex_creation_failure(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init - mutex creation failure");
     LOG_MESSAGE();
 
-    mock_xSemaphoreCreateMutex_should_fail = true;
+    mock_xSemaphoreCreateMutex_return_value = NULL;
 
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK even if mutex creation fails");
@@ -380,15 +405,7 @@ void test_rs485_bus_vout_on_off_handler_not_initialized(void)
     LOG_MESSAGE();
 
     esp_err_t result = rs485_bus_vout_on_off(true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result,
-        "rs485_bus_vout_on_off should return ESP_FAIL when not initialized");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should not be called when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should not be called when not initialized");
+    verify_rs485_bus_vout_failed(result);
 }
 
 // Тестируем rs485_bus_vout_on_off - неинициализированный мьютекс
@@ -398,25 +415,17 @@ void test_rs485_bus_vout_on_off_mutex_not_initialized(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_on_off - mutex not initialized");
     LOG_MESSAGE();
 
-    mock_xSemaphoreCreateMutex_should_fail = true;
+    mock_xSemaphoreCreateMutex_return_value = NULL;
 
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
-    mock_xSemaphore_reset();
+    mock_freertos_semaphore_reset();
 
     mock_esp_io_expander_set_level_called = 0;
 
     result = rs485_bus_vout_on_off(true);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result,
-        "rs485_bus_vout_on_off should return ESP_FAIL when mutex is NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called when mutex is NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should not be called when mutex is NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should not be called when mutex is NULL");
+    verify_rs485_bus_vout_failed(result);
 }
 
 // Тестируем rs485_bus_vout_on_off - включить и выключить
@@ -441,15 +450,7 @@ void test_rs485_bus_vout_set_allowed_handler_not_initialized(void)
     LOG_MESSAGE();
 
     esp_err_t result = rs485_bus_vout_set_allowed(true);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result,
-        "rs485_bus_vout_set_allowed should return ESP_FAIL when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should not be called when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should not be called when not initialized");
+    verify_rs485_bus_vout_failed(result);
 }
 
 // Тестируем rs485_bus_vout_set_allowed - неинициализированный мьютекс
@@ -459,25 +460,17 @@ void test_rs485_bus_vout_set_allowed_mutex_not_initialized(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_set_allowed - mutex not initialized");
     LOG_MESSAGE();
 
-    mock_xSemaphoreCreateMutex_should_fail = true;
+    mock_xSemaphoreCreateMutex_return_value = NULL;
 
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
-    mock_xSemaphore_reset();
+    mock_freertos_semaphore_reset();
 
     mock_esp_io_expander_set_level_called = 0;
 
     result = rs485_bus_vout_set_allowed(true);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result,
-        "rs485_bus_vout_set_allowed should return ESP_FAIL when mutex is NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called when mutex is NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should not be called when mutex is NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should not be called when mutex is NULL");
+    verify_rs485_bus_vout_failed(result);
 }
 
 // Тестируем rs485_bus_vout_set_allowed - различные комбинации allowed и enabled

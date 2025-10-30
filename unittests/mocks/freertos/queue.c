@@ -19,6 +19,7 @@ QueueHandle_t g_queue_spaces_handle = NULL;
 
 int g_queue_send_call_count = 0;
 QueueHandle_t g_queue_send_handle = NULL;
+TickType_t g_queue_send_ticks = 0;
 BaseType_t g_queue_send_return_value = pdPASS;
 
 int g_queue_messages_waiting_call_count = 0;
@@ -120,9 +121,9 @@ UBaseType_t uxQueueSpacesAvailable(const QueueHandle_t xQueue)
 
 BaseType_t xQueueSend(QueueHandle_t xQueue, const void *const pvItemToQueue, TickType_t xTicksToWait)
 {
-    (void)xTicksToWait;
     g_queue_send_call_count++;
     g_queue_send_handle = xQueue;
+    g_queue_send_ticks = xTicksToWait;
 
     if (g_queue_send_return_value != pdPASS) {
         return g_queue_send_return_value;
@@ -176,6 +177,7 @@ void mock_freertos_queue_reset(void)
     g_queue_spaces_handle = NULL;
     g_queue_send_call_count = 0;
     g_queue_send_handle = NULL;
+    g_queue_send_ticks = 0;
     g_queue_send_return_value = pdPASS;
     g_queue_messages_waiting_call_count = 0;
     g_queue_messages_waiting_handle = NULL;

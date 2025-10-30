@@ -29,6 +29,7 @@ extern QueueHandle_t g_queue_spaces_handle;
 
 extern int g_queue_send_call_count;
 extern QueueHandle_t g_queue_send_handle;
+extern TickType_t g_queue_send_ticks;
 extern BaseType_t g_queue_send_return_value;
 
 extern int g_queue_messages_waiting_call_count;

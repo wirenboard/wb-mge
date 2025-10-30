@@ -13,8 +13,8 @@ BaseType_t mock_xTaskCreate_return_value = pdPASS;
 int mock_vTaskDelete_called = 0;
 TaskHandle_t mock_vTaskDelete_xTaskToDelete = NULL;
 
-TickType_t mock_vTaskDelay_xTicksToDelay = 0;
 int mock_vTaskDelay_called = 0;
+TickType_t mock_vTaskDelay_xTicksToDelay = 0;
 
 BaseType_t xTaskCreate(TaskFunction_t pvTaskCode,
                        const char * const pcName,
@@ -48,9 +48,6 @@ void vTaskDelete(TaskHandle_t xTaskToDelete)
 
 void vTaskDelay(const TickType_t xTicksToDelay)
 {
-    for (TickType_t i = 0; i < xTicksToDelay; i++) {
-        // Simulate delay tick by tick
-    }
     mock_vTaskDelay_called++;
     mock_vTaskDelay_xTicksToDelay = xTicksToDelay;
 }

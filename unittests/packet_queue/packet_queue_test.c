@@ -166,6 +166,10 @@ void test_packet_queue_count(void)
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(g_test_handle), "Empty queue should have count 0");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_messages_waiting_call_count, "uxQueueMessagesWaiting should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        g_test_handle, g_queue_messages_waiting_handle,
+        "g_queue_messages_waiting_handle should point to the correct queue"
+    );
 
     const uint8_t test_data[] = {0x01, 0x02, 0x03};
 
