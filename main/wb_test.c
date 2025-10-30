@@ -172,7 +172,7 @@ esp_err_t wb_test_post_handler(httpd_req_t *req)
     if (res != ESP_OK) {
         json_utils_cleanup(request_json, NULL);
         if (res == ESP_ERR_NOT_FOUND) {
-            return json_utils_send_error(req, "Command field not found");
+            return json_utils_send_error(req, "Field 'clock_out' not found in request");
         } else if (res == ESP_ERR_INVALID_ARG) {
             return json_utils_send_error(req, "Incorrect command field value");
         } else {

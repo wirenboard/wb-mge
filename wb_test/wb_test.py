@@ -39,7 +39,7 @@ def authorize(ip, port, login, passwd):
         if value is None:
             print("Field 'auth' is not found in the authorization response", file=sys.stderr)
             sys.exit(1)
-        if value != True:
+        if value is not True:
             print("Authorization rejected", file=sys.stderr)
             sys.exit(1)
 
@@ -54,7 +54,7 @@ def authorize(ip, port, login, passwd):
         sys.exit(1)
 
     except requests.exceptions.RequestException as e:
-        print(f"Exception occured: {e}", file=sys.stderr)
+        print(f"Exception occurred: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -87,7 +87,7 @@ def get_status(ip, port, session_id):
         sys.exit(1)
 
     except requests.exceptions.RequestException as e:
-        print(f"Exception occured: {e}", file=sys.stderr)
+        print(f"Exception occurred: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -126,7 +126,7 @@ def set_clock_out(ip, port, session_id, enabled):
         sys.exit(1)
 
     except requests.exceptions.RequestException as e:
-        print(f"Exception occured: {e}", file=sys.stderr)
+        print(f"Exception occurred: {e}", file=sys.stderr)
         sys.exit(1)
 
 
