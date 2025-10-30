@@ -53,6 +53,8 @@ typedef struct {
     serial_desc_t* serial_desc;
     tcp_desc_t* tcp_desc;
     bool initialized;
+    bool disabled;
+    bool init_request;
 } bridge_ctx_t;
 
 static bridge_config_t bridge_current_cfg[BRIDGES_COUNT] = {0};
@@ -68,6 +70,32 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
         return 0;
     }
     return bridge_ctx[server_num].tcp_desc->active_connections;
+}
+
+void bridge_disable_port(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        return;
+    }
+    bridge_ctx[index].disabled = true;
+
+    if (bridge_ctx[index].initialized) {
+        bridge_ctx[index].init_request = true;
+        bridge_port_deinit(index);
+    }
+}
+
+void bridge_enable_port(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        return;
+    }
+    bridge_ctx[index].disabled = false;
+
+    if (bridge_ctx[index].init_request && !bridge_ctx[index].initialized) {
+        bridge_ctx[index].init_request = false;
+        bridge_port_init(index);
+    }
 }
 
 static bridge_mode_t string_to_bridge_mode(const char *str) {
@@ -191,6 +219,11 @@ esp_err_t bridge_port_init(unsigned index)
     if (bridge_ctx[index].initialized) {
         ESP_LOGW(TAG, "Port %u already initialized", index + 1);
         return ESP_ERR_NOT_ALLOWED;
+    }
+    if (bridge_ctx[index].disabled) {
+        ESP_LOGW(TAG, "Port %u is disabled", index + 1);
+        bridge_ctx[index].init_request = true;
+        return ESP_OK;
     }
 
     ESP_LOGD(TAG, "Port[%u]: Initializing...", index + 1);
