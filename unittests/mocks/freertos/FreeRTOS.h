@@ -8,7 +8,7 @@
 #define pdPASS                                   ( pdTRUE )
 #define pdFAIL                                   ( pdFALSE )
 
-#define portMAX_DELAY                            ( TickType_t ) 0xffff
+#define portMAX_DELAY                            ( TickType_t ) 0xffffffffUL
 
 typedef uint32_t TickType_t;
 

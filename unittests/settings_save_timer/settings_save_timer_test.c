@@ -25,6 +25,11 @@ void tearDown(void)
 
 }
 
+static void execute_timer_callback()
+{
+    mock_xTimerCreate_pxCallbackFunction(mock_xTimerCreate_return_value);
+}
+
 static void verify_event_group_ready_flag_set(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupSetBits_called, "xEventGroupSetBits should be called once");
@@ -39,7 +44,7 @@ static void verify_event_group_ready_flag_set(void)
 static void verify_timer_created(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTimerCreate_called, "xTimerCreate should be called once");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("settings_save_timer", mock_xTimerCreate_pcTimerName, "Timer name should not be NULL");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("settings_save_timer", mock_xTimerCreate_pcTimerName, "Timer name should be 'settings_save_timer'");
     TEST_ASSERT_EQUAL_MESSAGE(
         pdMS_TO_TICKS(SETTING_SAVE_TIMER_INTERVAL_MS),
         mock_xTimerCreate_xTimerPeriod,
@@ -177,7 +182,7 @@ void test_settings_save_timer_wait_ready_flag_set(void)
         "Wait timeout should be correct"
     );
 
-    // Проверяем запуск таймера с последующим запуском колбэка
+    execute_timer_callback();
     verify_timer_and_callback();
 }
 
@@ -197,7 +202,7 @@ void test_settings_save_timer_wait_timeout(void)
     TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_TIMEOUT, result, "Wait should timeout");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupWaitBits_called, "xEventGroupWaitBits should be called once");
 
-    // Проверяем запуск таймера с последующим запуском колбэка
+    execute_timer_callback();
     verify_timer_and_callback();
 }
 
@@ -223,6 +228,25 @@ void test_settings_save_timer_wait_without_init(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTimerStart_called, "xTimerStart should not be called");
 }
 
+// Тестируем timer_callback с event_group == NULL
+void test_settings_save_timer_callback_with_null_event_group(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test timer_callback - with NULL event_group");
+    LOG_MESSAGE();
+
+    esp_err_t init_result = settings_save_timer_auto_init();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, init_result, "Initialization should succeed");
+    TEST_ASSERT_NOT_NULL_MESSAGE(mock_xTimerCreate_pxCallbackFunction, "Callback should not be NULL");
+
+    settings_save_timer_reset();
+
+    execute_timer_callback();
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupSetBits_called,
+        "xEventGroupSetBits should be called once when event_group is NULL");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -234,6 +258,7 @@ int main(void)
     RUN_TEST(test_settings_save_timer_wait_ready_flag_set);
     RUN_TEST(test_settings_save_timer_wait_timeout);
     RUN_TEST(test_settings_save_timer_wait_without_init);
+    RUN_TEST(test_settings_save_timer_callback_with_null_event_group);
 
     return UNITY_END();
 }
