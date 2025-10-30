@@ -308,7 +308,15 @@ void test_settings_update_task_already_running(void)
     mock_http_server_check_settings_changed_return_value = true;
 
     settings_update();
+
+    verify_settings_update_checks();
+    verify_task_created();
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_called, "vTaskDelay should not be called");
+
+    mock_http_server_check_settings_changed_return_value = false;
+
     settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(3, mock_vTaskDelay_called, "vTaskDelay should be called 3 times");
 }
 
 int main(void)
