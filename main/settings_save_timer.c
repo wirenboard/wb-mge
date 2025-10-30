@@ -1,5 +1,10 @@
 #include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
+#include "freertos/timers.h"
+#include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_bit_defs.h"
+#include "esp_err.h"
 
 
 #define SETTING_SAVE_TIMER_INTERVAL_MS          1000    // Минимальный интервал между сохранением настроек
@@ -67,3 +72,11 @@ esp_err_t settings_save_timer_wait(void)
     xTimerStart(timer, 0);
     return result;
 }
+
+#ifdef __unittest_env__
+    void settings_save_timer_reset(void)
+    {
+        event_group = NULL;
+        timer = NULL;
+    }
+#endif
