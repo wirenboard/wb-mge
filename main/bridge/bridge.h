@@ -27,3 +27,6 @@ esp_err_t bridge_port_deinit(unsigned index);
 bool bridge_port_check_settings_changed(unsigned index);
 
 int tcp_server_active_connections(tcp_server_num_t server_num);
+
+void bridge_disable_port(unsigned index);
+void bridge_enable_port(unsigned index);

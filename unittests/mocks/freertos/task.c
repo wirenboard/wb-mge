@@ -1,13 +1,16 @@
 #include "task.h"
 #include <stddef.h>
 
+#define MOCK_TASK_HANDLE                ((TaskHandle_t)0xCCCCCCCC)
+#define CONFIG_FREERTOS_HZ              500
+
 int mock_xTaskCreate_called = 0;
 TaskFunction_t mock_xTaskCreate_pvTaskCode = NULL;
 const char *mock_xTaskCreate_pcName = NULL;
 uint32_t mock_xTaskCreate_usStackDepth = 0;
 void *mock_xTaskCreate_pvParameters = NULL;
 UBaseType_t mock_xTaskCreate_uxPriority = 0;
-TaskHandle_t mock_xTaskCreate_pxCreatedTask = NULL;
+TaskHandle_t *mock_xTaskCreate_pxCreatedTask = NULL;
 BaseType_t mock_xTaskCreate_return_value = pdPASS;
 
 int mock_vTaskDelete_called = 0;
@@ -15,6 +18,7 @@ TaskHandle_t mock_vTaskDelete_xTaskToDelete = NULL;
 
 TickType_t mock_vTaskDelay_xTicksToDelay = 0;
 int mock_vTaskDelay_called = 0;
+int mock_vTaskDelay_counter = 0;
 
 BaseType_t xTaskCreate(TaskFunction_t pvTaskCode,
                        const char * const pcName,
@@ -28,14 +32,13 @@ BaseType_t xTaskCreate(TaskFunction_t pvTaskCode,
     mock_xTaskCreate_usStackDepth = usStackDepth;
     mock_xTaskCreate_pvParameters = pvParameters;
     mock_xTaskCreate_uxPriority = uxPriority;
+    mock_xTaskCreate_pxCreatedTask = pxCreatedTask;
+
+    if (pxCreatedTask) {
+        *pxCreatedTask = MOCK_TASK_HANDLE;
+    }
 
     mock_xTaskCreate_called++;
-
-    if (mock_xTaskCreate_return_value == pdPASS && pxCreatedTask != NULL) {
-        *pxCreatedTask = MOCK_TASK_HANDLE_T;
-        mock_xTaskCreate_pxCreatedTask = *pxCreatedTask;
-        pvTaskCode(pvParameters);
-    }
 
     return mock_xTaskCreate_return_value;
 }
@@ -48,16 +51,18 @@ void vTaskDelete(TaskHandle_t xTaskToDelete)
 
 void vTaskDelay(const TickType_t xTicksToDelay)
 {
-    for (TickType_t i = 0; i < xTicksToDelay; i++) {
-        // Simulate delay tick by tick
-    }
     mock_vTaskDelay_called++;
     mock_vTaskDelay_xTicksToDelay = xTicksToDelay;
+    mock_vTaskDelay_counter++;
+
+    if (mock_vTaskDelay_counter >= 3) {
+        *mock_xTaskCreate_pxCreatedTask = NULL;
+    }
 }
 
 TickType_t mock_pdMS_TO_TICKS(TickType_t ms)
 {
-    return ms;
+    return (ms * CONFIG_FREERTOS_HZ) / 1000;
 }
 
 void mock_freertos_task_reset(void)
@@ -76,4 +81,5 @@ void mock_freertos_task_reset(void)
 
     mock_vTaskDelay_called = 0;
     mock_vTaskDelay_xTicksToDelay = 0;
+    mock_vTaskDelay_counter = 0;
 }
