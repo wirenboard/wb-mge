@@ -1,3 +1,18 @@
+2025-10-30 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc26
+    * added:    unittests for settings_save_timer
+
+2025-10-29 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc25
+    * added:    unittests for settings_update
+
+2025-10-28 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc24
+    * added:    unittests for system_voltage
+
 2025-10-28 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc23

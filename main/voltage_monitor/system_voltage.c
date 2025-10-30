@@ -110,3 +110,12 @@ float system_voltage_read(void)
 
     return system_voltage;
 }
+
+#ifdef __unittest_env__
+    void system_voltage_reset(void)
+    {
+        adc1_handle = NULL;
+        adc1_cali_handle = NULL;
+        adc_calibration_init = false;
+    }
+#endif
