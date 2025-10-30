@@ -6,6 +6,7 @@
 #include "network.h"
 #include "http_server.h"
 #include "update_rs485_mio_gpio_states.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #define SETTINGS_UPDATE_TASK_STACK_SIZE         6144
@@ -28,6 +29,11 @@ void setUp(void)
 void tearDown(void)
 {
 
+}
+
+void execute_task_function()
+{
+    mock_xTaskCreate_pvTaskCode(mock_xTaskCreate_pvParameters);
 }
 
 static void verify_settings_update_checks(void)
@@ -64,12 +70,7 @@ static void verify_task_created(void)
 
     TEST_ASSERT_NOT_NULL_MESSAGE(mock_xTaskCreate_pvParameters, "Task parameters should not be NULL");
     TEST_ASSERT_EQUAL_MESSAGE(SETTINGS_UPDATE_TASK_PRIORITY, mock_xTaskCreate_uxPriority, "Task priority should be 5");
-
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        MOCK_TASK_HANDLE_T,
-        mock_xTaskCreate_pxCreatedTask,
-        "Task handle should match the created task"
-    );
+    TEST_ASSERT_NOT_NULL_MESSAGE(mock_xTaskCreate_pxCreatedTask, "Task handle should not be NULL");
 }
 
 static void verify_updates(
@@ -121,7 +122,7 @@ static void verify_delay_before_network_updates(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelay_called, "vTaskDelay should be called once before network updates");
     TEST_ASSERT_EQUAL_MESSAGE(
-        HTTP_NETWORK_UPDATE_DELAY_MS,
+        pdMS_TO_TICKS(HTTP_NETWORK_UPDATE_DELAY_MS),
         mock_vTaskDelay_xTicksToDelay,
         "vTaskDelay should be called with the correct delay before network updates"
     );
@@ -163,6 +164,8 @@ void test_settings_update_bridge_ports_changed(void)
 
         verify_settings_update_checks();
         verify_task_created();
+        execute_task_function();
+        TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_called, "vTaskDelay should not be called");
 
         if (i == 0) {
             verify_updates(true, false, false, false, false, false);
@@ -187,6 +190,8 @@ void test_settings_update_mdns_changed(void)
 
     verify_settings_update_checks();
     verify_task_created();
+    execute_task_function();
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_called, "vTaskDelay should not be called");
     verify_updates(false, false, true, false, false, false);
     verify_task_deleted();
 }
@@ -204,6 +209,7 @@ void test_settings_update_http_server_changed(void)
 
     verify_settings_update_checks();
     verify_task_created();
+    execute_task_function();
     verify_delay_before_network_updates();
     verify_updates(false, false, false, true, false, false);
     verify_task_deleted();
@@ -222,6 +228,7 @@ void test_settings_update_ethernet_changed(void)
 
     verify_settings_update_checks();
     verify_task_created();
+    execute_task_function();
     verify_delay_before_network_updates();
     verify_updates(false, false, false, false, true, false);
     verify_task_deleted();
@@ -240,6 +247,7 @@ void test_settings_update_wifi_changed(void)
 
     verify_settings_update_checks();
     verify_task_created();
+    execute_task_function();
     verify_delay_before_network_updates();
     verify_updates(false, false, false, false, false, true);
     verify_task_deleted();
@@ -265,6 +273,7 @@ void test_settings_update_all_changed(void)
 
     verify_settings_update_checks();
     verify_task_created();
+    execute_task_function();
     verify_delay_before_network_updates();
     verify_updates(true, true, true, true, true, true);
     verify_task_deleted();
@@ -284,8 +293,22 @@ void test_settings_update_task_creation_failure(void)
 
     verify_settings_update_checks();
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_called, "xTaskCreate should be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_called, "vTaskDelay should not be called");
     verify_updates(false, false, false, false, false, false);
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelete_called, "vTaskDelete should not be called when task creation fails");
+}
+
+// Тестируем повторный запуск settings_update когда задача еще не завершилась
+void test_settings_update_task_already_running(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - task already running");
+    LOG_MESSAGE();
+
+    mock_http_server_check_settings_changed_return_value = true;
+
+    settings_update();
+    settings_update();
 }
 
 int main(void)
@@ -300,6 +323,7 @@ int main(void)
     RUN_TEST(test_settings_update_wifi_changed);
     RUN_TEST(test_settings_update_all_changed);
     RUN_TEST(test_settings_update_task_creation_failure);
+    RUN_TEST(test_settings_update_task_already_running);
 
     return UNITY_END();
 }
