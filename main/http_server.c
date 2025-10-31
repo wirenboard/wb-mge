@@ -5,6 +5,7 @@
 #include "info_handlers.h"
 #include "cmd_handler.h"
 #include "ota_handler.h"
+#include "wb_test.h"
 
 #include <esp_http_server.h>
 #include <sys/param.h>
@@ -172,6 +173,18 @@ static const httpd_uri_t uptime_get = {
     .handler = uptime_get_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t wb_test_get = {
+    .uri = "/wb_test",
+    .method = HTTP_GET,
+    .handler = wb_test_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t wb_test_post = {
+    .uri = "/wb_test",
+    .method = HTTP_POST,
+    .handler = wb_test_post_handler,
+    .user_ctx = NULL,
+};
 static const httpd_uri_t wb_status_get = {
     .uri = "/wb_status",
     .method = HTTP_GET,
@@ -229,6 +242,8 @@ esp_err_t http_server_init(void)
         httpd_register_uri_handler(http_server, &wifi_scan_results_get);
         httpd_register_uri_handler(http_server, &ap_clients_get);
         httpd_register_uri_handler(http_server, &uptime_get);
+        httpd_register_uri_handler(http_server, &wb_test_get);
+        httpd_register_uri_handler(http_server, &wb_test_post);
         httpd_register_uri_handler(http_server, &wb_status_get);
     }
 

@@ -281,6 +281,8 @@ void test_http_server_uri_handlers_registration(void)
         {"/wifi_scan/results", HTTP_GET},
         {"/ap_clients",        HTTP_GET},
         {"/uptime",            HTTP_GET},
+        {"/wb_test",           HTTP_GET},
+        {"/wb_test",           HTTP_POST},
         {"/wb_status",         HTTP_GET}
     };
 
@@ -604,6 +606,16 @@ void test_http_request_external_handlers(void)
     mock_simulate_http_request(HTTP_GET, "/wb_status");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_wb_status_get_handler_called,
                                  "wb_status_get_handler should be called for GET /wb_status");
+
+    // Test WB Test handlers
+    LOG_INFO("Testing WB Test handlers...");
+    mock_simulate_http_request(HTTP_GET, "/wb_test");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_wb_test_get_handler_called,
+                                 "wb_test_get_handler should be called for GET /wb_test");
+
+    mock_simulate_http_request(HTTP_POST, "/wb_test");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_wb_test_post_handler_called,
+                                 "wb_test_post_handler should be called for POST /wb_test");
 
     LOG_INFO("All external handlers tested successfully");
 }
