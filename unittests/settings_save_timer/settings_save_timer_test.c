@@ -44,11 +44,7 @@ static void verify_event_group_ready_flag_set(void)
 static void verify_timer_created(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTimerCreate_called, "xTimerCreate should be called once");
-<<<<<<< HEAD
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("settings_save_timer", mock_xTimerCreate_pcTimerName, "Timer name should not be NULL");
-=======
     TEST_ASSERT_EQUAL_STRING_MESSAGE("settings_save_timer", mock_xTimerCreate_pcTimerName, "Timer name should be 'settings_save_timer'");
->>>>>>> main
     TEST_ASSERT_EQUAL_MESSAGE(
         pdMS_TO_TICKS(SETTING_SAVE_TIMER_INTERVAL_MS),
         mock_xTimerCreate_xTimerPeriod,
@@ -186,11 +182,7 @@ void test_settings_save_timer_wait_ready_flag_set(void)
         "Wait timeout should be correct"
     );
 
-<<<<<<< HEAD
-    // Проверяем запуск таймера с последующим запуском колбэка
-=======
     execute_timer_callback();
->>>>>>> main
     verify_timer_and_callback();
 }
 
@@ -210,11 +202,7 @@ void test_settings_save_timer_wait_timeout(void)
     TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_TIMEOUT, result, "Wait should timeout");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupWaitBits_called, "xEventGroupWaitBits should be called once");
 
-<<<<<<< HEAD
-    // Проверяем запуск таймера с последующим запуском колбэка
-=======
     execute_timer_callback();
->>>>>>> main
     verify_timer_and_callback();
 }
 
@@ -240,8 +228,6 @@ void test_settings_save_timer_wait_without_init(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTimerStart_called, "xTimerStart should not be called");
 }
 
-<<<<<<< HEAD
-=======
 // Тестируем timer_callback с event_group == NULL
 void test_settings_save_timer_callback_with_null_event_group(void)
 {
@@ -261,7 +247,6 @@ void test_settings_save_timer_callback_with_null_event_group(void)
         "xEventGroupSetBits should be called once when event_group is NULL");
 }
 
->>>>>>> main
 int main(void)
 {
     UNITY_BEGIN();
@@ -273,10 +258,7 @@ int main(void)
     RUN_TEST(test_settings_save_timer_wait_ready_flag_set);
     RUN_TEST(test_settings_save_timer_wait_timeout);
     RUN_TEST(test_settings_save_timer_wait_without_init);
-<<<<<<< HEAD
-=======
     RUN_TEST(test_settings_save_timer_callback_with_null_event_group);
->>>>>>> main
 
     return UNITY_END();
 }
