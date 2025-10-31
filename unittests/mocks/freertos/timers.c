@@ -33,11 +33,6 @@ BaseType_t xTimerStart(TimerHandle_t xTimer, TickType_t xTicksToWait)
     mock_xTimerStart_xTimer = xTimer;
     mock_xTimerStart_xTicksToWait = xTicksToWait;
     mock_xTimerStart_called++;
-
-    if (mock_xTimerCreate_pxCallbackFunction) {
-        mock_xTimerCreate_pxCallbackFunction(xTimer);
-    }
-
     return pdPASS;
 }
 
