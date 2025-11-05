@@ -18,7 +18,6 @@ INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += $(PROJ_DIR)/main
 INC += $(IDF_PATH)/components/esp_common/include
-INC += $(IDF_PATH)/components/esp_hw_support/include/
 
 # List of tests
 TEST_LIST = modbus_helpers_test

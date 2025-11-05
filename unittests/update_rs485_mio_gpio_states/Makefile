@@ -1,5 +1,5 @@
 # Name of test / tests group
-TEST_NAME = setting_items_tests
+TEST_NAME = update_rs485_mio_gpio_states_test
 
 # Project root directory
 PROJ_DIR = ../..
@@ -8,23 +8,22 @@ PROJ_DIR = ../..
 UNITTEST_DIR = ..
 
 # Source files to be checked
-TESTED_SRC += $(PROJ_DIR)/main/setting_items.c
+TESTED_SRC += $(PROJ_DIR)/main/update_rs485_mio_gpio_states.c
 
 # Auxiliary source files used in this test
-AUX_SRC += mocks/*.c
-AUX_SRC += $(UNITTEST_DIR)/mocks/esp_mac.c
-AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c
+AUX_SRC += mocks/rs485_control.c
+AUX_SRC += mocks/mio_control.c
+AUX_SRC += mocks/setting_items.c
 
 # Include directories
 INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += mocks
-INC += $(PROJ_DIR)/main/
+INC += $(PROJ_DIR)/main
 INC += $(IDF_PATH)/components/esp_common/include
-INC += $(IDF_PATH)/components/nvs_flash/include/
 
 # List of tests
-TEST_LIST = setting_items_test setting_items_additional_test
+TEST_LIST = update_rs485_mio_gpio_states_test
 
 # Include base unit test build system
 include $(PROJ_DIR)/unittests/build_unittests.mk

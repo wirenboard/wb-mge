@@ -422,7 +422,6 @@ void test_rs485_bus_vout_on_off_mutex_not_initialized(void)
     LOG_MESSAGE();
 
     mock_xSemaphoreCreateMutex_should_fail = true;
-
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
@@ -483,7 +482,6 @@ void test_rs485_bus_vout_set_allowed_mutex_not_initialized(void)
     LOG_MESSAGE();
 
     mock_xSemaphoreCreateMutex_should_fail = true;
-
     esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
 
