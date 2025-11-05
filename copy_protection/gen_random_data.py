@@ -11,7 +11,7 @@ hmac_size = 32
 dummy_data_arrays_count = 5
 
 # Dummy data arrays size range
-dummy_data_arrays_min_size = 15
+dummy_data_arrays_min_size = 31
 dummy_data_arrays_max_size = 63
 
 # This script name
