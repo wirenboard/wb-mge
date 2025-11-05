@@ -50,6 +50,9 @@ typedef struct {
     TickType_t prot_code_task_delay;
     TickType_t port_exp_task_delay;
     TickType_t sys_monitor_task_delay;
+    TaskHandle_t prot_code_task_handle;
+    TaskHandle_t port_exp_task_handle;
+    TaskHandle_t sys_monitor_task_handle;
     EventGroupHandle_t event_group;
     copy_protection_state_t prot_state;
     uint8_t key[KEY_LEN];
@@ -279,14 +282,16 @@ esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
 
 esp_err_t copy_protection_start_protection_code_task(void)
 {
-    prot_ctx.prot_code_task_delay = get_random_time(PROT_CODE_TASK_DELAY_MS_MIN, PROT_CODE_TASK_DELAY_MS_MAX);
-    BaseType_t ret = xTaskCreate(protection_code_task, "", PROT_CODE_TASK_STACK_SIZE, NULL, PROT_CODE_TASK_PRIORITY, NULL);
+    if (prot_ctx.prot_code_task_handle == NULL) {
+        prot_ctx.prot_code_task_delay = get_random_time(PROT_CODE_TASK_DELAY_MS_MIN, PROT_CODE_TASK_DELAY_MS_MAX);
+        BaseType_t ret = xTaskCreate(protection_code_task, "", PROT_CODE_TASK_STACK_SIZE, NULL, PROT_CODE_TASK_PRIORITY, &prot_ctx.prot_code_task_handle);
 
-    if (ret != pdPASS) {
-        activate_copy_protection();
-        #if DEBUG_LOG_ENABLE
-            ESP_LOGE(TAG, "Failed to create protection_code_task()");
-        #endif
+        if ((ret != pdPASS) || (prot_ctx.prot_code_task_handle == NULL)) {
+            activate_copy_protection();
+            #if DEBUG_LOG_ENABLE
+                ESP_LOGE(TAG, "Failed to create protection_code_task()");
+            #endif
+        }
     }
 
     // Don't fail, always return ESP_OK
@@ -296,14 +301,16 @@ esp_err_t copy_protection_start_protection_code_task(void)
 
 esp_err_t copy_protection_start_port_expander_task(void)
 {
-    prot_ctx.port_exp_task_delay = get_random_time(PORT_EXPANDER_TASK_DELAY_MS_MIN, PORT_EXPANDER_TASK_DELAY_MS_MAX);
-    BaseType_t ret = xTaskCreate(port_expander_task, "", PORT_EXPANDER_TASK_STACK_SIZE, NULL, PORT_EXPANDER_TASK_PRIORITY, NULL);
+    if (prot_ctx.port_exp_task_handle == NULL) {
+        prot_ctx.port_exp_task_delay = get_random_time(PORT_EXPANDER_TASK_DELAY_MS_MIN, PORT_EXPANDER_TASK_DELAY_MS_MAX);
+        BaseType_t ret = xTaskCreate(port_expander_task, "", PORT_EXPANDER_TASK_STACK_SIZE, NULL, PORT_EXPANDER_TASK_PRIORITY, &prot_ctx.port_exp_task_handle);
 
-    if (ret != pdPASS) {
-        activate_copy_protection();
-        #if DEBUG_LOG_ENABLE
-            ESP_LOGE(TAG, "Failed to create port_expander_task()");
-        #endif
+        if ((ret != pdPASS) || (prot_ctx.port_exp_task_handle == NULL)) {
+            activate_copy_protection();
+            #if DEBUG_LOG_ENABLE
+                ESP_LOGE(TAG, "Failed to create port_expander_task()");
+            #endif
+        }
     }
 
     // Don't fail, always return ESP_OK
@@ -313,14 +320,16 @@ esp_err_t copy_protection_start_port_expander_task(void)
 
 esp_err_t copy_protection_start_sys_monitor_task(void)
 {
-    prot_ctx.sys_monitor_task_delay = get_random_time(SYSTEM_MONITOR_TASK_DELAY_MS_MIN, SYSTEM_MONITOR_TASK_DELAY_MS_MAX);
-    BaseType_t ret = xTaskCreate(sys_monitor_task, "", SYSTEM_MONITOR_TASK_STACK_SIZE, NULL, SYSTEM_MONITOR_TASK_PRIORITY, NULL);
+    if (prot_ctx.sys_monitor_task_handle == NULL) {
+        prot_ctx.sys_monitor_task_delay = get_random_time(SYSTEM_MONITOR_TASK_DELAY_MS_MIN, SYSTEM_MONITOR_TASK_DELAY_MS_MAX);
+        BaseType_t ret = xTaskCreate(sys_monitor_task, "", SYSTEM_MONITOR_TASK_STACK_SIZE, NULL, SYSTEM_MONITOR_TASK_PRIORITY, &prot_ctx.sys_monitor_task_handle);
 
-    if (ret != pdPASS) {
-        activate_copy_protection();
-        #if DEBUG_LOG_ENABLE
-            ESP_LOGE(TAG, "Failed to create sys_monitor_task()");
-        #endif
+        if ((ret != pdPASS) || (prot_ctx.sys_monitor_task_handle == NULL)) {
+            activate_copy_protection();
+            #if DEBUG_LOG_ENABLE
+                ESP_LOGE(TAG, "Failed to create sys_monitor_task()");
+            #endif
+        }
     }
 
     // Don't fail, always return ESP_OK
