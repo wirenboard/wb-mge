@@ -162,7 +162,7 @@ def write_sec_code_to_file(filename, sec_code):
         os.remove(filename)
         sys.exit(1)
 
-    print(f"The device security code was wtitten to the '{filename}' file")
+    print(f"The device protection code was wtitten to the '{filename}' file")
 
 
 def apply_swap(values, swap_table):
@@ -217,7 +217,7 @@ parser = argparse.ArgumentParser(
     description=f"""\
 This script can work in one of two modes:
 
-1) Generate security code for the specified MAC address using the keys from the specified file
+1) Generate protection code for the specified MAC address using the keys from the specified file
 Usage: {script_name} --mac MAC_ADDR [--keys KEYS_FILE] [--out OUT_FILE]
 
 2) Generate header file for project building using the keys and the swap tables from the specified files
@@ -229,7 +229,7 @@ Options:
   --keys KEYS_FILE                  Keys file (text format), default: '{keys_file}'
   --swap_tables SWAP_TABLES_FILE    Swap tables file (text format), default: '{swap_tables_file}'
   --dummy_data DUMMY_DATA_FILE      Dummy data file (text format), deefault: '{dummy_data_file}'
-  --out OUT_FILE                    Output binary file with security code, default: '{out_file}'
+  --out OUT_FILE                    Output binary file with protection code, default: '{out_file}'
   --out_header OUT_HEADER_FILE      Output header file for project building, default: '{out_header_file}'
 """,
 formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -251,7 +251,7 @@ if args.help:
     sys.exit(0)
 
 if len(args.mac):
-    # Security code generation mode
+    # Protection code generation mode
     mac_addr = read_mac_addr(args.mac)
     hmac_key, swap_table = read_hmac_swap_table_from_file(args.keys)
 

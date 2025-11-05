@@ -18,14 +18,14 @@ void calc_hmac(const uint8_t mac_addr[MAC_ADDR_LEN], const uint8_t key[KEY_LEN],
 }
 
 
-void truncate_hmac(const uint8_t hmac[HMAC_LEN], const uint8_t swap_table[SECURITY_CODE_LEN], uint8_t out_sec_code[SECURITY_CODE_LEN])
+void truncate_hmac(const uint8_t hmac[HMAC_LEN], const uint8_t swap_table[PROTECTION_CODE_LEN], uint8_t out_prot_code[PROTECTION_CODE_LEN])
 {
-    for (unsigned index = 0; index < SECURITY_CODE_LEN; index++) {
+    for (unsigned index = 0; index < PROTECTION_CODE_LEN; index++) {
         unsigned pos = swap_table[index];
         if (pos >= HMAC_LEN) {
             pos = HMAC_LEN;
         }
-        out_sec_code[index] = hmac[pos];
+        out_prot_code[index] = hmac[pos];
     }
 }
 

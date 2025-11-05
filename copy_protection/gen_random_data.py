@@ -36,7 +36,7 @@ def generate_swap_tables(filename):
         hex_values = " ".join(f"{b:02X}" for b in hmac_swap)
         f.write(f"{hex_values}\n\n")
 
-        f.write(f"# Security code swap table's swap table ({sec_code_size} unique bytes, values range 00..{sec_code_size - 1:02X})\n")
+        f.write(f"# Protection code swap table's swap table ({sec_code_size} unique bytes, values range 00..{sec_code_size - 1:02X})\n")
         swap_table_swap = generate_unique_bytes(0, sec_code_size - 1, sec_code_size)
         hex_values = " ".join(f"{b:02X}" for b in swap_table_swap)
         f.write(f"{hex_values}\n")

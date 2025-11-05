@@ -13,8 +13,8 @@
 #define SIGNATURE_EFUSE_BLOCK           EFUSE_BLK3
 #define SIGNATURE_EFUSE_OFFSET          8
 
-#define SECURITY_CODE_EFUSE_BLOCK       EFUSE_BLK3
-#define SECURITY_CODE_EFUSE_OFFSET      (SIGNATURE_EFUSE_OFFSET + DEVICE_SIGNATURE_LEN)
+#define PROTECTION_CODE_EFUSE_BLOCK     EFUSE_BLK3
+#define PROTECTION_CODE_EFUSE_OFFSET    (SIGNATURE_EFUSE_OFFSET + DEVICE_SIGNATURE_LEN)
 
 // Auxilary macros
 #define STR_HELPER_MACRO(x)             #x
@@ -75,30 +75,30 @@ static uint64_t generate_serial_from_mac(void)
         ESP_LOG_BUFFER_HEX_LEVEL(TAG, read_buf, sizeof(read_buf), ESP_LOG_DEBUG);
     }
 
-    static void write_security_code_to_efuse(void)
+    static void write_protection_code_to_efuse(void)
     {
-        uint8_t sec_code[SECURITY_CODE_LEN] = {0};
-        esp_err_t ret = copy_protection_get_security_code(sec_code);
+        uint8_t prot_code[PROTECTION_CODE_LEN] = {0};
+        esp_err_t ret = copy_protection_get_protection_code(prot_code);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Unable to get security code");
+            ESP_LOGE(TAG, "Unable to get protection code");
             return;
         }
 
-        ret = esp_efuse_write_block(SECURITY_CODE_EFUSE_BLOCK, sec_code, SECURITY_CODE_EFUSE_OFFSET * 8, SECURITY_CODE_LEN * 8);
+        ret = esp_efuse_write_block(PROTECTION_CODE_EFUSE_BLOCK, prot_code, PROTECTION_CODE_EFUSE_OFFSET * 8, PROTECTION_CODE_LEN * 8);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Unable to write device security code to virtual " STR_MACRO(SECURITY_CODE_EFUSE_BLOCK));
+            ESP_LOGE(TAG, "Unable to write device protection code to virtual " STR_MACRO(PROTECTION_CODE_EFUSE_BLOCK));
             return;
         }
 
-        ESP_LOGW(TAG, "Device security code was written to virtual " STR_MACRO(SECURITY_CODE_EFUSE_BLOCK));
+        ESP_LOGW(TAG, "Device protection code was written to virtual " STR_MACRO(PROTECTION_CODE_EFUSE_BLOCK));
         char read_buf[32] = {0};
-        ret = esp_efuse_read_block(SECURITY_CODE_EFUSE_BLOCK, read_buf, 0, sizeof(read_buf) * 8);
+        ret = esp_efuse_read_block(PROTECTION_CODE_EFUSE_BLOCK, read_buf, 0, sizeof(read_buf) * 8);
 
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Unable to read virtual " STR_MACRO(SECURITY_CODE_EFUSE_BLOCK));
+            ESP_LOGE(TAG, "Unable to read virtual " STR_MACRO(PROTECTION_CODE_EFUSE_BLOCK));
         }
 
-        ESP_LOGD(TAG, "Virtual " STR_MACRO(SECURITY_CODE_EFUSE_BLOCK) " content:");
+        ESP_LOGD(TAG, "Virtual " STR_MACRO(PROTECTION_CODE_EFUSE_BLOCK) " content:");
         ESP_LOG_BUFFER_HEX_LEVEL(TAG, read_buf, sizeof(read_buf), ESP_LOG_DEBUG);
     }
 
@@ -119,21 +119,21 @@ static void get_device_signature(char out_buf[DEVICE_SIGNATURE_LEN + 1])
 }
 
 
-static void get_security_code(uint8_t out_buf[SECURITY_CODE_LEN])
+static void get_protection_code(uint8_t out_buf[PROTECTION_CODE_LEN])
 {
-    memset(out_buf, 0, SECURITY_CODE_LEN);
-    esp_err_t res = esp_efuse_read_block(SECURITY_CODE_EFUSE_BLOCK, out_buf, SECURITY_CODE_EFUSE_OFFSET * 8, SECURITY_CODE_LEN * 8);
+    memset(out_buf, 0, PROTECTION_CODE_LEN);
+    esp_err_t res = esp_efuse_read_block(PROTECTION_CODE_EFUSE_BLOCK, out_buf, PROTECTION_CODE_EFUSE_OFFSET * 8, PROTECTION_CODE_LEN * 8);
 
     // Show status only when debug logs are enabled
     #if DEBUG_LOG_ENABLE
         if (res != ESP_OK) {
             ESP_LOGE(TAG, "Unable to read device secure code " STR_MACRO(SIGNATURE_EFUSE_BLOCK));
         } else {
-            uint8_t zero_buf[SECURITY_CODE_LEN];
+            uint8_t zero_buf[PROTECTION_CODE_LEN];
             memset(zero_buf, 0, sizeof(zero_buf));
-            bool is_empty = (memcmp(zero_buf, out_buf, SECURITY_CODE_LEN) == 0);
+            bool is_empty = (memcmp(zero_buf, out_buf, PROTECTION_CODE_LEN) == 0);
             if (is_empty) {
-                ESP_LOGW(TAG, "Device security code is empty");
+                ESP_LOGW(TAG, "Device protection code is empty");
             }
         }
     #else
@@ -152,11 +152,11 @@ esp_err_t sys_info_init(void)
 
     #if CONFIG_EFUSE_VIRTUAL
         write_device_signature_to_efuse();
-        write_security_code_to_efuse();
+        write_protection_code_to_efuse();
     #endif
 
     get_device_signature(sys_info.device_signature);
-    get_security_code(sys_info.security_code);
+    get_protection_code(sys_info.protection_code);
 
     ESP_LOGI(TAG, "Device name: %s", sys_info.device_name);
     if (strlen(sys_info.device_signature)) {

@@ -10,8 +10,8 @@
 
 #define SERIAL_FROM_MAC                         4328719365UL // MAC 00:01:02:03:04:05 converted to uint64
 #define TEST_DEVICE_SIGNATURE                   "TEST_SIG"
-#define TEST_SECURITY_CODE                      {0xAC, 0x57, 0x21, 0xF0, 0xAA, 0x8B, 0x37, 0x61, 0x93, 0xC5, 0x72, 0xEF}
-#define TEST_SECURITY_CODE_LEN                  12
+#define TEST_PROTECTION_CODE                    {0xAC, 0x57, 0x21, 0xF0, 0xAA, 0x8B, 0x37, 0x61, 0x93, 0xC5, 0x72, 0xEF}
+#define TEST_PROTECTION_CODE_LEN                12
 
 extern bool mock_esp_read_mac_should_fail;
 extern esp_efuse_block_t mock_read_block;
@@ -25,7 +25,7 @@ void setUp(void)
     mock_esp_read_mac_should_fail = false;
     mock_esp_efuse_read_block_return = ESP_OK;
     mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
-    mock_esp_efuse_set_security_code((uint8_t[])TEST_SECURITY_CODE);
+    mock_esp_efuse_set_protection_code((uint8_t[])TEST_PROTECTION_CODE);
 
     memset(&sys_info, 0, sizeof(sys_info));
 }
@@ -55,7 +55,7 @@ void test_sys_info_init_success(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
-        (uint8_t[])TEST_SECURITY_CODE, sys_info.security_code, TEST_SECURITY_CODE_LEN, "Device security code should match mock value"
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
     );
 }
 
@@ -78,7 +78,7 @@ void test_sys_info_init_mac_read_failure(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
-        (uint8_t[])TEST_SECURITY_CODE, sys_info.security_code, TEST_SECURITY_CODE_LEN, "Device security code should match mock value"
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
     );
 }
 
@@ -98,9 +98,9 @@ void test_sys_info_init_efuse_read_failure(void)
         "", sys_info.device_signature, "Device signature should be empty when eFuse read fails"
     );
 
-    const uint8_t zero_buf[TEST_SECURITY_CODE_LEN] = {0};
+    const uint8_t zero_buf[TEST_PROTECTION_CODE_LEN] = {0};
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
-        zero_buf, sys_info.security_code, TEST_SECURITY_CODE_LEN, "Device security code should be zero when eFuse read fails"
+        zero_buf, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should be zero when eFuse read fails"
     );
 
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(
@@ -131,7 +131,7 @@ void test_sys_info_init_empty_device_signature(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
-        (uint8_t[])TEST_SECURITY_CODE, sys_info.security_code, TEST_SECURITY_CODE_LEN, "Device security code should match mock value"
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
     );
 }
 
@@ -159,7 +159,7 @@ void test_sys_info_init_long_device_signature(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
-        (uint8_t[])TEST_SECURITY_CODE, sys_info.security_code, TEST_SECURITY_CODE_LEN, "Device security code should match mock value"
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
     );
 }
 
@@ -185,26 +185,26 @@ void test_sys_info_init_signature_truncation(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
-        (uint8_t[])TEST_SECURITY_CODE, sys_info.security_code, TEST_SECURITY_CODE_LEN, "Device security code should match mock value"
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
     );
 }
 
-// Тестируем инициализацию sys_info с пустым (нулевым) кодом безопасности
-void test_sys_info_init_zero_security_code(void)
+// Тестируем инициализацию sys_info с пустым (нулевым) кодом защиты
+void test_sys_info_init_zero_protection_code(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - zero security code");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - zero protection code");
     LOG_MESSAGE();
 
-    const uint8_t zero_sec_code[TEST_SECURITY_CODE_LEN] = {0};
-    mock_esp_efuse_set_security_code(zero_sec_code);
+    const uint8_t zero_prot_code[TEST_PROTECTION_CODE_LEN] = {0};
+    mock_esp_efuse_set_protection_code(zero_prot_code);
 
     esp_err_t result = sys_info_init();
 
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with zero security code");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with zero protection code");
 
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
-        zero_sec_code, sys_info.security_code, TEST_SECURITY_CODE_LEN, "Device security code should be zero"
+        zero_prot_code, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should be zero"
     );
 
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(
@@ -217,21 +217,21 @@ void test_sys_info_init_zero_security_code(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
 }
 
-void test_sys_info_init_security_code_with_zeros(void)
+void test_sys_info_init_protection_code_with_zeros(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - security code with zeros");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - protection code with zeros");
     LOG_MESSAGE();
 
-    const uint8_t sec_code[TEST_SECURITY_CODE_LEN] = {0x00, 0x57, 0x21, 0x00, 0xAA, 0x8B, 0x37, 0x00, 0x93, 0xC5, 0x72, 0x00};
-    mock_esp_efuse_set_security_code(sec_code);
+    const uint8_t prot_code[TEST_PROTECTION_CODE_LEN] = {0x00, 0x57, 0x21, 0x00, 0xAA, 0x8B, 0x37, 0x00, 0x93, 0xC5, 0x72, 0x00};
+    mock_esp_efuse_set_protection_code(prot_code);
 
     esp_err_t result = sys_info_init();
 
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with zero security code");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with zero protection code");
 
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
-        sec_code, sys_info.security_code, TEST_SECURITY_CODE_LEN, "Device security code should match the value specified in the test"
+        prot_code, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match the value specified in the test"
     );
 
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(
@@ -252,7 +252,7 @@ void test_sys_info_constants(void)
 
     TEST_ASSERT_EQUAL_MESSAGE(64, SYS_INFO_MAX_STR_LEN, "SYS_INFO_MAX_STR_LEN must be 64");
     TEST_ASSERT_EQUAL_MESSAGE(12, DEVICE_SIGNATURE_LEN, "DEVICE_SIGNATURE_LEN must be 12");
-    TEST_ASSERT_EQUAL_MESSAGE(12, SECURITY_CODE_LEN, "SECURITY_CODE_LEN must be 12");
+    TEST_ASSERT_EQUAL_MESSAGE(12, PROTECTION_CODE_LEN, "PROTECTION_CODE_LEN must be 12");
 }
 
 int main(void)
@@ -265,8 +265,8 @@ int main(void)
     RUN_TEST(test_sys_info_init_empty_device_signature);
     RUN_TEST(test_sys_info_init_long_device_signature);
     RUN_TEST(test_sys_info_init_signature_truncation);
-    RUN_TEST(test_sys_info_init_zero_security_code);
-    RUN_TEST(test_sys_info_init_security_code_with_zeros);
+    RUN_TEST(test_sys_info_init_zero_protection_code);
+    RUN_TEST(test_sys_info_init_protection_code_with_zeros);
     RUN_TEST(test_sys_info_constants);
 
     return UNITY_END();

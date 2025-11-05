@@ -136,19 +136,19 @@ void app_main(void)
 
     #if (!QEMU_BUILD)
         update_io_bus_control();
+        copy_protection_init(gpio_expander);
     #endif // QEMU_BUILD
 
     print_setting_items();
 
-    ESP_ERROR_CHECK(network_init());
+    ESP_ERROR_CHECK(network_init());  // Also calls copy_protection_start_protection_code_task()
     ESP_ERROR_CHECK(http_server_init());
 
     #if (!QEMU_BUILD)
-        copy_protection_init(gpio_expander);
         update_rs485_control();
-        indication_init(gpio_expander);
+        indication_init(gpio_expander);  // Also calls copy_protection_start_port_expander_task()
         indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
-        config_button_init();
+        config_button_init();  // Also calls copy_protection_start_sys_monitor_task()
         config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
     #endif // QEMU_BUILD
 

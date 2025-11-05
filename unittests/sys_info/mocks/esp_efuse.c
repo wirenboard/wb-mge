@@ -42,9 +42,9 @@ void mock_esp_efuse_set_signature(const char* signature)
     mock_esp_efuse_write_block(SIGNATURE_BLOCK, sig_buffer, SIGNATURE_OFFSET_BITS, DEVICE_SIGNATURE_LEN * 8);
 }
 
-void mock_esp_efuse_set_security_code(const uint8_t* sec_code)
+void mock_esp_efuse_set_protection_code(const uint8_t* prot_code)
 {
-    mock_esp_efuse_write_block(SECURITY_CODE_BLOCK, sec_code, SECURITY_CODE_OFFSET_BITS, SECURITY_CODE_LEN * 8);
+    mock_esp_efuse_write_block(PROTECTION_CODE_BLOCK, prot_code, PROTECTION_CODE_OFFSET_BITS, PROTECTION_CODE_LEN * 8);
 }
 
 esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offset_in_bits, size_t size_bits)

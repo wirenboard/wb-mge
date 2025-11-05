@@ -7,6 +7,7 @@
 #include "esp_mac.h"
 #include "sys/socket.h"
 #include "esp_log.h"
+#include "copy_protection.h"
 
 #if QEMU_BUILD
     #include "wifi_qemu_mock.h"
@@ -520,6 +521,11 @@ esp_err_t network_init(void)
     } else {
         ESP_LOGE(TAG, "Unable to read WiFi settings");
     }
+
+    #if !QEMU_BUILD
+        // Start copy_protection: protection_code_task()
+        copy_protection_start_protection_code_task();
+    #endif
 
     return ESP_OK;
 }
