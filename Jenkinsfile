@@ -24,10 +24,12 @@ pipeline {
         }
         stage('Build') {
             steps {
-                script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make"'
-                    // copy binaries to separate 'result' directory because s3_uploader job searches for files there
-                    sh 'mkdir -p result && cp release/*.bin result/'
+                withCredentials([file(credentialsId: 'mge_v3_keys', variable: 'MGE_KEYS_FILE')]) {
+                    script {
+                        sh 'bash -c "source /opt/esp/idf/export.sh && make"'
+                        // copy binaries to separate 'result' directory because s3_uploader job searches for files there
+                        sh 'mkdir -p result && cp release/*.bin result/'
+                    }
                 }
             }
             post {

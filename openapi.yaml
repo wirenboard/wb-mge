@@ -391,10 +391,10 @@ paths:
                 type: object
                 properties:
                   success: { type: boolean }
-                  message: 
+                  message:
                     type: string
                     maxLength: 255
-                  error: 
+                  error:
                     type: string
                     maxLength: 255
               examples:
@@ -632,6 +632,35 @@ paths:
                     enum: [true]
                   clock_out:
                     type: boolean
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /wb_status:
+    get:
+      summary: Get WB firmware status (only for internal use!)
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fw_status:
+                    type: string
+                    enum: ["ok", "fail", "unknown"]
         '400':
           description: Bad request
           content:

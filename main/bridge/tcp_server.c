@@ -19,6 +19,7 @@
 
 
 static const char *TAG = "tcp_server";
+static bool copy_protection = false;
 
 
 static inline bool check_task_exit_req(tcp_desc_t *desc)
@@ -122,7 +123,9 @@ static void receive_data(tcp_desc_t *desc)
         } else {
             ESP_LOGD(TAG, "Port %d received %d bytes", desc->port, len);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
-            desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
+            if (!copy_protection) {
+                desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
+            }
         }
     } while (len > 0);
 }
@@ -246,6 +249,10 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, 
 
 esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
+    if (copy_protection) {
+        return ESP_OK;
+    }
+
     if (!desc || (desc->client_sock < 0)) {
         ESP_LOGE(TAG, "No client connected");
         return ESP_FAIL;
@@ -311,4 +318,10 @@ esp_err_t tcp_server_deinit(tcp_desc_t *desc)
 
     ESP_LOGD(TAG, "Deinitialized");
     return ESP_OK;
+}
+
+
+void tcp_server_activate_copy_protection(void)
+{
+    copy_protection = true;
 }
