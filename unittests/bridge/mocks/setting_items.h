@@ -1,10 +1,12 @@
 #pragma once
 
-#include "esp_err.h"
+#include "bridge.h"
 #include <stdbool.h>
 
-#define MOCK_SETTING_ITEMS_MAX_CALLS               32
-#define MOCK_SETTING_ITEMS_KEY_MAX_LEN             128
+#define MOCK_DEFAULT_BAUDRATE                      9600
+
+#define MOCK_DEFAULT_BRIDGE_PORT                   502
+#define MOCK_DEFAULT_BRIDGE_PORT2                  503
 
 #define SETTING_ITEM_MAX_STR_LEN                   64
 
@@ -24,22 +26,38 @@
 #define UART_PARITY_EVEN_STR                       "even"
 #define UART_PARITY_ODD_STR                        "odd"
 
-extern bool mock_setting_items_read_should_fail;
-extern int mock_setting_items_read_called;
-extern char mock_setting_items_read_keys[MOCK_SETTING_ITEMS_MAX_CALLS][SETTING_ITEM_MAX_STR_LEN];
-extern char mock_setting_items_read_value_to_return_parity[SETTING_ITEM_MAX_STR_LEN];
-extern char mock_setting_items_read_value_to_return_stopbits[SETTING_ITEM_MAX_STR_LEN];
-extern char mock_setting_items_read_value_to_return_databits[SETTING_ITEM_MAX_STR_LEN];
-extern char mock_setting_items_read_value_to_return_bridge_mode[SETTING_ITEM_MAX_STR_LEN];
-extern char mock_setting_items_read_value_to_return_bridge_ip[SETTING_ITEM_MAX_STR_LEN];
+typedef struct {
+    uint32_t baudrate;
+    char parity[SETTING_ITEM_MAX_STR_LEN];
+    char stopbits[SETTING_ITEM_MAX_STR_LEN];
+    char databits[SETTING_ITEM_MAX_STR_LEN];
+} serial_test_config_t;
 
-extern bool mock_setting_items_read_int_should_fail;
-extern int mock_setting_items_read_int_called;
-extern char mock_setting_items_read_int_keys[MOCK_SETTING_ITEMS_MAX_CALLS][SETTING_ITEM_MAX_STR_LEN];
+typedef struct {
+    serial_test_config_t serial_config;
+    char bridge_mode[SETTING_ITEM_MAX_STR_LEN];
+    char bridge_ip[SETTING_ITEM_MAX_STR_LEN];
+    int bridge_port;
+    bool bridge_mb;
+} mock_bridge_test_config_t;
 
-extern int mock_setting_items_read_bool_called;
-extern bool mock_setting_items_read_bool_return_value;
-extern char mock_setting_items_read_bool_keys[MOCK_SETTING_ITEMS_MAX_CALLS][SETTING_ITEM_MAX_STR_LEN];
+typedef struct {
+    esp_err_t parity;
+    esp_err_t stopbits;
+    esp_err_t databits;
+    esp_err_t bridge_mode;
+    esp_err_t bridge_ip;
+} mock_setting_items_read_results_t;
+
+typedef struct {
+    int read_called;
+    int read_int_called;
+    int read_bool_called;
+    mock_setting_items_read_results_t read_result;
+} mock_setting_items_calls_t;
+
+extern mock_bridge_test_config_t mock_settings_items_bridge_cfg[BRIDGES_COUNT];
+extern mock_setting_items_calls_t mock_setting_items_calls[BRIDGES_COUNT];
 
 esp_err_t setting_items_read(const char *key, char *value);
 int setting_items_read_int(const char *key);

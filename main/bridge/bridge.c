@@ -62,20 +62,26 @@ static bridge_ctx_t bridge_ctx[BRIDGES_COUNT] = {0};
 
 int tcp_server_active_connections(tcp_server_num_t server_num)
 {
-    if ((server_num < 0) || (server_num >= BRIDGES_COUNT)) {
+    if ((server_num < 0) || (server_num >= TCP_SERVER_COUNT)) {
         ESP_LOGE(TAG, "Unknown server number: %d", server_num);
         return 0;
     }
-    if ((bridge_current_cfg[server_num].bridge_mode == BRIDGE_MODE_DISABLED) || !bridge_ctx[server_num].tcp_desc) {
+
+    if (bridge_current_cfg[server_num].bridge_mode == BRIDGE_MODE_DISABLED) {
         return 0;
     }
+
+    if (!bridge_ctx[server_num].tcp_desc) {
+        return 0;
+    }
+
     return bridge_ctx[server_num].tcp_desc->active_connections;
 }
 
-void bridge_disable_port(unsigned index)
+esp_err_t bridge_disable_port(unsigned index)
 {
     if (index >= BRIDGES_COUNT) {
-        return;
+        return ESP_ERR_INVALID_ARG;
     }
     bridge_ctx[index].disabled = true;
 
@@ -83,19 +89,25 @@ void bridge_disable_port(unsigned index)
         bridge_ctx[index].init_request = true;
         bridge_port_deinit(index);
     }
+
+    return ESP_OK;
 }
 
-void bridge_enable_port(unsigned index)
+esp_err_t bridge_enable_port(unsigned index)
 {
     if (index >= BRIDGES_COUNT) {
-        return;
+        return ESP_ERR_INVALID_ARG;
     }
     bridge_ctx[index].disabled = false;
 
-    if (bridge_ctx[index].init_request && !bridge_ctx[index].initialized) {
-        bridge_ctx[index].init_request = false;
-        bridge_port_init(index);
+    if (bridge_ctx[index].init_request) {
+        if (!bridge_ctx[index].initialized) {
+            bridge_ctx[index].init_request = false;
+            bridge_port_init(index);
+        }
     }
+
+    return ESP_OK;
 }
 
 static bridge_mode_t string_to_bridge_mode(const char *str) {
@@ -324,3 +336,11 @@ bool bridge_port_check_settings_changed(unsigned index)
         return true;
     }
 }
+
+#ifdef __unittest_env__
+    void bridge_reset(void)
+    {
+        memset(bridge_current_cfg, 0, sizeof(bridge_current_cfg));
+        memset(bridge_ctx, 0, sizeof(bridge_ctx));
+    }
+#endif

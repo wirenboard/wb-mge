@@ -1,3 +1,8 @@
+2025-11-06 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc28
+    * added:    unittests for bridge
+
 2025-10-30 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc27

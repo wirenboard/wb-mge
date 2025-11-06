@@ -1,14 +1,15 @@
 #pragma once
 
-extern int mock_rs485_busy_monitor_init_called;
+#include "bridge.h"
 
-extern int mock_rs485_busy_monitor_reset_called;
-extern unsigned mock_rs485_busy_monitor_reset_index;
+typedef struct {
+    int busy_monitor_init_called;
+    int busy_monitor_reset_called[BRIDGES_COUNT];
+    int stats_init_called;
+    int stats_reset_called[BRIDGES_COUNT];
+} mock_rs485_stats_t;
 
-extern int mock_rs485_stats_init_called;
-
-extern int mock_rs485_stats_reset_called;
-extern unsigned mock_rs485_stats_reset_index;
+extern mock_rs485_stats_t mock_rs485_stats;
 
 void rs485_busy_monitor_init(void);
 void rs485_busy_monitor_reset(unsigned index);
