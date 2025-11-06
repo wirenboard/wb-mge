@@ -1,0 +1,137 @@
+#include "esp_io_expander.h"
+#include "array_size.h"
+#include "debug_log.h"
+#include "esp_log.h"
+
+
+#define PORT_EXPANDER_TEST_PINS_COUNT       3
+#define PORT_EXPANDER_SHORTED_PIN_1         IO_EXPANDER_PIN_NUM_13  // P15 = IO1.5 = IO_EXPANDER_PIN_NUM_13
+#define PORT_EXPANDER_SHORTED_PIN_2         IO_EXPANDER_PIN_NUM_14  // P16 = IO1.6 = IO_EXPANDER_PIN_NUM_14
+#define PORT_EXPANDER_GROUNDED_PIN          IO_EXPANDER_PIN_NUM_15  // P17 = IO1.7 = IO_EXPANDER_PIN_NUM_15
+
+
+esp_io_expander_pin_num_t port_expander_pins[PORT_EXPANDER_TEST_PINS_COUNT] = {
+    PORT_EXPANDER_SHORTED_PIN_1,
+    PORT_EXPANDER_SHORTED_PIN_2,
+    PORT_EXPANDER_GROUNDED_PIN
+};
+
+typedef struct {
+    esp_io_expander_dir_t direction;
+    uint8_t out_level;
+    uint8_t in_level;
+} port_expander_test_pin_t;
+
+typedef struct {
+    port_expander_test_pin_t pins[PORT_EXPANDER_TEST_PINS_COUNT];
+} port_expander_test_t;
+
+// Массив данных для тестов перемычек на GPIO расширителя портов (тест = строка массива)
+// При выполнении очередного теста производится:
+// 0) Все GPIO сбрасываются в дефолтный режим (вход), чтобы избежать замыканий лог. 1 и 0 между тестами
+// 1) Конфигурируется режим GPIO для всех пинов (вход или выход)
+// 2) На GPIO, настроенные на выход, выдается заданный уровень (поле out_level: лог. 0 или 1)
+// 3) Из GPIO, настроенных на вход, считывается уровень и сравнивается с тем, что указано в тесте (поле in_level: лог. 0 или 1)
+static port_expander_test_t port_expander_tests[] = {
+//           PORT_EXPANDER_SHORTED_PIN_1             PORT_EXPANDER_SHORTED_PIN_2            PORT_EXPANDER_GROUNDED_PIN
+//            direction     |  out  | input           direction     |  out  | input           direction     |  out  | input
+    {{  {IO_EXPANDER_INPUT,     0,      0   },  {IO_EXPANDER_OUTPUT,    0,      0   },  {IO_EXPANDER_INPUT,     0,      0   }  }},
+    {{  {IO_EXPANDER_INPUT,     0,      1   },  {IO_EXPANDER_OUTPUT,    1,      0   },  {IO_EXPANDER_INPUT,     0,      0   }  }},
+    {{  {IO_EXPANDER_INPUT,     0,      0   },  {IO_EXPANDER_OUTPUT,    0,      0   },  {IO_EXPANDER_INPUT,     0,      0   }  }},
+    {{  {IO_EXPANDER_OUTPUT,    1,      0   },  {IO_EXPANDER_INPUT,     0,      1   },  {IO_EXPANDER_INPUT,     0,      0   }  }},
+    {{  {IO_EXPANDER_OUTPUT,    0,      0   },  {IO_EXPANDER_INPUT,     0,      0   },  {IO_EXPANDER_INPUT,     0,      0   }  }},
+};
+
+#if DEBUG_LOG_ENABLE
+    static const char* TAG = "port_expander_tests";
+#endif
+
+
+// Restore default pins directions (input)
+static void reset_gpio_directions(esp_io_expander_handle_t io_expander_handle)
+{
+    for (unsigned pin = 0; pin < PORT_EXPANDER_TEST_PINS_COUNT; pin++) {
+        esp_io_expander_set_dir(io_expander_handle, port_expander_pins[pin], IO_EXPANDER_INPUT);
+    }
+}
+
+
+// Set pins directions and outputs levels
+static void set_gpio_directions_and_levels(esp_io_expander_handle_t io_expander_handle, port_expander_test_t* test)
+{
+    for (unsigned pin = 0; pin < PORT_EXPANDER_TEST_PINS_COUNT; pin++) {
+        esp_io_expander_dir_t dir = test->pins[pin].direction;
+        esp_io_expander_pin_num_t pin_num = port_expander_pins[pin];
+        esp_io_expander_set_dir(io_expander_handle, pin_num, dir);
+        if (dir == IO_EXPANDER_OUTPUT) {
+            esp_io_expander_set_level(io_expander_handle, pin_num, test->pins[pin].out_level);
+        }
+    }
+}
+
+
+// Check pins input levels
+static bool check_gpio_input_levels(esp_io_expander_handle_t io_expander_handle, port_expander_test_t* test)
+{
+    bool ok = true;
+
+    for (unsigned pin = 0; pin < PORT_EXPANDER_TEST_PINS_COUNT; pin++) {
+        esp_io_expander_dir_t dir = test->pins[pin].direction;
+        if (dir != IO_EXPANDER_INPUT) {
+            continue;
+        }
+        esp_io_expander_pin_num_t pin_num = port_expander_pins[pin];
+        uint32_t pin_levels = 0;
+        esp_err_t ret = esp_io_expander_get_level(io_expander_handle, pin_num, &pin_levels);
+        if (ret == ESP_OK) {
+            bool test_ok;
+            if (test->pins[pin].in_level) {
+                test_ok = pin_levels;
+            } else {
+                test_ok = !pin_levels;
+            }
+            #if DEBUG_LOG_ENABLE
+                if (!test_ok) {
+                    unsigned index = (unsigned)((void*)test - (void*)port_expander_tests) / sizeof(port_expander_test_t);
+                    ESP_LOGE(TAG, "Test #%u, pin #%u: incorrect input state", index, pin);
+                }
+            #endif
+            ok = test_ok && ok;
+        } else {
+            #if DEBUG_LOG_ENABLE
+                unsigned index = (unsigned)((void*)test - (void*)port_expander_tests) / sizeof(port_expander_test_t);
+                ESP_LOGE(TAG, "Test #%u, pin #%u: failed to read GPIO state", index, pin);
+            #endif
+            ok = false;
+        }
+    }
+
+    return ok;
+}
+
+
+esp_err_t port_expander_run_tests(esp_io_expander_handle_t io_expander_handle)
+{
+    if (io_expander_handle == NULL) {
+        return ESP_FAIL;
+    }
+
+    bool ok = true;
+
+    // Run tests
+    for (unsigned index = 0; index < ARRAY_SIZE(port_expander_tests); index++) {
+        reset_gpio_directions(io_expander_handle);
+        set_gpio_directions_and_levels(io_expander_handle, &port_expander_tests[index]);
+        bool test_ok = check_gpio_input_levels(io_expander_handle, &port_expander_tests[index]);
+        ok = test_ok && ok;
+        // Don't break if test failed to save all tests sequence
+    }
+
+    reset_gpio_directions(io_expander_handle);
+
+    if (ok) {
+        return ESP_OK;
+    } else {
+        return ESP_FAIL;
+    }
+}

@@ -35,3 +35,4 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
 esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len);
 esp_err_t serial_wait_tx_done(serial_desc_t *desc, TickType_t timeout_ticks);
 esp_err_t serial_deinit(serial_desc_t *desc);
+void serial_activate_copy_protection(void);

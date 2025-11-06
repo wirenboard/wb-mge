@@ -3,6 +3,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "copy_protection.h"
 
 
 #define CONFIG_BUTTON_GPIO                  GPIO_NUM_34
@@ -129,6 +130,9 @@ esp_err_t config_button_init(void)
     if (config_btn_ctx.initialized) {
         return ESP_OK;  // Already initialized
     }
+
+    // Start copy_protection: sys_monitor_task()
+    copy_protection_start_sys_monitor_task();
 
     // Configure GPIO34 as input with pull-up
     gpio_config_t io_conf = {

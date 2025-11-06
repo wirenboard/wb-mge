@@ -11,6 +11,7 @@
 #include <stdlib.h>
 
 static const char *TAG = "settings_manager";
+static bool copy_protection = false;
 
 #define SETTING_KEY_BUF_SIZE 64
 
@@ -330,7 +331,9 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     if (cJSON_HasObjectItem(request_json, "wifi")) {
         cJSON *wifi_json = cJSON_GetObjectItem(request_json, "wifi");
         if (cJSON_IsObject(wifi_json)) {
-            save_group_settings(wifi_json, wifi_mappings, ARRAY_SIZE(wifi_mappings), NULL);
+            if (!copy_protection) {
+                save_group_settings(wifi_json, wifi_mappings, ARRAY_SIZE(wifi_mappings), NULL);
+            }
         }
     }
 
@@ -338,11 +341,15 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     if (cJSON_HasObjectItem(request_json, "ethernet")) {
         cJSON *eth_json = cJSON_GetObjectItem(request_json, "ethernet");
         if (cJSON_IsObject(eth_json)) {
-            save_group_settings(eth_json, ethernet_mappings, ARRAY_SIZE(ethernet_mappings), NULL);
+            if (!copy_protection) {
+                save_group_settings(eth_json, ethernet_mappings, ARRAY_SIZE(ethernet_mappings), NULL);
+            }
         }
     }
 
-    process_rs485_settings(request_json);
+    if (!copy_protection) {
+        process_rs485_settings(request_json);
+    }
 
     settings_update();
 
@@ -400,4 +407,9 @@ esp_err_t settings_post_handler(httpd_req_t *req)
 
     json_utils_send_response(req, request_json, response_json);
     return ESP_OK;
+}
+
+void settings_activate_copy_protection(void)
+{
+    copy_protection = true;
 }
