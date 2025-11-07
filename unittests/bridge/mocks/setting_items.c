@@ -24,12 +24,12 @@ static unsigned index_from_key(const char *key)
 
 esp_err_t setting_items_read(const char *key, char *value)
 {
+    TEST_ASSERT_NOT_NULL_MESSAGE(key, "setting_items_read called with NULL key pointer");
+    TEST_ASSERT_NOT_NULL_MESSAGE(value, "setting_items_read called with NULL value pointer");
+
     unsigned index = index_from_key(key);
 
     mock_setting_items_calls[index].read_called++;
-
-    TEST_ASSERT_NOT_NULL_MESSAGE(key, "setting_items_read called with NULL key pointer");
-    TEST_ASSERT_NOT_NULL_MESSAGE(value, "setting_items_read called with NULL value pointer");
 
     if (strcmp(key, "parity_1") == 0 || strcmp(key, "parity_2") == 0) {
         if (mock_setting_items_calls[index].read_result.parity != ESP_OK) {
