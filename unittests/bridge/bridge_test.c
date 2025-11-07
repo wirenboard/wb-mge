@@ -256,7 +256,7 @@ void test_bridge_init(void)
 void test_bridge_port_init_server_modbus_tcp_various_settings_1(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with various serial settings in server Modbus TCP mode");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with various serial settings in server Modbus TCP mode - 1");
     LOG_MESSAGE();
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -291,7 +291,7 @@ void test_bridge_port_init_server_modbus_tcp_various_settings_1(void)
 void test_bridge_port_init_server_modbus_tcp_various_settings_2(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with various serial settings in server Modbus TCP mode");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with various serial settings in server Modbus TCP mode - 2");
     LOG_MESSAGE();
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -315,8 +315,12 @@ void test_bridge_port_init_server_modbus_tcp_various_settings_2(void)
         verify_mode_tcp_init_port_calls(index, 1, 0);
     }
 
-    verify_serial_config_and_mode(0, &mock_modbus_tcp[0], UART_PARITY_ODD, UART_STOP_BITS_1_5, UART_DATA_6_BITS, BRIDGE_MODE_SERVER);
-    verify_serial_config_and_mode(1, &mock_modbus_tcp[1], UART_PARITY_DISABLE, UART_STOP_BITS_2, UART_DATA_7_BITS, BRIDGE_MODE_SERVER);
+    verify_serial_config_and_mode(
+        0, &mock_modbus_tcp[0], UART_PARITY_ODD, UART_STOP_BITS_1_5, UART_DATA_6_BITS, BRIDGE_MODE_SERVER
+    );
+    verify_serial_config_and_mode(
+        1, &mock_modbus_tcp[1], UART_PARITY_DISABLE, UART_STOP_BITS_2, UART_DATA_7_BITS, BRIDGE_MODE_SERVER
+    );
 }
 
 void test_bridge_port_init_server_modbus_tcp_invalid_settings(void)
@@ -355,7 +359,9 @@ void test_bridge_port_init_client_modbus_tcp(void)
         mock_settings_items_bridge_cfg[index].bridge_mb = true;
 
         esp_err_t result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_port_init should return ESP_ERR_INVALID_ARG in client mode");
+        TEST_ASSERT_EQUAL_MESSAGE(
+            ESP_ERR_INVALID_ARG, result, "bridge_port_init should return ESP_ERR_INVALID_ARG in client mode"
+        );
 
         verify_setting_items_read_calls(index);
         verify_mode_tcp_init_port_calls(index, 1, 0);
@@ -366,7 +372,10 @@ void test_bridge_port_init_client_modbus_tcp(void)
 void test_bridge_port_init_transparent_mode_various_settings_1(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with various serial settings and bridge modes in transparent mode");
+    LOG_COLORED_MESSAGE(
+        CONS_COLOR_LIGHT_BLUE,
+        "Test bridge_port_init with various serial settings and bridge modes in transparent mode - 1"
+    );
     LOG_MESSAGE();
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -403,7 +412,10 @@ void test_bridge_port_init_transparent_mode_various_settings_1(void)
 void test_bridge_port_init_transparent_mode_various_settings_2(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with various serial settings and bridge modes in transparent mode");
+    LOG_COLORED_MESSAGE(
+        CONS_COLOR_LIGHT_BLUE,
+        "Test bridge_port_init with various serial settings and bridge modes in transparent mode - 2"
+    );
     LOG_MESSAGE();
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -458,7 +470,12 @@ void test_bridge_port_init_transparent_mode_invalid_settings(void)
         verify_mode_tcp_init_port(index, &mock_transparent_tcp[index]);
         verify_mode_tcp_init_port_calls(index, 0, 1);
         verify_serial_config_and_mode(
-            index, &mock_transparent_tcp[index], UART_PARITY_DISABLE, UART_STOP_BITS_2, UART_DATA_8_BITS, BRIDGE_MODE_SERVER
+            index,
+            &mock_transparent_tcp[index],
+            UART_PARITY_DISABLE,
+            UART_STOP_BITS_2,
+            UART_DATA_8_BITS,
+            BRIDGE_MODE_SERVER
         );
     }
 }
@@ -593,7 +610,9 @@ void test_bridge_port_init_already_initialized(void)
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         esp_err_t result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_NOT_ALLOWED, result, "bridge_port_init should return ESP_ERR_NOT_ALLOWED when already initialized");
+        TEST_ASSERT_EQUAL_MESSAGE(
+            ESP_ERR_NOT_ALLOWED, result, "bridge_port_init should return ESP_ERR_NOT_ALLOWED when already initialized"
+        );
 
         verify_setting_items_not_called(index);
         verify_mode_tcp_init_port_calls(index, 0, 0);
@@ -648,10 +667,14 @@ void test_bridge_port_init_deinit_invalid_index(void)
     LOG_MESSAGE();
 
     esp_err_t result = bridge_port_init(BRIDGES_COUNT);
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_port_init should return ESP_ERR_INVALID_ARG for invalid index");
+    TEST_ASSERT_EQUAL_MESSAGE(
+        ESP_ERR_INVALID_ARG, result, "bridge_port_init should return ESP_ERR_INVALID_ARG for invalid index"
+    );
 
     result = bridge_port_deinit(BRIDGES_COUNT);
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_port_deinit should return ESP_ERR_INVALID_ARG for invalid index");
+    TEST_ASSERT_EQUAL_MESSAGE(
+        ESP_ERR_INVALID_ARG, result, "bridge_port_deinit should return ESP_ERR_INVALID_ARG for invalid index"
+    );
 }
 
 // Тестируем bridge_port_deinit с неинициализированными портами
@@ -721,10 +744,14 @@ void test_bridge_disable_enable_port_invalid_index(void)
     LOG_MESSAGE();
 
     esp_err_t result = bridge_disable_port(BRIDGES_COUNT);
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_disable_port should return ESP_ERR_INVALID_ARG for invalid index");
+    TEST_ASSERT_EQUAL_MESSAGE(
+        ESP_ERR_INVALID_ARG, result, "bridge_disable_port should return ESP_ERR_INVALID_ARG for invalid index"
+    );
 
     result = bridge_enable_port(BRIDGES_COUNT);
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_enable_port should return ESP_ERR_INVALID_ARG for invalid index");
+    TEST_ASSERT_EQUAL_MESSAGE(
+        ESP_ERR_INVALID_ARG, result, "bridge_enable_port should return ESP_ERR_INVALID_ARG for invalid index"
+    );
 }
 
 // Тестируем функцию bridge_disable_port с инициализированным bridge_port_init
@@ -909,6 +936,213 @@ void test_tcp_server_active_connections_exist(void)
     }
 }
 
+// Тестируем bridge_port_check_settings_changed с невалидным индексом
+void test_bridge_port_check_settings_changed_invalid_index(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - invalid index");
+    LOG_MESSAGE();
+
+    bool result = bridge_port_check_settings_changed(BRIDGES_COUNT);
+    TEST_ASSERT_FALSE_MESSAGE(result, "bridge_port_check_settings_changed should return false for invalid index");
+}
+
+// Тестируем bridge_port_check_settings_changed с ошибками чтения настроек
+void test_bridge_port_check_settings_changed_read_errors(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - setting read errors");
+    LOG_MESSAGE();
+
+    mock_setting_items_calls[0].read_result.parity = ESP_FAIL;
+    bool result = bridge_port_check_settings_changed(0);
+    TEST_ASSERT_FALSE_MESSAGE(result, "bridge_port_check_settings_changed should return false when serial config read fails");
+
+    mock_setting_items_calls[1].read_result.bridge_mode = ESP_FAIL;
+    result = bridge_port_check_settings_changed(1);
+    TEST_ASSERT_FALSE_MESSAGE(result, "bridge_port_check_settings_changed should return false when bridge config read fails");
+}
+
+// Тестируем bridge_port_check_settings_changed для неинициализированного порта с отключенным режимом
+void test_bridge_port_check_settings_changed_not_initialized_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(
+        CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - not initialized port with disabled mode"
+    );
+    LOG_MESSAGE();
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        strcpy(mock_settings_items_bridge_cfg[index].bridge_mode, "disabled");
+
+        bool result = bridge_port_check_settings_changed(index);
+        TEST_ASSERT_FALSE_MESSAGE(
+            result, "bridge_port_check_settings_changed should return false for uninitialized port in disabled mode"
+        );
+    }
+}
+
+// Тестируем bridge_port_check_settings_changed для неинициализированного порта с включенным режимом
+void test_bridge_port_check_settings_changed_not_initialized_enabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(
+        CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - not initialized port with enabled mode"
+    );
+    LOG_MESSAGE();
+
+    strcpy(mock_settings_items_bridge_cfg[0].bridge_mode, BRIDGE_MODE_SERVER_STR);
+    mock_settings_items_bridge_cfg[0].bridge_mb = true;
+
+    strcpy(mock_settings_items_bridge_cfg[1].bridge_mode, BRIDGE_MODE_CLIENT_STR);
+    mock_settings_items_bridge_cfg[1].bridge_mb = false;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        bool result = bridge_port_check_settings_changed(index);
+        TEST_ASSERT_TRUE_MESSAGE(
+            result, "bridge_port_check_settings_changed should return true for uninitialized port with enabled mode"
+        );
+    }
+}
+
+// Тестируем bridge_port_check_settings_changed для инициализированного порта без изменений
+void test_bridge_port_check_settings_changed_initialized_no_changes(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - initialized port with no changes");
+    LOG_MESSAGE();
+
+    strcpy(mock_settings_items_bridge_cfg[0].bridge_mode, BRIDGE_MODE_SERVER_STR);
+    mock_settings_items_bridge_cfg[0].bridge_mb = true;
+
+    strcpy(mock_settings_items_bridge_cfg[1].bridge_mode, BRIDGE_MODE_CLIENT_STR);
+    mock_settings_items_bridge_cfg[1].bridge_mb = false;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
+    }
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        bool result = bridge_port_check_settings_changed(index);
+        TEST_ASSERT_FALSE_MESSAGE(result, "bridge_port_check_settings_changed should return false when settings haven't changed");
+    }
+}
+
+// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+void test_bridge_port_check_settings_changed_initialized_changes_1(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - initialized port with changes - 1");
+    LOG_MESSAGE();
+
+    mock_settings_items_bridge_cfg[0].serial_config.baudrate = MOCK_DEFAULT_BAUDRATE;
+    strcpy(mock_settings_items_bridge_cfg[0].bridge_mode, BRIDGE_MODE_SERVER_STR);
+    mock_settings_items_bridge_cfg[0].bridge_mb = true;
+
+    strcpy(mock_settings_items_bridge_cfg[1].serial_config.parity, UART_PARITY_DISABLE_STR);
+    strcpy(mock_settings_items_bridge_cfg[1].bridge_mode, BRIDGE_MODE_CLIENT_STR);
+    mock_settings_items_bridge_cfg[1].bridge_mb = false;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
+    }
+
+    mock_settings_items_bridge_cfg[0].serial_config.baudrate = 115200;
+    strcpy(mock_settings_items_bridge_cfg[1].serial_config.parity, UART_PARITY_EVEN_STR);
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        bool result = bridge_port_check_settings_changed(index);
+        TEST_ASSERT_TRUE_MESSAGE(result, "bridge_port_check_settings_changed should return true when serial config changed");
+    }
+}
+
+// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+void test_bridge_port_check_settings_changed_initialized_changes_2(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - initialized port with changes - 2");
+    LOG_MESSAGE();
+
+    strcpy(mock_settings_items_bridge_cfg[0].bridge_mode, BRIDGE_MODE_SERVER_STR);
+    mock_settings_items_bridge_cfg[0].bridge_mb = true;
+
+    strcpy(mock_settings_items_bridge_cfg[1].bridge_mode, BRIDGE_MODE_CLIENT_STR);
+    mock_settings_items_bridge_cfg[1].bridge_mb = false;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
+    }
+
+    strcpy(mock_settings_items_bridge_cfg[0].bridge_mode, "disabled");
+    strcpy(mock_settings_items_bridge_cfg[1].bridge_ip, "192.168.11.7");
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        bool result = bridge_port_check_settings_changed(index);
+        TEST_ASSERT_TRUE_MESSAGE(result, "bridge_port_check_settings_changed should return true when bridge config changed");
+    }
+}
+
+// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+void test_bridge_port_check_settings_changed_initialized_changes_3(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - initialized port with changes - 3");
+    LOG_MESSAGE();
+
+    strcpy(mock_settings_items_bridge_cfg[0].bridge_mode, BRIDGE_MODE_SERVER_STR);
+    mock_settings_items_bridge_cfg[0].bridge_mb = true;
+    strcpy(mock_settings_items_bridge_cfg[0].serial_config.stopbits, UART_STOP_BITS_1_STR);
+
+    strcpy(mock_settings_items_bridge_cfg[1].bridge_mode, BRIDGE_MODE_CLIENT_STR);
+    mock_settings_items_bridge_cfg[1].bridge_mb = false;
+    strcpy(mock_settings_items_bridge_cfg[1].serial_config.databits, UART_DATA_8_BITS_STR);
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
+    }
+
+    strcpy(mock_settings_items_bridge_cfg[0].serial_config.stopbits, UART_STOP_BITS_2_STR);
+    strcpy(mock_settings_items_bridge_cfg[1].serial_config.databits, UART_DATA_7_BITS_STR);
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        bool result = bridge_port_check_settings_changed(index);
+        TEST_ASSERT_TRUE_MESSAGE(result, "bridge_port_check_settings_changed should return true when serial config changed");
+    }
+}
+
+// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+void test_bridge_port_check_settings_changed_initialized_changes_4(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_check_settings_changed - initialized port with changes - 4");
+    LOG_MESSAGE();
+
+    strcpy(mock_settings_items_bridge_cfg[0].bridge_mode, BRIDGE_MODE_SERVER_STR);
+    mock_settings_items_bridge_cfg[0].bridge_mb = true;
+    mock_settings_items_bridge_cfg[0].bridge_port = MOCK_DEFAULT_BRIDGE_PORT;
+
+    strcpy(mock_settings_items_bridge_cfg[1].bridge_mode, BRIDGE_MODE_CLIENT_STR);
+    mock_settings_items_bridge_cfg[1].bridge_mb = false;
+    mock_settings_items_bridge_cfg[1].bridge_port = MOCK_DEFAULT_BRIDGE_PORT2;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
+    }
+
+    mock_settings_items_bridge_cfg[0].bridge_port = 8080;
+    mock_settings_items_bridge_cfg[1].bridge_mb = true;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        bool result = bridge_port_check_settings_changed(index);
+        TEST_ASSERT_TRUE_MESSAGE(result, "bridge_port_check_settings_changed should return true when bridge config changed");
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -948,6 +1182,16 @@ int main(void)
     RUN_TEST(test_tcp_server_active_connections_disabled_mode);
     RUN_TEST(test_tcp_server_active_connections_null_tcp_desc);
     RUN_TEST(test_tcp_server_active_connections_exist);
+
+    RUN_TEST(test_bridge_port_check_settings_changed_invalid_index);
+    RUN_TEST(test_bridge_port_check_settings_changed_read_errors);
+    RUN_TEST(test_bridge_port_check_settings_changed_not_initialized_disabled);
+    RUN_TEST(test_bridge_port_check_settings_changed_not_initialized_enabled);
+    RUN_TEST(test_bridge_port_check_settings_changed_initialized_no_changes);
+    RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_1);
+    RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_2);
+    RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_3);
+    RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_4);
 
     return UNITY_END();
 }
