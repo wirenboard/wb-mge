@@ -1,5 +1,6 @@
 #include "serial.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,6 +10,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "esp_bit_defs.h"
@@ -39,11 +41,11 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, uint8_t b
     switch (event.type) {
         case UART_DATA:
             if (SERIAL_BUF_SIZE < event.size) {
-                ESP_LOGE(TAG, "UART[%d] receive buffer is too small, size: %u, expected: >= %u", desc->port_num, SERIAL_BUF_SIZE, event.size);
+                ESP_LOGE(TAG, "UART[%d] receive buffer is too small, size: %u, expected: >= %zu", desc->port_num, SERIAL_BUF_SIZE, event.size);
                 break;
             }
             memset(buffer, 0, SERIAL_BUF_SIZE);
-            ESP_LOGD(TAG, "UART[%d] DATA: %d", desc->port_num, event.size);
+            ESP_LOGD(TAG, "UART[%d] DATA: %zu", desc->port_num, event.size);
             uart_read_bytes(desc->port_num, buffer, event.size, portMAX_DELAY);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, buffer, event.size, ESP_LOG_DEBUG);
             if (!copy_protection) {

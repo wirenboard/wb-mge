@@ -41,4 +41,7 @@ UBaseType_t uxQueueSpacesAvailable(const QueueHandle_t xQueue);
 BaseType_t xQueueSend(QueueHandle_t xQueue, const void *const pvItemToQueue, TickType_t xTicksToWait);
 UBaseType_t uxQueueMessagesWaiting(const QueueHandle_t xQueue);
 
+#define xQueueReset( xQueue )    xQueueGenericReset( ( xQueue ), pdFALSE )
+BaseType_t xQueueGenericReset(QueueHandle_t xQueue, BaseType_t xNewQueue);
+
 void mock_freertos_queue_reset(void);

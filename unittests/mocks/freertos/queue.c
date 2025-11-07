@@ -162,6 +162,28 @@ UBaseType_t uxQueueMessagesWaiting(const QueueHandle_t xQueue)
     return (UBaseType_t)xQueue->count;
 }
 
+BaseType_t xQueueGenericReset(QueueHandle_t xQueue, BaseType_t xNewQueue)
+{
+    (void)xNewQueue;
+
+    if (!xQueue) {
+        return pdFAIL;
+    }
+
+    for (size_t i = 0; i < xQueue->max_items; i++) {
+        if (xQueue->items[i]) {
+            free(xQueue->items[i]);
+            xQueue->items[i] = NULL;
+        }
+    }
+
+    xQueue->head = 0;
+    xQueue->tail = 0;
+    xQueue->count = 0;
+
+    return pdPASS;
+}
+
 void mock_freertos_queue_reset(void)
 {
     g_queue_create_call_count = 0;
