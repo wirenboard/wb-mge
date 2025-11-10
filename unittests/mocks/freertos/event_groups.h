@@ -2,34 +2,56 @@
 
 #include "FreeRTOS.h"
 
-typedef void *EventGroupHandle_t;
+#include <stdbool.h>
+
 typedef TickType_t EventBits_t;
 
-extern int mock_xEventGroupCreate_called;
-extern EventGroupHandle_t mock_xEventGroupCreate_return_value;
+typedef struct EventGroupDef_t
+{
+    EventBits_t uxEventBits;
+} EventGroupDef_t;
 
-extern int mock_xEventGroupSetBits_called;
-extern EventGroupHandle_t mock_xEventGroupSetBits_xEventGroup;
-extern EventBits_t mock_xEventGroupSetBits_uxBitsToSet;
+typedef EventGroupDef_t *EventGroupHandle_t;
 
-extern int mock_xEventGroupWaitBits_called;
-extern EventGroupHandle_t mock_xEventGroupWaitBits_xEventGroup;
-extern EventBits_t mock_xEventGroupWaitBits_uxBitsToWaitFor;
-extern BaseType_t mock_xEventGroupWaitBits_xClearOnExit;
-extern BaseType_t mock_xEventGroupWaitBits_xWaitForAllBits;
-extern TickType_t mock_xEventGroupWaitBits_xTicksToWait;
-extern EventBits_t mock_xEventGroupWaitBits_return_value;
+typedef struct {
+    bool should_fail;
+    int called;
+    EventGroupHandle_t return_value;
+} mock_xEventGroupCreate_t;
 
-extern int mock_vEventGroupDelete_called;
-extern EventGroupHandle_t mock_vEventGroupDelete_xEventGroup;
+typedef struct {
+    int called;
+    EventGroupHandle_t xEventGroup;
+    EventBits_t uxBitsToSet;
+} mock_xEventGroupSetBits_t;
+
+typedef struct {
+    bool should_timeout;
+    int called;
+    EventGroupHandle_t xEventGroup;
+    EventBits_t uxBitsToWaitFor;
+    BaseType_t xClearOnExit;
+    BaseType_t xWaitForAllBits;
+    TickType_t xTicksToWait;
+} mock_xEventGroupWaitBits_t;
+
+typedef struct {
+    int called;
+    EventGroupHandle_t xEventGroup;
+} mock_vEventGroupDelete_t;
+
+extern mock_xEventGroupCreate_t mock_xEventGroupCreate_data;
+extern mock_xEventGroupSetBits_t mock_xEventGroupSetBits_data;
+extern mock_xEventGroupWaitBits_t mock_xEventGroupWaitBits_data;
+extern mock_vEventGroupDelete_t mock_vEventGroupDelete_data;
 
 void mock_freertos_event_groups_reset(void);
 
 EventGroupHandle_t xEventGroupCreate(void);
+void vEventGroupDelete(EventGroupHandle_t xEventGroup);
 EventBits_t xEventGroupSetBits(EventGroupHandle_t xEventGroup, const EventBits_t uxBitsToSet);
 EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
                                 const EventBits_t uxBitsToWaitFor,
                                 const BaseType_t xClearOnExit,
                                 const BaseType_t xWaitForAllBits,
                                 TickType_t xTicksToWait);
-void vEventGroupDelete(EventGroupHandle_t xEventGroup);
