@@ -1,24 +1,37 @@
 #pragma once
 
 #include "FreeRTOS.h"
+#include <stdbool.h>
+
+typedef void *TaskHandle_t;
 
 typedef void (*TaskFunction_t)(void *);
 
-extern int mock_xTaskCreate_called;
-extern TaskFunction_t mock_xTaskCreate_pvTaskCode;
-extern const char *mock_xTaskCreate_pcName;
-extern uint32_t mock_xTaskCreate_usStackDepth;
-extern void *mock_xTaskCreate_pvParameters;
-extern UBaseType_t mock_xTaskCreate_uxPriority;
-extern TaskHandle_t *mock_xTaskCreate_pxCreatedTask;
-extern BaseType_t mock_xTaskCreate_return_value;
+typedef struct {
+    bool should_fail;
+    int called;
+    TaskFunction_t pvTaskCode;
+    const char *pcName;
+    uint32_t usStackDepth;
+    void *pvParameters;
+    UBaseType_t uxPriority;
+    TaskHandle_t *pxCreatedTask;
+} mock_xTaskCreate_t;
 
-extern int mock_vTaskDelete_called;
-extern TaskHandle_t mock_vTaskDelete_xTaskToDelete;
+typedef struct {
+    int called;
+    TaskHandle_t xTaskToDelete;
+} mock_vTaskDelete_t;
 
-extern int mock_vTaskDelay_called;
-extern TickType_t mock_vTaskDelay_xTicksToDelay;
-extern int mock_vTaskDelay_counter;
+typedef struct {
+    int called;
+    TickType_t xTicksToDelay;
+    int counter;
+} mock_vTaskDelay_t;
+
+extern mock_xTaskCreate_t mock_xTaskCreate_data;
+extern mock_vTaskDelete_t mock_vTaskDelete_data;
+extern mock_vTaskDelay_t mock_vTaskDelay_data;
 
 void mock_freertos_task_reset(void);
 
