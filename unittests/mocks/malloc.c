@@ -1,3 +1,4 @@
+#include "unity.h"
 #include "malloc.h"
 
 #include <stdlib.h>
@@ -6,26 +7,28 @@
 #undef malloc
 #undef free
 
-#define MAX_TRACKED_ALLOCS 100
+#define MAX_TRACKED_ALLOCS          100
 
 bool malloc_should_fail = false;
 size_t last_malloc_size = 0;
+int allocated_count = 0;
+int freed_count = 0;
 
 static void* allocated_ptrs[MAX_TRACKED_ALLOCS];
-static int allocated_count = 0;
 static void* freed_ptrs[MAX_TRACKED_ALLOCS];
-static int freed_count = 0;
 
 void* test_malloc(size_t size)
 {
-    last_malloc_size = size;
-
     if (malloc_should_fail) {
         return NULL;
     }
 
+    last_malloc_size = size;
+
     void* ptr = malloc(size);
-    if (ptr && allocated_count < MAX_TRACKED_ALLOCS) {
+    TEST_ASSERT_NOT_NULL_MESSAGE(ptr, "test_malloc failed to allocate memory");
+
+    if (allocated_count < MAX_TRACKED_ALLOCS) {
         allocated_ptrs[allocated_count++] = ptr;
     }
     return ptr;
@@ -33,21 +36,13 @@ void* test_malloc(size_t size)
 
 void test_free(void* ptr)
 {
-    if (ptr && freed_count < MAX_TRACKED_ALLOCS) {
+    TEST_ASSERT_NOT_NULL_MESSAGE(ptr, "test_free called with NULL pointer");
+
+    if (freed_count < MAX_TRACKED_ALLOCS) {
         freed_ptrs[freed_count++] = ptr;
     }
 
     free(ptr);
-}
-
-void reset_malloc_tracking(void)
-{
-    malloc_should_fail = false;
-    last_malloc_size = 0;
-    allocated_count = 0;
-    freed_count = 0;
-    memset(allocated_ptrs, 0, sizeof(allocated_ptrs));
-    memset(freed_ptrs, 0, sizeof(freed_ptrs));
 }
 
 void* get_allocated_ptr(int index)
@@ -66,4 +61,14 @@ bool was_ptr_freed(void* ptr)
         }
     }
     return false;
+}
+
+void reset_malloc_tracking(void)
+{
+    malloc_should_fail = false;
+    last_malloc_size = 0;
+    allocated_count = 0;
+    freed_count = 0;
+    memset(allocated_ptrs, 0, sizeof(allocated_ptrs));
+    memset(freed_ptrs, 0, sizeof(freed_ptrs));
 }

@@ -3,8 +3,6 @@
 #include "bridge.h"
 #include <stdbool.h>
 
-#define MOCK_DEFAULT_BAUDRATE                      9600
-
 #define MOCK_DEFAULT_BRIDGE_PORT                   502
 #define MOCK_DEFAULT_BRIDGE_PORT2                  503
 

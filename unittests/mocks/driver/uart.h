@@ -8,7 +8,8 @@
 #include "freertos/queue.h"
 #include "esp_err.h"
 
-#define UART_PIN_NO_CHANGE      (-1)
+#define UART_PIN_NO_CHANGE              (-1)
+#define MOCK_PORT_NUM_UART1             UART_NUM_1
 
 typedef enum {
     UART_DATA_5_BITS   = 0x0,    /*!< word length: 5bits*/
@@ -51,43 +52,18 @@ typedef enum {
 } uart_event_type_t;
 
 typedef enum {
-    UART_MODE_UART = 0x00,                      /*!< mode: regular UART mode*/
     UART_MODE_RS485_HALF_DUPLEX = 0x01,         /*!< mode: half duplex RS485 UART mode control by RTS pin */
-    UART_MODE_IRDA = 0x02,                      /*!< mode: IRDA  UART mode*/
-    UART_MODE_RS485_COLLISION_DETECT = 0x03,    /*!< mode: RS485 collision detection UART mode (used for test purposes)*/
-    UART_MODE_RS485_APP_CTRL = 0x04,            /*!< mode: application control RS485 UART mode (used for test purposes)*/
 } uart_mode_t;
 
 typedef enum {
     UART_HW_FLOWCTRL_DISABLE = 0x0,   /*!< disable hardware flow control*/
-    UART_HW_FLOWCTRL_RTS     = 0x1,   /*!< enable RX hardware flow control (rts)*/
-    UART_HW_FLOWCTRL_CTS     = 0x2,   /*!< enable TX hardware flow control (cts)*/
-    UART_HW_FLOWCTRL_CTS_RTS = 0x3,   /*!< enable hardware flow control*/
-    UART_HW_FLOWCTRL_MAX     = 0x4,
 } uart_hw_flowcontrol_t;
 
 typedef enum {
-    // For CPU domain
-    SOC_MOD_CLK_CPU = 1,                       /*!< CPU_CLK can be sourced from XTAL, PLL, or RC_FAST by configuring soc_cpu_clk_src_t */
-    // For RTC domain
-    SOC_MOD_CLK_RTC_FAST,                      /*!< RTC_FAST_CLK can be sourced from XTAL_D2 or RC_FAST by configuring soc_rtc_fast_clk_src_t */
-    SOC_MOD_CLK_RTC_SLOW,                      /*!< RTC_SLOW_CLK can be sourced from RC_SLOW, XTAL32K, or RC_FAST_D256 by configuring soc_rtc_slow_clk_src_t */
-    // For digital domain: peripherals, WIFI, BLE
-    SOC_MOD_CLK_APB,                           /*!< APB_CLK is always 40MHz no matter it derives from XTAL or PLL */
-    SOC_MOD_CLK_PLL_F40M,                      /*!< PLL_F40M_CLK is derived from PLL, and has a fixed frequency of 40MHz */
-    SOC_MOD_CLK_PLL_F60M,                      /*!< PLL_F60M_CLK is derived from PLL, and has a fixed frequency of 60MHz */
-    SOC_MOD_CLK_PLL_F80M,                      /*!< PLL_F80M_CLK is derived from PLL, and has a fixed frequency of 80MHz */
-    SOC_MOD_CLK_OSC_SLOW,                      /*!< OSC_SLOW_CLK comes from an external slow clock signal, passing a clock gating to the peripherals */
-    SOC_MOD_CLK_RC_FAST,                       /*!< RC_FAST_CLK comes from the internal 20MHz rc oscillator, passing a clock gating to the peripherals */
-    SOC_MOD_CLK_RC_FAST_D256,                  /*!< RC_FAST_D256_CLK comes from the internal 20MHz rc oscillator, divided by 256, and passing a clock gating to the peripherals */
-    SOC_MOD_CLK_XTAL,                          /*!< XTAL_CLK comes from the external 26/40MHz crystal */
-    SOC_MOD_CLK_INVALID,                       /*!< Indication of the end of the available module clock sources */
+    SOC_MOD_CLK_PLL_F40M = 5,
 } soc_module_clk_t;
 
 typedef enum {
-    UART_SCLK_PLL_F40M = SOC_MOD_CLK_PLL_F40M, /*!< UART source clock is PLL_F40M CLK */
-    UART_SCLK_RTC = SOC_MOD_CLK_RC_FAST,       /*!< UART source clock is RC_FAST */
-    UART_SCLK_XTAL = SOC_MOD_CLK_XTAL,         /*!< UART source clock is XTAL */
     UART_SCLK_DEFAULT = SOC_MOD_CLK_PLL_F40M,  /*!< UART source clock default choice is PLL_F40M */
 } soc_periph_uart_clk_src_legacy_t;
 
@@ -129,3 +105,42 @@ esp_err_t uart_set_rx_timeout(uart_port_t uart_num, const uint8_t tout_thresh);
 esp_err_t uart_wait_tx_done(uart_port_t uart_num, TickType_t ticks_to_wait);
 int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t ticks_to_wait);
 int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size);
+
+typedef struct {
+    int driver_install_called;
+    int driver_delete_called;
+    int param_config_called;
+    int set_pin_called;
+    int set_mode_called;
+    int set_rx_timeout_called;
+    int read_bytes_called;
+    int write_bytes_called;
+    int wait_tx_done_called;
+    int flush_input_called;
+} mock_uart_calls_t;
+
+typedef struct {
+    int rx_buffer_size;
+    int tx_buffer_size;
+    int event_queue_size;
+    QueueHandle_t *uart_queue;
+    int intr_alloc_flags;
+    uart_config_t config;
+    int tx_pin;
+    int rx_pin;
+    int dir_pin;
+    int cts_pin;
+    uart_mode_t mode;
+    uint8_t rx_timeout;
+} mock_uart_data_t;
+
+extern mock_uart_calls_t mock_uart_calls;
+extern mock_uart_data_t mock_uart_data;
+
+extern esp_err_t mock_uart_driver_install_result;
+extern esp_err_t mock_uart_param_config_result;
+extern esp_err_t mock_uart_set_pin_result;
+extern esp_err_t mock_uart_set_mode_result;
+extern esp_err_t mock_uart_set_rx_timeout_result;
+
+void mock_uart_reset(void);

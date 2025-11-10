@@ -1,3 +1,8 @@
+#ifdef __unittest_env__
+    #define malloc test_malloc
+    #define free test_free
+#endif
+
 #include "serial.h"
 
 #include <stdbool.h>
@@ -92,7 +97,7 @@ static void uart_event_task(void *pvParameters)
     while(1) {
         uart_event_t event;
         BaseType_t result = xQueueReceive(desc->uart_queue, (void *)&event, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
-        if (result == pdTRUE) {
+        if (result == pdPASS) {
             handle_uart_event(desc, event, dtmp);
         }
 

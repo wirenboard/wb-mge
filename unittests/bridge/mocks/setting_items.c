@@ -1,4 +1,6 @@
 #include "unity.h"
+
+#include "config.h"
 #include "setting_items.h"
 #include <string.h>
 
