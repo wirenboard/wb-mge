@@ -213,32 +213,32 @@ static void verify_xEventGroupWaitBits_args(
 )
 {
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        mock_xEventGroupCreate_return_value,
-        mock_xEventGroupWaitBits_xEventGroup,
+        mock_xEventGroupCreate_data.return_value,
+        mock_xEventGroupWaitBits_data.xEventGroup,
         "xEventGroupWaitBits should be called with correct event group handle"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_uxBitsToWaitFor,
-        mock_xEventGroupWaitBits_uxBitsToWaitFor,
+        mock_xEventGroupWaitBits_data.uxBitsToWaitFor,
         "xEventGroupWaitBits should be called with correct bits to wait for"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_xClearOnExit,
-        mock_xEventGroupWaitBits_xClearOnExit,
+        mock_xEventGroupWaitBits_data.xClearOnExit,
         "xEventGroupWaitBits should be called with correct xClearOnExit value"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_xWaitForAllBits,
-        mock_xEventGroupWaitBits_xWaitForAllBits,
+        mock_xEventGroupWaitBits_data.xWaitForAllBits,
         "xEventGroupWaitBits should be called with correct xWaitForAllBits value"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_xTicksToWait,
-        mock_xEventGroupWaitBits_xTicksToWait,
+        mock_xEventGroupWaitBits_data.xTicksToWait,
         "xEventGroupWaitBits should be called with correct ticks to wait"
     );
 }
@@ -247,40 +247,40 @@ static void verify_event_group_create_delete_handlers(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(
         1,
-        mock_xEventGroupCreate_called,
+        mock_xEventGroupCreate_data.called,
         "xEventGroupCreate should be called once"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         1,
-        mock_vEventGroupDelete_called,
+        mock_vEventGroupDelete_data.called,
         "vEventGroupDelete should be called once"
     );
 
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        mock_xEventGroupCreate_return_value,
-        mock_vEventGroupDelete_xEventGroup,
+        mock_xEventGroupCreate_data.return_value,
+        mock_vEventGroupDelete_data.xEventGroup,
         "Deleted event group should match created one"
     );
 }
 
 static void verify_task_created(void)
 {
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_called, "xTaskCreate should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_data.called, "xTaskCreate should be called once");
 
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         "uart_event_task",
-        mock_xTaskCreate_pcName,
+        mock_xTaskCreate_data.pcName,
         "Task name should be 'uart_event_task'"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         SERIAL_TASK_STACK_SIZE,
-        mock_xTaskCreate_usStackDepth,
+        mock_xTaskCreate_data.usStackDepth,
         "Task stack depth should be 4096"
     );
 
-    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_TASK_PRIORITY, mock_xTaskCreate_uxPriority, "Task priority should be 12");
+    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_TASK_PRIORITY, mock_xTaskCreate_data.uxPriority, "Task priority should be 12");
 }
 
 static void verify_serial_init_calls(
@@ -332,13 +332,13 @@ static void verify_serial_init_calls(
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_task_create,
-        mock_xTaskCreate_called,
+        mock_xTaskCreate_data.called,
         "xTaskCreate call count mismatch"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_event_group_wait_bits,
-        mock_xEventGroupWaitBits_called,
+        mock_xEventGroupWaitBits_data.called,
         "xEventGroupWaitBits call count mismatch"
     );
 }
@@ -403,12 +403,12 @@ void test_serial_init_event_group_create_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_xEventGroupCreate_should_fail = true;
+    mock_xEventGroupCreate_data.should_fail = true;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when xEventGroupCreate fails");
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupCreate_called, "xEventGroupCreate should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupCreate_data.called, "xEventGroupCreate should be called once");
     verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0);
     verify_malloc_tracking(1, 1);
 }
@@ -538,7 +538,7 @@ void test_serial_init_task_create_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_xTaskCreate_return_value = pdFAIL;
+    mock_xTaskCreate_data.should_fail = true;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
