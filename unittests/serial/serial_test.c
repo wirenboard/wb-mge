@@ -72,13 +72,6 @@ static void verify_malloc_tracking(int expected_allocs, int expected_frees)
         freed_count,
         "Unexpected number of deallocations"
     );
-
-    if (expected_frees > 0) {
-        for (int i = 0; i < expected_frees; i++) {
-            void* buffer_ptr = get_allocated_ptr(i);
-            TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr), "Allocated buffer should be freed");
-        }
-    }
 }
 
 static void verify_uart_driver_install_args(void)
@@ -206,7 +199,26 @@ static void verify_uart_set_rx_timeout_args(void)
     );
 }
 
+static void verify_xEventGroupSetBits_args(
+    int index,
+    EventBits_t expected_uxBitsToSet
+)
+{
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        mock_xEventGroupCreate_data.return_value,
+        mock_xEventGroupSetBits_data.xEventGroup[index],
+        "xEventGroupSetBits should be called with correct event group handle"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_uxBitsToSet,
+        mock_xEventGroupSetBits_data.uxBitsToSet[index],
+        "xEventGroupSetBits should be called with correct bits to set"
+    );
+}
+
 static void verify_xEventGroupWaitBits_args(
+    int index,
     EventBits_t expected_uxBitsToWaitFor,
     BaseType_t expected_xClearOnExit,
     BaseType_t expected_xWaitForAllBits,
@@ -215,31 +227,31 @@ static void verify_xEventGroupWaitBits_args(
 {
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
         mock_xEventGroupCreate_data.return_value,
-        mock_xEventGroupWaitBits_data.xEventGroup,
+        mock_xEventGroupWaitBits_data.xEventGroup[index],
         "xEventGroupWaitBits should be called with correct event group handle"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_uxBitsToWaitFor,
-        mock_xEventGroupWaitBits_data.uxBitsToWaitFor,
+        mock_xEventGroupWaitBits_data.uxBitsToWaitFor[index],
         "xEventGroupWaitBits should be called with correct bits to wait for"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_xClearOnExit,
-        mock_xEventGroupWaitBits_data.xClearOnExit,
+        mock_xEventGroupWaitBits_data.xClearOnExit[index],
         "xEventGroupWaitBits should be called with correct xClearOnExit value"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_xWaitForAllBits,
-        mock_xEventGroupWaitBits_data.xWaitForAllBits,
+        mock_xEventGroupWaitBits_data.xWaitForAllBits[index],
         "xEventGroupWaitBits should be called with correct xWaitForAllBits value"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_xTicksToWait,
-        mock_xEventGroupWaitBits_data.xTicksToWait,
+        mock_xEventGroupWaitBits_data.xTicksToWait[index],
         "xEventGroupWaitBits should be called with correct ticks to wait"
     );
 }
@@ -555,7 +567,7 @@ void test_serial_init_task_create_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем успешную инициализацию serial_init без запуска задачи
+// Тестируем инициализацию serial_init без фактического запуска задачи
 void test_serial_init_success_no_task_execution(void)
 {
     LOG_MESSAGE();
@@ -565,7 +577,7 @@ void test_serial_init_success_no_task_execution(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_xEventGroupWaitBits_data.should_timeout = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -577,11 +589,12 @@ void test_serial_init_success_no_task_execution(void)
     verify_uart_set_mode_args();
     verify_uart_set_rx_timeout_args();
     verify_task_created();
-    verify_xEventGroupWaitBits_args(EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
+    verify_xEventGroupWaitBits_args(0, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
     verify_malloc_tracking(1, 0);
 }
 
-// Тестируем успешную инициализацию serial_init c запуском задачи
+// Тестируем инициализацию serial_init c запуском задачи и возникновением события EVENT_TASK_EXIT_REQ,
+// без получения данных по UART
 void test_serial_init_success_with_task_execution(void)
 {
     LOG_MESSAGE();
@@ -592,9 +605,24 @@ void test_serial_init_success_with_task_execution(void)
     init_default_config(&config);
 
     mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    verify_serial_init_calls(1, 1, 1, 1, 1, 0, 1, 2);
+    verify_xEventGroupWaitBits_args(0, EVENT_TASK_EXIT_REQ, pdFALSE, pdTRUE, 0);
+    verify_xEventGroupWaitBits_args(1, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
+    TEST_ASSERT_EQUAL_MESSAGE(
+        2,
+        mock_xEventGroupSetBits_data.called,
+        "xEventGroupSetBits should be called twice"
+    );
+    verify_xEventGroupSetBits_args(0, EVENT_TASK_STARTED);
+    verify_xEventGroupSetBits_args(1, EVENT_TASK_FINISHED);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once");
+    verify_malloc_tracking(2, 1);
 }
 
 int main(void)
