@@ -160,7 +160,7 @@ void test_settings_save_timer_wait_ready_flag_set(void)
 
     settings_save_timer_auto_init();
 
-    mock_xEventGroupWaitBits_data.return_value = EVENT_BIT_READY;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_BIT_READY;
 
     esp_err_t result = settings_save_timer_wait();
 
@@ -186,7 +186,7 @@ void test_settings_save_timer_wait_ready_flag_set(void)
     verify_timer_and_callback();
 }
 
-// Тестируем settings_save_timer_wait с таймаутом
+// Тестируем settings_save_timer_wait с таймаутом (флаг READY не установлен)
 void test_settings_save_timer_wait_timeout(void)
 {
     LOG_MESSAGE();
@@ -194,8 +194,6 @@ void test_settings_save_timer_wait_timeout(void)
     LOG_MESSAGE();
 
     settings_save_timer_auto_init();
-
-    mock_xEventGroupWaitBits_data.should_timeout = true;
 
     esp_err_t result = settings_save_timer_wait();
 

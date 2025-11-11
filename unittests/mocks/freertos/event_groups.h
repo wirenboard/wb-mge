@@ -4,6 +4,8 @@
 
 #include <stdbool.h>
 
+#define MAX_SET_WAIT_CALLS              8
+
 typedef TickType_t EventBits_t;
 
 typedef void *EventGroupHandle_t;
@@ -16,18 +18,18 @@ typedef struct {
 
 typedef struct {
     int called;
-    EventGroupHandle_t xEventGroup;
-    EventBits_t uxBitsToSet;
+    EventGroupHandle_t xEventGroup[MAX_SET_WAIT_CALLS];
+    EventBits_t uxBitsToSet[MAX_SET_WAIT_CALLS];
 } mock_xEventGroupSetBits_t;
 
 typedef struct {
     bool should_timeout;
     int called;
-    EventGroupHandle_t xEventGroup;
-    EventBits_t uxBitsToWaitFor;
-    BaseType_t xClearOnExit;
-    BaseType_t xWaitForAllBits;
-    TickType_t xTicksToWait;
+    EventGroupHandle_t xEventGroup[MAX_SET_WAIT_CALLS];
+    EventBits_t uxBitsToWaitFor[MAX_SET_WAIT_CALLS];
+    BaseType_t xClearOnExit[MAX_SET_WAIT_CALLS];
+    BaseType_t xWaitForAllBits[MAX_SET_WAIT_CALLS];
+    TickType_t xTicksToWait[MAX_SET_WAIT_CALLS];
     EventBits_t return_value;
 } mock_xEventGroupWaitBits_t;
 
