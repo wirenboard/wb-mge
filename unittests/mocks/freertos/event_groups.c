@@ -34,8 +34,8 @@ EventBits_t xEventGroupSetBits(EventGroupHandle_t xEventGroup, const EventBits_t
 {
     TEST_ASSERT_NOT_NULL_MESSAGE(xEventGroup, "xEventGroupSetBits called with NULL event group handle");
 
-    mock_xEventGroupSetBits_data.xEventGroup = xEventGroup;
-    mock_xEventGroupSetBits_data.uxBitsToSet = uxBitsToSet;
+    mock_xEventGroupSetBits_data.xEventGroup[mock_xEventGroupSetBits_data.called] = xEventGroup;
+    mock_xEventGroupSetBits_data.uxBitsToSet[mock_xEventGroupSetBits_data.called] = uxBitsToSet;
     mock_xEventGroupSetBits_data.called++;
 
     return 0;
@@ -49,16 +49,12 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
 {
     TEST_ASSERT_NOT_NULL_MESSAGE(xEventGroup, "xEventGroupWaitBits called with NULL event group handle");
 
-    mock_xEventGroupWaitBits_data.xEventGroup = xEventGroup;
-    mock_xEventGroupWaitBits_data.uxBitsToWaitFor = uxBitsToWaitFor;
-    mock_xEventGroupWaitBits_data.xClearOnExit = xClearOnExit;
-    mock_xEventGroupWaitBits_data.xWaitForAllBits = xWaitForAllBits;
-    mock_xEventGroupWaitBits_data.xTicksToWait = xTicksToWait;
+    mock_xEventGroupWaitBits_data.xEventGroup[mock_xEventGroupWaitBits_data.called] = xEventGroup;
+    mock_xEventGroupWaitBits_data.uxBitsToWaitFor[mock_xEventGroupWaitBits_data.called] = uxBitsToWaitFor;
+    mock_xEventGroupWaitBits_data.xClearOnExit[mock_xEventGroupWaitBits_data.called] = xClearOnExit;
+    mock_xEventGroupWaitBits_data.xWaitForAllBits[mock_xEventGroupWaitBits_data.called] = xWaitForAllBits;
+    mock_xEventGroupWaitBits_data.xTicksToWait[mock_xEventGroupWaitBits_data.called] = xTicksToWait;
     mock_xEventGroupWaitBits_data.called++;
-
-    if (mock_xEventGroupWaitBits_data.should_timeout) {
-        return (EventBits_t)0;
-    }
 
     return mock_xEventGroupWaitBits_data.return_value;
 }
