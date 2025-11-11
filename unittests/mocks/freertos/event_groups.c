@@ -4,11 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_EVENT_GROUPS                    10
-
-static EventGroupDef_t event_groups[MAX_EVENT_GROUPS];
-static int event_group_count = 0;
-
 mock_xEventGroupCreate_t mock_xEventGroupCreate_data;
 mock_xEventGroupSetBits_t mock_xEventGroupSetBits_data;
 mock_xEventGroupWaitBits_t mock_xEventGroupWaitBits_data;
@@ -22,16 +17,9 @@ EventGroupHandle_t xEventGroupCreate(void)
         return NULL;
     }
 
-    if (event_group_count >= MAX_EVENT_GROUPS) {
-        return NULL;
-    }
+    mock_xEventGroupCreate_data.return_value = (EventGroupHandle_t)0xABCD;
 
-    EventGroupHandle_t handle = &event_groups[event_group_count];
-    handle->uxEventBits = 0;
-    event_group_count++;
-
-    mock_xEventGroupCreate_data.return_value = handle;
-    return handle;
+    return mock_xEventGroupCreate_data.return_value;
 }
 
 void vEventGroupDelete(EventGroupHandle_t xEventGroup)
@@ -40,8 +28,6 @@ void vEventGroupDelete(EventGroupHandle_t xEventGroup)
 
     mock_vEventGroupDelete_data.xEventGroup = xEventGroup;
     mock_vEventGroupDelete_data.called++;
-
-    xEventGroup->uxEventBits = 0;
 }
 
 EventBits_t xEventGroupSetBits(EventGroupHandle_t xEventGroup, const EventBits_t uxBitsToSet)
@@ -52,9 +38,7 @@ EventBits_t xEventGroupSetBits(EventGroupHandle_t xEventGroup, const EventBits_t
     mock_xEventGroupSetBits_data.uxBitsToSet = uxBitsToSet;
     mock_xEventGroupSetBits_data.called++;
 
-    xEventGroup->uxEventBits |= uxBitsToSet;
-
-    return xEventGroup->uxEventBits;
+    return 0;
 }
 
 EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
@@ -76,28 +60,7 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
         return (EventBits_t)0;
     }
 
-    EventBits_t current_bits = xEventGroup->uxEventBits;
-
-    bool condition_met = false;
-
-    if (xWaitForAllBits == pdTRUE) {
-        condition_met = (current_bits & uxBitsToWaitFor) == uxBitsToWaitFor;
-    } else {
-        condition_met = (current_bits & uxBitsToWaitFor) != 0;
-    }
-
-    if (xTicksToWait == portMAX_DELAY) {
-        TEST_ASSERT_TRUE_MESSAGE(
-            condition_met,
-            "uxBitsToWaitFor should be set before xEventGroupWaitBits"
-        );
-    }
-
-    if (condition_met && xClearOnExit == pdTRUE) {
-        xEventGroup->uxEventBits &= ~uxBitsToWaitFor;
-    }
-
-    return current_bits;
+    return mock_xEventGroupWaitBits_data.return_value;
 }
 
 void mock_freertos_event_groups_reset(void)
@@ -106,7 +69,4 @@ void mock_freertos_event_groups_reset(void)
     memset(&mock_xEventGroupSetBits_data, 0, sizeof(mock_xEventGroupSetBits_data));
     memset(&mock_xEventGroupWaitBits_data, 0, sizeof(mock_xEventGroupWaitBits_data));
     memset(&mock_vEventGroupDelete_data, 0, sizeof(mock_vEventGroupDelete_data));
-
-    memset(event_groups, 0, sizeof(event_groups));
-    event_group_count = 0;
 }

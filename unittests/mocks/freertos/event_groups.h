@@ -6,12 +6,7 @@
 
 typedef TickType_t EventBits_t;
 
-typedef struct EventGroupDef_t
-{
-    EventBits_t uxEventBits;
-} EventGroupDef_t;
-
-typedef EventGroupDef_t *EventGroupHandle_t;
+typedef void *EventGroupHandle_t;
 
 typedef struct {
     bool should_fail;
@@ -33,6 +28,7 @@ typedef struct {
     BaseType_t xClearOnExit;
     BaseType_t xWaitForAllBits;
     TickType_t xTicksToWait;
+    EventBits_t return_value;
 } mock_xEventGroupWaitBits_t;
 
 typedef struct {
@@ -45,8 +41,6 @@ extern mock_xEventGroupSetBits_t mock_xEventGroupSetBits_data;
 extern mock_xEventGroupWaitBits_t mock_xEventGroupWaitBits_data;
 extern mock_vEventGroupDelete_t mock_vEventGroupDelete_data;
 
-void mock_freertos_event_groups_reset(void);
-
 EventGroupHandle_t xEventGroupCreate(void);
 void vEventGroupDelete(EventGroupHandle_t xEventGroup);
 EventBits_t xEventGroupSetBits(EventGroupHandle_t xEventGroup, const EventBits_t uxBitsToSet);
@@ -55,3 +49,5 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
                                 const BaseType_t xClearOnExit,
                                 const BaseType_t xWaitForAllBits,
                                 TickType_t xTicksToWait);
+
+void mock_freertos_event_groups_reset(void);
