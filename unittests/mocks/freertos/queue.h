@@ -2,6 +2,7 @@
 
 #include "freertos/FreeRTOS.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 
 typedef struct {
@@ -13,26 +14,46 @@ typedef struct {
     size_t count;          // Current number of items in queue
 } *QueueHandle_t;
 
-extern int g_queue_create_call_count;
-extern BaseType_t g_queue_create_result;
-extern UBaseType_t g_queue_max_len;
-extern UBaseType_t g_queue_item_size;
+typedef struct {
+    int called;
+    bool should_fail;
+    UBaseType_t max_len;
+    UBaseType_t item_size;
+} mock_xQueueCreate_t;
 
-extern int g_queue_delete_call_count;
-extern QueueHandle_t g_queue_delete_handle;
+typedef struct {
+    int called;
+    QueueHandle_t handle;
+} mock_vQueueDelete_t;
 
-extern int g_queue_receive_call_count;
-extern TickType_t g_queue_receive_ticks;
+typedef struct {
+    int called;
+    TickType_t ticks;
+} mock_xQueueReceive_t;
 
-extern int g_queue_space_call_count;
-extern QueueHandle_t g_queue_spaces_handle;
+typedef struct {
+    int called;
+    QueueHandle_t handle;
+} mock_uxQueueSpacesAvailable_t;
 
-extern int g_queue_send_call_count;
-extern QueueHandle_t g_queue_send_handle;
-extern BaseType_t g_queue_send_return_value;
+typedef struct {
+    int called;
+    QueueHandle_t handle;
+    TickType_t ticks;
+    bool should_fail;
+} mock_xQueueSend_t;
 
-extern int g_queue_messages_waiting_call_count;
-extern QueueHandle_t g_queue_messages_waiting_handle;
+typedef struct {
+    int called;
+    QueueHandle_t handle;
+} mock_uxQueueMessagesWaiting_t;
+
+extern mock_xQueueCreate_t mock_xQueueCreate_data;
+extern mock_vQueueDelete_t mock_vQueueDelete_data;
+extern mock_xQueueReceive_t mock_xQueueReceive_data;
+extern mock_uxQueueSpacesAvailable_t mock_uxQueueSpacesAvailable_data;
+extern mock_xQueueSend_t mock_xQueueSend_data;
+extern mock_uxQueueMessagesWaiting_t mock_uxQueueMessagesWaiting_data;
 
 QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t uxItemSize);
 void vQueueDelete(QueueHandle_t xQueue);

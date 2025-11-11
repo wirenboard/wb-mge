@@ -1,40 +1,26 @@
+#include "unity.h"
+
 #include "queue.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-int g_queue_create_call_count = 0;
-BaseType_t g_queue_create_result = pdPASS;
-UBaseType_t g_queue_max_len = 0;
-UBaseType_t g_queue_item_size = 0;
-
-int g_queue_delete_call_count = 0;
-QueueHandle_t g_queue_delete_handle = NULL;
-
-int g_queue_receive_call_count = 0;
-TickType_t g_queue_receive_ticks = 0;
-
-int g_queue_space_call_count = 0;
-QueueHandle_t g_queue_spaces_handle = NULL;
-
-int g_queue_send_call_count = 0;
-QueueHandle_t g_queue_send_handle = NULL;
-BaseType_t g_queue_send_return_value = pdPASS;
-
-int g_queue_messages_waiting_call_count = 0;
-QueueHandle_t g_queue_messages_waiting_handle = NULL;
+mock_xQueueCreate_t mock_xQueueCreate_data = {0};
+mock_vQueueDelete_t mock_vQueueDelete_data = {0};
+mock_xQueueReceive_t mock_xQueueReceive_data = {0};
+mock_uxQueueSpacesAvailable_t mock_uxQueueSpacesAvailable_data = {0};
+mock_xQueueSend_t mock_xQueueSend_data = {0};
+mock_uxQueueMessagesWaiting_t mock_uxQueueMessagesWaiting_data = {0};
 
 QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t uxItemSize)
 {
-    g_queue_create_call_count++;
-    g_queue_max_len = uxQueueLength;
-    g_queue_item_size = uxItemSize;
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, uxQueueLength, "xQueueCreate called with zero uxQueueLength");
 
-    if (g_queue_create_result == pdFAIL) {
-        return NULL;
-    }
+    mock_xQueueCreate_data.called++;
+    mock_xQueueCreate_data.max_len = uxQueueLength;
+    mock_xQueueCreate_data.item_size = uxItemSize;
 
-    if (uxQueueLength == 0) {
+    if (mock_xQueueCreate_data.should_fail) {
         return NULL;
     }
 
@@ -64,12 +50,10 @@ QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t ux
 
 void vQueueDelete(QueueHandle_t xQueue)
 {
-    g_queue_delete_call_count++;
-    g_queue_delete_handle = xQueue;
+    TEST_ASSERT_NOT_NULL_MESSAGE(xQueue, "vQueueDelete called with NULL xQueue");
 
-    if (!xQueue) {
-        return;
-    }
+    mock_vQueueDelete_data.called++;
+    mock_vQueueDelete_data.handle = xQueue;
 
     for (size_t i = 0; i < xQueue->max_items; i++) {
         if (xQueue->items[i]) {
@@ -83,12 +67,11 @@ void vQueueDelete(QueueHandle_t xQueue)
 
 BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t xTicksToWait)
 {
-    g_queue_receive_call_count++;
-    g_queue_receive_ticks = xTicksToWait;
+    TEST_ASSERT_NOT_NULL_MESSAGE(xQueue, "xQueueReceive called with NULL xQueue");
+    TEST_ASSERT_NOT_NULL_MESSAGE(pvBuffer, "xQueueReceive called with NULL pvBuffer");
 
-    if (!xQueue || !pvBuffer) {
-        return pdFAIL;
-    }
+    mock_xQueueReceive_data.called++;
+    mock_xQueueReceive_data.ticks = xTicksToWait;
 
     if (xQueue->count == 0) {
         return pdFAIL;
@@ -108,27 +91,24 @@ BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t 
 
 UBaseType_t uxQueueSpacesAvailable(const QueueHandle_t xQueue)
 {
-    g_queue_space_call_count++;
-    g_queue_spaces_handle = xQueue;
+    TEST_ASSERT_NOT_NULL_MESSAGE(xQueue, "uxQueueSpacesAvailable called with NULL xQueue");
 
-    if (!xQueue) {
-        return 0;
-    }
+    mock_uxQueueSpacesAvailable_data.called++;
+    mock_uxQueueSpacesAvailable_data.handle = xQueue;
 
     return (UBaseType_t)(xQueue->max_items - xQueue->count);
 }
 
 BaseType_t xQueueSend(QueueHandle_t xQueue, const void *const pvItemToQueue, TickType_t xTicksToWait)
 {
-    (void)xTicksToWait;
-    g_queue_send_call_count++;
-    g_queue_send_handle = xQueue;
+    TEST_ASSERT_NOT_NULL_MESSAGE(xQueue, "xQueueSend called with NULL xQueue");
+    TEST_ASSERT_NOT_NULL_MESSAGE(pvItemToQueue, "xQueueSend called with NULL pvItemToQueue");
 
-    if (g_queue_send_return_value != pdPASS) {
-        return g_queue_send_return_value;
-    }
+    mock_xQueueSend_data.called++;
+    mock_xQueueSend_data.handle = xQueue;
+    mock_xQueueSend_data.ticks = xTicksToWait;
 
-    if (!xQueue || !pvItemToQueue) {
+    if (mock_xQueueSend_data.should_fail) {
         return pdFAIL;
     }
 
@@ -152,31 +132,20 @@ BaseType_t xQueueSend(QueueHandle_t xQueue, const void *const pvItemToQueue, Tic
 
 UBaseType_t uxQueueMessagesWaiting(const QueueHandle_t xQueue)
 {
-    g_queue_messages_waiting_call_count++;
-    g_queue_messages_waiting_handle = xQueue;
+    TEST_ASSERT_NOT_NULL_MESSAGE(xQueue, "uxQueueMessagesWaiting called with NULL xQueue");
 
-    if (!xQueue) {
-        return 0;
-    }
+    mock_uxQueueMessagesWaiting_data.called++;
+    mock_uxQueueMessagesWaiting_data.handle = xQueue;
 
     return (UBaseType_t)xQueue->count;
 }
 
 void mock_freertos_queue_reset(void)
 {
-    g_queue_create_call_count = 0;
-    g_queue_create_result = pdPASS;
-    g_queue_max_len = 0;
-    g_queue_item_size = 0;
-    g_queue_delete_call_count = 0;
-    g_queue_delete_handle = NULL;
-    g_queue_receive_call_count = 0;
-    g_queue_receive_ticks = 0;
-    g_queue_space_call_count = 0;
-    g_queue_spaces_handle = NULL;
-    g_queue_send_call_count = 0;
-    g_queue_send_handle = NULL;
-    g_queue_send_return_value = pdPASS;
-    g_queue_messages_waiting_call_count = 0;
-    g_queue_messages_waiting_handle = NULL;
+    memset(&mock_xQueueCreate_data, 0, sizeof(mock_xQueueCreate_data));
+    memset(&mock_vQueueDelete_data, 0, sizeof(mock_vQueueDelete_data));
+    memset(&mock_xQueueReceive_data, 0, sizeof(mock_xQueueReceive_data));
+    memset(&mock_uxQueueSpacesAvailable_data, 0, sizeof(mock_uxQueueSpacesAvailable_data));
+    memset(&mock_xQueueSend_data, 0, sizeof(mock_xQueueSend_data));
+    memset(&mock_uxQueueMessagesWaiting_data, 0, sizeof(mock_uxQueueMessagesWaiting_data));
 }
