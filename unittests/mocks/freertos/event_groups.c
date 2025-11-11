@@ -73,24 +73,27 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
     mock_xEventGroupWaitBits_data.called++;
 
     if (mock_xEventGroupWaitBits_data.should_timeout) {
-        return 0;
+        return (EventBits_t)0;
     }
 
     EventBits_t current_bits = xEventGroup->uxEventBits;
 
+    bool condition_met = false;
+
     if (xWaitForAllBits == pdTRUE) {
-        TEST_ASSERT_TRUE_MESSAGE(
-            (current_bits & uxBitsToWaitFor) == uxBitsToWaitFor,
-            "xEventGroupWaitBits condition should be met before xEventGroupWaitBits"
-        );
+        condition_met = (current_bits & uxBitsToWaitFor) == uxBitsToWaitFor;
     } else {
+        condition_met = (current_bits & uxBitsToWaitFor) != 0;
+    }
+
+    if (xTicksToWait == portMAX_DELAY) {
         TEST_ASSERT_TRUE_MESSAGE(
-            (current_bits & uxBitsToWaitFor) != 0,
-            "xEventGroupWaitBits condition should be met before xEventGroupWaitBits"
+            condition_met,
+            "uxBitsToWaitFor should be set before xEventGroupWaitBits"
         );
     }
 
-    if (xClearOnExit == pdTRUE) {
+    if (condition_met && xClearOnExit == pdTRUE) {
         xEventGroup->uxEventBits &= ~uxBitsToWaitFor;
     }
 
