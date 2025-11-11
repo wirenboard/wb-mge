@@ -22,6 +22,7 @@ static unsigned index_from_key(const char *key)
     }
 
     TEST_FAIL_MESSAGE("Invalid key index");
+    return 0;
 }
 
 esp_err_t setting_items_read(const char *key, char *value)
@@ -73,7 +74,7 @@ esp_err_t setting_items_read(const char *key, char *value)
         return ESP_OK;
     }
 
-    return ESP_FAIL;
+    TEST_FAIL_MESSAGE("Invalid key");
 }
 
 int setting_items_read_int(const char *key)
@@ -92,7 +93,7 @@ int setting_items_read_int(const char *key)
         return mock_settings_items_bridge_cfg[index].serial_config.baudrate;
     }
 
-    return 0;
+    TEST_FAIL_MESSAGE("Invalid key");
 }
 
 bool setting_items_read_bool(const char *key)
@@ -107,7 +108,7 @@ bool setting_items_read_bool(const char *key)
         return mock_settings_items_bridge_cfg[index].bridge_mb;
     }
 
-    return false;
+    TEST_FAIL_MESSAGE("Invalid key");
 }
 
 void mock_setting_items_reset(void)

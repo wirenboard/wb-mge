@@ -1,4 +1,9 @@
-2025-11-07 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-11-11 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.0-rc30
+    * rework:   mock freertos
+
+2025-11-11 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.0-rc29
     * added:    unittests for bridge

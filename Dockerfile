@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     libc6-dev \
     libc6-dev-i386 \
     libc6-dev-x32 \
+    gcovr \
     && apt-get clean
 
 WORKDIR /root/esp/project

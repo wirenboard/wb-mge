@@ -21,6 +21,7 @@ typedef struct {
 
 extern mock_modbus_tcp_t mock_modbus_tcp[BRIDGES_COUNT];
 extern mock_modbus_tcp_calls_t mock_modbus_tcp_calls[BRIDGES_COUNT];
+extern bool mock_modbus_tcp_init_port_should_fail;
 
 esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
                                 bridge_mode_t mode, int port, uint32_t ip,
