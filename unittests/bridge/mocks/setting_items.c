@@ -20,6 +20,7 @@ static unsigned index_from_key(const char *key)
     }
 
     TEST_FAIL_MESSAGE("Invalid key index");
+    return 0;
 }
 
 esp_err_t setting_items_read(const char *key, char *value)
