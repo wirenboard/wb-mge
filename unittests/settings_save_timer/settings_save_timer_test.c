@@ -35,10 +35,10 @@ static void verify_event_group_ready_flag_set(void)
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should be called once");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
         mock_xEventGroupCreate_data.return_value,
-        mock_xEventGroupSetBits_data.xEventGroup,
+        mock_xEventGroupSetBits_data.xEventGroup[0],
         "Event group handle should match"
     );
-    TEST_ASSERT_EQUAL_MESSAGE(EVENT_BIT_READY, mock_xEventGroupSetBits_data.uxBitsToSet, "READY flag should be set");
+    TEST_ASSERT_EQUAL_MESSAGE(EVENT_BIT_READY, mock_xEventGroupSetBits_data.uxBitsToSet[0], "READY flag should be set");
 }
 
 static void verify_timer_created(void)
@@ -67,7 +67,7 @@ static void verify_timer_and_callback(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTimerStart_xTicksToWait, "Timer start should not wait");
 
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should be called twice");
-    TEST_ASSERT_EQUAL_MESSAGE(EVENT_BIT_READY, mock_xEventGroupSetBits_data.uxBitsToSet, "READY flag should be set");
+    TEST_ASSERT_EQUAL_MESSAGE(EVENT_BIT_READY, mock_xEventGroupSetBits_data.uxBitsToSet[0], "READY flag should be set");
 }
 
 // Тестируем успешную инициализацию таймера
@@ -169,16 +169,16 @@ void test_settings_save_timer_wait_ready_flag_set(void)
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupWaitBits_data.called, "xEventGroupWaitBits should be called once");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
         mock_xEventGroupCreate_data.return_value,
-        mock_xEventGroupWaitBits_data.xEventGroup,
+        mock_xEventGroupWaitBits_data.xEventGroup[0],
         "Event group handle should match"
     );
 
-    TEST_ASSERT_EQUAL_MESSAGE(EVENT_BIT_READY, mock_xEventGroupWaitBits_data.uxBitsToWaitFor, "Should wait for READY flag");
-    TEST_ASSERT_EQUAL_MESSAGE(pdTRUE, mock_xEventGroupWaitBits_data.xClearOnExit, "Should clear flag on exit");
-    TEST_ASSERT_EQUAL_MESSAGE(pdTRUE, mock_xEventGroupWaitBits_data.xWaitForAllBits, "Should wait for all bits");
+    TEST_ASSERT_EQUAL_MESSAGE(EVENT_BIT_READY, mock_xEventGroupWaitBits_data.uxBitsToWaitFor[0], "Should wait for READY flag");
+    TEST_ASSERT_EQUAL_MESSAGE(pdTRUE, mock_xEventGroupWaitBits_data.xClearOnExit[0], "Should clear flag on exit");
+    TEST_ASSERT_EQUAL_MESSAGE(pdTRUE, mock_xEventGroupWaitBits_data.xWaitForAllBits[0], "Should wait for all bits");
     TEST_ASSERT_EQUAL_MESSAGE(
         pdMS_TO_TICKS(SETTING_SAVE_TIMER_INTERVAL_MS),
-        mock_xEventGroupWaitBits_data.xTicksToWait,
+        mock_xEventGroupWaitBits_data.xTicksToWait[0],
         "Wait timeout should be correct"
     );
 
