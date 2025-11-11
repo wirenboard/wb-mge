@@ -38,6 +38,10 @@ BaseType_t xTaskCreate(TaskFunction_t pvTaskCode,
         *pxCreatedTask = MOCK_TASK_HANDLE;
     }
 
+    if (mock_xTaskCreate_data.self_execution) {
+        pvTaskCode(pvParameters);
+    }
+
     return pdPASS;
 }
 

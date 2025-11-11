@@ -10,6 +10,7 @@ typedef void (*TaskFunction_t)(void *);
 typedef struct {
     bool should_fail;
     int called;
+    bool self_execution;
     TaskFunction_t pvTaskCode;
     const char *pcName;
     uint32_t usStackDepth;
