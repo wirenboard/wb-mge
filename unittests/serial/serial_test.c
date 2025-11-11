@@ -58,6 +58,11 @@ static void init_default_config(serial_config_t *config)
     config->databits = UART_DATA_8_BITS;
 }
 
+static void execute_task_function(void)
+{
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
+}
+
 static void verify_malloc_tracking(int expected_allocs, int expected_frees)
 {
     TEST_ASSERT_EQUAL_MESSAGE(

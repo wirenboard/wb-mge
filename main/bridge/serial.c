@@ -114,6 +114,44 @@ static void uart_event_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
+static esp_err_t configure_uart_parameters(serial_config_t *serial_config)
+{
+    uart_config_t uart_config = {
+        .baud_rate = serial_config->baudrate,
+        .data_bits = serial_config->databits,
+        .parity = serial_config->parity,
+        .stop_bits = serial_config->stopbits,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+
+    esp_err_t err = uart_param_config(serial_config->port_num, &uart_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error during UART parameters configuring");
+        return err;
+    }
+
+    err = uart_set_pin(serial_config->port_num, serial_config->tx_pin, serial_config->rx_pin, serial_config->dir_pin, UART_PIN_NO_CHANGE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error during UART pin set");
+        return err;
+    }
+
+    err = uart_set_mode(serial_config->port_num, UART_MODE_RS485_HALF_DUPLEX);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error during UART mode set");
+        return err;
+    }
+
+    err = uart_set_rx_timeout(serial_config->port_num, SERIAL_READ_TOUT);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error during UART receive timeout set");
+        return err;
+    }
+
+    return ESP_OK;
+}
+
 serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
 {
     if (serial_config == NULL) {
@@ -154,41 +192,8 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
         return NULL;
     }
 
-    uart_config_t uart_config = {
-        .baud_rate = serial_config->baudrate,
-        .data_bits = serial_config->databits,
-        .parity = serial_config->parity,
-        .stop_bits = serial_config->stopbits,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT,
-    };
-
-    const char* error_msg = NULL;
-
-    err = uart_param_config(serial_config->port_num, &uart_config);
+    err = configure_uart_parameters(serial_config);
     if (err != ESP_OK) {
-        error_msg = "Error during UART parameters configuring";
-    }
-    if (error_msg == NULL) {
-        err = uart_set_pin(serial_config->port_num, serial_config->tx_pin, serial_config->rx_pin, serial_config->dir_pin, UART_PIN_NO_CHANGE);
-        if (err != ESP_OK) {
-            error_msg = "Error during UART pin set";
-        }
-    }
-    if (error_msg == NULL) {
-        err = uart_set_mode(serial_config->port_num, UART_MODE_RS485_HALF_DUPLEX);
-        if (err != ESP_OK) {
-            error_msg = "Error during UART mode set";
-        }
-    }
-    if (error_msg == NULL) {
-        err = uart_set_rx_timeout(serial_config->port_num, SERIAL_READ_TOUT);
-        if (err != ESP_OK) {
-            error_msg = "Error during UART receive timeout set";
-        }
-    }
-    if (error_msg != NULL) {
-        ESP_LOGE(TAG, "%s", error_msg);
         uart_driver_delete(serial_config->port_num);
         vEventGroupDelete(event_group);
         free(desc);
