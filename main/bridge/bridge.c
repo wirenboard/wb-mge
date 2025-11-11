@@ -62,7 +62,7 @@ static bridge_ctx_t bridge_ctx[BRIDGES_COUNT] = {0};
 
 int tcp_server_active_connections(tcp_server_num_t server_num)
 {
-    if ((server_num < 0) || (server_num >= TCP_SERVER_COUNT)) {
+    if ((server_num < 0) || (server_num >= BRIDGES_COUNT)) {
         ESP_LOGE(TAG, "Unknown server number: %d", server_num);
         return 0;
     }
@@ -101,10 +101,8 @@ esp_err_t bridge_enable_port(unsigned index)
     bridge_ctx[index].disabled = false;
 
     if (bridge_ctx[index].init_request) {
-        if (!bridge_ctx[index].initialized) {
-            bridge_ctx[index].init_request = false;
-            bridge_port_init(index);
-        }
+        bridge_ctx[index].init_request = false;
+        bridge_port_init(index);
     }
 
     return ESP_OK;
@@ -284,10 +282,6 @@ esp_err_t bridge_port_deinit(unsigned index)
     }
 
     bridge_config_t* cfg = &bridge_current_cfg[index];
-    if (cfg->bridge_mode == BRIDGE_MODE_DISABLED) {
-        ESP_LOGD(TAG, "Port[%u]: Nothing to deinitialize", index + 1);
-        return ESP_OK;
-    }
 
     ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
     if (cfg->bridge_mb) {
