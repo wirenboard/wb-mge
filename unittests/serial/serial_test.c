@@ -6,6 +6,7 @@
 #include "esp_bit_defs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 
 #include "config.h"
@@ -56,11 +57,6 @@ static void init_default_config(serial_config_t *config)
     config->parity = UART_PARITY_DISABLE;
     config->stopbits = UART_STOP_BITS_2;
     config->databits = UART_DATA_8_BITS;
-}
-
-static void execute_task_function(void)
-{
-    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
 }
 
 static void verify_malloc_tracking(int expected_allocs, int expected_frees)
@@ -428,7 +424,7 @@ void test_serial_init_uart_driver_install_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_driver_install_result = ESP_FAIL;
+    mock_uart_calls.driver_install_result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -449,7 +445,7 @@ void test_serial_init_uart_param_config_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_param_config_result = ESP_FAIL;
+    mock_uart_calls.param_config_result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -471,7 +467,7 @@ void test_serial_init_uart_set_pin_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_set_pin_result = ESP_FAIL;
+    mock_uart_calls.set_pin_result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -494,7 +490,7 @@ void test_serial_init_uart_set_mode_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_set_mode_result = ESP_FAIL;
+    mock_uart_calls.set_mode_result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -518,7 +514,7 @@ void test_serial_init_uart_set_rx_timeout_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_set_rx_timeout_result = ESP_FAIL;
+    mock_uart_calls.set_rx_timeout_result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -559,15 +555,17 @@ void test_serial_init_task_create_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем успешную инициализацию serial_init с базовой конфигурацией
-void test_serial_init_success_basic(void)
+// Тестируем успешную инициализацию serial_init без запуска задачи
+void test_serial_init_success_no_task_execution(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init success with basic configuration");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init success without task execution");
     LOG_MESSAGE();
 
     serial_config_t config;
     init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.should_timeout = true;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -581,6 +579,22 @@ void test_serial_init_success_basic(void)
     verify_task_created();
     verify_xEventGroupWaitBits_args(EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
     verify_malloc_tracking(1, 0);
+}
+
+// Тестируем успешную инициализацию serial_init c запуском задачи
+void test_serial_init_success_with_task_execution(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init success with task execution");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xTaskCreate_data.self_execution = true;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 }
 
 int main(void)
@@ -598,7 +612,8 @@ int main(void)
     RUN_TEST(test_serial_init_uart_set_rx_timeout_failure);
     RUN_TEST(test_serial_init_task_create_failure);
 
-    RUN_TEST(test_serial_init_success_basic);
+    RUN_TEST(test_serial_init_success_no_task_execution);
+    RUN_TEST(test_serial_init_success_with_task_execution);
 
     return UNITY_END();
 }

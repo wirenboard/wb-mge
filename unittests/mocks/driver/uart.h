@@ -108,11 +108,16 @@ int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size);
 
 typedef struct {
     int driver_install_called;
+    esp_err_t driver_install_result;
     int driver_delete_called;
     int param_config_called;
+    esp_err_t param_config_result;
     int set_pin_called;
+    esp_err_t set_pin_result;
     int set_mode_called;
+    esp_err_t set_mode_result;
     int set_rx_timeout_called;
+    esp_err_t set_rx_timeout_result;
     int read_bytes_called;
     int write_bytes_called;
     int wait_tx_done_called;
