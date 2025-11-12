@@ -73,7 +73,6 @@ typedef struct {
     uart_event_type_t type; /*!< UART event type */
     size_t size;            /*!< UART data size for UART_DATA event*/
     bool timeout_flag;      /*!< UART data read timeout flag for UART_DATA event (no new data received during configured RX TOUT)*/
-    /*!< If the event is caused by FIFO-full interrupt, then there will be no event with the timeout flag before the next byte coming.*/
 } uart_event_t;
 
 typedef struct {
@@ -137,6 +136,11 @@ typedef struct {
     int cts_pin;
     uart_mode_t mode;
     uint8_t rx_timeout;
+    TickType_t uart_wait_tx_done_ticks;
+    uint32_t uart_read_bytes_length;
+    TickType_t uart_read_bytes_ticks;
+    void *uart_write_bytes_src;
+    size_t uart_write_bytes_size;
 } mock_uart_data_t;
 
 extern mock_uart_calls_t mock_uart_calls;

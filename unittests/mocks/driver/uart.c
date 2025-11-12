@@ -71,6 +71,7 @@ esp_err_t uart_set_pin(uart_port_t uart_num, int tx_io_num, int rx_io_num, int r
     mock_uart_data.rx_pin = rx_io_num;
     mock_uart_data.dir_pin = rts_io_num;
     mock_uart_data.cts_pin = cts_io_num;
+
     return mock_uart_calls.set_pin_result;
 }
 
@@ -80,6 +81,7 @@ esp_err_t uart_set_mode(uart_port_t uart_num, uart_mode_t mode)
 
     mock_uart_calls.set_mode_called++;
     mock_uart_data.mode = mode;
+
     return mock_uart_calls.set_mode_result;
 }
 
@@ -89,6 +91,7 @@ esp_err_t uart_set_rx_timeout(uart_port_t uart_num, const uint8_t tout_thresh)
 
     mock_uart_calls.set_rx_timeout_called++;
     mock_uart_data.rx_timeout = tout_thresh;
+
     return mock_uart_calls.set_rx_timeout_result;
 }
 
@@ -97,29 +100,32 @@ esp_err_t uart_wait_tx_done(uart_port_t uart_num, TickType_t ticks_to_wait)
     TEST_ASSERT_EQUAL_MESSAGE(MOCK_PORT_NUM_UART1, uart_num, "uart_wait_tx_done should be called with correct port number");
 
     mock_uart_calls.wait_tx_done_called++;
-    (void)ticks_to_wait;
+    mock_uart_data.uart_wait_tx_done_ticks = ticks_to_wait;
+
     return ESP_OK;
 }
 
 int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t ticks_to_wait)
 {
     TEST_ASSERT_EQUAL_MESSAGE(MOCK_PORT_NUM_UART1, uart_num, "uart_read_bytes should be called with correct port number");
+    TEST_ASSERT_NOT_NULL_MESSAGE(buf, "uart_read_bytes called with NULL buffer");
 
     mock_uart_calls.read_bytes_called++;
-    (void)ticks_to_wait;
+    mock_uart_data.uart_read_bytes_length = length;
+    mock_uart_data.uart_read_bytes_ticks = ticks_to_wait;
 
-    if (buf != NULL && length > 0) {
-        memset(buf, 0, length);
-    }
-    return length;
+    return (int)length;
 }
 
 int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size)
 {
     TEST_ASSERT_EQUAL_MESSAGE(MOCK_PORT_NUM_UART1, uart_num, "uart_write_bytes should be called with correct port number");
+    TEST_ASSERT_NOT_NULL_MESSAGE(src, "uart_write_bytes called with NULL source buffer");
 
     mock_uart_calls.write_bytes_called++;
-    (void)src;
+    mock_uart_data.uart_write_bytes_src = (void *)src;
+    mock_uart_data.uart_write_bytes_size = size;
+
     return (int)size;
 }
 

@@ -28,7 +28,10 @@ typedef struct {
 
 typedef struct {
     int called;
+    QueueHandle_t handle;
     TickType_t ticks;
+    void *pvBuffer;
+    size_t buffer_size;
 } mock_xQueueReceive_t;
 
 typedef struct {
@@ -48,12 +51,18 @@ typedef struct {
     QueueHandle_t handle;
 } mock_uxQueueMessagesWaiting_t;
 
+typedef struct {
+    int called;
+    QueueHandle_t handle;
+} mock_xQueueReset_t;
+
 extern mock_xQueueCreate_t mock_xQueueCreate_data;
 extern mock_vQueueDelete_t mock_vQueueDelete_data;
 extern mock_xQueueReceive_t mock_xQueueReceive_data;
 extern mock_uxQueueSpacesAvailable_t mock_uxQueueSpacesAvailable_data;
 extern mock_xQueueSend_t mock_xQueueSend_data;
 extern mock_uxQueueMessagesWaiting_t mock_uxQueueMessagesWaiting_data;
+extern mock_xQueueReset_t mock_xQueueReset_data;
 
 QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t uxItemSize);
 void vQueueDelete(QueueHandle_t xQueue);
@@ -61,8 +70,6 @@ BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t 
 UBaseType_t uxQueueSpacesAvailable(const QueueHandle_t xQueue);
 BaseType_t xQueueSend(QueueHandle_t xQueue, const void *const pvItemToQueue, TickType_t xTicksToWait);
 UBaseType_t uxQueueMessagesWaiting(const QueueHandle_t xQueue);
-
-#define xQueueReset( xQueue )    xQueueGenericReset( ( xQueue ), pdFALSE )
-BaseType_t xQueueGenericReset(QueueHandle_t xQueue, BaseType_t xNewQueue);
+BaseType_t xQueueReset(QueueHandle_t xQueue);
 
 void mock_freertos_queue_reset(void);

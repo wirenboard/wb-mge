@@ -32,6 +32,7 @@ void setUp(void)
     mock_uart_reset();
     mock_freertos_event_groups_reset();
     mock_freertos_task_reset();
+    mock_freertos_queue_reset();
     reset_malloc_tracking();
 }
 
@@ -253,6 +254,30 @@ static void verify_xEventGroupWaitBits_args(
         expected_xTicksToWait,
         mock_xEventGroupWaitBits_data.xTicksToWait[index],
         "xEventGroupWaitBits should be called with correct ticks to wait"
+    );
+}
+
+static void verify_xQueueReceive_args(
+    QueueHandle_t expected_queue,
+    TickType_t expected_ticks
+)
+{
+    TEST_ASSERT_EQUAL_MESSAGE(
+        1,
+        mock_xQueueReceive_data.called,
+        "xQueueReceive should be called once"
+    );
+
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        expected_queue,
+        mock_xQueueReceive_data.handle,
+        "xQueueReceive should be called with correct queue handle"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_ticks,
+        mock_xQueueReceive_data.ticks,
+        "xQueueReceive should be called with correct ticks to wait"
     );
 }
 
@@ -595,10 +620,10 @@ void test_serial_init_success_no_task_execution(void)
 
 // Тестируем инициализацию serial_init c запуском задачи и возникновением события EVENT_TASK_EXIT_REQ,
 // без получения данных по UART
-void test_serial_init_success_with_task_execution(void)
+void test_serial_init_success_with_task_execution_no_uart_event(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init success with task execution");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init success with task execution and no UART event");
     LOG_MESSAGE();
 
     serial_config_t config;
@@ -614,15 +639,239 @@ void test_serial_init_success_with_task_execution(void)
     verify_serial_init_calls(1, 1, 1, 1, 1, 0, 1, 2);
     verify_xEventGroupWaitBits_args(0, EVENT_TASK_EXIT_REQ, pdFALSE, pdTRUE, 0);
     verify_xEventGroupWaitBits_args(1, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
-    TEST_ASSERT_EQUAL_MESSAGE(
-        2,
-        mock_xEventGroupSetBits_data.called,
-        "xEventGroupSetBits should be called twice"
-    );
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should be called twice");
     verify_xEventGroupSetBits_args(0, EVENT_TASK_STARTED);
     verify_xEventGroupSetBits_args(1, EVENT_TASK_FINISHED);
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once");
+    verify_xQueueReceive_args(desc->uart_queue, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
     verify_malloc_tracking(2, 1);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelete_data.called, "vTaskDelete should be called once");
+    TEST_ASSERT_NULL_MESSAGE(mock_vTaskDelete_data.xTaskToDelete, "vTaskDelete should be called to delete self");
+}
+
+// Тестируем получение события UART_DATA
+void test_serial_init_success_with_uart_data_event(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_DATA event");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    size_t size_to_read = 10;
+
+    uart_event_t event = {.type = UART_DATA, .size = size_to_read, .timeout_flag = false};
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.read_bytes_called, "uart_read_bytes should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(size_to_read, mock_uart_data.uart_read_bytes_length, "Should read 10 bytes");
+    TEST_ASSERT_EQUAL_MESSAGE(portMAX_DELAY, mock_uart_data.uart_read_bytes_ticks, "Should wait indefinitely");
+}
+
+// Тестируем получение события UART_DATA с включенной защитой копирования
+void test_serial_init_success_with_uart_data_event_copy_protection(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_DATA event and copy protection");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    size_t size_to_read = 10;
+
+    uart_event_t event = {.type = UART_DATA, .size = size_to_read, .timeout_flag = false};
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_activate_copy_protection();
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.read_bytes_called, "uart_read_bytes should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(size_to_read, mock_uart_data.uart_read_bytes_length, "Should read 10 bytes");
+    TEST_ASSERT_EQUAL_MESSAGE(portMAX_DELAY, mock_uart_data.uart_read_bytes_ticks, "Should wait indefinitely");
+}
+
+// Тестируем получение события UART_DATA с размером больше буфера
+void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_DATA event - buffer too small");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event = {.type = UART_DATA, .size = SERIAL_BUF_SIZE + 100, .timeout_flag = false};
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_calls.read_bytes_called, "uart_read_bytes should not be called");
+}
+
+// Тестируем получение события UART_FIFO_OVF
+void test_serial_init_success_with_uart_fifo_ovf_event(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_FIFO_OVF event");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event = {.type = UART_FIFO_OVF, .size = 0, .timeout_flag = false};
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_uart_calls.flush_input_called, "uart_flush_input should be called twice (once in task init, once for FIFO_OVF)");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
+}
+
+// Тестируем получение события UART_BUFFER_FULL
+void test_serial_init_success_with_uart_buffer_full_event(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_BUFFER_FULL event");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event = {.type = UART_BUFFER_FULL, .size = 0, .timeout_flag = false};
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_uart_calls.flush_input_called, "uart_flush_input should be called twice (once in task init, once for BUFFER_FULL)");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
+}
+
+// Тестируем получение события UART_BREAK
+void test_serial_init_success_with_uart_break_event(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_BREAK event");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event = {.type = UART_BREAK, .size = 0, .timeout_flag = false};
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once (only in task init)");
+}
+
+// Тестируем получение события UART_PARITY_ERR
+void test_serial_init_success_with_uart_parity_err_event(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_PARITY_ERR event");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event = {.type = UART_PARITY_ERR, .size = 0, .timeout_flag = false};
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once (only in task init)");
+}
+
+// Тестируем получение события UART_FRAME_ERR
+void test_serial_init_success_with_uart_frame_err_event(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_FRAME_ERR event");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event = {.type = UART_FRAME_ERR, .size = 0, .timeout_flag = false};
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once (only in task init)");
+}
+
+// Тестируем получение неизвестного события
+void test_serial_init_success_with_unknown_uart_event(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with unknown UART event");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event = {.type = 999, .size = 0, .timeout_flag = false};  // Unknown event type
+    mock_xQueueReceive_data.pvBuffer = &event;
+    mock_xQueueReceive_data.buffer_size = sizeof(event);
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once (only in task init)");
 }
 
 int main(void)
@@ -641,7 +890,17 @@ int main(void)
     RUN_TEST(test_serial_init_task_create_failure);
 
     RUN_TEST(test_serial_init_success_no_task_execution);
-    RUN_TEST(test_serial_init_success_with_task_execution);
+    RUN_TEST(test_serial_init_success_with_task_execution_no_uart_event);
+
+    RUN_TEST(test_serial_init_success_with_uart_data_event);
+    RUN_TEST(test_serial_init_success_with_uart_data_event_copy_protection);
+    RUN_TEST(test_serial_init_success_with_uart_data_event_buffer_too_small);
+    RUN_TEST(test_serial_init_success_with_uart_fifo_ovf_event);
+    RUN_TEST(test_serial_init_success_with_uart_buffer_full_event);
+    RUN_TEST(test_serial_init_success_with_uart_break_event);
+    RUN_TEST(test_serial_init_success_with_uart_parity_err_event);
+    RUN_TEST(test_serial_init_success_with_uart_frame_err_event);
+    RUN_TEST(test_serial_init_success_with_unknown_uart_event);
 
     return UNITY_END();
 }
