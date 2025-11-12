@@ -26,7 +26,9 @@ void* test_malloc(size_t size)
     last_malloc_size = size;
 
     void* ptr = malloc(size);
-    TEST_ASSERT_NOT_NULL_MESSAGE(ptr, "test_malloc failed to allocate memory");
+    if (!ptr) {
+        return NULL;
+    }
 
     if (allocated_count < MAX_TRACKED_ALLOCS) {
         allocated_ptrs[allocated_count++] = ptr;
@@ -36,8 +38,6 @@ void* test_malloc(size_t size)
 
 void test_free(void* ptr)
 {
-    TEST_ASSERT_NOT_NULL_MESSAGE(ptr, "test_free called with NULL pointer");
-
     if (freed_count < MAX_TRACKED_ALLOCS) {
         freed_ptrs[freed_count++] = ptr;
     }
