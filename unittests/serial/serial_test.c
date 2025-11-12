@@ -60,21 +60,6 @@ static void init_default_config(serial_config_t *config)
     config->databits = UART_DATA_8_BITS;
 }
 
-static void verify_malloc_tracking(int expected_allocs, int expected_frees)
-{
-    TEST_ASSERT_EQUAL_MESSAGE(
-        expected_allocs,
-        allocated_count,
-        "Unexpected number of allocations"
-    );
-
-    TEST_ASSERT_EQUAL_MESSAGE(
-        expected_frees,
-        freed_count,
-        "Unexpected number of deallocations"
-    );
-}
-
 static void verify_uart_driver_install_args(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(

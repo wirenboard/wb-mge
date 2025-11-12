@@ -11,8 +11,8 @@
 
 bool malloc_should_fail = false;
 size_t last_malloc_size = 0;
-int allocated_count = 0;
-int freed_count = 0;
+static int allocated_count = 0;
+static int freed_count = 0;
 
 static void* allocated_ptrs[MAX_TRACKED_ALLOCS];
 static void* freed_ptrs[MAX_TRACKED_ALLOCS];
@@ -71,4 +71,19 @@ void reset_malloc_tracking(void)
     freed_count = 0;
     memset(allocated_ptrs, 0, sizeof(allocated_ptrs));
     memset(freed_ptrs, 0, sizeof(freed_ptrs));
+}
+
+void verify_malloc_tracking(int expected_allocs, int expected_frees)
+{
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_allocs,
+        allocated_count,
+        "Unexpected number of allocations"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_frees,
+        freed_count,
+        "Unexpected number of deallocations"
+    );
 }
