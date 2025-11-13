@@ -31,7 +31,7 @@ void vEventGroupDelete(EventGroupHandle_t xEventGroup)
 EventBits_t xEventGroupSetBits(EventGroupHandle_t xEventGroup, const EventBits_t uxBitsToSet)
 {
     TEST_ASSERT_NOT_NULL_MESSAGE(xEventGroup, "xEventGroupSetBits called with NULL event group handle");
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(
+    TEST_ASSERT_LESS_THAN_MESSAGE(
         MAX_SET_WAIT_CALLS,
         mock_xEventGroupSetBits_data.called,
         "Exceeded maximum number of xEventGroupSetBits calls tracked in mock"
@@ -51,7 +51,7 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
                                 TickType_t xTicksToWait)
 {
     TEST_ASSERT_NOT_NULL_MESSAGE(xEventGroup, "xEventGroupWaitBits called with NULL event group handle");
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(
+    TEST_ASSERT_LESS_THAN_MESSAGE(
         MAX_SET_WAIT_CALLS,
         mock_xEventGroupWaitBits_data.called,
         "Exceeded maximum number of xEventGroupWaitBits calls tracked in mock"
