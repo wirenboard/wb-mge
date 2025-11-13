@@ -23,7 +23,6 @@ typedef struct {
 } mock_xEventGroupSetBits_t;
 
 typedef struct {
-    bool should_timeout;
     int called;
     EventGroupHandle_t xEventGroup[MAX_SET_WAIT_CALLS];
     EventBits_t uxBitsToWaitFor[MAX_SET_WAIT_CALLS];
