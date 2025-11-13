@@ -7,9 +7,9 @@
 #define MOCK_TASK_HANDLE                ((TaskHandle_t)0xCCCCCCCC)
 #define CONFIG_FREERTOS_HZ              500
 
-mock_xTaskCreate_t mock_xTaskCreate_data;
-mock_vTaskDelete_t mock_vTaskDelete_data;
-mock_vTaskDelay_t mock_vTaskDelay_data;
+mock_xTaskCreate_t mock_xTaskCreate_data = {0};
+mock_vTaskDelete_t mock_vTaskDelete_data = {0};
+mock_vTaskDelay_t mock_vTaskDelay_data = {0};
 
 BaseType_t xTaskCreate(TaskFunction_t pvTaskCode,
                        const char * const pcName,
@@ -19,7 +19,6 @@ BaseType_t xTaskCreate(TaskFunction_t pvTaskCode,
                        TaskHandle_t * const pxCreatedTask)
 {
     TEST_ASSERT_NOT_NULL_MESSAGE(pvTaskCode, "Task function should not be NULL");
-    TEST_ASSERT_NOT_NULL_MESSAGE(pvParameters, "Task parameters should not be NULL");
 
     mock_xTaskCreate_data.pvTaskCode = pvTaskCode;
     mock_xTaskCreate_data.pcName = pcName;

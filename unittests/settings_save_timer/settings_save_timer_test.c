@@ -160,7 +160,7 @@ void test_settings_save_timer_wait_ready_flag_set(void)
 
     settings_save_timer_auto_init();
 
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_BIT_READY;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_BIT_READY;
 
     esp_err_t result = settings_save_timer_wait();
 

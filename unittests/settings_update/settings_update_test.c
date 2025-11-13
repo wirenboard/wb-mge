@@ -55,6 +55,8 @@ static void verify_task_created(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_data.called, "xTaskCreate should be called once");
 
+    // pvTaskCode проверяется внутри xTaskCreate()
+
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         "settings_update_task",
         mock_xTaskCreate_data.pcName,
@@ -67,6 +69,7 @@ static void verify_task_created(void)
         "Task stack depth should be 6144"
     );
 
+    TEST_ASSERT_NOT_NULL_MESSAGE(mock_xTaskCreate_data.pvParameters, "Task parameters should not be NULL");
     TEST_ASSERT_EQUAL_MESSAGE(SETTINGS_UPDATE_TASK_PRIORITY, mock_xTaskCreate_data.uxPriority, "Task priority should be 5");
 }
 

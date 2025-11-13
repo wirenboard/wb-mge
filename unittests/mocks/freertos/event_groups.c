@@ -4,10 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-mock_xEventGroupCreate_t mock_xEventGroupCreate_data;
-mock_xEventGroupSetBits_t mock_xEventGroupSetBits_data;
-mock_xEventGroupWaitBits_t mock_xEventGroupWaitBits_data;
-mock_vEventGroupDelete_t mock_vEventGroupDelete_data;
+mock_xEventGroupCreate_t mock_xEventGroupCreate_data = {0};
+mock_xEventGroupSetBits_t mock_xEventGroupSetBits_data = {0};
+mock_xEventGroupWaitBits_t mock_xEventGroupWaitBits_data = {0};
+mock_vEventGroupDelete_t mock_vEventGroupDelete_data = {0};
 
 EventGroupHandle_t xEventGroupCreate(void)
 {
@@ -16,8 +16,6 @@ EventGroupHandle_t xEventGroupCreate(void)
     if (mock_xEventGroupCreate_data.should_fail) {
         return NULL;
     }
-
-    mock_xEventGroupCreate_data.return_value = (EventGroupHandle_t)0xABCD;
 
     return mock_xEventGroupCreate_data.return_value;
 }
@@ -33,6 +31,11 @@ void vEventGroupDelete(EventGroupHandle_t xEventGroup)
 EventBits_t xEventGroupSetBits(EventGroupHandle_t xEventGroup, const EventBits_t uxBitsToSet)
 {
     TEST_ASSERT_NOT_NULL_MESSAGE(xEventGroup, "xEventGroupSetBits called with NULL event group handle");
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(
+        MAX_SET_WAIT_CALLS,
+        mock_xEventGroupSetBits_data.called,
+        "Exceeded maximum number of xEventGroupSetBits calls tracked in mock"
+    );
 
     mock_xEventGroupSetBits_data.xEventGroup[mock_xEventGroupSetBits_data.called] = xEventGroup;
     mock_xEventGroupSetBits_data.uxBitsToSet[mock_xEventGroupSetBits_data.called] = uxBitsToSet;
@@ -48,6 +51,11 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
                                 TickType_t xTicksToWait)
 {
     TEST_ASSERT_NOT_NULL_MESSAGE(xEventGroup, "xEventGroupWaitBits called with NULL event group handle");
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(
+        MAX_SET_WAIT_CALLS,
+        mock_xEventGroupWaitBits_data.called,
+        "Exceeded maximum number of xEventGroupWaitBits calls tracked in mock"
+    );
 
     mock_xEventGroupWaitBits_data.xEventGroup[mock_xEventGroupWaitBits_data.called] = xEventGroup;
     mock_xEventGroupWaitBits_data.uxBitsToWaitFor[mock_xEventGroupWaitBits_data.called] = uxBitsToWaitFor;
@@ -62,6 +70,7 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
 void mock_freertos_event_groups_reset(void)
 {
     memset(&mock_xEventGroupCreate_data, 0, sizeof(mock_xEventGroupCreate_data));
+    mock_xEventGroupCreate_data.return_value = (EventGroupHandle_t)0xDEADBEEF;
     memset(&mock_xEventGroupSetBits_data, 0, sizeof(mock_xEventGroupSetBits_data));
     memset(&mock_xEventGroupWaitBits_data, 0, sizeof(mock_xEventGroupWaitBits_data));
     memset(&mock_vEventGroupDelete_data, 0, sizeof(mock_vEventGroupDelete_data));

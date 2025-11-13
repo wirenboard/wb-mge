@@ -13,6 +13,24 @@ mock_xQueueSend_t mock_xQueueSend_data = {0};
 mock_uxQueueMessagesWaiting_t mock_uxQueueMessagesWaiting_data = {0};
 mock_xQueueReset_t mock_xQueueReset_data = {0};
 
+static QueueHandle_t created_queue = NULL;
+
+static void free_queue(QueueHandle_t queue)
+{
+    if (queue == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < queue->max_items; i++) {
+        if (queue->items[i]) {
+            free(queue->items[i]);
+        }
+    }
+
+    free(queue->items);
+    free(queue);
+}
+
 QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t uxItemSize)
 {
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, uxQueueLength, "xQueueCreate called with zero uxQueueLength");
@@ -47,6 +65,8 @@ QueueHandle_t xQueueCreate(const UBaseType_t uxQueueLength, const UBaseType_t ux
     queue->tail = 0;
     queue->count = 0;
 
+    created_queue = queue;
+
     return queue;
 }
 
@@ -57,14 +77,11 @@ void vQueueDelete(QueueHandle_t xQueue)
     mock_vQueueDelete_data.called++;
     mock_vQueueDelete_data.handle = xQueue;
 
-    for (size_t i = 0; i < xQueue->max_items; i++) {
-        if (xQueue->items[i]) {
-            free(xQueue->items[i]);
-        }
-    }
+    free_queue(xQueue);
 
-    free(xQueue->items);
-    free(xQueue);
+    if (created_queue == xQueue) {
+        created_queue = NULL;
+    }
 }
 
 BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t xTicksToWait)
@@ -161,6 +178,9 @@ BaseType_t xQueueReset(QueueHandle_t xQueue)
 
 void mock_freertos_queue_reset(void)
 {
+    free_queue(created_queue);
+    created_queue = NULL;
+
     memset(&mock_xQueueCreate_data, 0, sizeof(mock_xQueueCreate_data));
     memset(&mock_vQueueDelete_data, 0, sizeof(mock_vQueueDelete_data));
     memset(&mock_xQueueReceive_data, 0, sizeof(mock_xQueueReceive_data));
