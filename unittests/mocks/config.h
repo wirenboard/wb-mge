@@ -14,3 +14,5 @@
 #endif
 
 #define MAX_FUNCTION_CALLS                           20
+
+#define MOCK_DEFAULT_BAUDRATE                        9600

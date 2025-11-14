@@ -2,6 +2,7 @@
 
     * version:  1.0.1-rc1
     * rework:   mock freertos
+    * added:    unittests for serial
 
 2025-11-11 Maxim Toropov <maxim.toropov@wirenboard.com>
 

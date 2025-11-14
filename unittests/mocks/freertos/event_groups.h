@@ -30,6 +30,8 @@ typedef struct {
     BaseType_t xWaitForAllBits[MAX_SET_WAIT_CALLS];
     TickType_t xTicksToWait[MAX_SET_WAIT_CALLS];
     EventBits_t return_value;
+    int set_event_on_call;
+    uint32_t events_to_set;
 } mock_xEventGroupWaitBits_t;
 
 typedef struct {

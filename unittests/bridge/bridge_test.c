@@ -5,6 +5,7 @@
 #include "driver/uart.h"
 
 #include "bridge.h"
+#include "config.h"
 #include "setting_items.h"
 #include "modbus_tcp.h"
 #include "transparent_tcp.h"

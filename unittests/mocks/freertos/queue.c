@@ -11,6 +11,7 @@ mock_xQueueReceive_t mock_xQueueReceive_data = {0};
 mock_uxQueueSpacesAvailable_t mock_uxQueueSpacesAvailable_data = {0};
 mock_xQueueSend_t mock_xQueueSend_data = {0};
 mock_uxQueueMessagesWaiting_t mock_uxQueueMessagesWaiting_data = {0};
+mock_xQueueReset_t mock_xQueueReset_data = {0};
 
 static QueueHandle_t created_queue = NULL;
 
@@ -89,7 +90,14 @@ BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t 
     TEST_ASSERT_NOT_NULL_MESSAGE(pvBuffer, "xQueueReceive called with NULL pvBuffer");
 
     mock_xQueueReceive_data.called++;
+    mock_xQueueReceive_data.handle = xQueue;
     mock_xQueueReceive_data.ticks = xTicksToWait;
+
+    // If mock data is provided, copy it directly to pvBuffer
+    if (mock_xQueueReceive_data.pvBuffer != NULL) {
+        memcpy(pvBuffer, mock_xQueueReceive_data.pvBuffer, mock_xQueueReceive_data.buffer_size);
+        return pdPASS;
+    }
 
     if (xQueue->count == 0) {
         return pdFAIL;
@@ -158,6 +166,16 @@ UBaseType_t uxQueueMessagesWaiting(const QueueHandle_t xQueue)
     return (UBaseType_t)xQueue->count;
 }
 
+BaseType_t xQueueReset(QueueHandle_t xQueue)
+{
+    TEST_ASSERT_NOT_NULL_MESSAGE(xQueue, "xQueueReset called with NULL xQueue");
+
+    mock_xQueueReset_data.called++;
+    mock_xQueueReset_data.handle = xQueue;
+
+    return pdPASS;
+}
+
 void mock_freertos_queue_reset(void)
 {
     free_queue(created_queue);
@@ -169,4 +187,5 @@ void mock_freertos_queue_reset(void)
     memset(&mock_uxQueueSpacesAvailable_data, 0, sizeof(mock_uxQueueSpacesAvailable_data));
     memset(&mock_xQueueSend_data, 0, sizeof(mock_xQueueSend_data));
     memset(&mock_uxQueueMessagesWaiting_data, 0, sizeof(mock_uxQueueMessagesWaiting_data));
+    memset(&mock_xQueueReset_data, 0, sizeof(mock_xQueueReset_data));
 }
