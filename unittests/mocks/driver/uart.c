@@ -17,6 +17,8 @@ mock_uart_write_bytes_t mock_uart_write_bytes_data = {0};
 
 esp_err_t uart_flush_input(uart_port_t uart_num)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_flush_input called with invalid uart_num");
+
     mock_uart_flush_input_data.called++;
     mock_uart_flush_input_data.uart_num = uart_num;
 
@@ -27,6 +29,8 @@ esp_err_t uart_driver_install(uart_port_t uart_num, int rx_buffer_size,
                               int tx_buffer_size, int event_queue_size,
                               QueueHandle_t *uart_queue, int intr_alloc_flags)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_driver_install called with invalid uart_num");
+
     mock_uart_driver_install_data.called++;
     mock_uart_driver_install_data.uart_num = uart_num;
     mock_uart_driver_install_data.rx_buffer_size = rx_buffer_size;
@@ -51,6 +55,8 @@ esp_err_t uart_driver_install(uart_port_t uart_num, int rx_buffer_size,
 
 esp_err_t uart_driver_delete(uart_port_t uart_num)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_driver_delete called with invalid uart_num");
+
     mock_uart_driver_delete_data.called++;
     mock_uart_driver_delete_data.uart_num = uart_num;
 
@@ -59,6 +65,7 @@ esp_err_t uart_driver_delete(uart_port_t uart_num)
 
 esp_err_t uart_param_config(uart_port_t uart_num, const uart_config_t *uart_config)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_param_config called with invalid uart_num");
     TEST_ASSERT_NOT_NULL_MESSAGE(uart_config, "uart_param_config called with NULL uart_config");
 
     mock_uart_param_config_data.called++;
@@ -70,6 +77,8 @@ esp_err_t uart_param_config(uart_port_t uart_num, const uart_config_t *uart_conf
 
 esp_err_t uart_set_pin(uart_port_t uart_num, int tx_io_num, int rx_io_num, int rts_io_num, int cts_io_num)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_set_pin called with invalid uart_num");
+
     mock_uart_set_pin_data.called++;
     mock_uart_set_pin_data.uart_num = uart_num;
     mock_uart_set_pin_data.tx_pin = tx_io_num;
@@ -82,6 +91,8 @@ esp_err_t uart_set_pin(uart_port_t uart_num, int tx_io_num, int rx_io_num, int r
 
 esp_err_t uart_set_mode(uart_port_t uart_num, uart_mode_t mode)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_set_mode called with invalid uart_num");
+
     mock_uart_set_mode_data.called++;
     mock_uart_set_mode_data.uart_num = uart_num;
     mock_uart_set_mode_data.mode = mode;
@@ -91,6 +102,8 @@ esp_err_t uart_set_mode(uart_port_t uart_num, uart_mode_t mode)
 
 esp_err_t uart_set_rx_timeout(uart_port_t uart_num, const uint8_t tout_thresh)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_set_rx_timeout called with invalid uart_num");
+
     mock_uart_set_rx_timeout_data.called++;
     mock_uart_set_rx_timeout_data.uart_num = uart_num;
     mock_uart_set_rx_timeout_data.rx_timeout = tout_thresh;
@@ -100,6 +113,8 @@ esp_err_t uart_set_rx_timeout(uart_port_t uart_num, const uint8_t tout_thresh)
 
 esp_err_t uart_wait_tx_done(uart_port_t uart_num, TickType_t ticks_to_wait)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_wait_tx_done called with invalid uart_num");
+
     mock_uart_wait_tx_done_data.called++;
     mock_uart_wait_tx_done_data.uart_num = uart_num;
     mock_uart_wait_tx_done_data.ticks_to_wait = ticks_to_wait;
@@ -109,6 +124,7 @@ esp_err_t uart_wait_tx_done(uart_port_t uart_num, TickType_t ticks_to_wait)
 
 int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t ticks_to_wait)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_read_bytes called with invalid uart_num");
     TEST_ASSERT_NOT_NULL_MESSAGE(buf, "uart_read_bytes called with NULL buffer");
 
     mock_uart_read_bytes_data.called++;
@@ -122,6 +138,7 @@ int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t
 
 int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size)
 {
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_write_bytes called with invalid uart_num");
     TEST_ASSERT_NOT_NULL_MESSAGE(src, "uart_write_bytes called with NULL source buffer");
 
     mock_uart_write_bytes_data.called++;
