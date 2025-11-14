@@ -323,10 +323,13 @@ void test_settings_update_task_already_running(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called, "vTaskDelay should not be called");
 
     mock_http_server_check_settings_changed_return_value = false;
+    mock_vTaskDelay_data.task_handle_reset_on_count = 3;
 
     result = settings_update();
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
-    TEST_ASSERT_EQUAL_MESSAGE(3, mock_vTaskDelay_data.called, "vTaskDelay should be called 3 times");
+    TEST_ASSERT_EQUAL_MESSAGE(
+        mock_vTaskDelay_data.task_handle_reset_on_count, mock_vTaskDelay_data.called, "vTaskDelay should be called 3 times"
+    );
 }
 
 int main(void)
