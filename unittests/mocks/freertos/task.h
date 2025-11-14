@@ -28,6 +28,7 @@ typedef struct {
     int called;
     TickType_t xTicksToDelay;
     int counter;
+    int task_handle_reset_on_count;
 } mock_vTaskDelay_t;
 
 extern mock_xTaskCreate_t mock_xTaskCreate_data;
