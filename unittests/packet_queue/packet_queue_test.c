@@ -180,7 +180,6 @@ void test_packet_queue_count(void)
 
     uint8_t* received_buf = NULL;
     packet_queue_pop(g_test_handle, &received_buf, 0);
-    free(received_buf);
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, packet_queue_count(g_test_handle), "Queue should have 2 items after pop");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(NULL), "NULL handle should return 0");
@@ -203,7 +202,7 @@ void test_packet_queue_push_success(void)
     esp_err_t result = packet_queue_push(g_test_handle, test_data, test_len);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Push should succeed");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(test_len, last_malloc_size, "malloc should allocate test_len bytes for buffer");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(test_len, allocated_ptrs[0].size, "malloc should allocate test_len bytes for buffer");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called once");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueSend_data.called, "xQueueSend should be called once");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.ticks, "xQueueSend should be called with correct ticks");
@@ -338,8 +337,6 @@ void test_packet_queue_pop_success(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueReceive_data.called, "xQueueReceive should be called once");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(g_test_handle), "Queue should be empty after pop");
-
-    free(received_buf);
 }
 
 // Тестируем извлечение пакета из очереди с NULL дескриптором
@@ -435,8 +432,6 @@ void test_packet_queue_pop_with_timeout(void)
     result = packet_queue_pop(g_test_handle, &received_buf, wait_time);
     TEST_ASSERT_EQUAL_MESSAGE(wait_time, mock_xQueueReceive_data.ticks, "xQueueReceive should be called with correct wait time");
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
-
-    free(received_buf);
 }
 
 int main(void)

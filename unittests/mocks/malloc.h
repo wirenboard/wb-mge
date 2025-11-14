@@ -3,8 +3,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+typedef struct {
+    void* ptr;
+    size_t size;
+} alloc_record_t;
+
 extern bool malloc_should_fail;
-extern size_t last_malloc_size;
+extern alloc_record_t allocated_ptrs[];
 
 void* test_malloc(size_t size);
 void test_free(void* ptr);

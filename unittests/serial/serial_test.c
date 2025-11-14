@@ -27,6 +27,15 @@
 
 #define SERIAL_EVENT_WAIT_TIMEOUT_MS    50
 
+typedef struct {
+    int called;
+    serial_desc_t *desc;
+    uint8_t *data;
+    size_t len;
+} mock_receive_handler_t;
+
+mock_receive_handler_t mock_receive_handler_data = {0};
+
 void setUp(void)
 {
     mock_uart_reset();
@@ -43,14 +52,15 @@ void tearDown(void)
 
 static void mock_receive_handler(serial_desc_t *desc, uint8_t *data, size_t len)
 {
-    (void)desc;
-    (void)data;
-    (void)len;
+    mock_receive_handler_data.called++;
+    mock_receive_handler_data.desc = desc;
+    mock_receive_handler_data.data = data;
+    mock_receive_handler_data.len = len;
 }
 
 static void init_default_config(serial_config_t *config)
 {
-    config->port_num = MOCK_PORT_NUM_UART1;
+    config->port_num = UART_NUM_1;
     config->tx_pin = GPIO_NUM_10;
     config->rx_pin = GPIO_NUM_9;
     config->dir_pin = GPIO_NUM_4;
@@ -63,31 +73,37 @@ static void init_default_config(serial_config_t *config)
 static void verify_uart_driver_install_args(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        mock_uart_driver_install_data.uart_num,
+        "uart_driver_install should be called with correct UART port number"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
         SERIAL_BUF_SIZE,
-        mock_uart_data.rx_buffer_size,
+        mock_uart_driver_install_data.rx_buffer_size,
         "uart_driver_install should be called with correct RX buffer size"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         SERIAL_BUF_SIZE,
-        mock_uart_data.tx_buffer_size,
+        mock_uart_driver_install_data.tx_buffer_size,
         "uart_driver_install should be called with correct TX buffer size"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         SERIAL_QUEUE_SIZE,
-        mock_uart_data.event_queue_size,
+        mock_uart_driver_install_data.event_queue_size,
         "uart_driver_install should be called with correct event queue size"
     );
 
     TEST_ASSERT_NOT_NULL_MESSAGE(
-        mock_uart_data.uart_queue,
+        mock_uart_driver_install_data.uart_queue,
         "uart_driver_install should be called with non-NULL uart_queue pointer"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         0,
-        mock_uart_data.intr_alloc_flags,
+        mock_uart_driver_install_data.intr_alloc_flags,
         "uart_driver_install should be called with interrupt flags set to 0"
     );
 }
@@ -100,38 +116,44 @@ static void verify_uart_param_config_args(
 )
 {
     TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        mock_uart_param_config_data.uart_num,
+        "uart_param_config should be called with correct UART port number"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
         expected_baudrate,
-        mock_uart_data.config.baud_rate,
+        mock_uart_param_config_data.config.baud_rate,
         "uart_param_config should be called with correct baud rate"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_data_bits,
-        mock_uart_data.config.data_bits,
+        mock_uart_param_config_data.config.data_bits,
         "uart_param_config should be called with correct data bits"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_parity,
-        mock_uart_data.config.parity,
+        mock_uart_param_config_data.config.parity,
         "uart_param_config should be called with correct parity"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_stop_bits,
-        mock_uart_data.config.stop_bits,
+        mock_uart_param_config_data.config.stop_bits,
         "uart_param_config should be called with correct stop bits"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         UART_HW_FLOWCTRL_DISABLE,
-        mock_uart_data.config.flow_ctrl,
+        mock_uart_param_config_data.config.flow_ctrl,
         "uart_param_config should be called with flow control disabled"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         UART_SCLK_DEFAULT,
-        mock_uart_data.config.source_clk,
+        mock_uart_param_config_data.config.source_clk,
         "uart_param_config should be called with default source clock"
     );
 }
@@ -143,26 +165,32 @@ static void verify_uart_set_pin_args(
 )
 {
     TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        mock_uart_set_pin_data.uart_num,
+        "uart_set_pin should be called with correct UART port number"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
         expected_tx_pin,
-        mock_uart_data.tx_pin,
+        mock_uart_set_pin_data.tx_pin,
         "uart_set_pin should be called with correct TX pin"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_rx_pin,
-        mock_uart_data.rx_pin,
+        mock_uart_set_pin_data.rx_pin,
         "uart_set_pin should be called with correct RX pin"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_dir_pin,
-        mock_uart_data.dir_pin,
+        mock_uart_set_pin_data.dir_pin,
         "uart_set_pin should be called with correct DIR pin"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         UART_PIN_NO_CHANGE,
-        mock_uart_data.cts_pin,
+        mock_uart_set_pin_data.cts_pin,
         "uart_set_pin should be called with CTS pin set to UART_PIN_NO_CHANGE"
     );
 }
@@ -170,8 +198,14 @@ static void verify_uart_set_pin_args(
 static void verify_uart_set_mode_args(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        mock_uart_set_mode_data.uart_num,
+        "uart_set_mode should be called with correct UART port number"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
         UART_MODE_RS485_HALF_DUPLEX,
-        mock_uart_data.mode,
+        mock_uart_set_mode_data.mode,
         "uart_set_mode should be called with UART_MODE_RS485_HALF_DUPLEX"
     );
 }
@@ -179,9 +213,61 @@ static void verify_uart_set_mode_args(void)
 static void verify_uart_set_rx_timeout_args(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        mock_uart_set_rx_timeout_data.uart_num,
+        "uart_set_rx_timeout should be called with correct UART port number"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
         SERIAL_READ_TOUT,
-        mock_uart_data.rx_timeout,
+        mock_uart_set_rx_timeout_data.rx_timeout,
         "uart_set_rx_timeout should be called with SERIAL_READ_TOUT"
+    );
+}
+
+static void verify_uart_flush_input_args(int expected_called)
+{
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_called,
+        mock_uart_flush_input_data.called,
+        "uart_flush_input call count mismatch"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        mock_uart_flush_input_data.uart_num,
+        "uart_flush_input should be called with correct UART port number"
+    );
+}
+
+static void verify_uart_read_bytes_args(
+    int expected_called,
+    uint32_t expected_length,
+    TickType_t expected_ticks_to_wait
+)
+{
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_called,
+        mock_uart_read_bytes_data.called,
+        "uart_read_bytes call count mismatch"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        mock_uart_read_bytes_data.uart_num,
+        "uart_read_bytes should be called with correct UART port number"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_length,
+        mock_uart_read_bytes_data.length,
+        "uart_read_bytes should be called with correct length"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_ticks_to_wait,
+        mock_uart_read_bytes_data.ticks_to_wait,
+        "uart_read_bytes should be called with correct ticks to wait"
     );
 }
 
@@ -319,37 +405,37 @@ static void verify_serial_init_calls(
 {
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_uart_driver_install,
-        mock_uart_calls.driver_install_called,
+        mock_uart_driver_install_data.called,
         "uart_driver_install call count mismatch"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_uart_param_config,
-        mock_uart_calls.param_config_called,
+        mock_uart_param_config_data.called,
         "uart_param_config call count mismatch"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_uart_set_pin,
-        mock_uart_calls.set_pin_called,
+        mock_uart_set_pin_data.called,
         "uart_set_pin call count mismatch"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_uart_set_mode,
-        mock_uart_calls.set_mode_called,
+        mock_uart_set_mode_data.called,
         "uart_set_mode call count mismatch"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_uart_set_rx_timeout,
-        mock_uart_calls.set_rx_timeout_called,
+        mock_uart_set_rx_timeout_data.called,
         "uart_set_rx_timeout call count mismatch"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         expected_uart_driver_delete,
-        mock_uart_calls.driver_delete_called,
+        mock_uart_driver_delete_data.called,
         "uart_driver_delete call count mismatch"
     );
 
@@ -434,6 +520,12 @@ void test_serial_init_event_group_create_failure(void)
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupCreate_data.called, "xEventGroupCreate should be called once");
     verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0);
     verify_malloc_tracking(1, 1);
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        sizeof(serial_desc_t),
+        allocated_ptrs[0].size,
+        "Memory size mismatch for serial_desc_t allocation"
+    );
 }
 
 // Тестируем serial_init с ошибкой вызова uart_driver_install
@@ -446,7 +538,7 @@ void test_serial_init_uart_driver_install_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_calls.driver_install_result = ESP_FAIL;
+    mock_uart_driver_install_data.result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -467,7 +559,7 @@ void test_serial_init_uart_param_config_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_calls.param_config_result = ESP_FAIL;
+    mock_uart_param_config_data.result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -489,7 +581,7 @@ void test_serial_init_uart_set_pin_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_calls.set_pin_result = ESP_FAIL;
+    mock_uart_set_pin_data.result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -512,7 +604,7 @@ void test_serial_init_uart_set_mode_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_calls.set_mode_result = ESP_FAIL;
+    mock_uart_set_mode_data.result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -536,7 +628,7 @@ void test_serial_init_uart_set_rx_timeout_failure(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_uart_calls.set_rx_timeout_result = ESP_FAIL;
+    mock_uart_set_rx_timeout_data.result = ESP_FAIL;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -587,7 +679,7 @@ void test_serial_init_success_no_task_execution(void)
     serial_config_t config;
     init_default_config(&config);
 
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
@@ -615,8 +707,7 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     init_default_config(&config);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
@@ -627,9 +718,25 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should be called twice");
     verify_xEventGroupSetBits_args(0, EVENT_TASK_STARTED);
     verify_xEventGroupSetBits_args(1, EVENT_TASK_FINISHED);
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once");
+    verify_uart_flush_input_args(1);
     verify_xQueueReceive_args(desc->uart_queue, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
     verify_malloc_tracking(2, 1);
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        sizeof(serial_desc_t),
+        allocated_ptrs[0].size,
+        "Memory size mismatch for serial_desc_t allocation"
+    );
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        SERIAL_BUF_SIZE,
+        allocated_ptrs[1].size,
+        "Memory size mismatch for UART read buffer allocation"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        was_ptr_freed(allocated_ptrs[1].ptr),
+        "UART read buffer should be freed on task exit"
+    );
+
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelete_data.called, "vTaskDelete should be called once");
     TEST_ASSERT_NULL_MESSAGE(mock_vTaskDelete_data.xTaskToDelete, "vTaskDelete should be called to delete self");
 }
@@ -651,15 +758,12 @@ void test_serial_init_success_with_uart_data_event(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.read_bytes_called, "uart_read_bytes should be called once");
-    TEST_ASSERT_EQUAL_MESSAGE(size_to_read, mock_uart_data.uart_read_bytes_length, "Should read 10 bytes");
-    TEST_ASSERT_EQUAL_MESSAGE(portMAX_DELAY, mock_uart_data.uart_read_bytes_ticks, "Should wait indefinitely");
+    verify_uart_read_bytes_args(1, size_to_read, portMAX_DELAY);
 }
 
 // Тестируем получение события UART_DATA с включенной защитой копирования
@@ -679,17 +783,14 @@ void test_serial_init_success_with_uart_data_event_copy_protection(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_activate_copy_protection();
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.read_bytes_called, "uart_read_bytes should be called once");
-    TEST_ASSERT_EQUAL_MESSAGE(size_to_read, mock_uart_data.uart_read_bytes_length, "Should read 10 bytes");
-    TEST_ASSERT_EQUAL_MESSAGE(portMAX_DELAY, mock_uart_data.uart_read_bytes_ticks, "Should wait indefinitely");
+    verify_uart_read_bytes_args(1, size_to_read, portMAX_DELAY);
 }
 
 // Тестируем получение события UART_DATA с размером больше буфера
@@ -707,12 +808,11 @@ void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_calls.read_bytes_called, "uart_read_bytes should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
 }
 
 // Тестируем получение события UART_FIFO_OVF
@@ -730,13 +830,12 @@ void test_serial_init_success_with_uart_fifo_ovf_event(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
-    TEST_ASSERT_EQUAL_MESSAGE(2, mock_uart_calls.flush_input_called, "uart_flush_input should be called twice (once in task init, once for FIFO_OVF)");
+    verify_uart_flush_input_args(2);
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called once");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
 }
@@ -756,13 +855,12 @@ void test_serial_init_success_with_uart_buffer_full_event(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
-    TEST_ASSERT_EQUAL_MESSAGE(2, mock_uart_calls.flush_input_called, "uart_flush_input should be called twice (once in task init, once for BUFFER_FULL)");
+    verify_uart_flush_input_args(2);
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called once");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
 }
@@ -782,12 +880,11 @@ void test_serial_init_success_with_uart_break_event(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once (only in task init)");
+    verify_uart_flush_input_args(1);
 }
 
 // Тестируем получение события UART_PARITY_ERR
@@ -805,12 +902,11 @@ void test_serial_init_success_with_uart_parity_err_event(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once (only in task init)");
+    verify_uart_flush_input_args(1);
 }
 
 // Тестируем получение события UART_FRAME_ERR
@@ -828,12 +924,11 @@ void test_serial_init_success_with_uart_frame_err_event(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once (only in task init)");
+    verify_uart_flush_input_args(1);
 }
 
 // Тестируем получение неизвестного события
@@ -851,12 +946,11 @@ void test_serial_init_success_with_unknown_uart_event(void)
     mock_xQueueReceive_data.buffer_size = sizeof(event);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.return_value |= EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_calls.flush_input_called, "uart_flush_input should be called once (only in task init)");
+    verify_uart_flush_input_args(1);
 }
 
 int main(void)

@@ -9,7 +9,6 @@
 #include "esp_err.h"
 
 #define UART_PIN_NO_CHANGE              (-1)
-#define MOCK_PORT_NUM_UART1             UART_NUM_1
 
 typedef enum {
     UART_DATA_5_BITS   = 0x0,    /*!< word length: 5bits*/
@@ -106,50 +105,86 @@ int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t
 int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size);
 
 typedef struct {
-    int driver_install_called;
-    esp_err_t driver_install_result;
-    int driver_delete_called;
-    int param_config_called;
-    esp_err_t param_config_result;
-    int set_pin_called;
-    esp_err_t set_pin_result;
-    int set_mode_called;
-    esp_err_t set_mode_result;
-    int set_rx_timeout_called;
-    esp_err_t set_rx_timeout_result;
-    int read_bytes_called;
-    int write_bytes_called;
-    int wait_tx_done_called;
-    int flush_input_called;
-} mock_uart_calls_t;
+    int called;
+    uart_port_t uart_num;
+} mock_uart_flush_input_t;
 
 typedef struct {
+    int called;
+    uart_port_t uart_num;
     int rx_buffer_size;
     int tx_buffer_size;
     int event_queue_size;
     QueueHandle_t *uart_queue;
     int intr_alloc_flags;
+    esp_err_t result;
+} mock_uart_driver_install_t;
+
+typedef struct {
+    int called;
+    uart_port_t uart_num;
+} mock_uart_driver_delete_t;
+
+typedef struct {
+    int called;
+    uart_port_t uart_num;
     uart_config_t config;
+    esp_err_t result;
+} mock_uart_param_config_t;
+
+typedef struct {
+    int called;
+    uart_port_t uart_num;
     int tx_pin;
     int rx_pin;
     int dir_pin;
     int cts_pin;
+    esp_err_t result;
+} mock_uart_set_pin_t;
+
+typedef struct {
+    int called;
+    uart_port_t uart_num;
     uart_mode_t mode;
+    esp_err_t result;
+} mock_uart_set_mode_t;
+
+typedef struct {
+    int called;
+    uart_port_t uart_num;
     uint8_t rx_timeout;
-    TickType_t uart_wait_tx_done_ticks;
-    uint32_t uart_read_bytes_length;
-    TickType_t uart_read_bytes_ticks;
-    void *uart_write_bytes_src;
-    size_t uart_write_bytes_size;
-} mock_uart_data_t;
+    esp_err_t result;
+} mock_uart_set_rx_timeout_t;
 
-extern mock_uart_calls_t mock_uart_calls;
-extern mock_uart_data_t mock_uart_data;
+typedef struct {
+    int called;
+    uart_port_t uart_num;
+    TickType_t ticks_to_wait;
+} mock_uart_wait_tx_done_t;
 
-extern esp_err_t mock_uart_driver_install_result;
-extern esp_err_t mock_uart_param_config_result;
-extern esp_err_t mock_uart_set_pin_result;
-extern esp_err_t mock_uart_set_mode_result;
-extern esp_err_t mock_uart_set_rx_timeout_result;
+typedef struct {
+    int called;
+    uart_port_t uart_num;
+    uint32_t length;
+    TickType_t ticks_to_wait;
+} mock_uart_read_bytes_t;
+
+typedef struct {
+    int called;
+    uart_port_t uart_num;
+    void *src;
+    size_t size;
+} mock_uart_write_bytes_t;
+
+extern mock_uart_flush_input_t mock_uart_flush_input_data;
+extern mock_uart_driver_install_t mock_uart_driver_install_data;
+extern mock_uart_driver_delete_t mock_uart_driver_delete_data;
+extern mock_uart_param_config_t mock_uart_param_config_data;
+extern mock_uart_set_pin_t mock_uart_set_pin_data;
+extern mock_uart_set_mode_t mock_uart_set_mode_data;
+extern mock_uart_set_rx_timeout_t mock_uart_set_rx_timeout_data;
+extern mock_uart_wait_tx_done_t mock_uart_wait_tx_done_data;
+extern mock_uart_read_bytes_t mock_uart_read_bytes_data;
+extern mock_uart_write_bytes_t mock_uart_write_bytes_data;
 
 void mock_uart_reset(void);

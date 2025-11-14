@@ -9,38 +9,68 @@
 
 #define MAX_TRACKED_ALLOCS          100
 
+alloc_record_t allocated_ptrs[MAX_TRACKED_ALLOCS] = {0};
 bool malloc_should_fail = false;
-size_t last_malloc_size = 0;
+
+static void* freed_ptrs[MAX_TRACKED_ALLOCS] = {0};
 static int allocated_count = 0;
 static int freed_count = 0;
 
-static void* allocated_ptrs[MAX_TRACKED_ALLOCS];
-static void* freed_ptrs[MAX_TRACKED_ALLOCS];
+static bool was_ptr_allocated(void* ptr)
+{
+    for (int i = 0; i < allocated_count; i++) {
+        if (allocated_ptrs[i].ptr == ptr) {
+            return true;
+        }
+    }
+    return false;
+}
 
 void* test_malloc(size_t size)
 {
+    TEST_ASSERT_LESS_THAN_MESSAGE(
+        MAX_TRACKED_ALLOCS,
+        allocated_count,
+        "Exceeded maximum number of tracked allocations in mock"
+    );
+
     if (malloc_should_fail) {
         return NULL;
     }
-
-    last_malloc_size = size;
 
     void* ptr = malloc(size);
     if (!ptr) {
         return NULL;
     }
 
-    if (allocated_count < MAX_TRACKED_ALLOCS) {
-        allocated_ptrs[allocated_count++] = ptr;
-    }
+    allocated_ptrs[allocated_count].ptr = ptr;
+    allocated_ptrs[allocated_count].size = size;
+    allocated_count++;
+
     return ptr;
 }
 
 void test_free(void* ptr)
 {
-    if (freed_count < MAX_TRACKED_ALLOCS) {
-        freed_ptrs[freed_count++] = ptr;
+    if (ptr == NULL) {
+        return;
     }
+
+    if (!was_ptr_allocated(ptr)) {
+        TEST_FAIL_MESSAGE("Attempting to free untracked pointer");
+    }
+
+    if (was_ptr_freed(ptr)) {
+        TEST_FAIL_MESSAGE("Double free detected");
+    }
+
+    TEST_ASSERT_LESS_THAN_MESSAGE(
+        MAX_TRACKED_ALLOCS,
+        freed_count,
+        "Exceeded maximum number of tracked deallocations in mock"
+    );
+
+    freed_ptrs[freed_count++] = ptr;
 
     free(ptr);
 }
@@ -48,7 +78,7 @@ void test_free(void* ptr)
 void* get_allocated_ptr(int index)
 {
     if (index >= 0 && index < allocated_count) {
-        return allocated_ptrs[index];
+        return allocated_ptrs[index].ptr;
     }
     return NULL;
 }
@@ -65,8 +95,13 @@ bool was_ptr_freed(void* ptr)
 
 void reset_malloc_tracking(void)
 {
+    for (int i = 0; i < allocated_count; i++) {
+        if (!was_ptr_freed(allocated_ptrs[i].ptr)) {
+            free(allocated_ptrs[i].ptr);
+        }
+    }
+
     malloc_should_fail = false;
-    last_malloc_size = 0;
     allocated_count = 0;
     freed_count = 0;
     memset(allocated_ptrs, 0, sizeof(allocated_ptrs));
@@ -86,4 +121,13 @@ void verify_malloc_tracking(int expected_allocs, int expected_frees)
         freed_count,
         "Unexpected number of deallocations"
     );
+
+    if (expected_allocs == expected_frees) {
+        for (int i = 0; i < allocated_count; i++) {
+            TEST_ASSERT_TRUE_MESSAGE(
+                was_ptr_freed(allocated_ptrs[i].ptr),
+                "Not all allocated pointers were freed"
+            );
+        }
+    }
 }
