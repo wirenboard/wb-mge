@@ -1,3 +1,8 @@
+2025-11-14 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.1-rc1
+    * rework:   mock freertos
+
 2025-11-11 Maxim Toropov <maxim.toropov@wirenboard.com>
 
     * version:  1.0.0
