@@ -18,4 +18,13 @@ typedef enum {
 #define ESP_LOGD(tag, format, ...) printf("[DEBUG] %s: " format "\n", tag, ##__VA_ARGS__)
 #define ESP_LOGV(tag, format, ...) printf("[VERBOSE] %s: " format "\n", tag, ##__VA_ARGS__)
 
-#define ESP_LOG_BUFFER_HEX_LEVEL(tag, buffer, buff_len, level)
+#define ESP_LOG_BUFFER_HEX_LEVEL(tag, buffer, buff_len, level) \
+    do { \
+        if ((level) <= ESP_LOG_DEBUG) { \
+            printf("[BUFFER_HEX] %s: ", tag); \
+            for (size_t i = 0; i < (buff_len); i++) { \
+                printf("%02x ", ((uint8_t*)(buffer))[i]); \
+            } \
+            printf("\n"); \
+        } \
+    } while(0)

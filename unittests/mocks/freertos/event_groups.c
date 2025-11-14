@@ -1,6 +1,8 @@
 #include "unity.h"
 
 #include "event_groups.h"
+#include "esp_bit_defs.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,6 +65,12 @@ EventBits_t xEventGroupWaitBits(EventGroupHandle_t xEventGroup,
     mock_xEventGroupWaitBits_data.xWaitForAllBits[mock_xEventGroupWaitBits_data.called] = xWaitForAllBits;
     mock_xEventGroupWaitBits_data.xTicksToWait[mock_xEventGroupWaitBits_data.called] = xTicksToWait;
     mock_xEventGroupWaitBits_data.called++;
+
+    if (mock_xEventGroupWaitBits_data.set_event_on_call > 0) {
+        if (mock_xEventGroupWaitBits_data.called > mock_xEventGroupWaitBits_data.set_event_on_call) {
+            mock_xEventGroupWaitBits_data.return_value |= mock_xEventGroupWaitBits_data.events_to_set;
+        }
+    }
 
     return mock_xEventGroupWaitBits_data.return_value;
 }

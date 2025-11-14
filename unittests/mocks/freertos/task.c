@@ -54,10 +54,9 @@ void vTaskDelay(const TickType_t xTicksToDelay)
 {
     mock_vTaskDelay_data.called++;
     mock_vTaskDelay_data.xTicksToDelay = xTicksToDelay;
-    mock_vTaskDelay_data.counter++;
 
     if (mock_vTaskDelay_data.task_handle_reset_on_count > 0) {
-        if (mock_vTaskDelay_data.counter >= mock_vTaskDelay_data.task_handle_reset_on_count) {
+        if (mock_vTaskDelay_data.called >= mock_vTaskDelay_data.task_handle_reset_on_count) {
             *mock_xTaskCreate_data.pxCreatedTask = NULL;
         }
     }

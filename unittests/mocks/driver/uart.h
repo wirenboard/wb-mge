@@ -8,6 +8,8 @@
 #include "freertos/queue.h"
 #include "esp_err.h"
 
+#define MOCK_DATA_FROM_UART_READ        "HELLO_WORLD_FROM_MGE"
+
 #define UART_PIN_NO_CHANGE              (-1)
 
 typedef enum {
@@ -160,6 +162,7 @@ typedef struct {
     int called;
     uart_port_t uart_num;
     TickType_t ticks_to_wait;
+    esp_err_t result;
 } mock_uart_wait_tx_done_t;
 
 typedef struct {
@@ -174,6 +177,7 @@ typedef struct {
     uart_port_t uart_num;
     void *src;
     size_t size;
+    int return_value;
 } mock_uart_write_bytes_t;
 
 extern mock_uart_flush_input_t mock_uart_flush_input_data;

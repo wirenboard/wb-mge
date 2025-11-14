@@ -104,7 +104,7 @@ esp_err_t uart_wait_tx_done(uart_port_t uart_num, TickType_t ticks_to_wait)
     mock_uart_wait_tx_done_data.uart_num = uart_num;
     mock_uart_wait_tx_done_data.ticks_to_wait = ticks_to_wait;
 
-    return ESP_OK;
+    return mock_uart_wait_tx_done_data.result;
 }
 
 int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t ticks_to_wait)
@@ -115,6 +115,7 @@ int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t
     mock_uart_read_bytes_data.uart_num = uart_num;
     mock_uart_read_bytes_data.length = length;
     mock_uart_read_bytes_data.ticks_to_wait = ticks_to_wait;
+    strncpy((char *)buf, MOCK_DATA_FROM_UART_READ, length);
 
     return (int)length;
 }
@@ -127,6 +128,10 @@ int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size)
     mock_uart_write_bytes_data.uart_num = uart_num;
     mock_uart_write_bytes_data.src = (void *)src;
     mock_uart_write_bytes_data.size = size;
+
+    if (mock_uart_write_bytes_data.return_value != 0) {
+        return mock_uart_write_bytes_data.return_value;
+    }
 
     return (int)size;
 }

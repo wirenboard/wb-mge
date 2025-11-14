@@ -268,3 +268,10 @@ void serial_activate_copy_protection(void)
 {
     copy_protection = true;
 }
+
+#ifdef __unittest_env__
+    void serial_deactivate_copy_protection(void)
+    {
+        copy_protection = false;
+    }
+#endif

@@ -27,6 +27,8 @@
 
 #define SERIAL_EVENT_WAIT_TIMEOUT_MS    50
 
+void serial_deactivate_copy_protection(void);
+
 typedef struct {
     int called;
     serial_desc_t *desc;
@@ -34,6 +36,7 @@ typedef struct {
     size_t len;
 } mock_receive_handler_t;
 
+static uint8_t mock_receive_buffer[SERIAL_BUF_SIZE];
 mock_receive_handler_t mock_receive_handler_data = {0};
 
 void setUp(void)
@@ -43,6 +46,12 @@ void setUp(void)
     mock_freertos_task_reset();
     mock_freertos_queue_reset();
     reset_malloc_tracking();
+
+    memset(&mock_receive_handler_data, 0, sizeof(mock_receive_handler_data));
+    memset(mock_receive_buffer, 0, sizeof(mock_receive_buffer));
+    mock_receive_handler_data.data = mock_receive_buffer;
+
+    serial_deactivate_copy_protection();
 }
 
 void tearDown(void)
@@ -54,7 +63,7 @@ static void mock_receive_handler(serial_desc_t *desc, uint8_t *data, size_t len)
 {
     mock_receive_handler_data.called++;
     mock_receive_handler_data.desc = desc;
-    mock_receive_handler_data.data = data;
+    memcpy(mock_receive_handler_data.data, data, len);
     mock_receive_handler_data.len = len;
 }
 
@@ -329,12 +338,13 @@ static void verify_xEventGroupWaitBits_args(
 }
 
 static void verify_xQueueReceive_args(
+    int expected_called,
     QueueHandle_t expected_queue,
     TickType_t expected_ticks
 )
 {
     TEST_ASSERT_EQUAL_MESSAGE(
-        1,
+        expected_called,
         mock_xQueueReceive_data.called,
         "xQueueReceive should be called once"
     );
@@ -707,19 +717,21 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     init_default_config(&config);
 
     mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
-    verify_serial_init_calls(1, 1, 1, 1, 1, 0, 1, 2);
+    verify_serial_init_calls(1, 1, 1, 1, 1, 0, 1, 5);
     verify_xEventGroupWaitBits_args(0, EVENT_TASK_EXIT_REQ, pdFALSE, pdTRUE, 0);
-    verify_xEventGroupWaitBits_args(1, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
+    verify_xEventGroupWaitBits_args(4, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should be called twice");
     verify_xEventGroupSetBits_args(0, EVENT_TASK_STARTED);
     verify_xEventGroupSetBits_args(1, EVENT_TASK_FINISHED);
     verify_uart_flush_input_args(1);
-    verify_xQueueReceive_args(desc->uart_queue, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
+    verify_xQueueReceive_args(4, desc->uart_queue, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
     verify_malloc_tracking(2, 1);
 
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
@@ -762,8 +774,32 @@ void test_serial_init_success_with_uart_data_event(void)
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-
     verify_uart_read_bytes_args(1, size_to_read, portMAX_DELAY);
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        1,
+        mock_receive_handler_data.called,
+        "Receive handler should be called once"
+    );
+
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        desc,
+        mock_receive_handler_data.desc,
+        "Receive handler should be called with correct serial descriptor"
+    );
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        size_to_read,
+        mock_receive_handler_data.len,
+        "Receive handler should be called with correct data length"
+    );
+
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        MOCK_DATA_FROM_UART_READ,
+        mock_receive_handler_data.data,
+        size_to_read,
+        "Receive handler should be called with correct data"
+    );
 }
 
 // Тестируем получение события UART_DATA с включенной защитой копирования
@@ -789,8 +825,13 @@ void test_serial_init_success_with_uart_data_event_copy_protection(void)
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-
     verify_uart_read_bytes_args(1, size_to_read, portMAX_DELAY);
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        0,
+        mock_receive_handler_data.called,
+        "Receive handler should not be called when copy protection is active"
+    );
 }
 
 // Тестируем получение события UART_DATA с размером больше буфера
@@ -953,6 +994,225 @@ void test_serial_init_success_with_unknown_uart_event(void)
     verify_uart_flush_input_args(1);
 }
 
+// Тестируем успешную отправку serial_send
+void test_serial_send_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send success");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+    size_t bytes_written = sizeof(data);
+    esp_err_t err = serial_send(desc, data, bytes_written);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should return ESP_OK");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called, "uart_write_bytes should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_NUM_1, mock_uart_write_bytes_data.uart_num, "uart_write_bytes should be called with correct UART port");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(data, mock_uart_write_bytes_data.src, "uart_write_bytes should be called with correct data pointer");
+    TEST_ASSERT_EQUAL_MESSAGE(bytes_written, mock_uart_write_bytes_data.size, "uart_write_bytes should be called with correct size");
+}
+
+// Тестируем serial_send с ошибкой записи
+void test_serial_send_partial_write(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send with partial write");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+    mock_uart_write_bytes_data.return_value = 3;
+
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, err, "serial_send should return ESP_FAIL on partial write");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called, "uart_write_bytes should be called once");
+}
+
+// Тестируем serial_send с активной защитой копирования
+void test_serial_send_with_copy_protection(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send with copy protection");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    serial_activate_copy_protection();
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should return ESP_OK even with copy protection");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_write_bytes_data.called, "uart_write_bytes should not be called when copy protection is active");
+}
+
+// Тестируем serial_wait_tx_done
+void test_serial_wait_tx_done_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_wait_tx_done");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    TickType_t timeout = pdMS_TO_TICKS(100);
+    esp_err_t err = serial_wait_tx_done(desc, timeout);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_wait_tx_done should return ESP_OK");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_wait_tx_done_data.called, "uart_wait_tx_done should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_NUM_1, mock_uart_wait_tx_done_data.uart_num, "uart_wait_tx_done should be called with correct UART port");
+    TEST_ASSERT_EQUAL_MESSAGE(timeout, mock_uart_wait_tx_done_data.ticks_to_wait, "uart_wait_tx_done should be called with correct timeout");
+}
+
+// Тестируем serial_deinit с NULL дескриптором
+void test_serial_deinit_null_descriptor(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_deinit with NULL descriptor");
+    LOG_MESSAGE();
+
+    esp_err_t err = serial_deinit(NULL);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, err, "serial_deinit should return ESP_ERR_INVALID_ARG for NULL descriptor");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xEventGroupWaitBits_data.called, "xEventGroupWaitBits should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_driver_delete_data.called, "uart_driver_delete should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called, "vEventGroupDelete should not be called");
+}
+
+// Тестируем serial_deinit с уже деинициализированным дескриптором (task_handle == NULL)
+void test_serial_deinit_already_deinitialized_task(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_deinit with already deinitialized descriptor (task_handle == NULL)");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    desc->task_handle = NULL;
+
+    esp_err_t err = serial_deinit(desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        ESP_ERR_NOT_ALLOWED, err, "serial_deinit should return ESP_ERR_NOT_ALLOWED for already deinitialized descriptor"
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupWaitBits_data.called, "xEventGroupWaitBits should be called once in serial_init");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_driver_delete_data.called, "uart_driver_delete should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called, "vEventGroupDelete should not be called");
+}
+
+// Тестируем serial_deinit с уже деинициализированным дескриптором (event_group == NULL)
+void test_serial_deinit_already_deinitialized_event_group(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_deinit with already deinitialized descriptor (event_group == NULL)");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    desc->event_group = NULL;
+
+    esp_err_t err = serial_deinit(desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        ESP_ERR_NOT_ALLOWED, err, "serial_deinit should return ESP_ERR_NOT_ALLOWED for already deinitialized descriptor"
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupWaitBits_data.called, "xEventGroupWaitBits should be called once in serial_init");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_driver_delete_data.called, "uart_driver_delete should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called, "vEventGroupDelete should not be called");
+}
+
+// Тестируем serial_deinit успешно
+void test_serial_deinit_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_deinit success");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_FINISHED;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    esp_err_t err = serial_deinit(desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_deinit should return ESP_OK");
+
+    verify_xEventGroupSetBits_args(0, EVENT_TASK_EXIT_REQ);
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_xEventGroupWaitBits_data.called, "xEventGroupWaitBits should be called twice");
+    verify_xEventGroupWaitBits_args(1, EVENT_TASK_FINISHED, pdFALSE, pdTRUE, portMAX_DELAY);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_driver_delete_data.called, "uart_driver_delete should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_NUM_1, mock_uart_driver_delete_data.uart_num, "uart_driver_delete should be called with correct UART port");
+
+    verify_event_group_create_delete_handlers();
+    verify_malloc_tracking(1, 1);
+}
+
+// Тестируем serial_deinit когда задача не завершается вовремя
+void test_serial_deinit_task_not_finished(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_deinit when task doesn't finish");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    mock_xEventGroupWaitBits_data.return_value = 0;
+
+    esp_err_t err = serial_deinit(desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, err, "serial_deinit should return ESP_FAIL when task doesn't finish");
+
+    verify_xEventGroupSetBits_args(0, EVENT_TASK_EXIT_REQ);
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_xEventGroupWaitBits_data.called, "xEventGroupWaitBits should be called twice");
+    verify_xEventGroupWaitBits_args(1, EVENT_TASK_FINISHED, pdFALSE, pdTRUE, portMAX_DELAY);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_driver_delete_data.called, "uart_driver_delete should not be called when task doesn't finish");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called, "vEventGroupDelete should not be called when task doesn't finish");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -980,6 +1240,17 @@ int main(void)
     RUN_TEST(test_serial_init_success_with_uart_parity_err_event);
     RUN_TEST(test_serial_init_success_with_uart_frame_err_event);
     RUN_TEST(test_serial_init_success_with_unknown_uart_event);
+
+    RUN_TEST(test_serial_send_success);
+    RUN_TEST(test_serial_send_partial_write);
+    RUN_TEST(test_serial_send_with_copy_protection);
+    RUN_TEST(test_serial_wait_tx_done_success);
+
+    RUN_TEST(test_serial_deinit_null_descriptor);
+    RUN_TEST(test_serial_deinit_already_deinitialized_task);
+    RUN_TEST(test_serial_deinit_already_deinitialized_event_group);
+    RUN_TEST(test_serial_deinit_success);
+    RUN_TEST(test_serial_deinit_task_not_finished);
 
     return UNITY_END();
 }
