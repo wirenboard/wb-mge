@@ -30,7 +30,6 @@ typedef enum {
     EFUSE_BLK_MAX           = 4,
 } esp_efuse_block_t;
 
-extern bool mock_esp_read_mac_should_fail;
 extern esp_efuse_block_t mock_read_block;
 extern size_t mock_read_offset;
 extern esp_err_t mock_esp_efuse_read_block_return;

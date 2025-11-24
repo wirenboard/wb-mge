@@ -9,7 +9,6 @@
 
 #define BLOCK_SIZE      32
 
-bool mock_esp_read_mac_should_fail = false;
 esp_efuse_block_t mock_read_block = EFUSE_BLK0;
 size_t mock_read_offset = 0;
 esp_err_t mock_esp_efuse_read_block_return = ESP_OK;
@@ -75,7 +74,6 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
 
 void mock_esp_efuse_reset(void)
 {
-    mock_esp_read_mac_should_fail = false;
     mock_read_block = EFUSE_BLK0;
     mock_read_offset = 0;
     mock_esp_efuse_read_block_return = ESP_OK;

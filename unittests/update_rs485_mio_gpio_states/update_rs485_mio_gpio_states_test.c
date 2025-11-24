@@ -6,12 +6,6 @@
 #include "rs485_control.h"
 #include "mio_control.h"
 
-extern int mock_setting_items_read_bool_called;
-extern char mock_setting_items_read_bool_keys[MAX_FUNCTION_CALLS][64];
-
-void mock_setting_items_set_bool(const char *key, bool value);
-void mock_setting_items_reset(void);
-
 void setUp(void)
 {
     mock_rs485_control_reset();

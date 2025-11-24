@@ -15,7 +15,10 @@
 
 void setUp(void)
 {
+    mock_esp_read_mac_should_fail = false;
     mock_esp_efuse_reset();
+    mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
+    mock_esp_efuse_set_protection_code((uint8_t[])TEST_PROTECTION_CODE);
     memset(&sys_info, 0, sizeof(sys_info));
 }
 

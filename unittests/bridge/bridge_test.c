@@ -20,7 +20,14 @@
 #define SETTING_ITEMS_READ_BOOL_MAX_CALLS          1
 
 void bridge_reset(void);
-static void mocks_reset(void);
+
+static void mocks_reset(void)
+{
+    mock_setting_items_reset();
+    mock_modbus_tcp_reset();
+    mock_transparent_tcp_reset();
+    mock_rs485_stats_reset();
+}
 
 void setUp(void)
 {
@@ -31,14 +38,6 @@ void setUp(void)
 void tearDown(void)
 {
 
-}
-
-static void mocks_reset(void)
-{
-    mock_setting_items_reset();
-    mock_modbus_tcp_reset();
-    mock_transparent_tcp_reset();
-    mock_rs485_stats_reset();
 }
 
 static void configure_port_modes(void)
