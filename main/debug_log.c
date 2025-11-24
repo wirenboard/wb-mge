@@ -2,9 +2,7 @@
 #include <string.h>
 #include "esp_log.h"
 #include "array_size.h"
-
-
-#define DEBUG_LOG_ENABLE        0   // Global debug logs enable
+#include "debug_log.h"
 
 
 #if (DEBUG_LOG_ENABLE)
@@ -34,7 +32,9 @@
         {.tag = "network",              .enabled = true},
         {.tag = "wifi_apsta",           .enabled = true},
         {.tag = "mio_control",          .enabled = false},
-        {.tag = "voltage_monitor",      .enabled = true}
+        {.tag = "voltage_monitor",      .enabled = true},
+        {.tag = "copy_protection",      .enabled = true},
+        {.tag = "port_expander_tests",  .enabled = true},
     };
 
     void debug_log_init(void)

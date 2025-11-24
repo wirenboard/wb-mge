@@ -282,7 +282,8 @@ void test_http_server_uri_handlers_registration(void)
         {"/ap_clients",        HTTP_GET},
         {"/uptime",            HTTP_GET},
         {"/wb_test",           HTTP_GET},
-        {"/wb_test",           HTTP_POST}
+        {"/wb_test",           HTTP_POST},
+        {"/wb_status",         HTTP_GET}
     };
 
     size_t expected_count = ARRAY_SIZE(expected_uri_registry);
@@ -601,6 +602,10 @@ void test_http_request_external_handlers(void)
     mock_simulate_http_request(HTTP_GET, "/uptime");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uptime_get_handler_called,
                                  "uptime_get_handler should be called for GET /uptime");
+
+    mock_simulate_http_request(HTTP_GET, "/wb_status");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_wb_status_get_handler_called,
+                                 "wb_status_get_handler should be called for GET /wb_status");
 
     // Test WB Test handlers
     LOG_INFO("Testing WB Test handlers...");

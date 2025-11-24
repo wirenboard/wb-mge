@@ -8,7 +8,10 @@
 
 #include <string.h>
 
-#define SERIAL_FROM_MAC                                 4328719365UL // MAC 00:01:02:03:04:05 converted to uint64
+#define SERIAL_FROM_MAC                         4328719365UL // MAC 00:01:02:03:04:05 converted to uint64
+#define TEST_DEVICE_SIGNATURE                   "TEST_SIG"
+#define TEST_PROTECTION_CODE                    {0xAC, 0x57, 0x21, 0xF0, 0xAA, 0x8B, 0x37, 0x61, 0x93, 0xC5, 0x72, 0xEF}
+#define TEST_PROTECTION_CODE_LEN                12
 
 void setUp(void)
 {
@@ -31,8 +34,6 @@ void test_sys_info_init_success(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
 
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(
         SERIAL_FROM_MAC, sys_info.device_serial_num, "Device serial number should match MAC address conversion"
@@ -42,6 +43,9 @@ void test_sys_info_init_success(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
+    );
 }
 
 // Тестируем инициализацию sys_info при ошибке чтения MAC
@@ -56,14 +60,15 @@ void test_sys_info_init_mac_read_failure(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK even when MAC read fails");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(0, sys_info.device_serial_num, "Device serial number should be 0 when MAC read fails");
 
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
+    );
 }
 
 // Тестируем инициализацию sys_info при ошибке чтения eFuse
@@ -78,11 +83,15 @@ void test_sys_info_init_efuse_read_failure(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK even when eFuse read fails");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         "", sys_info.device_signature, "Device signature should be empty when eFuse read fails"
     );
+
+    const uint8_t zero_buf[TEST_PROTECTION_CODE_LEN] = {0};
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        zero_buf, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should be zero when eFuse read fails"
+    );
+
     TEST_ASSERT_EQUAL_UINT64_MESSAGE(
         SERIAL_FROM_MAC, sys_info.device_serial_num, "Serial number should still be populated"
     );
@@ -105,13 +114,14 @@ void test_sys_info_init_empty_device_signature(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with empty signature");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(empty_signature, sys_info.device_signature, "Device signature should be empty string");
 
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
+    );
 }
 
 // Тестируем инициализацию sys_info с максимально длинной сигнатурой устройства
@@ -127,8 +137,6 @@ void test_sys_info_init_long_device_signature(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with long signature");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_MESSAGE(
         DEVICE_SIGNATURE_LEN, strlen(sys_info.device_signature), "Device signature should not exceed maximum length"
     );
@@ -139,6 +147,9 @@ void test_sys_info_init_long_device_signature(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
+    );
 }
 
 // Тестируем инициализацию sys_info с обрезкой сигнатуры устройства
@@ -153,8 +164,6 @@ void test_sys_info_init_signature_truncation(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with long signature");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(SIGNATURE_BLOCK, mock_read_block, "eFuse block read should be SIGNATURE_BLOCK");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(SIGNATURE_OFFSET_BITS, mock_read_offset, "eFuse read offset should be SIGNATURE_OFFSET_BITS");
     TEST_ASSERT_EQUAL_MESSAGE(
         DEVICE_SIGNATURE_LEN, strlen(sys_info.device_signature), "Device signature should be truncated"
     );
@@ -164,6 +173,75 @@ void test_sys_info_init_signature_truncation(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        (uint8_t[])TEST_PROTECTION_CODE, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match mock value"
+    );
+}
+
+// Тестируем инициализацию sys_info с пустым (нулевым) кодом защиты
+void test_sys_info_init_zero_protection_code(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - zero protection code");
+    LOG_MESSAGE();
+
+    const uint8_t zero_prot_code[TEST_PROTECTION_CODE_LEN] = {0};
+    mock_esp_efuse_set_protection_code(zero_prot_code);
+
+    esp_err_t result = sys_info_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with zero protection code");
+
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        zero_prot_code, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should be zero"
+    );
+
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(
+        SERIAL_FROM_MAC, sys_info.device_serial_num, "Device serial number should match MAC address conversion"
+    );
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
+}
+
+void test_sys_info_init_protection_code_with_zeros(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - protection code with zeros");
+    LOG_MESSAGE();
+
+    const uint8_t prot_code[TEST_PROTECTION_CODE_LEN] = {0x00, 0x57, 0x21, 0x00, 0xAA, 0x8B, 0x37, 0x00, 0x93, 0xC5, 0x72, 0x00};
+    mock_esp_efuse_set_protection_code(prot_code);
+
+    esp_err_t result = sys_info_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK with zero protection code");
+
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        prot_code, sys_info.protection_code, TEST_PROTECTION_CODE_LEN, "Device protection code should match the value specified in the test"
+    );
+
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(
+        SERIAL_FROM_MAC, sys_info.device_serial_num, "Device serial number should match MAC address conversion"
+    );
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_VERSION, sys_info.firmware_ver, "Firmware version should be FIRMWARE_VERSION");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(FIRMWARE_GIT_INFO, sys_info.firmware_git_info, "Firmware git info should be FIRMWARE_GIT_INFO");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
+}
+
+void test_sys_info_constants(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info - constants definitions");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_MESSAGE(64, SYS_INFO_MAX_STR_LEN, "SYS_INFO_MAX_STR_LEN must be 64");
+    TEST_ASSERT_EQUAL_MESSAGE(12, DEVICE_SIGNATURE_LEN, "DEVICE_SIGNATURE_LEN must be 12");
+    TEST_ASSERT_EQUAL_MESSAGE(12, PROTECTION_CODE_LEN, "PROTECTION_CODE_LEN must be 12");
 }
 
 int main(void)
@@ -176,6 +254,9 @@ int main(void)
     RUN_TEST(test_sys_info_init_empty_device_signature);
     RUN_TEST(test_sys_info_init_long_device_signature);
     RUN_TEST(test_sys_info_init_signature_truncation);
+    RUN_TEST(test_sys_info_init_zero_protection_code);
+    RUN_TEST(test_sys_info_init_protection_code_with_zeros);
+    RUN_TEST(test_sys_info_constants);
 
     return UNITY_END();
 }

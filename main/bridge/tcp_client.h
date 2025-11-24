@@ -11,3 +11,5 @@ esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len);
 esp_err_t tcp_client_connected(tcp_desc_t *desc);
 
 esp_err_t tcp_client_deinit(tcp_desc_t *desc);
+
+void tcp_client_activate_copy_protection(void);

@@ -23,22 +23,10 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_FREERTOS_HZ=500
 
 #
-# Enable DEBUG log messages activated by esp_log_level_set()
-#
-CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
-CONFIG_LOG_MAXIMUM_LEVEL=4
-
-#
 # LWIP
 #
 CONFIG_LWIP_MAX_SOCKETS=15
 CONFIG_LWIP_STATS=y
-
-#
-# eFuse Bit Manager
-#
-# Only for debug purposes, must be disabled in production!
-# CONFIG_EFUSE_VIRTUAL=y
 
 # Task Watchdog Timer panic on timeout (reset system)
 CONFIG_ESP_TASK_WDT_PANIC=y
@@ -47,3 +35,18 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+#
+# Enable DEBUG log messages activated by esp_log_level_set()
+#
+# Only for debug purposes, must be disabled in production!
+#
+# CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+# CONFIG_LOG_MAXIMUM_LEVEL=4
+
+#
+# eFuse Bit Manager
+#
+# Only for debug purposes, must be disabled in production!
+#
+# CONFIG_EFUSE_VIRTUAL=y

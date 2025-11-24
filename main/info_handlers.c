@@ -7,6 +7,7 @@
 #include "sys_info.h"
 #include "voltage_monitor.h"
 #include "config_button.h"
+#include "copy_protection.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -233,6 +234,41 @@ static esp_err_t info_build_ap_clients_json(cJSON **clients_json)
     return ESP_OK;
 }
 
+static esp_err_t info_build_wb_status_json(cJSON **wb_status_json)
+{
+    if (wb_status_json == NULL) {
+        return ESP_FAIL;
+    }
+
+    *wb_status_json = cJSON_CreateObject();
+    if (*wb_status_json == NULL) {
+        ESP_LOGE(TAG, "Failed to create wb_status JSON object");
+        return ESP_FAIL;
+    }
+
+    #if (!QEMU_BUILD)
+        copy_protection_state_t prot_state = copy_protection_get_state();
+        const char* prot_state_str;
+        switch (prot_state) {
+            case COPY_PROT_STATE_OK:
+                prot_state_str = "ok";
+                break;
+            case COPY_PROT_STATE_FAIL:
+                prot_state_str = "fail";
+                break;
+            default:
+            case COPY_PROT_STATE_UNKNOWN:
+                prot_state_str = "unknown";
+                break;
+        }
+    #else
+        const char* prot_state_str = "unknown";
+    #endif
+
+    cJSON_AddStringToObject(*wb_status_json, "fw_status", prot_state_str);
+
+    return ESP_OK;
+}
 
 esp_err_t info_get_handler(httpd_req_t *req)
 {
@@ -340,5 +376,26 @@ esp_err_t ap_clients_get_handler(httpd_req_t *req)
     }
 
     json_utils_send_response(req, NULL, clients_json);
+    return ESP_OK;
+}
+
+esp_err_t wb_status_get_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "WB status GET request");
+
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
+    cJSON *wb_status_json = NULL;
+    esp_err_t result = info_build_wb_status_json(&wb_status_json);
+
+    if ((result != ESP_OK) || (wb_status_json == NULL)) {
+        ESP_LOGE(TAG, "Failed to build WB status JSON");
+        json_utils_send_error(req, "Failed to get WB status");
+        return ESP_OK;
+    }
+
+    json_utils_send_response(req, NULL, wb_status_json);
     return ESP_OK;
 }

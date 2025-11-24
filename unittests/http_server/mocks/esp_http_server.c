@@ -32,6 +32,7 @@ int mock_ap_clients_get_handler_called = 0;
 int mock_uptime_get_handler_called = 0;
 int mock_wb_test_get_handler_called = 0;
 int mock_wb_test_post_handler_called = 0;
+int mock_wb_status_get_handler_called = 0;
 
 int mock_httpd_resp_set_type_call_count = 0;
 int mock_httpd_resp_set_hdr_call_count = 0;
@@ -99,6 +100,7 @@ void mock_handlers_reset(void)
     mock_uptime_get_handler_called = 0;
     mock_wb_test_get_handler_called = 0;
     mock_wb_test_post_handler_called = 0;
+    mock_wb_status_get_handler_called = 0;
 }
 
 esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)

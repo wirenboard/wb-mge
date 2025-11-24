@@ -7,3 +7,5 @@
 esp_err_t settings_get_handler(httpd_req_t *req);
 // HTTP handler for settings POST endpoint
 esp_err_t settings_post_handler(httpd_req_t *req);
+
+void settings_activate_copy_protection(void);

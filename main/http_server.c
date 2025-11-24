@@ -185,6 +185,12 @@ static const httpd_uri_t wb_test_post = {
     .handler = wb_test_post_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t wb_status_get = {
+    .uri = "/wb_status",
+    .method = HTTP_GET,
+    .handler = wb_status_get_handler,
+    .user_ctx = NULL,
+};
 
 
 static uint16_t get_web_port_setting(void)
@@ -238,6 +244,7 @@ esp_err_t http_server_init(void)
         httpd_register_uri_handler(http_server, &uptime_get);
         httpd_register_uri_handler(http_server, &wb_test_get);
         httpd_register_uri_handler(http_server, &wb_test_post);
+        httpd_register_uri_handler(http_server, &wb_status_get);
     }
 
     if (http_server == NULL) {

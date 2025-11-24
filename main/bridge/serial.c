@@ -1,5 +1,11 @@
+#ifdef __unittest_env__
+    #define malloc test_malloc
+    #define free test_free
+#endif
+
 #include "serial.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,6 +15,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "esp_bit_defs.h"
@@ -31,6 +38,7 @@
 
 
 static const char *TAG = "serial";
+static bool copy_protection = false;
 
 
 static void handle_uart_event(serial_desc_t *desc, uart_event_t event, uint8_t buffer[SERIAL_BUF_SIZE])
@@ -38,14 +46,16 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, uint8_t b
     switch (event.type) {
         case UART_DATA:
             if (SERIAL_BUF_SIZE < event.size) {
-                ESP_LOGE(TAG, "UART[%d] receive buffer is too small, size: %u, expected: >= %u", desc->port_num, SERIAL_BUF_SIZE, event.size);
+                ESP_LOGE(TAG, "UART[%d] receive buffer is too small, size: %u, expected: >= %zu", desc->port_num, SERIAL_BUF_SIZE, event.size);
                 break;
             }
             memset(buffer, 0, SERIAL_BUF_SIZE);
-            ESP_LOGD(TAG, "UART[%d] DATA: %d", desc->port_num, event.size);
+            ESP_LOGD(TAG, "UART[%d] DATA: %zu", desc->port_num, event.size);
             uart_read_bytes(desc->port_num, buffer, event.size, portMAX_DELAY);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, buffer, event.size, ESP_LOG_DEBUG);
-            desc->receive_handler(desc, buffer, event.size);
+            if (!copy_protection) {
+                desc->receive_handler(desc, buffer, event.size);
+            }
             break;
         case UART_FIFO_OVF:
             ESP_LOGW(TAG, "UART[%d] HW fifo overflow", desc->port_num);
@@ -87,7 +97,7 @@ static void uart_event_task(void *pvParameters)
     while(1) {
         uart_event_t event;
         BaseType_t result = xQueueReceive(desc->uart_queue, (void *)&event, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
-        if (result == pdTRUE) {
+        if (result == pdPASS) {
             handle_uart_event(desc, event, dtmp);
         }
 
@@ -102,6 +112,44 @@ static void uart_event_task(void *pvParameters)
     xEventGroupSetBits(desc->event_group, EVENT_TASK_FINISHED);
     desc->task_handle = NULL;
     vTaskDelete(NULL);
+}
+
+static esp_err_t configure_uart_parameters(serial_config_t *serial_config)
+{
+    uart_config_t uart_config = {
+        .baud_rate = serial_config->baudrate,
+        .data_bits = serial_config->databits,
+        .parity = serial_config->parity,
+        .stop_bits = serial_config->stopbits,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+
+    esp_err_t err = uart_param_config(serial_config->port_num, &uart_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error during UART parameters configuring");
+        return err;
+    }
+
+    err = uart_set_pin(serial_config->port_num, serial_config->tx_pin, serial_config->rx_pin, serial_config->dir_pin, UART_PIN_NO_CHANGE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error during UART pin set");
+        return err;
+    }
+
+    err = uart_set_mode(serial_config->port_num, UART_MODE_RS485_HALF_DUPLEX);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error during UART mode set");
+        return err;
+    }
+
+    err = uart_set_rx_timeout(serial_config->port_num, SERIAL_READ_TOUT);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error during UART receive timeout set");
+        return err;
+    }
+
+    return ESP_OK;
 }
 
 serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
@@ -144,41 +192,8 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
         return NULL;
     }
 
-    uart_config_t uart_config = {
-        .baud_rate = serial_config->baudrate,
-        .data_bits = serial_config->databits,
-        .parity = serial_config->parity,
-        .stop_bits = serial_config->stopbits,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT,
-    };
-
-    const char* error_msg = NULL;
-
-    err = uart_param_config(serial_config->port_num, &uart_config);
+    err = configure_uart_parameters(serial_config);
     if (err != ESP_OK) {
-        error_msg = "Error during UART parameters configuring";
-    }
-    if (error_msg == NULL) {
-        err = uart_set_pin(serial_config->port_num, serial_config->tx_pin, serial_config->rx_pin, serial_config->dir_pin, UART_PIN_NO_CHANGE);
-        if (err != ESP_OK) {
-            error_msg = "Error during UART pin set";
-        }
-    }
-    if (error_msg == NULL) {
-        err = uart_set_mode(serial_config->port_num, UART_MODE_RS485_HALF_DUPLEX);
-        if (err != ESP_OK) {
-            error_msg = "Error during UART mode set";
-        }
-    }
-    if (error_msg == NULL) {
-        err = uart_set_rx_timeout(serial_config->port_num, SERIAL_READ_TOUT);
-        if (err != ESP_OK) {
-            error_msg = "Error during UART receive timeout set";
-        }
-    }
-    if (error_msg != NULL) {
-        ESP_LOGE(TAG, "%s", error_msg);
         uart_driver_delete(serial_config->port_num);
         vEventGroupDelete(event_group);
         free(desc);
@@ -204,6 +219,10 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
 
 esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 {
+    if (copy_protection) {
+        return ESP_OK;
+    }
+
     int written = uart_write_bytes(desc->port_num, (const char *)data, len);
 
     if (written != len) {
@@ -244,3 +263,15 @@ esp_err_t serial_deinit(serial_desc_t *desc)
 
     return ESP_OK;
 }
+
+void serial_activate_copy_protection(void)
+{
+    copy_protection = true;
+}
+
+#ifdef __unittest_env__
+    void serial_deactivate_copy_protection(void)
+    {
+        copy_protection = false;
+    }
+#endif

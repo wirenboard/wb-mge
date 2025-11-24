@@ -8,6 +8,7 @@
 #include "lwip/netif.h"
 #include "lwip/stats.h"
 #include "network.h"
+#include "copy_protection.h"
 
 
 #define INDICATION_TASK_STACK_SIZE      (3 * 1024)
@@ -262,6 +263,9 @@ esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
     if (indication_initialized) {
         return ESP_OK;  // Already initialized
     }
+
+    // Start copy_protection: port_expander_task()
+    copy_protection_start_port_expander_task();
 
     if (!io_expander_handle) {
         ESP_LOGE(TAG, "IO expander handle is NULL");

@@ -70,7 +70,7 @@ static void settings_update_task(void *arg)
 }
 
 
-void settings_update(void)
+esp_err_t settings_update(void)
 {
     update_rs485_control();
     update_io_bus_control();
@@ -117,8 +117,11 @@ void settings_update(void)
                                     (void*)(uintptr_t)flags, SETTINGS_UPDATE_TASK_PRIORITY, &update_task_handle);
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Unable to create settings update task");
+            return ESP_FAIL;
         }
     }
+
+    return ESP_OK;
 }
 
 #ifdef __unittest_env__

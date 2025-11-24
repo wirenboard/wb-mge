@@ -27,6 +27,7 @@
 
 
 static const char *TAG = "tcp_client";
+static bool copy_protection = false;
 
 
 static inline bool delay_until_exit_req(tcp_desc_t *desc, TickType_t ticks)
@@ -135,7 +136,9 @@ static void receive_data(tcp_desc_t *desc)
         } else {
             ESP_LOGD(TAG, "Received %d bytes from %s, port %d", len, ip_str, desc->port);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
-            desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
+            if (!copy_protection) {
+                desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
+            }
         }
     }
 }
@@ -241,6 +244,10 @@ esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
 
 esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
+    if (copy_protection) {
+        return ESP_OK;
+    }
+
     if (!desc || (desc->client_sock < 0)) {
         ESP_LOGE(TAG, "No client socket");
         return ESP_FAIL;
@@ -302,4 +309,9 @@ esp_err_t tcp_client_deinit(tcp_desc_t *desc)
 
     ESP_LOGD(TAG, "Deinitialized");
     return ESP_OK;
+}
+
+void tcp_client_activate_copy_protection(void)
+{
+    copy_protection = true;
 }

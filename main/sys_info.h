@@ -11,6 +11,8 @@
 
 #define SYS_INFO_MAX_STR_LEN    64
 
+#define PROTECTION_CODE_LEN     12
+
 typedef struct {
     uint64_t device_serial_num;
     char firmware_ver[SYS_INFO_MAX_STR_LEN];
@@ -18,6 +20,7 @@ typedef struct {
 
     char device_name[SYS_INFO_MAX_STR_LEN];
     char device_signature[DEVICE_SIGNATURE_LEN + 1];
+    uint8_t protection_code[PROTECTION_CODE_LEN];
 
     bool eth_is_connected;
     char eth_ip[SYS_INFO_MAX_STR_LEN];
