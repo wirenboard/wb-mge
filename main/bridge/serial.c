@@ -21,14 +21,14 @@
 #include "esp_bit_defs.h"
 
 
-// буфер должен быть больше, чем максимальный размер пакета modbus + байты арбитража быстрого modbus
-// но, так как устройство может работать в режиме "прозрачного" шлюза, то размер буфера стоит выбирать с запасом
-// при переполнении буфера возникнет событие UART_BUFFER_FULL
+// Buffer must be larger than the maximum Modbus packet size + fast Modbus arbitration bytes
+// However, since the device can work in "transparent" gateway mode, the buffer size should be chosen with a margin
+// When the buffer overflows, UART_BUFFER_FULL event will occur
 #define SERIAL_BUF_SIZE                 (1000)
-#define SERIAL_READ_TOUT                10          // Задержка приема UART в символах (1 символ ~= 11 бит), с запасом
+#define SERIAL_READ_TOUT                10          // UART receive delay in symbols (1 symbol ~= 11 bits), with margin
 #define SERIAL_TASK_STACK_SIZE          (1024 * 4)  // TODO: check stack size
 #define SERIAL_TASK_PRIORITY            12
-#define SERIAL_QUEUE_SIZE               20          // Размер очереди событий UART
+#define SERIAL_QUEUE_SIZE               20          // UART event queue size
 
 #define EVENT_TASK_STARTED              BIT0
 #define EVENT_TASK_FINISHED             BIT1
@@ -82,9 +82,9 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, uint8_t b
     }
 }
 
-// Нельзя эту задачу надолго блокировать в колбэке
-// Иначе может переполниться очередь событий UART,
-// из-за чего пакеты начнут склеиваться и частично дропаться
+// This task must not be blocked for long in the callback
+// Otherwise the UART event queue may overflow,
+// causing packets to stick together and partially drop
 static void uart_event_task(void *pvParameters)
 {
     serial_desc_t *desc = (serial_desc_t *)pvParameters;

@@ -7,24 +7,24 @@
 #include "fast_modbus.h"
 
 
-#define MODBUS_TCP_TASK_STACK_SIZE          3072            // Размер стека каждой задачи
-#define MODBUS_TCP_TASK_PRIORITY            4               // Приоритет задач
-#define MODBUS_TCP_MAX_TASK_COUNT           BRIDGES_COUNT   // Максимальное количество задач (портов)
+#define MODBUS_TCP_TASK_STACK_SIZE          3072            // Stack size for each task
+#define MODBUS_TCP_TASK_PRIORITY            4               // Task priority
+#define MODBUS_TCP_MAX_TASK_COUNT           BRIDGES_COUNT   // Maximum number of tasks (ports)
 
-#define MODBUS_TCP_QUEUE_LEN                10              // Длина очереди запросов от клиентов
+#define MODBUS_TCP_QUEUE_LEN                10              // Client request queue length
 
-#define MODBUS_TCP_SEND_BUFFER_SIZE         1024            // Размер буфера передачи для TCP и RTU пакетов
+#define MODBUS_TCP_SEND_BUFFER_SIZE         1024            // Transmit buffer size for TCP and RTU packets
 
-#define EVENT_SERIAL_RESPONSE_RECEIVED      BIT0            // Флаг события: serial-порт получил пакет с ответом
-#define EVENT_TASK_STARTED                  BIT8            // Флаг события: задача запустилась
-#define EVENT_TASK_FINISHED                 BIT9            // Флаг события: задача завершила работу
-#define EVENT_TASK_EXIT_REQ                 BIT16           // Флаг события: запрос завершения работы задачи
+#define EVENT_SERIAL_RESPONSE_RECEIVED      BIT0            // Event flag: serial port received response packet
+#define EVENT_TASK_STARTED                  BIT8            // Event flag: task started
+#define EVENT_TASK_FINISHED                 BIT9            // Event flag: task finished
+#define EVENT_TASK_EXIT_REQ                 BIT16           // Event flag: task exit request
 
-#define MODBUS_RTU_MAX_PACKET_LEN           256             // Максимальная длина пакета Modbus RTU (кадров)
-#define MODBUS_RTU_RECV_RESERVE_LEN         10              // Запас на прием пакета с учетом интервала тишины и арбитража быстрого Modbus (кадров)
-#define RS485_BITS_PER_FRAME                11              // Количество бит в кадре UART (8 бит данных + старт-бит + 2 стоп-бита)
+#define MODBUS_RTU_MAX_PACKET_LEN           256             // Maximum Modbus RTU packet length (frames)
+#define MODBUS_RTU_RECV_RESERVE_LEN         10              // Reserve for packet reception with silence interval and Fast Modbus arbitration (frames)
+#define RS485_BITS_PER_FRAME                11              // Number of bits in UART frame (8 data bits + start bit + 2 stop bits)
 
-#define WAIT_LOOP_DELAY_MS                  100             // Задержка в циклах ожидания, нужна чтобы периодически проверять флаг запроса выхода
+#define WAIT_LOOP_DELAY_MS                  100             // Delay in wait loops, needed to periodically check exit request flag
 
 
 typedef struct {
@@ -55,7 +55,7 @@ static inline bool check_task_exit_req(const mb_tcp_task_ctx_t *ctx)
     return false;
 }
 
-// Поиск контекста по дескриптору serial_desc_t
+// Find context by serial_desc_t descriptor
 static mb_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* serial_desc)
 {
     for (unsigned i = 0; i < MODBUS_TCP_MAX_TASK_COUNT; i++) {
@@ -66,7 +66,7 @@ static mb_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* serial_de
     return 0;
 }
 
-// Поиск контекста по дескриптору tcp_desc_t
+// Find context by tcp_desc_t descriptor
 static mb_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 {
     for (unsigned i = 0; i < MODBUS_TCP_MAX_TASK_COUNT; i++) {
@@ -78,8 +78,8 @@ static mb_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 }
 
 
-// Разделение Modbus TCP запросов в TCP-потоке данных и помещение их в очередь
-// Возвращает количество запросов, помещенных в очередь
+// Separate Modbus TCP requests in TCP data stream and push them to queue
+// Returns the number of requests pushed to queue
 static unsigned separate_and_push_requests_from_tcp(mb_tcp_task_ctx_t* ctx, const uint8_t* data, size_t len)
 {
     unsigned count = 0;
@@ -111,7 +111,7 @@ static unsigned separate_and_push_requests_from_tcp(mb_tcp_task_ctx_t* ctx, cons
 }
 
 
-// Callback-функция приема данных из последовательного порта
+// Callback function for receiving data from serial port
 static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t len)
 {
     ESP_LOGD(TAG, "Received data from serial, length: %u", len);
@@ -168,7 +168,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 }
 
 
-// Callback-функция приема данных из TCP-сокета
+// Callback function for receiving data from TCP socket
 static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
     ESP_LOGD(TAG, "Received data from TCP, length: %u", len);
@@ -190,7 +190,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
 }
 
 
-// Ожидание активного TCP подключения
+// Wait for active TCP connection
 static void wait_tcp_connection(const mb_tcp_task_ctx_t* ctx)
 {
     bool wait_conn = false;
@@ -202,15 +202,15 @@ static void wait_tcp_connection(const mb_tcp_task_ctx_t* ctx)
             packet_queue_clear(ctx->tcp_queue);
             wait_conn = true;
         }
-        vTaskDelay(pdMS_TO_TICKS(WAIT_LOOP_DELAY_MS));  // Задержка, чтобы не вешать систему
+        vTaskDelay(pdMS_TO_TICKS(WAIT_LOOP_DELAY_MS));  // Delay to avoid hanging the system
     }
 }
 
 
-// Получение TCP запроса из очереди пакетов
-// Возвращает размер полученного пакета и устанавливает указатель tcp_req_buf на данные пакета
-// В случае отсутствия пакета в очереди возвращает 0
-// После использования буфер tcp_req_buf необходимо освободить через free(tcp_req_buf)
+// Get TCP request from packet queue
+// Returns received packet size and sets tcp_req_buf pointer to packet data
+// Returns 0 if no packet in queue
+// Buffer tcp_req_buf must be freed with free(tcp_req_buf) after use
 static size_t fetch_tcp_request(mb_tcp_task_ctx_t* ctx, uint8_t** tcp_req_buf)
 {
     size_t len = 0;
@@ -227,10 +227,10 @@ static size_t fetch_tcp_request(mb_tcp_task_ctx_t* ctx, uint8_t** tcp_req_buf)
 }
 
 
-// Создание RTU запроса из TCP запроса
-// Возвращает размер RTU запроса и устанавливает указатель rtu_req_buf на данные RTU пакета
-// В случае ошибки возвращает 0
-// После использования буфер rtu_req_buf необходимо освободить через free(rtu_req_buf)
+// Create RTU request from TCP request
+// Returns RTU request size and sets rtu_req_buf pointer to RTU packet data
+// Returns 0 on error
+// Buffer rtu_req_buf must be freed with free(rtu_req_buf) after use
 static size_t make_rtu_request_from_tcp(mb_tcp_task_ctx_t* ctx, uint8_t* tcp_req_buf, uint8_t** rtu_req_buf)
 {
     *rtu_req_buf = malloc(MODBUS_TCP_SEND_BUFFER_SIZE);
@@ -251,7 +251,7 @@ static size_t make_rtu_request_from_tcp(mb_tcp_task_ctx_t* ctx, uint8_t* tcp_req
 }
 
 
-// Отправка RTU пакета с запросом
+// Send RTU request packet
 static esp_err_t send_rtu_request(mb_tcp_task_ctx_t* ctx, uint8_t* rtu_req_buf, size_t rtu_req_len)
 {
     ESP_LOGD(TAG, "Port[%u]: Sending RTU request, length: %u", ctx->index + 1, rtu_req_len);
@@ -266,8 +266,8 @@ static esp_err_t send_rtu_request(mb_tcp_task_ctx_t* ctx, uint8_t* rtu_req_buf, 
 }
 
 
-// Ожидание отправки RTU запроса и получения ответа
-// Возвращает результат ожидания ответа (true - ответ получен)
+// Wait for RTU request transmission and response reception
+// Returns result of waiting for response (true - response received)
 static bool wait_rtu_send_receive(mb_tcp_task_ctx_t* ctx)
 {
     xEventGroupClearBits(ctx->event_group, EVENT_SERIAL_RESPONSE_RECEIVED);
@@ -289,7 +289,7 @@ static bool wait_rtu_send_receive(mb_tcp_task_ctx_t* ctx)
 }
 
 
-// Задача для работы в режиме Modbus TCP сервера
+// Task for Modbus TCP server mode operation
 static void modbus_tcp_server_task(void *arg)
 {
     mb_tcp_task_ctx_t* ctx = (mb_tcp_task_ctx_t*)arg;
@@ -306,13 +306,13 @@ static void modbus_tcp_server_task(void *arg)
         uint8_t* tcp_req_buf = 0;
         size_t tcp_req_len = fetch_tcp_request(ctx, &tcp_req_buf);
         if (!tcp_req_len) {
-            continue;
+            break;
         }
 
-        // Принятый пакет с запросом уже проверен в колбэке process_data_from_tcp()
-        // Проверка того, является ли запрос запросом поддержки Быстрого Modbus
+        // Received request packet is already validated in process_data_from_tcp() callback
+        // Check if request is a Fast Modbus support probe
         enum fast_modbus_probe_result probe_result = fast_modbus_send_probe_response(
-            ctx->index + 1, ctx->tcp_desc, tcp_req_buf
+            ctx->index, ctx->tcp_desc, tcp_req_buf
         );
         if (probe_result != FAST_MODBUS_NOT_PROBE) {
             free(tcp_req_buf);
@@ -346,11 +346,11 @@ static void modbus_tcp_server_task(void *arg)
 }
 
 
-// Расчет тайм-аута получения RTU-ответа в зависимости от скорости порта.
-// Расчет производится из времени, необходимого на получение пакета Modbus RTU максимальной
-// длины (256 байт) + запас на интервал тишины и арбитраж быстрого Modbus (10 байт).
-// Размер кадра считается максимальным и наиболее веротяным (11 бит)
-// Возвращает значение тайм-аута в тиках FreeRTOS.
+// Calculate RTU response timeout based on port speed.
+// Calculation is based on time required to receive maximum length Modbus RTU packet
+// (256 bytes) + reserve for silence interval and Fast Modbus arbitration (10 bytes).
+// Frame size is considered maximum and most probable (11 bits)
+// Returns timeout value in FreeRTOS ticks.
 static unsigned calc_response_timeout_ticks(unsigned baudrate)
 {
     static const unsigned max_resp_len = MODBUS_RTU_MAX_PACKET_LEN + MODBUS_RTU_RECV_RESERVE_LEN;
