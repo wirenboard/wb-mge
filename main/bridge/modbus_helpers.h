@@ -23,7 +23,7 @@ typedef struct __attribute__((packed)) {
 static inline uint16_t modbus_swap16(uint16_t x) {return (x >> 8) | (x << 8);}
 
 // Calculate CRC16 for Modbus RTU packet
-// Returns result immediately in Big Endian format
+// Returns result in Big Endian format
 uint16_t modbus_crc16(const uint8_t *data, uint16_t len);
 
 // Check Modbus RTU request validity (length, CRC)

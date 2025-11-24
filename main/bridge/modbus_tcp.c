@@ -306,13 +306,13 @@ static void modbus_tcp_server_task(void *arg)
         uint8_t* tcp_req_buf = 0;
         size_t tcp_req_len = fetch_tcp_request(ctx, &tcp_req_buf);
         if (!tcp_req_len) {
-            break;
+            continue;
         }
 
         // Received request packet is already validated in process_data_from_tcp() callback
         // Check if request is a Fast Modbus support probe
         enum fast_modbus_probe_result probe_result = fast_modbus_send_probe_response(
-            ctx->index, ctx->tcp_desc, tcp_req_buf
+            ctx->index + 1, ctx->tcp_desc, tcp_req_buf
         );
         if (probe_result != FAST_MODBUS_NOT_PROBE) {
             free(tcp_req_buf);
