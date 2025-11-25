@@ -21,6 +21,18 @@ WB-MGE предназначен для подключения устройств
 2. **Python 3.8+**
 3. **Git**
 
+### 0. Установка Node.js (если не установлен)
+
+```bash
+# Для Ubuntu/Debian
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+```bash
+# Для macOS с использованием Homebrew
+brew install node
+```
+
 ### 1. Установка ESP-IDF
 
 ```bash

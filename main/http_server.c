@@ -14,8 +14,8 @@
 #include "esp_log.h"
 #include "setting_items.h"
 
-#define MAX_URI_HANDLERS                    20          // TODO: Select value for release
-#define STACK_SIZE                          (1024 * 6)  // TODO: Check memory usage
+#define MAX_URI_HANDLERS                    20
+#define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 
 #define WEB_PORT_FALLBACK                   80          // Used if unable to read from settings

@@ -26,7 +26,7 @@
 // When the buffer overflows, UART_BUFFER_FULL event will occur
 #define SERIAL_BUF_SIZE                 (1000)
 #define SERIAL_READ_TOUT                10          // UART receive delay in symbols (1 symbol ~= 11 bits), with margin
-#define SERIAL_TASK_STACK_SIZE          (1024 * 4)  // TODO: check stack size
+#define SERIAL_TASK_STACK_SIZE          (1024 * 4)
 #define SERIAL_TASK_PRIORITY            12
 #define SERIAL_QUEUE_SIZE               20          // UART event queue size
 

@@ -18,6 +18,18 @@ Two modes are available for each port:
 2. **Python 3.8+**
 3. **Git**
 
+### 0. Install Node.js (if not installed)
+
+```bash
+# For Ubuntu/Debian
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+```bash
+# For macOS using Homebrew
+brew install node
+```
+
 ### 1. Install ESP-IDF
 
 ```bash
