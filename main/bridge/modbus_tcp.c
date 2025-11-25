@@ -349,7 +349,7 @@ static void modbus_tcp_server_task(void *arg)
 // Calculate RTU response timeout based on port speed.
 // Calculation is based on time required to receive maximum length Modbus RTU packet
 // (256 bytes) + reserve for silence interval and Fast Modbus arbitration (10 bytes).
-// Frame size is considered maximum and most probable (11 bits)
+// Frame size is considered maximum and most likely (11 bits)
 // Returns timeout value in FreeRTOS ticks.
 static unsigned calc_response_timeout_ticks(unsigned baudrate)
 {

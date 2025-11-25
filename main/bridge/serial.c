@@ -84,7 +84,7 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, uint8_t b
 
 // This task must not be blocked for long in the callback
 // Otherwise the UART event queue may overflow,
-// causing packets to stick together and partially drop
+// causing packets to merge and partially drop
 static void uart_event_task(void *pvParameters)
 {
     serial_desc_t *desc = (serial_desc_t *)pvParameters;

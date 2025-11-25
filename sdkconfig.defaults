@@ -18,7 +18,7 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 # FreeRTOS / Kernel
 #
 # RTOS frequency increased to improve task switching speed and
-# increase accuracy of timeouts and delays (vTaskDelay)
+# accuracy of timeouts and delays (vTaskDelay)
 #
 CONFIG_FREERTOS_HZ=500
 
