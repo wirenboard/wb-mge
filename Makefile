@@ -161,7 +161,7 @@ clean:
 .PHONY: all unittests build-frontend build-idf-project prepare_release keys_header_file clean
 
 # Include coverage definitions and targets
-include unittests/build_common_coverage.mk
+-include unittests/build_common_coverage.mk
 
 # Include QEMU targets
 include qemu.mk
