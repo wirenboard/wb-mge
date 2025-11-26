@@ -4,10 +4,10 @@
 #include "tcp_desc.h"
 #include "bridge.h"
 
-// Инициализация порта в режиме прозрачного моста TCP <-> RS-485
+// Initialize port in transparent TCP <-> RS-485 bridge mode
 esp_err_t transparent_tcp_init_port(unsigned index, serial_config_t *config,
                                     bridge_mode_t mode, int port, uint32_t ip,
                                     serial_desc_t **serial_desc, tcp_desc_t **tcp_desc);
 
-// Деинициализация ранее инициализированного порта
+// Deinitialize previously initialized port
 esp_err_t transparent_tcp_deinit_port(unsigned index);

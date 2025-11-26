@@ -9,9 +9,9 @@
 
 #include <string.h>
 
-#define MODBUS_MGE_DETECT_LENGTH                    17              // Длина запроса Быстрого Modbus
-#define MODBUS_MGE_DETECT_UID                       0x00            // Unit ID для определения MGE (0)
-#define MODBUS_MGE_DETECT_FCODE                     0x47            // Код функции Modbus для определения MGE (71)
+#define MODBUS_MGE_DETECT_LENGTH                    17              // Fast Modbus request length
+#define MODBUS_MGE_DETECT_UID                       0x00            // Unit ID for MGE detection (0)
+#define MODBUS_MGE_DETECT_FCODE                     0x47            // Modbus function code for MGE detection (71)
 
 static const char *FAST_MODBUS_REQUEST_STR = "WB-FAST-MODBUS?";
 static const char *FAST_MODBUS_RESPONSE_STR = "WB-FAST-MODBUS-OK";
