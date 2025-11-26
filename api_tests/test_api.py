@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Простые тесты для WB-MGE HTTP API
+Simple tests for WB-MGE HTTP API
 """
 
 import requests
@@ -18,8 +18,8 @@ class WBMGEAPI:
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'identity',  # Избегаем сжатия
-            'Connection': 'close',          # Закрываем соединение после каждого запроса
+            'Accept-Encoding': 'identity',  # Avoid compression
+            'Connection': 'close',          # Close connection after each request
             'Cache-Control': 'no-cache',
         })
 
@@ -34,7 +34,7 @@ class WBMGEAPI:
             pass  # urllib3 not available
 
     def auth(self, login="admin", password="admin"):
-        """Авторизация"""
+        """Authorization"""
         try:
             response = self.session.post(f"{self.base_url}/auth", json={
                 "login": login,
@@ -45,181 +45,181 @@ class WBMGEAPI:
             raise
 
     def get_info(self):
-        """Получить информацию об устройстве"""
+        """Get device information"""
         return self.session.get(f"{self.base_url}/info", timeout=10)
 
     def get_settings(self):
-        """Получить настройки"""
+        """Get settings"""
         return self.session.get(f"{self.base_url}/settings", timeout=10)
 
     def update_settings(self, data):
-        """Обновить настройки"""
+        """Update settings"""
         return self.session.post(f"{self.base_url}/settings", json=data, timeout=10)
 
     def start_wifi_scan(self):
-        """Запустить сканирование WiFi"""
+        """Start WiFi scan"""
         return self.session.post(f"{self.base_url}/wifi_scan/start")
 
     def get_wifi_scan_results(self):
-        """Получить результаты сканирования WiFi"""
+        """Get WiFi scan results"""
         return self.session.get(f"{self.base_url}/wifi_scan/results")
 
     def get_ap_clients(self):
-        """Получить список клиентов AP"""
+        """Get list of AP clients"""
         return self.session.get(f"{self.base_url}/ap_clients")
 
     def get_static_file(self, path):
-        """Получить статический файл"""
+        """Get static file"""
         return self.session.get(f"{self.base_url}/{path}")
 
     def get_session(self):
-        """Проверить статус сессии"""
+        """Check session status"""
         return self.session.get(f"{self.base_url}/session")
 
     def logout(self):
-        """Выйти из системы"""
+        """Logout"""
         return self.session.post(f"{self.base_url}/logout")
 
     def get_uptime(self):
-        """Получить время работы устройства"""
+        """Get device uptime"""
         return self.session.get(f"{self.base_url}/uptime")
 
     def execute_command(self, cmd):
-        """Выполнить команду"""
+        """Execute command"""
         try:
-            print(f"Отправка команды: {cmd}")
+            print(f"Sending command: {cmd}")
             payload = {"cmd": cmd}
             print(f"JSON payload: {payload}")
 
             response = self.session.post(f"{self.base_url}/cmd", json=payload, timeout=10)
-            print(f"Команда {cmd} отправлена, статус: {response.status_code}")
+            print(f"Command {cmd} sent, status: {response.status_code}")
 
             return response
         except requests.exceptions.RequestException as e:
-            print(f"Ошибка при отправке команды {cmd}: {e}")
+            print(f"Error sending command {cmd}: {e}")
             raise
 
 
 def test_auth(api):
-    """Тест авторизации"""
-    print("=== Тест авторизации ===")
+    """Authorization test"""
+    print("=== Authorization test ===")
 
-    # Неправильные данные
+    # Incorrect credentials
     response = api.auth("wrong", "wrong")
     assert response.status_code == 200
     data = response.json()
     assert data["auth"] == False
     assert "error" in data
-    print("✓ Неправильная авторизация отклонена")
+    print("✓ Incorrect authorization rejected")
 
-    # Правильные данные
+    # Correct credentials
     response = api.auth()
     assert response.status_code == 200
     data = response.json()
     assert data["auth"] == True
-    print("✓ Правильная авторизация принята")
+    print("✓ Correct authorization accepted")
 
 
 def test_info(api):
-    """Тест информации об устройстве"""
-    print("\n=== Тест информации об устройстве ===")
+    """Device information test"""
+    print("\n=== Device information test ===")
 
-    # Получить информацию
+    # Get information
     response = api.get_info()
     assert response.status_code == 200
     data = response.json()
 
-    # Проверить обязательные поля согласно новой структуре API
+    # Check required fields according to the new API structure
     required_fields = [
         "device_name", "signature", "firmware", "git_info",
         "serial_num", "system_voltage", "config_button_presses"
     ]
     for field in required_fields:
-        assert field in data, f"Поле {field} отсутствует"
+        assert field in data, f"Field {field} is missing"
 
-    # Проверить типы данных основных полей
-    assert isinstance(data["serial_num"], int), "Поле serial_num имеет неверный тип"
-    assert isinstance(data["system_voltage"], (int, float)), "Поле system_voltage имеет неверный тип"
-    assert isinstance(data["config_button_presses"], int), "Поле config_button_presses имеет неверный тип"
+    # Check data types of main fields
+    assert isinstance(data["serial_num"], int), "Field serial_num has incorrect type"
+    assert isinstance(data["system_voltage"], (int, float)), "Field system_voltage has incorrect type"
+    assert isinstance(data["config_button_presses"], int), "Field config_button_presses has incorrect type"
 
-    # Проверить структуру ethernet
-    assert "ethernet" in data, "Секция ethernet отсутствует"
+    # Check ethernet structure
+    assert "ethernet" in data, "Section ethernet is missing"
     eth = data["ethernet"]
 
-    # Проверить поля структуры ethernet
+    # Check fields of ethernet structure
     ethernet_fields = [
         "con_eth", "ip", "mask", "gw", "mac"
     ]
     for field in ethernet_fields:
-        assert field in eth, f"Поле {field} отсутствует"
+        assert field in eth, f"Field {field} is missing"
 
-    assert isinstance(eth["con_eth"], bool), "Поле con_eth имеет неверный тип"
+    assert isinstance(eth["con_eth"], bool), "Field con_eth has incorrect type"
 
-    # Проверить структуру wifi
-    assert "wifi" in data, "Секция wifi отсутствует"
+    # Check wifi structure
+    assert "wifi" in data, "Section wifi is missing"
     wifi = data["wifi"]
 
-    # Проверить поля структуры wifi
+    # Check fields of wifi structure
     wifi_fields = [
         "enabled", "mode", "con_sta", "con_sta_ssid", "sta_ip", "sta_mask", "sta_gw",
         "con_ap", "ap_ip", "ap_mask", "ap_gw", "sta_rssi", "ap_channel", "sta_mac", "ap_mac"
     ]
     for field in wifi_fields:
-        assert field in wifi, f"Поле {field} отсутствует"
+        assert field in wifi, f"Field {field} is missing"
 
-    assert isinstance(wifi["enabled"], bool), "Поле enabled имеет неверный тип"
-    assert isinstance(wifi["con_sta"], bool), "Поле con_sta имеет неверный тип"
-    assert isinstance(wifi["con_ap"], int), "Поле con_ap имеет неверный тип"
-    assert isinstance(wifi["sta_rssi"], int), "Поле sta_rssi имеет неверный тип"
-    assert isinstance(wifi["ap_channel"], int), "Поле ap_channel имеет неверный тип"
+    assert isinstance(wifi["enabled"], bool), "Field enabled has incorrect type"
+    assert isinstance(wifi["con_sta"], bool), "Field con_sta has incorrect type"
+    assert isinstance(wifi["con_ap"], int), "Field con_ap has incorrect type"
+    assert isinstance(wifi["sta_rssi"], int), "Field sta_rssi has incorrect type"
+    assert isinstance(wifi["ap_channel"], int), "Field ap_channel has incorrect type"
 
-    assert 0 <= wifi["con_ap"] <= 10, f"Поле con_ap имеет неверное значение: {wifi['con_ap']}"
-    assert -128 <= wifi["sta_rssi"] <= 127, f"Поле sta_rssi имеет неверное значение: {wifi['sta_rssi']}"
-    assert 1 <= wifi["ap_channel"] <= 13, f"Поле ap_channel имеет неверное значение: {wifi['ap_channel']}"
+    assert 0 <= wifi["con_ap"] <= 10, f"Field con_ap has incorrect value: {wifi['con_ap']}"
+    assert -128 <= wifi["sta_rssi"] <= 127, f"Field sta_rssi has incorrect value: {wifi['sta_rssi']}"
+    assert 1 <= wifi["ap_channel"] <= 13, f"Field ap_channel has incorrect value: {wifi['ap_channel']}"
 
-    # Проверить структуру rs485 портов
+    # Check rs485 ports structure
     for port in ["rs485_1", "rs485_2"]:
-        assert port in data, f"Секция {port} отсутствует"
+        assert port in data, f"Section {port} is missing"
         rs485 = data[port]
 
-        assert "is_busy" in rs485, "Поле is_busy отсутствует"
-        assert "error_percentage" in rs485, "Поле error_percentage отсутствует"
-        assert "server_connections_count" in rs485, "Поле server_connections_count отсутствует"
+        assert "is_busy" in rs485, "Field is_busy is missing"
+        assert "error_percentage" in rs485, "Field error_percentage is missing"
+        assert "server_connections_count" in rs485, "Field server_connections_count is missing"
 
-        assert isinstance(rs485["is_busy"], bool), "Поле is_busy имеет неверный тип"
-        assert isinstance(rs485["error_percentage"], int), "Поле error_percentage имеет неверный тип"
-        assert isinstance(rs485["server_connections_count"], int), "Поле server_connections_count имеет неверный тип"
+        assert isinstance(rs485["is_busy"], bool), "Field is_busy has incorrect type"
+        assert isinstance(rs485["error_percentage"], int), "Field error_percentage has incorrect type"
+        assert isinstance(rs485["server_connections_count"], int), "Field server_connections_count has incorrect type"
 
-    print("✓ Структура информации корректна")
+    print("✓ Information structure is correct")
 
 
 def test_settings(api):
-    """Тест настроек"""
-    print("\n=== Тест настроек ===")
+    """Settings test"""
+    print("\n=== Settings test ===")
 
-    # Получить настройки
+    # Get settings
     response = api.get_settings()
     assert response.status_code == 200
     original_settings = response.json()
 
-    # Проверить структуру
+    # Check structure
     required_sections = ["wifi", "ethernet", "rs485_1", "rs485_2"]
     for section in required_sections:
-        assert section in original_settings, f"Секция {section} отсутствует"
+        assert section in original_settings, f"Section {section} is missing"
 
-    assert "hostname" in original_settings, "Поле vout отсутствует"
-    assert "login" in original_settings, "Поле vout отсутствует"
-    assert "pass" in original_settings, "Поле vout отсутствует"
-    assert "vout" in original_settings, "Поле vout отсутствует"
-    assert "web_port" in original_settings, "Поле web_port отсутствует"
-    assert "io_bus" in original_settings, "Поле io_bus отсутствует"
+    assert "hostname" in original_settings, "Field hostname is missing"
+    assert "login" in original_settings, "Field login is missing"
+    assert "pass" in original_settings, "Field pass is missing"
+    assert "vout" in original_settings, "Field vout is missing"
+    assert "web_port" in original_settings, "Field web_port is missing"
+    assert "io_bus" in original_settings, "Field io_bus is missing"
 
-    assert isinstance(original_settings["vout"], bool), "Поле vout имеет неверный тип"
-    assert isinstance(original_settings["web_port"], int), "Поле web_port имеет неверный тип"
-    assert 1 <= original_settings["web_port"] <= 65535, f"Поле web_port имеет неверное значение: {original_settings['web_port']}"
-    assert isinstance(original_settings["io_bus"], bool), "Поле io_bus имеет неверный тип"
+    assert isinstance(original_settings["vout"], bool), "Field vout has incorrect type"
+    assert isinstance(original_settings["web_port"], int), "Field web_port has incorrect type"
+    assert 1 <= original_settings["web_port"] <= 65535, f"Field web_port has incorrect value: {original_settings['web_port']}"
+    assert isinstance(original_settings["io_bus"], bool), "Field io_bus has incorrect type"
 
-    # Проверить WiFi настройки
+    # Check WiFi settings
     wifi = original_settings["wifi"]
     wifi_fields = [
         "mode", "ap_auth", "sta_auth", "ap_ssid", "ap_pass", "sta_ssid", "sta_pass",
@@ -227,25 +227,25 @@ def test_settings(api):
         "sta_dhcpc", "sta_ip_static", "sta_mask_static", "sta_gw_static"
     ]
     for field in wifi_fields:
-        assert field in wifi, f"Поле {field} отсутствует"
+        assert field in wifi, f"Field {field} is missing"
 
-    assert isinstance(wifi["sta_dhcpc"], bool), "Поле sta_dhcpc имеет неверный тип"
+    assert isinstance(wifi["sta_dhcpc"], bool), "Field sta_dhcpc has incorrect type"
 
-    assert wifi["mode"] in ["ap", "sta", "apsta", "none"], f"Поле mode имеет неверное значение: {wifi['mode']}"
-    assert wifi["ap_auth"] in ["open", "wpa2_psk", "wpa3_psk"], f"Поле ap_auth имеет неверное значение: {wifi['ap_auth']}"
-    assert wifi["sta_auth"] in ["open", "wpa2_psk", "wpa3_psk"], f"Поле sta_auth имеет неверное значение: {wifi['sta_auth']}"
+    assert wifi["mode"] in ["ap", "sta", "apsta", "none"], f"Field mode has incorrect value: {wifi['mode']}"
+    assert wifi["ap_auth"] in ["open", "wpa2_psk", "wpa3_psk"], f"Field ap_auth has incorrect value: {wifi['ap_auth']}"
+    assert wifi["sta_auth"] in ["open", "wpa2_psk", "wpa3_psk"], f"Field sta_auth has incorrect value: {wifi['sta_auth']}"
 
-    # Проверить Ethernet настройки
+    # Check Ethernet settings
     eth = original_settings["ethernet"]
     eth_fields = [
         "ip_static", "mask_static", "gw_static", "dhcpc"
     ]
     for field in eth_fields:
-        assert field in eth, f"Поле {field} отсутствует"
+        assert field in eth, f"Field {field} is missing"
 
-    assert isinstance(eth["dhcpc"], bool), "Поле dhcpc имеет неверный тип"
+    assert isinstance(eth["dhcpc"], bool), "Field dhcpc has incorrect type"
 
-    # Проверить RS485 настройки
+    # Check RS485 settings
     for port in ["rs485_1", "rs485_2"]:
         rs485 = original_settings[port]
         rs485_fields = [
@@ -253,44 +253,44 @@ def test_settings(api):
             "parity", "databits", "bridge"
         ]
         for field in rs485_fields:
-            assert field in rs485, f"Поле {field} отсутствует"
+            assert field in rs485, f"Field {field} is missing"
 
-        assert isinstance(rs485["term"], bool), f"Поле term имеет неверный тип"
-        assert isinstance(rs485["fail_safe"], bool), f"Поле fail_safe имеет неверный тип"
-        assert isinstance(rs485["baudrate"], int), f"Поле baudrate имеет неверный тип"
+        assert isinstance(rs485["term"], bool), f"Field term has incorrect type"
+        assert isinstance(rs485["fail_safe"], bool), f"Field fail_safe has incorrect type"
+        assert isinstance(rs485["baudrate"], int), f"Field baudrate has incorrect type"
         assert rs485["baudrate"] in [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200], \
-            f"Поле baudrate имеет неверное значение: {rs485['baudrate']}"
+            f"Field baudrate has incorrect value: {rs485['baudrate']}"
         assert rs485["stopbits"] in ["1", "1.5", "2"], \
-            f"Поле stopbits имеет неверное значение: {rs485['stopbits']}"
+            f"Field stopbits has incorrect value: {rs485['stopbits']}"
         assert rs485["parity"] in ["none", "even", "odd"], \
-            f"Поле parity имеет неверное значение: {rs485['parity']}"
+            f"Field parity has incorrect value: {rs485['parity']}"
         assert rs485["databits"] in ["5", "6", "7", "8"], \
-            f"Поле databits имеет неверное значение: {rs485['databits']}"
+            f"Field databits has incorrect value: {rs485['databits']}"
 
-        # Проверить bridge настройки
+        # Check bridge settings
         bridge = rs485["bridge"]
         bridge_fields = [
             "mode", "port", "ip", "modbus"
         ]
         for field in bridge_fields:
-            assert field in bridge, f"Поле {field} отсутствует"
+            assert field in bridge, f"Field {field} is missing"
 
-        assert bridge["mode"] in ["server", "client"], f"Поле mode имеет неверное значение: {bridge['mode']}"
-        assert isinstance(bridge["port"], int), "Поле port имеет неверный тип"
-        assert 1 <= bridge["port"] <= 65535, f"Поле port имеет неверное значение: {bridge['port']}"
-        assert isinstance(bridge["modbus"], bool), "Поле modbus имеет неверный тип"
+        assert bridge["mode"] in ["server", "client"], f"Field mode has incorrect value: {bridge['mode']}"
+        assert isinstance(bridge["port"], int), "Field port has incorrect type"
+        assert 1 <= bridge["port"] <= 65535, f"Field port has incorrect value: {bridge['port']}"
+        assert isinstance(bridge["modbus"], bool), "Field modbus has incorrect type"
 
         # Modbus TCP specific parameters removed from test
 
-    print("✓ Структура настроек корректна")
+    print("✓ Settings structure is correct")
 
-    # Тест записи настроек с проверкой ограничений
+    # Test writing settings with validation
     test_settings = {
-        "hostname": "test-device-123",  # Валидный hostname
-        #"login": "testuser123",         # Валидный login # NOTE: Пока не трогаем, иначе дальше ломается авторизация
-        "web_port": 8080,               # Валидный порт
-        "vout": not original_settings["vout"],  # Переключить bool
-        "io_bus": not original_settings["io_bus"],  # Переключить bool
+        "hostname": "test-device-123",  # Valid hostname
+        #"login": "testuser123",         # Valid login # NOTE: Not touching for now, otherwise authorization breaks
+        "web_port": 8080,               # Valid port
+        "vout": not original_settings["vout"],  # Toggle bool
+        "io_bus": not original_settings["io_bus"],  # Toggle bool
         "wifi": {
             "mode": "sta",
             "ap_auth": "wpa2_psk",
@@ -347,39 +347,39 @@ def test_settings(api):
     assert response.status_code == 200
     result = response.json()
     assert result["success"] == True
-    print("✓ Запись настроек с валидными данными работает")
+    print("✓ Writing settings with valid data works")
 
-    # Проверить что все настройки сохранились
+    # Check that all settings were saved
     response = api.get_settings()
     assert response.status_code == 200
     new_settings = response.json()
 
-    # Проверить основные параметры
+    # Check main parameters
     main_fields = [
         "hostname", "vout", "web_port", "io_bus"
         # "login", "pass"
     ]
     for field in main_fields:
-        assert new_settings[field] == test_settings[field], f"Неверное значение поля {field}: {new_settings[field]}"
+        assert new_settings[field] == test_settings[field], f"Incorrect value for field {field}: {new_settings[field]}"
 
-    # Проверить WiFi настройки
+    # Check WiFi settings
     wifi = new_settings["wifi"]
     for field in wifi_fields:
-        assert wifi[field] == test_settings["wifi"][field], f"Неверное значение поля {field}: {wifi[field]}"
+        assert wifi[field] == test_settings["wifi"][field], f"Incorrect value for field {field}: {wifi[field]}"
 
-    # Проверить Ethernet настройки
+    # Check Ethernet settings
     eth = new_settings["ethernet"]
     for field in eth_fields:
-        assert eth[field] == test_settings["ethernet"][field], f"Неверное значение поля {field}: {eth[field]}"
+        assert eth[field] == test_settings["ethernet"][field], f"Incorrect value for field {field}: {eth[field]}"
 
-    # Проверить RS485_1 настройки
+    # Check RS485_1 settings
     rs485_1 = new_settings["rs485_1"]
     rs485_main_fields = [
         "term", "fail_safe", "baudrate", "stopbits", "parity", "databits"
     ]
     for field in rs485_main_fields:
         assert rs485_1[field] == test_settings["rs485_1"][field], \
-            f"Неверное значение поля {field}: {rs485_1[field]}"
+            f"Incorrect value for field {field}: {rs485_1[field]}"
 
     bridge_1 = new_settings["rs485_1"]["bridge"]
     bridge_fields = [
@@ -387,194 +387,194 @@ def test_settings(api):
     ]
     for field in bridge_fields:
         assert bridge_1[field] == test_settings["rs485_1"]["bridge"][field], \
-            f"Неверное значение поля {field}: {bridge_1[field]}"
+            f"Incorrect value for field {field}: {bridge_1[field]}"
 
-    # Проверить RS485_2 настройки
+    # Check RS485_2 settings
     rs485_2 = new_settings["rs485_2"]
     for field in rs485_main_fields:
         assert rs485_2[field] == test_settings["rs485_2"][field], \
-            f"Неверное значение поля {field}: {rs485_2[field]}"
+            f"Incorrect value for field {field}: {rs485_2[field]}"
 
     bridge_2 = new_settings["rs485_2"]["bridge"]
     for field in bridge_fields:
         assert bridge_2[field] == test_settings["rs485_2"]["bridge"][field], \
-            f"Неверное значение поля {field}: {bridge_2[field]}"
+            f"Incorrect value for field {field}: {bridge_2[field]}"
 
-    print("✓ Все настройки корректно сохраняются")
+    print("✓ All settings are saved correctly")
 
-    # Тест с невалидными данными
+    # Test with invalid data
     invalid_settings = {
-        "hostname": "invalid_hostname!",            # Недопустимые символы
-        "web_port": 70000,                          # Превышение лимита
+        "hostname": "invalid_hostname!",            # Invalid characters
+        "web_port": 70000,                          # Exceeds limit
         "wifi": {
-            "mode": "disabled",                     # Отсутствующий режим
-            "ap_auth": "close",                     # Отсутствующий режим
-            "sta_auth": "wep",                      # Отсутствующий режим
-            "ap_ssid": "a" * 50,                    # Слишком длинный SSID
-            "sta_ssid": "фыва123",                  # Недопустимые символы
-            "ap_ip_static": "123.456.789.101",      # Недопустимые значения байтов
-            "ap_mask_static": "abc.def.ghi.jkl",    # Недопустимые символы
-            "ap_gw_static": True,                   # Неверный тип
-            "sta_ip_static": "192.168.1.1.1",       # Неверный формат
-            "sta_mask_static": "123.aaa.1.1",       # Недопустимые символы
-            "sta_gw_static": 192                    # Неверный тип
+            "mode": "disabled",                     # Non-existent mode
+            "ap_auth": "close",                     # Non-existent mode
+            "sta_auth": "wep",                      # Non-existent mode
+            "ap_ssid": "a" * 50,                    # SSID too long
+            "sta_ssid": "фыва123",                  # Invalid characters
+            "ap_ip_static": "123.456.789.101",      # Invalid byte values
+            "ap_mask_static": "abc.def.ghi.jkl",    # Invalid characters
+            "ap_gw_static": True,                   # Invalid type
+            "sta_ip_static": "192.168.1.1.1",       # Invalid format
+            "sta_mask_static": "123.aaa.1.1",       # Invalid characters
+            "sta_gw_static": 192                    # Invalid type
         },
         "ethernet": {
-            "ip_static": "123.456.789.101",         # Недопустимые значения байтов
-            "mask_static": 456,                     # Неверный тип
-            "gw_static": 789,                       # Неверный тип
-            "dhcpc": 0                              # Неверный тип
+            "ip_static": "123.456.789.101",         # Invalid byte values
+            "mask_static": 456,                     # Invalid type
+            "gw_static": 789,                       # Invalid type
+            "dhcpc": 0                              # Invalid type
         },
         "rs485_1": {
-            "term": 1,                              # Неверный тип
-            "fail_safe": "off",                     # Неверный тип
-            "baudrate": 123456,                     # Недопустимое значение
-            "stopbits": "2.5",                      # Недопустимое значение
-            "parity": "all",                        # Недопустимое значение
-            "databits": "2",                        # Недопустимое значение
+            "term": 1,                              # Invalid type
+            "fail_safe": "off",                     # Invalid type
+            "baudrate": 123456,                     # Invalid value
+            "stopbits": "2.5",                      # Invalid value
+            "parity": "all",                        # Invalid value
+            "databits": "2",                        # Invalid value
             "bridge": {
-                "mode": "station",                  # Недопустимое значение
-                "port": 0,                          # Недопустимое значение
-                "ip": "201.250.252.256",            # Недопустимые значения байтов
-                "modbus": "enabled"                 # Неверный тип
+                "mode": "station",                  # Invalid value
+                "port": 0,                          # Invalid value
+                "ip": "201.250.252.256",            # Invalid byte values
+                "modbus": "enabled"                 # Invalid type
             },
         "rs485_2": {
-            "term": "true",                         # Неверный тип
-            "fail_safe": "true",                    # Неверный тип
-            "baudrate": 0,                          # Недопустимое значение
-            "stopbits": "0.5",                      # Недопустимое значение
-            "parity": "disabled",                   # Недопустимое значение
-            "databits": "4",                        # Недопустимое значение
+            "term": "true",                         # Invalid type
+            "fail_safe": "true",                    # Invalid type
+            "baudrate": 0,                          # Invalid value
+            "stopbits": "0.5",                      # Invalid value
+            "parity": "disabled",                   # Invalid value
+            "databits": "4",                        # Invalid value
             "bridge": {
-                "mode": "server",                   # Недопустимое значение
-                "port": 65536,                      # Недопустимое значение
-                "ip": "102.abc.126.18",             # Недопустимые символы
-                "modbus": "disabled"                # Неверный тип
+                "mode": "server",                   # Invalid value
+                "port": 65536,                      # Invalid value
+                "ip": "102.abc.126.18",             # Invalid characters
+                "modbus": "disabled"                # Invalid type
             }
         },
-        "vout": "true",                             # Неверный тип
-        "io_bus": "true"                            # Неверный тип
+        "vout": "true",                             # Invalid type
+        "io_bus": "true"                            # Invalid type
         }
     }
 
     response = api.update_settings(invalid_settings)
-    # API должен либо отклонить (400), либо принять но не сохранить неправильные значения
+    # API should either reject (400) or accept but not save invalid values
     assert response.status_code in [200, 400]
-    print("✓ Обработка невалидных настроек работает")
+    print("✓ Invalid settings handling works")
 
-    # Проверка, что не сохраняются невалидные настройки
+    # Check that invalid settings are not saved
     response = api.get_settings()
     assert response.status_code == 200
     valid_settings = response.json()
-    assert valid_settings == new_settings, "Были сохранены невалидные настройки"
-    print("✓ Невалидные настройки не сохраняются")
+    assert valid_settings == new_settings, "Invalid settings were saved"
+    print("✓ Invalid settings are not saved")
 
-    # Откат настроек
+    # Restore settings
     response = api.update_settings(original_settings)
     assert response.status_code == 200
-    print("✓ Возвращены исходные настройки")
+    print("✓ Original settings restored")
 
 
 def test_session_management(api):
-    """Тест управления сессиями"""
-    print("\n=== Тест управления сессиями ===")
+    """Session management test"""
+    print("\n=== Session management test ===")
 
-    # Проверить статус сессии после авторизации
+    # Check session status after authorization
     response = api.get_session()
     assert response.status_code == 200
-    print("✓ Проверка статуса сессии работает")
+    print("✓ Session status check works")
 
-    # Тест logout
+    # Test logout
     response = api.logout()
     assert response.status_code == 200
     data = response.json()
-    assert data["logout"] == True  # API возвращает "logout", не "success"
-    print("✓ Logout работает")
+    assert data["logout"] == True  # API returns "logout", not "success"
+    print("✓ Logout works")
 
-    # Проверить что сессия недействительна после logout
+    # Check that session is invalid after logout
     response = api.get_session()
     assert response.status_code == 401
-    print("✓ Сессия корректно завершается после logout")
+    print("✓ Session correctly terminates after logout")
 
-    # Переавторизоваться для остальных тестов
+    # Re-authorize for other tests
     response = api.auth()
     assert response.status_code == 200
     assert response.json()["auth"] == True
-    print("✓ Повторная авторизация работает")
+    print("✓ Re-authorization works")
 
 
 def test_uptime(api):
-    """Тест времени работы устройства"""
-    print("\n=== Тест времени работы ===")
+    """Device uptime test"""
+    print("\n=== Uptime test ===")
 
     response = api.get_uptime()
     assert response.status_code == 200
     data = response.json()
 
-    # Проверить структуру uptime
+    # Check uptime structure
     required_fields = ["days", "hours", "minutes", "seconds"]
     for field in required_fields:
-        assert field in data, f"Поле {field} отсутствует в uptime"
+        assert field in data, f"Field {field} is missing in uptime"
 
-    # Проверить ограничения
+    # Check constraints
     assert isinstance(data["days"], int) and data["days"] >= 0
     assert isinstance(data["hours"], int) and 0 <= data["hours"] <= 23
     assert isinstance(data["minutes"], int) and 0 <= data["minutes"] <= 59
     assert isinstance(data["seconds"], int) and 0 <= data["seconds"] <= 59
 
-    print("✓ Получение времени работы работает")
+    print("✓ Uptime retrieval works")
 
 
 def test_commands(api):
-    """Тест выполнения команд"""
-    print("\n=== Тест команд ===")
+    """Command execution test"""
+    print("\n=== Commands test ===")
 
     try:
-        # Тест команды set_default_settings (безопасная)
-        print("Отправка команды set_default_settings...")
+        # Test set_default_settings command (safe)
+        print("Sending set_default_settings command...")
         response = api.execute_command("set_default_settings")
 
         print(f"Status Code: {response.status_code}")
         print(f"Headers: {response.headers}")
-        print(f"Content: {response.text[:500]}...")  # Первые 500 символов
+        print(f"Content: {response.text[:500]}...")  # First 500 characters
 
-        assert response.status_code == 200, f"Ожидался статус 200, получен {response.status_code}"
+        assert response.status_code == 200, f"Expected status 200, got {response.status_code}"
 
-        # По коду HTTP сервера, команды возвращают пустой ответ, а не JSON
+        # According to HTTP server code, commands return empty response, not JSON
         if response.text.strip():
             try:
                 data = response.json()
                 print(f"JSON Response: {data}")
             except Exception as e:
-                print(f"Не удалось разобрать JSON: {e}")
+                print(f"Failed to parse JSON: {e}")
                 print(f"Raw response: {response.text}")
         else:
-            print("Получен пустой ответ (ожидается для команд)")
+            print("Empty response received (expected for commands)")
 
-        print("✓ Команда set_default_settings работает")
+        print("✓ Command set_default_settings works")
 
-        # НЕ тестируем reboot (опасно для автотестов)
-        print("✓ Опасные команды пропущены для безопасности")
+        # NOT testing reboot (dangerous for auto-tests)
+        print("✓ Dangerous commands skipped for safety")
 
     except requests.exceptions.RequestException as e:
-        print(f"❌ Ошибка соединения при выполнении команды: {e}")
+        print(f"❌ Connection error executing command: {e}")
         raise
     except Exception as e:
-        print(f"❌ Неожиданная ошибка в тесте команд: {e}")
-        print(f"Тип ошибки: {type(e).__name__}")
+        print(f"❌ Unexpected error in commands test: {e}")
+        print(f"Error type: {type(e).__name__}")
         raise
 
 
 def test_modbus_tcp_parameters(api):
-    """Тест специфических параметров Modbus TCP"""
-    print("\n=== Тест параметров Modbus TCP ===")
+    """Modbus TCP specific parameters test"""
+    print("\n=== Modbus TCP parameters test ===")
 
-    # Получить текущие настройки
+    # Get current settings
     response = api.get_settings()
     assert response.status_code == 200
     original_settings = response.json()
 
-    # Тест настроек Modbus TCP для первого порта
+    # Test Modbus TCP settings for first port
     modbus_settings = {
         "rs485_1": {
             "bridge": {
@@ -597,129 +597,129 @@ def test_modbus_tcp_parameters(api):
     assert response.status_code == 200
     result = response.json()
     assert result["success"] == True
-    print("✓ Настройки Modbus TCP сохранены")
+    print("✓ Modbus TCP settings saved")
 
-    # Проверить что настройки применились
+    # Check that settings were applied
     response = api.get_settings()
     assert response.status_code == 200
     new_settings = response.json()
 
-    # Проверить первый порт
+    # Check first port
     rs485_1 = new_settings["rs485_1"]["bridge"]
     assert rs485_1["modbus"] == True
 
-    # Проверить второй порт
+    # Check second port
     rs485_2 = new_settings["rs485_2"]["bridge"]
     assert rs485_2["modbus"] == True
 
-    print("✓ Параметры Modbus TCP корректно применились")
+    print("✓ Modbus TCP parameters applied correctly")
 
-    # Тест с отключенным Modbus
+    # Test with Modbus disabled
     transparent_settings = {
         "rs485_1": {
             "bridge": {
-                "modbus": False         # Прозрачный режим
+                "modbus": False         # Transparent mode
             }
         }
     }
 
     response = api.update_settings(transparent_settings)
     assert response.status_code == 200
-    print("✓ Настройки для прозрачного режима принимаются")
+    print("✓ Transparent mode settings accepted")
 
 
 def test_modbus_validation_limits(api):
-    """Тест валидации лимитов для Modbus параметров"""
-    print("\n=== Тест валидации лимитов Modbus ===")
+    """Validation limits test for Modbus parameters"""
+    print("\n=== Modbus limits validation test ===")
 
-    # Тест с невалидными портами
+    # Test with invalid ports
     invalid_settings = {
         "rs485_1": {
             "bridge": {
                 "modbus": True,
-                "port": 0          # Невалидный порт
+                "port": 0          # Invalid port
             }
         }
     }
 
     response = api.update_settings(invalid_settings)
-    # API должен либо отклонить, либо скорректировать значения
+    # API should either reject or correct values
     assert response.status_code in [200, 400]
-    print("✓ Невалидные порты обрабатываются")
+    print("✓ Invalid ports are handled")
 
-    # Тест с превышением лимита порта
+    # Test with port exceeding limit
     invalid_settings = {
         "rs485_2": {
             "bridge": {
                 "modbus": True,
-                "port": 70000      # Больше максимума (65535)
+                "port": 70000      # Exceeds maximum (65535)
             }
         }
     }
 
     response = api.update_settings(invalid_settings)
     assert response.status_code in [200, 400]
-    print("✓ Превышение лимитов портов обрабатывается")
+    print("✓ Port limit exceeding is handled")
 
 
 def test_validation_patterns(api):
-    """Тест валидации паттернов и ограничений"""
-    print("\n=== Тест валидации паттернов ===")
+    """Patterns and constraints validation test"""
+    print("\n=== Patterns validation test ===")
 
-    # Тест валидных паттернов
+    # Test valid patterns
     valid_data = {
-        "hostname": "valid-hostname-123",  # Валидный hostname
-        "login": "valid_user_123",         # Валидный login
+        "hostname": "valid-hostname-123",  # Valid hostname
+        "login": "valid_user_123",         # Valid login
         "wifi": {
-            "ap_ssid": "ValidSSID",        # Валидный SSID
-            "ap_pass": "ValidPass123"      # Валидный пароль (8+ символов)
+            "ap_ssid": "ValidSSID",        # Valid SSID
+            "ap_pass": "ValidPass123"      # Valid password (8+ characters)
         }
     }
 
     response = api.update_settings(valid_data)
     assert response.status_code == 200
-    print("✓ Валидные паттерны принимаются")
+    print("✓ Valid patterns accepted")
 
-    # Тест граничных значений
+    # Test boundary values
     boundary_data = {
         "wifi": {
-            "ap_ssid": "A",                # Минимальная длина (1 символ)
-            "ap_pass": "12345678"          # Минимальная длина пароля (8 символов)
+            "ap_ssid": "A",                # Minimum length (1 character)
+            "ap_pass": "12345678"          # Minimum password length (8 characters)
         },
-        "web_port": 1                      # Минимальный порт
+        "web_port": 1                      # Minimum port
     }
 
     response = api.update_settings(boundary_data)
     assert response.status_code == 200
-    print("✓ Граничные значения принимаются")
+    print("✓ Boundary values accepted")
 
-    # Тест превышения лимитов
+    # Test exceeding limits
     limit_data = {
         "wifi": {
-            "ap_ssid": "A" * 50,           # Превышение лимита SSID (32)
-            "ap_pass": "A" * 100           # Превышение лимита пароля (63)
+            "ap_ssid": "A" * 50,           # SSID limit exceeded (32)
+            "ap_pass": "A" * 100           # Password limit exceeded (63)
         },
-        "web_port": 70000                  # Превышение лимита порта (65535)
+        "web_port": 70000                  # Port limit exceeded (65535)
     }
 
     response = api.update_settings(limit_data)
-    # Должен отклонить или игнорировать неправильные значения
+    # Should reject or ignore incorrect values
     assert response.status_code in [200, 400]
-    print("✓ Превышение лимитов обрабатывается")
+    print("✓ Limit exceeding is handled")
 
 
 def test_wifi_scanner(api):
-    """Тест сканера WiFi"""
-    print("\n=== Тест сканера WiFi ===")
+    """WiFi scanner test"""
+    print("\n=== WiFi scanner test ===")
 
-    # Запустить сканирование
+    # Start scan
     response = api.start_wifi_scan()
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data["success"], bool)
-    print("✓ Запуск сканирования WiFi работает")
+    print("✓ WiFi scan start works")
 
-    # Проверить статус сканирования
+    # Check scan status
     response = api.get_wifi_scan_results()
     assert response.status_code == 200
     data = response.json()
@@ -728,10 +728,10 @@ def test_wifi_scanner(api):
     assert "scan_completed" in data
     assert isinstance(data["scan_in_progress"], bool)
     assert isinstance(data["scan_completed"], bool)
-    assert data["scan_in_progress"] == True, "scan_in_progress должен быть true"
-    assert data["scan_completed"] == False, "scan_in_progress должен быть false"
+    assert data["scan_in_progress"] == True, "scan_in_progress should be true"
+    assert data["scan_completed"] == False, "scan_completed should be false"
 
-    # Ожидание окончания сканирования
+    # Wait for scan completion
     timeout = 0
     while True:
         time.sleep(1)
@@ -741,7 +741,7 @@ def test_wifi_scanner(api):
         if data["scan_in_progress"] == False and data["scan_completed"] == True:
             break
         timeout = timeout + 1
-        assert timeout < 10, "Превышено время ожидания окончания сканирования"
+        assert timeout < 10, "Scan completion timeout exceeded"
 
     if "networks" in data:
         assert isinstance(data["networks"], list)
@@ -750,12 +750,12 @@ def test_wifi_scanner(api):
             assert "rssi" in network
             assert -100 <= network["rssi"] <= 0
 
-    print("✓ Получение результатов сканирования работает")
+    print("✓ Scan results retrieval works")
 
 
 def test_ap_clients(api):
-    """Тест списка клиентов AP"""
-    print("\n=== Тест списка клиентов AP ===")
+    """AP clients list test"""
+    print("\n=== AP clients list test ===")
 
     response = api.get_ap_clients()
     assert response.status_code == 200
@@ -767,15 +767,15 @@ def test_ap_clients(api):
         if "rssi" in client:
             assert -100 <= client["rssi"] <= 0
 
-    print("✓ Получение списка клиентов AP работает")
+    print("✓ AP clients list retrieval works")
 
 
 def test_static_files(api):
-    """Тест статических файлов"""
-    print("\n=== Тест статических файлов ===")
+    """Static files test"""
+    print("\n=== Static files test ===")
 
     static_files = [
-        ("", "text/html"),           # Главная страница
+        ("", "text/html"),           # Main page
         ("index.css", "text/css"),   # CSS
         ("index.js", "application/javascript"),  # JS
         ("favicon.webp", "image/webp")  # Favicon
@@ -786,19 +786,19 @@ def test_static_files(api):
         assert response.status_code == 200
 
         content_type = response.headers.get("content-type", "")
-        assert expected_content_type in content_type.lower(), f"Неправильный Content-Type для {path}: ожидался '{expected_content_type}', получен '{content_type}'"
+        assert expected_content_type in content_type.lower(), f"Incorrect Content-Type for {path}: expected '{expected_content_type}', got '{content_type}'"
 
-        # Проверить что контент не пустой
+        # Check that content is not empty
         assert len(response.content) > 0
 
-        print(f"✓ Статический файл {path or 'index'} доступен")
+        print(f"✓ Static file {path or 'index'} accessible")
 
 
 def test_unauthorized_access(api):
-    """Тест доступа без авторизации"""
-    print("\n=== Тест неавторизованного доступа ===")
+    """Unauthorized access test"""
+    print("\n=== Unauthorized access test ===")
 
-    # Создать новую сессию без авторизации
+    # Create new session without authorization
     unauth_session = requests.Session()
 
     protected_endpoints = [
@@ -813,76 +813,76 @@ def test_unauthorized_access(api):
         elif method == "POST":
             response = unauth_session.post(f"{api.base_url}{endpoint}")
 
-        print(f"Тестируем {method} {endpoint}:")
+        print(f"Testing {method} {endpoint}:")
         print(f"  Status Code: {response.status_code}")
         print(f"  Headers: {dict(response.headers)}")
         print(f"  Content: {response.text[:200]}...")
 
-        assert response.status_code == 401, f"Эндпоинт {method} {endpoint} должен требовать авторизацию. Получен статус: {response.status_code}, содержимое: {response.text[:100]}"
+        assert response.status_code == 401, f"Endpoint {method} {endpoint} should require authorization. Got status: {response.status_code}, content: {response.text[:100]}"
 
-    print("✓ Защищенные эндпоинты требуют авторизацию")
+    print("✓ Protected endpoints require authorization")
 
-    # Проверить что статические файлы доступны без авторизации
+    # Check that static files are accessible without authorization
     static_endpoints = ["/", "/index.css", "/index.js", "/favicon.webp"]
 
     for endpoint in static_endpoints:
         response = unauth_session.get(f"{api.base_url}{endpoint}")
-        print(f"Тестируем GET {endpoint}:")
+        print(f"Testing GET {endpoint}:")
         print(f"  Status Code: {response.status_code}")
         assert response.status_code == 200
 
-    print("✓ Статические файлы доступны без авторизации")
+    print("✓ Static files accessible without authorization")
 
 
 def quick_connection_test(base_url):
-    """Быстрая проверка подключения перед запуском тестов"""
+    """Quick connection check before running tests"""
     import socket
     from urllib.parse import urlparse
 
-    print("🔍 Быстрая проверка подключения...")
+    print("🔍 Quick connection check...")
 
     parsed = urlparse(base_url)
     host = parsed.hostname or "192.168.5.1"
     port = parsed.port or 80
 
     try:
-        # Проверка TCP порта
+        # Check TCP port
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
         result = sock.connect_ex((host, port))
         sock.close()
 
         if result == 0:
-            print(f"✅ TCP подключение к {host}:{port} успешно")
+            print(f"✅ TCP connection to {host}:{port} successful")
 
-            # Дополнительно проверим HTTP запрос
+            # Additionally check HTTP request
             try:
                 import requests
                 response = requests.get(base_url + "/favicon.webp", timeout=5,
                                       headers={'Connection': 'close'})
-                print(f"✅ HTTP тест успешен (Status: {response.status_code})")
+                print(f"✅ HTTP test successful (Status: {response.status_code})")
                 return True
             except Exception as e:
-                print(f"⚠️  TCP работает, но HTTP провалился: {e}")
-                print(f"💡 Возможно проблема в HTTP заголовках или протоколе")
+                print(f"⚠️  TCP works, but HTTP failed: {e}")
+                print(f"💡 Possible issue in HTTP headers or protocol")
                 return False
         else:
-            print(f"❌ TCP подключение к {host}:{port} провалилось")
-            print(f"💡 Запустите диагностику: python diagnose_connection.py {base_url}")
+            print(f"❌ TCP connection to {host}:{port} failed")
+            print(f"💡 Run diagnostics: python diagnose_connection.py {base_url}")
             return False
 
     except Exception as e:
-        print(f"❌ Ошибка проверки подключения: {e}")
-        print(f"💡 Запустите диагностику: python diagnose_connection.py {base_url}")
+        print(f"❌ Connection check error: {e}")
+        print(f"💡 Run diagnostics: python diagnose_connection.py {base_url}")
         return False
 
 
 def main():
-    """Главная функция запуска тестов"""
+    """Main function to run tests"""
     import argparse
     import sys
 
-    # Парсинг аргументов командной строки
+    # Parse command line arguments
     parser = argparse.ArgumentParser(description='WB-MGE API Tests')
     parser.add_argument('--ip', default='192.168.5.1', help='IP address of WB-MGE device')
     parser.add_argument('--stop-on-failure', action='store_true', help='Stop on first test failure')
@@ -890,42 +890,42 @@ def main():
 
     args = parser.parse_args()
 
-    # Проверяем аргументы командной строки
+    # Check command line arguments
     stop_on_failure = args.stop_on_failure or "--stop-on-failure" in sys.argv
     verbose = args.verbose or "--verbose" in sys.argv
 
-    # Создаем API клиент с указанным IP
+    # Create API client with specified IP
     api = WBMGEAPI(f"http://{args.ip}")
 
-    print("Запуск тестов WB-MGE API")
+    print("Running WB-MGE API tests")
     print("=" * 40)
 
-    # Быстрая проверка подключения
+    # Quick connection check
     if not quick_connection_test(api.base_url):
-        print("\n❌ Предварительная проверка подключения провалилась")
-        print("🔧 Проверьте сетевое подключение перед запуском тестов")
+        print("\n❌ Preliminary connection check failed")
+        print("🔧 Check network connection before running tests")
         return 1
 
     if stop_on_failure:
-        print("⚠️  Режим: остановка на первой ошибке")
+        print("⚠️  Mode: stop on first error")
     else:
-        print("🔄 Режим: продолжение выполнения при ошибках")
+        print("🔄 Mode: continue on errors")
 
-    # Список всех тестов для выполнения
+    # List of all tests to execute
     tests = [
-        ("неавторизованного доступа", test_unauthorized_access),
-        ("авторизации", test_auth),
-        ("информации об устройстве", test_info),
-        ("настроек", test_settings),
-        ("управления сессиями", test_session_management),
-        ("времени работы", test_uptime),
-        ("параметров Modbus TCP", test_modbus_tcp_parameters),
-        ("валидации лимитов Modbus", test_modbus_validation_limits),
-        ("валидации паттернов", test_validation_patterns),
-        ("сканера WiFi", test_wifi_scanner),
-        ("списка клиентов AP", test_ap_clients),
-        ("статических файлов", test_static_files),
-        ("команд", test_commands),
+        ("unauthorized access", test_unauthorized_access),
+        ("authorization", test_auth),
+        ("device information", test_info),
+        ("settings", test_settings),
+        ("session management", test_session_management),
+        ("uptime", test_uptime),
+        ("Modbus TCP parameters", test_modbus_tcp_parameters),
+        ("Modbus validation limits", test_modbus_validation_limits),
+        ("validation patterns", test_validation_patterns),
+        ("WiFi scanner", test_wifi_scanner),
+        ("AP clients list", test_ap_clients),
+        ("static files", test_static_files),
+        ("commands", test_commands),
     ]
 
     passed = 0
@@ -936,71 +936,71 @@ def main():
     for test_name, test_func in tests:
         try:
             if not verbose:
-                print(f"\n--- Выполняется тест {test_name} ---")
+                print(f"\n--- Running {test_name} test ---")
             else:
-                print(f"\n🔍 Запуск теста: {test_name}")
+                print(f"\n🔍 Starting test: {test_name}")
 
             test_func(api)
             passed += 1
-            print(f"✅ Тест {test_name} ПРОЙДЕН")
+            print(f"✅ Test {test_name} PASSED")
 
         except AssertionError as e:
             failed += 1
-            error_msg = f"Ошибка теста: {e}"
+            error_msg = f"Test error: {e}"
             failed_tests.append((test_name, error_msg))
-            print(f"❌ Тест {test_name} ПРОВАЛЕН: {error_msg}")
+            print(f"❌ Test {test_name} FAILED: {error_msg}")
 
             if stop_on_failure:
-                print(f"\n🛑 Остановка тестирования на первой ошибке")
+                print(f"\n🛑 Stopping testing on first error")
                 skipped = len(tests) - (passed + failed)
                 break
 
         except requests.exceptions.RequestException as e:
             failed += 1
-            error_msg = f"Ошибка соединения: {e}"
+            error_msg = f"Connection error: {e}"
             failed_tests.append((test_name, error_msg))
-            print(f"❌ Тест {test_name} ПРОВАЛЕН: {error_msg}")
+            print(f"❌ Test {test_name} FAILED: {error_msg}")
 
             if stop_on_failure:
-                print(f"\n🛑 Остановка тестирования на первой ошибке")
+                print(f"\n🛑 Stopping testing on first error")
                 skipped = len(tests) - (passed + failed)
                 break
 
         except Exception as e:
             failed += 1
-            error_msg = f"Неожиданная ошибка: {e}"
+            error_msg = f"Unexpected error: {e}"
             failed_tests.append((test_name, error_msg))
-            print(f"❌ Тест {test_name} ПРОВАЛЕН: {error_msg}")
+            print(f"❌ Test {test_name} FAILED: {error_msg}")
 
             if stop_on_failure:
-                print(f"\n🛑 Остановка тестирования на первой ошибке")
+                print(f"\n🛑 Stopping testing on first error")
                 skipped = len(tests) - (passed + failed)
                 break
 
-    # Итоговый отчет
+    # Final report
     print("\n" + "=" * 60)
-    print("ИТОГИ ТЕСТИРОВАНИЯ:")
-    print(f"✅ Пройдено: {passed}")
-    print(f"❌ Провалено: {failed}")
+    print("TEST RESULTS:")
+    print(f"✅ Passed: {passed}")
+    print(f"❌ Failed: {failed}")
     if skipped > 0:
-        print(f"⏸️  Пропущено: {skipped}")
-    print(f"📊 Всего: {len(tests)}")
+        print(f"⏸️  Skipped: {skipped}")
+    print(f"📊 Total: {len(tests)}")
 
     if failed > 0:
-        print("\n❌ ПРОВАЛИВШИЕСЯ ТЕСТЫ:")
+        print("\n❌ FAILED TESTS:")
         for test_name, error in failed_tests:
             print(f"  • {test_name}: {error}")
 
     if failed == 0:
-        print("\n🎉 ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО!")
+        print("\n🎉 ALL TESTS PASSED SUCCESSFULLY!")
         return 0
     else:
         success_rate = (passed / (passed + failed)) * 100
-        print(f"\n⚠️  {failed} из {passed + failed} тестов провалились ({success_rate:.1f}% успешных)")
+        print(f"\n⚠️  {failed} out of {passed + failed} tests failed ({success_rate:.1f}% successful)")
 
         if skipped == 0:
-            print("\n💡 Используйте --stop-on-failure для остановки на первой ошибке")
-            print("💡 Используйте --verbose для подробного вывода")
+            print("\n💡 Use --stop-on-failure to stop on first error")
+            print("💡 Use --verbose for detailed output")
 
         return 1
 

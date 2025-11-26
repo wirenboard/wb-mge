@@ -7,7 +7,7 @@
 
 static const char *TAG = "update_rs485_mio_gpio_states";
 
-// обновляет состояние подтяжек, питания и терминаторов RS485 в соответствии с текущими настройками
+// Updates the state of pull-ups, power and RS485 terminators according to current settings
 void update_rs485_control(void)
 {
     bool pullup_1_enabled = setting_items_read_bool(KEY_485_FAIL_SAFE_1);

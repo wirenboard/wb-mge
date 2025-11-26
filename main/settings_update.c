@@ -17,7 +17,7 @@
 #define ETHERNET_FLAG                       BIT10
 #define WIFI_FLAG                           BIT11
 
-#define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Задержка перед обновлением настроек HTTP / Ethernet / WiFi
+#define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
 
 static const char *TAG = "settings_update";
@@ -44,7 +44,7 @@ static void settings_update_task(void *arg)
     }
 
     if (flags & (HTTP_SERVER_FLAG | ETHERNET_FLAG | WIFI_FLAG)) {
-        // Небольшая задержка, чтобы успел отправиться ответ клиенту
+        // Small delay to allow the response to be sent to the client
         vTaskDelay(pdMS_TO_TICKS(HTTP_NETWORK_UPDATE_DELAY_MS));
     }
 

@@ -6,7 +6,7 @@
 #define SETTING_ITEM_MAX_STR_LEN            64          // WPA2 passwords can be up to 63 characters + null terminator
 #define SETTING_ITEMS_NUM_MAX               50
 
-// Ключи для хранения настроек
+// Keys for storing settings
 #define KEY_HOSTNAME                "hostname"
 #define KEY_WEB_PORT                "web_port"
 #define KEY_LOGIN                   "login"
@@ -57,10 +57,10 @@
 #define KEY_485_FAIL_SAFE_1         "485_fail_safe_1"
 #define KEY_485_FAIL_SAFE_2         "485_fail_safe_2"
 
-// Включение MIO на RS485-2
+// Enable MIO on RS485-2
 #define KEY_IO_BUS_ENABLED          "io_bus"
 
-// WiFi режимы
+// WiFi modes
 #define WIFI_MODE_AP_STR            "ap"
 #define WIFI_MODE_STA_STR           "sta"
 #define WIFI_MODE_APSTA_STR         "apsta"
@@ -71,23 +71,23 @@
 #define WIFI_AUTH_WPA2_PSK_STR      "wpa2_psk"
 #define WIFI_AUTH_WPA3_PSK_STR      "wpa3_psk"
 
-// UART стоп-биты
+// UART stop bits
 #define UART_STOP_BITS_1_STR        "1"
 #define UART_STOP_BITS_1_5_STR      "1.5"
 #define UART_STOP_BITS_2_STR        "2"
 
-// UART биты данных
+// UART data bits
 #define UART_DATA_5_BITS_STR        "5"
 #define UART_DATA_6_BITS_STR        "6"
 #define UART_DATA_7_BITS_STR        "7"
 #define UART_DATA_8_BITS_STR        "8"
 
-// UART четность
+// UART parity
 #define UART_PARITY_DISABLE_STR     "none"
 #define UART_PARITY_EVEN_STR        "even"
 #define UART_PARITY_ODD_STR         "odd"
 
-// Режимы моста
+// Bridge modes
 #define BRIDGE_MODE_SERVER_STR      "server"
 #define BRIDGE_MODE_CLIENT_STR      "client"
 
