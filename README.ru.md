@@ -1,5 +1,5 @@
 # WB-MGE
-Wirenboard Multi-protocol gateway
+Мультипротокольный шлюз Wirenboard
 
 [English README](README.md)
 
@@ -17,20 +17,17 @@ WB-MGE предназначен для подключения устройств
 
 ### Необходимые инструменты
 
-1. **Node.js 20.x** (для сборки фронтенда)
-2. **Python 3.8+**
+1. **Node.js 20.x** (требуется версия 20.x)
+2. **Python 3.8+** (требуется версия 3.8 или выше)
 3. **Git**
 
-### 0. Установка Node.js (если не установлен)
+**Note:** Приведенные ниже инструкции предназначены для Debian/Ubuntu систем
+
+### 0. Установка Node.js 20.x
 
 ```bash
-# Для Ubuntu/Debian
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
-```
-```bash
-# Для macOS с использованием Homebrew
-brew install node
 ```
 
 ### 1. Установка ESP-IDF
@@ -116,7 +113,13 @@ docker run --rm -it -v $(pwd):/root/esp/project wb-mge-builder
 
 ### Альтернатива: сборка одной командой
 
-Можно собрать проект без входа в контейнер:
+Можно собрать проект, не заходя в контейнер:
+
+```bash
+docker run --rm -v $(pwd):/root/esp/project wb-mge-builder bash -c "cd copy_protection && ./keygen.py --random --keys_file keys.txt && cd .. && make"
+```
+
+Или если ключи уже сгенерированы:
 
 ```bash
 docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
@@ -125,11 +128,7 @@ docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 ## Прошивка устройства
 
 ```bash
-# Linux
 idf.py -p /dev/ttyACM* flash
-
-# macOS
-idf.py -p /dev/cu.wchusbserial* flash
 ```
 
 ## Подключение к консоли устройства

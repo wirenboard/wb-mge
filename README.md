@@ -14,20 +14,17 @@ Two modes are available for each port:
 
 ### Prerequisites
 
-1. **Node.js 20.x** (for frontend build)
-2. **Python 3.8+**
+1. **Node.js 20.x** (version 20.x is required)
+2. **Python 3.8+** (version 3.8 or higher is required)
 3. **Git**
 
-### 0. Install Node.js (if not installed)
+**Note:** These instructions are for Debian/Ubuntu systems
+
+### 0. Install Node.js 20.x
 
 ```bash
-# For Ubuntu/Debian
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
-```
-```bash
-# For macOS using Homebrew
-brew install node
 ```
 
 ### 1. Install ESP-IDF
@@ -87,7 +84,7 @@ Docker allows you to build the project without installing ESP-IDF and Node.js on
 ### 0. Install Docker
 
 Install Docker according to the official documentation for your OS:
-https://docs.docker.com/get-started/get-docker/
+https://docs.docker.com/desktop/setup/install/linux/
 
 ### 1. Build Docker Image
 
@@ -116,17 +113,19 @@ Building inside the container is the same as manual building (see "Manual Build 
 You can build the project without entering the container:
 
 ```bash
+docker run --rm -v $(pwd):/root/esp/project wb-mge-builder bash -c "cd copy_protection && ./keygen.py --random --keys_file keys.txt && cd .. && make"
+```
+
+Or if the keys have been already generated:
+
+```bash
 docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 ```
 
 ## Flashing the Device
 
 ```bash
-# Linux
 idf.py -p /dev/ttyACM* flash
-
-# macOS
-idf.py -p /dev/cu.wchusbserial* flash
 ```
 
 ## Connecting to Device Console
