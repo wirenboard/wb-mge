@@ -53,7 +53,10 @@ cd wb-mge
 
 ### 3. Generate Key File
 
-Generate the key file according to copy_protection/readme.md.
+``` bash
+cd copy_protection
+./keygen.py --random --keys_file keys.txt
+```
 
 ### 4. Build the Project
 
@@ -81,12 +84,12 @@ make build-idf-project
 
 Docker allows you to build the project without installing ESP-IDF and Node.js on your host system.
 
-### 1. Install Docker
+### 0. Install Docker
 
 Install Docker according to the official documentation for your OS:
 https://docs.docker.com/get-started/get-docker/
 
-### 2. Build Docker Image
+### 1. Build Docker Image
 
 ```bash
 # From the project root directory
@@ -98,13 +101,13 @@ This will create a Docker image with:
 - Node.js 20.x
 - All necessary build tools
 
-### 3. Run Container
+### 2. Run Container
 
 ```bash
 docker run --rm -it -v $(pwd):/root/esp/project wb-mge-builder
 ```
 
-### 4. Build Inside Container
+### 3. Build Inside Container
 
 Building inside the container is the same as manual building (see "Manual Build Instructions" section, steps 3 and 4).
 
@@ -120,7 +123,7 @@ docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 
 ```bash
 # Linux
-idf.py -p /dev/ttyUSB* flash
+idf.py -p /dev/ttyACM* flash
 
 # macOS
 idf.py -p /dev/cu.wchusbserial* flash
