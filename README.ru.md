@@ -1,5 +1,5 @@
 # WB-MGE
-Мультипротокольный шлюз Wirenboard
+Мультипротокольный шлюз Wiren Board
 
 [English README](README.md)
 

@@ -1,5 +1,5 @@
 # WB-MGE
-Wirenboard Multi-protocol gateway
+Wiren Board Multiprotocol Gateway
 
 ## Project Description
 
