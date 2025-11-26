@@ -3,7 +3,7 @@
 
 #include "bridge/fast_modbus.h"
 #include "bridge/modbus_helpers.h"
-#include "bridge/tcp_server.h"
+#include "tcp_server.h"
 
 #include "malloc.h"
 
@@ -20,17 +20,19 @@ typedef struct {
     tcp_desc_t* tcp_desc;
 } mb_tcp_task_ctx_t;
 
-const mb_tcp_task_ctx_t test_ctx = {
+static tcp_desc_t mock_tcp_desc = {0};
+
+static const mb_tcp_task_ctx_t test_ctx = {
     .index = 1,
-    .tcp_desc = NULL
+    .tcp_desc = &mock_tcp_desc
 };
 
 static const char *FAST_MODBUS_REQUEST_STR = "WB-FAST-MODBUS?";
 static const size_t tcp_req_data_len = 15;
 static const size_t tcp_req_len = sizeof(mb_tcp_header_t) + tcp_req_data_len;
 
-uint8_t *test_request = NULL;
-mb_tcp_header_t *test_request_header = NULL;
+static uint8_t *test_request = NULL;
+static mb_tcp_header_t *test_request_header = NULL;
 
 void setUp(void)
 {

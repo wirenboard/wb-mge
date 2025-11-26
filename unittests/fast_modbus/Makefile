@@ -12,6 +12,7 @@ AUX_SRC += mocks/tcp_server.c
 AUX_SRC += ../mocks/malloc.c
 
 # Include directories
+INC += mocks
 INC += ..
 INC += ../mocks
 INC += $(PROJ_DIR)/main
