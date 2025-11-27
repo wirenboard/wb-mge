@@ -1,5 +1,6 @@
 #ifdef __unittest_env__
     #define malloc test_malloc
+    #define free test_free
 #endif
 
 #include "fast_modbus.h"

@@ -1,5 +1,4 @@
 #include "esp_mac.h"
-#include <stdbool.h>
 
 bool mock_esp_read_mac_should_fail = false;
 

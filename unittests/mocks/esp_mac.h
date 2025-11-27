@@ -2,6 +2,8 @@
 
 #include "esp_err.h"
 
+#include <stdbool.h>
+
 typedef enum {
     ESP_MAC_WIFI_STA,      /**< MAC for WiFi Station (6 bytes) */
     ESP_MAC_WIFI_SOFTAP,   /**< MAC for WiFi Soft-AP (6 bytes) */
@@ -13,5 +15,7 @@ typedef enum {
     ESP_MAC_EFUSE_CUSTOM,  /**< MAC_CUSTOM eFuse which was can be burned by customer (6 bytes) */
     ESP_MAC_EFUSE_EXT,     /**< if CONFIG_SOC_IEEE802154_SUPPORTED=y, MAC_EXT eFuse which is used as an extender for IEEE802154 MAC (2 bytes) */
 } esp_mac_type_t;
+
+extern bool mock_esp_read_mac_should_fail;
 
 esp_err_t esp_read_mac(uint8_t *mac, esp_mac_type_t type);

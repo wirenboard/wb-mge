@@ -2,6 +2,7 @@
 #include "console_log.h"
 
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "ram_storage.h"
 #include "setting_items.h"
 
@@ -12,8 +13,6 @@ setting_storage_iface_t test_storage = {
     .write_str = rams_write_str,
     .read_str = rams_read_str,
 };
-
-extern bool mock_esp_read_mac_should_fail;
 
 void setUp(void)
 {

@@ -9,8 +9,11 @@
 
 #define BLOCK_SIZE      32
 
-static uint8_t efuse_blocks[EFUSE_BLK_MAX][BLOCK_SIZE] = {0};
+esp_efuse_block_t mock_read_block = EFUSE_BLK0;
+size_t mock_read_offset = 0;
 esp_err_t mock_esp_efuse_read_block_return = ESP_OK;
+
+static uint8_t efuse_blocks[EFUSE_BLK_MAX][BLOCK_SIZE] = {0};
 
 static void mock_esp_efuse_write_block(esp_efuse_block_t blk, const void* src_key, size_t offset_in_bits, size_t size_bits)
 {
@@ -67,4 +70,12 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
     memcpy(dst_key, &efuse_blocks[blk][offset_bytes], size_bytes);
 
     return ESP_OK;
+}
+
+void mock_esp_efuse_reset(void)
+{
+    mock_read_block = EFUSE_BLK0;
+    mock_read_offset = 0;
+    mock_esp_efuse_read_block_return = ESP_OK;
+    mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
 }

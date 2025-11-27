@@ -48,7 +48,7 @@ static void verify_timer_created(void)
     TEST_ASSERT_EQUAL_MESSAGE(
         pdMS_TO_TICKS(SETTING_SAVE_TIMER_INTERVAL_MS),
         mock_xTimerCreate_xTimerPeriod,
-        "Timer period should be 1000 ms"
+        "Timer period should be 500 ticks"
     );
     TEST_ASSERT_EQUAL_MESSAGE(pdFALSE, mock_xTimerCreate_xAutoReload, "Timer should not auto-reload");
     TEST_ASSERT_NULL_MESSAGE(mock_xTimerCreate_pvTimerID, "Timer ID should be NULL");
@@ -179,7 +179,7 @@ void test_settings_save_timer_wait_ready_flag_set(void)
     TEST_ASSERT_EQUAL_MESSAGE(
         pdMS_TO_TICKS(SETTING_SAVE_TIMER_INTERVAL_MS),
         mock_xEventGroupWaitBits_data.xTicksToWait[0],
-        "Wait timeout should be correct"
+        "Wait timeout should be 500 ticks"
     );
 
     execute_timer_callback();
@@ -219,7 +219,7 @@ void test_settings_save_timer_wait_without_init(void)
     TEST_ASSERT_EQUAL_MESSAGE(
         pdMS_TO_TICKS(SETTING_SAVE_TIMER_INTERVAL_MS),
         mock_vTaskDelay_data.xTicksToDelay,
-        "Delay should be correct"
+        "Delay should be 500 ticks"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_xEventGroupWaitBits_data.called, "xEventGroupWaitBits should not be called");

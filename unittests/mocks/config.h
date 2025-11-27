@@ -13,6 +13,7 @@
     #define FIRMWARE_GIT_INFO "TEST_GIT_INFO"
 #endif
 
-#define MAX_FUNCTION_CALLS                           20
-
 #define MOCK_DEFAULT_BAUDRATE                        9600
+#define MOCK_DEFAULT_BRIDGE_PORT                     502
+#define MOCK_DEFAULT_BRIDGE_PORT2                    503
+#define MOCK_DEFAULT_BRIDGE_IP                       "192.168.5.2"
