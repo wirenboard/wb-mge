@@ -15,6 +15,8 @@
 #define MODBUS_MGE_DETECT_UID                   0x00
 #define MODBUS_MGE_DETECT_FCODE                 0x47
 
+#define MODBUS_TCP_RESP_LENGTH                  25 // sizeof(mb_tcp_header_t) (8) + strlen(FAST_MODBUS_RESPONSE_STR) (17)
+
 typedef struct {
     int index;
     tcp_desc_t* tcp_desc;
@@ -36,8 +38,7 @@ static mb_tcp_header_t *test_request_header = NULL;
 
 void setUp(void)
 {
-    mock_tcp_send_result = ESP_OK;
-    malloc_should_fail = false;
+    mock_tcp_server_reset();
 
     test_request = malloc(tcp_req_len);
     TEST_ASSERT_NOT_NULL(test_request);
@@ -48,6 +49,7 @@ void setUp(void)
 
 void tearDown(void)
 {
+    reset_malloc_tracking();
     free(test_request);
 }
 
@@ -71,6 +73,11 @@ void test_fast_modbus_send_probe_response_success(void)
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SUCCESS, result);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, tcp_server_send_mock.called, "tcp_server_send should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(tcp_server_send_mock.desc, test_ctx.tcp_desc, "tcp_server_send called with incorrect tcp_desc");
+    TEST_ASSERT_EQUAL_MESSAGE(MODBUS_TCP_RESP_LENGTH, tcp_server_send_mock.len, "tcp_server_send called with incorrect length");
+    verify_malloc_tracking(1, 1);
 }
 
 // Тестируем случай, когда запрос не является запросом Быстрого Modbus (другой код функции)
@@ -93,6 +100,8 @@ void test_fast_modbus_send_probe_response_not_probe_function(void)
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
+    TEST_ASSERT_EQUAL_MESSAGE(0, tcp_server_send_mock.called, "tcp_server_send should not be called");
+    verify_malloc_tracking(0, 0);
 }
 
 // Тестируем случай, когда запрос не является запросом Быстрого Modbus (другой Unit ID)
@@ -115,6 +124,8 @@ void test_fast_modbus_send_probe_response_not_probe_unit_id(void)
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
+    TEST_ASSERT_EQUAL_MESSAGE(0, tcp_server_send_mock.called, "tcp_server_send should not be called");
+    verify_malloc_tracking(0, 0);
 }
 
 // Тестируем случай, когда запрос не является запросом Быстрого Modbus (другая длина)
@@ -137,6 +148,8 @@ void test_fast_modbus_send_probe_response_not_probe_length(void)
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
+    TEST_ASSERT_EQUAL_MESSAGE(0, tcp_server_send_mock.called, "tcp_server_send should not be called");
+    verify_malloc_tracking(0, 0);
 }
 
 // Тестируем случай, когда запрос не является запросом Быстрого Modbus (другая строка запроса)
@@ -159,6 +172,8 @@ void test_fast_modbus_send_probe_response_not_probe_string(void)
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
+    TEST_ASSERT_EQUAL_MESSAGE(0, tcp_server_send_mock.called, "tcp_server_send should not be called");
+    verify_malloc_tracking(0, 0);
 }
 
 // Тестируем случай, когда tcp_server_send возвращает ошибку
@@ -176,13 +191,17 @@ void test_fast_modbus_send_probe_response_send_fail(void)
 
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
-    mock_tcp_send_result = ESP_FAIL;
+    tcp_server_send_mock.result = ESP_FAIL;
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
         test_ctx.index, test_ctx.tcp_desc, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SEND_FAIL, result);
+    TEST_ASSERT_EQUAL_MESSAGE(1, tcp_server_send_mock.called, "tcp_server_send should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(tcp_server_send_mock.desc, test_ctx.tcp_desc, "tcp_server_send called with incorrect tcp_desc");
+    TEST_ASSERT_EQUAL_MESSAGE(MODBUS_TCP_RESP_LENGTH, tcp_server_send_mock.len, "tcp_server_send called with incorrect length");
+    verify_malloc_tracking(1, 1);
 }
 
 // Тестируем случай, когда malloc возвращает NULL
@@ -207,6 +226,8 @@ void test_fast_modbus_send_probe_response_malloc_fail(void)
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_MALLOC_FAIL, result);
+    TEST_ASSERT_EQUAL_MESSAGE(0, tcp_server_send_mock.called, "tcp_server_send should not be called");
+    verify_malloc_tracking(0, 0);
 }
 
 int main(void)

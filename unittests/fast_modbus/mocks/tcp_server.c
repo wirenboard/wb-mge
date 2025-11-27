@@ -1,15 +1,20 @@
-#include "unity.h"
-
 #include "bridge/tcp_desc.h"
 #include "tcp_server.h"
 
-esp_err_t mock_tcp_send_result = ESP_OK;
+#include <string.h>
+
+tcp_server_send_mock_t tcp_server_send_mock = {0};
 
 esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
-    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "tcp_server_send: desc should not be NULL");
-    TEST_ASSERT_NOT_NULL_MESSAGE(data, "tcp_server_send: data should not be NULL");
-    TEST_ASSERT_EQUAL_MESSAGE(25, len, "tcp_server_send: len should be 25 for test cases");
+    tcp_server_send_mock.called++;
+    tcp_server_send_mock.desc = desc;
+    tcp_server_send_mock.len = len;
 
-    return mock_tcp_send_result;
+    return tcp_server_send_mock.result;
+}
+
+void mock_tcp_server_reset(void)
+{
+    memset(&tcp_server_send_mock, 0, sizeof(tcp_server_send_mock_t));
 }
