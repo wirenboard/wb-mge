@@ -77,7 +77,7 @@ static const char *TAG = "main";
 #endif
 
 
-// Выводит все настройки в лог
+// Prints all settings to log
 static inline void print_setting_items(void)
 {
     char value[SETTING_ITEM_MAX_STR_LEN] = {0};

@@ -1,15 +1,20 @@
-#include "bridge/tcp_server.h"
+#include "bridge/tcp_desc.h"
+#include "tcp_server.h"
+
 #include <string.h>
 
-esp_err_t mock_tcp_send_result = ESP_OK;
+tcp_server_send_mock_t tcp_server_send_mock = {0};
 
 esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
-    (void)desc;
-    (void)data;
-    (void)len;
-    if (mock_tcp_send_result != ESP_OK) {
-        return mock_tcp_send_result;
-    }
-    return ESP_OK;
+    tcp_server_send_mock.called++;
+    tcp_server_send_mock.desc = desc;
+    tcp_server_send_mock.len = len;
+
+    return tcp_server_send_mock.result;
+}
+
+void mock_tcp_server_reset(void)
+{
+    memset(&tcp_server_send_mock, 0, sizeof(tcp_server_send_mock_t));
 }

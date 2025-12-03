@@ -13,20 +13,11 @@
 #define TEST_PROTECTION_CODE                    {0xAC, 0x57, 0x21, 0xF0, 0xAA, 0x8B, 0x37, 0x61, 0x93, 0xC5, 0x72, 0xEF}
 #define TEST_PROTECTION_CODE_LEN                12
 
-extern bool mock_esp_read_mac_should_fail;
-extern esp_efuse_block_t mock_read_block;
-extern size_t mock_read_offset;
-extern esp_err_t mock_esp_efuse_read_block_return;
-
-extern void mock_esp_efuse_set_signature(const char* signature);
-
 void setUp(void)
 {
     mock_esp_read_mac_should_fail = false;
-    mock_esp_efuse_read_block_return = ESP_OK;
-    mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
+    mock_esp_efuse_reset();
     mock_esp_efuse_set_protection_code((uint8_t[])TEST_PROTECTION_CODE);
-
     memset(&sys_info, 0, sizeof(sys_info));
 }
 

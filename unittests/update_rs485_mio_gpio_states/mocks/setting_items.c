@@ -1,4 +1,3 @@
-#include "config.h"
 #include "setting_items.h"
 
 #include <string.h>
@@ -8,7 +7,7 @@ static const char* mock_setting_keys[MAX_FUNCTION_CALLS];
 static int mock_settings_count = 0;
 
 int mock_setting_items_read_bool_called = 0;
-char mock_setting_items_read_bool_keys[MAX_FUNCTION_CALLS][64];
+char mock_setting_items_read_bool_keys[MAX_FUNCTION_CALLS][SETTING_ITEM_MAX_STR_LEN];
 
 bool setting_items_read_bool(const char *key)
 {
@@ -16,7 +15,7 @@ bool setting_items_read_bool(const char *key)
         strncpy(mock_setting_items_read_bool_keys[mock_setting_items_read_bool_called],
                 key,
                 sizeof(mock_setting_items_read_bool_keys[0]) - 1);
-        mock_setting_items_read_bool_keys[mock_setting_items_read_bool_called][63] = '\0';
+        mock_setting_items_read_bool_keys[mock_setting_items_read_bool_called][SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
     }
     mock_setting_items_read_bool_called++;
 

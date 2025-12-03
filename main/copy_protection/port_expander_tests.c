@@ -26,12 +26,12 @@ typedef struct {
     port_expander_test_pin_t pins[PORT_EXPANDER_TEST_PINS_COUNT];
 } port_expander_test_t;
 
-// Массив данных для тестов перемычек на GPIO расширителя портов (тест = строка массива)
-// При выполнении очередного теста производится:
-// 0) Все GPIO сбрасываются в дефолтный режим (вход), чтобы избежать замыканий лог. 1 и 0 между тестами
-// 1) Конфигурируется режим GPIO для всех пинов (вход или выход)
-// 2) На GPIO, настроенные на выход, выдается заданный уровень (поле out_level: лог. 0 или 1)
-// 3) Из GPIO, настроенных на вход, считывается уровень и сравнивается с тем, что указано в тесте (поле in_level: лог. 0 или 1)
+// Test data array for GPIO port expander jumper tests (test = array row)
+// When executing each test:
+// 0) All GPIOs are reset to default mode (input) to avoid shorts between logic 1 and 0 between tests
+// 1) GPIO mode is configured for all pins (input or output)
+// 2) On GPIOs configured as outputs, specified level is set (out_level field: logic 0 or 1)
+// 3) From GPIOs configured as inputs, level is read and compared with test specification (in_level field: logic 0 or 1)
 static port_expander_test_t port_expander_tests[] = {
 //           PORT_EXPANDER_SHORTED_PIN_1             PORT_EXPANDER_SHORTED_PIN_2            PORT_EXPANDER_GROUNDED_PIN
 //            direction     |  out  | input           direction     |  out  | input           direction     |  out  | input

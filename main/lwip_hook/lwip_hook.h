@@ -5,12 +5,12 @@
 
 #define LWIP_HOOK_IP4_INPUT ip4_input_hook_fn
 
-// В lwip внутри esp-idf не реализован учет статистики по интерфейсам,
-// поэтому приходится самим детектировать активность на интерфейсе
+// lwip inside esp-idf does not implement interface statistics tracking,
+// so we have to detect interface activity ourselves
 
-// Хук-функция, вызывается lwip при получении IP-пакета
-// Увеличиваем один из счетчиков статистики интерфейса на длину полученного пакета
-// Счетчик используется для отслеживания активности интерфейса
+// Hook function, called by lwip when receiving an IP packet
+// Increment one of the interface statistics counters by the received packet length
+// Counter is used to track interface activity
 static inline u8_t ip4_input_hook_fn(struct pbuf *p, struct netif *inp)
 {
     inp->mib2_counters.ifinoctets += p->tot_len;

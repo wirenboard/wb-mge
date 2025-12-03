@@ -1,8 +1,8 @@
 #pragma once
 
-#include "config.h"
 #include "esp_err.h"
 
+#define MAX_FUNCTION_CALLS                  20
 #define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCD1234)
 
 typedef enum {
@@ -41,3 +41,5 @@ extern uint8_t mock_esp_io_expander_set_level_levels[MAX_FUNCTION_CALLS];
 esp_err_t esp_io_expander_print_state(esp_io_expander_handle_t handle);
 esp_err_t esp_io_expander_set_dir(esp_io_expander_handle_t handle, uint32_t pin_num_mask, esp_io_expander_dir_t direction);
 esp_err_t esp_io_expander_set_level(esp_io_expander_handle_t handle, uint32_t pin_num_mask, uint8_t level);
+
+void mock_esp_io_expander_reset(void);

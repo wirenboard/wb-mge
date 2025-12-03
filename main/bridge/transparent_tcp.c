@@ -9,7 +9,7 @@
 #include "bridge.h"
 
 
-#define TRANSPARENT_TCP_MAX_TASK_COUNT      BRIDGES_COUNT   // Максимальное количество задач (портов)
+#define TRANSPARENT_TCP_MAX_TASK_COUNT      BRIDGES_COUNT   // Maximum number of tasks (ports)
 
 
 typedef esp_err_t (*tcp_send_func_t)(tcp_desc_t *desc, uint8_t *data, size_t len);
@@ -33,7 +33,7 @@ static const char *TAG = "transparent_tcp";
 static transp_tcp_task_ctx_t transp_tcp_task_ctx[TRANSPARENT_TCP_MAX_TASK_COUNT] = {0};
 
 
-// Поиск контекста по дескриптору serial_desc_t
+// Find context by serial_desc_t descriptor
 static transp_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* serial_desc)
 {
     for (unsigned i = 0; i < TRANSPARENT_TCP_MAX_TASK_COUNT; i++) {
@@ -45,7 +45,7 @@ static transp_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* seria
 }
 
 
-// Поиск контекста по дескриптору tcp_desc_t
+// Find context by tcp_desc_t descriptor
 static transp_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 {
     for (unsigned i = 0; i < TRANSPARENT_TCP_MAX_TASK_COUNT; i++) {
@@ -57,7 +57,7 @@ static transp_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 }
 
 
-// Callback-функция приема данных из последовательного порта
+// Callback function for receiving data from serial port
 static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t len)
 {
     ESP_LOGD(TAG, "Received data from serial, length: %u", len);
@@ -91,7 +91,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 }
 
 
-// Callback-функция приема данных из TCP-сокета
+// Callback function for receiving data from TCP socket
 static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
     ESP_LOGD(TAG, "Received data from TCP, length: %u", len);

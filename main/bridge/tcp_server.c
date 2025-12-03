@@ -258,9 +258,9 @@ esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
         return ESP_FAIL;
     }
 
-    // Используется неблокирующая функция, чтобы не блокировать задачу uart_event_task()
-    // Иначе переполняется очередь событий UART и пакеты начинают склеиваться и дропаться
-    // В TCP под капотом есть свой буфер передачи и окно, проблем быть не должно
+    // Using non-blocking function to avoid blocking uart_event_task()
+    // Otherwise UART event queue overflows and packets start to merge and drop
+    // TCP has its own transmit buffer and window under the hood, should not be a problem
     int res = send(desc->client_sock, data, len, MSG_DONTWAIT);
 
     if (res < 0) {
