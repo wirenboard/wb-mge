@@ -1,6 +1,6 @@
-2025-11-26 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-12-03 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
-    * version:  1.0.1-rc4
+    * version:  1.0.1
     * rework:   mock freertos
     * added:    unittests for serial
     * rework:   dockerfile
