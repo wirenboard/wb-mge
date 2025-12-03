@@ -13,16 +13,7 @@ void mio_control_test_reset(void);
 
 void setUp(void)
 {
-    mock_esp_io_expander_set_dir_called = 0;
-    mock_esp_io_expander_set_dir_handle = NULL;
-    memset(mock_esp_io_expander_set_dir_pin_masks, 0, sizeof(mock_esp_io_expander_set_dir_pin_masks));
-    memset(mock_esp_io_expander_set_dir_directions, 0, sizeof(mock_esp_io_expander_set_dir_directions));
-
-    mock_esp_io_expander_set_level_called = 0;
-    mock_esp_io_expander_set_level_handle = NULL;
-    memset(mock_esp_io_expander_set_level_pin_masks, 0, sizeof(mock_esp_io_expander_set_level_pin_masks));
-    memset(mock_esp_io_expander_set_level_levels, 0, sizeof(mock_esp_io_expander_set_level_levels));
-
+    mock_esp_io_expander_reset();
     mio_control_test_reset();
 }
 

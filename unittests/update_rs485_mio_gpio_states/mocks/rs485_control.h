@@ -4,6 +4,8 @@
 #include "esp_err.h"
 #include <stdbool.h>
 
+#define MAX_FUNCTION_CALLS                  20
+
 typedef enum {
     RS485_1 = 1,
     RS485_2 = 2

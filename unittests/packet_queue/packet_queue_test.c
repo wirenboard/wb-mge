@@ -37,10 +37,10 @@ void test_packet_queue_create_success(void)
     g_test_handle = packet_queue_create(max_len);
 
     TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_create_call_count, "xQueueCreate should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(max_len, g_queue_max_len, "Queue max length should match requested length");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueCreate_data.called, "xQueueCreate should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(max_len, mock_xQueueCreate_data.max_len, "Queue max length should match requested length");
     TEST_ASSERT_EQUAL_INT_MESSAGE(
-        sizeof(packet_queue_elem_t), g_queue_item_size, "Queue item size should match packet_queue_elem_t size"
+        sizeof(packet_queue_elem_t), mock_xQueueCreate_data.item_size, "Queue item size should match packet_queue_elem_t size"
     );
 }
 
@@ -52,11 +52,11 @@ void test_packet_queue_create_failure(void)
     LOG_MESSAGE();
 
     const size_t max_len = 10;
-    g_queue_create_result = pdFAIL;
+    mock_xQueueCreate_data.should_fail = true;
     packet_queue_handle test_handle = packet_queue_create(max_len);
 
     TEST_ASSERT_NULL_MESSAGE(test_handle, "Queue handle should be NULL on failure");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_create_call_count, "xQueueCreate should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueCreate_data.called, "xQueueCreate should be called once");
 }
 
 // Тестируем успешное удаление очереди пакетов
@@ -81,9 +81,9 @@ void test_packet_queue_delete_success(void)
 
     packet_queue_delete(test_handle);
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(3, g_queue_receive_call_count, "xQueueReceive should be called to clear items");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_delete_call_count, "vQueueDelete should be called once");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(test_handle, g_queue_delete_handle, "vQueueDelete should be called with correct handle");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, mock_xQueueReceive_data.called, "xQueueReceive should be called to clear items");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_vQueueDelete_data.called, "vQueueDelete should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(test_handle, mock_vQueueDelete_data.handle, "vQueueDelete should be called with correct handle");
 }
 
 // Тестируем удаление очереди пакетов с NULL дескриптором
@@ -95,8 +95,8 @@ void test_packet_queue_delete_null_handle(void)
 
     packet_queue_delete(NULL);
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, g_queue_delete_call_count, "vQueueDelete should not be called for NULL handle");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(NULL, g_queue_delete_handle, "vQueueDelete should not be called for NULL handle");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_vQueueDelete_data.called, "vQueueDelete should not be called for NULL handle");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(NULL, mock_vQueueDelete_data.handle, "vQueueDelete should not be called for NULL handle");
 }
 
 // Тестируем очистку очереди пакетов с валидным дескриптором
@@ -134,7 +134,7 @@ void test_packet_queue_clear_valid_handle(void)
     UBaseType_t spaces_after = uxQueueSpacesAvailable(g_test_handle);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(max_len, spaces_after, "Queue should be completely empty after clear");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(4, g_queue_receive_call_count, "xQueueReceive should be called 4 times");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(4, mock_xQueueReceive_data.called, "xQueueReceive should be called 4 times");
 
     TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr1), "First allocated buffer should be freed");
     TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr2), "Second allocated buffer should be freed");
@@ -150,7 +150,7 @@ void test_packet_queue_clear_null_handle(void)
 
     packet_queue_clear(NULL);
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, g_queue_receive_call_count, "xQueueReceive should not be called for NULL handle");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueReceive_data.called, "xQueueReceive should not be called for NULL handle");
 }
 
 // Тестируем получение количества пакетов в очереди
@@ -165,7 +165,7 @@ void test_packet_queue_count(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(g_test_handle), "Empty queue should have count 0");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_messages_waiting_call_count, "uxQueueMessagesWaiting should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uxQueueMessagesWaiting_data.called, "uxQueueMessagesWaiting should be called once");
 
     const uint8_t test_data[] = {0x01, 0x02, 0x03};
 
@@ -180,7 +180,6 @@ void test_packet_queue_count(void)
 
     uint8_t* received_buf = NULL;
     packet_queue_pop(g_test_handle, &received_buf, 0);
-    free(received_buf);
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, packet_queue_count(g_test_handle), "Queue should have 2 items after pop");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(NULL), "NULL handle should return 0");
@@ -203,18 +202,19 @@ void test_packet_queue_push_success(void)
     esp_err_t result = packet_queue_push(g_test_handle, test_data, test_len);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Push should succeed");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(test_len, last_malloc_size, "malloc should allocate test_len bytes for buffer");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_space_call_count, "uxQueueSpacesAvailable should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_send_call_count, "xQueueSend should be called once");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(test_len, allocated_ptrs[0].size, "malloc should allocate test_len bytes for buffer");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueSend_data.called, "xQueueSend should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.ticks, "xQueueSend should be called with correct ticks");
 
     UBaseType_t spaces = uxQueueSpacesAvailable(g_test_handle);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(max_len - 1, spaces, "Queue should have one item");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        g_test_handle, g_queue_spaces_handle, "g_queue_spaces_handle should point to the correct queue"
+        g_test_handle, mock_uxQueueSpacesAvailable_data.handle, "g_queue_spaces_handle should point to the correct queue"
     );
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        g_test_handle, g_queue_send_handle, "g_queue_send_handle should point to the correct queue"
+        g_test_handle, mock_xQueueSend_data.handle, "g_queue_send_handle should point to the correct queue"
     );
 }
 
@@ -231,8 +231,8 @@ void test_packet_queue_push_null_handle(void)
     esp_err_t result = packet_queue_push(NULL, test_data, test_len);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "Push should fail with NULL handle");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, g_queue_space_call_count, "uxQueueSpacesAvailable should not be called");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, g_queue_send_call_count, "xQueueSend should not be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should not be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called");
 }
 
 // Тестируем добавление пакета в заполненную очередь
@@ -260,8 +260,8 @@ void test_packet_queue_push_no_space(void)
     UBaseType_t spaces = uxQueueSpacesAvailable(g_test_handle);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, spaces, "Queue should be full");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(4, g_queue_space_call_count, "uxQueueSpacesAvailable should be called 4 times");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, g_queue_send_call_count, "xQueueSend should be called only 2 times");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(4, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called 4 times");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_xQueueSend_data.called, "xQueueSend should be called only 2 times");
 }
 
 // Тестируем добавление пакета с ошибкой выделения памяти
@@ -283,8 +283,8 @@ void test_packet_queue_push_malloc_fail(void)
     esp_err_t result = packet_queue_push(g_test_handle, test_data, test_len);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "Push should fail when malloc fails");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_space_call_count, "uxQueueSpacesAvailable should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, g_queue_send_call_count, "xQueueSend should not be called when malloc fails");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called when malloc fails");
 }
 
 // Тестируем добавление пакета с ошибкой отправки в очередь
@@ -301,13 +301,14 @@ void test_packet_queue_push_queue_send_fail(void)
     const uint8_t test_data[] = {0x01, 0x02, 0x03};
     const size_t test_len = sizeof(test_data);
 
-    g_queue_send_return_value = pdFAIL;
+    mock_xQueueSend_data.should_fail = true;
 
     esp_err_t result = packet_queue_push(g_test_handle, test_data, test_len);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "Push should fail when queue send fails");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_space_call_count, "uxQueueSpacesAvailable should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_send_call_count, "xQueueSend should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueSend_data.called, "xQueueSend should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.ticks, "xQueueSend should be called with correct ticks");
 }
 
 // Тестируем успешное извлечение пакета из очереди
@@ -333,11 +334,9 @@ void test_packet_queue_pop_success(void)
     TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "Should return correct packet length");
     TEST_ASSERT_NOT_NULL_MESSAGE(received_buf, "Buffer pointer should not be NULL");
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(test_data, received_buf, test_len, "Received data should match sent data");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_receive_call_count, "xQueueReceive should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueReceive_data.called, "xQueueReceive should be called once");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(g_test_handle), "Queue should be empty after pop");
-
-    free(received_buf);
 }
 
 // Тестируем извлечение пакета из очереди с NULL дескриптором
@@ -352,7 +351,7 @@ void test_packet_queue_pop_null_handle(void)
 
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for NULL handle");
     TEST_ASSERT_NULL_MESSAGE(received_buf, "Buffer pointer should remain NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, g_queue_receive_call_count, "xQueueReceive should not be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueReceive_data.called, "xQueueReceive should not be called");
 }
 
 // Тестируем извлечение пакета из пустой очереди
@@ -371,7 +370,7 @@ void test_packet_queue_pop_empty_queue(void)
 
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
     TEST_ASSERT_NULL_MESSAGE(received_buf, "Buffer pointer should remain NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_receive_call_count, "xQueueReceive should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueReceive_data.called, "xQueueReceive should be called once");
 }
 
 // Тестируем извлечение пакета с NULL указателем на буфер
@@ -397,7 +396,7 @@ void test_packet_queue_pop_null_buffer_ptr(void)
     size_t result = packet_queue_pop(g_test_handle, NULL, 0);
 
     TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "Should return correct packet length even with NULL buf_ptr");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, g_queue_receive_call_count, "xQueueReceive should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueReceive_data.called, "xQueueReceive should be called once");
     TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr), "The correct allocated buffer should be freed");
 }
 
@@ -421,20 +420,18 @@ void test_packet_queue_pop_with_timeout(void)
     uint8_t* received_buf = NULL;
     TickType_t wait_time = 0;
     size_t result = packet_queue_pop(g_test_handle, &received_buf, wait_time);
-    TEST_ASSERT_EQUAL_MESSAGE(wait_time, g_queue_receive_ticks, "xQueueReceive should be called with correct wait time");
+    TEST_ASSERT_EQUAL_MESSAGE(wait_time, mock_xQueueReceive_data.ticks, "xQueueReceive should be called with correct wait time");
     TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "Should return correct packet length");
 
     wait_time = 1000;
     result = packet_queue_pop(g_test_handle, &received_buf, wait_time);
-    TEST_ASSERT_EQUAL_MESSAGE(wait_time, g_queue_receive_ticks, "xQueueReceive should be called with correct wait time");
+    TEST_ASSERT_EQUAL_MESSAGE(wait_time, mock_xQueueReceive_data.ticks, "xQueueReceive should be called with correct wait time");
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
 
     wait_time = portMAX_DELAY;
     result = packet_queue_pop(g_test_handle, &received_buf, wait_time);
-    TEST_ASSERT_EQUAL_MESSAGE(wait_time, g_queue_receive_ticks, "xQueueReceive should be called with correct wait time");
+    TEST_ASSERT_EQUAL_MESSAGE(wait_time, mock_xQueueReceive_data.ticks, "xQueueReceive should be called with correct wait time");
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
-
-    free(received_buf);
 }
 
 int main(void)

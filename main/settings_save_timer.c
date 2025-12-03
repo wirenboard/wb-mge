@@ -7,8 +7,8 @@
 #include "esp_err.h"
 
 
-#define SETTING_SAVE_TIMER_INTERVAL_MS          1000    // Минимальный интервал между сохранением настроек
-#define EVENT_BIT_READY                         BIT0    // Бит (флаг) готовности таймера к следующему сохранению настроек
+#define SETTING_SAVE_TIMER_INTERVAL_MS          1000    // Minimum interval between settings saves
+#define EVENT_BIT_READY                         BIT0    // Ready flag (bit) for the next settings save
 
 
 static const char* TAG = "settings_save_timer";

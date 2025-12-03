@@ -3,10 +3,10 @@
 
 #define WIFI_CHAN_AP                9
 
-#define BASE_HOSTNAME               "WB-MGE" // генерируется в setting_items.c: get_dynamic_hostname
+#define BASE_HOSTNAME               "WB-MGE" // generated in setting_items.c: get_dynamic_hostname
 
 
-// Значения по умолчанию
+// Default values
 
 #define DEFAULT_LOGIN               "admin"
 #define DEFAULT_PASS                "admin"
@@ -31,7 +31,7 @@
 #define DEFAULT_AP_IP_STATIC        "192.168.5.1"
 #define DEFAULT_AP_MASK_STATIC      "255.255.255.0"
 #define DEFAULT_AP_GW_STATIC        "192.168.5.1"
-#define DEFAULT_AP_PASS             "" // генерируется в setting_items.c: get_dynamic_ap_pass_default
+#define DEFAULT_AP_PASS             "" // generated in setting_items.c: get_dynamic_ap_pass_default
 #define DEFAULT_STA_SSID            ""
 #define DEFAULT_STA_PASS            ""
 #define DEFAULT_STA_DHCPC           "true"

@@ -1,8 +1,8 @@
 #include "unity.h"
+
+#include "config.h"
 #include "setting_items.h"
 #include <string.h>
-
-#define MOCK_DEFAULT_BRIDGE_IP                     "192.168.5.2"
 
 mock_bridge_test_config_t mock_settings_items_bridge_cfg[BRIDGES_COUNT] = {0};
 mock_setting_items_calls_t mock_setting_items_calls[BRIDGES_COUNT] = {0};

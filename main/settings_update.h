@@ -1,3 +1,5 @@
 #pragma once
 
-void settings_update(void);
+#include "esp_err.h"
+
+esp_err_t settings_update(void);

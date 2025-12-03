@@ -1,24 +1,15 @@
+#include "unity.h"
+
 #include "task.h"
 #include <stddef.h>
+#include <string.h>
 
 #define MOCK_TASK_HANDLE                ((TaskHandle_t)0xCCCCCCCC)
 #define CONFIG_FREERTOS_HZ              500
 
-int mock_xTaskCreate_called = 0;
-TaskFunction_t mock_xTaskCreate_pvTaskCode = NULL;
-const char *mock_xTaskCreate_pcName = NULL;
-uint32_t mock_xTaskCreate_usStackDepth = 0;
-void *mock_xTaskCreate_pvParameters = NULL;
-UBaseType_t mock_xTaskCreate_uxPriority = 0;
-TaskHandle_t *mock_xTaskCreate_pxCreatedTask = NULL;
-BaseType_t mock_xTaskCreate_return_value = pdPASS;
-
-int mock_vTaskDelete_called = 0;
-TaskHandle_t mock_vTaskDelete_xTaskToDelete = NULL;
-
-TickType_t mock_vTaskDelay_xTicksToDelay = 0;
-int mock_vTaskDelay_called = 0;
-int mock_vTaskDelay_counter = 0;
+mock_xTaskCreate_t mock_xTaskCreate_data = {0};
+mock_vTaskDelete_t mock_vTaskDelete_data = {0};
+mock_vTaskDelay_t mock_vTaskDelay_data = {0};
 
 BaseType_t xTaskCreate(TaskFunction_t pvTaskCode,
                        const char * const pcName,
@@ -27,36 +18,47 @@ BaseType_t xTaskCreate(TaskFunction_t pvTaskCode,
                        UBaseType_t uxPriority,
                        TaskHandle_t * const pxCreatedTask)
 {
-    mock_xTaskCreate_pvTaskCode = pvTaskCode;
-    mock_xTaskCreate_pcName = pcName;
-    mock_xTaskCreate_usStackDepth = usStackDepth;
-    mock_xTaskCreate_pvParameters = pvParameters;
-    mock_xTaskCreate_uxPriority = uxPriority;
-    mock_xTaskCreate_pxCreatedTask = pxCreatedTask;
+    TEST_ASSERT_NOT_NULL_MESSAGE(pvTaskCode, "Task function should not be NULL");
 
-    if (pxCreatedTask) {
+    mock_xTaskCreate_data.pvTaskCode = pvTaskCode;
+    mock_xTaskCreate_data.pcName = pcName;
+    mock_xTaskCreate_data.usStackDepth = usStackDepth;
+    mock_xTaskCreate_data.pvParameters = pvParameters;
+    mock_xTaskCreate_data.uxPriority = uxPriority;
+    mock_xTaskCreate_data.pxCreatedTask = pxCreatedTask;
+
+    mock_xTaskCreate_data.called++;
+
+    if (mock_xTaskCreate_data.should_fail) {
+        return pdFAIL;
+    }
+
+    if (pxCreatedTask != NULL) {
         *pxCreatedTask = MOCK_TASK_HANDLE;
     }
 
-    mock_xTaskCreate_called++;
+    if (mock_xTaskCreate_data.self_execution) {
+        pvTaskCode(pvParameters);
+    }
 
-    return mock_xTaskCreate_return_value;
+    return pdPASS;
 }
 
 void vTaskDelete(TaskHandle_t xTaskToDelete)
 {
-    mock_vTaskDelete_xTaskToDelete = xTaskToDelete;
-    mock_vTaskDelete_called++;
+    mock_vTaskDelete_data.xTaskToDelete = xTaskToDelete;
+    mock_vTaskDelete_data.called++;
 }
 
 void vTaskDelay(const TickType_t xTicksToDelay)
 {
-    mock_vTaskDelay_called++;
-    mock_vTaskDelay_xTicksToDelay = xTicksToDelay;
-    mock_vTaskDelay_counter++;
+    mock_vTaskDelay_data.called++;
+    mock_vTaskDelay_data.xTicksToDelay = xTicksToDelay;
 
-    if (mock_vTaskDelay_counter >= 3) {
-        *mock_xTaskCreate_pxCreatedTask = NULL;
+    if (mock_vTaskDelay_data.task_handle_reset_on_count > 0) {
+        if (mock_vTaskDelay_data.called >= mock_vTaskDelay_data.task_handle_reset_on_count) {
+            *mock_xTaskCreate_data.pxCreatedTask = NULL;
+        }
     }
 }
 
@@ -67,19 +69,7 @@ TickType_t mock_pdMS_TO_TICKS(TickType_t ms)
 
 void mock_freertos_task_reset(void)
 {
-    mock_xTaskCreate_called = 0;
-    mock_xTaskCreate_pvTaskCode = NULL;
-    mock_xTaskCreate_pcName = NULL;
-    mock_xTaskCreate_usStackDepth = 0;
-    mock_xTaskCreate_pvParameters = NULL;
-    mock_xTaskCreate_uxPriority = 0;
-    mock_xTaskCreate_pxCreatedTask = NULL;
-    mock_xTaskCreate_return_value = pdPASS;
-
-    mock_vTaskDelete_called = 0;
-    mock_vTaskDelete_xTaskToDelete = NULL;
-
-    mock_vTaskDelay_called = 0;
-    mock_vTaskDelay_xTicksToDelay = 0;
-    mock_vTaskDelay_counter = 0;
+    memset(&mock_xTaskCreate_data, 0, sizeof(mock_xTaskCreate_data));
+    memset(&mock_vTaskDelete_data, 0, sizeof(mock_vTaskDelete_data));
+    memset(&mock_vTaskDelay_data, 0, sizeof(mock_vTaskDelay_data));
 }

@@ -17,7 +17,7 @@
 #define ETHERNET_FLAG                       BIT10
 #define WIFI_FLAG                           BIT11
 
-#define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Задержка перед обновлением настроек HTTP / Ethernet / WiFi
+#define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
 
 static const char *TAG = "settings_update";
@@ -44,7 +44,7 @@ static void settings_update_task(void *arg)
     }
 
     if (flags & (HTTP_SERVER_FLAG | ETHERNET_FLAG | WIFI_FLAG)) {
-        // Небольшая задержка, чтобы успел отправиться ответ клиенту
+        // Small delay to allow the response to be sent to the client
         vTaskDelay(pdMS_TO_TICKS(HTTP_NETWORK_UPDATE_DELAY_MS));
     }
 
@@ -70,7 +70,7 @@ static void settings_update_task(void *arg)
 }
 
 
-void settings_update(void)
+esp_err_t settings_update(void)
 {
     update_rs485_control();
     update_io_bus_control();
@@ -117,8 +117,11 @@ void settings_update(void)
                                     (void*)(uintptr_t)flags, SETTINGS_UPDATE_TASK_PRIORITY, &update_task_handle);
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Unable to create settings update task");
+            return ESP_FAIL;
         }
     }
+
+    return ESP_OK;
 }
 
 #ifdef __unittest_env__

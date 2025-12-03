@@ -10,19 +10,10 @@
 
 #define SERIAL_FROM_MAC                                 4328719365UL // MAC 00:01:02:03:04:05 converted to uint64
 
-extern bool mock_esp_read_mac_should_fail;
-extern esp_efuse_block_t mock_read_block;
-extern size_t mock_read_offset;
-extern esp_err_t mock_esp_efuse_read_block_return;
-
 void setUp(void)
 {
     mock_esp_read_mac_should_fail = false;
-    mock_read_block = EFUSE_BLK0;
-    mock_read_offset = 0;
-    mock_esp_efuse_read_block_return = ESP_OK;
-    mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
-
+    mock_esp_efuse_reset();
     memset(&sys_info, 0, sizeof(sys_info));
 }
 

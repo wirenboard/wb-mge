@@ -115,7 +115,7 @@ if ! $QEMU_BIN \
     -nic user,model=open_eth,hostfwd=tcp:127.0.0.1:8080-:80 \
     -nographic \
     -serial mon:stdio; then
-    
+
     echo "❌ Direct QEMU launch failed. Trying idf.py qemu monitor..."
     echo "🔧 Note: This method won't have port forwarding - you'll need to find the ESP32 IP"
     CONFIG_ETH_USE_OPENETH=1 idf.py qemu monitor

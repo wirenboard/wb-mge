@@ -33,7 +33,7 @@ void tearDown(void)
 
 void execute_task_function()
 {
-    mock_xTaskCreate_pvTaskCode(mock_xTaskCreate_pvParameters);
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
 }
 
 static void verify_settings_update_checks(void)
@@ -53,24 +53,24 @@ static void verify_settings_update_checks(void)
 
 static void verify_task_created(void)
 {
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_called, "xTaskCreate should be called once");
-    TEST_ASSERT_NOT_NULL_MESSAGE(mock_xTaskCreate_pvTaskCode, "Task function should not be NULL");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_data.called, "xTaskCreate should be called once");
+
+    // pvTaskCode проверяется внутри xTaskCreate()
 
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         "settings_update_task",
-        mock_xTaskCreate_pcName,
+        mock_xTaskCreate_data.pcName,
         "Task name should be 'settings_update_task'"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
         SETTINGS_UPDATE_TASK_STACK_SIZE,
-        mock_xTaskCreate_usStackDepth,
+        mock_xTaskCreate_data.usStackDepth,
         "Task stack depth should be 6144"
     );
 
-    TEST_ASSERT_NOT_NULL_MESSAGE(mock_xTaskCreate_pvParameters, "Task parameters should not be NULL");
-    TEST_ASSERT_EQUAL_MESSAGE(SETTINGS_UPDATE_TASK_PRIORITY, mock_xTaskCreate_uxPriority, "Task priority should be 5");
-    TEST_ASSERT_NOT_NULL_MESSAGE(mock_xTaskCreate_pxCreatedTask, "Task handle should not be NULL");
+    TEST_ASSERT_NOT_NULL_MESSAGE(mock_xTaskCreate_data.pvParameters, "Task parameters should not be NULL");
+    TEST_ASSERT_EQUAL_MESSAGE(SETTINGS_UPDATE_TASK_PRIORITY, mock_xTaskCreate_data.uxPriority, "Task priority should be 5");
 }
 
 static void verify_updates(
@@ -120,18 +120,18 @@ static void verify_updates(
 
 static void verify_delay_before_network_updates(void)
 {
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelay_called, "vTaskDelay should be called once before network updates");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelay_data.called, "vTaskDelay should be called once before network updates");
     TEST_ASSERT_EQUAL_MESSAGE(
         pdMS_TO_TICKS(HTTP_NETWORK_UPDATE_DELAY_MS),
-        mock_vTaskDelay_xTicksToDelay,
+        mock_vTaskDelay_data.xTicksToDelay,
         "vTaskDelay should be called with the correct delay before network updates"
     );
 }
 
 static void verify_task_deleted(void)
 {
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelete_called, "vTaskDelete should be called once");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(NULL, mock_vTaskDelete_xTaskToDelete, "Task should delete itself (NULL)");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelete_data.called, "vTaskDelete should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(NULL, mock_vTaskDelete_data.xTaskToDelete, "Task should delete itself (NULL)");
 }
 
 // Тестируем случай, когда никакие настройки не изменились
@@ -141,10 +141,11 @@ void test_settings_update_no_changes(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - no changes");
     LOG_MESSAGE();
 
-    settings_update();
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
 
     verify_settings_update_checks();
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTaskCreate_called, "xTaskCreate should not be called when no changes");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTaskCreate_data.called, "xTaskCreate should not be called when no changes");
     verify_updates(false, false, false, false, false, false);
 }
 
@@ -160,12 +161,13 @@ void test_settings_update_bridge_ports_changed(void)
 
         mock_bridge_port_check_settings_changed_return_value[i] = true;
 
-        settings_update();
+        esp_err_t result = settings_update();
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
 
         verify_settings_update_checks();
         verify_task_created();
         execute_task_function();
-        TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_called, "vTaskDelay should not be called");
+        TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called, "vTaskDelay should not be called");
 
         if (i == 0) {
             verify_updates(true, false, false, false, false, false);
@@ -186,12 +188,13 @@ void test_settings_update_mdns_changed(void)
 
     mock_network_check_mdns_settings_changed_return_value = true;
 
-    settings_update();
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
 
     verify_settings_update_checks();
     verify_task_created();
     execute_task_function();
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_called, "vTaskDelay should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called, "vTaskDelay should not be called");
     verify_updates(false, false, true, false, false, false);
     verify_task_deleted();
 }
@@ -205,7 +208,8 @@ void test_settings_update_http_server_changed(void)
 
     mock_http_server_check_settings_changed_return_value = true;
 
-    settings_update();
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
 
     verify_settings_update_checks();
     verify_task_created();
@@ -224,7 +228,8 @@ void test_settings_update_ethernet_changed(void)
 
     mock_network_check_eth_settings_changed_return_value = true;
 
-    settings_update();
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
 
     verify_settings_update_checks();
     verify_task_created();
@@ -243,7 +248,8 @@ void test_settings_update_wifi_changed(void)
 
     mock_network_check_wifi_settings_changed_return_value = true;
 
-    settings_update();
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
 
     verify_settings_update_checks();
     verify_task_created();
@@ -269,7 +275,8 @@ void test_settings_update_all_changed(void)
     mock_network_check_eth_settings_changed_return_value = true;
     mock_network_check_wifi_settings_changed_return_value = true;
 
-    settings_update();
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
 
     verify_settings_update_checks();
     verify_task_created();
@@ -287,15 +294,16 @@ void test_settings_update_task_creation_failure(void)
     LOG_MESSAGE();
 
     mock_bridge_port_check_settings_changed_return_value[0] = true;
-    mock_xTaskCreate_return_value = pdFAIL;
+    mock_xTaskCreate_data.should_fail = true;
 
-    settings_update();
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, result, "Settings update should fail");
 
     verify_settings_update_checks();
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_called, "xTaskCreate should be called");
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_called, "vTaskDelay should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_data.called, "xTaskCreate should be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called, "vTaskDelay should not be called");
     verify_updates(false, false, false, false, false, false);
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelete_called, "vTaskDelete should not be called when task creation fails");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelete_data.called, "vTaskDelete should not be called when task creation fails");
 }
 
 // Тестируем повторный запуск settings_update когда задача еще не завершилась
@@ -307,16 +315,21 @@ void test_settings_update_task_already_running(void)
 
     mock_http_server_check_settings_changed_return_value = true;
 
-    settings_update();
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
 
     verify_settings_update_checks();
     verify_task_created();
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_called, "vTaskDelay should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called, "vTaskDelay should not be called");
 
     mock_http_server_check_settings_changed_return_value = false;
+    mock_vTaskDelay_data.task_handle_reset_on_count = 3;
 
-    settings_update();
-    TEST_ASSERT_EQUAL_MESSAGE(3, mock_vTaskDelay_called, "vTaskDelay should be called 3 times");
+    result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(
+        mock_vTaskDelay_data.task_handle_reset_on_count, mock_vTaskDelay_data.called, "vTaskDelay should be called 3 times"
+    );
 }
 
 int main(void)

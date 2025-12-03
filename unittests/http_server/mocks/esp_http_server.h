@@ -109,6 +109,10 @@ struct httpd_req {
     .uri_match_fn = NULL                        \
 }
 
+extern int mock_httpd_stop_call_count;
+extern esp_err_t mock_httpd_stop_return_value;
+extern httpd_handle_t mock_captured_httpd_stop_handle;
+
 extern int mock_httpd_start_call_count;
 extern int mock_wifi_scan_init_call_count;
 extern int mock_auth_init_call_count;

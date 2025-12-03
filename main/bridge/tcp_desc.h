@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
+#include "freertos/task.h"
 
 typedef struct tcp_desc_t tcp_desc_t;
 

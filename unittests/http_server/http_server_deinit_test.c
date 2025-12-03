@@ -10,11 +10,6 @@
 
 #define WEB_PORT                            8080
 
-extern int mock_httpd_stop_call_count;
-extern esp_err_t mock_httpd_stop_return_value;
-extern httpd_handle_t mock_server_handle;
-extern httpd_handle_t mock_captured_httpd_stop_handle;
-
 void mock_setting_items_set_web_port(int port);
 
 void setUp(void)

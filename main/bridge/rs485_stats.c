@@ -5,12 +5,12 @@
 #include "esp_log.h"
 
 
-#define RS485_BUSY_MONITOR_TIMEOUT_MS           5000            // Тайм-аут определения наличия обмена в порте RS-485
+#define RS485_BUSY_MONITOR_TIMEOUT_MS           5000            // Timeout for detecting communication activity on RS-485 port
 
-#define RS485_BUSY_MONITOR_TASK_STACK_SIZE      1024            // Размер стека задачи мониторинга
-#define RS485_BUSY_MONITOR_TASK_PRIORITY        1               // Приоритет задачи мониторинга
+#define RS485_BUSY_MONITOR_TASK_STACK_SIZE      1024            // Monitoring task stack size
+#define RS485_BUSY_MONITOR_TASK_PRIORITY        1               // Monitoring task priority
 
-#define RS485_STATS_WINDOW_SIZE                 100             // Размер окна (кол-во запросов) для расчета статистики
+#define RS485_STATS_WINDOW_SIZE                 100             // Window size (number of requests) for statistics calculation
 
 #define MAX(a, b)                               ((a) > (b) ? (a) : (b))
 
