@@ -3,12 +3,19 @@
 #include "config.h"
 #include "nvs.h"
 #include "esp_mac.h"
+#include "esp_efuse.h"
 #include "array_size.h"
 #include "setting_validators.h"
 
 #include <string.h>
 #include <stdlib.h>
 #include <esp_log.h>
+
+#define WIFI_PASS_BUFFER_SIZE            16
+
+#define WIFI_PASS_EFUSE_BLOCK            EFUSE_BLK2
+#define WIFI_PASS_MIN_LEN                8
+#define WIFI_PASS_EFUSE_MAX_LEN          12
 
 static const char *TAG = "setting_items";
 
@@ -31,37 +38,76 @@ static const setting_storage_iface_t nvs_storage_iface = {
     .read_str = nvs_read_str,
 };
 
-// Generate dynamic default AP password from MAC address
+// Try to read WiFi password from eFuse
+static bool read_wifi_pass_from_efuse(char *key_buf, size_t buf_size)
+{
+    uint8_t efuse_data[WIFI_PASS_EFUSE_MAX_LEN] = {0};
+    esp_err_t ret = esp_efuse_read_block(WIFI_PASS_EFUSE_BLOCK, efuse_data, 0, WIFI_PASS_EFUSE_MAX_LEN * 8);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to read WiFi password from eFuse");
+        return false;
+    }
+
+    size_t efuse_wifi_pass_len = strnlen((const char *)efuse_data, WIFI_PASS_EFUSE_MAX_LEN);
+
+    if (efuse_wifi_pass_len < WIFI_PASS_MIN_LEN) {
+        ESP_LOGW(TAG, "WiFi password eFuse is empty or too short");
+        return false;
+    }
+
+    memcpy(key_buf, efuse_data, efuse_wifi_pass_len);
+    key_buf[efuse_wifi_pass_len] = '\0';
+
+    ESP_LOGI(TAG, "WiFi password read from eFuse successfully");
+    return true;
+}
+
+// Generate fallback AP password from MAC address (backward compatibility)
+static void generate_mac_based_password(char *password_buf, size_t buf_size)
+{
+    uint8_t mac[6];
+    esp_err_t ret = esp_read_mac(mac, ESP_MAC_ETH);
+    if (ret == ESP_OK) {
+        // Convert MAC to decimal and trim to 10 digits
+        uint64_t mac_decimal = 0;
+        for (int i = 0; i < 6; i++) {
+            mac_decimal = (mac_decimal * 256) + mac[i];
+        }
+        // Take last 10 digits and ensure it's at least 8 digits for password policy
+        uint32_t password_num = (uint32_t)(mac_decimal % 10000000000ULL);
+        if (password_num < 10000000) {  // Less than 8 digits
+            password_num += 10000000;   // Make it 8 digits minimum
+        }
+        int ret = snprintf(password_buf, buf_size, "%010lu", (unsigned long)password_num);
+        if (ret >= buf_size) {
+            ESP_LOGW(TAG, "Generated password was truncated");
+        }
+        ESP_LOGD(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], password_buf);
+    } else {
+        // Fallback to default if MAC read fails
+        strncpy(password_buf, "wirenboard", buf_size - 1);
+        password_buf[buf_size - 1] = '\0';
+        ESP_LOGW(TAG, "Failed to read MAC for AP password generation, using fallback");
+    }
+}
+
+// Generate dynamic default AP password
+// Priority: 1. eFuse key (factory programmed)
+//           2. MAC-based generation (backward compatibility)
 static const char *get_dynamic_ap_pass_default(void)
 {
-    static char generated_password[16] = {0};
+    static char generated_password[WIFI_PASS_BUFFER_SIZE] = {0};
     static bool password_generated = false;
 
     if (!password_generated) {
-        uint8_t mac[6];
-        esp_err_t ret = esp_read_mac(mac, ESP_MAC_ETH);
-        if (ret == ESP_OK) {
-            // Convert MAC to decimal and trim to 10 digits
-            uint64_t mac_decimal = 0;
-            for (int i = 0; i < 6; i++) {
-                mac_decimal = (mac_decimal * 256) + mac[i];
-            }
-            // Take last 10 digits and ensure it's at least 8 digits for password policy
-            uint32_t password_num = (uint32_t)(mac_decimal % 10000000000ULL);
-            if (password_num < 10000000) {  // Less than 8 digits
-                password_num += 10000000;   // Make it 8 digits minimum
-            }
-            int ret = snprintf(generated_password, sizeof(generated_password), "%010lu", (unsigned long)password_num);
-            if (ret >= sizeof(generated_password)) {
-                ESP_LOGW(TAG, "Generated password was truncated");
-            }
-            ESP_LOGD(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
-                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], generated_password);
+        // Try to read password from eFuse first
+        if (read_wifi_pass_from_efuse(generated_password, WIFI_PASS_BUFFER_SIZE)) {
+            ESP_LOGI(TAG, "Using WiFi password from eFuse");
         } else {
-            // Fallback to default if MAC read fails
-            strncpy(generated_password, "wirenboard", sizeof(generated_password) - 1);
-            generated_password[sizeof(generated_password) - 1] = '\0';
-            ESP_LOGW(TAG, "Failed to read MAC for AP password generation, using fallback");
+            // Fall back to MAC-based generation for backward compatibility
+            ESP_LOGI(TAG, "Using MAC-based WiFi password (backward compatibility)");
+            generate_mac_based_password(generated_password, WIFI_PASS_BUFFER_SIZE);
         }
         password_generated = true;
     }
