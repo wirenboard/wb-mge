@@ -6,7 +6,7 @@ import SaveIcon from '@/assets/save.svg?component';
 import { useAlerts } from '@/common/alert';
 import { useFirmware } from '@/common/firmware';
 import { useInfo } from '@/common/info';
-import { documentation, email, support, website } from '@/common/links';
+import { documentation, email, support, website, firmwareLatest } from '@/common/links';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
 import type { CommandResponse } from '@/common/types';
@@ -70,6 +70,15 @@ const updateInterface = () => {
     });
   }
   changeLang(language.value);
+};
+
+const onPasswordChange = (ev: KeyboardEvent) => {
+  const input = (ev.target as HTMLInputElement);
+
+  input.setCustomValidity('');
+  if (!input.validity.valid && input.value) {
+    input.setCustomValidity(t('wrong_password_pattern'));
+  }
 };
 </script>
 
@@ -166,6 +175,7 @@ const updateInterface = () => {
               name="new-password"
               pattern="^[a-zA-Z0-9_\-]+$"
               required
+              @input="onPasswordChange"
             />
           </div>
 
@@ -189,18 +199,17 @@ const updateInterface = () => {
 
       <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
 
-      <fieldset class="system-container">
+      <fieldset class="system-container1 system-links">
         <legend>{{ t('links') }}</legend>
 
         <a :href="documentation" target="_blank">{{ t('documentation') }}</a>
-        <div></div>
 
         <a v-if="locale === 'ru'" :href="support" target="_blank">{{ t('support') }}</a>
         <a v-else :href="`mailto: ${email}`">{{ t('support') }}:&nbsp;{{ email }}</a>
-        <div></div>
 
         <a :href="website" target="_blank">{{ t('website') }}</a>
-        <div></div>
+
+        <a :href="firmwareLatest" target="_blank">{{ t('firmware_link') }}</a>
       </fieldset>
     </div>
   </Layout>
@@ -233,6 +242,12 @@ const updateInterface = () => {
   justify-items: flex-start;
   page-break-inside: avoid;
   break-inside: avoid;
+}
+
+.system-links {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .system-container div {
@@ -296,7 +311,9 @@ const updateInterface = () => {
     "links": "Links",
     "documentation": "Documentation",
     "support": "Support",
-    "website": "Buy devices"
+    "website": "Buy devices",
+    "firmware_link": "Latest firmware version",
+    "wrong_password_pattern": "Use only letters, numbers, underscores, or hyphens"
   },
   "ru": {
     "title": "Система",
@@ -321,7 +338,9 @@ const updateInterface = () => {
     "links": "Ссылки",
     "documentation": "Документация",
     "support": "Техподдержка",
-    "website": "Купить устройства"
+    "website": "Купить устройства",
+    "firmware_link": "Последняя версия прошивки",
+    "wrong_password_pattern": "Используйте только буквы, цифры, подчёркивание или дефис"
   }
 }
 </i18n>
