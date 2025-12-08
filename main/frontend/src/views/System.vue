@@ -72,8 +72,8 @@ const updateInterface = () => {
   changeLang(language.value);
 };
 
-const onPasswordChange = (ev: KeyboardEvent) => {
-  const input = (ev.target as HTMLInputElement);
+const onPasswordChange = (ev: Event) => {
+  const input = ev.target as HTMLInputElement;
 
   input.setCustomValidity('');
   if (!input.validity.valid && input.value) {
