@@ -23,3 +23,4 @@ extern bool mock_esp_read_mac_should_fail;
 extern uint8_t mock_mac_address[MAC_ADDRESS_SIZE];
 
 esp_err_t esp_read_mac(uint8_t *mac, esp_mac_type_t type);
+void mock_esp_mac_reset(void);

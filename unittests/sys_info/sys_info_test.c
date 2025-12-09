@@ -9,13 +9,12 @@
 #include <string.h>
 
 #define SERIAL_FROM_MAC                         4328719365UL // MAC 00:01:02:03:04:05 converted to uint64
-#define TEST_DEVICE_SIGNATURE                   "TEST_SIG"
 #define TEST_PROTECTION_CODE                    {0xAC, 0x57, 0x21, 0xF0, 0xAA, 0x8B, 0x37, 0x61, 0x93, 0xC5, 0x72, 0xEF}
 #define TEST_PROTECTION_CODE_LEN                12
 
 void setUp(void)
 {
-    mock_esp_read_mac_should_fail = false;
+    mock_esp_mac_reset();
     mock_esp_efuse_reset();
     mock_esp_efuse_set_protection_code((uint8_t[])TEST_PROTECTION_CODE);
     memset(&sys_info, 0, sizeof(sys_info));

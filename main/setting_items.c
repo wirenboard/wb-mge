@@ -127,7 +127,7 @@ static const char *get_dynamic_hostname_default(void)
     static bool hostname_generated = false;
 
     if (!hostname_generated) {
-        uint8_t mac[6];
+        uint8_t mac[MAC_ADDRESS_SIZE] = {0};
         esp_err_t ret = esp_read_mac(mac, ESP_MAC_ETH);
         if (ret == ESP_OK) {
             int ret = snprintf(generated_hostname, sizeof(generated_hostname), "%s-%02X%02X%02X",

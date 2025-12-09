@@ -83,15 +83,12 @@ const char* hostname_default = "WB-MGE-030405";
 void setUp(void)
 {
     mock_reset_validator_flags();
+    mock_esp_mac_reset();
 
     mock_storage_read_error_code = ESP_OK;
     mock_storage_write_error_code = ESP_OK;
 
     rams_init();
-
-    for (int i = 0; i < MAC_ADDRESS_SIZE; i++) {
-        mock_mac_address[i] = i;
-    }
 }
 
 void tearDown(void)

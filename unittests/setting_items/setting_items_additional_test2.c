@@ -1,9 +1,7 @@
 #include "unity.h"
 #include "console_log.h"
 
-#include "esp_log.h"
 #include "esp_mac.h"
-#include "esp_efuse.h"
 #include "ram_storage.h"
 #include "setting_items.h"
 
@@ -32,7 +30,6 @@ void test_generate_mac_based_password_short_mac(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test generate_mac_based_password - short MAC address");
     LOG_MESSAGE();
 
-    memset(mock_mac_address, 0, MAC_ADDRESS_SIZE);
     mock_mac_address[MAC_ADDRESS_SIZE - 1] = 1;
 
     rams_init();
@@ -42,9 +39,9 @@ void test_generate_mac_based_password_short_mac(void)
     memset(buffer, 0, sizeof(buffer));
 
     esp_err_t ret = setting_items_read(KEY_AP_PASS, buffer);
-    TEST_ASSERT_EQUAL(ESP_OK, ret);
-    TEST_ASSERT_EQUAL_STRING("0010000001", buffer);
-    TEST_ASSERT_EQUAL(10, strlen(buffer));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "Reading generated AP password should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("0010000001", buffer, "Generated password should match expected value");
+    TEST_ASSERT_EQUAL_MESSAGE(10, strlen(buffer), "Generated password length should be 10");
 }
 
 int main(void)
