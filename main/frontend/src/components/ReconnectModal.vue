@@ -74,6 +74,7 @@ onBeforeUnmount(() => clearInterval(timer.value));
   justify-self: center;
   box-shadow: 0 0 20px 4px rgba(0, 0, 0, 0.4);
   animation: appear 200ms forwards;
+  outline: none;
 }
 
 .reconnectModal::backdrop {
@@ -83,19 +84,24 @@ onBeforeUnmount(() => clearInterval(timer.value));
 
 .reconnectModal-loaderWrapper {
   position: relative;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .reconnectModal-counter {
-  position: absolute;
-  top: 11px;
-  width: 100%;
-  text-align: center;
   font-weight: 900;
+  line-height: 1em;
+  height: 18px;
 }
 
 .reconnectModal-loader {
-  min-width: 46px;
-  height: 46px;
+  position: absolute;
+  min-width: 36px;
+  height: 36px;
+  display: block;
   animation: rotate 1s linear infinite;
 }
 </style>

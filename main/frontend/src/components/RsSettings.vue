@@ -38,6 +38,11 @@ const save = () => {
   }
   updateSettings(data);
 };
+
+const isSaveDisabled = computed(() => {
+  const fields = props.field === 'rs485_2' ? [props.field, 'io_bus'] : [props.field];
+  return isLoading.value || props.hasPortsConflict || !isChanged(fields);
+});
 </script>
 
 <template>
@@ -153,7 +158,7 @@ const save = () => {
         class="settings-submit"
         type="submit"
         :is-loading="isLoading"
-        :disabled="isLoading || !isChanged([field, 'io_bus']) || hasPortsConflict"
+        :disabled="isSaveDisabled"
       >
         {{ t('save') }}
       </Button>
@@ -177,14 +182,14 @@ const save = () => {
     "stopbits": "Stop bits",
     "databits": "Data bits",
     "failsafe": "Failsafe bias",
-    "terminator": "120Ω resistor-terminator",
+    "terminator": "120Ω termination resistor",
     "modbus_mode": "Modbus mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Transparent",
     "bridge_ip": "IP address",
     "io_bus": "I/O Bus",
-    "io_bus_info": "Enables WB-MIO chip connected to RS485-2",
+    "io_bus_info": "Enables WB-MIO chip connected to RS485-2.\nDefault address 247",
     "ports_conflict": "Port values must be unique"
   },
   "ru": {
