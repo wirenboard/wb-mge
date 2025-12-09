@@ -1,7 +1,8 @@
-2025-12-08 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-12-09 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
-    * version:  1.0.2-rc1
+    * version:  1.0.2-rc2
     * added:    read WiFi password from eFuse
+    * added:    unittests for setting_items eFuse reading
 
 2025-12-03 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
