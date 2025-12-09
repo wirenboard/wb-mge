@@ -40,6 +40,9 @@ static const setting_storage_iface_t nvs_storage_iface = {
     .read_str = nvs_read_str,
 };
 
+static bool password_generated = false;
+static bool hostname_generated = false;
+
 // Try to read default WiFi password from eFuse
 static bool read_wifi_pass_from_efuse(char *key_buf)
 {
@@ -100,7 +103,6 @@ static void generate_mac_based_password(char *password_buf, size_t buf_size)
 static const char *get_dynamic_ap_pass_default(void)
 {
     static char generated_password[WIFI_PASS_BUFFER_SIZE] = {0};
-    static bool password_generated = false;
 
     // MAC-based password maximum length is 10, eFuse - 12, so we compare against the larger size
     static_assert(sizeof(generated_password) > WIFI_PASS_EFUSE_MAX_LEN, "buffer is too small for eFuse WiFi password");
@@ -124,7 +126,6 @@ static const char *get_dynamic_ap_pass_default(void)
 static const char *get_dynamic_hostname_default(void)
 {
     static char generated_hostname[32] = {0};
-    static bool hostname_generated = false;
 
     if (!hostname_generated) {
         uint8_t mac[6];
