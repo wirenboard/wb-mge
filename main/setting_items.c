@@ -78,7 +78,10 @@ static void generate_mac_based_password(char *password_buf, size_t buf_size)
         if (password_num < 10000000) {  // Less than 8 digits
             password_num += 10000000;   // Make it 8 digits minimum
         }
-        snprintf(password_buf, buf_size, "%010lu", (unsigned long)password_num);
+        int ret = snprintf(password_buf, buf_size, "%010lu", (unsigned long)password_num);
+        if (ret >= buf_size) {
+            ESP_LOGW(TAG, "Generated password was truncated");
+        }
         ESP_LOGD(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], password_buf);
     } else {
