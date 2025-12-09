@@ -38,27 +38,27 @@ static const setting_storage_iface_t nvs_storage_iface = {
     .read_str = nvs_read_str,
 };
 
-// Try to read WiFi password from eFuse
-static bool read_wifi_pass_from_efuse(char *key_buf, size_t buf_size)
+// Try to read default WiFi password from eFuse
+static bool read_wifi_pass_from_efuse(char *key_buf)
 {
     uint8_t efuse_data[WIFI_PASS_EFUSE_MAX_LEN] = {0};
     esp_err_t ret = esp_efuse_read_block(WIFI_PASS_EFUSE_BLOCK, efuse_data, 0, WIFI_PASS_EFUSE_MAX_LEN * 8);
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to read WiFi password from eFuse");
+        ESP_LOGW(TAG, "Failed to read default WiFi password from eFuse");
         return false;
     }
 
     size_t efuse_wifi_pass_len = strnlen((const char *)efuse_data, WIFI_PASS_EFUSE_MAX_LEN);
 
     if (efuse_wifi_pass_len < WIFI_PASS_MIN_LEN) {
-        ESP_LOGW(TAG, "WiFi password eFuse is empty or too short");
+        ESP_LOGW(TAG, "Default WiFi password in eFuse is empty or too short");
         return false;
     }
 
     memcpy(key_buf, efuse_data, efuse_wifi_pass_len);
     key_buf[efuse_wifi_pass_len] = '\0';
 
-    ESP_LOGI(TAG, "WiFi password read from eFuse successfully");
+    ESP_LOGD(TAG, "Default WiFi password read from eFuse successfully");
     return true;
 }
 
@@ -79,9 +79,6 @@ static void generate_mac_based_password(char *password_buf, size_t buf_size)
             password_num += 10000000;   // Make it 8 digits minimum
         }
         int ret = snprintf(password_buf, buf_size, "%010lu", (unsigned long)password_num);
-        if (ret >= buf_size) {
-            ESP_LOGW(TAG, "Generated password was truncated");
-        }
         ESP_LOGD(TAG, "Generated AP password from MAC: %02X:%02X:%02X:%02X:%02X:%02X -> %s",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], password_buf);
     } else {
@@ -92,21 +89,24 @@ static void generate_mac_based_password(char *password_buf, size_t buf_size)
     }
 }
 
-// Generate dynamic default AP password
-// Priority: 1. eFuse key (factory programmed)
+// Get dynamic default AP password
+// Priority: 1. From eFuse (factory programmed)
 //           2. MAC-based generation (backward compatibility)
 static const char *get_dynamic_ap_pass_default(void)
 {
     static char generated_password[WIFI_PASS_BUFFER_SIZE] = {0};
     static bool password_generated = false;
 
+    // MAC-based password maximum length is 10, eFuse - 12, so we compare against the larger size
+    static_assert(sizeof(generated_password) > WIFI_PASS_EFUSE_MAX_LEN, "buffer is too small for eFuse WiFi password");
+
     if (!password_generated) {
-        // Try to read password from eFuse first
-        if (read_wifi_pass_from_efuse(generated_password, WIFI_PASS_BUFFER_SIZE)) {
-            ESP_LOGI(TAG, "Using WiFi password from eFuse");
+        // Try to read default WiFi password from eFuse first
+        if (read_wifi_pass_from_efuse(generated_password)) {
+            ESP_LOGD(TAG, "Using default WiFi password from eFuse");
         } else {
             // Fall back to MAC-based generation for backward compatibility
-            ESP_LOGI(TAG, "Using MAC-based WiFi password (backward compatibility)");
+            ESP_LOGD(TAG, "Using MAC-based WiFi password (backward compatibility)");
             generate_mac_based_password(generated_password, WIFI_PASS_BUFFER_SIZE);
         }
         password_generated = true;
