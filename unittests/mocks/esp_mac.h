@@ -3,6 +3,9 @@
 #include "esp_err.h"
 
 #include <stdbool.h>
+#include <stdint.h>
+
+#define MAC_ADDRESS_SIZE                 6
 
 typedef enum {
     ESP_MAC_WIFI_STA,      /**< MAC for WiFi Station (6 bytes) */
@@ -17,5 +20,6 @@ typedef enum {
 } esp_mac_type_t;
 
 extern bool mock_esp_read_mac_should_fail;
+extern uint8_t mock_mac_address[MAC_ADDRESS_SIZE];
 
 esp_err_t esp_read_mac(uint8_t *mac, esp_mac_type_t type);

@@ -4,6 +4,7 @@
 #include "array_size.h"
 #include "config.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "ram_storage.h"
 #include "setting_items.h"
 #include "setting_validators.h"
@@ -78,21 +79,19 @@ const mock_setting_item_t expected_items[] = {
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))
 
 const char* hostname_default = "WB-MGE-030405";
-const char* ap_pass_default = "0033752069";
 
 void setUp(void)
 {
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_BLUE, "SETUP: Initializing...");
-    LOG_MESSAGE();
-
     mock_reset_validator_flags();
 
     mock_storage_read_error_code = ESP_OK;
     mock_storage_write_error_code = ESP_OK;
 
     rams_init();
-    setting_items_init_with_storage(&test_storage);
+
+    for (int i = 0; i < MAC_ADDRESS_SIZE; i++) {
+        mock_mac_address[i] = i;
+    }
 }
 
 void tearDown(void)
@@ -117,7 +116,7 @@ void test_setting_items_init_with_storage(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_init_with_storage function");
     LOG_MESSAGE();
 
-    rams_init();
+    const char* ap_pass_default = "0033752069";
 
     esp_err_t result = setting_items_init_with_storage(&test_storage);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
