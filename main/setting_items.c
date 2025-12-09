@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <esp_log.h>
 
+#define MAC_ADDRESS_SIZE                 6
+
 #define WIFI_PASS_BUFFER_SIZE            16
 
 #define WIFI_PASS_EFUSE_BLOCK            EFUSE_BLK2
@@ -65,12 +67,12 @@ static bool read_wifi_pass_from_efuse(char *key_buf)
 // Generate fallback AP password from MAC address (backward compatibility)
 static void generate_mac_based_password(char *password_buf, size_t buf_size)
 {
-    uint8_t mac[6];
+    uint8_t mac[MAC_ADDRESS_SIZE] = {0};
     esp_err_t ret = esp_read_mac(mac, ESP_MAC_ETH);
     if (ret == ESP_OK) {
         // Convert MAC to decimal and trim to 10 digits
         uint64_t mac_decimal = 0;
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < MAC_ADDRESS_SIZE; i++) {
             mac_decimal = (mac_decimal * 256) + mac[i];
         }
         // Take last 10 digits and ensure it's at least 8 digits for password policy
