@@ -6,7 +6,7 @@ import SaveIcon from '@/assets/save.svg?component';
 import { useAlerts } from '@/common/alert';
 import { useFirmware } from '@/common/firmware';
 import { useInfo } from '@/common/info';
-import { documentation, email, support, website } from '@/common/links';
+import { documentation, email, support, website, firmwareLatest } from '@/common/links';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
 import type { CommandResponse } from '@/common/types';
@@ -18,6 +18,7 @@ import InputNumber from '@/components/InputNumber.vue';
 import FileUpload from '@/components/FileUpload.vue';
 import Layout from '@/components/Layout.vue';
 import { api } from '@/utils/api';
+import { onCustomValidation } from '@/utils/validation';
 
 const { t, locale } = useI18n();
 const language = ref<Locale>(locale.value as Locale);
@@ -152,6 +153,7 @@ const updateInterface = () => {
               name="username"
               :autocomplete="isChanged(['login']) ? 'username' : 'off'"
               required
+              @input="(ev) => onCustomValidation(ev, t('wrong_username_pattern'))"
             />
           </div>
 
@@ -164,8 +166,9 @@ const updateInterface = () => {
               :autocomplete="isChanged(['pass']) ? 'new-password' : 'off'"
               type="password"
               name="new-password"
-              pattern="^[a-zA-Z0-9_\-]+$"
+              pattern="^[\x20-\x7E]+$"
               required
+              @input="(ev) => onCustomValidation(ev, t('wrong_password_pattern'))"
             />
           </div>
 
@@ -189,18 +192,17 @@ const updateInterface = () => {
 
       <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
 
-      <fieldset class="system-container">
+      <fieldset class="system-container1 system-links">
         <legend>{{ t('links') }}</legend>
 
         <a :href="documentation" target="_blank">{{ t('documentation') }}</a>
-        <div></div>
 
         <a v-if="locale === 'ru'" :href="support" target="_blank">{{ t('support') }}</a>
         <a v-else :href="`mailto: ${email}`">{{ t('support') }}:&nbsp;{{ email }}</a>
-        <div></div>
 
         <a :href="website" target="_blank">{{ t('website') }}</a>
-        <div></div>
+
+        <a :href="firmwareLatest" target="_blank">{{ t('firmware_link') }}</a>
       </fieldset>
     </div>
   </Layout>
@@ -233,6 +235,12 @@ const updateInterface = () => {
   justify-items: flex-start;
   page-break-inside: avoid;
   break-inside: avoid;
+}
+
+.system-links {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .system-container div {
@@ -296,7 +304,10 @@ const updateInterface = () => {
     "links": "Links",
     "documentation": "Documentation",
     "support": "Support",
-    "website": "Buy devices"
+    "website": "Buy devices",
+    "firmware_link": "Download latest firmware",
+    "wrong_username_pattern": "Use only Latin letters, numbers, hyphens, and underscores",
+    "wrong_password_pattern": "Use only Latin letters, numbers, spaces, and special characters"
   },
   "ru": {
     "title": "Система",
@@ -321,7 +332,10 @@ const updateInterface = () => {
     "links": "Ссылки",
     "documentation": "Документация",
     "support": "Техподдержка",
-    "website": "Купить устройства"
+    "website": "Купить устройства",
+    "firmware_link": "Скачать последнюю прошивку",
+    "wrong_username_pattern": "Используйте только латиницу, цифры, дефисы и нижние подчеркивания",
+    "wrong_password_pattern": "Используйте только латиницу, цифры, пробелы и спецсимволы"
   }
 }
 </i18n>

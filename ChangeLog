@@ -1,3 +1,11 @@
+2025-12-08 Victor Vedenin <victor.vedenin@wirenboard.com>
+
+    * version:  1.0.2
+    * added:    download link to latest firmware
+    * rework:   favicon changed to actual
+    * fix:      false activation of settings button
+    * fix:      localization issues
+
 2025-12-03 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
     * version:  1.0.1
