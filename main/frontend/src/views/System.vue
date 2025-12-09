@@ -18,6 +18,7 @@ import InputNumber from '@/components/InputNumber.vue';
 import FileUpload from '@/components/FileUpload.vue';
 import Layout from '@/components/Layout.vue';
 import { api } from '@/utils/api';
+import { onCustomValidation } from '@/utils/validation';
 
 const { t, locale } = useI18n();
 const language = ref<Locale>(locale.value as Locale);
@@ -70,15 +71,6 @@ const updateInterface = () => {
     });
   }
   changeLang(language.value);
-};
-
-const onPasswordChange = (ev: Event) => {
-  const input = ev.target as HTMLInputElement;
-
-  input.setCustomValidity('');
-  if (!input.validity.valid && input.value) {
-    input.setCustomValidity(t('wrong_password_pattern'));
-  }
 };
 </script>
 
@@ -161,6 +153,7 @@ const onPasswordChange = (ev: Event) => {
               name="username"
               :autocomplete="isChanged(['login']) ? 'username' : 'off'"
               required
+              @input="(ev) => onCustomValidation(ev, t('wrong_username_pattern'))"
             />
           </div>
 
@@ -173,9 +166,9 @@ const onPasswordChange = (ev: Event) => {
               :autocomplete="isChanged(['pass']) ? 'new-password' : 'off'"
               type="password"
               name="new-password"
-              pattern="^[a-zA-Z0-9_\-]+$"
+              pattern="^[\x20-\x7E]+$"
               required
-              @input="onPasswordChange"
+              @input="(ev) => onCustomValidation(ev, t('wrong_password_pattern'))"
             />
           </div>
 
@@ -312,8 +305,9 @@ const onPasswordChange = (ev: Event) => {
     "documentation": "Documentation",
     "support": "Support",
     "website": "Buy devices",
-    "firmware_link": "Latest firmware version",
-    "wrong_password_pattern": "Use only letters, numbers, underscores, or hyphens"
+    "firmware_link": "Download latest firmware",
+    "wrong_username_pattern": "Use only Latin letters, numbers, hyphens, and underscores",
+    "wrong_password_pattern": "Use only Latin letters, numbers, spaces, and special characters"
   },
   "ru": {
     "title": "Система",
@@ -339,8 +333,9 @@ const onPasswordChange = (ev: Event) => {
     "documentation": "Документация",
     "support": "Техподдержка",
     "website": "Купить устройства",
-    "firmware_link": "Последняя версия прошивки",
-    "wrong_password_pattern": "Используйте только буквы, цифры, подчёркивание или дефис"
+    "firmware_link": "Скачать последнюю прошивку",
+    "wrong_username_pattern": "Используйте только латиницу, цифры, дефисы и нижние подчеркивания",
+    "wrong_password_pattern": "Используйте только латиницу, цифры, пробелы и спецсимволы"
   }
 }
 </i18n>
