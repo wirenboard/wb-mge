@@ -891,7 +891,7 @@ void test_read_wifi_pass_from_efuse(void)
 
     result = setting_items_read(KEY_AP_PASS, buffer);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return fallback password when MAC read fails");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return fallback password when eFuse password is too short");
 
     setUp();
     memset(buffer, 0, sizeof(buffer));
@@ -902,7 +902,7 @@ void test_read_wifi_pass_from_efuse(void)
 
     result = setting_items_read(KEY_AP_PASS, buffer);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass", buffer, "Should return fallback password when MAC read fails");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass", buffer, "Should return eFuse password when length is valid");
 
     setUp();
     memset(buffer, 0, sizeof(buffer));
@@ -913,7 +913,7 @@ void test_read_wifi_pass_from_efuse(void)
 
     result = setting_items_read(KEY_AP_PASS, buffer);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass1234", buffer, "Should return fallback password when MAC read fails");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass1234", buffer, "Should return truncated eFuse password when length exceeds max");
 
     setUp();
     memset(buffer, 0, sizeof(buffer));
@@ -925,7 +925,7 @@ void test_read_wifi_pass_from_efuse(void)
 
     result = setting_items_read(KEY_AP_PASS, buffer);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return fallback password when MAC read fails");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return fallback password when eFuse read fails");
 }
 
 int main(void)
