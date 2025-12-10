@@ -120,7 +120,7 @@ void copy_protection_init_keys(void)
     esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
     {
         (void)io_expander_handle;
-        prot_ctx.prot_state = COPY_PROT_STATE_OK;
+        prot_ctx.prot_state = COPY_PROT_STATE_UNKNOWN;
         return ESP_OK;
     }
 

@@ -48,19 +48,13 @@ git clone git@github.com:wirenboard/wb-mge.git
 cd wb-mge
 ```
 
-### 3. Generate Key File
+### 3. Build the Project (Internal)
 
-``` bash
-cd copy_protection
-./keygen.py --random --keys_file keys.txt
-```
-
-### 4. Build the Project
-
-For a complete build (unit tests + frontend + firmware):
+When building internally, copy protection is disabled, and the protection status is set to UNKNOWN.
+For complete internal build (frontend + firmware):
 
 ```bash
-make
+make build-internal
 ```
 
 If building components separately, first build the frontend:
@@ -72,10 +66,8 @@ make build-frontend
 Then build the firmware:
 
 ```bash
-make build-idf-project
+make build-idf-project-internal
 ```
-
-**Important:** Using `idf.py build` directly will NOT embed version information into the binary. Always use `make build-idf-project` for production builds.
 
 ## Building with Docker
 
@@ -106,20 +98,14 @@ docker run --rm -it -v $(pwd):/root/esp/project wb-mge-builder
 
 ### 3. Build Inside Container
 
-Building inside the container is the same as manual building (see "Manual Build Instructions" section, steps 3 and 4).
+Building inside the container is the same as manual building (see "Manual Build Instructions" section, step 3).
 
 ### Alternative: One-Command Build
 
 You can build the project without entering the container:
 
 ```bash
-docker run --rm -v $(pwd):/root/esp/project wb-mge-builder bash -c "cd copy_protection && ./keygen.py --random --keys_file keys.txt && cd .. && make"
-```
-
-Or if the keys have been already generated:
-
-```bash
-docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
+docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make build-internal
 ```
 
 ## Flashing the Device
