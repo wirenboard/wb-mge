@@ -48,9 +48,9 @@ git clone git@github.com:wirenboard/wb-mge.git
 cd wb-mge
 ```
 
-### 3. Build the Project (Internal)
+### 3. Internal-use firmware Build
 
-When building internally, copy protection is disabled, and the protection status is set to UNKNOWN.
+When building internal-use firmware, copy protection is disabled, and the protection status is set to UNKNOWN.
 For complete internal build (frontend + firmware):
 
 ```bash

@@ -139,7 +139,7 @@ build-idf-project-internal:
 
 prepare_release:
 	@mkdir -p $(RELEASE_DIR)
-	@rm -rf release/*
+	@rm -rf $(RELEASE_DIR)/*
 	@cp $(BUILD_DIR)/$(TARGET).bin $(RELEASE_DIR)/$(RELEASE_FILE_NAME)
 	@echo 'Release firmware: $(RELEASE_DIR)/$(RELEASE_FILE_NAME)'
 
