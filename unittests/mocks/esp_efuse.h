@@ -31,5 +31,6 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
 
 void mock_esp_efuse_set_signature(const char* signature);
 void mock_esp_efuse_set_protection_code(const uint8_t* prot_code);
+void mock_esp_efuse_set_wifi_password(const char* wifi_pass);
 
 void mock_esp_efuse_reset(void);

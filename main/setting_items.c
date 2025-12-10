@@ -474,3 +474,11 @@ const char *setting_items_type_to_string(setting_item_type_t type)
         return "UNKNOWN";
     }
 }
+
+#ifdef __unittest_env__
+    void setting_items_reset(void)
+    {
+        password_generated = false;
+        hostname_generated = false;
+    }
+#endif
