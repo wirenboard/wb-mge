@@ -65,8 +65,9 @@ void mock_esp_efuse_set_wifi_password(const char* wifi_pass)
     mock_esp_efuse_write_block(WIFI_PASS_EFUSE_BLOCK, wifi_pass, WIFI_PASS_EFUSE_OFFSET * 8, pass_len * 8);
 
     if (pass_len < WIFI_PASS_EFUSE_MAX_LEN) {
+        uint8_t zeros[WIFI_PASS_EFUSE_MAX_LEN] = {0};
         mock_esp_efuse_write_block(
-            WIFI_PASS_EFUSE_BLOCK, "\0", (WIFI_PASS_EFUSE_OFFSET + pass_len) * 8, (WIFI_PASS_EFUSE_MAX_LEN - pass_len) * 8
+            WIFI_PASS_EFUSE_BLOCK, zeros, (WIFI_PASS_EFUSE_OFFSET + pass_len) * 8, (WIFI_PASS_EFUSE_MAX_LEN - pass_len) * 8
         );
     }
 }
