@@ -60,7 +60,15 @@ void mock_esp_efuse_set_protection_code(const uint8_t* prot_code)
 
 void mock_esp_efuse_set_wifi_password(const char* wifi_pass)
 {
-    mock_esp_efuse_write_block(WIFI_PASS_EFUSE_BLOCK, wifi_pass, WIFI_PASS_EFUSE_OFFSET * 8, WIFI_PASS_EFUSE_MAX_LEN * 8);
+    size_t pass_len = strlen(wifi_pass);
+
+    mock_esp_efuse_write_block(WIFI_PASS_EFUSE_BLOCK, wifi_pass, WIFI_PASS_EFUSE_OFFSET * 8, pass_len * 8);
+
+    if (pass_len < WIFI_PASS_EFUSE_MAX_LEN) {
+        mock_esp_efuse_write_block(
+            WIFI_PASS_EFUSE_BLOCK, "\0", (WIFI_PASS_EFUSE_OFFSET + pass_len) * 8, (WIFI_PASS_EFUSE_MAX_LEN - pass_len) * 8
+        );
+    }
 }
 
 esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offset_in_bits, size_t size_bits)
