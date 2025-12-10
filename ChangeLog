@@ -1,3 +1,8 @@
+2025-12-10 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.3-rc1
+    * added:    read default WiFi password from eFuse
+
 2025-12-08 Victor Vedenin <victor.vedenin@wirenboard.com>
 
     * version:  1.0.2
