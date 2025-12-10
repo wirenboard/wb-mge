@@ -12,6 +12,7 @@ import Layout from '@/components/Layout.vue';
 import IpInput from '@/components/IpInput.vue';
 import RsSettings from '@/components/RsSettings.vue';
 import Switch from '@/components/Switch.vue';
+import { onCustomValidation } from '@/utils/validation';
 
 const { t } = useI18n();
 const { data, initData, isChanged, isLoading, updateSettings } = useSettings();
@@ -157,7 +158,17 @@ const addNetwork = () => {
           <template v-if="data.wifi.mode === 'ap'">
             <label for="ap_ssid">{{ t('ssid') }}</label>
             <div class="settings-data">
-              <input id="ap_ssid" v-model="data.wifi.ap_ssid" type="text" name="ap_ssid" pattern="^[\x20-\x7E]{1,31}$" minlength="1" maxlength="32" required />
+              <input
+                id="ap_ssid"
+                v-model="data.wifi.ap_ssid"
+                type="text"
+                name="ap_ssid"
+                pattern="^[\x20-\x7E]{1,31}$"
+                minlength="1"
+                maxlength="32"
+                required
+                @input="(ev) => onCustomValidation(ev, t('wrong_ssid_pattern'))"
+              />
             </div>
 
             <label for="ap_auth">{{ t('wifi_pass_security') }}</label>
@@ -170,7 +181,18 @@ const addNetwork = () => {
             <template v-if="data.wifi.ap_auth !== 'open'">
               <label for="ap_pass">{{ t('password') }}</label>
               <div class="settings-data">
-                <input id="ap_pass" v-model="data.wifi.ap_pass" required :placeholder="t('pass_placeholder')" pattern="[\x20-\x7E]{8,63}" minlength="8" maxlength="63" type="password" name="ap_ pass" />
+                <input
+                  id="ap_pass"
+                  v-model="data.wifi.ap_pass"
+                  required
+                  :placeholder="t('pass_placeholder')"
+                  pattern="[\x20-\x7E]{8,63}"
+                  minlength="8"
+                  maxlength="63"
+                  type="password"
+                  name="ap_ pass"
+                  @input="(ev) => onCustomValidation(ev, t('wrong_pass_pattern'))"
+                />
               </div>
             </template>
 
@@ -406,7 +428,9 @@ const addNetwork = () => {
     "open": "Unsecured",
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
-    "add_ssid": "Add ssid"
+    "add_ssid": "Add ssid",
+    "wrong_ssid_pattern": "Enter a string of 1–31 characters: Latin letters, numbers, spaces, and special characters",
+    "wrong_pass_pattern": "Enter a string of 8–63 characters: Latin letters, numbers, spaces, and special characters"
   },
   "ru": {
     "title": "Настройки",
@@ -423,7 +447,9 @@ const addNetwork = () => {
     "open": "Без защиты",
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
-    "add_ssid": "Добавить ssid"
+    "add_ssid": "Добавить ssid",
+    "wrong_ssid_pattern": "Введите строку из 1–31 символов: латиница, цифры, пробелы и спецсимволы",
+    "wrong_pass_pattern": "Введите строку из 8–63 символов: латиница, цифры, пробелы и спецсимволы"
   }
 }
 </i18n>
