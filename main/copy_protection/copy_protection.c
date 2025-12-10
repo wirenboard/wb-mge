@@ -126,6 +126,20 @@ void copy_protection_init_keys(void)
     }
 
 #else
+    static void activate_copy_protection(void)
+    {
+        prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
+
+        serial_activate_copy_protection();
+        tcp_client_activate_copy_protection();
+        tcp_server_activate_copy_protection();
+        settings_activate_copy_protection();
+
+        #if DEBUG_LOG_ENABLE
+            ESP_LOGE(TAG, "Copy protection activated!");
+        #endif
+    }
+
     esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
     {
         prot_ctx.prot_state = COPY_PROT_STATE_UNKNOWN;
@@ -292,20 +306,6 @@ void copy_protection_init_keys(void)
 
         #if DEBUG_LOG_ENABLE
             ESP_LOGD(TAG, "Copy protection checks passed!");
-        #endif
-    }
-
-    static void activate_copy_protection(void)
-    {
-        prot_ctx.prot_state = COPY_PROT_STATE_FAIL;
-
-        serial_activate_copy_protection();
-        tcp_client_activate_copy_protection();
-        tcp_server_activate_copy_protection();
-        settings_activate_copy_protection();
-
-        #if DEBUG_LOG_ENABLE
-            ESP_LOGE(TAG, "Copy protection activated!");
         #endif
     }
 
