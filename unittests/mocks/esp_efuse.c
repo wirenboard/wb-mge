@@ -16,6 +16,7 @@
 #define PROTECTION_CODE_EFUSE_OFFSET            (SIGNATURE_EFUSE_OFFSET + DEVICE_SIGNATURE_LEN)
 
 #define WIFI_PASS_EFUSE_BLOCK                   EFUSE_BLK2
+#define WIFI_PASS_EFUSE_OFFSET                  0
 #define WIFI_PASS_EFUSE_MAX_LEN                 12
 
 esp_err_t mock_esp_efuse_read_block_return = ESP_OK;
@@ -59,7 +60,7 @@ void mock_esp_efuse_set_protection_code(const uint8_t* prot_code)
 
 void mock_esp_efuse_set_wifi_password(const char* wifi_pass)
 {
-    mock_esp_efuse_write_block(WIFI_PASS_EFUSE_BLOCK, wifi_pass, 0, WIFI_PASS_EFUSE_MAX_LEN * 8);
+    mock_esp_efuse_write_block(WIFI_PASS_EFUSE_BLOCK, wifi_pass, WIFI_PASS_EFUSE_OFFSET * 8, WIFI_PASS_EFUSE_MAX_LEN * 8);
 }
 
 esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offset_in_bits, size_t size_bits)

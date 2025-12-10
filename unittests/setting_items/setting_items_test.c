@@ -891,7 +891,7 @@ void test_read_wifi_pass_from_efuse(void)
 
     result = setting_items_read(KEY_AP_PASS, buffer);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return fallback password when eFuse password is too short");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return MAC-based password when eFuse password is too short");
 
     setUp();
     memset(buffer, 0, sizeof(buffer));
@@ -903,6 +903,17 @@ void test_read_wifi_pass_from_efuse(void)
     result = setting_items_read(KEY_AP_PASS, buffer);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass", buffer, "Should return eFuse password when length is valid");
+
+    setUp();
+    memset(buffer, 0, sizeof(buffer));
+    mock_esp_efuse_set_wifi_password("testpass1234");
+
+    result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    result = setting_items_read(KEY_AP_PASS, buffer);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass1234", buffer, "Should return eFuse password when length is valid");
 
     setUp();
     memset(buffer, 0, sizeof(buffer));
@@ -925,7 +936,7 @@ void test_read_wifi_pass_from_efuse(void)
 
     result = setting_items_read(KEY_AP_PASS, buffer);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return fallback password when eFuse read fails");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return MAC-based password when eFuse read fails");
 }
 
 int main(void)

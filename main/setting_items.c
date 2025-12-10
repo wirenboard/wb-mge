@@ -11,13 +11,14 @@
 #include <stdlib.h>
 #include <esp_log.h>
 
-#define MAC_ADDRESS_SIZE                 6
+#define MAC_ADDRESS_SIZE                    6
 
-#define WIFI_PASS_BUFFER_SIZE            16
+#define WIFI_PASS_BUFFER_SIZE               16
 
-#define WIFI_PASS_EFUSE_BLOCK            EFUSE_BLK2
-#define WIFI_PASS_MIN_LEN                8
-#define WIFI_PASS_EFUSE_MAX_LEN          12
+#define WIFI_PASS_EFUSE_BLOCK               EFUSE_BLK2
+#define WIFI_PASS_EFUSE_OFFSET              0
+#define WIFI_PASS_MIN_LEN                   8
+#define WIFI_PASS_EFUSE_MAX_LEN             12
 
 static const char *TAG = "setting_items";
 
@@ -47,7 +48,7 @@ static bool hostname_generated = false;
 static bool read_wifi_pass_from_efuse(char *key_buf)
 {
     uint8_t efuse_data[WIFI_PASS_EFUSE_MAX_LEN] = {0};
-    esp_err_t ret = esp_efuse_read_block(WIFI_PASS_EFUSE_BLOCK, efuse_data, 0, WIFI_PASS_EFUSE_MAX_LEN * 8);
+    esp_err_t ret = esp_efuse_read_block(WIFI_PASS_EFUSE_BLOCK, efuse_data, WIFI_PASS_EFUSE_OFFSET * 8, WIFI_PASS_EFUSE_MAX_LEN * 8);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to read default WiFi password from eFuse");
         return false;
