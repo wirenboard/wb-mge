@@ -8,7 +8,9 @@
 #include "debug_log.h"
 #include "esp_log.h"
 #include "copy_protection_helpers.h"
-#include "keys.h"
+#if !INTERNAL_BUILD
+    #include "keys.h"
+#endif
 #include "serial.h"
 #include "tcp_client.h"
 #include "tcp_server.h"
@@ -62,6 +64,13 @@ typedef struct {
 
 static prot_ctx_t prot_ctx = {0};
 
+#if DEBUG_LOG_ENABLE
+    static const char* TAG = "copy_protection";
+#endif
+
+
+#if !INTERNAL_BUILD
+
 #pragma pack(push, 1)
     typedef struct {
         uint8_t dummy_1[DUMMY_DATA_LEN_1];
@@ -89,17 +98,22 @@ static stored_keys_t stored_keys = {
     .dummy_5 = DUMMY_DATA_ARRAY_5
 };
 
-#if DEBUG_LOG_ENABLE
-    static const char* TAG = "copy_protection";
-#endif
-
-
 void copy_protection_init_keys(void)
 {
     unswap_array_values(stored_keys.hmac_key, stored_keys.hmac_key_table, KEY_LEN, prot_ctx.key);
     unswap_array_values(stored_keys.prot_code_swap, stored_keys.prot_code_swap_table, PROTECTION_CODE_LEN, prot_ctx.swap_table);
     prot_ctx.keys_initialized = true;
 }
+
+#else
+
+void copy_protection_init_keys(void)
+{
+    // Internal build: keys are not used
+    prot_ctx.keys_initialized = true;
+}
+
+#endif
 
 
 #if INTERNAL_BUILD

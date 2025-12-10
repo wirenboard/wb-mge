@@ -15,6 +15,7 @@ DEFS += MODEL_DEFINE=$(MODEL_DEFINE)
 
 BUILD_DIR = build
 RELEASE_DIR = release
+RELEASE_INTERNAL_DIR = release_internal
 
 #######################################
 # OS detection and tool selection
@@ -131,13 +132,22 @@ build-idf-project: keys_header_file
 	@$(MAKE) prepare_release
 
 build-idf-project-internal: DEFS += INTERNAL_BUILD=1
-build-idf-project-internal: build-idf-project
+build-idf-project-internal:
+	@echo 'Building ESP-IDF project (internal, no keys)'
+	@idf.py $(addprefix -D, $(DEFS)) build
+	@$(MAKE) prepare_release_internal
 
 prepare_release:
 	@mkdir -p $(RELEASE_DIR)
 	@rm -rf release/*
 	@cp $(BUILD_DIR)/$(TARGET).bin $(RELEASE_DIR)/$(RELEASE_FILE_NAME)
 	@echo 'Release firmware: $(RELEASE_DIR)/$(RELEASE_FILE_NAME)'
+
+prepare_release_internal:
+	@mkdir -p $(RELEASE_INTERNAL_DIR)
+	@rm -rf $(RELEASE_INTERNAL_DIR)/*
+	@cp $(BUILD_DIR)/$(TARGET).bin $(RELEASE_INTERNAL_DIR)/$(RELEASE_FILE_NAME)
+	@echo 'Release firmware (internal): $(RELEASE_INTERNAL_DIR)/$(RELEASE_FILE_NAME)'
 
 keys_header_file:
 	@${COPY_PROT_RANDOM_SCRIPT} --swap_tables ${COPY_PROT_SWAP_TABLES_FILE} --dummy_data ${COPY_PROT_DUMMY_DATA_FILE}
@@ -149,6 +159,7 @@ clean:
 	@rm -rf $(BUILD_DIR)
 	@idf.py fullclean
 	@rm -rf $(RELEASE_DIR)
+	@rm -rf $(RELEASE_INTERNAL_DIR)
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
 	@rm -rf sdkconfig
@@ -163,7 +174,7 @@ clean:
 		fi; \
 	done
 
-.PHONY: all unittests build-frontend build-idf-project prepare_release keys_header_file clean
+.PHONY: all unittests build-frontend build-idf-project build-idf-project-internal prepare_release prepare_release_internal keys_header_file clean
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk
