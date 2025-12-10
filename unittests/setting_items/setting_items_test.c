@@ -827,7 +827,7 @@ void test_dynamic_defaults_generation_mac_error(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test dynamic defaults generation - MAC error");
     LOG_MESSAGE();
 
-    mock_esp_read_mac_should_fail = true;
+    mock_esp_read_mac_return = ESP_FAIL;
 
     esp_err_t result = setting_items_init_with_storage(&test_storage);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
@@ -844,13 +844,13 @@ void test_dynamic_defaults_generation_mac_error(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("WB-MGE", buffer, "Should return fallback hostname when MAC read fails");
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, esp_read_mac_called, "esp_read_mac should be called twice");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_read_mac_called, "esp_read_mac should be called twice");
 
     // Повторный вызов get_dynamic_ap_pass_default и get_dynamic_hostname_default не должен вызывать esp_read_mac снова
     rams_init();
     result = setting_items_init_with_storage(&test_storage);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, esp_read_mac_called, "esp_read_mac should not be called again");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_read_mac_called, "esp_read_mac should not be called again");
 }
 
 // Тестируем генерацию пароля на основе MAC-адреса, когда MAC-адрес короткий

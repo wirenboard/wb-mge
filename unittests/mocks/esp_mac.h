@@ -1,8 +1,6 @@
 #pragma once
 
 #include "esp_err.h"
-
-#include <stdbool.h>
 #include <stdint.h>
 
 #define MAC_ADDRESS_SIZE                 6
@@ -19,8 +17,8 @@ typedef enum {
     ESP_MAC_EFUSE_EXT,     /**< if CONFIG_SOC_IEEE802154_SUPPORTED=y, MAC_EXT eFuse which is used as an extender for IEEE802154 MAC (2 bytes) */
 } esp_mac_type_t;
 
-extern int esp_read_mac_called;
-extern bool mock_esp_read_mac_should_fail;
+extern int mock_esp_read_mac_called;
+extern esp_err_t mock_esp_read_mac_return;
 extern uint8_t mock_mac_address[MAC_ADDRESS_SIZE];
 
 esp_err_t esp_read_mac(uint8_t *mac, esp_mac_type_t type);

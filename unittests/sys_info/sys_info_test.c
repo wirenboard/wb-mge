@@ -56,7 +56,7 @@ void test_sys_info_init_mac_read_failure(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - MAC read failure");
     LOG_MESSAGE();
 
-    mock_esp_read_mac_should_fail = true;
+    mock_esp_read_mac_return = ESP_FAIL;
 
     esp_err_t result = sys_info_init();
 

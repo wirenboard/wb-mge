@@ -90,7 +90,7 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
 
     memcpy(dst_key, &efuse_blocks[blk][offset_bytes], size_bytes);
 
-    return ESP_OK;
+    return mock_esp_efuse_read_block_return;
 }
 
 void mock_esp_efuse_reset(void)
