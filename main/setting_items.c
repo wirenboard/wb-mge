@@ -11,13 +11,14 @@
 #include <stdlib.h>
 #include <esp_log.h>
 
-#define MAC_ADDRESS_SIZE                 6
+#define MAC_ADDRESS_SIZE                    6
 
-#define WIFI_PASS_BUFFER_SIZE            16
+#define WIFI_PASS_BUFFER_SIZE               16
 
-#define WIFI_PASS_EFUSE_BLOCK            EFUSE_BLK2
-#define WIFI_PASS_MIN_LEN                8
-#define WIFI_PASS_EFUSE_MAX_LEN          12
+#define WIFI_PASS_EFUSE_BLOCK               EFUSE_BLK2
+#define WIFI_PASS_EFUSE_OFFSET              0
+#define WIFI_PASS_MIN_LEN                   8
+#define WIFI_PASS_EFUSE_MAX_LEN             12
 
 static const char *TAG = "setting_items";
 
@@ -47,7 +48,7 @@ static bool hostname_generated = false;
 static bool read_wifi_pass_from_efuse(char *key_buf)
 {
     uint8_t efuse_data[WIFI_PASS_EFUSE_MAX_LEN] = {0};
-    esp_err_t ret = esp_efuse_read_block(WIFI_PASS_EFUSE_BLOCK, efuse_data, 0, WIFI_PASS_EFUSE_MAX_LEN * 8);
+    esp_err_t ret = esp_efuse_read_block(WIFI_PASS_EFUSE_BLOCK, efuse_data, WIFI_PASS_EFUSE_OFFSET * 8, WIFI_PASS_EFUSE_MAX_LEN * 8);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to read default WiFi password from eFuse");
         return false;
@@ -128,7 +129,7 @@ static const char *get_dynamic_hostname_default(void)
     static char generated_hostname[32] = {0};
 
     if (!hostname_generated) {
-        uint8_t mac[6];
+        uint8_t mac[MAC_ADDRESS_SIZE] = {0};
         esp_err_t ret = esp_read_mac(mac, ESP_MAC_ETH);
         if (ret == ESP_OK) {
             int ret = snprintf(generated_hostname, sizeof(generated_hostname), "%s-%02X%02X%02X",
@@ -474,3 +475,11 @@ const char *setting_items_type_to_string(setting_item_type_t type)
         return "UNKNOWN";
     }
 }
+
+#ifdef __unittest_env__
+    void setting_items_reset(void)
+    {
+        password_generated = false;
+        hostname_generated = false;
+    }
+#endif
