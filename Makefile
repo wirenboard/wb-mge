@@ -104,6 +104,8 @@ C_SOURCES = $(shell $(FIND) main -name "*.c" -not -path "*/frontend/*")
 
 all: unittests build-frontend build-idf-project
 
+build-internal: build-frontend build-idf-project-internal
+
 unittests: $(UNITTESTS_TARGETS)
 
 $(UNITTESTS_TARGETS):
@@ -127,6 +129,9 @@ build-idf-project: keys_header_file
 	@echo 'Building ESP-IDF project'
 	@idf.py $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
+
+build-idf-project-internal: DEFS += INTERNAL_BUILD=1
+build-idf-project-internal: build-idf-project
 
 prepare_release:
 	@mkdir -p $(RELEASE_DIR)

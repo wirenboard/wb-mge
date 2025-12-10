@@ -6,6 +6,9 @@ add_compile_definitions(${MODEL_DEFINE})
 add_compile_definitions(DEVICE_SIGNATURE="${DEVICE_SIGNATURE}")
 add_compile_definitions(FIRMWARE_GIT_INFO="${FIRMWARE_GIT_INFO}")
 add_compile_definitions(FIRMWARE_VERSION="${FIRMWARE_VERSION}")
+if(INTERNAL_BUILD)
+    add_compile_definitions(INTERNAL_BUILD=1)
+endif()
 
 set(PROJECT_VER "${FIRMWARE_VERSION}")
 
