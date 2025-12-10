@@ -6,11 +6,6 @@
 #include <stddef.h>
 
 #define TEST_DEVICE_SIGNATURE                   "TEST_SIG"
-#define SIGNATURE_BLOCK                         EFUSE_BLK3
-#define SIGNATURE_OFFSET_BITS                   64
-
-#define PROTECTION_CODE_BLOCK                   EFUSE_BLK3
-#define PROTECTION_CODE_OFFSET_BITS             160
 
 typedef enum {
     EFUSE_BLK0              = 0, /**< Number of eFuse block. Reserved. */
@@ -30,13 +25,12 @@ typedef enum {
     EFUSE_BLK_MAX           = 4,
 } esp_efuse_block_t;
 
-extern esp_efuse_block_t mock_read_block;
-extern size_t mock_read_offset;
 extern esp_err_t mock_esp_efuse_read_block_return;
 
 esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offset_in_bits, size_t size_bits);
 
 void mock_esp_efuse_set_signature(const char* signature);
 void mock_esp_efuse_set_protection_code(const uint8_t* prot_code);
+void mock_esp_efuse_set_wifi_password(const char* wifi_pass);
 
 void mock_esp_efuse_reset(void);

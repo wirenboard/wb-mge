@@ -7,10 +7,18 @@
 #include <string.h>
 #include <stdint.h>
 
-#define BLOCK_SIZE      32
+#define BLOCK_SIZE                              32
 
-esp_efuse_block_t mock_read_block = EFUSE_BLK0;
-size_t mock_read_offset = 0;
+#define SIGNATURE_EFUSE_BLOCK                   EFUSE_BLK3
+#define SIGNATURE_EFUSE_OFFSET                  8
+
+#define PROTECTION_CODE_EFUSE_BLOCK             EFUSE_BLK3
+#define PROTECTION_CODE_EFUSE_OFFSET            (SIGNATURE_EFUSE_OFFSET + DEVICE_SIGNATURE_LEN)
+
+#define WIFI_PASS_EFUSE_BLOCK                   EFUSE_BLK2
+#define WIFI_PASS_EFUSE_OFFSET                  0
+#define WIFI_PASS_EFUSE_MAX_LEN                 12
+
 esp_err_t mock_esp_efuse_read_block_return = ESP_OK;
 
 static uint8_t efuse_blocks[EFUSE_BLK_MAX][BLOCK_SIZE] = {0};
@@ -42,12 +50,26 @@ void mock_esp_efuse_set_signature(const char* signature)
     }
 
     memcpy(sig_buffer, signature, sig_len);
-    mock_esp_efuse_write_block(SIGNATURE_BLOCK, sig_buffer, SIGNATURE_OFFSET_BITS, DEVICE_SIGNATURE_LEN * 8);
+    mock_esp_efuse_write_block(SIGNATURE_EFUSE_BLOCK, sig_buffer, SIGNATURE_EFUSE_OFFSET * 8, DEVICE_SIGNATURE_LEN * 8);
 }
 
 void mock_esp_efuse_set_protection_code(const uint8_t* prot_code)
 {
-    mock_esp_efuse_write_block(PROTECTION_CODE_BLOCK, prot_code, PROTECTION_CODE_OFFSET_BITS, PROTECTION_CODE_LEN * 8);
+    mock_esp_efuse_write_block(PROTECTION_CODE_EFUSE_BLOCK, prot_code, PROTECTION_CODE_EFUSE_OFFSET * 8, PROTECTION_CODE_LEN * 8);
+}
+
+void mock_esp_efuse_set_wifi_password(const char* wifi_pass)
+{
+    size_t pass_len = strlen(wifi_pass);
+
+    mock_esp_efuse_write_block(WIFI_PASS_EFUSE_BLOCK, wifi_pass, WIFI_PASS_EFUSE_OFFSET * 8, pass_len * 8);
+
+    if (pass_len < WIFI_PASS_EFUSE_MAX_LEN) {
+        uint8_t zeros[WIFI_PASS_EFUSE_MAX_LEN] = {0};
+        mock_esp_efuse_write_block(
+            WIFI_PASS_EFUSE_BLOCK, zeros, (WIFI_PASS_EFUSE_OFFSET + pass_len) * 8, (WIFI_PASS_EFUSE_MAX_LEN - pass_len) * 8
+        );
+    }
 }
 
 esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offset_in_bits, size_t size_bits)
@@ -69,13 +91,12 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
 
     memcpy(dst_key, &efuse_blocks[blk][offset_bytes], size_bytes);
 
-    return ESP_OK;
+    return mock_esp_efuse_read_block_return;
 }
 
 void mock_esp_efuse_reset(void)
 {
-    mock_read_block = EFUSE_BLK0;
-    mock_read_offset = 0;
     mock_esp_efuse_read_block_return = ESP_OK;
+    memset(efuse_blocks, 0, sizeof(efuse_blocks));
     mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
 }
