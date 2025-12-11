@@ -23,6 +23,7 @@ copy_protection/keys.txt
 
 # Release
 release/
+release_internal/
 
 # Dependencies
 managed_components/
