@@ -1,6 +1,6 @@
-2025-12-10 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+2025-12-11 Ilia Skochilov <ilia.skochilov@wirenboard.com>
 
-    * version:  1.0.3-rc3
+    * version:  1.0.3
     * added:    read default WiFi password from eFuse
     * added:    unittests for setting_items eFuse reading
     * added:    internal-use firmware build target
