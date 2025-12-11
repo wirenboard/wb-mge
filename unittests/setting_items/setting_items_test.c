@@ -4,6 +4,8 @@
 #include "array_size.h"
 #include "config.h"
 #include "esp_log.h"
+#include "esp_efuse.h"
+#include "esp_mac.h"
 #include "ram_storage.h"
 #include "setting_items.h"
 #include "setting_validators.h"
@@ -77,22 +79,21 @@ const mock_setting_item_t expected_items[] = {
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))
 
-const char* hostname_default = "WB-MGE-030405";
 const char* ap_pass_default = "0033752069";
+const char* hostname_default = "WB-MGE-030405";
+
+void setting_items_reset(void);
 
 void setUp(void)
 {
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_BLUE, "SETUP: Initializing...");
-    LOG_MESSAGE();
-
     mock_reset_validator_flags();
+    mock_esp_mac_reset();
+    setting_items_reset();
 
     mock_storage_read_error_code = ESP_OK;
     mock_storage_write_error_code = ESP_OK;
 
     rams_init();
-    setting_items_init_with_storage(&test_storage);
 }
 
 void tearDown(void)
@@ -116,8 +117,6 @@ void test_setting_items_init_with_storage(void)
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_init_with_storage function");
     LOG_MESSAGE();
-
-    rams_init();
 
     esp_err_t result = setting_items_init_with_storage(&test_storage);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
@@ -820,6 +819,158 @@ void test_setting_items_type_to_string(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE("UNKNOWN", type_string, "Should return 'UNKNOWN' for negative type value");
 }
 
+// Тестируем get_dynamic_ap_pass_default и get_dynamic_hostname_default в случае, когда esp_read_mac возвращает ошибку,
+// а затем повторный вызов setting_items_init_with_storage
+void test_dynamic_defaults_generation_mac_error(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test dynamic defaults generation - MAC error");
+    LOG_MESSAGE();
+
+    mock_esp_read_mac_return = ESP_FAIL;
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char buffer[SETTING_ITEM_MAX_STR_LEN];
+    memset(buffer, 0, sizeof(buffer));
+
+    result = setting_items_read(KEY_AP_PASS, buffer);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("wirenboard", buffer, "Should return fallback password when MAC read fails");
+
+    memset(buffer, 0, sizeof(buffer));
+    result = setting_items_read(KEY_HOSTNAME, buffer);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("WB-MGE", buffer, "Should return fallback hostname when MAC read fails");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_read_mac_called, "esp_read_mac should be called twice");
+
+    // Повторный вызов get_dynamic_ap_pass_default и get_dynamic_hostname_default не должен вызывать esp_read_mac снова
+    rams_init();
+    result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_read_mac_called, "esp_read_mac should not be called again");
+}
+
+// Тестируем генерацию пароля на основе MAC-адреса, когда MAC-адрес короткий
+void test_generate_mac_based_password_short_mac(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test generate_mac_based_password - short MAC address");
+    LOG_MESSAGE();
+
+    memset(mock_mac_address, 0, MAC_ADDRESS_SIZE);
+    mock_mac_address[MAC_ADDRESS_SIZE - 1] = 1;
+
+    setting_items_init_with_storage(&test_storage);
+
+    char buffer[SETTING_ITEM_MAX_STR_LEN];
+    memset(buffer, 0, sizeof(buffer));
+
+    esp_err_t ret = setting_items_read(KEY_AP_PASS, buffer);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "Reading generated AP password should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("0010000001", buffer, "Generated password should match expected value");
+    TEST_ASSERT_EQUAL_MESSAGE(10, strlen(buffer), "Generated password length should be 10");
+}
+
+// Тестируем функцию read_wifi_pass_from_efuse с разной длиной пароля в efuse
+void test_read_wifi_pass_from_efuse_7_symbols(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test read_wifi_pass_from_efuse - various lengths");
+    LOG_MESSAGE();
+
+    mock_esp_efuse_set_wifi_password("testpas");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char buffer[SETTING_ITEM_MAX_STR_LEN];
+    memset(buffer, 0, sizeof(buffer));
+
+    result = setting_items_read(KEY_AP_PASS, buffer);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return MAC-based password when eFuse password is too short");
+}
+
+void test_read_wifi_pass_from_efuse_8_symbols(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test read_wifi_pass_from_efuse - various lengths");
+    LOG_MESSAGE();
+
+    mock_esp_efuse_set_wifi_password("testpass");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char buffer[SETTING_ITEM_MAX_STR_LEN];
+    memset(buffer, 0, sizeof(buffer));
+
+    result = setting_items_read(KEY_AP_PASS, buffer);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass", buffer, "Should return eFuse password when length is valid");
+}
+
+void test_read_wifi_pass_from_efuse_12_symbols(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test read_wifi_pass_from_efuse - various lengths");
+    LOG_MESSAGE();
+
+    mock_esp_efuse_set_wifi_password("testpass1234");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char buffer[SETTING_ITEM_MAX_STR_LEN];
+    memset(buffer, 0, sizeof(buffer));
+
+    result = setting_items_read(KEY_AP_PASS, buffer);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass1234", buffer, "Should return eFuse password when length is valid");
+}
+
+void test_read_wifi_pass_from_efuse_13_symbols(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test read_wifi_pass_from_efuse - various lengths");
+    LOG_MESSAGE();
+
+    mock_esp_efuse_set_wifi_password("testpass12345");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char buffer[SETTING_ITEM_MAX_STR_LEN];
+    memset(buffer, 0, sizeof(buffer));
+
+    result = setting_items_read(KEY_AP_PASS, buffer);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass1234", buffer, "Should return truncated eFuse password when length exceeds max");
+}
+
+void test_read_wifi_pass_from_efuse_read_error(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test read_wifi_pass_from_efuse - read error");
+    LOG_MESSAGE();
+
+    mock_esp_efuse_set_wifi_password("testpass1234");
+    mock_esp_efuse_read_block_return = ESP_ERR_INVALID_STATE;
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char buffer[SETTING_ITEM_MAX_STR_LEN];
+    memset(buffer, 0, sizeof(buffer));
+
+    result = setting_items_read(KEY_AP_PASS, buffer);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should return ESP_OK for successful read");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return MAC-based password when eFuse read fails");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -827,12 +978,14 @@ int main(void)
     RUN_TEST(test_setting_items_init_function);
     RUN_TEST(test_setting_items_init_with_storage);
     RUN_TEST(test_setting_items_array_contents);
+
     RUN_TEST(test_authentication_validators);
     RUN_TEST(test_port_validators);
     RUN_TEST(test_ip_validators);
     RUN_TEST(test_wifi_validators);
     RUN_TEST(test_serial_validators);
     RUN_TEST(test_bridge_and_bool_validators);
+
     RUN_TEST(test_setting_items_save_error_conditions);
     RUN_TEST(test_setting_items_read_success);
     RUN_TEST(test_setting_items_read_error_conditions);
@@ -844,6 +997,15 @@ int main(void)
     RUN_TEST(test_setting_items_get_default_value);
     RUN_TEST(test_setting_items_get_type);
     RUN_TEST(test_setting_items_type_to_string);
+
+    RUN_TEST(test_dynamic_defaults_generation_mac_error);
+    RUN_TEST(test_generate_mac_based_password_short_mac);
+
+    RUN_TEST(test_read_wifi_pass_from_efuse_7_symbols);
+    RUN_TEST(test_read_wifi_pass_from_efuse_8_symbols);
+    RUN_TEST(test_read_wifi_pass_from_efuse_12_symbols);
+    RUN_TEST(test_read_wifi_pass_from_efuse_13_symbols);
+    RUN_TEST(test_read_wifi_pass_from_efuse_read_error);
 
     return UNITY_END();
 }

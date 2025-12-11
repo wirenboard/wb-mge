@@ -51,19 +51,13 @@ git clone git@github.com:wirenboard/wb-mge.git
 cd wb-mge
 ```
 
-### 3. Генерация файла ключей
+### 3. Сборка прошивки для внутреннего использования
 
-``` bash
-cd copy_protection
-./keygen.py --random --keys_file keys.txt
-```
-
-### 4. Сборка проекта
-
-Для полной сборки проекта (юниттесты + frontend + прошивка):
+При сборке для внутреннего использования отключается защита от копирования, статус защиты присваивается UNKNOWN.
+Для полной внутренней сборки проекта (frontend + прошивка):
 
 ```bash
-make
+make build-internal
 ```
 
 Если компоненты собираются отдельно, то сначала соберите frontend:
@@ -75,10 +69,8 @@ make build-frontend
 Затем прошивку:
 
 ```bash
-make build-idf-project
+make build-idf-project-internal
 ```
-
-**Важно:** Использование `idf.py build` напрямую НЕ встроит информацию о версии в бинарник. Всегда используйте `make build-idf-project` для production сборок.
 
 ## Сборка с использованием Docker
 
@@ -109,20 +101,14 @@ docker run --rm -it -v $(pwd):/root/esp/project wb-mge-builder
 
 ### 3. Сборка внутри контейнера
 
-Сборка внутри контейнера не отличается от обычной сборки (см. раздел "Инструкции по ручной сборке", пункты 3 и 4).
+Сборка внутри контейнера не отличается от обычной сборки (см. раздел "Инструкции по ручной сборке", пункт 3).
 
 ### Альтернатива: сборка одной командой
 
 Можно собрать проект, не заходя в контейнер:
 
 ```bash
-docker run --rm -v $(pwd):/root/esp/project wb-mge-builder bash -c "cd copy_protection && ./keygen.py --random --keys_file keys.txt && cd .. && make"
-```
-
-Или если ключи уже сгенерированы:
-
-```bash
-docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
+docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make build-internal
 ```
 
 ## Прошивка устройства

@@ -1,3 +1,10 @@
+2025-12-11 Ilia Skochilov <ilia.skochilov@wirenboard.com>
+
+    * version:  1.0.3
+    * added:    read default WiFi password from eFuse
+    * added:    unittests for setting_items eFuse reading
+    * added:    internal-use firmware build target
+
 2025-12-08 Victor Vedenin <victor.vedenin@wirenboard.com>
 
     * version:  1.0.2
