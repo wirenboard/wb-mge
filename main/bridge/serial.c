@@ -41,31 +41,46 @@ static const char *TAG = "serial";
 static bool copy_protection = false;
 
 
-static void handle_uart_event(serial_desc_t *desc, uart_event_t event, uint8_t buffer[SERIAL_BUF_SIZE])
+typedef struct {
+    uint8_t* data;
+    size_t data_len;
+} buffer_ctx_t;
+
+
+static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ctx_t* buffer_ctx)
 {
     switch (event.type) {
         case UART_DATA:
-            if (SERIAL_BUF_SIZE < event.size) {
-                ESP_LOGE(TAG, "UART[%d] receive buffer is too small, size: %u, expected: >= %zu", desc->port_num, SERIAL_BUF_SIZE, event.size);
+            size_t free_space = SERIAL_BUF_SIZE - buffer_ctx->data_len;
+            if (free_space < event.size) {
+                ESP_LOGE(TAG, "UART[%d] receive buffer overflow, free: %zu, expected: >= %zu", desc->port_num, free_space, event.size);
+                uart_flush_input(desc->port_num);
+                xQueueReset(desc->uart_queue);
+                buffer_ctx->data_len = 0;
                 break;
             }
-            memset(buffer, 0, SERIAL_BUF_SIZE);
-            ESP_LOGD(TAG, "UART[%d] DATA: %zu", desc->port_num, event.size);
-            uart_read_bytes(desc->port_num, buffer, event.size, portMAX_DELAY);
-            ESP_LOG_BUFFER_HEX_LEVEL(TAG, buffer, event.size, ESP_LOG_DEBUG);
-            if (!copy_protection) {
-                desc->receive_handler(desc, buffer, event.size);
+            ESP_LOGD(TAG, "UART[%d] DATA: %zu, TIMEOUT: %u", desc->port_num, event.size, (unsigned)event.timeout_flag);
+            uart_read_bytes(desc->port_num, &buffer_ctx->data[buffer_ctx->data_len], event.size, portMAX_DELAY);
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG, &buffer_ctx->data[buffer_ctx->data_len], event.size, ESP_LOG_DEBUG);
+            buffer_ctx->data_len += event.size;
+            if (event.timeout_flag) {
+                if (!copy_protection) {
+                    desc->receive_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
+                    buffer_ctx->data_len = 0;
+                }
             }
             break;
         case UART_FIFO_OVF:
             ESP_LOGW(TAG, "UART[%d] HW fifo overflow", desc->port_num);
             uart_flush_input(desc->port_num);
             xQueueReset(desc->uart_queue);
+            buffer_ctx->data_len = 0;
             break;
         case UART_BUFFER_FULL:
             ESP_LOGW(TAG, "UART[%d] ring buffer full", desc->port_num);
             uart_flush_input(desc->port_num);
             xQueueReset(desc->uart_queue);
+            buffer_ctx->data_len = 0;
             break;
         case UART_BREAK:
             ESP_LOGD(TAG, "UART[%d] rx break", desc->port_num);
@@ -92,13 +107,19 @@ static void uart_event_task(void *pvParameters)
     ESP_LOGD(TAG, "UART[%d] event task started", desc->port_num);
 
     uint8_t *dtmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
+    buffer_ctx_t buffer_ctx = {
+        .data = dtmp,
+        .data_len = 0
+    };
+
     uart_flush_input(desc->port_num);
+    xQueueReset(desc->uart_queue);
 
     while(1) {
         uart_event_t event;
         BaseType_t result = xQueueReceive(desc->uart_queue, (void *)&event, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
         if (result == pdPASS) {
-            handle_uart_event(desc, event, dtmp);
+            handle_uart_event(desc, event, &buffer_ctx);
         }
 
         EventBits_t bits = xEventGroupWaitBits(desc->event_group, EVENT_TASK_EXIT_REQ, pdFALSE, pdTRUE, 0);
@@ -142,6 +163,10 @@ static esp_err_t configure_uart_parameters(serial_config_t *serial_config)
         ESP_LOGE(TAG, "Error during UART mode set");
         return err;
     }
+
+    // Force enable Rx timeout events generation to be able to detect
+    // the end of a packet if its length is equal to the UART receive buffer size
+    uart_set_always_rx_timeout(serial_config->port_num, true);
 
     err = uart_set_rx_timeout(serial_config->port_num, SERIAL_READ_TOUT);
     if (err != ESP_OK) {
