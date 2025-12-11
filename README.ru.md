@@ -71,8 +71,6 @@ make build-frontend
 make build-idf-project
 ```
 
-**Важно:** Использование `idf.py build` напрямую НЕ встроит информацию о версии в бинарник. Всегда используйте `make build-idf-project` для production сборок.
-
 ## Сборка с использованием Docker
 
 Docker позволяет собирать проект без установки ESP-IDF и Node.js на хост-систему.

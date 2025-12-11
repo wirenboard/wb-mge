@@ -68,8 +68,6 @@ Then build the firmware:
 make build-idf-project
 ```
 
-**Important:** Using `idf.py build` directly will NOT embed version information into the binary. Always use `make build-idf-project` for production builds.
-
 ## Building with Docker
 
 Docker allows you to build the project without installing ESP-IDF and Node.js on your host system.
@@ -99,7 +97,7 @@ docker run --rm -it -v $(pwd):/root/esp/project wb-mge-builder
 
 ### 3. Build Inside Container
 
-Building inside the container is the same as manual building (see "Manual Build Instructions" section, steps 3 and 4).
+Building inside the container is the same as manual building (see "Manual Build Instructions" section, step 3).
 
 ### Alternative: One-Command Build
 
