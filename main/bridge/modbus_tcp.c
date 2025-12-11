@@ -24,6 +24,8 @@
 #define MODBUS_RTU_RECV_RESERVE_LEN         10              // Reserve for packet reception with silence interval and Fast Modbus arbitration (frames)
 #define RS485_BITS_PER_FRAME                11              // Number of bits in UART frame (8 data bits + start bit + 2 stop bits)
 
+#define MODBUS_RTU_RECV_TOUT_RESERVE_MS     30              // Extra reserve for packet reception waiting timeout (compensate FreeRTOS and logs lag)
+
 #define WAIT_LOOP_DELAY_MS                  100             // Delay in wait loops, needed to periodically check exit request flag
 
 
@@ -357,6 +359,7 @@ static unsigned calc_response_timeout_ticks(unsigned baudrate)
 
     unsigned bytes_rate = baudrate / RS485_BITS_PER_FRAME;
     unsigned timeout_ms = ((1000 * max_resp_len) + bytes_rate - 1) / bytes_rate;
+    timeout_ms += MODBUS_RTU_RECV_TOUT_RESERVE_MS;
     unsigned timeout_ticks = (timeout_ms * configTICK_RATE_HZ + 999) / 1000;
 
     return timeout_ticks;
