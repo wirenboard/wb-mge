@@ -131,12 +131,12 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    ESP_LOGD(TAG, "Port[%d]: Processing data from serial port", ctx->index + 1);
+    ESP_LOGD(TAG, "Port[%d]: Processing data from serial port, truncated length: %zu", ctx->index + 1, truncated_len);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, truncated_len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);
 
-    esp_err_t check_res = modbus_rtu_check_response(data, len, NULL);
+    esp_err_t check_res = modbus_rtu_check_response(data, truncated_len, NULL);
     if (check_res != ESP_OK) {
         return;
     }
