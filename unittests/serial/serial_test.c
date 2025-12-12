@@ -219,6 +219,21 @@ static void verify_uart_set_mode_args(void)
     );
 }
 
+static void verify_uart_set_always_rx_timeout_args(void)
+{
+    TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        uart_set_always_rx_timeout_data.uart_num,
+        "uart_set_always_rx_timeout should be called with correct UART port number"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        true,
+        uart_set_always_rx_timeout_data.always_rx_timeout_en,
+        "uart_set_always_rx_timeout should be called with the always_rx_timeout_en flag set"
+    );
+}
+
 static void verify_uart_set_rx_timeout_args(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(
@@ -407,6 +422,7 @@ static void verify_serial_init_calls(
     int expected_uart_param_config,
     int expected_uart_set_pin,
     int expected_uart_set_mode,
+    int expected_uart_set_always_rx_timeout,
     int expected_uart_set_rx_timeout,
     int expected_uart_driver_delete,
     int expected_task_create,
@@ -435,6 +451,12 @@ static void verify_serial_init_calls(
         expected_uart_set_mode,
         mock_uart_set_mode_data.called,
         "uart_set_mode call count mismatch"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        expected_uart_set_always_rx_timeout,
+        uart_set_always_rx_timeout_data.called,
+        "uart_set_always_rx_timeout call count mismatch"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
@@ -472,7 +494,7 @@ void test_serial_init_null_config(void)
     serial_desc_t *desc = serial_init(NULL, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when config is NULL");
-    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0);
+    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0, 0);
     verify_malloc_tracking(0, 0);
 }
 
@@ -489,7 +511,7 @@ void test_serial_init_null_handler(void)
     serial_desc_t *desc = serial_init(&config, NULL);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when handler is NULL");
-    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0);
+    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0, 0);
     verify_malloc_tracking(0, 0);
 }
 
@@ -508,7 +530,7 @@ void test_serial_init_memory_allocation_failure(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL on memory allocation failure");
-    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0);
+    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0, 0);
     verify_malloc_tracking(0, 0);
 }
 
@@ -528,7 +550,7 @@ void test_serial_init_event_group_create_failure(void)
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when xEventGroupCreate fails");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupCreate_data.called, "xEventGroupCreate should be called once");
-    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0);
+    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0, 0);
     verify_malloc_tracking(1, 1);
 
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
@@ -553,7 +575,7 @@ void test_serial_init_uart_driver_install_failure(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when uart_driver_install fails");
-    verify_serial_init_calls(1, 0, 0, 0, 0, 0, 0, 0);
+    verify_serial_init_calls(1, 0, 0, 0, 0, 0, 0, 0, 0);
     verify_event_group_create_delete_handlers();
     verify_uart_driver_install_args();
     verify_malloc_tracking(1, 1);
@@ -574,7 +596,7 @@ void test_serial_init_uart_param_config_failure(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when uart_param_config fails");
-    verify_serial_init_calls(1, 1, 0, 0, 0, 1, 0, 0);
+    verify_serial_init_calls(1, 1, 0, 0, 0, 0, 1, 0, 0);
     verify_event_group_create_delete_handlers();
     verify_uart_driver_install_args();
     verify_uart_param_config_args(MOCK_DEFAULT_BAUDRATE, UART_DATA_8_BITS, UART_PARITY_DISABLE, UART_STOP_BITS_2);
@@ -596,7 +618,7 @@ void test_serial_init_uart_set_pin_failure(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when uart_set_pin fails");
-    verify_serial_init_calls(1, 1, 1, 0, 0, 1, 0, 0);
+    verify_serial_init_calls(1, 1, 1, 0, 0, 0, 1, 0, 0);
     verify_event_group_create_delete_handlers();
     verify_uart_driver_install_args();
     verify_uart_param_config_args(MOCK_DEFAULT_BAUDRATE, UART_DATA_8_BITS, UART_PARITY_DISABLE, UART_STOP_BITS_2);
@@ -619,7 +641,7 @@ void test_serial_init_uart_set_mode_failure(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when uart_set_mode fails");
-    verify_serial_init_calls(1, 1, 1, 1, 0, 1, 0, 0);
+    verify_serial_init_calls(1, 1, 1, 1, 0, 0, 1, 0, 0);
     verify_event_group_create_delete_handlers();
     verify_uart_driver_install_args();
     verify_uart_param_config_args(MOCK_DEFAULT_BAUDRATE, UART_DATA_8_BITS, UART_PARITY_DISABLE, UART_STOP_BITS_2);
@@ -643,12 +665,13 @@ void test_serial_init_uart_set_rx_timeout_failure(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when uart_set_rx_timeout fails");
-    verify_serial_init_calls(1, 1, 1, 1, 1, 1, 0, 0);
+    verify_serial_init_calls(1, 1, 1, 1, 1, 1, 1, 0, 0);
     verify_event_group_create_delete_handlers();
     verify_uart_driver_install_args();
     verify_uart_param_config_args(MOCK_DEFAULT_BAUDRATE, UART_DATA_8_BITS, UART_PARITY_DISABLE, UART_STOP_BITS_2);
     verify_uart_set_pin_args(GPIO_NUM_10, GPIO_NUM_9, GPIO_NUM_4);
     verify_uart_set_mode_args();
+    verify_uart_set_always_rx_timeout_args();
     verify_uart_set_rx_timeout_args();
     verify_malloc_tracking(1, 1);
 }
@@ -668,12 +691,13 @@ void test_serial_init_task_create_failure(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when task creation fails");
-    verify_serial_init_calls(1, 1, 1, 1, 1, 1, 1, 0);
+    verify_serial_init_calls(1, 1, 1, 1, 1, 1, 1, 1, 0);
     verify_event_group_create_delete_handlers();
     verify_uart_driver_install_args();
     verify_uart_param_config_args(MOCK_DEFAULT_BAUDRATE, UART_DATA_8_BITS, UART_PARITY_DISABLE, UART_STOP_BITS_2);
     verify_uart_set_pin_args(GPIO_NUM_10, GPIO_NUM_9, GPIO_NUM_4);
     verify_uart_set_mode_args();
+    verify_uart_set_always_rx_timeout_args();
     verify_uart_set_rx_timeout_args();
     verify_task_created();
     verify_malloc_tracking(1, 1);
@@ -694,11 +718,12 @@ void test_serial_init_success_no_task_execution(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
 
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-    verify_serial_init_calls(1, 1, 1, 1, 1, 0, 1, 1);
+    verify_serial_init_calls(1, 1, 1, 1, 1, 1, 0, 1, 1);
     verify_uart_driver_install_args();
     verify_uart_param_config_args(MOCK_DEFAULT_BAUDRATE, UART_DATA_8_BITS, UART_PARITY_DISABLE, UART_STOP_BITS_2);
     verify_uart_set_pin_args(GPIO_NUM_10, GPIO_NUM_9, GPIO_NUM_4);
     verify_uart_set_mode_args();
+    verify_uart_set_always_rx_timeout_args();
     verify_uart_set_rx_timeout_args();
     verify_task_created();
     verify_xEventGroupWaitBits_args(0, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
@@ -724,7 +749,7 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
-    verify_serial_init_calls(1, 1, 1, 1, 1, 0, 1, 5);
+    verify_serial_init_calls(1, 1, 1, 1, 1, 1, 0, 1, 5);
     verify_xEventGroupWaitBits_args(0, EVENT_TASK_EXIT_REQ, pdFALSE, pdTRUE, 0);
     verify_xEventGroupWaitBits_args(4, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_xEventGroupSetBits_data.called, "xEventGroupSetBits should be called twice");
@@ -755,11 +780,11 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_DATA
-void test_serial_init_success_with_uart_data_event(void)
+// Тестируем получение события UART_DATA с установленным флагом тайм-аута приема
+void test_serial_init_success_with_uart_data_event_tout(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_DATA event");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_DATA event - timeout_flag is set");
     LOG_MESSAGE();
 
     serial_config_t config;
@@ -767,9 +792,12 @@ void test_serial_init_success_with_uart_data_event(void)
 
     size_t size_to_read = 10;
 
-    uart_event_t event = {.type = UART_DATA, .size = size_to_read, .timeout_flag = false};
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    uart_event_t event = {.type = UART_DATA, .size = size_to_read, .timeout_flag = true};
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -804,6 +832,150 @@ void test_serial_init_success_with_uart_data_event(void)
     );
 }
 
+// Тестируем получение события UART_DATA со сброшенным флагом тайм-аута приема
+void test_serial_init_success_with_uart_data_event_no_tout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_DATA event - timeout_flag is not set");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    size_t size_to_read = 10;
+
+    uart_event_t event = {.type = UART_DATA, .size = size_to_read, .timeout_flag = false};
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    verify_uart_read_bytes_args(1, size_to_read, portMAX_DELAY);
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        0,
+        mock_receive_handler_data.called,
+        "Receive handler should not be called when the timeout_flag is not set"
+    );
+}
+
+// Тестируем получение двух событий UART_DATA со сброшенным и установленным флагом тайм-аута приема
+void test_serial_init_success_with_two_uart_data_events(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with two UART_DATA events - timeout_flag is not set and then is set");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    void* events_arr[2] = {&event_1, &event_2};
+    size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 2;
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 2;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    verify_uart_read_bytes_args(2, 20, portMAX_DELAY);  // Last (second) read length should be 20 bytes
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        1,
+        mock_receive_handler_data.called,
+        "Receive handler should be called once"
+    );
+
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        desc,
+        mock_receive_handler_data.desc,
+        "Receive handler should be called with correct serial descriptor"
+    );
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        30,
+        mock_receive_handler_data.len,
+        "Receive handler should be called with correct data length"
+    );
+
+    char expected_data[30];
+    memcpy(expected_data, MOCK_DATA_FROM_UART_READ, 10);
+    memcpy(&expected_data[10], MOCK_DATA_FROM_UART_READ, 20);
+
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        expected_data,
+        mock_receive_handler_data.data,
+        30,
+        "Receive handler should be called with correct data"
+    );
+}
+
+// Тестируем получение трех событий UART_DATA со сброшенным и дважды с установленным флагом тайм-аута приема
+void test_serial_init_success_with_three_uart_data_events(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with three UART_DATA events - timeout_flag is not set and then is set twice");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    uart_event_t event_3 = {.type = UART_DATA, .size = 15, .timeout_flag = true};
+    void* events_arr[3] = {&event_1, &event_2, &event_3};
+    size_t event_size_arr[3] = {sizeof(event_1), sizeof(event_2), sizeof(event_3)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 3;
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    verify_uart_read_bytes_args(3, 15, portMAX_DELAY);  // Last (third) read length should be 15 bytes
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        2,
+        mock_receive_handler_data.called,
+        "Receive handler should be called once"
+    );
+
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        desc,
+        mock_receive_handler_data.desc,
+        "Receive handler should be called with correct serial descriptor"
+    );
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        15,
+        mock_receive_handler_data.len,
+        "Receive handler should be called with correct data length on second call"
+    );
+
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        MOCK_DATA_FROM_UART_READ,
+        mock_receive_handler_data.data,
+        15,
+        "Receive handler should be called with correct data on second call"
+    );
+}
+
 // Тестируем получение события UART_DATA с включенной защитой копирования
 void test_serial_init_success_with_uart_data_event_copy_protection(void)
 {
@@ -816,9 +988,12 @@ void test_serial_init_success_with_uart_data_event_copy_protection(void)
 
     size_t size_to_read = 10;
 
-    uart_event_t event = {.type = UART_DATA, .size = size_to_read, .timeout_flag = false};
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    uart_event_t event = {.type = UART_DATA, .size = size_to_read, .timeout_flag = true};
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -836,6 +1011,49 @@ void test_serial_init_success_with_uart_data_event_copy_protection(void)
     );
 }
 
+// Тестируем получение события UART_DATA с размером равным максимальному размеру буфера
+void test_serial_init_success_with_uart_data_event_buffer_max_size(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with UART_DATA event - maximum buffer size");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event = {.type = UART_DATA, .size = SERIAL_BUF_SIZE, .timeout_flag = true};
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    verify_uart_read_bytes_args(1, SERIAL_BUF_SIZE, portMAX_DELAY);
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        1,
+        mock_receive_handler_data.called,
+        "Receive handler should be called once"
+    );
+
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        desc,
+        mock_receive_handler_data.desc,
+        "Receive handler should be called with correct serial descriptor"
+    );
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        SERIAL_BUF_SIZE,
+        mock_receive_handler_data.len,
+        "Receive handler should be called with correct data length"
+    );
+}
+
 // Тестируем получение события UART_DATA с размером больше буфера
 void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
 {
@@ -846,9 +1064,12 @@ void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
     serial_config_t config;
     init_default_config(&config);
 
-    uart_event_t event = {.type = UART_DATA, .size = SERIAL_BUF_SIZE + 100, .timeout_flag = false};
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    uart_event_t event = {.type = UART_DATA, .size = SERIAL_BUF_SIZE + 1, .timeout_flag = true};
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -856,7 +1077,43 @@ void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
+    verify_uart_flush_input_args(2);
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_xQueueReset_data.called, "xQueueReset should be called twice");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
+}
+
+// Тестируем получение двух событий UART_DATA с переполнением буфера на втором событии
+void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with two UART_DATA events - buffer overflow on second event");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = SERIAL_BUF_SIZE - 10 + 1, .timeout_flag = true};
+    void* events_arr[2] = {&event_1, &event_2};
+    size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 2;
+
+    mock_xTaskCreate_data.self_execution = true;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 2;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    verify_uart_read_bytes_args(1, 10, portMAX_DELAY);  // uart_read_bytes() should be called only once for first event
+
+    verify_uart_flush_input_args(2);
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_xQueueReset_data.called, "xQueueReset should be called twice");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
@@ -871,8 +1128,11 @@ void test_serial_init_success_with_uart_fifo_ovf_event(void)
     init_default_config(&config);
 
     uart_event_t event = {.type = UART_FIFO_OVF, .size = 0, .timeout_flag = false};
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -881,7 +1141,7 @@ void test_serial_init_success_with_uart_fifo_ovf_event(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
     verify_uart_flush_input_args(2);
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_xQueueReset_data.called, "xQueueReset should be called twice");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
@@ -898,8 +1158,11 @@ void test_serial_init_success_with_uart_buffer_full_event(void)
     init_default_config(&config);
 
     uart_event_t event = {.type = UART_BUFFER_FULL, .size = 0, .timeout_flag = false};
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -908,7 +1171,7 @@ void test_serial_init_success_with_uart_buffer_full_event(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
     verify_uart_flush_input_args(2);
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_xQueueReset_data.called, "xQueueReset should be called twice");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
@@ -925,8 +1188,11 @@ void test_serial_init_success_with_uart_break_event(void)
     init_default_config(&config);
 
     uart_event_t event = {.type = UART_BREAK, .size = 0, .timeout_flag = false};
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -935,6 +1201,7 @@ void test_serial_init_success_with_uart_break_event(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
     verify_uart_flush_input_args(1);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called only once");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
@@ -950,8 +1217,11 @@ void test_serial_init_success_with_uart_parity_err_event(void)
     init_default_config(&config);
 
     uart_event_t event = {.type = UART_PARITY_ERR, .size = 0, .timeout_flag = false};
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -960,6 +1230,7 @@ void test_serial_init_success_with_uart_parity_err_event(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
     verify_uart_flush_input_args(1);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called only once");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
@@ -975,8 +1246,11 @@ void test_serial_init_success_with_uart_frame_err_event(void)
     init_default_config(&config);
 
     uart_event_t event = {.type = UART_FRAME_ERR, .size = 0, .timeout_flag = false};
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -985,6 +1259,7 @@ void test_serial_init_success_with_uart_frame_err_event(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
     verify_uart_flush_input_args(1);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called only once");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
@@ -1000,8 +1275,11 @@ void test_serial_init_success_with_unknown_uart_event(void)
     init_default_config(&config);
 
     uart_event_t event = {.type = 999, .size = 0, .timeout_flag = false};  // Unknown event type
-    mock_xQueueReceive_data.pvBuffer = &event;
-    mock_xQueueReceive_data.buffer_size = sizeof(event);
+    void* events_arr[1] = {&event};
+    size_t event_size_arr[1] = {sizeof(event)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 1;
 
     mock_xTaskCreate_data.self_execution = true;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
@@ -1010,6 +1288,7 @@ void test_serial_init_success_with_unknown_uart_event(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
     verify_uart_flush_input_args(1);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xQueueReset_data.called, "xQueueReset should be called only once");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
@@ -1282,9 +1561,14 @@ int main(void)
     RUN_TEST(test_serial_init_success_no_task_execution);
     RUN_TEST(test_serial_init_success_with_task_execution_no_uart_event);
 
-    RUN_TEST(test_serial_init_success_with_uart_data_event);
+    RUN_TEST(test_serial_init_success_with_uart_data_event_tout);
+    RUN_TEST(test_serial_init_success_with_uart_data_event_no_tout);
+    RUN_TEST(test_serial_init_success_with_two_uart_data_events);
+    RUN_TEST(test_serial_init_success_with_three_uart_data_events);
     RUN_TEST(test_serial_init_success_with_uart_data_event_copy_protection);
+    RUN_TEST(test_serial_init_success_with_uart_data_event_buffer_max_size);
     RUN_TEST(test_serial_init_success_with_uart_data_event_buffer_too_small);
+    RUN_TEST(test_serial_init_success_with_two_uart_data_events_buffer_overflow);
     RUN_TEST(test_serial_init_success_with_uart_fifo_ovf_event);
     RUN_TEST(test_serial_init_success_with_uart_buffer_full_event);
     RUN_TEST(test_serial_init_success_with_uart_break_event);
