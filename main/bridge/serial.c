@@ -42,18 +42,18 @@ static bool copy_protection = false;
 
 
 typedef struct {
-    uint8_t* data;
+    uint8_t *data;
     size_t data_len;
 } buffer_ctx_t;
 
 
-static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ctx_t* buffer_ctx)
+static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ctx_t *buffer_ctx)
 {
     switch (event.type) {
         case UART_DATA:
-            size_t free_space = SERIAL_BUF_SIZE - buffer_ctx->data_len;
-            if (free_space < event.size) {
-                ESP_LOGE(TAG, "UART[%d] receive buffer overflow, free: %zu, expected: >= %zu", desc->port_num, free_space, event.size);
+            int free_space = (int)SERIAL_BUF_SIZE - (int)buffer_ctx->data_len;
+            if (free_space < (int)event.size) {
+                ESP_LOGE(TAG, "UART[%d] receive buffer overflow, free: %d, expected: >= %zu", desc->port_num, free_space, event.size);
                 uart_flush_input(desc->port_num);
                 xQueueReset(desc->uart_queue);
                 buffer_ctx->data_len = 0;
