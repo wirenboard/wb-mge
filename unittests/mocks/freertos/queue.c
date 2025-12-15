@@ -94,9 +94,17 @@ BaseType_t xQueueReceive(QueueHandle_t xQueue, void *const pvBuffer, TickType_t 
     mock_xQueueReceive_data.ticks = xTicksToWait;
 
     // If mock data is provided, copy it directly to pvBuffer
-    if (mock_xQueueReceive_data.pvBuffer != NULL) {
-        memcpy(pvBuffer, mock_xQueueReceive_data.pvBuffer, mock_xQueueReceive_data.buffer_size);
-        return pdPASS;
+    if (mock_xQueueReceive_data.array_len && mock_xQueueReceive_data.buffer_size_arr && mock_xQueueReceive_data.pvBuffer_arr) {
+        if (mock_xQueueReceive_data.called <= mock_xQueueReceive_data.array_len) {
+            memcpy(
+                pvBuffer,
+                mock_xQueueReceive_data.pvBuffer_arr[mock_xQueueReceive_data.called - 1],
+                mock_xQueueReceive_data.buffer_size_arr[mock_xQueueReceive_data.called - 1]
+            );
+            return pdPASS;
+        } else {
+            return pdFAIL;
+        }
     }
 
     if (xQueue->count == 0) {

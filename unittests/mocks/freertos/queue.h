@@ -30,8 +30,9 @@ typedef struct {
     int called;
     QueueHandle_t handle;
     TickType_t ticks;
-    void *pvBuffer;
-    size_t buffer_size;
+    void **pvBuffer_arr;
+    size_t *buffer_size_arr;
+    size_t array_len;
 } mock_xQueueReceive_t;
 
 typedef struct {

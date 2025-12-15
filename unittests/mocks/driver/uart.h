@@ -8,7 +8,7 @@
 #include "freertos/queue.h"
 #include "esp_err.h"
 
-#define MOCK_DATA_FROM_UART_READ        "HELLO_WORLD_FROM_MGE"
+#define MOCK_DATA_FROM_UART_READ        "HELLO_WORLD_FROM_MGE_UART_MOCK_DATA_BUFFER"
 
 #define UART_PIN_NO_CHANGE              (-1)
 
@@ -105,6 +105,7 @@ esp_err_t uart_set_rx_timeout(uart_port_t uart_num, const uint8_t tout_thresh);
 esp_err_t uart_wait_tx_done(uart_port_t uart_num, TickType_t ticks_to_wait);
 int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t ticks_to_wait);
 int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size);
+void uart_set_always_rx_timeout(uart_port_t uart_num, bool always_rx_timeout_en);
 
 typedef struct {
     int called;
@@ -180,6 +181,12 @@ typedef struct {
     int return_value;
 } mock_uart_write_bytes_t;
 
+typedef struct {
+    int called;
+    uart_port_t uart_num;
+    bool always_rx_timeout_en;
+} uart_set_always_rx_timeout_t;
+
 extern mock_uart_flush_input_t mock_uart_flush_input_data;
 extern mock_uart_driver_install_t mock_uart_driver_install_data;
 extern mock_uart_driver_delete_t mock_uart_driver_delete_data;
@@ -190,5 +197,6 @@ extern mock_uart_set_rx_timeout_t mock_uart_set_rx_timeout_data;
 extern mock_uart_wait_tx_done_t mock_uart_wait_tx_done_data;
 extern mock_uart_read_bytes_t mock_uart_read_bytes_data;
 extern mock_uart_write_bytes_t mock_uart_write_bytes_data;
+extern uart_set_always_rx_timeout_t uart_set_always_rx_timeout_data;
 
 void mock_uart_reset(void);
