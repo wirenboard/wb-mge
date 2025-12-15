@@ -12,8 +12,7 @@
 #define MODBUS_RTU_CRC_BASE                         0xFFFF
 #define MODBUS_RTU_CRC16_LEN                        sizeof(uint16_t)
 #define MODBUS_RTU_REQUEST_MIN_LEN                  5
-#define MODBUS_RTU_NORMAL_RESPONSE_MIN_LEN          6
-#define MODBUS_RTU_EXCEPTION_RESPONSE_MIN_LEN       5
+#define MODBUS_RTU_RESPONSE_MIN_LEN                 5
 
 #define MODBUS_TCP_REQUEST_MIN_LEN                  8
 #define MODBUS_TCP_TRANSACTION_ID                   0x1234
@@ -22,6 +21,11 @@ const uint8_t valid_rtu_request[] = { 0x9F, 0x03, 0x00, 0xC8, 0x00, 0x06, 0x58, 
 const size_t valid_rtu_request_len = sizeof(valid_rtu_request);
 const uint8_t valid_rtu_response[] = { 0x9F, 0x03, 0x06, 0x57, 0x42, 0x4D, 0x52, 0x36, 0x43, 0x54, 0x17 };
 const size_t valid_rtu_response_len = sizeof(valid_rtu_response);
+
+const uint8_t valid_short_rtu_request[] = { 0xFD, 0x46, 0x01, 0x13, 0x90 };
+const size_t valid_short_rtu_request_len = sizeof(valid_short_rtu_request);
+const uint8_t valid_short_rtu_response[] = { 0xFD, 0x46, 0x12, 0x52, 0x5D };
+const size_t valid_short_rtu_response_len = sizeof(valid_short_rtu_response);
 
 const uint8_t valid_tcp_request[] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x9F, 0x03, 0x00, 0xC8, 0x00, 0x06};
 const size_t valid_tcp_request_len = sizeof(valid_tcp_request);
@@ -88,16 +92,30 @@ void test_modbus_rtu_check_request_null(void)
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_request(NULL, valid_rtu_request_len));
 }
 
-void test_modbus_rtu_check_request_short_len(void)
+void test_modbus_rtu_check_request_short_len_fail(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_request - short length");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_request - short length fail");
     LOG_MESSAGE();
 
     const size_t short_len = MODBUS_RTU_REQUEST_MIN_LEN - 1;
     uint8_t buf[short_len];
-    memcpy(buf, valid_rtu_request, short_len);
+    memcpy(buf, valid_short_rtu_request, short_len);
+
+    // Make CRC16 valid
+    uint16_t* crc = (uint16_t*)&buf[short_len - MODBUS_RTU_CRC16_LEN];
+    *crc = modbus_crc16(buf, short_len - MODBUS_RTU_CRC16_LEN);
+
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_request(buf, short_len));
+}
+
+void test_modbus_rtu_check_request_short_len_ok(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_request - short length ok");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL(ESP_OK, modbus_rtu_check_request(valid_short_rtu_request, valid_short_rtu_request_len));
 }
 
 void test_modbus_rtu_check_request_exception_func(void)
@@ -151,25 +169,30 @@ void test_modbus_rtu_check_response_null(void)
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(NULL, valid_rtu_response_len, NULL));
 }
 
-void test_modbus_rtu_check_response_short_len(void)
+void test_modbus_rtu_check_response_short_len_fail(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_response - short length");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_response - short length fail");
     LOG_MESSAGE();
 
-    size_t short_len = MODBUS_RTU_NORMAL_RESPONSE_MIN_LEN - 1;
+    size_t short_len = MODBUS_RTU_RESPONSE_MIN_LEN - 1;
     uint8_t buf_reg[short_len];
-    memcpy(buf_reg, valid_rtu_request, short_len);
+    memcpy(buf_reg, valid_short_rtu_response, short_len);
+
+    // Make CRC16 valid
+    uint16_t* crc = (uint16_t*)&buf_reg[short_len - MODBUS_RTU_CRC16_LEN];
+    *crc = modbus_crc16(buf_reg, short_len - MODBUS_RTU_CRC16_LEN);
+
     TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(buf_reg, short_len, NULL));
+}
 
-    short_len = MODBUS_RTU_EXCEPTION_RESPONSE_MIN_LEN - 1;
-    uint8_t buf_exc[short_len];
-    memcpy(buf_exc, valid_rtu_request, short_len);
+void test_modbus_rtu_check_response_short_len_ok(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_response - short length ok");
+    LOG_MESSAGE();
 
-    mb_rtu_header_t* header = (mb_rtu_header_t*)buf_exc;
-    header->function |= MODBUS_EXCEPTION_FLAG;
-
-    TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(buf_exc, short_len, NULL));
+    TEST_ASSERT_EQUAL(ESP_OK, modbus_rtu_check_response(valid_short_rtu_response, valid_short_rtu_response_len, NULL));
 }
 
 void test_modbus_rtu_check_response_crc_mismatch(void)
@@ -395,13 +418,15 @@ int main(void)
     RUN_TEST(test_modbus_crc16_single_byte);
 
     RUN_TEST(test_modbus_rtu_check_request_null);
-    RUN_TEST(test_modbus_rtu_check_request_short_len);
+    RUN_TEST(test_modbus_rtu_check_request_short_len_fail);
+    RUN_TEST(test_modbus_rtu_check_request_short_len_ok);
     RUN_TEST(test_modbus_rtu_check_request_exception_func);
     RUN_TEST(test_modbus_rtu_check_request_crc_mismatch);
     RUN_TEST(test_modbus_rtu_check_request_valid);
 
     RUN_TEST(test_modbus_rtu_check_response_null);
-    RUN_TEST(test_modbus_rtu_check_response_short_len);
+    RUN_TEST(test_modbus_rtu_check_response_short_len_fail);
+    RUN_TEST(test_modbus_rtu_check_response_short_len_ok);
     RUN_TEST(test_modbus_rtu_check_response_crc_mismatch);
     RUN_TEST(test_modbus_rtu_check_response_slave_id_mismatch);
     RUN_TEST(test_modbus_rtu_check_response_func_mismatch);
