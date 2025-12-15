@@ -1,5 +1,5 @@
-2025-12-11 Maxim Toropov <maxim.toropov@wirenboard.com>
-    * version:  1.0.4-rc1
+2025-12-15 Maxim Toropov <maxim.toropov@wirenboard.com>
+    * version:  1.0.4
     * fix:      long packets (>120 bytes) splitting during receive from serial
     * fix:      FF tructaion for fast Modbus and minimum RTU response length
     * fix:      increase RTU response waiting timeout in Modbus TCP mode
