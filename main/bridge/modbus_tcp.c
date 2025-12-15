@@ -24,6 +24,8 @@
 #define MODBUS_RTU_RECV_RESERVE_LEN         10              // Reserve for packet reception with silence interval and Fast Modbus arbitration (frames)
 #define RS485_BITS_PER_FRAME                11              // Number of bits in UART frame (8 data bits + start bit + 2 stop bits)
 
+#define MODBUS_RTU_RECV_TOUT_RESERVE_MS     30              // Extra reserve for packet reception waiting timeout (compensate FreeRTOS and logs lag)
+
 #define WAIT_LOOP_DELAY_MS                  100             // Delay in wait loops, needed to periodically check exit request flag
 
 
@@ -131,12 +133,12 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    ESP_LOGD(TAG, "Port[%d]: Processing data from serial port", ctx->index + 1);
+    ESP_LOGD(TAG, "Port[%d]: Processing data from serial port, truncated length: %zu", ctx->index + 1, truncated_len);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, truncated_len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);
 
-    esp_err_t check_res = modbus_rtu_check_response(data, len, NULL);
+    esp_err_t check_res = modbus_rtu_check_response(data, truncated_len, NULL);
     if (check_res != ESP_OK) {
         return;
     }
@@ -357,6 +359,7 @@ static unsigned calc_response_timeout_ticks(unsigned baudrate)
 
     unsigned bytes_rate = baudrate / RS485_BITS_PER_FRAME;
     unsigned timeout_ms = ((1000 * max_resp_len) + bytes_rate - 1) / bytes_rate;
+    timeout_ms += MODBUS_RTU_RECV_TOUT_RESERVE_MS;
     unsigned timeout_ticks = (timeout_ms * configTICK_RATE_HZ + 999) / 1000;
 
     return timeout_ticks;

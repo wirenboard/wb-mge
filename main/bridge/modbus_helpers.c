@@ -9,8 +9,7 @@
 #define MODBUS_RTU_CRC_BASE                     0xFFFF
 #define MODBUS_RTU_CRC16_LEN                    sizeof(uint16_t)
 #define MODBUS_RTU_REQUEST_MIN_LEN              5
-#define MODBUS_RTU_EXCEPTION_RESPONSE_MIN_LEN   (sizeof(mb_rtu_header_t) + sizeof(uint8_t) + MODBUS_RTU_CRC16_LEN)
-#define MODBUS_RTU_NORMAL_RESPONSE_MIN_LEN      (sizeof(mb_rtu_header_t) + MODBUS_RTU_CRC16_LEN + sizeof(uint16_t))
+#define MODBUS_RTU_RESPONSE_MIN_LEN             5
 
 #define MODBUS_TCP_REQUEST_MIN_LEN              sizeof(mb_tcp_header_t)
 
@@ -75,15 +74,8 @@ esp_err_t modbus_rtu_check_response(const uint8_t *data, size_t len, const mb_rt
 
     mb_rtu_header_t* header = (mb_rtu_header_t*)data;
 
-    size_t min_len = 0;
-    if (header->function & MODBUS_EXCEPTION_FLAG) {
-        min_len = MODBUS_RTU_EXCEPTION_RESPONSE_MIN_LEN;
-    } else {
-        min_len = MODBUS_RTU_NORMAL_RESPONSE_MIN_LEN;
-    }
-
-    if (len < min_len) {
-        ESP_LOGW(TAG, "Incorrect RTU response length: %u, expected >= %u", (unsigned)len, (unsigned)min_len);
+    if (len < MODBUS_RTU_RESPONSE_MIN_LEN) {
+        ESP_LOGW(TAG, "Incorrect RTU response length: %u, expected >= %u", (unsigned)len, MODBUS_RTU_RESPONSE_MIN_LEN);
         return ESP_FAIL;
     }
 
