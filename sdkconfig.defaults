@@ -37,6 +37,14 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 
 #
+# ADC Calibration Configurations
+#
+# Disable ADC two-point calibration because really these calibrations
+# are are not present in the eFuse (first 4 bytes in block 3)
+# and to make it possible to use this space in the future for our purpuses
+CONFIG_ADC_CALI_EFUSE_TP_ENABLE=n
+
+#
 # Enable DEBUG log messages activated by esp_log_level_set()
 #
 # Only for debug purposes, must be disabled in production!
