@@ -153,6 +153,12 @@ esp_err_t voltage_monitor_init(voltage_monitor_callback_t callback_fn)
 
     vm_ctx.sys_voltage_callback_fn = callback_fn;
 
+    if (!vm_ctx.sys_voltage_is_ok) {
+        if (vm_ctx.sys_voltage_callback_fn != NULL) {
+            vm_ctx.sys_voltage_callback_fn(vm_ctx.sys_voltage, vm_ctx.sys_voltage_is_ok);
+        }
+    }
+
     BaseType_t result = xTaskCreate(voltage_monitor_task, "voltage_monitor_task", VM_TASK_STACK_SIZE, NULL, VM_TASK_PRIORITY, &task_handle);
     if (result != pdPASS) {
         vSemaphoreDelete(vm_ctx_mutex);
