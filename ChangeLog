@@ -1,7 +1,7 @@
 2025-12-22 Maxim Toropov <maxim.toropov@wirenboard.com>
-    * version:  1.0.5-rc1
+    * version:  1.0.5
     * fix:      disable device reboot when power supply voltage is outside the operating range
-    * fix:      disable two-point ADC calibration due to these values are not present in eFuse block 3
+    * fix:      disable two-point ADC calibration due to these values are not present in eFuse block 3 and may conflict with signature
 
 2025-12-15 Maxim Toropov <maxim.toropov@wirenboard.com>
     * version:  1.0.4
