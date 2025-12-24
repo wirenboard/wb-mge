@@ -1,7 +1,9 @@
 #pragma once
 
 #include <stdbool.h>
-#include "esp_io_expander.h"
+#include "esp_err.h"
 
-esp_err_t mio_control_init(esp_io_expander_handle_t io_expander);
+// Сan only be called after gpio_expander_init()
+esp_err_t mio_control_init(void);
+
 esp_err_t mio_control_io_bus_onoff(bool enabled);

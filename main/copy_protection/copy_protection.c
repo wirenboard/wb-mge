@@ -46,7 +46,6 @@ static_assert(SYSTEM_MONITOR_TASK_DELAY_MS_MIN > PORT_EXPANDER_TASK_DELAY_MS_MAX
 
 
 typedef struct {
-    esp_io_expander_handle_t port_expander;
     uint8_t hmac[HMAC_LEN];
     bool port_expander_check_ok;
     TickType_t prot_code_task_delay;
@@ -117,9 +116,8 @@ void copy_protection_init_keys(void)
 
 
 #if INTERNAL_BUILD
-    esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
+    esp_err_t copy_protection_init(void)
     {
-        (void)io_expander_handle;
         prot_ctx.prot_state = COPY_PROT_STATE_UNKNOWN;
         return ESP_OK;
     }
@@ -154,22 +152,13 @@ void copy_protection_init_keys(void)
         #endif
     }
 
-    esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle)
+    esp_err_t copy_protection_init(void)
     {
         prot_ctx.prot_state = COPY_PROT_STATE_UNKNOWN;
 
         if (!prot_ctx.keys_initialized) {
             copy_protection_init_keys();
         }
-
-        if (io_expander_handle == NULL) {
-            activate_copy_protection();
-            #if DEBUG_LOG_ENABLE
-                ESP_LOGE(TAG, "GPIO expander handle is NULL");
-            #endif
-            return ESP_FAIL;
-        }
-        prot_ctx.port_expander = io_expander_handle;
 
         uint8_t mac_addr[MAC_ADDR_LEN] = {0};
         esp_err_t ret = esp_efuse_mac_get_default(mac_addr);
@@ -192,7 +181,7 @@ void copy_protection_init_keys(void)
             return ESP_FAIL;
         }
 
-        prot_ctx.port_expander_check_ok = (port_expander_run_tests(io_expander_handle) == ESP_OK);
+        prot_ctx.port_expander_check_ok = (port_expander_run_tests() == ESP_OK);
         #if DEBUG_LOG_ENABLE
             if (!prot_ctx.port_expander_check_ok) {
                 ESP_LOGE(TAG, "Port expander tests failed");
@@ -263,26 +252,19 @@ void copy_protection_init_keys(void)
         #endif
         vTaskDelay(prot_ctx.port_exp_task_delay);
 
-        if (prot_ctx.port_expander != NULL) {
-            esp_err_t ret = port_expander_run_tests(prot_ctx.port_expander);
-            bool ok = (ret == ESP_OK) && prot_ctx.port_expander_check_ok;
+        esp_err_t ret = port_expander_run_tests();
+        bool ok = (ret == ESP_OK) && prot_ctx.port_expander_check_ok;
 
-            #if DEBUG_LOG_ENABLE
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "Port expander tests failed");
-                }
-            #endif
-
-            if (ok) {
-                xEventGroupSetBits(prot_ctx.event_group, EVENT_PORT_EXPANDER_OK);
-            } else {
-                xEventGroupSetBits(prot_ctx.event_group, EVENT_PORT_EXPANDER_FAIL);
-                activate_copy_protection();
+        #if DEBUG_LOG_ENABLE
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Port expander tests failed");
             }
+        #endif
+
+        if (ok) {
+            xEventGroupSetBits(prot_ctx.event_group, EVENT_PORT_EXPANDER_OK);
         } else {
-            #if DEBUG_LOG_ENABLE
-                ESP_LOGE(TAG, "Port expander handle is NULL");
-            #endif
+            xEventGroupSetBits(prot_ctx.event_group, EVENT_PORT_EXPANDER_FAIL);
             activate_copy_protection();
         }
 

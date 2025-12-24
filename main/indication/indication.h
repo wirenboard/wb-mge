@@ -1,10 +1,10 @@
 #pragma once
 
-#include "esp_io_expander_tca95xx_16bit.h"
+#include "esp_err.h"
 
 // Initialize indication module
 // IO expander should be initialized before calling this function
-esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle);
+esp_err_t indication_init(void);
 
 // Start regular status LED blinking with specified period
 void indication_status_led_blink(unsigned period_ms);

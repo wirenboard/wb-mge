@@ -1,8 +1,5 @@
-#include "leds_control.h"
-
-#include "esp_io_expander_tca95xx_16bit.h"
+#include "gpio_expander.h"
 #include "esp_log.h"
-
 
 #define ETHERNET_LED_PIN            IO_EXPANDER_PIN_NUM_5
 #define WIFI_LED_PIN                IO_EXPANDER_PIN_NUM_4
@@ -12,69 +9,63 @@
 #define WIFI_LED_INVERSION          1
 #define STATUS_LED_INVERSION        0
 
-
 static const char *TAG = "leds_control";
 
-static esp_io_expander_handle_t io_expander = NULL;
-
-
-void leds_control_init(esp_io_expander_handle_t io_expander_handle)
+static esp_err_t last_error(esp_err_t ret, esp_err_t err)
 {
-    if (io_expander_handle == NULL) {
-        ESP_LOGE(TAG, "IO expander handle is NULL");
-        return;
+    if (err != ESP_OK) {
+        ret = err;
     }
-
-    io_expander = io_expander_handle;
-
-    esp_io_expander_set_dir(io_expander, ETHERNET_LED_PIN, IO_EXPANDER_OUTPUT);
-    esp_io_expander_set_level(io_expander, ETHERNET_LED_PIN, ETHERNET_LED_INVERSION);
-
-    esp_io_expander_set_dir(io_expander, WIFI_LED_PIN, IO_EXPANDER_OUTPUT);
-    esp_io_expander_set_level(io_expander, WIFI_LED_PIN, WIFI_LED_INVERSION);
-
-    esp_io_expander_set_dir(io_expander, STATUS_LED_PIN, IO_EXPANDER_OUTPUT);
-    esp_io_expander_set_level(io_expander, STATUS_LED_PIN, STATUS_LED_INVERSION);
+    return ret;
 }
 
-void leds_control_set_eth_led(bool on)
+esp_err_t leds_control_init(void)
 {
-    if (io_expander == NULL) {
-        ESP_LOGE(TAG, "IO expander handle is NULL");
-        return;
+    // Don't fail on first error, try to do all initialization steps
+    esp_err_t ret = gpio_expander_set_out_dir_and_level(ETHERNET_LED_PIN, ETHERNET_LED_INVERSION);
+
+    esp_err_t err = gpio_expander_set_out_dir_and_level(WIFI_LED_PIN, WIFI_LED_INVERSION);
+    ret = last_error(ret, err);
+
+    err = gpio_expander_set_out_dir_and_level(STATUS_LED_PIN, STATUS_LED_INVERSION);
+    ret = last_error(ret, err);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "At least one initialization step failed");
     }
 
+    return ret;
+}
+
+esp_err_t leds_control_set_eth_led(bool on)
+{
     #if (ETHERNET_LED_INVERSION)
-        esp_io_expander_set_level(io_expander, ETHERNET_LED_PIN, !on);
+        esp_err_t ret = gpio_expander_set_level(ETHERNET_LED_PIN, !on);
     #else
-        esp_io_expander_set_level(io_expander, ETHERNET_LED_PIN, on);
+        esp_err_t ret = gpio_expander_set_level(ETHERNET_LED_PIN, on);
     #endif
+
+    return ret;
 }
 
-void leds_control_set_wifi_led(bool on)
+esp_err_t leds_control_set_wifi_led(bool on)
 {
-    if (io_expander == NULL) {
-        ESP_LOGE(TAG, "IO expander handle is NULL");
-        return;
-    }
-
     #if (WIFI_LED_INVERSION)
-        esp_io_expander_set_level(io_expander, WIFI_LED_PIN, !on);
+        esp_err_t ret = gpio_expander_set_level(WIFI_LED_PIN, !on);
     #else
-        esp_io_expander_set_level(io_expander, WIFI_LED_PIN, on);
+        esp_err_t ret = gpio_expander_set_level(WIFI_LED_PIN, on);
     #endif
+
+    return ret;
 }
 
-void leds_control_set_status_led(bool on)
+esp_err_t leds_control_set_status_led(bool on)
 {
-    if (io_expander == NULL) {
-        ESP_LOGE(TAG, "IO expander handle is NULL");
-        return;
-    }
-
     #if (STATUS_LED_INVERSION)
-        esp_io_expander_set_level(io_expander, STATUS_LED_PIN, !on);
+        esp_err_t ret = gpio_expander_set_level(STATUS_LED_PIN, !on);
     #else
-        esp_io_expander_set_level(io_expander, STATUS_LED_PIN, on);
+        esp_err_t ret = gpio_expander_set_level(STATUS_LED_PIN, on);
     #endif
+
+    return ret;
 }

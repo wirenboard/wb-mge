@@ -1,7 +1,7 @@
-#include "esp_io_expander.h"
 #include "array_size.h"
 #include "debug_log.h"
 #include "esp_log.h"
+#include "gpio_expander.h"
 
 
 #define PORT_EXPANDER_TEST_PINS_COUNT       3
@@ -48,30 +48,31 @@ static port_expander_test_t port_expander_tests[] = {
 
 
 // Restore default pins directions (input)
-static void reset_gpio_directions(esp_io_expander_handle_t io_expander_handle)
+static void reset_gpio_directions(void)
 {
     for (unsigned pin = 0; pin < PORT_EXPANDER_TEST_PINS_COUNT; pin++) {
-        esp_io_expander_set_dir(io_expander_handle, port_expander_pins[pin], IO_EXPANDER_INPUT);
+        gpio_expander_set_dir(port_expander_pins[pin], IO_EXPANDER_INPUT);
     }
 }
 
 
 // Set pins directions and outputs levels
-static void set_gpio_directions_and_levels(esp_io_expander_handle_t io_expander_handle, port_expander_test_t* test)
+static void set_gpio_directions_and_levels(port_expander_test_t* test)
 {
     for (unsigned pin = 0; pin < PORT_EXPANDER_TEST_PINS_COUNT; pin++) {
         esp_io_expander_dir_t dir = test->pins[pin].direction;
         esp_io_expander_pin_num_t pin_num = port_expander_pins[pin];
-        esp_io_expander_set_dir(io_expander_handle, pin_num, dir);
         if (dir == IO_EXPANDER_OUTPUT) {
-            esp_io_expander_set_level(io_expander_handle, pin_num, test->pins[pin].out_level);
+            gpio_expander_set_out_dir_and_level(pin_num, test->pins[pin].out_level);
+        } else {
+            gpio_expander_set_dir(pin_num, dir);
         }
     }
 }
 
 
 // Check pins input levels
-static bool check_gpio_input_levels(esp_io_expander_handle_t io_expander_handle, port_expander_test_t* test)
+static bool check_gpio_input_levels(port_expander_test_t* test)
 {
     bool ok = true;
 
@@ -82,7 +83,7 @@ static bool check_gpio_input_levels(esp_io_expander_handle_t io_expander_handle,
         }
         esp_io_expander_pin_num_t pin_num = port_expander_pins[pin];
         uint32_t pin_levels = 0;
-        esp_err_t ret = esp_io_expander_get_level(io_expander_handle, pin_num, &pin_levels);
+        esp_err_t ret = gpio_expander_get_level(pin_num, &pin_levels);
         if (ret == ESP_OK) {
             bool test_ok;
             if (test->pins[pin].in_level) {
@@ -110,24 +111,20 @@ static bool check_gpio_input_levels(esp_io_expander_handle_t io_expander_handle,
 }
 
 
-esp_err_t port_expander_run_tests(esp_io_expander_handle_t io_expander_handle)
+esp_err_t port_expander_run_tests(void)
 {
-    if (io_expander_handle == NULL) {
-        return ESP_FAIL;
-    }
-
     bool ok = true;
 
     // Run tests
     for (unsigned index = 0; index < ARRAY_SIZE(port_expander_tests); index++) {
-        reset_gpio_directions(io_expander_handle);
-        set_gpio_directions_and_levels(io_expander_handle, &port_expander_tests[index]);
-        bool test_ok = check_gpio_input_levels(io_expander_handle, &port_expander_tests[index]);
+        reset_gpio_directions();
+        set_gpio_directions_and_levels(&port_expander_tests[index]);
+        bool test_ok = check_gpio_input_levels(&port_expander_tests[index]);
         ok = test_ok && ok;
         // Don't break if test failed to save all tests sequence
     }
 
-    reset_gpio_directions(io_expander_handle);
+    reset_gpio_directions();
 
     if (ok) {
         return ESP_OK;
