@@ -15,8 +15,11 @@ AUX_SRC += mocks/driver/i2c_master.c
 AUX_SRC += mocks/esp_io_expander_tca95xx_16bit.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/debug_log.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/esp_io_expander.c
+AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
+AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 
 # Include directories
+INC += .
 INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += mocks
