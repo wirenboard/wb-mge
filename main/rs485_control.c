@@ -113,7 +113,7 @@ esp_err_t rs485_control_init(void)
     if (rs485_bus_vout_mutex == NULL) {
         rs485_bus_vout_mutex = xSemaphoreCreateMutex();
         if (rs485_bus_vout_mutex == NULL) {
-            ESP_LOGW(TAG, "Failed to initialize RS-485 bus Vout mutex");
+            ESP_LOGE(TAG, "Failed to initialize RS-485 bus Vout mutex");
             return ESP_FAIL;
         }
     }
@@ -149,7 +149,7 @@ esp_err_t rs485_control_init(void)
     ret = last_error(ret, err);
 
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "At least one initialization step failed");
+        ESP_LOGW(TAG, "At least one initialization step failed");
     }
 
     return ret;

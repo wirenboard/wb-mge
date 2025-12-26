@@ -2,8 +2,9 @@
 #include "console_log.h"
 
 #include "rs485_control.h"
-#include "esp_io_expander.h"
+#include "gpio_expander_mock.h"
 #include "freertos/semphr.h"
+#include "array_size.h"
 
 #include <stdbool.h>
 #include <string.h>
@@ -14,13 +15,11 @@
 #define FAILSAFE_485_2_PIN              IO_EXPANDER_PIN_NUM_3
 #define VOUT_485_PIN                    IO_EXPANDER_PIN_NUM_6
 
-#define RS485_PINS_COUNT                5
-
 void rs485_control_test_reset(void);
 
 void setUp(void)
 {
-    mock_esp_io_expander_reset();
+    mock_gpio_expander_reset();
     mock_freertos_semaphore_reset();
     rs485_control_test_reset();
 }
@@ -30,467 +29,783 @@ void tearDown(void)
 
 }
 
-static bool find_pin_with_direction(uint32_t pin_mask, esp_io_expander_dir_t expected_dir)
+static const char* bool_to_str(bool value)
 {
-    for (int i = 0; i < RS485_PINS_COUNT; i++) {
-        if (mock_esp_io_expander_set_dir_pin_masks[i] == pin_mask) {
-            if (mock_esp_io_expander_set_dir_directions[i] == expected_dir) {
-                return true;
-            }
+    if (value) {
+        return "true";
+    } else {
+        return "false";
+    }
+}
+
+bool find_gpio_expander_set_out_dir_and_level_call(uint32_t pin_num_mask, uint8_t level)
+{
+    for (int i = 0; i < mock_gpio_expander_set_out_dir_and_level_data.called; i++) {
+        if (mock_gpio_expander_set_out_dir_and_level_data.masks[i] != pin_num_mask) {
+            continue;
         }
+        if (mock_gpio_expander_set_out_dir_and_level_data.levels[i] != level) {
+            continue;
+        }
+        return true;
     }
     return false;
 }
 
-static bool find_pin_with_level(uint32_t pin_mask, uint8_t level)
+bool find_gpio_expander_set_level_call(uint32_t pin_num_mask, uint8_t level)
 {
-    for (int i = 0; i < RS485_PINS_COUNT; i++) {
-        if (mock_esp_io_expander_set_level_pin_masks[i] == pin_mask) {
-            if (mock_esp_io_expander_set_level_levels[i] == level) {
-                return true;
-            }
+    for (int i = 0; i < mock_gpio_expander_set_level_data.called; i++) {
+        if (mock_gpio_expander_set_level_data.masks[i] != pin_num_mask) {
+            continue;
         }
+        if (mock_gpio_expander_set_level_data.levels[i] != level) {
+            continue;
+        }
+        return true;
     }
     return false;
 }
 
-static void verify_semaphore_take_give(void)
+void validate_rs485_control_init_run(void)
 {
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should be called once");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        MOCK_SEMAPHORE_HANDLE_T,
-        mock_xSemaphoreTake_Handle,
-        "xSemaphoreTake should be called with the correct semaphore handle"
-    );
-    TEST_ASSERT_EQUAL_INT_MESSAGE(portMAX_DELAY, mock_xSemaphoreTake_xTicksToWait,
-        "xSemaphoreTake should be called with portMAX_DELAY");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should be called once");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        MOCK_SEMAPHORE_HANDLE_T,
-        mock_xSemaphoreGive_Handle,
-        "xSemaphoreGive should be called with the correct semaphore handle"
-    );
-}
-
-static void verify_rs485_term_on_off(rs485_port_t port, bool on, uint32_t expected_pin, const char *port_name)
-{
-    mock_esp_io_expander_reset();
-
-    esp_err_t result = rs485_term_on_off(port, on);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_term_on_off should return ESP_OK");
     TEST_ASSERT_EQUAL_INT_MESSAGE(
-        1, mock_esp_io_expander_set_level_called, "esp_io_expander_set_level should be called once"
+        5,
+        mock_gpio_expander_set_out_dir_and_level_data.called,
+        "gpio_expander_set_out_dir_and_level() should be called 5 times"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_out_dir_and_level_call(TERM485_1_PIN, 0),
+        "gpio_expander_set_out_dir_and_level() should be called with pin_num_mask = TERM485_1_PIN and level = 0"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_out_dir_and_level_call(TERM485_2_PIN, 0),
+        "gpio_expander_set_out_dir_and_level() should be called with pin_num_mask = TERM485_2_PIN and level = 0"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_out_dir_and_level_call(FAILSAFE_485_1_PIN, 0),
+        "gpio_expander_set_out_dir_and_level() should be called with pin_num_mask = FAILSAFE_485_1_PIN and level = 0"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_out_dir_and_level_call(FAILSAFE_485_2_PIN, 0),
+        "gpio_expander_set_out_dir_and_level() should be called with pin_num_mask = FAILSAFE_485_2_PIN and level = 0"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_out_dir_and_level_call(VOUT_485_PIN, 0),
+        "gpio_expander_set_out_dir_and_level() should be called with pin_num_mask = VOUT_485_PIN and level = 0"
     );
 
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%s should be set", port_name);
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(expected_pin, mock_esp_io_expander_set_level_pin_masks[0], msg);
-
-    snprintf(msg, sizeof(msg), "%s should be set to %s", port_name, on ? "HIGH (1)" : "LOW (0)");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(on ? 1 : 0, mock_esp_io_expander_set_level_levels[0], msg);
-}
-
-static void verify_rs485_pupd_on_off(rs485_port_t port, bool on, uint32_t expected_pin, const char *port_name)
-{
-    mock_esp_io_expander_reset();
-
-    esp_err_t result = rs485_pupd_on_off(port, on);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_pupd_on_off should return ESP_OK");
     TEST_ASSERT_EQUAL_INT_MESSAGE(
-        1, mock_esp_io_expander_set_level_called, "esp_io_expander_set_level should be called once"
+        5,
+        mock_gpio_expander_set_level_data.called,
+        "gpio_expander_set_level() should be called 5 times"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_level_call(TERM485_1_PIN, 0),
+        "gpio_expander_set_level() should be called with pin_num_mask = TERM485_1_PIN and level = 0"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_level_call(TERM485_2_PIN, 0),
+        "gpio_expander_set_level() should be called with pin_num_mask = TERM485_2_PIN and level = 0"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_level_call(FAILSAFE_485_1_PIN, 0),
+        "gpio_expander_set_level() should be called with pin_num_mask = FAILSAFE_485_1_PIN and level = 0"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_level_call(FAILSAFE_485_2_PIN, 0),
+        "gpio_expander_set_level() should be called with pin_num_mask = FAILSAFE_485_2_PIN and level = 0"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        find_gpio_expander_set_level_call(VOUT_485_PIN, 0),
+        "gpio_expander_set_level() should be called with pin_num_mask = VOUT_485_PIN and level = 0"
     );
 
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%s should be set", port_name);
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(expected_pin, mock_esp_io_expander_set_level_pin_masks[0], msg);
+    // rs485_bus_vout_on_off() specific calls
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called, "xSemaphoreTake() must be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called, "xSemaphoreGive() must be called once");
 
-    snprintf(msg, sizeof(msg), "%s should be set to %s", port_name, on ? "HIGH (1)" : "LOW (0)");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(on ? 1 : 0, mock_esp_io_expander_set_level_levels[0], msg);
+    // Unnecessary calls
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_vSemaphoreDelete_called, "vSemaphoreDelete() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_init_data.called, "gpio_expander_init() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_dir_data.called, "gpio_expander_set_dir() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
 }
 
-static void verify_rs485_bus_vout_on_off(bool on)
-{
-    mock_freertos_semaphore_reset();
-    mock_esp_io_expander_reset();
-
-    esp_err_t result = rs485_bus_vout_on_off(on);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off should return ESP_OK");
-
-    verify_semaphore_take_give();
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "VOUT_485_PIN should be set");
-
-    char msg[128];
-    snprintf(msg, sizeof(msg), "VOUT_485_PIN should be set to %s", on ? "HIGH (1)" : "LOW (0)");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(on ? 1 : 0, mock_esp_io_expander_set_level_levels[0], msg);
-}
-
-static void verify_rs485_bus_vout_failed(esp_err_t result)
-{
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result,
-        "rs485_bus_vout_* should return ESP_FAIL when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called,
-        "xSemaphoreTake should not be called when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called,
-        "xSemaphoreGive should not be called when not initialized");
-}
-
-static void verify_rs485_bus_vout_set_allowed(bool allowed, uint8_t expected_level)
-{
-    mock_freertos_semaphore_reset();
-    mock_esp_io_expander_reset();
-
-    esp_err_t result = rs485_bus_vout_set_allowed(allowed);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed should return ESP_OK");
-
-    verify_semaphore_take_give();
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(VOUT_485_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "VOUT_485_PIN should be set");
-
-    char msg[128];
-    snprintf(msg, sizeof(msg), "VOUT_485_PIN should be set to %d", expected_level);
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(expected_level, mock_esp_io_expander_set_level_levels[0], msg);
-}
-
-// Тестируем успешную инициализацию rs485_control_init
+// Тестируем успешную инициализацию rs485_control_init()
 void test_rs485_control_init_success(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init - success case");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init() - success case");
     LOG_MESSAGE();
 
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
+    esp_err_t result = rs485_control_init();
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called,
-        "xSemaphoreCreateMutex should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(RS485_PINS_COUNT, mock_esp_io_expander_set_dir_called,
-        "esp_io_expander_set_dir should be called 5 times");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_direction(VOUT_485_PIN, IO_EXPANDER_OUTPUT),
-        "VOUT_485_PIN should be configured as OUTPUT");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_direction(TERM485_1_PIN, IO_EXPANDER_OUTPUT),
-        "TERM485_1_PIN should be configured as OUTPUT");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_direction(TERM485_2_PIN, IO_EXPANDER_OUTPUT),
-        "TERM485_2_PIN should be configured as OUTPUT");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_direction(FAILSAFE_485_1_PIN, IO_EXPANDER_OUTPUT),
-        "FAILSAFE_485_1_PIN should be configured as OUTPUT");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_direction(FAILSAFE_485_2_PIN, IO_EXPANDER_OUTPUT),
-        "FAILSAFE_485_2_PIN should be configured as OUTPUT");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(RS485_PINS_COUNT * 2, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called 10 times (5 init + 5 from on_off functions)");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_level(VOUT_485_PIN, 0),
-        "VOUT_485_PIN should be set to level 0");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_level(TERM485_1_PIN, 0),
-        "TERM485_1_PIN should be set to level 0");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_level(TERM485_2_PIN, 0),
-        "TERM485_2_PIN should be set to level 0");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_level(FAILSAFE_485_1_PIN, 0),
-        "FAILSAFE_485_1_PIN should be set to level 0");
-
-    TEST_ASSERT_TRUE_MESSAGE(
-        find_pin_with_level(FAILSAFE_485_2_PIN, 0),
-        "FAILSAFE_485_2_PIN should be set to level 0");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should be called once");
+    validate_rs485_control_init_run();
 }
 
-// Тестируем инициализацию с NULL handle
-void test_rs485_control_init_null_handle(void)
+// Тестируем rs485_control_init() с ошибкой xSemaphoreCreateMutex()
+void test_rs485_control_init_mutex_fail(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init - NULL handle");
-    LOG_MESSAGE();
-
-    esp_err_t result = rs485_control_init(NULL);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_control_init should return ESP_FAIL with NULL handle");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreCreateMutex_called,
-        "xSemaphoreCreateMutex should not be called with NULL handle");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_dir_called,
-        "esp_io_expander_set_dir should not be called with NULL handle");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called with NULL handle");
-}
-
-// Тестируем повторную инициализацию (мьютекс уже создан)
-void test_rs485_control_init_mutex_already_created(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init - mutex already created");
-    LOG_MESSAGE();
-
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called,
-        "xSemaphoreCreateMutex should be called on first init");
-
-    mock_esp_io_expander_set_dir_called = 0;
-    mock_esp_io_expander_set_level_called = 0;
-
-    result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called,
-        "xSemaphoreCreateMutex should not be called on second init (mutex already exists)");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(RS485_PINS_COUNT, mock_esp_io_expander_set_dir_called,
-        "esp_io_expander_set_dir should still be called");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(RS485_PINS_COUNT * 2, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should still be called");
-}
-
-// Тестируем инициализацию с ошибкой создания мьютекса
-void test_rs485_control_init_mutex_creation_failure(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init - mutex creation failure");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init() - xSemaphoreCreateMutex() fail");
     LOG_MESSAGE();
 
     mock_xSemaphoreCreateMutex_return_value = NULL;
 
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK even if mutex creation fails");
+    esp_err_t result = rs485_control_init();
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called,
-        "xSemaphoreCreateMutex should be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_control_init() should return ESP_FAIL");
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(RS485_PINS_COUNT, mock_esp_io_expander_set_dir_called,
-        "esp_io_expander_set_dir should still be called (init continues on mutex failure)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called, "xSemaphoreTake() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called, "xSemaphoreGive() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_vSemaphoreDelete_called, "vSemaphoreDelete() should NOT be called");
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(9, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called 9 times (5 init + 4 from term/pupd, bus_vout fails)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_init_data.called, "gpio_expander_init() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_dir_data.called, "gpio_expander_set_dir() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_level_data.called, "gpio_expander_set_level() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_out_dir_and_level_data.called, "gpio_expander_set_out_dir_and_level() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
 }
 
-// Тестируем rs485_term_on_off - неинициализированный io_expander
-void test_rs485_term_on_off_handler_not_initialized(void)
+// Тестируем rs485_control_init() с ошибкой gpio_expander_set_out_dir_and_level()
+void test_rs485_control_init_set_out_dir_and_level_fail(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_term_on_off - not initialized");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init() - gpio_expander_set_out_dir_and_level() fail");
     LOG_MESSAGE();
 
-    esp_err_t result = rs485_term_on_off(RS485_1, true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_term_on_off should return ESP_FAIL when not initialized");
+    mock_gpio_expander_set_out_dir_and_level_data.should_fail = true;
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called when not initialized");
+    esp_err_t result = rs485_control_init();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_control_init() should return ESP_FAIL");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should be called once");
+    validate_rs485_control_init_run();
 }
 
-// Тестируем rs485_term_on_off - недопустимый номер порта
-void test_rs485_term_on_off_invalid_port(void)
+// Тестируем rs485_control_init() с ошибкой gpio_expander_set_level()
+void test_rs485_control_init_set_level_fail(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_term_on_off - invalid port number");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init() - gpio_expander_set_level() fail");
     LOG_MESSAGE();
 
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
+    mock_gpio_expander_set_level_data.should_fail = true;
 
-    mock_esp_io_expander_set_level_called = 0;
+    esp_err_t result = rs485_control_init();
 
-    result = rs485_term_on_off((rs485_port_t)0, true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_term_on_off should return ESP_FAIL with invalid port");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_control_init() should return ESP_FAIL");
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called with invalid port");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should be called once");
+    validate_rs485_control_init_run();
 }
 
-// Тестируем rs485_term_on_off - включить и выключить для обоих портов
-void test_rs485_term_on_off_switch(void)
+// Тестируем повторный вызов rs485_control_init()
+void test_rs485_control_init_repeat_call(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_term_on_off - turn on and off for both ports");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_control_init() - repeat call");
     LOG_MESSAGE();
 
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
+    esp_err_t result = rs485_control_init();
 
-    verify_rs485_term_on_off(RS485_1, true, TERM485_1_PIN, "TERM485_1_PIN");
-    verify_rs485_term_on_off(RS485_1, false, TERM485_1_PIN, "TERM485_1_PIN");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
 
-    verify_rs485_term_on_off(RS485_2, true, TERM485_2_PIN, "TERM485_2_PIN");
-    verify_rs485_term_on_off(RS485_2, false, TERM485_2_PIN, "TERM485_2_PIN");
-}
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should be called once");
+    validate_rs485_control_init_run();
 
-// Тестируем rs485_pupd_on_off - неинициализированный io_expander
-void test_rs485_pupd_on_off_handler_not_initialized(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_pupd_on_off - not initialized");
-    LOG_MESSAGE();
-
-    esp_err_t result = rs485_pupd_on_off(RS485_1, true);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result,
-        "rs485_pupd_on_off should return ESP_FAIL when not initialized");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called when not initialized");
-}
-
-// Тестируем rs485_pupd_on_off - недопустимый номер порта
-void test_rs485_pupd_on_off_invalid_port(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_pupd_on_off - invalid port number");
-    LOG_MESSAGE();
-
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
-
-    mock_esp_io_expander_set_level_called = 0;
-
-    result = rs485_pupd_on_off((rs485_port_t)5, true);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result,
-        "rs485_pupd_on_off should return ESP_FAIL with invalid port");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called with invalid port");
-}
-
-// Тестируем rs485_pupd_on_off - включить и выключить для обоих портов
-void test_rs485_pupd_on_off_switch(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_pupd_on_off - turn on and off for both ports");
-    LOG_MESSAGE();
-
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
-
-    verify_rs485_pupd_on_off(RS485_1, true, FAILSAFE_485_1_PIN, "FAILSAFE_485_1_PIN");
-    verify_rs485_pupd_on_off(RS485_1, false, FAILSAFE_485_1_PIN, "FAILSAFE_485_1_PIN");
-
-    verify_rs485_pupd_on_off(RS485_2, true, FAILSAFE_485_2_PIN, "FAILSAFE_485_2_PIN");
-    verify_rs485_pupd_on_off(RS485_2, false, FAILSAFE_485_2_PIN, "FAILSAFE_485_2_PIN");
-}
-
-// Тестируем rs485_bus_vout_on_off - неинициализированный io_expander
-void test_rs485_bus_vout_on_off_handler_not_initialized(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_on_off - handler not initialized");
-    LOG_MESSAGE();
-
-    esp_err_t result = rs485_bus_vout_on_off(true);
-    verify_rs485_bus_vout_failed(result);
-}
-
-// Тестируем rs485_bus_vout_on_off - неинициализированный мьютекс
-void test_rs485_bus_vout_on_off_mutex_not_initialized(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_on_off - mutex not initialized");
-    LOG_MESSAGE();
-
-    mock_xSemaphoreCreateMutex_return_value = NULL;
-
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
-
+    // Repeat call
+    mock_gpio_expander_reset();
     mock_freertos_semaphore_reset();
 
-    mock_esp_io_expander_set_level_called = 0;
+    result = rs485_control_init();
 
-    result = rs485_bus_vout_on_off(true);
-    verify_rs485_bus_vout_failed(result);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should NOT be called");
+    validate_rs485_control_init_run();
 }
 
-// Тестируем rs485_bus_vout_on_off - включить и выключить
-void test_rs485_bus_vout_on_off_switch(void)
+// Валидация работы rs485_term_on_off() и rs485_pupd_on_off()
+void validate_rs485_term_pupd_on_off_run(uint32_t pin_num_mask, bool on)
 {
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_on_off - turn on and off");
-    LOG_MESSAGE();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_gpio_expander_set_level_data.called, "gpio_expander_set_level() should be called once");
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(
+        pin_num_mask,
+        mock_gpio_expander_set_level_data.masks[0],
+        "gpio_expander_set_level() should be called with provided pin_num_mask value"
+    );
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        (uint8_t)on,
+        mock_gpio_expander_set_level_data.levels[0],
+        "gpio_expander_set_level() should be called with provided level value"
+    );
 
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called, "xSemaphoreTake() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called, "xSemaphoreGive() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_vSemaphoreDelete_called, "vSemaphoreDelete() should NOT be called");
 
-    verify_rs485_bus_vout_on_off(true);
-    verify_rs485_bus_vout_on_off(false);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_init_data.called, "gpio_expander_init() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_dir_data.called, "gpio_expander_set_dir() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_out_dir_and_level_data.called, "gpio_expander_set_out_dir_and_level() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
 }
 
-// Тестируем rs485_bus_vout_set_allowed - неинициализированный io_expander
-void test_rs485_bus_vout_set_allowed_handler_not_initialized(void)
+// Тестируем успешное выполнение rs485_term_on_off()
+void test_rs485_term_on_off_success(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_set_allowed - handler not initialized");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_term_on_off() - success case");
     LOG_MESSAGE();
 
-    esp_err_t result = rs485_bus_vout_set_allowed(true);
-    verify_rs485_bus_vout_failed(result);
+    static struct {
+        rs485_port_t port;
+        bool on;
+        uint32_t pin_num_mask;
+    } test_data[] = {
+        {.port = RS485_2,   .on = true,     .pin_num_mask = TERM485_2_PIN},
+        {.port = RS485_1,   .on = true,     .pin_num_mask = TERM485_1_PIN},
+        {.port = RS485_2,   .on = false,    .pin_num_mask = TERM485_2_PIN},
+        {.port = RS485_1,   .on = false,    .pin_num_mask = TERM485_1_PIN},
+    };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(test_data); i++) {
+        setUp();
+        LOG_INFO(
+            "Testing with port = %s, on = %s",
+            (test_data[i].port == RS485_1) ? "RS485_1" : "RS485_2",
+            bool_to_str(test_data[i].on)
+         );
+
+         esp_err_t result = rs485_term_on_off(test_data[i].port, test_data[i].on);
+
+         TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_term_on_off() should return ESP_OK");
+         validate_rs485_term_pupd_on_off_run(test_data[i].pin_num_mask, test_data[i].on);
+    }
 }
 
-// Тестируем rs485_bus_vout_set_allowed - неинициализированный мьютекс
-void test_rs485_bus_vout_set_allowed_mutex_not_initialized(void)
+// Тестируем rs485_term_on_off() с ошибкой gpio_expander_set_level()
+void test_rs485_term_on_off_set_level_fail(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_set_allowed - mutex not initialized");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_term_on_off() - gpio_expander_set_level() fail");
     LOG_MESSAGE();
 
-    mock_xSemaphoreCreateMutex_return_value = NULL;
+    static struct {
+        rs485_port_t port;
+        bool on;
+        uint32_t pin_num_mask;
+    } test_data[] = {
+        {.port = RS485_2,   .on = true,     .pin_num_mask = TERM485_2_PIN},
+        {.port = RS485_1,   .on = true,     .pin_num_mask = TERM485_1_PIN},
+        {.port = RS485_2,   .on = false,    .pin_num_mask = TERM485_2_PIN},
+        {.port = RS485_1,   .on = false,    .pin_num_mask = TERM485_1_PIN},
+    };
 
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
+    for (unsigned i = 0; i < ARRAY_SIZE(test_data); i++) {
+        setUp();
+        mock_gpio_expander_set_level_data.should_fail = true;
+        LOG_INFO(
+            "Testing with port = %s, on = %s",
+            (test_data[i].port == RS485_1) ? "RS485_1" : "RS485_2",
+            bool_to_str(test_data[i].on)
+         );
 
+         esp_err_t result = rs485_term_on_off(test_data[i].port, test_data[i].on);
+
+         TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_term_on_off() should return ESP_FAIL");
+         validate_rs485_term_pupd_on_off_run(test_data[i].pin_num_mask, test_data[i].on);
+    }
+}
+
+// Валидация работы rs485_term_on_off() и rs485_pupd_on_off() с некорректным номером порта
+void validate_rs485_term_pupd_on_off_incorrect_port()
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called, "xSemaphoreTake() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called, "xSemaphoreGive() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_vSemaphoreDelete_called, "vSemaphoreDelete() should NOT be called");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_init_data.called, "gpio_expander_init() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_dir_data.called, "gpio_expander_set_dir() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_level_data.called, "gpio_expander_set_level() should NOT be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_out_dir_and_level_data.called, "gpio_expander_set_out_dir_and_level() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
+}
+
+// Тестируем rs485_term_on_off() с некорректным номером порта
+void test_rs485_term_on_off_incorrect_port(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_term_on_off() - incorrect port");
+    LOG_MESSAGE();
+
+    // Minimum limit
+    int port = RS485_1 - 1;
+    LOG_INFO("Testing with port = %d", port);
+
+    esp_err_t result = rs485_term_on_off(port, false);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_term_on_off() should return ESP_FAIL");
+    validate_rs485_term_pupd_on_off_incorrect_port();
+
+    // Maximum limit
+    setUp();
+
+    port = RS485_2 + 1;
+    LOG_INFO("Testing with port = %d", port);
+
+    result = rs485_term_on_off(port, false);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_term_on_off() should return ESP_FAIL");
+    validate_rs485_term_pupd_on_off_incorrect_port();
+}
+
+// Тестируем успешное выполнение rs485_pupd_on_off()
+void test_rs485_pupd_on_off_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_pupd_on_off() - success case");
+    LOG_MESSAGE();
+
+    static struct {
+        rs485_port_t port;
+        bool on;
+        uint32_t pin_num_mask;
+    } test_data[] = {
+        {.port = RS485_2,   .on = true,     .pin_num_mask = FAILSAFE_485_2_PIN},
+        {.port = RS485_1,   .on = true,     .pin_num_mask = FAILSAFE_485_1_PIN},
+        {.port = RS485_2,   .on = false,    .pin_num_mask = FAILSAFE_485_2_PIN},
+        {.port = RS485_1,   .on = false,    .pin_num_mask = FAILSAFE_485_1_PIN},
+    };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(test_data); i++) {
+        setUp();
+        LOG_INFO(
+            "Testing with port = %s, on = %s",
+            (test_data[i].port == RS485_1) ? "RS485_1" : "RS485_2",
+            bool_to_str(test_data[i].on)
+         );
+
+         esp_err_t result = rs485_pupd_on_off(test_data[i].port, test_data[i].on);
+
+         TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_pupd_on_off() should return ESP_OK");
+         validate_rs485_term_pupd_on_off_run(test_data[i].pin_num_mask, test_data[i].on);
+    }
+}
+
+// Тестируем rs485_pupd_on_off() с ошибкой gpio_expander_set_level()
+void test_rs485_pupd_on_off_set_level_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_pupd_on_off() - gpio_expander_set_level() fail");
+    LOG_MESSAGE();
+
+    static struct {
+        rs485_port_t port;
+        bool on;
+        uint32_t pin_num_mask;
+    } test_data[] = {
+        {.port = RS485_2,   .on = true,     .pin_num_mask = FAILSAFE_485_2_PIN},
+        {.port = RS485_1,   .on = true,     .pin_num_mask = FAILSAFE_485_1_PIN},
+        {.port = RS485_2,   .on = false,    .pin_num_mask = FAILSAFE_485_2_PIN},
+        {.port = RS485_1,   .on = false,    .pin_num_mask = FAILSAFE_485_1_PIN},
+    };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(test_data); i++) {
+        setUp();
+        mock_gpio_expander_set_level_data.should_fail = true;
+        LOG_INFO(
+            "Testing with port = %s, on = %s",
+            (test_data[i].port == RS485_1) ? "RS485_1" : "RS485_2",
+            bool_to_str(test_data[i].on)
+         );
+
+         esp_err_t result = rs485_pupd_on_off(test_data[i].port, test_data[i].on);
+
+         TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_pupd_on_off() should return ESP_FAIL");
+         validate_rs485_term_pupd_on_off_run(test_data[i].pin_num_mask, test_data[i].on);
+    }
+}
+
+// Тестируем rs485_pupd_on_off() с некорректным номером порта
+void test_rs485_pupd_on_off_incorrect_port(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_pupd_on_off() - incorrect port");
+    LOG_MESSAGE();
+
+    // Minimum limit
+    int port = RS485_1 - 1;
+    LOG_INFO("Testing with port = %d", port);
+
+    esp_err_t result = rs485_pupd_on_off(port, false);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_pupd_on_off() should return ESP_FAIL");
+    validate_rs485_term_pupd_on_off_incorrect_port();
+
+    // Maximum limit
+    setUp();
+
+    port = RS485_2 + 1;
+    LOG_INFO("Testing with port = %d", port);
+
+    result = rs485_pupd_on_off(port, false);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_pupd_on_off() should return ESP_FAIL");
+    validate_rs485_term_pupd_on_off_incorrect_port();
+}
+
+// Валидация выполнения rs485_bus_vout_on_off() и rs485_bus_vout_set_allowed()
+void validate_rs485_bus_vout_run(bool out_level)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called, "xSemaphoreTake() should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        MOCK_SEMAPHORE_HANDLE_T,
+        mock_xSemaphoreTake_Handle,
+        "xSemaphoreTake() should be called with correct handle"
+    );
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(
+        portMAX_DELAY,
+        mock_xSemaphoreTake_xTicksToWait,
+        "xSemaphoreTake() should be called with portMAX_DELAY timeout value"
+    );
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_gpio_expander_set_level_data.called, "gpio_expander_set_level() should be called once");
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(
+        VOUT_485_PIN,
+        mock_gpio_expander_set_level_data.masks[0],
+        "gpio_expander_set_level() should be called with pin_num_mask = VOUT_485_PIN"
+    );
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        (uint8_t)out_level,
+        mock_gpio_expander_set_level_data.levels[0],
+        "gpio_expander_set_level() should be equal to provided value"
+    );
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreGive_called, "xSemaphoreGive() should be called once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        MOCK_SEMAPHORE_HANDLE_T,
+        mock_xSemaphoreGive_Handle,
+        "xSemaphoreGive() should be called with correct handle"
+    );
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_vSemaphoreDelete_called, "vSemaphoreDelete() should NOT be called");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_init_data.called, "gpio_expander_init() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_dir_data.called, "gpio_expander_set_dir() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_out_dir_and_level_data.called, "gpio_expander_set_out_dir_and_level() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
+
+    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(
+        mock_xSemaphoreTake_call_seq,
+        mock_gpio_expander_set_level_data.call_seq[0],
+        "gpio_expander_set_level() should be called after xSemaphoreTake()"
+    );
+    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(
+        mock_gpio_expander_set_level_data.call_seq[0],
+        mock_xSemaphoreGive_call_seq,
+        "xSemaphoreGive() should be called after gpio_expander_set_level()"
+    );
+}
+
+// Тестируем успешное выполнение rs485_bus_vout_on_off()
+void test_rs485_bus_vout_on_off_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_on_off() - success case");
+    LOG_MESSAGE();
+
+    esp_err_t result = rs485_control_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
+
+    static struct {
+        bool allowed;
+        bool enabled;
+        bool vout_state;
+    } test_data[] = {
+        {.allowed = true,   .enabled = true,    .vout_state = true},
+        {.allowed = true,   .enabled = false,   .vout_state = false},
+        {.allowed = false,  .enabled = false,   .vout_state = false},
+        {.allowed = false,  .enabled = true,    .vout_state = false},
+    };
+
+    for (int i = 0; i < ARRAY_SIZE(test_data); i++) {
+        LOG_INFO("Testing with allowed = %s, enabled = %s", bool_to_str(test_data[i].allowed), bool_to_str(test_data[i].enabled));
+
+        result = rs485_bus_vout_set_allowed(test_data[i].allowed);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed() should return ESP_OK");
+
+        mock_gpio_expander_reset();
+        mock_freertos_semaphore_reset();
+
+        result = rs485_bus_vout_on_off(test_data[i].enabled);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off() should return ESP_OK");
+        validate_rs485_bus_vout_run(test_data[i].vout_state);
+    }
+}
+
+// Тестируем rs485_bus_vout_on_off() с ошибкой выполнения gpio_expander_set_level()
+void test_rs485_bus_vout_on_off_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_on_off() - gpio_expander_set_level() fail");
+    LOG_MESSAGE();
+
+    esp_err_t result = rs485_control_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
+
+    static struct {
+        bool allowed;
+        bool enabled;
+        bool vout_state;
+    } test_data[] = {
+        {.allowed = true,   .enabled = true,    .vout_state = true},
+        {.allowed = true,   .enabled = false,   .vout_state = false},
+        {.allowed = false,  .enabled = false,   .vout_state = false},
+        {.allowed = false,  .enabled = true,    .vout_state = false},
+    };
+
+    for (int i = 0; i < ARRAY_SIZE(test_data); i++) {
+        LOG_INFO("Testing with allowed = %s, enabled = %s", bool_to_str(test_data[i].allowed), bool_to_str(test_data[i].enabled));
+
+        mock_gpio_expander_set_level_data.should_fail = false;
+        result = rs485_bus_vout_set_allowed(test_data[i].allowed);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed() should return ESP_OK");
+
+        mock_gpio_expander_reset();
+        mock_freertos_semaphore_reset();
+        mock_gpio_expander_set_level_data.should_fail = true;
+
+        result = rs485_bus_vout_on_off(test_data[i].enabled);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_bus_vout_on_off() should return ESP_FAIL");
+        validate_rs485_bus_vout_run(test_data[i].vout_state);
+    }
+}
+
+// Валидация выполнения rs485_bus_vout_on_off() и rs485_bus_vout_set_allowed() без инициализации модуля
+void validate_rs485_bus_vout_no_init(void)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called, "xSemaphoreTake() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_level_data.called, "gpio_expander_set_level() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called, "xSemaphoreGive() should NOT be called");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_vSemaphoreDelete_called, "vSemaphoreDelete() should NOT be called");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_init_data.called, "gpio_expander_init() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_dir_data.called, "gpio_expander_set_dir() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_set_out_dir_and_level_data.called, "gpio_expander_set_out_dir_and_level() should NOT be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
+}
+
+// Тестируем rs485_bus_vout_on_off() без инициализации модуля
+void test_rs485_bus_vout_on_off_no_init(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_on_off() - module not initialized");
+    LOG_MESSAGE();
+
+    bool on = true;
+    LOG_INFO("Testing with on = true");
+
+    esp_err_t result = rs485_bus_vout_on_off(on);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_bus_vout_on_off() should return ESP_FAIL");
+    validate_rs485_bus_vout_no_init();
+
+    // Second check with another value
+    mock_gpio_expander_reset();
     mock_freertos_semaphore_reset();
 
-    mock_esp_io_expander_set_level_called = 0;
+    on = false;
+    LOG_INFO("Testing with on = false");
 
-    result = rs485_bus_vout_set_allowed(true);
-    verify_rs485_bus_vout_failed(result);
+    result = rs485_bus_vout_on_off(on);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_bus_vout_on_off() should return ESP_FAIL");
+    validate_rs485_bus_vout_no_init();
 }
 
-// Тестируем rs485_bus_vout_set_allowed - различные комбинации allowed и enabled
-void test_rs485_bus_vout_set_allowed(void)
+// Тестируем успешное выполнение rs485_bus_vout_set_allowed()
+void test_rs485_bus_vout_set_allowed_success(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_set_allowed - various combinations");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_set_allowed() - success case");
     LOG_MESSAGE();
 
-    esp_err_t result = rs485_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init should return ESP_OK");
+    esp_err_t result = rs485_control_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
 
-    verify_rs485_bus_vout_set_allowed(true, 0);
-    verify_rs485_bus_vout_set_allowed(false, 0);
+    static struct {
+        bool enabled;
+        bool allowed;
+        bool vout_state;
+    } test_data[] = {
+        {.enabled = false,  .allowed = true,    .vout_state = false},
+        {.enabled = false,  .allowed = false,   .vout_state = false},
+        {.enabled = true,   .allowed = false,   .vout_state = false},
+        {.enabled = true,   .allowed = true,    .vout_state = true},
+    };
 
-    result = rs485_bus_vout_on_off(true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off should return ESP_OK");
+    for (int i = 0; i < ARRAY_SIZE(test_data); i++) {
+        LOG_INFO("Testing with enabled = %s, allowed = %s", bool_to_str(test_data[i].enabled), bool_to_str(test_data[i].allowed));
 
-    verify_rs485_bus_vout_set_allowed(true, 1);
-    verify_rs485_bus_vout_set_allowed(false, 0);
+        result = rs485_bus_vout_on_off(test_data[i].enabled);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off() should return ESP_OK");
+
+        mock_gpio_expander_reset();
+        mock_freertos_semaphore_reset();
+
+        result = rs485_bus_vout_set_allowed(test_data[i].allowed);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed() should return ESP_OK");
+        validate_rs485_bus_vout_run(test_data[i].vout_state);
+    }
+}
+
+// Тестируем rs485_bus_vout_set_allowed() с ошибкой выполнения gpio_expander_set_level()
+void test_rs485_bus_vout_set_allowed_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_set_allowed() - gpio_expander_set_level() fail");
+    LOG_MESSAGE();
+
+    esp_err_t result = rs485_control_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
+
+    static struct {
+        bool enabled;
+        bool allowed;
+        bool vout_state;
+    } test_data[] = {
+        {.enabled = false,  .allowed = true,    .vout_state = false},
+        {.enabled = false,  .allowed = false,   .vout_state = false},
+        {.enabled = true,   .allowed = false,   .vout_state = false},
+        {.enabled = true,   .allowed = true,    .vout_state = true},
+    };
+
+    for (int i = 0; i < ARRAY_SIZE(test_data); i++) {
+        LOG_INFO("Testing with enabled = %s, allowed = %s", bool_to_str(test_data[i].enabled), bool_to_str(test_data[i].allowed));
+
+        mock_gpio_expander_set_level_data.should_fail = false;
+        result = rs485_bus_vout_on_off(test_data[i].enabled);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off() should return ESP_OK");
+
+        mock_gpio_expander_reset();
+        mock_freertos_semaphore_reset();
+        mock_gpio_expander_set_level_data.should_fail = true;
+
+        result = rs485_bus_vout_set_allowed(test_data[i].allowed);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_bus_vout_set_allowed() should return ESP_FAIL");
+        validate_rs485_bus_vout_run(test_data[i].vout_state);
+    }
+}
+
+// Тестируем rs485_bus_vout_set_allowed() без инициализации модуля
+void test_rs485_bus_vout_set_allowed_no_init(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test rs485_bus_vout_set_allowed() - module not initialized");
+    LOG_MESSAGE();
+
+    bool allowed = false;
+    LOG_INFO("Testing with allowed = false");
+
+    esp_err_t result = rs485_bus_vout_set_allowed(allowed);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_bus_vout_set_allowed() should return ESP_FAIL");
+    validate_rs485_bus_vout_no_init();
+
+    // Second check with another value
+    mock_gpio_expander_reset();
+    mock_freertos_semaphore_reset();
+
+    allowed = true;
+    LOG_INFO("Testing with allowed = true");
+
+    result = rs485_bus_vout_set_allowed(allowed);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "rs485_bus_vout_set_allowed() should return ESP_FAIL");
+    validate_rs485_bus_vout_no_init();
+}
+
+// Тестируем значение enabled для Vout после инициализации
+void test_default_vout_enabled_value(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test default enabled value for Vout after init");
+    LOG_MESSAGE();
+
+    esp_err_t result = rs485_control_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
+
+    mock_gpio_expander_reset();
+    mock_freertos_semaphore_reset();
+
+    bool allowed = true;
+    LOG_INFO("Testing with allowed = %s", bool_to_str(allowed));
+
+    result = rs485_bus_vout_set_allowed(allowed);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed() should return ESP_OK");
+    validate_rs485_bus_vout_run(false);
+
+    // Second check with another value
+    mock_gpio_expander_reset();
+    mock_freertos_semaphore_reset();
+
+    allowed = false;
+    LOG_INFO("Testing with allowed = %s", bool_to_str(allowed));
+
+    result = rs485_bus_vout_set_allowed(allowed);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_set_allowed() should return ESP_OK");
+    validate_rs485_bus_vout_run(false);
+}
+
+// Тестируем значение allowed для Vout после инициализации
+void test_default_vout_allowed_value(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test default allowed value for Vout after init");
+    LOG_MESSAGE();
+
+    esp_err_t result = rs485_control_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_control_init() should return ESP_OK");
+
+    mock_gpio_expander_reset();
+    mock_freertos_semaphore_reset();
+
+    bool enabled = true;
+    LOG_INFO("Testing with enabled = %s", bool_to_str(enabled));
+
+    result = rs485_bus_vout_on_off(enabled);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off() should return ESP_OK");
+    validate_rs485_bus_vout_run(enabled);
+
+    // Second check with another value
+    mock_gpio_expander_reset();
+    mock_freertos_semaphore_reset();
+
+    enabled = false;
+    LOG_INFO("Testing with enabled = %s", bool_to_str(enabled));
+
+    result = rs485_bus_vout_on_off(enabled);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "rs485_bus_vout_on_off() should return ESP_OK");
+    validate_rs485_bus_vout_run(enabled);
 }
 
 int main(void)
@@ -498,25 +813,29 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_rs485_control_init_success);
-    RUN_TEST(test_rs485_control_init_null_handle);
-    RUN_TEST(test_rs485_control_init_mutex_already_created);
-    RUN_TEST(test_rs485_control_init_mutex_creation_failure);
+    RUN_TEST(test_rs485_control_init_mutex_fail);
+    RUN_TEST(test_rs485_control_init_set_out_dir_and_level_fail);
+    RUN_TEST(test_rs485_control_init_set_level_fail);
+    RUN_TEST(test_rs485_control_init_repeat_call);
 
-    RUN_TEST(test_rs485_term_on_off_handler_not_initialized);
-    RUN_TEST(test_rs485_term_on_off_invalid_port);
-    RUN_TEST(test_rs485_term_on_off_switch);
+    RUN_TEST(test_rs485_term_on_off_success);
+    RUN_TEST(test_rs485_term_on_off_set_level_fail);
+    RUN_TEST(test_rs485_term_on_off_incorrect_port);
 
-    RUN_TEST(test_rs485_pupd_on_off_handler_not_initialized);
-    RUN_TEST(test_rs485_pupd_on_off_invalid_port);
-    RUN_TEST(test_rs485_pupd_on_off_switch);
+    RUN_TEST(test_rs485_pupd_on_off_success);
+    RUN_TEST(test_rs485_pupd_on_off_set_level_fail);
+    RUN_TEST(test_rs485_pupd_on_off_incorrect_port);
 
-    RUN_TEST(test_rs485_bus_vout_on_off_handler_not_initialized);
-    RUN_TEST(test_rs485_bus_vout_on_off_mutex_not_initialized);
-    RUN_TEST(test_rs485_bus_vout_on_off_switch);
+    RUN_TEST(test_rs485_bus_vout_on_off_success);
+    RUN_TEST(test_rs485_bus_vout_on_off_fail);
+    RUN_TEST(test_rs485_bus_vout_on_off_no_init);
 
-    RUN_TEST(test_rs485_bus_vout_set_allowed_handler_not_initialized);
-    RUN_TEST(test_rs485_bus_vout_set_allowed_mutex_not_initialized);
-    RUN_TEST(test_rs485_bus_vout_set_allowed);
+    RUN_TEST(test_rs485_bus_vout_set_allowed_success);
+    RUN_TEST(test_rs485_bus_vout_set_allowed_fail);
+    RUN_TEST(test_rs485_bus_vout_set_allowed_no_init);
+
+    RUN_TEST(test_default_vout_enabled_value);
+    RUN_TEST(test_default_vout_allowed_value);
 
     return UNITY_END();
 }
