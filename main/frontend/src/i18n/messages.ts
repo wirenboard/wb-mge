@@ -16,7 +16,7 @@ export const messages = {
     server: 'Server',
     disabled: 'Disabled',
     ap: 'Access Point',
-    sta: 'Station',
+    sta: 'Client',
     none: 'None',
     ssid: 'Network name (SSID)',
   },
