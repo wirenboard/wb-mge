@@ -72,10 +72,18 @@ esp_err_t gpio_expander_init(esp_io_expander_handle_t* handle)
     return ESP_OK;
 }
 
-esp_err_t gpio_expander_set_dir(uint32_t pin_num_mask, esp_io_expander_dir_t direction)
+static bool not_initialized(void)
 {
     if ((gpio_expander == NULL) || (gpio_expander_mutex == NULL)) {
         ESP_LOGE(TAG, "GPIO expander is not initialized");
+        return true;
+    }
+    return false;
+}
+
+esp_err_t gpio_expander_set_dir(uint32_t pin_num_mask, esp_io_expander_dir_t direction)
+{
+    if (not_initialized()) {
         return ESP_FAIL;
     }
 
@@ -88,8 +96,7 @@ esp_err_t gpio_expander_set_dir(uint32_t pin_num_mask, esp_io_expander_dir_t dir
 
 esp_err_t gpio_expander_set_level(uint32_t pin_num_mask, uint8_t level)
 {
-    if ((gpio_expander == NULL) || (gpio_expander_mutex == NULL)) {
-        ESP_LOGE(TAG, "GPIO expander is not initialized");
+    if (not_initialized()) {
         return ESP_FAIL;
     }
 
@@ -102,8 +109,7 @@ esp_err_t gpio_expander_set_level(uint32_t pin_num_mask, uint8_t level)
 
 esp_err_t gpio_expander_set_out_dir_and_level(uint32_t pin_num_mask, uint8_t level)
 {
-    if ((gpio_expander == NULL) || (gpio_expander_mutex == NULL)) {
-        ESP_LOGE(TAG, "GPIO expander is not initialized");
+    if (not_initialized()) {
         return ESP_FAIL;
     }
 
@@ -119,8 +125,7 @@ esp_err_t gpio_expander_set_out_dir_and_level(uint32_t pin_num_mask, uint8_t lev
 
 esp_err_t gpio_expander_get_level(uint32_t pin_num_mask, uint32_t *level_mask)
 {
-    if ((gpio_expander == NULL) || (gpio_expander_mutex == NULL)) {
-        ESP_LOGE(TAG, "GPIO expander is not initialized");
+    if (not_initialized()) {
         return ESP_FAIL;
     }
 
