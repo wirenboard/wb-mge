@@ -1,5 +1,5 @@
-2025-12-26 Maxim Toropov <maxim.toropov@wirenboard.com>
-    * version:  1.0.6-rc2
+2025-12-29 Maxim Toropov <maxim.toropov@wirenboard.com>
+    * version:  1.0.6
     * fix:      GPIO expander competing access (use thread-safe functions for working with a port expander)
     * fix:      change wifi mode label in frontend from 'Station' to 'Client'
 
