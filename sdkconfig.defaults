@@ -40,8 +40,8 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # ADC Calibration Configurations
 #
 # Disable ADC two-point calibration because really these calibrations
-# are are not present in the eFuse (first 4 bytes in block 3)
-# and to make it possible to use this space in the future for our purpuses
+# are are not present in the eFuse (bytes 12-15 in block 3) and to
+# prevent conflict with device signature stored in block 3
 CONFIG_ADC_CALI_EFUSE_TP_ENABLE=n
 
 #

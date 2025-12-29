@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdbool.h>
 
 #define MAX_FUNCTION_CALLS                  20
 #define MOCK_IO_EXPANDER_HANDLE             ((esp_io_expander_handle_t)0xABCD1234)
@@ -24,22 +25,57 @@ typedef enum {
 
 typedef void *esp_io_expander_handle_t;
 
-extern esp_err_t mock_esp_io_expander_print_state_return;
-extern int mock_esp_io_expander_print_state_called;
-extern esp_io_expander_handle_t mock_esp_io_expander_print_state_handle;
+typedef struct {
+    int called;
+    unsigned call_seq;
+    esp_io_expander_handle_t handle;
+    bool should_fail;
+} mock_esp_io_expander_print_state_t;
 
-extern int mock_esp_io_expander_set_dir_called;
-extern esp_io_expander_handle_t mock_esp_io_expander_set_dir_handle;
-extern uint32_t mock_esp_io_expander_set_dir_pin_masks[MAX_FUNCTION_CALLS];
-extern esp_io_expander_dir_t mock_esp_io_expander_set_dir_directions[MAX_FUNCTION_CALLS];
+typedef struct {
+    int called;
+    unsigned call_seq;
+    esp_io_expander_handle_t handle;
+    uint32_t masks[MAX_FUNCTION_CALLS];
+    esp_io_expander_dir_t directions[MAX_FUNCTION_CALLS];
+    bool should_fail;
+} mock_esp_io_expander_set_dir_t;
 
-extern int mock_esp_io_expander_set_level_called;
-extern esp_io_expander_handle_t mock_esp_io_expander_set_level_handle;
-extern uint32_t mock_esp_io_expander_set_level_pin_masks[MAX_FUNCTION_CALLS];
-extern uint8_t mock_esp_io_expander_set_level_levels[MAX_FUNCTION_CALLS];
+typedef struct {
+    int called;
+    unsigned call_seq;
+    esp_io_expander_handle_t handle;
+    uint32_t masks[MAX_FUNCTION_CALLS];
+    uint8_t levels[MAX_FUNCTION_CALLS];
+    bool should_fail;
+} mock_esp_io_expander_set_level_t;
+
+typedef struct {
+    int called;
+    unsigned call_seq;
+    esp_io_expander_handle_t handle;
+    uint32_t masks[MAX_FUNCTION_CALLS];
+    uint32_t levels_setup;
+    bool should_fail;
+} mock_esp_io_expander_get_level_t;
+
+typedef struct {
+    int called;
+    unsigned call_seq;
+    esp_io_expander_handle_t handle;
+    bool should_fail;
+} mock_esp_io_expander_del_t;
+
+extern mock_esp_io_expander_print_state_t mock_esp_io_expander_print_state_data;
+extern mock_esp_io_expander_set_dir_t mock_esp_io_expander_set_dir_data;
+extern mock_esp_io_expander_set_level_t mock_esp_io_expander_set_level_data;
+extern mock_esp_io_expander_get_level_t mock_esp_io_expander_get_level_data;
+extern mock_esp_io_expander_del_t mock_esp_io_expander_del_data;
 
 esp_err_t esp_io_expander_print_state(esp_io_expander_handle_t handle);
 esp_err_t esp_io_expander_set_dir(esp_io_expander_handle_t handle, uint32_t pin_num_mask, esp_io_expander_dir_t direction);
 esp_err_t esp_io_expander_set_level(esp_io_expander_handle_t handle, uint32_t pin_num_mask, uint8_t level);
+esp_err_t esp_io_expander_get_level(esp_io_expander_handle_t handle, uint32_t pin_num_mask, uint32_t *level_mask);
+esp_err_t esp_io_expander_del(esp_io_expander_handle_t handle);
 
 void mock_esp_io_expander_reset(void);

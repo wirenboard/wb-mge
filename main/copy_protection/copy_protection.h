@@ -1,7 +1,6 @@
 #pragma once
 
 #include "esp_err.h"
-#include "esp_io_expander.h"
 #include "sys_info.h"
 
 typedef enum {
@@ -14,7 +13,8 @@ typedef enum {
 void copy_protection_init_keys(void);
 
 // Must be called after copy_protection_init_keys() and gpio_expander_init()
-esp_err_t copy_protection_init(esp_io_expander_handle_t io_expander_handle);
+// Сan only be called after gpio_expander_init()
+esp_err_t copy_protection_init(void);
 
 // Must be called after copy_protection_init() and sys_info_init()
 // Called from network_init()

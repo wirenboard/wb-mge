@@ -38,10 +38,6 @@
 
 static const char *TAG = "main";
 
-#if (!QEMU_BUILD)
-    static esp_io_expander_handle_t gpio_expander = NULL;
-#endif
-
 
 #if (!QEMU_BUILD)
     static void factory_reset(void)
@@ -111,9 +107,9 @@ void app_main(void)
     #if (!QEMU_BUILD)
         // Initialize GPIO expander before voltage monitoring
         // to reset all GPIOs to safe state anyway
-        gpio_expander_init(&gpio_expander);
-        rs485_control_init(gpio_expander);
-        mio_control_init(gpio_expander);
+        gpio_expander_init(NULL);
+        rs485_control_init();
+        mio_control_init();
 
         ESP_ERROR_CHECK(voltage_monitor_init(sys_voltage_event_callback));
         float voltage = voltage_monitor_get_sys_voltage();
@@ -132,7 +128,7 @@ void app_main(void)
 
     #if (!QEMU_BUILD)
         update_io_bus_control();
-        copy_protection_init(gpio_expander);
+        copy_protection_init();
     #endif // QEMU_BUILD
 
     print_setting_items();
@@ -142,7 +138,7 @@ void app_main(void)
 
     #if (!QEMU_BUILD)
         update_rs485_control();
-        indication_init(gpio_expander);  // Also calls copy_protection_start_port_expander_task()
+        indication_init();  // Also calls copy_protection_start_port_expander_task()
         indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
         config_button_init();  // Also calls copy_protection_start_sys_monitor_task()
         config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);

@@ -2,7 +2,7 @@
 #include "console_log.h"
 
 #include "mio_control.h"
-#include "esp_io_expander.h"
+#include "gpio_expander_mock.h"
 
 #include <stdbool.h>
 #include <string.h>
@@ -13,8 +13,7 @@ void mio_control_test_reset(void);
 
 void setUp(void)
 {
-    mock_esp_io_expander_reset();
-    mio_control_test_reset();
+    mock_gpio_expander_reset();
 }
 
 void tearDown(void)
@@ -22,137 +21,171 @@ void tearDown(void)
 
 }
 
-// Тестируем случай успешной инициализации mio_control_init
+// Валидация выполнения функции mio_control_init()
+void validate_mio_control_init_run(void)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        1,
+        mock_gpio_expander_set_out_dir_and_level_data.called,
+        "gpio_expander_set_out_dir_and_level() should be called once"
+    );
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(
+        IO_EXPANDER_PIN_NUM_8,
+        mock_gpio_expander_set_out_dir_and_level_data.masks[0],
+        "pin_num_mask in gpio_expander_set_out_dir_and_level() call should be IO_EXPANDER_PIN_NUM_8"
+    );
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        0,
+        mock_gpio_expander_set_out_dir_and_level_data.levels[0],
+        "level in in gpio_expander_set_out_dir_and_level() call should be 0"
+    );
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        0,
+        mock_gpio_expander_init_data.called,
+        "gpio_expander_init() should NOT be called"
+    );
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        0,
+        mock_gpio_expander_set_dir_data.called,
+        "gpio_expander_set_dir() should NOT be called"
+    );
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        0,
+        mock_gpio_expander_set_level_data.called,
+        "gpio_expander_set_level() should NOT be called"
+    );
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        0,
+        mock_gpio_expander_get_level_data.called,
+        "gpio_expander_get_level() should NOT be called"
+    );
+}
+
+// Тестируем успешное выполнение mio_control_init()
 void test_mio_control_init_success(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_init - success case");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_init() - success case");
     LOG_MESSAGE();
 
-    esp_err_t result = mio_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init should return ESP_OK");
+    esp_err_t result = mio_control_init();
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_dir_called,
-        "esp_io_expander_set_dir should be called once");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_IO_EXPANDER_HANDLE, mock_esp_io_expander_set_dir_handle,
-        "Handle passed to set_dir should match");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MIO_RESET_PIN, mock_esp_io_expander_set_dir_pin_masks[0],
-        "Pin mask should be IO_EXPANDER_PIN_NUM_8");
-    TEST_ASSERT_EQUAL_MESSAGE(IO_EXPANDER_OUTPUT, mock_esp_io_expander_set_dir_directions[0],
-        "Direction should be OUTPUT");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called once");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_IO_EXPANDER_HANDLE, mock_esp_io_expander_set_level_handle,
-        "Handle passed to set_level should match");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MIO_RESET_PIN, mock_esp_io_expander_set_level_pin_masks[0],
-        "Pin mask should be IO_EXPANDER_PIN_NUM_8");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[0],
-        "Initial level should be 0 (disabled)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init() should return ESP_OK");
+    validate_mio_control_init_run();
 }
 
-// Тестируем инициализацию с NULL handle
-void test_mio_control_init_null_handle(void)
+// Тестируем mio_control_init() при ошибке gpio_expander_set_out_dir_and_level()
+void test_mio_control_init_fail(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_init - NULL handle");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_init() - gpio_expander_set_out_dir_and_level() fail");
     LOG_MESSAGE();
 
-    esp_err_t result = mio_control_init(NULL);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "mio_control_init should return ESP_FAIL");
+    mock_gpio_expander_set_out_dir_and_level_data.should_fail = true;
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_dir_called,
-        "esp_io_expander_set_dir should not be called with NULL handle");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called with NULL handle");
+    esp_err_t result = mio_control_init();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "mio_control_init() should return ESP_FAIL");
+    validate_mio_control_init_run();
 }
 
-// Тестируем включение IO bus
-void test_mio_control_io_bus_onoff_enable(void)
+// Валидация выполнения mio_control_io_bus_onoff()
+void validate_mio_control_io_bus_onoff_run(bool enabled)
 {
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff - enable");
-    LOG_MESSAGE();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        1,
+        mock_gpio_expander_set_level_data.called,
+        "gpio_expander_set_level() should be called once"
+    );
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(
+        IO_EXPANDER_PIN_NUM_8,
+        mock_gpio_expander_set_level_data.masks[0],
+        "pin_num_mask in gpio_expander_set_level() call should be IO_EXPANDER_PIN_NUM_8"
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(
+        enabled,
+        mock_gpio_expander_set_level_data.levels[0],
+        "level in gpio_expander_set_level() call should be equal to provided value"
+    );
 
-    esp_err_t result = mio_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init should return ESP_OK");
-
-    result = mio_control_io_bus_onoff(true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff should return ESP_OK");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called twice");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_IO_EXPANDER_HANDLE, mock_esp_io_expander_set_level_handle,
-        "Handle should match");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MIO_RESET_PIN, mock_esp_io_expander_set_level_pin_masks[1],
-        "Pin mask should be IO_EXPANDER_PIN_NUM_8");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[1],
-        "Level should be 1 (enabled)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        0,
+        mock_gpio_expander_init_data.called,
+        "gpio_expander_init() should NOT be called"
+    );
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        0,
+        mock_gpio_expander_set_dir_data.called,
+        "gpio_expander_set_dir() should NOT be called"
+    );
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        0,
+        mock_gpio_expander_set_out_dir_and_level_data.called,
+        "gpio_expander_set_out_dir_and_level() should NOT be called"
+    );
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        0,
+        mock_gpio_expander_get_level_data.called,
+        "gpio_expander_get_level() should NOT be called"
+    );
 }
 
-// Тестируем выключение IO bus
-void test_mio_control_io_bus_onoff_disable(void)
+// Тестируем успешное выполнение mio_control_io_bus_onoff()
+void test_mio_control_io_bus_onoff_success(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff - disable");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff() - success case");
     LOG_MESSAGE();
 
-    esp_err_t result = mio_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init should return ESP_OK");
+    bool enabled = true;
+    LOG_INFO("Testing with enabled = %s", enabled ? "true" : "false");
 
-    result = mio_control_io_bus_onoff(false);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff should return ESP_OK");
+    esp_err_t result = mio_control_io_bus_onoff(enabled);
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called twice");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_IO_EXPANDER_HANDLE, mock_esp_io_expander_set_level_handle,
-        "Handle should match");
-    TEST_ASSERT_EQUAL_HEX32_MESSAGE(MIO_RESET_PIN, mock_esp_io_expander_set_level_pin_masks[1],
-        "Pin mask should be IO_EXPANDER_PIN_NUM_8");
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[1],
-        "Level should be 0 (disabled)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff() should return ESP_OK");
+    validate_mio_control_io_bus_onoff_run(enabled);
+
+    // Second test
+    setUp();
+
+    enabled = false;
+    LOG_INFO("Testing with enabled = %s", enabled ? "true" : "false");
+
+    result = mio_control_io_bus_onoff(enabled);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff() should return ESP_OK");
+    validate_mio_control_io_bus_onoff_run(enabled);
 }
 
-// Тестируем переключение IO bus
-void test_mio_control_io_bus_onoff_toggle(void)
+// Тестируем mio_control_io_bus_onoff() с ошибкой выполнения gpio_expander_set_level()
+void test_mio_control_io_bus_onoff_fail(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff - toggle");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff() - gpio_expander_set_level() fail");
     LOG_MESSAGE();
 
-    esp_err_t result = mio_control_init(MOCK_IO_EXPANDER_HANDLE);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_init should return ESP_OK");
+    mock_gpio_expander_set_level_data.should_fail = true;
 
-    result = mio_control_io_bus_onoff(true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "mio_control_io_bus_onoff should return ESP_OK");
+    bool enabled = true;
+    LOG_INFO("Testing with enabled = %s", enabled ? "true" : "false");
 
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[1],
-        "Level should be 1 after enable");
+    esp_err_t result = mio_control_io_bus_onoff(enabled);
 
-    mio_control_io_bus_onoff(false);
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, mock_esp_io_expander_set_level_levels[2],
-        "Level should be 0 after disable");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "mio_control_io_bus_onoff() should return ESP_FAIL");
+    validate_mio_control_io_bus_onoff_run(enabled);
 
-    mio_control_io_bus_onoff(true);
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, mock_esp_io_expander_set_level_levels[3],
-        "Level should be 1 after re-enable");
+    // Second test
+    setUp();
+    mock_gpio_expander_set_level_data.should_fail = true;
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(4, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should be called 4 times");
-}
+    enabled = false;
+    LOG_INFO("Testing with enabled = %s", enabled ? "true" : "false");
 
-// Тестируем вызов io_bus_onoff без инициализации
-void test_mio_control_io_bus_onoff_not_initialized(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test mio_control_io_bus_onoff - not initialized");
-    LOG_MESSAGE();
+    result = mio_control_io_bus_onoff(enabled);
 
-    esp_err_t result = mio_control_io_bus_onoff(true);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "mio_control_io_bus_onoff should return ESP_FAIL");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_set_level_called,
-        "esp_io_expander_set_level should not be called when not initialized");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "mio_control_io_bus_onoff() should return ESP_FAIL");
+    validate_mio_control_io_bus_onoff_run(enabled);
 }
 
 int main(void)
@@ -160,11 +193,10 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_mio_control_init_success);
-    RUN_TEST(test_mio_control_init_null_handle);
-    RUN_TEST(test_mio_control_io_bus_onoff_enable);
-    RUN_TEST(test_mio_control_io_bus_onoff_disable);
-    RUN_TEST(test_mio_control_io_bus_onoff_toggle);
-    RUN_TEST(test_mio_control_io_bus_onoff_not_initialized);
+    RUN_TEST(test_mio_control_init_fail);
+
+    RUN_TEST(test_mio_control_io_bus_onoff_success);
+    RUN_TEST(test_mio_control_io_bus_onoff_fail);
 
     return UNITY_END();
 }
