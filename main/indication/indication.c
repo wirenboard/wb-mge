@@ -1,4 +1,3 @@
-#include "esp_io_expander_tca95xx_16bit.h"
 #include "leds_control.h"
 #include "freertos/FreeRTOS.h"
 #include "esp_log.h"
@@ -257,15 +256,10 @@ static void indication_task(void *arg)
 }
 
 
-esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
+esp_err_t indication_init(void)
 {
     if (indication_initialized) {
         return ESP_OK;  // Already initialized
-    }
-
-    if (!io_expander_handle) {
-        ESP_LOGE(TAG, "IO expander handle is NULL");
-        return ESP_FAIL;
     }
 
     ctx_mutex = xSemaphoreCreateMutex();
@@ -274,7 +268,7 @@ esp_err_t indication_init(esp_io_expander_handle_t io_expander_handle)
         return ESP_FAIL;
     }
 
-    leds_control_init(io_expander_handle);
+    leds_control_init();
 
     // Status led context (init only minimum necessary fields)
     xSemaphoreTake(ctx_mutex, portMAX_DELAY);

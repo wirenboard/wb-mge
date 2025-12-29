@@ -4,8 +4,11 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 typedef void *i2c_master_bus_handle_t;
+
+#define MOCK_I2C_MASTER_BUS_HANDLE      (i2c_master_bus_handle_t)0x12345678
 
 typedef int i2c_port_num_t;
 
@@ -102,9 +105,22 @@ typedef enum {
     I2C_NUM_MAX,                /*!< I2C port max */
 } i2c_port_t;
 
-extern esp_err_t mock_i2c_new_master_bus_return;
-extern int mock_i2c_new_master_bus_called;
-extern i2c_master_bus_handle_t mock_i2c_bus_handle;
-extern i2c_master_bus_config_t mock_i2c_bus_config;
+typedef struct {
+    int called;
+    i2c_master_bus_config_t bus_config;
+    bool should_fail;
+} mock_i2c_new_master_bus_t;
+
+typedef struct {
+    int called;
+    i2c_master_bus_handle_t bus_handle;
+    bool should_fail;
+} mock_i2c_del_master_bus_t;
+
+extern mock_i2c_new_master_bus_t mock_i2c_new_master_bus_data;
+extern mock_i2c_del_master_bus_t mock_i2c_del_master_bus_data;
 
 esp_err_t i2c_new_master_bus(const i2c_master_bus_config_t *bus_config, i2c_master_bus_handle_t *ret_bus_handle);
+esp_err_t i2c_del_master_bus(i2c_master_bus_handle_t bus_handle);
+
+void mock_i2c_master_reset(void);
