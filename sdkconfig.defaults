@@ -30,6 +30,7 @@ CONFIG_LWIP_STATS=y
 
 # Task Watchdog Timer panic on timeout (reset system)
 CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=8
 
 #
 # Compiler options
