@@ -18,7 +18,7 @@ const onBlur = () => {
 };
 
 const onInput = (ev: Event) => {
-  model.value = (model.value as string).replace(/[^0-9.]/g, '');
+  model.value = (ev.target as HTMLInputElement).value.replace(/[^0-9.]/g, '');
   onCustomValidation(ev, t('wrong_ip_pattern'));
 };
 

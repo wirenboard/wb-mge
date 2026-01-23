@@ -1,3 +1,7 @@
+2026-01-23 Victor Vedenin <victor.vedenin@wirenboard.com>
+    * version:  1.0.7
+    * fix:      IP save in firefox
+
 2025-12-29 Maxim Toropov <maxim.toropov@wirenboard.com>
     * version:  1.0.6
     * fix:      GPIO expander competing access (use thread-safe functions for working with a port expander)
