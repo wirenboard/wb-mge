@@ -31,6 +31,9 @@ CONFIG_LWIP_STATS=y
 # Task Watchdog Timer panic on timeout (reset system)
 CONFIG_ESP_TASK_WDT_PANIC=y
 
+# Preparing for a firmware update may take about 5-7 seconds
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
 #
 # Compiler options
 #

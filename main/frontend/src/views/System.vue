@@ -249,7 +249,6 @@ const updateInterface = () => {
   display: flex;
 }
 
-.system-container div:nth-child(odd),
 .system-data {
   width: 100%;
   display: flex;
