@@ -1,6 +1,7 @@
-2026-01-23 Victor Vedenin <victor.vedenin@wirenboard.com>
+2026-01-26 Victor Vedenin <victor.vedenin@wirenboard.com>, Maxim Toropov <maxim.toropov@wirenboard.com>
     * version:  1.0.7
     * fix:      IP save in firefox
+    * fix:      TWDT timeout during firmware update via WiFi
 
 2025-12-29 Maxim Toropov <maxim.toropov@wirenboard.com>
     * version:  1.0.6
