@@ -61,6 +61,18 @@ const cancelChoice = () => {
   "ru": {
     "cancel": "Отменить",
     "upload": "Загрузить"
+  },
+  "kk": {
+    "cancel": "Таңдауды болдырмау",
+    "upload": "Жүктеу"
+  },
+  "it": {
+    "cancel": "Annulla selezione",
+    "upload": "Carica"
+  },
+  "de": {
+    "cancel": "Auswahl aufheben",
+    "upload": "Hochladen"
   }
 }
 </i18n>

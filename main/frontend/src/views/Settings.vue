@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { onBeforeRouteLeave } from 'vue-router';
 import Select from 'vue-multiselect';
 import ReloadIcon from '@/assets/reload.svg?component';
 import { useWifi } from '@/common/network';
@@ -40,7 +41,7 @@ watch([() => data.value?.wifi.sta_ssid, () => wifi.value], () => {
   selectedWifi.value = computedWifiNetworks.value.find(item => item.ssid === data.value?.wifi.sta_ssid);
 });
 
-onUnmounted(() => {
+onBeforeRouteLeave(() => {
   stopPolling();
 });
 
@@ -354,6 +355,7 @@ const addNetwork = () => {
   justify-items: flex-start;
   page-break-inside: avoid;
   break-inside: avoid;
+  line-height: 1em;
 }
 
 .settings-info div {
@@ -450,6 +452,63 @@ const addNetwork = () => {
     "add_ssid": "Добавить ssid",
     "wrong_ssid_pattern": "Введите строку из 1–31 символов: латиница, цифры, пробелы и спецсимволы",
     "wrong_pass_pattern": "Введите строку из 8–63 символов: латиница, цифры, пробелы и спецсимволы"
+  },
+  "kk": {
+    "title": "Баптаулар",
+
+    "ethernet": "Ethernet",
+    "dhcp_client": "DHCP клиенті",
+    "ip": "Тұрақты IP",
+    "gateway": "Шлюз",
+    "mask": "Маска",
+
+    "wifi_settings": "Wi-Fi",
+    "wifi_mode": "Режим",
+    "wifi_pass_security": "Желі қорғанысы",
+    "open": "Қорғаныссыз",
+    "wpa2_psk": "WPA2-PSK",
+    "wpa3_psk": "WPA3-PSK",
+    "add_ssid": "SSID қосу",
+    "wrong_ssid_pattern": "1–31 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар",
+    "wrong_pass_pattern": "8–63 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар"
+  },
+  "it": {
+    "title": "Impostazioni",
+
+    "ethernet": "Ethernet",
+    "dhcp_client": "Client DHCP",
+    "ip": "IP statico",
+    "gateway": "Gateway",
+    "mask": "Maschera",
+
+    "wifi_settings": "Wi-Fi",
+    "wifi_mode": "Modalità",
+    "wifi_pass_security": "Protezione rete",
+    "open": "Non protetto",
+    "wpa2_psk": "WPA2-PSK",
+    "wpa3_psk": "WPA3-PSK",
+    "add_ssid": "Aggiungi SSID",
+    "wrong_ssid_pattern": "Inserisci una stringa di 1–31 caratteri: lettere latine, numeri, spazi e caratteri speciali",
+    "wrong_pass_pattern": "Inserisci una stringa di 8–63 caratteri: lettere latine, numeri, spazi e caratteri speciali"
+  },
+  "de": {
+    "title": "Einstellungen",
+
+    "ethernet": "Ethernet",
+    "dhcp_client": "DHCP-Client",
+    "ip": "Statische IP",
+    "gateway": "Gateway",
+    "mask": "Maske",
+
+    "wifi_settings": "Wi-Fi",
+    "wifi_mode": "Modus",
+    "wifi_pass_security": "Netzwerkschutz",
+    "open": "Ungesichert",
+    "wpa2_psk": "WPA2-PSK",
+    "wpa3_psk": "WPA3-PSK",
+    "add_ssid": "SSID hinzufügen",
+    "wrong_ssid_pattern": "Geben Sie eine Zeichenfolge mit 1–31 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen",
+    "wrong_pass_pattern": "Geben Sie eine Zeichenfolge mit 8–63 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen"
   }
 }
 </i18n>

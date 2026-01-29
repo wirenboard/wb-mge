@@ -51,7 +51,6 @@ onBeforeUnmount(() => clearInterval(timer.value));
     <dialog ref="dialog" class="reconnectModal">
       <div class="reconnectModal-loaderWrapper">
         <Loader class="reconnectModal-loader" fill="currentColor" />
-        <div class="reconnectModal-counter">{{ countdown }}</div>
       </div>
       {{ t('reconnecting') }}
     </dialog>
@@ -67,7 +66,7 @@ onBeforeUnmount(() => clearInterval(timer.value));
   border: 0;
   align-items: center;
   display: flex;
-  gap: 6px;
+  gap: 12px;
   margin: auto 24px;
   font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif,"Apple Color Emoji","Segoe UI Emoji",Segoe UI Symbol,"Noto Color Emoji";
   font-size: 16px;
@@ -84,23 +83,18 @@ onBeforeUnmount(() => clearInterval(timer.value));
 
 .reconnectModal-loaderWrapper {
   position: relative;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.reconnectModal-counter {
-  font-weight: 900;
-  line-height: 1em;
-  height: 18px;
-}
-
 .reconnectModal-loader {
   position: absolute;
-  min-width: 36px;
-  height: 36px;
+  min-width: 30px;
+  height: 30px;
   display: block;
   animation: rotate 1s linear infinite;
 }
@@ -113,6 +107,15 @@ onBeforeUnmount(() => clearInterval(timer.value));
   },
   "ru": {
     "reconnecting": "Связь с устройством потеряна. Попытка переподключения…"
+  },
+  "kk": {
+    "reconnecting": "Құрылғымен байланыс үзілді. Қайта қосылу әрекеті…"
+  },
+  "it": {
+    "reconnecting": "Connessione al dispositivo persa. Tentativo di riconnessione…"
+  },
+  "de": {
+    "reconnecting": "Verbindung zum Gerät verloren. Versuche neu zu verbinden…"
   }
 }
 </i18n>

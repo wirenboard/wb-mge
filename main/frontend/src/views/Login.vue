@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
 import { useAlerts } from '@/common/alert';
-import { changeLang, Locale } from '@/i18n';
+import { changeLang, languages, Locale } from '@/i18n';
 import { documentation } from '@/common/links';
 import type { Auth } from '@/common/types';
 import AlertsWrapper from '@/components/AlertsWrapper.vue';
@@ -59,8 +59,7 @@ const login = async () => {
       <label class="login-languageWrapper">
         <span class="login-languageIcon" />
         <select v-model="locale" class="login-language" @change="changeLang(locale as Locale)">
-          <option value="en">English</option>
-          <option value="ru">Русский</option>
+          <option v-for="(lang, code) in languages" :key="code" :value="code">{{ lang }}</option>
         </select>
       </label>
     </nav>
@@ -164,6 +163,24 @@ const login = async () => {
     "sign_in": "Войти",
     "documentation": "Документация",
     "wrong_credentials": "Введены неверные логин или пароль"
+  },
+  "kk": {
+    "title": "WB-MGE шлюзының интерфейсі",
+    "sign_in": "Кіру",
+    "documentation": "Құжаттама",
+    "wrong_credentials": "Логин немесе құпиясөз қате енгізілді"
+  },
+  "it": {
+    "title": "Interfaccia gateway WB-MGE",
+    "sign_in": "Accedi",
+    "documentation": "Documentazione",
+    "wrong_credentials": "Inserisci login e password corretti"
+  },
+  "de": {
+    "title": "WB-MGE-Gateway-Oberfläche",
+    "sign_in": "Einloggen",
+    "documentation": "Dokumentation",
+    "wrong_credentials": "Bitte korrekten Benutzernamen und Passwort eingeben"
   }
 }
 </i18n>
