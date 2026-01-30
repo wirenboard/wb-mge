@@ -208,6 +208,87 @@ const getDisplayValue = (val: string | boolean | number) => {
     "power_vout": "Питание Vout",
     "power": "Напряжение питания",
     "v": "В"
+  },
+  "kk": {
+    "title": "Шолу",
+
+    "status": "Күйі",
+    "connection": "Қосылым",
+    "ip": "IP мекенжайы",
+    "mac": "MAC мекенжайы",
+    "enabled": "Қосулы",
+    "connected": "Қосылған",
+    "not_connected": "Қосылмаған",
+    "disabled": "Өшірілген",
+
+    "ethernet": "Ethernet",
+
+    "wifi": "Wi-Fi",
+    "wifi_mode": "Режим",
+    "client": "Клиент",
+    "access_point": "Қатынас нүктесі",
+    "connections_count": "Қосылымдар саны",
+    "rssi": "RSSI",
+    "dbm": "dBm",
+
+    "gateway": "Gateway",
+    "power_vout": "Vout кернеуі",
+    "power": "Қорек кернеуі",
+    "v": "В"
+  },
+  "it": {
+    "title": "Dashboard",
+
+    "status": "Stato",
+    "connection": "Connessione",
+    "ip": "Indirizzo IP",
+    "mac": "Indirizzo MAC",
+    "enabled": "Abilitato",
+    "connected": "Connesso",
+    "not_connected": "Non connesso",
+    "disabled": "Disabilitato",
+
+    "ethernet": "Ethernet",
+
+    "wifi": "Wi-Fi",
+    "wifi_mode": "Modalità",
+    "client": "Client",
+    "access_point": "Access Point",
+    "connections_count": "Numero di connessioni",
+    "rssi": "RSSI",
+    "dbm": "dBm",
+
+    "gateway": "Gateway",
+    "power_vout": "Tensione Vout",
+    "power": "Tensione di alimentazione",
+    "v": "V"
+  },
+  "de": {
+    "title": "Übersicht",
+
+    "status": "Status",
+    "connection": "Verbindung",
+    "ip": "IP-Adresse",
+    "mac": "MAC-Adresse",
+    "enabled": "Aktiviert",
+    "connected": "Verbunden",
+    "not_connected": "Nicht verbunden",
+    "disabled": "Deaktiviert",
+
+    "ethernet": "Ethernet",
+
+    "wifi": "Wi-Fi",
+    "wifi_mode": "Modus",
+    "client": "Client",
+    "access_point": "Access Point",
+    "connections_count": "Anzahl der Verbindungen",
+    "rssi": "RSSI",
+    "dbm": "dBm",
+
+    "gateway": "Gateway",
+    "power_vout": "Vout-Versorgung",
+    "power": "Versorgungsspannung",
+    "v": "V"
   }
 }
 </i18n>
