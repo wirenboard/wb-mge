@@ -44,7 +44,7 @@ export const messages = {
   kk: {
     connection_error: 'Қосылым қатесі',
     save: 'Сақтау',
-    dashboard: 'Бақылау тақтасы',
+    dashboard: 'Шолу',
     settings: 'Баптаулар',
     system: 'Жүйе',
     login: 'Пайдаланушы аты',

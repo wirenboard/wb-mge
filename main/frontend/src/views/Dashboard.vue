@@ -210,7 +210,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "v": "В"
   },
   "kk": {
-    "title": "Бақылау тақтасы",
+    "title": "Шолу",
 
     "status": "Күйі",
     "connection": "Қосылым",
@@ -231,9 +231,9 @@ const getDisplayValue = (val: string | boolean | number) => {
     "rssi": "RSSI",
     "dbm": "dBm",
 
-    "gateway": "Шлюз",
-    "power_vout": "Vout қуаты",
-    "power": "Қуат кернеуі",
+    "gateway": "Gateway",
+    "power_vout": "Vout кернеуі",
+    "power": "Қорек кернеуі",
     "v": "В"
   },
   "it": {
@@ -259,8 +259,8 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Alimentazione Vout",
-    "power": "Potenza",
+    "power_vout": "Tensione Vout",
+    "power": "Tensione di alimentazione",
     "v": "V"
   },
   "de": {

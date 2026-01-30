@@ -115,7 +115,7 @@ onBeforeUnmount(() => clearInterval(timer.value));
     "reconnecting": "Connessione al dispositivo persa. Tentativo di riconnessione…"
   },
   "de": {
-    "reconnecting": "Verbindung zum Gerät verloren. Versuche neu zu verbinden…"
+    "reconnecting": "Verbindung zum Gerät verloren. Versuche erneut zu verbinden…"
   }
 }
 </i18n>

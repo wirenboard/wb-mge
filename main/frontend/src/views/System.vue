@@ -254,9 +254,10 @@ const updateInterface = () => {
 }
 
 .system-container div {
-  height: 33px;
+  min-height: 33px;
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
 }
 
 .system-data {

@@ -102,9 +102,9 @@ const { t } = useI18n();
     "status": "Stato",
     "status_info": "Attivo se sono stati trasferiti dati negli ultimi 5 secondi",
     "active": "Attivo",
-    "not_active": "Non attivo",
-    "error_rate": "Tasso di errori",
-    "error_rate_description": "Tasso di errori per le ultime 100 richieste"
+    "not_active": "Inattivo",
+    "error_rate": "Tasso di errore",
+    "error_rate_description": "Tasso di errore per le ultime 100 richieste"
   },
   "de": {
     "modbus_mode": "Modbus-Modus",

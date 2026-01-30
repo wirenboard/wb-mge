@@ -59,7 +59,7 @@ watch(model, () => {
     "wrong_ip_pattern": "Некорректный формат — требуется IPv4: четыре числа от 0 до 255, разделённые точками"
   },
   "kk": {
-    "wrong_ip_pattern": "Қате пішім — IPv4 қажет: нүктемен бөлінген 0–255 аралығындағы төрт сан"
+    "wrong_ip_pattern": "Қате пішім — IPv4 қажет: нүктелермен бөлінген 0–255 аралығындағы төрт сан"
   },
   "it": {
     "wrong_ip_pattern": "Formato non corretto — è richiesto IPv4: quattro numeri da 0 a 255 separati da punti"

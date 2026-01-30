@@ -124,7 +124,7 @@ const handleFileChange = () => {
     "uploadSettings": "Файлдан жүктеу",
     "settingsUploaded": "Баптаулар жүктелді",
     "reset": "Қалпына келтіру",
-    "set_default_settings": "Зауыттыққа қайтару",
+    "set_default_settings": "Зауыттық баптауларға қайтару",
     "factory_reset_confirm": "Зауыттық баптауларға қайтаруды қалайсыз ба?"
   },
   "it": {
@@ -146,7 +146,7 @@ const handleFileChange = () => {
     "uploadSettings": "Einstellungen hochladen",
     "settingsUploaded": "Einstellungen hochgeladen",
     "reset": "Zurücksetzen",
-    "set_default_settings": "Werkseinstellungen",
+    "set_default_settings": "Werkseinstellungen zurücksetzen",
     "factory_reset_confirm": "Möchten Sie wirklich auf Werkseinstellungen zurücksetzen?"
   }
 }
