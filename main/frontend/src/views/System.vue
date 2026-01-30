@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { changeLang, type Locale } from '@/i18n';
+import { changeLang, languages, type Locale } from '@/i18n';
 import SaveIcon from '@/assets/save.svg?component';
 import { useAlerts } from '@/common/alert';
 import { useFirmware } from '@/common/firmware';
@@ -79,56 +79,58 @@ const updateInterface = () => {
     <Heading :title="t('title')" />
 
     <div class="system">
-      <fieldset class="system-container">
+      <fieldset>
         <legend>{{ t('device') }}</legend>
-        <div>{{ t('hostname') }}</div>
-        <form class="system-data system-saveWrapper" autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
-          <input v-model="settings!.hostname" type="text" name="hostname">
-          <button type="submit" :disabled="!settings!.hostname || !isChanged(['hostname'])">
-            <SaveIcon class="system-save" />
-          </button>
-        </form>
+        <div class="system-container system-containerLarge">
+          <div>{{ t('hostname') }}</div>
+          <form class="system-data system-saveWrapper" autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
+            <input v-model="settings!.hostname" type="text" name="hostname">
+            <button type="submit" :disabled="!settings!.hostname || !isChanged(['hostname'])">
+              <SaveIcon class="system-save" />
+            </button>
+          </form>
 
-        <div>{{ t('serial_num') }}</div>
-        <div class="system-data">
-          {{ info!.serial_num }}
-        </div>
-
-        <template v-if="uptime">
-          <div>{{ t('uptime') }}</div>
+          <div>{{ t('serial_num') }}</div>
           <div class="system-data">
-            <template v-if="uptime.days">
-              <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
-            </template>
-            <template v-if="uptime.hours">
-              <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
-            </template>
-            <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+            {{ info!.serial_num }}
           </div>
-        </template>
 
-        <div>{{ t('firmware_version') }}</div>
-        <div class="system-data">
-          {{ info?.firmware }}
-        </div>
+          <template v-if="uptime">
+            <div>{{ t('uptime') }}</div>
+            <div class="system-data">
+              <template v-if="uptime.days">
+                <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
+              </template>
+              <template v-if="uptime.hours">
+                <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
+              </template>
+              <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+            </div>
+          </template>
 
-        <div>{{ t('firmware_update') }}</div>
-        <div class="system-data">
-          <FileUpload
-            v-model="firmwareFile"
-            :placeholder="t('choose_firmware')"
-            accept=".bin"
-            :uploading-placeholder="isUpdating ? t('firmware_updating') : ''"
-            :is-loading="isUpdating"
-            :disabled="loadedMethod === 'firmware'"
-            @upload="updateFirmware"
-          />
-        </div>
-        <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
+          <div>{{ t('firmware_version') }}</div>
+          <div class="system-data">
+            {{ info?.firmware }}
+          </div>
 
-        <div>{{ t('reboot') }}</div>
-        <div class="system-data">
-          <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
+          <div>{{ t('firmware_update') }}</div>
+          <div class="system-data">
+            <FileUpload
+              v-model="firmwareFile"
+              :placeholder="t('choose_firmware')"
+              accept=".bin"
+              :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
+              :is-loading="isUpdating"
+              :disabled="loadedMethod === 'firmware'"
+              @upload="updateFirmware"
+            />
+          </div>
+          <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
+
+          <div>{{ t('reboot') }}</div>
+          <div class="system-data">
+            <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
+          </div>
         </div>
       </fieldset>
 
@@ -175,8 +177,7 @@ const updateInterface = () => {
           <label for="language">{{ t('language') }}</label>
           <div class="system-data">
             <select id="language" v-model="language" name="language">
-              <option value="en">English</option>
-              <option value="ru">Русский</option>
+              <option v-for="(lang, code) in languages" :key="code" :value="code">{{ lang }}</option>
             </select>
           </div>
 
@@ -235,6 +236,15 @@ const updateInterface = () => {
   justify-items: flex-start;
   page-break-inside: avoid;
   break-inside: avoid;
+  line-height: 1em;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.system-containerLarge {
+  grid-template-columns: 1fr minmax(210px, 1fr);
+  gap: 6px 12px;
 }
 
 .system-links {
@@ -244,9 +254,10 @@ const updateInterface = () => {
 }
 
 .system-container div {
-  height: 33px;
+  min-height: 33px;
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
 }
 
 .system-data {
@@ -297,6 +308,7 @@ const updateInterface = () => {
     "firmware_update_processed": "Firmware update in progress",
     "wirmware_update_error": "Firmware update error",
     "choose_firmware": "Choose file",
+    "update": "Update",
     "firmware_updating": "Updating",
     "reboot": "Reboot",
     "restart": "Reboot device",
@@ -325,6 +337,7 @@ const updateInterface = () => {
     "firmware_update_processed": "Обновление ПО в процессе",
     "wirmware_update_error": "Ошибка обновления прошивки",
     "choose_firmware": "Выбрать файл",
+    "update": "Обновить",
     "firmware_updating": "Обновление",
     "reboot": "Перезагрузка",
     "restart": "Перезагрузить",
@@ -335,6 +348,93 @@ const updateInterface = () => {
     "firmware_link": "Скачать последнюю прошивку",
     "wrong_username_pattern": "Используйте только латиницу, цифры, дефисы и нижние подчеркивания",
     "wrong_password_pattern": "Используйте только латиницу, цифры, пробелы и спецсимволы"
+  },
+  "kk": {
+    "title": "Жүйе",
+    "device": "Құрылғы",
+    "hostname": "Хост атауы",
+    "serial_num": "Сериялық нөмір",
+    "uptime": "Жұмыс уақыты",
+    "uptime_days": "- | {n} күн | {n} күн | {n} күн",
+    "uptime_hours": "бір сағаттан аз | {n} сағат | {n} сағат | {n} сағат",
+    "uptime_minutes": "минут | {n} минут | {n} минут | {n} минут",
+    "interface": "Веб-интерфейс",
+    "language": "Тіл",
+    "firmware_version": "Микробағдарлама нұсқасы",
+    "firmware_update": "Микробағдарламаны жаңарту",
+    "wirmware_update_info": "Жаңартудан кейін құрылғы қайта жүктеледі",
+    "firmware_update_processed": "Микробағдарламаны жаңарту жүріп жатыр",
+    "wirmware_update_error": "Микробағдарламаны жаңарту қатесі",
+    "choose_firmware": "Файлды таңдаңыз",
+    "update": "Жаңарту",
+    "firmware_updating": "Жаңартылуда",
+    "reboot": "Қайта жүктеу",
+    "restart": "Құрылғыны қайта жүктеу",
+    "links": "Сілтемелер",
+    "documentation": "Құжаттама",
+    "support": "Қолдау",
+    "website": "Құрылғыларды сатып алу",
+    "firmware_link": "Соңғы микробағдарламаны жүктеу",
+    "wrong_username_pattern": "Тек латын әріптері, сандар, дефис және астыңғы сызықша қолданыңыз",
+    "wrong_password_pattern": "Тек латын әріптері, сандар, бос орындар және арнайы таңбалар қолданыңыз"
+  },
+  "it": {
+    "title": "Sistema",
+    "device": "Dispositivo",
+    "hostname": "Nome host",
+    "serial_num": "Numero di serie",
+    "uptime": "Tempo di attività",
+    "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
+    "uptime_hours": "meno di un'ora | {n} ora | {n} ore | {n} ore",
+    "uptime_minutes": "minuto | {n} minuto | {n} minuti | {n} minuti",
+    "interface": "Interfaccia web",
+    "language": "Lingua",
+    "firmware_version": "Versione firmware",
+    "firmware_update": "Aggiornamento firmware",
+    "wirmware_update_info": "Il dispositivo si riavvierà dopo l'aggiornamento",
+    "firmware_update_processed": "Aggiornamento firmware in corso",
+    "wirmware_update_error": "Errore di aggiornamento firmware",
+    "choose_firmware": "Scegli file",
+    "update": "Aggiorna",
+    "firmware_updating": "Aggiornamento",
+    "reboot": "Riavvia",
+    "restart": "Riavvia dispositivo",
+    "links": "Link",
+    "documentation": "Documentazione",
+    "support": "Supporto",
+    "website": "Acquista dispositivi",
+    "firmware_link": "Scarica l'ultimo firmware",
+    "wrong_username_pattern": "Usa solo lettere latine, numeri, trattini e underscore",
+    "wrong_password_pattern": "Usa solo lettere latine, numeri, spazi e caratteri speciali"
+  },
+  "de": {
+    "title": "System",
+    "device": "Gerät",
+    "hostname": "Hostname",
+    "serial_num": "Seriennummer",
+    "uptime": "Betriebszeit",
+    "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
+    "uptime_hours": "weniger als eine Stunde | {n} Stunde | {n} Stunden | {n} Stunden",
+    "uptime_minutes": "Minute | {n} Minute | {n} Minuten | {n} Minuten",
+    "interface": "Weboberfläche",
+    "language": "Sprache",
+    "firmware_version": "Firmware-Version",
+    "firmware_update": "Firmware-Update",
+    "wirmware_update_info": "Das Gerät wird nach dem Update neu gestartet",
+    "firmware_update_processed": "Firmware-Update läuft",
+    "wirmware_update_error": "Fehler beim Firmware-Update",
+    "choose_firmware": "Datei auswählen",
+    "update": "Aktualisieren",
+    "firmware_updating": "Wird aktualisiert",
+    "reboot": "Neustart",
+    "restart": "Gerät neu starten",
+    "links": "Links",
+    "documentation": "Dokumentation",
+    "support": "Support",
+    "website": "Geräte kaufen",
+    "firmware_link": "Neueste Firmware herunterladen",
+    "wrong_username_pattern": "Nur lateinische Buchstaben, Zahlen, Bindestriche und Unterstriche verwenden",
+    "wrong_password_pattern": "Nur lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen verwenden"
   }
 }
 </i18n>

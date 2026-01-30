@@ -77,6 +77,48 @@ const { t } = useI18n();
     "not_active": "Не активен",
     "error_rate": "Процент ошибок",
     "error_rate_description": "Процент ошибок по последним 100 запросам"
+  },
+  "kk": {
+    "modbus_mode": "Режим",
+    "bridge_mode": "Рөл",
+    "bridge_modbus": "Modbus TCP",
+    "bridge_transparent": "Мөлдір",
+    "tcp_port": "TCP порты",
+    "tcp_count": "TCP қосылымдары",
+    "status": "Күйі",
+    "status_info": "Соңғы 5 секундта дерек берілсе — белсенді",
+    "active": "Белсенді",
+    "not_active": "Белсенді емес",
+    "error_rate": "Қате пайызы",
+    "error_rate_description": "Соңғы 100 сұрауға қатысты қате пайызы"
+  },
+  "it": {
+    "modbus_mode": "Modalità Modbus",
+    "bridge_mode": "Modalità bridge",
+    "bridge_modbus": "Modbus TCP",
+    "bridge_transparent": "Trasparente",
+    "tcp_port": "Porta TCP",
+    "tcp_count": "Connessioni TCP",
+    "status": "Stato",
+    "status_info": "Attivo se sono stati trasferiti dati negli ultimi 5 secondi",
+    "active": "Attivo",
+    "not_active": "Inattivo",
+    "error_rate": "Tasso di errore",
+    "error_rate_description": "Tasso di errore per le ultime 100 richieste"
+  },
+  "de": {
+    "modbus_mode": "Modbus-Modus",
+    "bridge_mode": "Bridge-Modus",
+    "bridge_modbus": "Modbus TCP",
+    "bridge_transparent": "Transparent",
+    "tcp_port": "TCP-Port",
+    "tcp_count": "TCP-Verbindungen",
+    "status": "Status",
+    "status_info": "Aktiv, wenn in den letzten 5 Sekunden Daten übertragen wurden",
+    "active": "Aktiv",
+    "not_active": "Inaktiv",
+    "error_rate": "Fehlerquote",
+    "error_rate_description": "Fehlerquote der letzten 100 Anfragen"
   }
 }
 </i18n>

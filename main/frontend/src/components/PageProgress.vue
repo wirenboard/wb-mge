@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 const progress = ref(0);
 const isActive = ref(false);
 let timer: number | null = null;
 
 const router = useRouter();
+const route = useRoute();
 
 const start = () => {
   isActive.value = true;
@@ -44,6 +45,9 @@ router.afterEach(async () => {
   <div
     v-if="isActive"
     class="page-progress"
+    :class="{
+      'page-progressLogin': route.name === 'login'
+    }"
     :style="{ width: progress + '%' }"
   />
 </template>
@@ -57,7 +61,9 @@ router.afterEach(async () => {
   background: var(--primary-color);
   transition: width 0.2s ease;
   z-index: 9999;
+}
 
+.page-progress:not(.page-progressLogin) {
   @media (max-width: 680px) {
     top: 58px;
   }

@@ -152,6 +152,15 @@ watch(
   },
   "ru": {
     "logout": "Выйти"
+  },
+  "kk": {
+    "logout": "Шығу"
+  },
+  "it": {
+    "logout": "Esci"
+  },
+  "de": {
+    "logout": "Abmelden"
   }
 }
 </i18n>

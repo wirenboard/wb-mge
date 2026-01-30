@@ -48,7 +48,9 @@ const cancelChoice = () => {
 
 .fileUpload-wrapper {
   display: flex;
-  gap: 12px;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 </style>
 
@@ -61,6 +63,18 @@ const cancelChoice = () => {
   "ru": {
     "cancel": "Отменить",
     "upload": "Загрузить"
+  },
+  "kk": {
+    "cancel": "Таңдауды болдырмау",
+    "upload": "Жүктеу"
+  },
+  "it": {
+    "cancel": "Annulla",
+    "upload": "Carica"
+  },
+  "de": {
+    "cancel": "Abbrechen",
+    "upload": "Hochladen"
   }
 }
 </i18n>
