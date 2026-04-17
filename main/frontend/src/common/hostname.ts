@@ -4,6 +4,10 @@ import { api } from '@/utils/api';
 const hostname = ref<string>('');
 let fetched = false;
 
+export const setHostname = (value: string) => {
+  hostname.value = value;
+};
+
 export const useHostname = () => {
   if (!fetched) {
     fetched = true;
