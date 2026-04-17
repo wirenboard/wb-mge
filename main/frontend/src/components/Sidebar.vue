@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
@@ -11,8 +11,7 @@ const { t } = useI18n();
 const route = useRoute();
 const isShowMenu = ref(false);
 const router = useRouter();
-const { hostname, fetchHostname } = useHostname();
-onMounted(() => fetchHostname());
+const { hostname } = useHostname();
 
 watch(
   () => route.fullPath,

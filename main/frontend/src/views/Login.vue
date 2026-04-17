@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
@@ -17,8 +17,7 @@ const route = useRoute();
 const { showAlert } = useAlerts();
 const data = reactive({ login: '', pass: '' });
 const isLoading = ref(false);
-const { hostname, fetchHostname } = useHostname();
-onMounted(() => fetchHostname());
+const { hostname } = useHostname();
 
 const login = async () => {
   isLoading.value = true;
