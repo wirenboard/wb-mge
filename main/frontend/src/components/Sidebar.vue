@@ -5,13 +5,11 @@ import { useRoute, useRouter } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
 import LogoutIcon from '@/assets/logout.svg?component';
 import MenuIcon from '@/assets/menu.svg?component';
-import { useHostname } from '@/common/hostname';
 
 const { t } = useI18n();
 const route = useRoute();
 const isShowMenu = ref(false);
 const router = useRouter();
-const { hostname } = useHostname();
 
 watch(
   () => route.fullPath,
@@ -25,7 +23,6 @@ watch(
   <aside class="sidebar">
     <RouterLink to="/" class="sidebar-logo">
       <Logo alt="Wiren Board" />
-      <div v-if="hostname" class="sidebar-hostname">{{ hostname }}</div>
     </RouterLink>
 
     <MenuIcon class="sidebar-burger" @click="isShowMenu = !isShowMenu" />
@@ -145,14 +142,6 @@ watch(
   width: 20px;
   height: 20px;
   margin-right: 6px;
-}
-
-.sidebar-hostname {
-  font-size: 11px;
-  color: var(--text-color-secondary, #888);
-  text-align: center;
-  margin-top: 4px;
-  word-break: break-all;
 }
 </style>
 
