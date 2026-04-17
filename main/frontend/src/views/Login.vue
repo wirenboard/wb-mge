@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
@@ -9,6 +9,7 @@ import { documentation } from '@/common/links';
 import type { Auth } from '@/common/types';
 import AlertsWrapper from '@/components/AlertsWrapper.vue';
 import { api } from '@/utils/api';
+import { useHostname } from '@/common/hostname';
 
 const { t, locale } = useI18n();
 const router = useRouter();
@@ -16,6 +17,8 @@ const route = useRoute();
 const { showAlert } = useAlerts();
 const data = reactive({ login: '', pass: '' });
 const isLoading = ref(false);
+const { hostname, fetchHostname } = useHostname();
+onMounted(() => fetchHostname());
 
 const login = async () => {
   isLoading.value = true;
@@ -35,6 +38,7 @@ const login = async () => {
 <template>
   <section class="login">
     <Logo alt="Wiren Board" />
+    <div v-if="hostname" class="login-hostname">{{ hostname }}</div>
 
     <div class="login-title">{{ t('title') }}</div>
 
@@ -147,6 +151,12 @@ const login = async () => {
   background-size: 14px;
   height: 14px;
   width: 14px;
+}
+
+.login-hostname {
+  font-size: 13px;
+  color: var(--text-color-secondary, #888);
+  margin-top: 6px;
 }
 </style>
 
