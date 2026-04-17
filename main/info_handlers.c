@@ -1,6 +1,7 @@
 #include "info_handlers.h"
 #include "json_utils.h"
 #include "auth.h"
+#include "setting_items.h"
 #include "bridge.h"
 #include "wifi_apsta.h"
 #include "config.h"
@@ -397,5 +398,22 @@ esp_err_t wb_status_get_handler(httpd_req_t *req)
     }
 
     json_utils_send_response(req, NULL, wb_status_json);
+    return ESP_OK;
+}
+
+esp_err_t hostname_get_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "Hostname GET request");
+
+    char hostname[SETTING_ITEM_MAX_STR_LEN] = { 0 };
+    setting_items_read(KEY_HOSTNAME, hostname);
+
+    cJSON *response_json = cJSON_CreateObject();
+    if (response_json == NULL) {
+        json_utils_send_error(req, "Failed to create response");
+        return ESP_OK;
+    }
+    cJSON_AddStringToObject(response_json, "hostname", hostname);
+    json_utils_send_response(req, NULL, response_json);
     return ESP_OK;
 }
