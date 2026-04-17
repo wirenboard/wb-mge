@@ -10,3 +10,8 @@ esp_err_t uptime_get_handler(httpd_req_t *req);
 
 // HTTP handler for AP clients GET endpoint
 esp_err_t ap_clients_get_handler(httpd_req_t *req);
+
+// HTTP handler for WB status GET endpoint
+
+// HTTP handler for hostname GET endpoint (public, no auth)
+esp_err_t hostname_get_handler(httpd_req_t *req);

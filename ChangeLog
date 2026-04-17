@@ -1,3 +1,8 @@
+2026-04-17 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
+    * version:  1.1.1
+    * added:    display device hostname under the logo on login screen and sidebar
+    * added:    public GET /hostname API endpoint (no auth required)
+
 2026-01-29 Victor Vedenin <victor.vedenin@wirenboard.com>
     * version:  1.1.0
     * added:    new interface languages: Kazakh, Italian, and German

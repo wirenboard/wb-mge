@@ -2,6 +2,7 @@ import { ref } from 'vue';
 import { useAlerts } from '@/common/alert';
 import type { DeepPartial, Settings, UpdateSettingsResponse } from '@/common/types';
 import { api } from '@/utils/api';
+import { setHostname } from '@/common/hostname';
 
 const isDeepEqual = (a: any, b: any): boolean => {
   if (a === b) return true;
@@ -31,6 +32,9 @@ export const useSettings = () => {
   const refresh = async () => {
     data.value = await api<Settings>('settings');
     initData.value = JSON.parse(JSON.stringify(data.value));
+    if (data.value?.hostname) {
+      setHostname(data.value.hostname);
+    }
   };
 
   const isChanged = (fields: string[]) => {
