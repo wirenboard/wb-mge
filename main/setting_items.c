@@ -219,6 +219,12 @@ static const setting_item_t setting_items[] = {
     {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
+
+    // KNX IP Secure
+    {KEY_KNX_ENABLED, DEFAULT_KNX_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_KNX_PORT, DEFAULT_KNX_PORT, validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_KNX_DEVICE_AUTH, DEFAULT_KNX_DEVICE_AUTH, NULL, SETTING_ITEM_TYPE_STRING},
+    {KEY_KNX_USER_PASS, DEFAULT_KNX_USER_PASS, NULL, SETTING_ITEM_TYPE_STRING},
 };
 
 static const setting_item_t *find_setting_item(const char *key)
