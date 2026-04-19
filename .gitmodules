@@ -1,0 +1,4 @@
+[submodule "components/knxd_core/knxd"]
+	path = components/knxd_core/knxd
+	url = https://github.com/wirenboard/knxd.git
+	branch = esp32-port
