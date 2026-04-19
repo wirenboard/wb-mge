@@ -85,6 +85,13 @@ export interface RsSettings {
   };
 }
 
+export interface KnxSettings {
+  enabled: boolean;
+  port: number;
+  device_auth: string;
+  user_pass: string;
+}
+
 export interface Settings {
   hostname: string;
   login: string;
@@ -92,6 +99,7 @@ export interface Settings {
   web_port: number;
   io_bus: boolean;
   vout: boolean;
+  knx: KnxSettings;
   wifi: {
     mode: WiFiMode;
     ap_ip_static: string;

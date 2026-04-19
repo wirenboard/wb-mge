@@ -28,11 +28,19 @@ CONFIG_FREERTOS_HZ=500
 CONFIG_LWIP_MAX_SOCKETS=15
 CONFIG_LWIP_STATS=y
 
-# Task Watchdog Timer panic on timeout (reset system)
-CONFIG_ESP_TASK_WDT_PANIC=y
+# Task Watchdog Timer — log only, don't panic (KNX PBKDF2 blocks for ~20s)
+# CONFIG_ESP_TASK_WDT_PANIC is not set
 
-# Preparing for a firmware update may take about 5-7 seconds
-CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+#
+# KNX IP Secure — requires Curve25519 ECDH and PKCS5
+#
+CONFIG_MBEDTLS_ECP_DP_CURVE25519_ENABLED=y
+CONFIG_MBEDTLS_ECDH_C=y
+CONFIG_MBEDTLS_PKCS5_C=y
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+
+# First-boot PBKDF2 key derivation takes ~20s (cached after), OTA takes 5-7s
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
 
 #
 # Compiler options

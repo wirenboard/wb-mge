@@ -28,7 +28,8 @@ set(COMPONENT_SRCS "main.c"
                    "settings_update.c"
                    "settings_save_timer.c"
                    "debug_log.c"
-                   "wb_test.c")
+                   "wb_test.c"
+                   "knx_server.cpp")
 
 # Conditionally add files based on build type
 if(CONFIG_ETH_USE_OPENETH)
@@ -72,3 +73,14 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
 )
 
 target_link_libraries(${COMPONENT_TARGET} "-u wb_app_desc")
+
+# knxd core — must use --whole-archive to preserve RDRIVER/RSERVER auto-registration statics
+if(TARGET __idf_knxd_core)
+    target_link_libraries(${COMPONENT_TARGET} PRIVATE
+        -Wl,--whole-archive __idf_knxd_core -Wl,--no-whole-archive)
+endif()
+
+# knx_server.cpp includes knxd headers which have warnings incompatible with -Werror
+set_source_files_properties(knx_server.cpp PROPERTIES COMPILE_OPTIONS
+    "-Wno-error;-Wno-unused-variable;-fexceptions;-frtti"
+)

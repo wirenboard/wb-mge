@@ -68,6 +68,13 @@ static const setting_mapping_t rs485_bridge_mappings[] = {
     {"modbus", "bridge_modbus"},
 };
 
+static const setting_mapping_t knx_mappings[] = {
+    {"enabled", KEY_KNX_ENABLED},
+    {"port", KEY_KNX_PORT},
+    {"device_auth", KEY_KNX_DEVICE_AUTH},
+    {"user_pass", KEY_KNX_USER_PASS},
+};
+
 static esp_err_t add_rs485_settings_to_json(cJSON *parent);
 
 // Helper function to add setting to JSON using automatic type detection
@@ -195,6 +202,13 @@ esp_err_t settings_build_response_json(cJSON **response_json)
     if (add_group_to_json(*response_json, "ethernet", ethernet_mappings,
                          ARRAY_SIZE(ethernet_mappings)) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add Ethernet settings to JSON");
+        cJSON_Delete(*response_json);
+        return ESP_FAIL;
+    }
+
+    // Add KNX settings group
+    if (add_group_to_json(*response_json, "knx", knx_mappings, ARRAY_SIZE(knx_mappings)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add KNX settings to JSON");
         cJSON_Delete(*response_json);
         return ESP_FAIL;
     }
@@ -339,6 +353,14 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         cJSON *eth_json = cJSON_GetObjectItem(request_json, "ethernet");
         if (cJSON_IsObject(eth_json)) {
             save_group_settings(eth_json, ethernet_mappings, ARRAY_SIZE(ethernet_mappings), NULL);
+        }
+    }
+
+    // Process KNX settings group
+    if (cJSON_HasObjectItem(request_json, "knx")) {
+        cJSON *knx_json = cJSON_GetObjectItem(request_json, "knx");
+        if (cJSON_IsObject(knx_json)) {
+            save_group_settings(knx_json, knx_mappings, ARRAY_SIZE(knx_mappings), NULL);
         }
     }
 

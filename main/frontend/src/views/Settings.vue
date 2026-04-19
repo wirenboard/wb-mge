@@ -4,6 +4,8 @@ import { useI18n } from 'vue-i18n';
 import { onBeforeRouteLeave } from 'vue-router';
 import Select from 'vue-multiselect';
 import ReloadIcon from '@/assets/reload.svg?component';
+import EyeIcon from '@/assets/eye.svg?component';
+import EyeOffIcon from '@/assets/eyeOff.svg?component';
 import { useWifi } from '@/common/network';
 import { useSettings } from '@/common/settings';
 import type { Settings, WiFiNetwork, WiFiSecuityProtocol } from '@/common/types';
@@ -18,6 +20,8 @@ import { onCustomValidation } from '@/utils/validation';
 const { t } = useI18n();
 const { data, initData, isChanged, isLoading, updateSettings } = useSettings();
 const { wifi, isPolling, startPolling, stopPolling } = useWifi();
+const showKnxDeviceAuth = ref(false);
+const showKnxUserPass = ref(false);
 const selectedWifi = ref();
 const wifiSelect = ref();
 const searhcValue = ref('');
@@ -324,6 +328,81 @@ const addNetwork = () => {
         title="RS-485 2"
         :has-ports-conflict="data.rs485_1.bridge.port === data.rs485_2.bridge.port"
       />
+
+      <fieldset>
+        <legend>KNX IP Secure</legend>
+        <form
+          class="settings-info"
+          @submit.prevent="updateSettings({
+            knx: {
+              enabled: data.knx.enabled,
+              port: data.knx.port,
+              device_auth: data.knx.device_auth,
+              user_pass: data.knx.user_pass,
+            }
+          })">
+          <label for="knx_enabled">{{ t('knx_enabled') }}</label>
+          <div class="settings-data">
+            <Switch
+              id="knx_enabled"
+              v-model="data.knx.enabled"
+            />
+          </div>
+
+          <template v-if="data.knx.enabled">
+            <label for="knx_port">{{ t('knx_port') }}</label>
+            <div class="settings-data">
+              <input
+                id="knx_port"
+                v-model.number="data.knx.port"
+                type="number"
+                min="1"
+                max="65535"
+                name="knx_port"
+              />
+            </div>
+
+            <label for="knx_device_auth">{{ t('knx_device_auth') }}</label>
+            <div class="settings-data settings-password">
+              <input
+                id="knx_device_auth"
+                v-model="data.knx.device_auth"
+                :type="showKnxDeviceAuth ? 'text' : 'password'"
+                name="knx_device_auth"
+                :placeholder="t('knx_auth_placeholder')"
+              />
+              <button type="button" class="settings-eyeButton" @click="showKnxDeviceAuth = !showKnxDeviceAuth">
+                <EyeIcon v-if="!showKnxDeviceAuth" />
+                <EyeOffIcon v-else />
+              </button>
+            </div>
+
+            <label for="knx_user_pass">{{ t('knx_user_pass') }}</label>
+            <div class="settings-data settings-password">
+              <input
+                id="knx_user_pass"
+                v-model="data.knx.user_pass"
+                :type="showKnxUserPass ? 'text' : 'password'"
+                name="knx_user_pass"
+                :placeholder="t('knx_pass_placeholder')"
+              />
+              <button type="button" class="settings-eyeButton" @click="showKnxUserPass = !showKnxUserPass">
+                <EyeIcon v-if="!showKnxUserPass" />
+                <EyeOffIcon v-else />
+              </button>
+            </div>
+          </template>
+
+          <Button
+            class="settings-submit"
+            type="submit"
+            :is-loading="isLoading && isChanged(['knx'])"
+            :disabled="isLoading || !isChanged(['knx'])"
+          >
+            {{ t('save') }}
+          </Button>
+        </form>
+      </fieldset>
     </div>
   </Layout>
 </template>
@@ -404,6 +483,30 @@ const addNetwork = () => {
   align-items: center;
 }
 
+.settings-password {
+  position: relative;
+}
+
+.settings-password input {
+  padding-right: 36px;
+}
+
+.settings-eyeButton {
+  all: unset;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  opacity: 0.5;
+  display: flex;
+  align-items: center;
+}
+
+.settings-eyeButton:hover {
+  opacity: 1;
+}
+
 .settings-submit {
   margin-top: 14px;
 }
@@ -432,7 +535,14 @@ const addNetwork = () => {
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Add ssid",
     "wrong_ssid_pattern": "Enter a string of 1–31 characters: Latin letters, numbers, spaces, and special characters",
-    "wrong_pass_pattern": "Enter a string of 8–63 characters: Latin letters, numbers, spaces, and special characters"
+    "wrong_pass_pattern": "Enter a string of 8–63 characters: Latin letters, numbers, spaces, and special characters",
+
+    "knx_enabled": "Enable KNX",
+    "knx_port": "TCP Port",
+    "knx_device_auth": "Device Auth Password",
+    "knx_user_pass": "User Password",
+    "knx_auth_placeholder": "Device authentication",
+    "knx_pass_placeholder": "Commissioning password"
   },
   "ru": {
     "title": "Настройки",
@@ -451,7 +561,14 @@ const addNetwork = () => {
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Добавить ssid",
     "wrong_ssid_pattern": "Введите строку из 1–31 символов: латиница, цифры, пробелы и спецсимволы",
-    "wrong_pass_pattern": "Введите строку из 8–63 символов: латиница, цифры, пробелы и спецсимволы"
+    "wrong_pass_pattern": "Введите строку из 8–63 символов: латиница, цифры, пробелы и спецсимволы",
+
+    "knx_enabled": "Включить KNX",
+    "knx_port": "TCP порт",
+    "knx_device_auth": "Пароль аутентификации",
+    "knx_user_pass": "Пароль пользователя",
+    "knx_auth_placeholder": "Device authentication",
+    "knx_pass_placeholder": "Commissioning password"
   },
   "kk": {
     "title": "Баптаулар",
@@ -470,17 +587,21 @@ const addNetwork = () => {
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "SSID қосу",
     "wrong_ssid_pattern": "1–31 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар",
-    "wrong_pass_pattern": "8–63 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар"
+    "wrong_pass_pattern": "8–63 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар",
+    "knx_enabled": "Enable KNX",
+    "knx_port": "TCP Port",
+    "knx_device_auth": "Device Auth Password",
+    "knx_user_pass": "User Password",
+    "knx_auth_placeholder": "Device authentication",
+    "knx_pass_placeholder": "Commissioning password"
   },
   "it": {
     "title": "Impostazioni",
-
     "ethernet": "Ethernet",
     "dhcp_client": "Client DHCP",
     "ip": "IP statico",
     "gateway": "Gateway",
     "mask": "Maschera",
-
     "wifi_settings": "Wi-Fi",
     "wifi_mode": "Modalità",
     "wifi_pass_security": "Protezione rete",
@@ -489,17 +610,21 @@ const addNetwork = () => {
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Aggiungi SSID",
     "wrong_ssid_pattern": "Inserisci una stringa di 1–31 caratteri: lettere latine, numeri, spazi e caratteri speciali",
-    "wrong_pass_pattern": "Inserisci una stringa di 8–63 caratteri: lettere latine, numeri, spazi e caratteri speciali"
+    "wrong_pass_pattern": "Inserisci una stringa di 8–63 caratteri: lettere latine, numeri, spazi e caratteri speciali",
+    "knx_enabled": "Enable KNX",
+    "knx_port": "TCP Port",
+    "knx_device_auth": "Device Auth Password",
+    "knx_user_pass": "User Password",
+    "knx_auth_placeholder": "Device authentication",
+    "knx_pass_placeholder": "Commissioning password"
   },
   "de": {
     "title": "Einstellungen",
-
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP-Client",
     "ip": "Statische IP",
     "gateway": "Gateway",
     "mask": "Maske",
-
     "wifi_settings": "Wi-Fi",
     "wifi_mode": "Modus",
     "wifi_pass_security": "Netzwerkschutz",
@@ -508,7 +633,13 @@ const addNetwork = () => {
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "SSID hinzufügen",
     "wrong_ssid_pattern": "Geben Sie eine Zeichenfolge mit 1–31 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen",
-    "wrong_pass_pattern": "Geben Sie eine Zeichenfolge mit 8–63 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen"
+    "wrong_pass_pattern": "Geben Sie eine Zeichenfolge mit 8–63 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen",
+    "knx_enabled": "KNX aktivieren",
+    "knx_port": "TCP-Port",
+    "knx_device_auth": "Geräte-Auth-Passwort",
+    "knx_user_pass": "Benutzerpasswort",
+    "knx_auth_placeholder": "Device authentication",
+    "knx_pass_placeholder": "Commissioning password"
   }
 }
 </i18n>

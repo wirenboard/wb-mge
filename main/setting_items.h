@@ -60,6 +60,12 @@
 // Enable MIO on RS485-2
 #define KEY_IO_BUS_ENABLED          "io_bus"
 
+// KNX IP Secure
+#define KEY_KNX_ENABLED             "knx_enabled"
+#define KEY_KNX_PORT                "knx_port"
+#define KEY_KNX_DEVICE_AUTH         "knx_dev_auth"
+#define KEY_KNX_USER_PASS           "knx_user_pass"
+
 // WiFi modes
 #define WIFI_MODE_AP_STR            "ap"
 #define WIFI_MODE_STA_STR           "sta"

@@ -13,6 +13,8 @@
 #include "network.h"
 #include "settings_update.h"
 #include "debug_log.h"
+#include "knx_server.h"
+#include "esp_mac.h"
 
 // QEMU build conditional includes
 #if (QEMU_BUILD)
@@ -36,6 +38,9 @@
 
 
 static const char *TAG = "main";
+
+/* Global MAC for knxd eibnetserver.cpp on ESP32 */
+uint8_t g_knx_mac[6] = {0};
 
 
 #if (!QEMU_BUILD)
@@ -149,7 +154,37 @@ void app_main(void)
             sys_info.eth_is_connected ||
             sys_info.wifi_sta_is_connected)
         {
+            // Claim UART1 for KNX before bridge starts (bridge will skip port 1)
+            bool knx_enabled = setting_items_read_bool(KEY_KNX_ENABLED);
+            if (knx_enabled) {
+                uart_driver_install(KNX_UART_NUM, 512, 512, 0, NULL, 0);
+            }
+
             ESP_ERROR_CHECK(bridge_init());
+
+            if (knx_enabled) {
+                knx_server_config_t knx_cfg = {};
+                knx_cfg.tcp_port = (uint16_t)setting_items_read_int(KEY_KNX_PORT);
+                setting_items_read(KEY_KNX_DEVICE_AUTH, knx_cfg.device_auth);
+                setting_items_read(KEY_KNX_USER_PASS, knx_cfg.user_password);
+
+                esp_read_mac(knx_cfg.serial_number, ESP_MAC_ETH);
+                memcpy(g_knx_mac, knx_cfg.serial_number, 6);
+
+                // WBE2-I-KNX module: NCN5121 TPUART
+                knx_cfg.uart_num = KNX_UART_NUM;
+                knx_cfg.uart_rx_pin = KNX_UART_RX_PIN;
+                knx_cfg.uart_tx_pin = KNX_UART_TX_PIN;
+                knx_cfg.uart_baud = KNX_UART_BAUD;
+
+                esp_err_t err = knx_server_start(&knx_cfg);
+                if (err == ESP_OK) {
+                    ESP_LOGI(TAG, "KNX IP Secure server started on port %d", knx_cfg.tcp_port);
+                } else {
+                    ESP_LOGE(TAG, "KNX IP Secure server failed to start: %s", esp_err_to_name(err));
+                }
+            }
+
             break;
         } else {
             vTaskDelay(pdMS_TO_TICKS(1000));
