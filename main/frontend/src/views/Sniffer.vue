@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -170,7 +170,6 @@ function clearLogs() {
   lastTimestampUs = 0
 }
 
-onMounted(() => startCapture())
 onUnmounted(() => stopCapture())
 
 const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
