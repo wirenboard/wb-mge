@@ -81,6 +81,12 @@ watch(
                 <rect x="6" y="6" width="4" height="4" />
                 <path d="M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2" />
               </template>
+              <template v-else-if="link.meta?.menuIcon === 'activity'">
+                <path d="M1 8h3l2-5 4 10 2-5h3" />
+              </template>
+              <template v-else-if="link.meta?.menuIcon === 'plug'">
+                <path d="M6 2v4M10 2v4M5 6h6l-1 4H6zM7 10v4M9 10v4" />
+              </template>
             </svg>
             {{ t(link.meta?.menuName as string) }}
           </RouterLink>
@@ -415,6 +421,7 @@ watch(
 {
   "en": {
     "group_overview": "Overview",
+    "group_modbus_tools": "Modbus tools",
     "group_configuration": "Configuration",
     "link_docs": "Documentation",
     "link_support": "Support",
@@ -423,6 +430,7 @@ watch(
   },
   "ru": {
     "group_overview": "Обзор",
+    "group_modbus_tools": "Инструменты Modbus",
     "group_configuration": "Конфигурация",
     "link_docs": "Документация",
     "link_support": "Техподдержка",
@@ -431,6 +439,7 @@ watch(
   },
   "kk": {
     "group_overview": "Шолу",
+    "group_modbus_tools": "Modbus құралдары",
     "group_configuration": "Конфигурация",
     "link_docs": "Құжаттама",
     "link_support": "Қолдау",
@@ -439,6 +448,7 @@ watch(
   },
   "it": {
     "group_overview": "Panoramica",
+    "group_modbus_tools": "Strumenti Modbus",
     "group_configuration": "Configurazione",
     "link_docs": "Documentazione",
     "link_support": "Supporto",
@@ -447,6 +457,7 @@ watch(
   },
   "de": {
     "group_overview": "Übersicht",
+    "group_modbus_tools": "Modbus-Werkzeuge",
     "group_configuration": "Konfiguration",
     "link_docs": "Dokumentation",
     "link_support": "Support",

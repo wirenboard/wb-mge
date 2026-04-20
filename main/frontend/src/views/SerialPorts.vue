@@ -22,7 +22,6 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
           field="rs485_1"
           title="RS-485 · Port 1"
           sub="Wired terminal · left"
-          :has-ports-conflict="data.rs485_1.bridge.port === data.rs485_2.bridge.port"
         />
 
         <div class="stack">
@@ -31,7 +30,6 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
             field="rs485_2"
             title="RS-485 · Port 2"
             sub="Wired terminal · right + I/O bus"
-            :has-ports-conflict="data.rs485_1.bridge.port === data.rs485_2.bridge.port"
           />
 
           <section class="card">

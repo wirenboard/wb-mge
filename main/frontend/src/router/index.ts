@@ -8,6 +8,7 @@ import Login from '@/views/Login.vue';
 import Network from '@/views/Network.vue';
 import SerialPorts from '@/views/SerialPorts.vue';
 import System from '@/views/System.vue';
+import TcpGateway from '@/views/TcpGateway.vue';
 import { api } from '@/utils/api';
 import { checkSession } from './checkSession';
 
@@ -33,6 +34,20 @@ const router = createRouter({
       name: 'sniffer',
       component: Sniffer,
       meta: { requiresAuth: true, menuName: 'sniffer', menuGroup: 'modbus_tools', menuIcon: 'activity' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
+    },
+    {
+      path: '/tcp-gateway',
+      name: 'tcp_gateway',
+      component: TcpGateway,
+      meta: { requiresAuth: true, menuName: 'tcp_gateway', menuGroup: 'modbus_tools', menuIcon: 'plug' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();
