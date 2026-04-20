@@ -217,8 +217,8 @@ function hexByteStyle(byte: string, index: number, arr: string[]) {
 }
 
 function directionLabel(dir: string, slave: string) {
-  if (dir === 'MASTER') return `Master \u2192 Slave ${slave}`;
-  if (dir === 'SLAVE') return `Slave ${slave} \u2192 Master`;
+  if (dir === 'MASTER') return `Master \u2192 Slave 0x${slave}`;
+  if (dir === 'SLAVE') return `Slave 0x${slave} \u2192 Master`;
   return 'Error response';
 }
 </script>
@@ -281,7 +281,7 @@ function directionLabel(dir: string, slave: string) {
               <th class="col-id">#</th>
               <th class="col-time">{{ t('col_time') }}</th>
               <th class="col-dt">&Delta;t</th>
-              <th class="col-dir">{{ t('col_dir') }}</th>
+              <th class="col-sender">{{ t('col_dir') }}</th>
               <th class="col-slave">Slave</th>
               <th class="col-fc">{{ t('col_fc') }}</th>
               <th class="col-payload">{{ t('col_payload') }}</th>
@@ -299,7 +299,7 @@ function directionLabel(dir: string, slave: string) {
               <td class="mono">{{ r.t }}</td>
               <td class="mono muted">{{ r.dt }}</td>
               <td><span :class="dirPillClass(r.dir)">{{ r.dir }}</span></td>
-              <td class="mono" style="font-weight:500">{{ r.slave }}</td>
+              <td class="mono" style="font-weight:500" :title="`0x${r.slave} (${parseInt(r.slave, 16)})`">0x{{ r.slave }}</td>
               <td class="mono fc-cell">{{ r.fc }}</td>
               <td>
                 <span class="hex-payload">
@@ -334,7 +334,7 @@ function directionLabel(dir: string, slave: string) {
         <div class="detail-grid">
           <div>
             <div class="sub-section-label">Header</div>
-            <div class="kv" style="padding:5px 0"><div class="k">Slave ID</div><div class="v mono">{{ sel.slave }} ({{ parseInt(sel.slave, 16) }})</div></div>
+            <div class="kv" style="padding:5px 0"><div class="k">Slave ID</div><div class="v mono">0x{{ sel.slave }} ({{ parseInt(sel.slave, 16) }})</div></div>
             <div class="kv" style="padding:5px 0"><div class="k">{{ t('col_fc') }}</div><div class="v mono">{{ sel.fc }}</div></div>
             <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">{{ t('col_dir') }}</div><div class="v">{{ sel.dir === 'MASTER' ? 'Request' : sel.dir === 'SLAVE' ? 'Response' : 'Error response' }}</div></div>
           </div>
@@ -535,8 +535,8 @@ function directionLabel(dir: string, slave: string) {
 .col-id { width: 56px; }
 .col-time { width: 100px; }
 .col-dt { width: 68px; }
-.col-dir { width: 76px; }
-.col-slave { width: 70px; }
+.col-sender { width: 76px; }
+.col-slave { width: 80px; }
 .col-fc { width: 200px; }
 .col-bytes { width: 60px; }
 .col-crc { width: 60px; }
@@ -733,7 +733,7 @@ function directionLabel(dir: string, slave: string) {
     "error": "error",
     "errors": "errors",
     "col_time": "Time",
-    "col_dir": "Direction",
+    "col_dir": "Sender",
     "col_fc": "Function code",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Bytes",
@@ -756,7 +756,7 @@ function directionLabel(dir: string, slave: string) {
     "error": "ошибка",
     "errors": "ошибок",
     "col_time": "Время",
-    "col_dir": "Направление",
+    "col_dir": "Отправитель",
     "col_fc": "Код функции",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Байт",
@@ -779,7 +779,7 @@ function directionLabel(dir: string, slave: string) {
     "error": "қате",
     "errors": "қате",
     "col_time": "Уақыт",
-    "col_dir": "Бағыт",
+    "col_dir": "Жіберуші",
     "col_fc": "Функция коды",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Байт",
@@ -802,7 +802,7 @@ function directionLabel(dir: string, slave: string) {
     "error": "errore",
     "errors": "errori",
     "col_time": "Ora",
-    "col_dir": "Direzione",
+    "col_dir": "Mittente",
     "col_fc": "Codice funzione",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Byte",
@@ -825,7 +825,7 @@ function directionLabel(dir: string, slave: string) {
     "error": "Fehler",
     "errors": "Fehler",
     "col_time": "Zeit",
-    "col_dir": "Richtung",
+    "col_dir": "Absender",
     "col_fc": "Funktionscode",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Bytes",
