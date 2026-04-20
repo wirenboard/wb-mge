@@ -7,6 +7,7 @@ import Dashboard from '@/views/Dashboard.vue';
 import Login from '@/views/Login.vue';
 import Network from '@/views/Network.vue';
 import SerialPorts from '@/views/SerialPorts.vue';
+import Sniffer from '@/views/Sniffer.vue';
 import System from '@/views/System.vue';
 import TcpGateway from '@/views/TcpGateway.vue';
 import { api } from '@/utils/api';
@@ -62,6 +63,20 @@ const router = createRouter({
       name: 'settings',
       component: SerialPorts,
       meta: { requiresAuth: true, menuName: 'serial_ports', menuGroup: 'configuration', menuIcon: 'sliders' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
+    },
+    {
+      path: '/sniffer',
+      name: 'sniffer',
+      component: Sniffer,
+      meta: { requiresAuth: true, menuName: 'sniffer', menuGroup: 'modbus_tools', menuIcon: 'activity' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();
