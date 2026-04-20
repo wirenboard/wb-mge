@@ -64,6 +64,9 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             buffer_ctx->data_len += event.size;
             if (event.timeout_flag) {
                 desc->receive_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
+                if (desc->sniff_handler) {
+                    desc->sniff_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
+                }
                 buffer_ctx->data_len = 0;
             }
             break;
@@ -202,6 +205,7 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
 
     desc->port_num = serial_config->port_num;
     desc->receive_handler = serial_receive_handler;
+    desc->sniff_handler = NULL;
     desc->uart_queue = NULL;
     desc->task_handle = NULL;
     desc->event_group = event_group;

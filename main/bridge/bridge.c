@@ -1,5 +1,9 @@
 #include "bridge.h"
 
+#if (QEMU_BUILD)
+    #include "modbus_mock_qemu.h"
+#endif
+
 #include "esp_check.h"
 #include "setting_items.h"
 #include "driver/gpio.h"
@@ -10,6 +14,7 @@
 #include "transparent_tcp.h"
 #include "modbus_tcp.h"
 #include "rs485_stats.h"
+#include "sniffer.h"
 
 #include "freertos/FreeRTOS.h"
 #include <string.h>
@@ -263,6 +268,12 @@ esp_err_t bridge_port_init(unsigned index)
         ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", bridge_current_cfg[index].serial_config.port_num);
     }
 
+    sniffer_attach(index, bridge_ctx[index].serial_desc);
+#if (QEMU_BUILD)
+    if (index == 0) {
+        modbus_mock_qemu_start(bridge_ctx[index].serial_desc);
+    }
+#endif
     bridge_ctx[index].initialized = true;
     ESP_LOGD(TAG, "Port[%u]: Initialized", index + 1);
 

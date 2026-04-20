@@ -6,6 +6,7 @@
 #include "cmd_handler.h"
 #include "ota_handler.h"
 #include "wb_test.h"
+#include "bridge/sniffer.h"
 
 #include <esp_http_server.h>
 #include <sys/param.h>
@@ -307,6 +308,13 @@ esp_err_t http_server_init(void)
         httpd_register_uri_handler(http_server, &wb_test_get);
         httpd_register_uri_handler(http_server, &wb_test_post);
         httpd_register_uri_handler(http_server, &hostname_get);
+
+        if (sniffer_init() != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize sniffer");
+            httpd_stop(http_server);
+            return ESP_FAIL;
+        }
+        sniffer_register_handlers(http_server);
     }
 
     if (http_server == NULL) {
