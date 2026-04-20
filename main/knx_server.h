@@ -30,6 +30,18 @@ esp_err_t knx_server_start(const knx_server_config_t *config);
 esp_err_t knx_server_stop(void);
 bool knx_server_is_running(void);
 
+typedef struct {
+    bool running;            /* knx server task is alive */
+    bool bus_alive;          /* NCN5120 link is up (last heartbeat OK) */
+    uint16_t tcp_port;       /* TCP port the secure tunnel listens on */
+    uint32_t tx_count;       /* telegrams forwarded bus -> tunnel client */
+    uint32_t rx_count;       /* telegrams forwarded tunnel client -> bus */
+    uint8_t  clients_count;  /* total active TCP tunnel connections */
+    uint8_t  secure_count;   /* of which are inside an IP Secure session */
+} knx_server_stats_t;
+
+void knx_server_get_stats(knx_server_stats_t *stats);
+
 #ifdef __cplusplus
 }
 #endif

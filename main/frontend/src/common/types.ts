@@ -24,6 +24,16 @@ export interface RsStatus {
   server_connections_count: number;
 }
 
+export interface KnxStatus {
+  running: boolean;
+  bus_alive: boolean;
+  tcp_port: number;
+  tx_count: number;
+  rx_count: number;
+  clients_count: number;
+  secure_count: number;
+}
+
 export interface Info {
   device_name: string;
   serial_num: number;
@@ -54,6 +64,7 @@ export interface Info {
   };
   rs485_1: RsStatus;
   rs485_2: RsStatus;
+  knx?: KnxStatus;
 }
 
 export type WiFiSecuityProtocol = 'open' | 'wpa2_psk' | 'wpa3_psk';

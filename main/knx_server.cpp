@@ -39,6 +39,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <atomic>
 
 static const char *TAG = "knx_server";
 
@@ -48,6 +49,13 @@ uart_port_t g_knx_uart_num = UART_NUM_1;
 static TaskHandle_t s_task = nullptr;
 static volatile bool s_running = false;
 static Router *s_router = nullptr;
+static uint16_t s_tcp_port = 0;
+
+/* Stats counters — defined here, incremented from knxd's tcptunserver/tunchannel. */
+std::atomic<uint32_t> g_knx_tx_count{0};   /* bus -> tunnel client telegrams */
+std::atomic<uint32_t> g_knx_rx_count{0};   /* tunnel client -> bus telegrams */
+std::atomic<uint16_t> g_knx_clients{0};    /* active TCP tunnel connections */
+std::atomic<uint16_t> g_knx_secure{0};     /* of which inside IP Secure session */
 
 /* ============================================================
  * Factory registration — knxd's AutoRegister statics get
@@ -210,7 +218,8 @@ static void knx_router_task(void *arg)
     (*tcptun)["tunnel"] = "B.tunnel";
     IniSectionPtr tunnel_sec = ini["B.tunnel"]; /* empty section for tunnel client config */
     char port_str[8];
-    snprintf(port_str, sizeof(port_str), "%d", cfg->tcp_port ? cfg->tcp_port : 3671);
+    s_tcp_port = cfg->tcp_port ? cfg->tcp_port : 3671;
+    snprintf(port_str, sizeof(port_str), "%d", s_tcp_port);
     (*tcptun)["port"] = port_str;
 
     /* Pre-derive PBKDF2 keys (cached in NVS after first boot) */
@@ -311,4 +320,28 @@ extern "C" esp_err_t knx_server_stop(void)
 extern "C" bool knx_server_is_running(void)
 {
     return s_running;
+}
+
+extern "C" void knx_server_get_stats(knx_server_stats_t *stats)
+{
+    if (!stats) return;
+    stats->running = s_running;
+    stats->tcp_port = s_tcp_port;
+    stats->tx_count = g_knx_tx_count.load();
+    stats->rx_count = g_knx_rx_count.load();
+    stats->clients_count = (uint8_t)g_knx_clients.load();
+    stats->secure_count = (uint8_t)g_knx_secure.load();
+
+    /* Bus alive: NCN5120 LinkConnect must be in L_up state. */
+    stats->bus_alive = false;
+    if (s_router) {
+        for (auto &kv : s_router->getLinks()) {
+            auto &link = kv.second;
+            if (!link || !link->cfg) continue;
+            if (link->cfg->name == "A.ncn5120") {
+                stats->bus_alive = (link->state == L_up);
+                break;
+            }
+        }
+    }
 }
