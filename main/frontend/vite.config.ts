@@ -28,6 +28,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, ''),
         },
+        '/sniffer': {
+          target: env?.PROXY_TARGET || 'http://localhost:60081',
+          changeOrigin: true,
+          ws: true,
+        },
       }
     },
     resolve: {
