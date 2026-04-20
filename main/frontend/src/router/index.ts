@@ -5,7 +5,8 @@ import { useSettings } from '@/common/settings';
 import type { LogoutResponse } from '@/common/types';
 import Dashboard from '@/views/Dashboard.vue';
 import Login from '@/views/Login.vue';
-import Settings from '@/views/Settings.vue';
+import Network from '@/views/Network.vue';
+import SerialPorts from '@/views/SerialPorts.vue';
 import System from '@/views/System.vue';
 import { api } from '@/utils/api';
 import { checkSession } from './checkSession';
@@ -28,14 +29,27 @@ const router = createRouter({
       }],
     },
     {
-      path: '/settings',
-      name: 'settings',
-      component: Settings,
-      meta: { requiresAuth: true, menuName: 'settings', menuGroup: 'configuration', menuIcon: 'sliders' },
+      path: '/network',
+      name: 'network',
+      component: Network,
+      meta: { requiresAuth: true, menuName: 'network', menuGroup: 'configuration', menuIcon: 'network' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();
-
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: SerialPorts,
+      meta: { requiresAuth: true, menuName: 'serial_ports', menuGroup: 'configuration', menuIcon: 'sliders' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
         await Promise.all([
           fetchInfo(),
           refresh(),

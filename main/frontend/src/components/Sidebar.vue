@@ -68,6 +68,10 @@ watch(
                 <circle cx="7" cy="8" r="1.2" />
                 <circle cx="11" cy="12" r="1.2" />
               </template>
+              <template v-else-if="link.meta?.menuIcon === 'network'">
+                <rect x="2" y="10" width="12" height="4" rx="1" />
+                <path d="M8 10V6M4 6h8M4 6V3M12 6V3" />
+              </template>
               <template v-else-if="link.meta?.menuIcon === 'cpu'">
                 <rect x="4" y="4" width="8" height="8" rx="1" />
                 <rect x="6" y="6" width="4" height="4" />
