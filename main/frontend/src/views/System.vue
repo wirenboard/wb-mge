@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { changeLang, languages, type Locale } from '@/i18n';
 import SaveIcon from '@/assets/save.svg?component';
 import { useAlerts } from '@/common/alert';
 import { useFirmware } from '@/common/firmware';
 import { useInfo } from '@/common/info';
-import { documentation, email, support, website, firmwareLatest } from '@/common/links';
+import { documentation, email, support, website, firmwareLatest, firmwareLatestVersion } from '@/common/links';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
 import type { CommandResponse } from '@/common/types';
@@ -29,6 +29,23 @@ const { showAlert } = useAlerts();
 const { data: settings, isChanged, updateSettings } = useSettings();
 const { isReconnecting, uptime } = useUptime();
 const { info } = useInfo();
+
+const latestVersion = ref<string | null>(null);
+const latestVersionError = ref(false);
+
+onMounted(async () => {
+  try {
+    const res = await fetch(firmwareLatestVersion);
+    if (!res.ok) throw new Error();
+    latestVersion.value = (await res.text()).trim();
+  } catch {
+    latestVersionError.value = true;
+  }
+});
+
+const hasUpdate = computed(() =>
+  latestVersion.value && info.value?.firmware && latestVersion.value !== info.value.firmware
+);
 
 const updateFirmware = async () => {
   loadedMethod.value = 'firmware';
@@ -193,11 +210,22 @@ const updateInterface = () => {
           </div>
           <div class="card-body">
             <div class="kv">
-              <div class="k">{{ t('firmware_version') }}</div>
-              <div class="v mono">{{ info?.firmware }}</div>
+              <div class="k">{{ t('firmware_current') }}</div>
+              <div class="v firmware-version-row">
+                <span>
+                  <span class="mono">{{ info?.firmware }}</span>
+                  <template v-if="latestVersion && !latestVersionError">
+                    <span class="muted" style="margin-left:8px;font-size:11.5px">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span>
+                  </template>
+                  <span v-else-if="latestVersionError" class="muted" style="margin-left:8px;font-size:11.5px">({{ t('firmware_check_failed') }})</span>
+                </span>
+                <a v-if="hasUpdate" :href="firmwareLatest" class="firmware-download-btn">
+                  <Button type="button" variant="primary">{{ t('firmware_download', { v: latestVersion }) }}</Button>
+                </a>
+              </div>
             </div>
             <div class="kv">
-              <div class="k">{{ t('firmware_update') }}</div>
+              <div class="k">{{ t('firmware_install') }}</div>
               <div class="v">
                 <FileUpload
                   v-model="firmwareFile"
@@ -228,6 +256,18 @@ const updateInterface = () => {
 </template>
 
 <style scoped>
+.firmware-version-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.firmware-download-btn {
+  text-decoration: none;
+}
+
 .system-saveWrapper {
   display: flex;
   gap: 6px;
@@ -261,8 +301,11 @@ const updateInterface = () => {
     "uptime_minutes": "minute | {n} minute | {n} minutes | {n} minutes",
     "interface": "Web interface",
     "language": "Language",
-    "firmware_version": "Firmware version",
-    "firmware_update": "Firmware update",
+    "firmware_current": "Current version",
+    "firmware_latest_label": "latest",
+    "firmware_check_failed": "update check unavailable",
+    "firmware_download": "Download {v}",
+    "firmware_install": "Install from file",
     "wirmware_update_info": "The device will reboot after the update",
     "firmware_update_processed": "Firmware update in progress",
     "wirmware_update_error": "Firmware update error",
@@ -294,8 +337,11 @@ const updateInterface = () => {
     "uptime_minutes": "минута | {n} минута | {n} минуты | {n} минут",
     "interface": "Веб-интерфейс",
     "language": "Язык",
-    "firmware_version": "Версия ПО",
-    "firmware_update": "Обновление ПО",
+    "firmware_current": "Текущая версия",
+    "firmware_latest_label": "последняя",
+    "firmware_check_failed": "проверка обновлений недоступна",
+    "firmware_download": "Скачать {v}",
+    "firmware_install": "Установить из файла",
     "wirmware_update_info": "После обновления устройство будет перезагружено",
     "firmware_update_processed": "Обновление ПО в процессе",
     "wirmware_update_error": "Ошибка обновления прошивки",
@@ -327,8 +373,11 @@ const updateInterface = () => {
     "uptime_minutes": "минут | {n} минут | {n} минут | {n} минут",
     "interface": "Веб-интерфейс",
     "language": "Тіл",
-    "firmware_version": "Микробағдарлама нұсқасы",
-    "firmware_update": "Микробағдарламаны жаңарту",
+    "firmware_current": "Ағымдағы нұсқа",
+    "firmware_latest_label": "соңғы",
+    "firmware_check_failed": "жаңарту тексерісі қолжетімсіз",
+    "firmware_download": "{v} жүктеу",
+    "firmware_install": "Файлдан орнату",
     "wirmware_update_info": "Жаңартудан кейін құрылғы қайта жүктеледі",
     "firmware_update_processed": "Микробағдарламаны жаңарту жүріп жатыр",
     "wirmware_update_error": "Микробағдарламаны жаңарту қатесі",
@@ -360,8 +409,11 @@ const updateInterface = () => {
     "uptime_minutes": "minuto | {n} minuto | {n} minuti | {n} minuti",
     "interface": "Interfaccia web",
     "language": "Lingua",
-    "firmware_version": "Versione firmware",
-    "firmware_update": "Aggiornamento firmware",
+    "firmware_current": "Versione attuale",
+    "firmware_latest_label": "ultima",
+    "firmware_check_failed": "controllo aggiornamenti non disponibile",
+    "firmware_download": "Scarica {v}",
+    "firmware_install": "Installa da file",
     "wirmware_update_info": "Il dispositivo si riavvierà dopo l'aggiornamento",
     "firmware_update_processed": "Aggiornamento firmware in corso",
     "wirmware_update_error": "Errore di aggiornamento firmware",
@@ -393,8 +445,11 @@ const updateInterface = () => {
     "uptime_minutes": "Minute | {n} Minute | {n} Minuten | {n} Minuten",
     "interface": "Weboberfläche",
     "language": "Sprache",
-    "firmware_version": "Firmware-Version",
-    "firmware_update": "Firmware-Update",
+    "firmware_current": "Aktuelle Version",
+    "firmware_latest_label": "neueste",
+    "firmware_check_failed": "Update-Prüfung nicht verfügbar",
+    "firmware_download": "{v} herunterladen",
+    "firmware_install": "Aus Datei installieren",
     "wirmware_update_info": "Das Gerät wird nach dem Update neu gestartet",
     "firmware_update_processed": "Firmware-Update läuft",
     "wirmware_update_error": "Fehler beim Firmware-Update",
