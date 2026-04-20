@@ -28,10 +28,13 @@
 #include "router.h"
 #include "link.h"
 #include "tcptunserver.h"
+#include "eibnetserver.h"
 #include "ncn5120.h"
 #include "retry.h"
 #include "dummy.h"
 #include "nat.h"
+#include "fpace.h"
+#include "fqueue.h"
 #include <ev++.h>
 
 #include <cstring>
@@ -54,15 +57,21 @@ static void register_knxd_factories()
 {
     static Maker<NCN5120, Driver> ncn5120_maker;
     static Maker<TcpTunServer, Server> tcptunsrv_maker;
+    static Maker<EIBnetServer, Server> ets_router_maker;
     static Maker<RetryFilter, Filter> retry_maker;
     static Maker<DummyL2Driver, Driver> dummy_maker;
     static Maker<NatL2Filter, Filter> single_maker;
+    static Maker<PaceFilter, Filter> pace_maker;
+    static Maker<QueueFilter, Filter> queue_maker;
 
     Factory<Driver>::Instance().reg(ncn5120_maker, "ncn5120");
     Factory<Server>::Instance().reg(tcptunsrv_maker, "tcptunsrv");
+    Factory<Server>::Instance().reg(ets_router_maker, "ets_router");
     Factory<Filter>::Instance().reg(retry_maker, "retry");
     Factory<Driver>::Instance().reg(dummy_maker, "dummy");
     Factory<Filter>::Instance().reg(single_maker, "single");
+    Factory<Filter>::Instance().reg(pace_maker, "pace");
+    Factory<Filter>::Instance().reg(queue_maker, "queue");
 
     printf("[KNX] Filters registered: ");
     for (auto& kv : Factory<Filter>::Instance().map())
@@ -178,7 +187,7 @@ static void knx_router_task(void *arg)
     IniSectionPtr main_sec = ini["main"];
     (*main_sec)["addr"] = "1.1.1";
     (*main_sec)["client-addrs"] = "1.1.200:4";
-    (*main_sec)["connections"] = "A.ncn5120,B.tcptun";
+    (*main_sec)["connections"] = "A.ncn5120,B.tcptun,C.eibnet";
     (*main_sec)["name"] = "ESP32-KNX";
     (*main_sec)["unknown-ok"] = "true";
     (*main_sec)["debug"] = "debug";
@@ -224,7 +233,22 @@ static void knx_router_task(void *arg)
              cfg->serial_number[3], cfg->serial_number[4], cfg->serial_number[5]);
     (*tcptun)["serial-number"] = sno_str;
 
-    ESP_LOGI(TAG, "Starting knxd: ncn5120@%s, tcptunsrv port %s", devpath, port_str);
+    /* KNXnet/IP UDP discovery (SEARCH/DESCRIPTION on 224.0.23.12:3671).
+     * Advertises SF_TUNNELLING + SF_SECURITY so ETS finds the device and
+     * connects via the secure TCP tunnel above. The router= is required so
+     * the multicast LinkConnect has a named cfg section even though SF_ROUTING
+     * is suppressed when secure=true. */
+    IniSectionPtr eibnet = ini["C.eibnet"];
+    (*eibnet)["server"] = "ets_router";
+    (*eibnet)["discover"] = "true";
+    (*eibnet)["secure"] = "true";
+    (*eibnet)["tunnel"] = "B.tunnel";
+    (*eibnet)["router"] = "C.eibnet-router";
+    (*eibnet)["serial-number"] = sno_str;
+    (*eibnet)["name"] = "ESP32-KNX";
+    IniSectionPtr eibnet_router = ini["C.eibnet-router"]; /* empty router section */
+
+    ESP_LOGI(TAG, "Starting knxd: ncn5120@%s, tcptunsrv port %s, ets_router discover", devpath, port_str);
 
     s_router = new Router(ini, "main");
     if (!s_router->setup()) {
