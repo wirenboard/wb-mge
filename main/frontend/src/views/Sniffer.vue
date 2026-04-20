@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -28,6 +28,7 @@ const ws = ref<WebSocket | null>(null);
 let lastTimestampUs = 0;
 const wsStatus = ref<'connected' | 'disconnected' | 'reconnecting'>('disconnected');
 
+const tableWrap = ref<HTMLElement | null>(null);
 const selected = ref<number | null>(null);
 const filter = ref('');
 const onlyErrors = ref(false);
@@ -134,7 +135,10 @@ function connectWs() {
           stopCapture()
           return
         }
-        rows.value.unshift(row)
+        rows.value.push(row)
+        nextTick(() => {
+          if (tableWrap.value) tableWrap.value.scrollTop = tableWrap.value.scrollHeight
+        })
       }
     } catch (e) {
       console.warn('sniffer: failed to parse WS message', e)
@@ -268,9 +272,9 @@ function directionLabel(dir: string, slave: string) {
       </div>
     </div>
 
-    <!-- Log table -->
+    <!-- Log table --> 
     <div class="sniffer-body">
-      <div class="sniffer-table-wrap">
+      <div class="sniffer-table-wrap" ref="tableWrap">
         <table class="sniffer-table">
           <thead>
             <tr>
