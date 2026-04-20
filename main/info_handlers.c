@@ -7,6 +7,7 @@
 #include "sys_info.h"
 #include "voltage_monitor.h"
 #include "config_button.h"
+#include "knx_server.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -294,6 +295,21 @@ esp_err_t info_get_handler(httpd_req_t *req)
         }
 
         cJSON_Delete(rs485_json);
+    }
+
+    // KNX stats
+    cJSON *knx = cJSON_CreateObject();
+    if (knx != NULL) {
+        knx_server_stats_t st;
+        knx_server_get_stats(&st);
+        cJSON_AddBoolToObject(knx, "running", st.running);
+        cJSON_AddBoolToObject(knx, "bus_alive", st.bus_alive);
+        cJSON_AddNumberToObject(knx, "tcp_port", st.tcp_port);
+        cJSON_AddNumberToObject(knx, "tx_count", st.tx_count);
+        cJSON_AddNumberToObject(knx, "rx_count", st.rx_count);
+        cJSON_AddNumberToObject(knx, "clients_count", st.clients_count);
+        cJSON_AddNumberToObject(knx, "secure_count", st.secure_count);
+        cJSON_AddItemToObject(response_json, "knx", knx);
     }
 
     json_utils_send_response(req, NULL, response_json);

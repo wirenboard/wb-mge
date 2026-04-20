@@ -104,8 +104,28 @@ const getDisplayValue = (val: string | boolean | number) => {
         <div>{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
 
         <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
+      </fieldset>
 
-        <RsStatus title="RS-485 2" :info="info!.rs485_2" :settings="settings!.rs485_2" />
+      <fieldset v-if="info!.knx" class="dashboard-container">
+        <legend>{{ t('knx') }}</legend>
+
+        <div>{{ t('status') }}</div>
+        <div>{{ info!.knx.running ? t('running') : t('stopped') }}</div>
+
+        <div>{{ t('knx_bus') }}</div>
+        <div>{{ info!.knx.bus_alive ? t('alive') : t('not_connected') }}</div>
+
+        <div>{{ t('knx_tcp_port') }}</div>
+        <div>{{ info!.knx.tcp_port }}</div>
+
+        <div>{{ t('knx_clients') }}</div>
+        <div>{{ info!.knx.clients_count }} ({{ info!.knx.secure_count }} {{ t('knx_secure') }})</div>
+
+        <div>{{ t('knx_to_bus') }}</div>
+        <div>{{ info!.knx.rx_count }}</div>
+
+        <div>{{ t('knx_from_bus') }}</div>
+        <div>{{ info!.knx.tx_count }}</div>
       </fieldset>
     </div>
   </Layout>
@@ -180,7 +200,18 @@ const getDisplayValue = (val: string | boolean | number) => {
     "gateway": "Gateway",
     "power_vout": "Power Vout",
     "power": "Power",
-    "v": "V"
+    "v": "V",
+
+    "knx": "KNX",
+    "running": "Running",
+    "stopped": "Stopped",
+    "knx_bus": "KNX bus",
+    "alive": "Alive",
+    "knx_tcp_port": "TCP port",
+    "knx_clients": "Connected clients",
+    "knx_secure": "secure",
+    "knx_to_bus": "Telegrams to bus",
+    "knx_from_bus": "Telegrams from bus"
   },
   "ru": {
     "title": "Обзор",

@@ -317,16 +317,8 @@ const addNetwork = () => {
       <RsSettings
         v-model:settings="data.rs485_1"
         field="rs485_1"
-        title="RS-485 1"
-        :has-ports-conflict="data.rs485_1.bridge.port === data.rs485_2.bridge.port"
-      />
-
-      <RsSettings
-        v-model:settings="data.rs485_2"
-        v-model:io_bus="data.io_bus"
-        field="rs485_2"
-        title="RS-485 2"
-        :has-ports-conflict="data.rs485_1.bridge.port === data.rs485_2.bridge.port"
+        title="RS-485"
+        :has-ports-conflict="false"
       />
 
       <fieldset>
