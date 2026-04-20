@@ -78,14 +78,9 @@ const login = async () => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100dvh;
-  margin-top: -30px;
-  padding: 0 24px;
+  min-height: 100dvh;
+  padding: 0 24px 30px;
   background: var(--bg-sidebar);
-
-  @media (max-height: 600px) {
-    margin-top: 0;
-  }
 }
 
 .login-card {
