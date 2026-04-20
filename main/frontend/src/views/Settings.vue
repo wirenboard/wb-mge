@@ -94,7 +94,7 @@ const addNetwork = () => {
     <Heading :title="t('title')" />
 
     <div v-if="data" class="main-body">
-    <div class="grid-2">
+      <div class="grid-2">
       <div class="stack">
       <section class="card">
         <form
@@ -320,7 +320,7 @@ const addNetwork = () => {
         :has-ports-conflict="data.rs485_1.bridge.port === data.rs485_2.bridge.port"
       />
       </div>
-    </div>
+      </div>
     </div>
   </Layout>
 </template>

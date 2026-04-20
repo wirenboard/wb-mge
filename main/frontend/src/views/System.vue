@@ -79,7 +79,7 @@ const updateInterface = () => {
     <Heading :title="t('title')" />
 
     <div class="main-body">
-    <div class="grid-2">
+      <div class="grid-2">
       <div class="stack">
         <section class="card">
           <div class="card-header">
@@ -203,19 +203,12 @@ const updateInterface = () => {
         <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
 
       </div>
-    </div>
+      </div>
     </div>
   </Layout>
 </template>
 
 <style scoped>
-.system-links {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  font-size: 13px;
-}
-
 .system-saveWrapper {
   display: flex;
   gap: 6px;

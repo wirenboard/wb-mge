@@ -34,7 +34,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     <Heading :title="t('title')" />
 
     <div class="main-body">
-    <div class="grid-2">
+      <div class="grid-2">
       <div class="stack">
         <section class="card">
           <div class="card-header">
@@ -119,8 +119,8 @@ const getDisplayValue = (val: string | boolean | number) => {
         <section class="card">
           <div class="card-header">
             <div class="title">{{ t('gateway') }}</div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="font-size:12px;color:var(--text-secondary)">V<sub>out</sub></span>
+            <div class="vout-control">
+              <span class="vout-label">V<sub>out</sub></span>
               <Switch
                 id="power_vout"
                 v-model="settings!.vout"
@@ -154,14 +154,21 @@ const getDisplayValue = (val: string | boolean | number) => {
           </div>
         </section>
       </div>
-    </div>
+      </div>
     </div>
   </Layout>
 </template>
 
 <style>
-.mono { font-family: var(--font-mono); }
-.muted { color: var(--text-muted); }
+.vout-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.vout-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
 </style>
 
 <i18n>

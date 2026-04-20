@@ -25,12 +25,6 @@ const menuGroups = computed(() => {
   return groups;
 });
 
-const icons: Record<string, string> = {
-  gauge: 'M2 11a6 6 0 0 1 12 0|M8 11l3-3',
-  sliders: 'M3 4h10|M3 8h6|M3 12h10',
-  cpu: 'R4,4,8,8,1|R6,6,4,4|M6 2v2|M10 2v2|M6 12v2|M10 12v2|M2 6h2|M2 10h2|M12 6h2|M12 10h2',
-};
-
 watch(
   () => route.fullPath,
   () => {
