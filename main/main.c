@@ -42,6 +42,35 @@ static const char *TAG = "main";
 /* Global MAC for knxd eibnetserver.cpp on ESP32 */
 uint8_t g_knx_mac[6] = {0};
 
+/* Cached config + counter for the supervisor that restarts knx_server
+ * if the knxd task dies (e.g. after the NCN5120 TPUART, which is bus-
+ * powered, goes silent during a KNX bus power loss). */
+static knx_server_config_t s_knx_cfg;
+static uint32_t s_knx_restart_count = 0;
+uint32_t knx_get_restart_count(void) { return s_knx_restart_count; }
+
+static void knx_supervisor_task(void *arg)
+{
+    (void)arg;
+    /* Backoff between attempts: NCN5120 may stay silent until the bus
+     * comes back, so retrying every 5s is enough — restart itself
+     * (PBKDF2 cached, ev_loop, factories) takes ~1s. */
+    const TickType_t poll_period = pdMS_TO_TICKS(5000);
+    while (1) {
+        vTaskDelay(poll_period);
+        if (knx_server_is_running()) continue;
+        ESP_LOGW(TAG, "KNX server not running, restarting (attempt #%lu)",
+                 (unsigned long)(s_knx_restart_count + 1));
+        esp_err_t err = knx_server_start(&s_knx_cfg);
+        if (err == ESP_OK) {
+            s_knx_restart_count++;
+            ESP_LOGI(TAG, "KNX restarted");
+        } else {
+            ESP_LOGE(TAG, "KNX restart failed: %s", esp_err_to_name(err));
+        }
+    }
+}
+
 
 #if (!QEMU_BUILD)
     static void factory_reset(void)
@@ -163,26 +192,26 @@ void app_main(void)
             ESP_ERROR_CHECK(bridge_init());
 
             if (knx_enabled) {
-                knx_server_config_t knx_cfg = {};
-                knx_cfg.tcp_port = (uint16_t)setting_items_read_int(KEY_KNX_PORT);
-                setting_items_read(KEY_KNX_DEVICE_AUTH, knx_cfg.device_auth);
-                setting_items_read(KEY_KNX_USER_PASS, knx_cfg.user_password);
+                s_knx_cfg.tcp_port = (uint16_t)setting_items_read_int(KEY_KNX_PORT);
+                setting_items_read(KEY_KNX_DEVICE_AUTH, s_knx_cfg.device_auth);
+                setting_items_read(KEY_KNX_USER_PASS, s_knx_cfg.user_password);
 
-                esp_read_mac(knx_cfg.serial_number, ESP_MAC_ETH);
-                memcpy(g_knx_mac, knx_cfg.serial_number, 6);
+                esp_read_mac(s_knx_cfg.serial_number, ESP_MAC_ETH);
+                memcpy(g_knx_mac, s_knx_cfg.serial_number, 6);
 
                 // WBE2-I-KNX module: NCN5121 TPUART
-                knx_cfg.uart_num = KNX_UART_NUM;
-                knx_cfg.uart_rx_pin = KNX_UART_RX_PIN;
-                knx_cfg.uart_tx_pin = KNX_UART_TX_PIN;
-                knx_cfg.uart_baud = KNX_UART_BAUD;
+                s_knx_cfg.uart_num = KNX_UART_NUM;
+                s_knx_cfg.uart_rx_pin = KNX_UART_RX_PIN;
+                s_knx_cfg.uart_tx_pin = KNX_UART_TX_PIN;
+                s_knx_cfg.uart_baud = KNX_UART_BAUD;
 
-                esp_err_t err = knx_server_start(&knx_cfg);
+                esp_err_t err = knx_server_start(&s_knx_cfg);
                 if (err == ESP_OK) {
-                    ESP_LOGI(TAG, "KNX IP Secure server started on port %d", knx_cfg.tcp_port);
+                    ESP_LOGI(TAG, "KNX IP Secure server started on port %d", s_knx_cfg.tcp_port);
                 } else {
                     ESP_LOGE(TAG, "KNX IP Secure server failed to start: %s", esp_err_to_name(err));
                 }
+                xTaskCreate(knx_supervisor_task, "knx_super", 3072, NULL, 4, NULL);
             }
 
             break;
