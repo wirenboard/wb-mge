@@ -92,6 +92,18 @@ esp_err_t sys_info_init(void)
     GET_APP_DESC_STR_FIELD(fw_git_info, sys_info.firmware_git_info);
     GET_APP_DESC_STR_FIELD(device_model, sys_info.device_name);
 
+    #if QEMU_BUILD
+        if (!strlen(sys_info.firmware_ver)) {
+            snprintf(sys_info.firmware_ver, sizeof(sys_info.firmware_ver), "1.0.0");
+        }
+        if (!strlen(sys_info.firmware_git_info)) {
+            snprintf(sys_info.firmware_git_info, sizeof(sys_info.firmware_git_info), "qemu_build");
+        }
+        if (!strlen(sys_info.device_signature)) {
+            snprintf(sys_info.device_signature, sizeof(sys_info.device_signature), "mge_v3");
+        }
+    #endif
+
     #if CONFIG_EFUSE_VIRTUAL
         write_device_signature_to_efuse();
     #endif
