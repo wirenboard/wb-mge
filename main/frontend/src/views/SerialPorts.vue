@@ -11,7 +11,7 @@ const { data } = useSettings();
 
 <template>
   <Layout>
-    <Heading :title="t('title')" />
+    <Heading :title="t('title')" :crumbs="t('crumbs')" />
 
     <div v-if="data" class="main-body">
       <div class="grid-2">
@@ -38,10 +38,10 @@ const { data } = useSettings();
 
 <i18n>
 {
-  "en": { "title": "Serial ports" },
-  "ru": { "title": "Последовательные порты" },
-  "kk": { "title": "Сериялық порттар" },
-  "it": { "title": "Porte seriali" },
-  "de": { "title": "Serielle Schnittstellen" }
+  "en": { "title": "Serial ports", "crumbs": "RS-485 interfaces" },
+  "ru": { "title": "Последовательные порты", "crumbs": "Интерфейсы RS-485" },
+  "kk": { "title": "Сериялық порттар", "crumbs": "RS-485 интерфейстері" },
+  "it": { "title": "Porte seriali", "crumbs": "Interfacce RS-485" },
+  "de": { "title": "Serielle Schnittstellen", "crumbs": "RS-485-Schnittstellen" }
 }
 </i18n>

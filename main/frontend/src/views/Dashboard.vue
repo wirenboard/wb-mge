@@ -35,7 +35,7 @@ const getDisplayValue = (val: string | boolean | number) => {
 
 <template>
   <Layout>
-    <Heading :title="t('title')" />
+    <Heading :title="t('title')" :crumbs="t('crumbs')" />
 
     <div class="main-body">
       <div class="grid-2">
@@ -220,6 +220,7 @@ const getDisplayValue = (val: string | boolean | number) => {
 {
   "en": {
     "title": "Dashboard",
+    "crumbs": "Gateway overview",
 
     "status": "Status",
     "connection": "Connection",
@@ -254,6 +255,7 @@ const getDisplayValue = (val: string | boolean | number) => {
   },
   "ru": {
     "title": "Обзор",
+    "crumbs": "Обзор шлюза",
 
     "status": "Состояние",
     "connection": "Подключение",
@@ -288,6 +290,7 @@ const getDisplayValue = (val: string | boolean | number) => {
   },
   "kk": {
     "title": "Шолу",
+    "crumbs": "Шлюзге шолу",
 
     "status": "Күйі",
     "connection": "Қосылым",
@@ -322,6 +325,7 @@ const getDisplayValue = (val: string | boolean | number) => {
   },
   "it": {
     "title": "Dashboard",
+    "crumbs": "Panoramica gateway",
 
     "status": "Stato",
     "connection": "Connessione",
@@ -356,6 +360,7 @@ const getDisplayValue = (val: string | boolean | number) => {
   },
   "de": {
     "title": "Übersicht",
+    "crumbs": "Gateway-Übersicht",
 
     "status": "Status",
     "connection": "Verbindung",

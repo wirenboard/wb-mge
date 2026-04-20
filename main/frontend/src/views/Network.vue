@@ -90,7 +90,7 @@ const addNetwork = () => {
 
 <template>
   <Layout>
-    <Heading :title="t('title')" />
+    <Heading :title="t('title')" :crumbs="t('crumbs')" />
 
     <div v-if="data" class="main-body">
       <div class="grid-2">
@@ -339,6 +339,7 @@ const addNetwork = () => {
 {
   "en": {
     "title": "Network",
+    "crumbs": "Ethernet & Wi-Fi configuration",
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP client",
@@ -358,6 +359,7 @@ const addNetwork = () => {
   },
   "ru": {
     "title": "Сеть",
+    "crumbs": "Настройка Ethernet и Wi-Fi",
 
     "ethernet": "Ethernet",
     "dhcp_client": "Клиент DHCP",
@@ -377,6 +379,7 @@ const addNetwork = () => {
   },
   "kk": {
     "title": "Желі",
+    "crumbs": "Ethernet және Wi-Fi конфигурациясы",
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP клиенті",
@@ -396,6 +399,7 @@ const addNetwork = () => {
   },
   "it": {
     "title": "Rete",
+    "crumbs": "Configurazione Ethernet e Wi-Fi",
 
     "ethernet": "Ethernet",
     "dhcp_client": "Client DHCP",
@@ -415,6 +419,7 @@ const addNetwork = () => {
   },
   "de": {
     "title": "Netzwerk",
+    "crumbs": "Ethernet- und Wi-Fi-Konfiguration",
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP-Client",

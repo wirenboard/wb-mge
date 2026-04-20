@@ -6,6 +6,8 @@ import type { RouteRecordRaw } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
 import MenuIcon from '@/assets/menu.svg?component';
 import { useHostname } from '@/common/hostname';
+import { useInfo } from '@/common/info';
+import { useSettings } from '@/common/settings';
 import { documentation, support, email, website } from '@/common/links';
 
 const { t, locale } = useI18n();
@@ -13,6 +15,8 @@ const route = useRoute();
 const isShowMenu = ref(false);
 const router = useRouter();
 const { hostname } = useHostname();
+const { info } = useInfo();
+const { data: settings } = useSettings();
 
 const menuGroups = computed(() => {
   const routes = router.options.routes.filter(r => r.meta?.menuName) as RouteRecordRaw[];
@@ -82,6 +86,29 @@ watch(
           </RouterLink>
         </template>
       </div>
+      <div v-if="info && settings" class="sb-ports">
+        <div class="sb-port">
+          <div class="sb-port-head">
+            <span class="sb-port-name">Port 1</span>
+            <span :class="['sb-port-state', info.rs485_1.is_busy ? 'on' : 'off']">
+              <span class="dot" />{{ info.rs485_1.is_busy ? 'ACTIVE' : 'IDLE' }}
+            </span>
+          </div>
+          <div class="sb-port-row"><span class="sb-port-k">Mode</span><span class="sb-port-v">{{ settings.rs485_1.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ settings.rs485_1.baudrate }} · 8{{ settings.rs485_1.parity === 'none' ? 'N' : settings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ settings.rs485_1.stopbits }}</span></div>
+        </div>
+        <div class="sb-port">
+          <div class="sb-port-head">
+            <span class="sb-port-name">Port 2</span>
+            <span :class="['sb-port-state', info.rs485_2.is_busy ? 'on' : 'off']">
+              <span class="dot" />{{ info.rs485_2.is_busy ? 'ACTIVE' : 'IDLE' }}
+            </span>
+          </div>
+          <div class="sb-port-row"><span class="sb-port-k">Mode</span><span class="sb-port-v">{{ settings.rs485_2.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ settings.rs485_2.baudrate }} · 8{{ settings.rs485_2.parity === 'none' ? 'N' : settings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ settings.rs485_2.stopbits }}</span></div>
+        </div>
+      </div>
+
       <div class="sb-links">
         <a :href="documentation" target="_blank" class="sb-link">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l2 2v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM5 6h5M5 9h5M5 12h3"/></svg>
@@ -254,6 +281,93 @@ watch(
   display: flex;
   flex-direction: column;
   flex-grow: 1;
+}
+
+.sb-ports {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 10px;
+  border-bottom: 1px solid var(--border-sidebar);
+}
+
+.sb-port {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sb-port + .sb-port {
+  border-top: 1px solid var(--border-sidebar);
+  margin-top: 4px;
+  padding-top: 10px;
+}
+
+.sb-port-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.sb-port-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.01em;
+}
+
+.sb-port-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+
+.sb-port-state .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.sb-port-state.on {
+  color: var(--brand-on-dark);
+}
+
+.sb-port-state.on .dot {
+  background: var(--brand-on-dark);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-on-dark) 20%, transparent);
+}
+
+.sb-port-state.off {
+  color: var(--text-on-dark-dim);
+}
+
+.sb-port-state.off .dot {
+  background: var(--text-on-dark-dim);
+}
+
+.sb-port-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-on-dark-muted);
+}
+
+.sb-port-row.mono {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.sb-port-k {
+  color: var(--text-on-dark-dim);
+}
+
+.sb-port-v {
+  color: var(--text-on-dark);
 }
 
 .sb-links {

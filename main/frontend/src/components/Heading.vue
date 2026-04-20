@@ -4,7 +4,7 @@ import { computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
 
-const props = defineProps<{ title: string }>();
+const props = defineProps<{ title: string; crumbs?: string }>();
 const { data, isChanged } = useSettings();
 const { locale } = useI18n();
 const head = injectHead();
@@ -28,7 +28,10 @@ watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostnam
 <template>
   <header class="heading">
     <div class="heading-container">
-      <h1 class="heading-title">{{ title }}</h1>
+      <div>
+        <h1 class="heading-title">{{ title }}</h1>
+        <div v-if="crumbs" class="heading-crumbs">{{ crumbs }}</div>
+      </div>
     </div>
 
     <div class="heading-actions">
@@ -62,6 +65,13 @@ watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostnam
   @media (max-width: 500px) {
     font-size: 18px;
   }
+}
+
+.heading-crumbs {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-weight: 400;
 }
 
 .heading-container,

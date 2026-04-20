@@ -76,7 +76,7 @@ const updateInterface = () => {
 
 <template>
   <Layout>
-    <Heading :title="t('title')" />
+    <Heading :title="t('title')" :crumbs="t('crumbs')" />
 
     <div class="main-body">
       <div class="grid-2">
@@ -248,6 +248,7 @@ const updateInterface = () => {
 {
   "en": {
     "title": "System",
+    "crumbs": "Device & maintenance",
     "device_name": "Device name",
     "device_name_sub": "Used as hostname and mDNS name on the local network",
     "device_info": "Device information",
@@ -280,6 +281,7 @@ const updateInterface = () => {
   },
   "ru": {
     "title": "Система",
+    "crumbs": "Устройство и обслуживание",
     "device_name": "Имя устройства",
     "device_name_sub": "Используется как hostname и mDNS-имя в локальной сети",
     "device_info": "Информация об устройстве",
@@ -312,6 +314,7 @@ const updateInterface = () => {
   },
   "kk": {
     "title": "Жүйе",
+    "crumbs": "Құрылғы және қызмет көрсету",
     "device_name": "Құрылғы атауы",
     "device_name_sub": "Жергілікті желіде hostname және mDNS атауы ретінде қолданылады",
     "device_info": "Құрылғы туралы ақпарат",
@@ -344,6 +347,7 @@ const updateInterface = () => {
   },
   "it": {
     "title": "Sistema",
+    "crumbs": "Dispositivo e manutenzione",
     "device_name": "Nome dispositivo",
     "device_name_sub": "Usato come hostname e nome mDNS nella rete locale",
     "device_info": "Informazioni dispositivo",
@@ -376,6 +380,7 @@ const updateInterface = () => {
   },
   "de": {
     "title": "System",
+    "crumbs": "Gerät und Wartung",
     "device_name": "Gerätename",
     "device_name_sub": "Wird als Hostname und mDNS-Name im lokalen Netzwerk verwendet",
     "device_info": "Geräteinformationen",
