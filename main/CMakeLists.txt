@@ -69,6 +69,9 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             frontend/dist/index.css.gz
                             frontend/dist/index.html.gz
                             frontend/dist/index.js.gz
+                            frontend/dist/inter-latin.woff2.gz
+                            frontend/dist/inter-cyrillic.woff2.gz
+                            frontend/dist/inter-latin-ext.woff2.gz
 )
 
 target_link_libraries(${COMPONENT_TARGET} "-u wb_app_desc")

@@ -36,6 +36,15 @@ extern const uint8_t index_js_end[] asm("_binary_index_js_gz_end");
 extern const uint8_t index_html_start[] asm("_binary_index_html_gz_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_gz_end");
 
+extern const uint8_t inter_latin_start[] asm("_binary_inter_latin_woff2_gz_start");
+extern const uint8_t inter_latin_end[] asm("_binary_inter_latin_woff2_gz_end");
+
+extern const uint8_t inter_cyrillic_start[] asm("_binary_inter_cyrillic_woff2_gz_start");
+extern const uint8_t inter_cyrillic_end[] asm("_binary_inter_cyrillic_woff2_gz_end");
+
+extern const uint8_t inter_latin_ext_start[] asm("_binary_inter_latin_ext_woff2_gz_start");
+extern const uint8_t inter_latin_ext_end[] asm("_binary_inter_latin_ext_woff2_gz_end");
+
 
 static const httpd_config_t httpd_default_config = HTTPD_DEFAULT_CONFIG();
 
@@ -66,6 +75,30 @@ static esp_err_t index_js_get_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "application/javascript");
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     httpd_resp_send(req, (const char *)index_js_start, index_js_end - index_js_start);
+    return ESP_OK;
+}
+
+static esp_err_t inter_latin_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "font/woff2");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_send(req, (const char *)inter_latin_start, inter_latin_end - inter_latin_start);
+    return ESP_OK;
+}
+
+static esp_err_t inter_cyrillic_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "font/woff2");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_send(req, (const char *)inter_cyrillic_start, inter_cyrillic_end - inter_cyrillic_start);
+    return ESP_OK;
+}
+
+static esp_err_t inter_latin_ext_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "font/woff2");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_send(req, (const char *)inter_latin_ext_start, inter_latin_ext_end - inter_latin_ext_start);
     return ESP_OK;
 }
 
@@ -105,6 +138,24 @@ static const httpd_uri_t favicon_get = {
     .uri = "/favicon.webp",
     .method = HTTP_GET,
     .handler = favicon_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t inter_latin_get = {
+    .uri = "/inter-latin.woff2",
+    .method = HTTP_GET,
+    .handler = inter_latin_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t inter_cyrillic_get = {
+    .uri = "/inter-cyrillic.woff2",
+    .method = HTTP_GET,
+    .handler = inter_cyrillic_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t inter_latin_ext_get = {
+    .uri = "/inter-latin-ext.woff2",
+    .method = HTTP_GET,
+    .handler = inter_latin_ext_get_handler,
     .user_ctx = NULL,
 };
 static const httpd_uri_t index_css_get = {
@@ -232,6 +283,9 @@ esp_err_t http_server_init(void)
         httpd_register_uri_handler(http_server, &index_css_get);
         httpd_register_uri_handler(http_server, &index_js_get);
         httpd_register_uri_handler(http_server, &favicon_get);
+        httpd_register_uri_handler(http_server, &inter_latin_get);
+        httpd_register_uri_handler(http_server, &inter_cyrillic_get);
+        httpd_register_uri_handler(http_server, &inter_latin_ext_get);
 
         httpd_register_uri_handler(http_server, &update_post);
         httpd_register_uri_handler(http_server, &info_get);
