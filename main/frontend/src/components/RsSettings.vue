@@ -98,17 +98,6 @@ const isSaveDisabled = computed(() => {
           </div>
         </div>
 
-        <template v-if="field === 'rs485_2'">
-          <div class="sub-section">
-            <div class="sub-section-label">I/O Bus</div>
-            <div class="field">
-              <label :for="`${field}-io_bus`">{{ t('io_bus') }}</label>
-              <div style="justify-self: end"><Switch :id="`${field}-io_bus`" v-model="ioBus" /></div>
-              <div class="hint">{{ t('io_bus_info') }}</div>
-            </div>
-          </div>
-        </template>
-
         <div class="sub-section">
           <div class="sub-section-label">{{ t('tcp_section') }}</div>
           <div class="field">
