@@ -39,23 +39,25 @@ const login = async () => {
     <Logo alt="Wiren Board" />
     <div v-if="hostname" class="login-hostname">{{ hostname }}</div>
 
-    <div class="login-title">{{ t('title') }}</div>
-
-    <fieldset class="login-wrapper">
-      <form class="login-form" @submit.prevent="login">
-        <div class="login-fields">
+    <form class="card login-card" @submit.prevent="login">
+      <div class="card-header">
+        <div class="title">{{ t('title') }}</div>
+      </div>
+      <div class="card-body">
+        <div class="login-field">
           <label for="username">{{ t('login') }}</label>
           <input id="username" v-model="data.login" name="username" type="text" autocomplete="username" :required="!!data.login" autofocus />
-
+        </div>
+        <div class="login-field">
           <label for="password">{{ t('password') }}</label>
           <input id="password" v-model="data.pass" name="pass" type="password" autocomplete="current-password" :required="!!data.pass" />
         </div>
+      </div>
+      <div class="login-actions">
+        <button type="submit" :disabled="isLoading || !data.login || !data.pass">{{ t('sign_in') }}</button>
+      </div>
+    </form>
 
-        <div class="login-actions">
-          <button type="submit" :disabled="isLoading || !data.login || !data.pass">{{ t('sign_in') }}</button>
-        </div>
-      </form>
-    </fieldset>
     <nav class="login-links">
       <a :href="documentation" target="_blank">{{ t('documentation') }}</a>
 
@@ -79,41 +81,39 @@ const login = async () => {
   height: 100dvh;
   margin-top: -30px;
   padding: 0 24px;
-  background: var(--bg-canvas);
+  background: var(--bg-sidebar);
 
-  @media( max-height: 600px ) {
+  @media (max-height: 600px) {
     margin-top: 0;
   }
 }
 
-.login-wrapper {
+.login-card {
   margin-top: 24px;
-  padding: 0;
   max-width: 350px;
   width: 100%;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-md);
   overflow: hidden;
 }
 
-.login-title {
-  font-weight: 600;
-  font-size: 16px;
-  margin-top: 16px;
-  color: var(--text-color);
-}
-
-.login-fields {
-  padding: 24px;
-  gap: 12px;
+.login-field {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--border-color);
+}
+
+.login-field:last-child {
+  border-bottom: 0;
+}
+
+.login-field > label {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .login-actions {
-  padding: 16px 24px;
+  padding: 14px 18px;
   display: flex;
   align-items: center;
   justify-content: end;
@@ -129,12 +129,17 @@ const login = async () => {
   width: 100%;
   max-width: 350px;
   box-sizing: border-box;
-  padding: 0 12px 0 24px;
+  padding: 0 12px 0 18px;
   margin-top: 8px;
 }
 
 .login-links a {
   font-size: 13px;
+  color: var(--text-on-dark-muted);
+}
+
+.login-links a:hover {
+  color: var(--text-on-dark);
 }
 
 .login-languageWrapper {
@@ -147,7 +152,7 @@ const login = async () => {
   box-shadow: none;
   font-size: 13px;
   background: none;
-  color: var(--link-color);
+  color: var(--text-on-dark-muted);
   cursor: pointer;
   padding-right: 12px;
   height: auto;
@@ -160,11 +165,12 @@ const login = async () => {
   background-size: 14px;
   height: 14px;
   width: 14px;
+  filter: invert(0.6);
 }
 
 .login-hostname {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-on-dark-muted);
   margin-top: 6px;
 }
 </style>
