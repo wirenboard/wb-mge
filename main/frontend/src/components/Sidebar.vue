@@ -16,7 +16,7 @@ const isShowMenu = ref(false);
 const router = useRouter();
 const { hostname } = useHostname();
 const { info } = useInfo();
-const { data: settings } = useSettings();
+const { initData: savedSettings } = useSettings();
 
 const menuGroups = computed(() => {
   const routes = router.options.routes.filter(r => r.meta?.menuName) as RouteRecordRaw[];
@@ -86,7 +86,7 @@ watch(
           </RouterLink>
         </template>
       </div>
-      <div v-if="info && settings" class="sb-ports">
+      <div v-if="info && savedSettings" class="sb-ports">
         <div class="sb-port">
           <div class="sb-port-head">
             <span class="sb-port-name">Port 1</span>
@@ -94,8 +94,8 @@ watch(
               <span class="dot" />{{ info.rs485_1.is_busy ? 'ACTIVE' : 'IDLE' }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-k">Mode</span><span class="sb-port-v">{{ settings.rs485_1.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ settings.rs485_1.baudrate }} · 8{{ settings.rs485_1.parity === 'none' ? 'N' : settings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ settings.rs485_1.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-k">Mode</span><span class="sb-port-v">{{ savedSettings.rs485_1.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
         </div>
         <div class="sb-port">
           <div class="sb-port-head">
@@ -104,8 +104,8 @@ watch(
               <span class="dot" />{{ info.rs485_2.is_busy ? 'ACTIVE' : 'IDLE' }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-k">Mode</span><span class="sb-port-v">{{ settings.rs485_2.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ settings.rs485_2.baudrate }} · 8{{ settings.rs485_2.parity === 'none' ? 'N' : settings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ settings.rs485_2.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-k">Mode</span><span class="sb-port-v">{{ savedSettings.rs485_2.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
         </div>
       </div>
 
