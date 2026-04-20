@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -7,53 +7,195 @@ import Layout from '@/components/Layout.vue';
 
 const { t } = useI18n();
 
-const LOGS = [
-  { t: '17:31:04.112', dt: '\u2014',       dir: 'MASTER', slave: '01', fc: '03 Read Holding Regs',     pl: '01 03 00 00 00 0A CD CB', bytes: 8,  crc: 'OK', parsed: { start: 0, qty: 10 } },
-  { t: '17:31:04.115', dt: '+3 ms',   dir: 'SLAVE',  slave: '01', fc: '03 Read Holding Regs',     pl: '01 03 14 00 DC 00 01 00 00 00 64 00 00 00 00 00 \u2026', bytes: 23, crc: 'OK' },
-  { t: '17:31:03.442', dt: '+673 ms', dir: 'MASTER', slave: '01', fc: '06 Write Single Reg',      pl: '01 06 00 10 00 64 88 E4', bytes: 8,  crc: 'OK' },
-  { t: '17:31:03.446', dt: '+4 ms',   dir: 'SLAVE',  slave: '01', fc: '06 Write Single Reg',      pl: '01 06 00 10 00 64 88 E4', bytes: 8,  crc: 'OK' },
-  { t: '17:31:02.881', dt: '+561 ms', dir: 'MASTER', slave: '02', fc: '03 Read Holding Regs',     pl: '02 03 00 00 00 08 04 5E', bytes: 8,  crc: 'OK' },
-  { t: '17:31:02.885', dt: '+4 ms',   dir: 'SLAVE',  slave: '02', fc: '03 Read Holding Regs',     pl: '02 03 10 00 01 00 00 00 64 41 4D 85 1F \u2026', bytes: 21, crc: 'OK' },
-  { t: '17:31:02.441', dt: '+444 ms', dir: 'MASTER', slave: '01', fc: '01 Read Coils',            pl: '01 01 00 00 00 10 FD CF', bytes: 8,  crc: 'OK' },
-  { t: '17:31:02.444', dt: '+3 ms',   dir: 'SLAVE',  slave: '01', fc: '01 Read Coils',            pl: '01 01 02 FF 00 A4 38',    bytes: 7,  crc: 'OK' },
-  { t: '17:31:01.997', dt: '+553 ms', dir: 'MASTER', slave: '05', fc: '04 Read Input Regs',       pl: '05 04 00 00 00 04 F1 C9', bytes: 8,  crc: 'OK' },
-  { t: '17:31:01.999', dt: '+2 ms',   dir: 'SLAVE',  slave: '05', fc: '04 Read Input Regs',       pl: '05 04 08 43 6C CC CD 41 4D 85 1F B2 2C', bytes: 13, crc: 'OK' },
-  { t: '17:31:01.330', dt: '+669 ms', dir: 'MASTER', slave: '02', fc: '10 Write Multiple Regs',   pl: '02 10 00 20 00 03 06 00 12 00 34 01 2C 01 F4', bytes: 15, crc: 'OK' },
-  { t: '17:31:01.334', dt: '+4 ms',   dir: 'SLAVE',  slave: '02', fc: '10 Write Multiple Regs',   pl: '02 10 00 20 00 03 0C', bytes: 8,  crc: 'OK' },
-  { t: '17:31:00.881', dt: '+547 ms', dir: 'MASTER', slave: '04', fc: '03 Read Holding Regs',     pl: '04 03 00 00 00 06 C4 4A', bytes: 8,  crc: 'OK' },
-  { t: '17:31:00.887', dt: '+6 ms',   dir: 'SLAVE',  slave: '04', fc: '03 Read Holding Regs',     pl: '04 03 0C 00 01 00 64 77 33', bytes: 15, crc: 'OK' },
-  { t: '17:31:00.441', dt: '+554 ms', dir: 'MASTER', slave: '01', fc: '03 Read Holding Regs',     pl: '01 03 00 0A 00 05 94 0A', bytes: 8,  crc: 'OK' },
-  { t: '17:31:00.444', dt: '+3 ms',   dir: 'SLAVE',  slave: '01', fc: '03 Read Holding Regs',     pl: '01 03 0A 00 01 00 00 00 64 46 D1', bytes: 15, crc: 'OK' },
-  { t: '17:30:59.998', dt: '+446 ms', dir: 'MASTER', slave: '06', fc: '06 Write Single Reg',      pl: '06 06 00 05 00 01 59 E3', bytes: 8,  crc: 'OK' },
-  { t: '17:30:59.001', dt: '+997 ms', dir: 'SLAVE',  slave: '06', fc: '06 Write Single Reg',      pl: '06 06 00 05 00 01 59 E3', bytes: 8,  crc: 'OK' },
-  { t: '17:30:59.013', dt: '+12 ms',  dir: 'MASTER', slave: '05', fc: '04 Read Input Regs',       pl: '05 04 00 00 00 04 F1 C9', bytes: 8,  crc: 'OK' },
-  { t: '17:30:59.016', dt: '+3 ms',   dir: 'ERR',    slave: '05', fc: '04 Read Input Regs',       pl: '05 04 86 43 6C CC CD 41 4D 85 1F ?? ??', bytes: 13, crc: 'ERR' },
-  { t: '17:30:58.441', dt: '+425 ms', dir: 'MASTER', slave: '01', fc: '03 Read Holding Regs',     pl: '01 03 00 00 00 0A CD CB', bytes: 8,  crc: 'OK' },
-  { t: '17:30:58.444', dt: '+3 ms',   dir: 'SLAVE',  slave: '01', fc: '03 Read Holding Regs',     pl: '01 03 14 00 DC 00 01 00 00 00 64 00 00 00 \u2026', bytes: 23, crc: 'OK' },
-].map((r, i) => ({ ...r, id: 1267 - i }));
+type SniffRow = {
+  id: number
+  port: number
+  timestamp_us: number
+  dir: 'MASTER' | 'SLAVE' | 'TIMEOUT' | 'ERR'
+  slave: string
+  fc: string
+  pl: string
+  bytes_arr: string[]
+  bytes: number
+  crc: 'OK' | 'ERR'
+  t: string
+  dt: string
+}
 
-const running = ref(true);
-const selected = ref(1267);
+const rows = ref<SniffRow[]>([]);
+const running = ref(false);
+const ws = ref<WebSocket | null>(null);
+let lastTimestampUs = 0;
+const wsStatus = ref<'connected' | 'disconnected' | 'reconnecting'>('disconnected');
+
+const selected = ref<number | null>(null);
 const filter = ref('');
 const onlyErrors = ref(false);
 const portFilter = ref('all');
 const portOptions = ['all', 'A', 'B'];
 
-const rows = computed(() => {
-  let r = LOGS;
-  if (onlyErrors.value) r = r.filter(x => x.dir === 'ERR' || x.crc === 'ERR');
-  if (filter.value.trim()) {
-    const f = filter.value.toLowerCase();
-    r = r.filter(x =>
-      x.slave.includes(f) || x.fc.toLowerCase().includes(f) || x.pl.toLowerCase().includes(f)
-    );
+const FC_NAMES: Record<number, string> = {
+  1: 'Read Coils',
+  2: 'Read Discrete Inputs',
+  3: 'Read Holding Regs',
+  4: 'Read Input Regs',
+  5: 'Write Single Coil',
+  6: 'Write Single Reg',
+  15: 'Write Multiple Coils',
+  16: 'Write Multiple Regs',
+}
+
+function formatTimestamp(us: number): string {
+  const ms = Math.floor(us / 1000)
+  const d = new Date(ms)
+  const hh = d.getHours().toString().padStart(2, '0')
+  const mm = d.getMinutes().toString().padStart(2, '0')
+  const ss = d.getSeconds().toString().padStart(2, '0')
+  const mmm = d.getMilliseconds().toString().padStart(3, '0')
+  return `${hh}:${mm}:${ss}.${mmm}`
+}
+
+function formatDt(us: number, prevUs: number): string {
+  if (prevUs === 0) return '—'
+  const diff = Math.round((us - prevUs) / 1000)
+  return `+${diff} ms`
+}
+
+function hexToPayloadString(raw: string): string {
+  return raw.match(/.{1,2}/g)?.join(' ') ?? raw
+}
+
+function parsePacket(msg: any): SniffRow | null {
+  if (typeof msg.id !== 'number') return null
+  if (msg.type === 'timeout') {
+    const fcName = FC_NAMES[msg.function] ?? `FC${msg.function}`
+    const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase()
+    const dt = formatDt(msg.timestamp_us, lastTimestampUs)
+    lastTimestampUs = msg.timestamp_us
+    return {
+      id: msg.id,
+      port: msg.port,
+      timestamp_us: msg.timestamp_us,
+      dir: 'TIMEOUT',
+      slave,
+      fc: `${msg.function.toString(16).padStart(2, '0').toUpperCase()} ${fcName}`,
+      pl: '',
+      bytes_arr: [],
+      bytes: 0,
+      crc: 'ERR',
+      t: formatTimestamp(msg.timestamp_us),
+      dt,
+    }
   }
-  return r;
+  if (msg.type === 'packet') {
+    const fcName = FC_NAMES[msg.function] ?? `FC${msg.function}`
+    const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase()
+    const dir = msg.dir === 'master' ? 'MASTER' : 'SLAVE'
+    const crc = msg.crc_valid ? 'OK' : 'ERR'
+    const pl = hexToPayloadString(msg.raw)
+    const dt = formatDt(msg.timestamp_us, lastTimestampUs)
+    lastTimestampUs = msg.timestamp_us
+    return {
+      id: msg.id,
+      port: msg.port,
+      timestamp_us: msg.timestamp_us,
+      dir: crc === 'ERR' ? 'ERR' : dir,
+      slave,
+      fc: `${msg.function.toString(16).padStart(2, '0').toUpperCase()} ${fcName}`,
+      pl,
+      bytes_arr: hexToPayloadString(msg.raw).split(' '),
+      bytes: msg.size,
+      crc,
+      t: formatTimestamp(msg.timestamp_us),
+      dt,
+    }
+  }
+  return null
+}
+
+function getWsUrl(): string {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${proto}://${location.host}/sniffer/ws`
+}
+
+function connectWs() {
+  lastTimestampUs = 0
+  ws.value = new WebSocket(getWsUrl())
+  ws.value.onopen = () => {
+    wsStatus.value = 'connected'
+    ws.value?.send(JSON.stringify({ cmd: 'start', port: 'all' }))
+  }
+  ws.value.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data as string)
+      const row = parsePacket(msg)
+      if (row) {
+        if (rows.value.length >= 1000) {
+          stopCapture()
+          return
+        }
+        rows.value.unshift(row)
+      }
+    } catch (e) {
+      console.warn('sniffer: failed to parse WS message', e)
+    }
+  }
+  ws.value.onclose = () => {
+    ws.value = null
+    if (running.value) {
+      wsStatus.value = 'reconnecting'
+      setTimeout(connectWs, 2000)
+    } else {
+      wsStatus.value = 'disconnected'
+    }
+  }
+}
+
+function startCapture() {
+  clearLogs()
+  running.value = true
+  connectWs()
+}
+
+function stopCapture() {
+  running.value = false
+  wsStatus.value = 'disconnected'
+  ws.value?.send(JSON.stringify({ cmd: 'stop', port: 'all' }))
+  ws.value?.close()
+  ws.value = null
+}
+
+function clearLogs() {
+  rows.value = []
+  lastTimestampUs = 0
+}
+
+onMounted(() => startCapture())
+onUnmounted(() => stopCapture())
+
+const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
+
+const filteredRows = computed(() => {
+  let r = rows.value
+  if (portFilter.value !== 'all') {
+    const p = portFilter.value === 'A' ? 0 : 1
+    r = r.filter(x => x.port === p)
+  }
+  if (onlyErrors.value) r = r.filter(x => x.crc === 'ERR')
+  if (filter.value.trim()) {
+    const f = filter.value.toLowerCase()
+    r = r.filter(x =>
+      x.slave.toLowerCase().includes(f) ||
+      x.fc.toLowerCase().includes(f) ||
+      x.pl.toLowerCase().includes(f)
+    )
+  }
+  return r
 });
 
-const errorCount = computed(() => LOGS.filter(x => x.dir === 'ERR' || x.crc === 'ERR').length);
-
-const sel = computed(() => rows.value.find(r => r.id === selected.value) || rows.value[0]);
+const sel = computed(() =>
+  selected.value !== null ? filteredRows.value.find(r => r.id === selected.value) ?? null : null
+);
 
 function dirPillClass(dir: string) {
   return 'dir-pill dir-' + dir.toLowerCase();
@@ -82,12 +224,13 @@ function directionLabel(dir: string, slave: string) {
   <Layout>
     <Heading :title="t('title')">
       <template #default>
-        <Button :variant="running ? 'danger' : 'primary'" @click="running = !running">
+        <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
           {{ running ? t('stop') : t('start') }}
         </Button>
-        <Button variant="outline">{{ t('clear') }}</Button>
+        <Button variant="outline" @click="clearLogs()">{{ t('clear') }}</Button>
       </template>
     </Heading>
+    <span v-if="wsStatus !== 'connected'" class="ws-status">{{ wsStatus === 'reconnecting' ? 'Reconnecting…' : 'Disconnected' }}</span>
 
     <!-- Filter bar -->
     <div class="filter-bar">
@@ -121,9 +264,8 @@ function directionLabel(dir: string, slave: string) {
       <div class="filter-spacer" />
 
       <div class="filter-stats">
-        <span><b class="mono">{{ LOGS.length.toLocaleString() }}</b> {{ t('packets') }}</span>
+        <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
         <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
-        <span><b class="mono">0.31 kB/s</b></span>
       </div>
     </div>
 
@@ -146,7 +288,7 @@ function directionLabel(dir: string, slave: string) {
           </thead>
           <tbody>
             <tr
-              v-for="r in rows" :key="r.id"
+              v-for="r in filteredRows" :key="r.id"
               :class="{ selected: selected === r.id, 'err-row': r.crc === 'ERR' }"
               @click="selected = r.id"
             >
@@ -159,9 +301,9 @@ function directionLabel(dir: string, slave: string) {
               <td>
                 <span class="hex-payload">
                   <span
-                    v-for="(b, i) in r.pl.split(' ')" :key="i"
+                    v-for="(b, i) in r.bytes_arr" :key="i"
                     class="hex-byte"
-                    :style="hexByteStyle(b, i, r.pl.split(' '))"
+                    :style="hexByteStyle(b, i, r.bytes_arr)"
                   >{{ b }}</span>
                 </span>
               </td>
@@ -196,10 +338,6 @@ function directionLabel(dir: string, slave: string) {
 
           <div>
             <div class="sub-section-label">{{ t('parsed') }}</div>
-            <template v-if="sel.fc.startsWith('03')">
-              <div class="kv" style="padding:5px 0"><div class="k">{{ t('start_addr') }}</div><div class="v mono">0x0000 (0)</div></div>
-              <div class="kv" style="padding:5px 0"><div class="k">{{ t('quantity') }}</div><div class="v mono">10 registers</div></div>
-            </template>
             <div class="kv" style="padding:5px 0"><div class="k">CRC</div><div class="v mono" :style="{ color: sel.crc === 'ERR' ? 'var(--mb-err)' : 'var(--mb-ok)' }">{{ sel.crc === 'ERR' ? '\u2715 Mismatch' : '\u2713 Valid' }}</div></div>
             <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">{{ t('size') }}</div><div class="v mono">{{ sel.bytes }} {{ t('col_bytes').toLowerCase() }}</div></div>
           </div>
@@ -208,9 +346,9 @@ function directionLabel(dir: string, slave: string) {
             <div class="sub-section-label">{{ t('raw_bytes') }}</div>
             <div class="raw-bytes-box">
               <span
-                v-for="(b, i) in sel.pl.split(' ')" :key="i"
+                v-for="(b, i) in sel.bytes_arr" :key="i"
                 class="raw-byte"
-                :style="hexByteStyle(b, i, sel.pl.split(' '))"
+                :style="hexByteStyle(b, i, sel.bytes_arr)"
               >{{ b }}</span>
             </div>
             <div class="raw-legend">
@@ -433,6 +571,21 @@ function directionLabel(dir: string, slave: string) {
   color: var(--mb-err);
   background: color-mix(in oklch, var(--mb-err) 8%, white);
   border-color: color-mix(in oklch, var(--mb-err) 25%, white);
+}
+
+.dir-timeout {
+  color: var(--text-muted);
+  background: color-mix(in oklch, var(--text-muted) 6%, var(--bg-surface));
+  border-color: color-mix(in oklch, var(--text-muted) 20%, var(--bg-surface));
+}
+
+.ws-status {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 32px;
+  background: color-mix(in oklch, var(--text-muted) 6%, var(--bg-surface));
+  border-bottom: 1px solid var(--border-color);
 }
 
 /* Hex payload */
