@@ -82,6 +82,7 @@ static esp_err_t inter_latin_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "font/woff2");
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
     httpd_resp_send(req, (const char *)inter_latin_start, inter_latin_end - inter_latin_start);
     return ESP_OK;
 }
@@ -90,6 +91,7 @@ static esp_err_t inter_cyrillic_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "font/woff2");
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
     httpd_resp_send(req, (const char *)inter_cyrillic_start, inter_cyrillic_end - inter_cyrillic_start);
     return ESP_OK;
 }
@@ -98,6 +100,7 @@ static esp_err_t inter_latin_ext_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "font/woff2");
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
     httpd_resp_send(req, (const char *)inter_latin_ext_start, inter_latin_ext_end - inter_latin_ext_start);
     return ESP_OK;
 }
