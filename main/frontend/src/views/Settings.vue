@@ -206,7 +206,7 @@ const addNetwork = () => {
                     minlength="8"
                     maxlength="63"
                     type="password"
-                    name="ap_ pass"
+                    name="ap_pass"
                     @input="(ev) => onCustomValidation(ev, t('wrong_pass_pattern'))"
                   />
                 </div>
@@ -262,7 +262,7 @@ const addNetwork = () => {
                     </template>
                   </Select>
 
-                  <Button variant="outline" type="button" class="settings-reloadButton" :disalbed="isPolling" @click="startPolling">
+                  <Button variant="outline" type="button" class="settings-reloadButton" :disabled="isPolling" @click="startPolling">
                     <ReloadIcon
                       class="settings-reload"
                       :class="{
