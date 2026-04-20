@@ -77,6 +77,10 @@
   outline-width: 0;
 }
 
+input, select, button, textarea {
+  font-family: inherit;
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -168,7 +172,8 @@ legend {
 .kv:last-child { border-bottom: 0; }
 .kv .k { color: var(--text-secondary); }
 .kv .v { color: var(--text-color); text-align: right; }
-.kv .v.mono { font-family: var(--font-mono); font-size: 12.5px; }
+.mono { font-family: var(--font-mono); }
+.kv .v.mono { font-size: 12.5px; }
 .kv .v.muted { color: var(--text-muted); }
 .kv .hint {
   grid-column: 1 / -1;
@@ -245,7 +250,6 @@ input[type="password"],
 input:not([type]),
 select {
   box-sizing: border-box;
-  font-family: var(--font-ui);
   font-size: 12.5px;
   color: var(--text-color);
   width: 100%;

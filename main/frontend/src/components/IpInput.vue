@@ -32,7 +32,7 @@ watch(model, () => {
 <template>
   <input
     v-model="model"
-    class="ipInput"
+    class="ipInput mono"
     :class="{ 'ipInput-invalid': showError }"
     type="text"
     pattern="^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$"

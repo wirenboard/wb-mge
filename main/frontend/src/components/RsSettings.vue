@@ -142,7 +142,7 @@ const isSaveDisabled = computed(() => {
               name="bridge_port"
               min="1"
               max="65535"
-              class="rsSettings-port"
+              class="rsSettings-port mono"
               :invalid="hasPortsConflict"
               required
             />
