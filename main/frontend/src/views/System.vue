@@ -78,205 +78,148 @@ const updateInterface = () => {
   <Layout>
     <Heading :title="t('title')" />
 
-    <div class="system">
-      <fieldset>
-        <legend>{{ t('device') }}</legend>
-        <div class="system-container system-containerLarge">
-          <div>{{ t('hostname') }}</div>
-          <form class="system-data system-saveWrapper" autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
-            <input v-model="settings!.hostname" type="text" name="hostname">
-            <button type="submit" :disabled="!settings!.hostname || !isChanged(['hostname'])">
-              <SaveIcon class="system-save" />
-            </button>
-          </form>
-
-          <div>{{ t('serial_num') }}</div>
-          <div class="system-data">
-            {{ info!.serial_num }}
+    <div class="main-body">
+    <div class="grid-2">
+      <div class="stack">
+        <section class="card">
+          <div class="card-header">
+            <div class="title">{{ t('device') }}</div>
           </div>
-
-          <template v-if="uptime">
-            <div>{{ t('uptime') }}</div>
-            <div class="system-data">
-              <template v-if="uptime.days">
-                <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
-              </template>
-              <template v-if="uptime.hours">
-                <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
-              </template>
-              <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+          <div class="card-body">
+            <div class="kv">
+              <div class="k">{{ t('hostname') }}</div>
+              <div class="v">
+                <form class="system-saveWrapper" autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
+                  <input v-model="settings!.hostname" type="text" name="hostname">
+                  <button type="submit" :disabled="!settings!.hostname || !isChanged(['hostname'])">
+                    <SaveIcon class="system-save" />
+                  </button>
+                </form>
+              </div>
             </div>
-          </template>
-
-          <div>{{ t('firmware_version') }}</div>
-          <div class="system-data">
-            {{ info?.firmware }}
+            <div class="kv">
+              <div class="k">{{ t('serial_num') }}</div>
+              <div class="v">{{ info!.serial_num }}</div>
+            </div>
+            <template v-if="uptime">
+              <div class="kv">
+                <div class="k">{{ t('uptime') }}</div>
+                <div class="v muted">
+                  <template v-if="uptime.days">
+                    <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
+                  </template>
+                  <template v-if="uptime.hours">
+                    <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
+                  </template>
+                  <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+                </div>
+              </div>
+            </template>
+            <div class="kv">
+              <div class="k">{{ t('firmware_version') }}</div>
+              <div class="v mono">{{ info?.firmware }}</div>
+            </div>
+            <div class="kv">
+              <div class="k">{{ t('firmware_update') }}</div>
+              <div class="v">
+                <FileUpload
+                  v-model="firmwareFile"
+                  :placeholder="t('choose_firmware')"
+                  accept=".bin"
+                  :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
+                  :is-loading="isUpdating"
+                  :disabled="loadedMethod === 'firmware'"
+                  @upload="updateFirmware"
+                />
+              </div>
+            </div>
+            <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
+            <div class="kv">
+              <div class="k">{{ t('reboot') }}</div>
+              <div class="v">
+                <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
+              </div>
+            </div>
           </div>
+        </section>
 
-          <div>{{ t('firmware_update') }}</div>
-          <div class="system-data">
-            <FileUpload
-              v-model="firmwareFile"
-              :placeholder="t('choose_firmware')"
-              accept=".bin"
-              :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
-              :is-loading="isUpdating"
-              :disabled="loadedMethod === 'firmware'"
-              @upload="updateFirmware"
-            />
-          </div>
-          <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
+        <section class="card">
+          <form
+            :autocomplete="isChanged(['login', 'pass']) ? 'on' : 'off'"
+            @submit.prevent="updateInterface">
+            <div class="card-header">
+              <div class="title">{{ t('interface') }}</div>
+              <Button
+                type="submit"
+                :disabled="!isChanged(['login', 'pass', 'web_port']) && language === locale"
+              >
+                {{ t('save') }}
+              </Button>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="port">{{ t('port') }}</label>
+                <InputNumber id="port" v-model="settings!.web_port" type="text" name="port" min="1" max="65535" required />
+              </div>
+              <div class="field">
+                <label for="username">{{ t('login') }}</label>
+                <input
+                  id="username"
+                  v-model="settings!.login"
+                  type="text"
+                  pattern="^[a-zA-Z0-9_\-]+$"
+                  name="username"
+                  :autocomplete="isChanged(['login']) ? 'username' : 'off'"
+                  required
+                  @input="(ev) => onCustomValidation(ev, t('wrong_username_pattern'))"
+                />
+              </div>
+              <div class="field">
+                <label for="new-password">{{ t('password') }}</label>
+                <input
+                  id="new-password"
+                  v-model="settings!.pass"
+                  :placeholder="t('pass_placeholder')"
+                  :autocomplete="isChanged(['pass']) ? 'new-password' : 'off'"
+                  type="password"
+                  name="new-password"
+                  pattern="^[\x20-\x7E]+$"
+                  required
+                  @input="(ev) => onCustomValidation(ev, t('wrong_password_pattern'))"
+                />
+              </div>
+              <div class="field">
+                <label for="language">{{ t('language') }}</label>
+                <select id="language" v-model="language" name="language">
+                  <option v-for="(lang, code) in languages" :key="code" :value="code">{{ lang }}</option>
+                </select>
+              </div>
+            </div>
+          </form>
+        </section>
+      </div>
 
-          <div>{{ t('reboot') }}</div>
-          <div class="system-data">
-            <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
-          </div>
-        </div>
-      </fieldset>
+      <div class="stack">
+        <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
 
-      <fieldset>
-        <legend>{{ t('interface') }}</legend>
-        <form
-          class="system-container"
-          :autocomplete="isChanged(['login', 'pass']) ? 'on' : 'off'"
-          @submit.prevent="updateInterface">
-          <label for="port">{{ t('port') }}</label>
-          <div class="system-data">
-            <InputNumber id="port" v-model="settings!.web_port" type="text" name="port" min="1" max="65535" required />
-          </div>
-
-          <label for="username">{{ t('login') }}</label>
-          <div class="system-data">
-            <input
-              id="username"
-              v-model="settings!.login"
-              type="text"
-              pattern="^[a-zA-Z0-9_\-]+$"
-              name="username"
-              :autocomplete="isChanged(['login']) ? 'username' : 'off'"
-              required
-              @input="(ev) => onCustomValidation(ev, t('wrong_username_pattern'))"
-            />
-          </div>
-
-          <label for="new-password">{{ t('password') }}</label>
-          <div class="system-data">
-            <input
-              id="new-password"
-              v-model="settings!.pass"
-              :placeholder="t('pass_placeholder')"
-              :autocomplete="isChanged(['pass']) ? 'new-password' : 'off'"
-              type="password"
-              name="new-password"
-              pattern="^[\x20-\x7E]+$"
-              required
-              @input="(ev) => onCustomValidation(ev, t('wrong_password_pattern'))"
-            />
-          </div>
-
-          <label for="language">{{ t('language') }}</label>
-          <div class="system-data">
-            <select id="language" v-model="language" name="language">
-              <option v-for="(lang, code) in languages" :key="code" :value="code">{{ lang }}</option>
-            </select>
-          </div>
-
-          <Button
-            class="system-submit"
-            type="submit"
-            :disabled="!isChanged(['login', 'pass', 'web_port']) && language === locale"
-          >
-            {{ t('save') }}
-          </Button>
-        </form>
-      </fieldset>
-
-      <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
-
-      <fieldset class="system-container1 system-links">
-        <legend>{{ t('links') }}</legend>
-
-        <a :href="documentation" target="_blank">{{ t('documentation') }}</a>
-
-        <a v-if="locale === 'ru'" :href="support" target="_blank">{{ t('support') }}</a>
-        <a v-else :href="`mailto: ${email}`">{{ t('support') }}:&nbsp;{{ email }}</a>
-
-        <a :href="website" target="_blank">{{ t('website') }}</a>
-
-        <a :href="firmwareLatest" target="_blank">{{ t('firmware_link') }}</a>
-      </fieldset>
+      </div>
+    </div>
     </div>
   </Layout>
 </template>
 
 <style scoped>
-.system {
-  columns: 2;
-  column-gap: 12px;
-
-  @media (max-width: 1320px) {
-    columns: 2;
-  }
-
-  @media (max-width: 1024px) {
-    columns: 1;
-    max-width: 470px;
-  }
-
-  @media (max-width: 500px) {
-    width: 100%;
-  }
-}
-
-.system-container {
-  display: grid;
-  gap: 6px 24px;
-  grid-template-columns: 1fr 1fr;
-  align-items: center;
-  justify-items: flex-start;
-  page-break-inside: avoid;
-  break-inside: avoid;
-  line-height: 1em;
-  overflow-wrap: break-word;
-  word-break: break-word;
-  hyphens: auto;
-}
-
-.system-containerLarge {
-  grid-template-columns: 1fr minmax(210px, 1fr);
-  gap: 6px 12px;
-}
-
 .system-links {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.system-container div {
-  min-height: 33px;
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-}
-
-.system-data {
-  width: 100%;
-  display: flex;
-  justify-content: end;
-}
-
-.system-submit {
-  margin-top: 14px;
-}
-
-.system-info * {
-  width: fit-content;
+  gap: 10px;
+  font-size: 13px;
 }
 
 .system-saveWrapper {
   display: flex;
   gap: 6px;
+  justify-content: flex-end;
 }
 
 .system-save {

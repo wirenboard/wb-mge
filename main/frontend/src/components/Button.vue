@@ -25,13 +25,24 @@ const emit = defineEmits(['click']);
 <style scoped>
 .button {
   position: relative;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--r-md);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-color);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
   user-select: none;
-  padding: 6px 12px;
-  border-radius: var(--border-radius);
-  transition: color .15s ease-in-out, background-color .15s ease-in-out;
   outline: 0;
-  border: 0;
 }
 
 .button:not(:disabled) {
@@ -40,6 +51,7 @@ const emit = defineEmits(['click']);
 
 .button:disabled {
   opacity: .65;
+  cursor: unset;
 }
 
 .button-caption {
@@ -48,43 +60,49 @@ const emit = defineEmits(['click']);
 }
 
 .button-primary {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
   color: #fff;
-  background-color: var(--primary-color);
 }
 
 .button-primary:focus:not(:disabled),
 .button-primary:hover:not(:disabled) {
   background: var(--primary-color-hover);
+  border-color: var(--primary-color-hover);
 }
 
 .button-danger {
-  background: var(--danger-color);
-  color: #fff;
+  color: var(--danger-color);
+  border-color: color-mix(in oklch, var(--danger-color) 40%, var(--border-strong));
+  background: var(--bg-surface);
 }
 
-.button-danger:hover {
-  background: var(--danger-color-hover);
+.button-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger-color);
 }
 
 .button-gray {
-  background: var(--gray-color);
-  color: #495057;
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
 }
 
 .button-gray:focus:not(:disabled),
 .button-gray:hover:not(:disabled) {
-  background: var(--gray-color-hover);
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
 }
 
 .button-outline {
   border: 1px solid var(--border-color);
-  background: none;
+  background: var(--bg-surface);
   color: var(--text-color);
 }
 
 .button-outline:hover:not(:disabled) {
-  border: 1px solid var(--border-color);
-  background: #f8fafc;
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-strong);
 }
 
 .button-loader {

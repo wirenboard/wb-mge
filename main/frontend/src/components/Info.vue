@@ -16,8 +16,8 @@ defineProps<{ text: string; severity?: 'info' | 'error' }>();
 <style>
 .info {
   grid-column: span 2 !important;
-  color: var(--gray-text);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: 11px;
   margin-top: -6px;
   height: fit-content !important;
   justify-content: start !important;
@@ -31,7 +31,8 @@ defineProps<{ text: string; severity?: 'info' | 'error' }>();
 .info-icon {
   width: 14px;
   height: 14px;
-  color: var(--gray-text);
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .info-error {

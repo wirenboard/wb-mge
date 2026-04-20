@@ -79,6 +79,7 @@ const login = async () => {
   height: 100dvh;
   margin-top: -30px;
   padding: 0 24px;
+  background: var(--bg-canvas);
 
   @media( max-height: 600px ) {
     margin-top: 0;
@@ -90,12 +91,18 @@ const login = async () => {
   padding: 0;
   max-width: 350px;
   width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
 }
 
 .login-title {
-  font-weight: bold;
-  font-size: 18px;
+  font-weight: 600;
+  font-size: 16px;
   margin-top: 16px;
+  color: var(--text-color);
 }
 
 .login-fields {
@@ -110,7 +117,8 @@ const login = async () => {
   display: flex;
   align-items: center;
   justify-content: end;
-  background: var(--sidebar-background);
+  background: var(--bg-surface-subtle);
+  border-top: 1px solid var(--border-color);
 }
 
 .login-links {
@@ -122,10 +130,11 @@ const login = async () => {
   max-width: 350px;
   box-sizing: border-box;
   padding: 0 12px 0 24px;
+  margin-top: 8px;
 }
 
 .login-links a {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .login-languageWrapper {
@@ -136,25 +145,26 @@ const login = async () => {
 .login-language {
   border: 0;
   box-shadow: none;
-  font-size: 14px;
+  font-size: 13px;
   background: none;
   color: var(--link-color);
   cursor: pointer;
   padding-right: 12px;
+  height: auto;
 }
 
 .login-languageIcon {
   background-image: url("@/assets/locale.svg");
   background-repeat: no-repeat;
-  background-position:center;
+  background-position: center;
   background-size: 14px;
   height: 14px;
   width: 14px;
 }
 
 .login-hostname {
-  font-size: 13px;
-  color: var(--text-color-secondary, #888);
+  font-size: 12px;
+  color: var(--text-muted);
   margin-top: 6px;
 }
 </style>

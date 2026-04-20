@@ -9,7 +9,7 @@ import InputNumber from '@/components/InputNumber.vue';
 import IpInput from '@/components/IpInput.vue';
 import Switch from '@/components/Switch.vue';
 
-const props = defineProps<{ title: string; field: string; hasPortsConflict: boolean }>();
+const props = defineProps<{ title: string; sub?: string; field: string; hasPortsConflict: boolean }>();
 
 const { t } = useI18n();
 const { isChanged, isLoading, updateSettings } = useSettings();
@@ -46,124 +46,112 @@ const isSaveDisabled = computed(() => {
 </script>
 
 <template>
-  <fieldset>
-    <legend>{{ title }}</legend>
-    <form
-      class="settings-info"
-      @submit.prevent="save">
-      <label :for="`${field}-baudrate`">{{ t('baudrate') }}</label>
-      <div class="settings-data">
-        <select :id="`${field}-baudrate`" v-model="settings!.baudrate" name="baudrate">
-          <option v-for="item in baudrateOptions" :key="`baudrate_1_${item}`" :value="item">{{ item }}</option>
-        </select>
-      </div>
-
-      <label :for="`${field}-parity`">{{ t('parity') }}</label>
-      <div class="settings-data">
-        <select :id="`${field}-parity`" v-model="settings!.parity" name="parity">
-          <option v-for="item in parityOptions" :key="`parity_1_${item}`" :value="item">{{ t(item) }}</option>
-        </select>
-      </div>
-
-      <label :for="`${field}-stopbits`">{{ t('stopbits') }}</label>
-      <div class="settings-data">
-        <select :id="`${field}-stopbits`" v-model="settings!.stopbits" name="stopbits">
-          <option v-for="item in stopBits" :key="`stopbits_1_${item}`" :value="item">{{ item?.split('-')[0] }}</option>
-        </select>
-      </div>
-
-      <label :for="`${field}-databits`">{{ t('databits') }}</label>
-      <div class="settings-data">
-        <select :id="`${field}-databits`" v-model="settings!.databits" name="databits">
-          <option v-for="item in dataBits" :key="`stopbits_1_${item}`" :value="item">{{ item?.split('-')[0] }}</option>
-        </select>
-      </div>
-
-      <label :for="`${field}-fail_safe`">{{ t('failsafe') }}</label>
-      <div class="settings-data">
-        <Switch
-          :id="`${field}-fail_safe`"
-          v-model="settings!.fail_safe"
-        />
-      </div>
-
-      <label :for="`${field}-term`">{{ t('terminator') }}</label>
-      <div class="settings-data">
-        <Switch
-          :id="`${field}-term`"
-          v-model="settings!.term"
-        />
-      </div>
-
-      <template v-if="field === 'rs485_2'">
-        <label :for="`${field}-io_bus`">{{ t('io_bus') }}</label>
-        <div class="settings-data">
-          <Switch
-            :id="`${field}-io_bus`"
-            v-model="ioBus"
-          />
+  <section class="card">
+    <form @submit.prevent="save">
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="title">{{ title }}</div>
+          <div v-if="sub" class="sub">{{ sub }}</div>
         </div>
-        <Info :text="t('io_bus_info')" />
-      </template>
-
-      <b>TCP</b>
-      <div></div>
-
-      <label :for="`${field}-bridge_mb`">{{ t('modbus_mode') }}</label>
-      <div class="settings-data">
-        <select
-          :id="`${field}-bridge_mb`"
-          v-model="settings!.bridge.modbus"
-          name="bridge_mb"
-          @change="(ev: Event) => {
-            const target = ev.target as HTMLSelectElement;
-            if (target.value === 'true') {
-              settings!.bridge.mode = 'server';
-            }
-          }">
-          <option v-for="item in bridgeModbus" :key="`bridge_mb_1${item}`" :value="item.value">{{ item.label }}</option>
-        </select>
+        <Button
+          type="submit"
+          :is-loading="isLoading"
+          :disabled="isSaveDisabled"
+        >
+          {{ t('save') }}
+        </Button>
       </div>
-
-      <label :for="`${field}-bridge_mode`">{{ t('bridge_mode') }}</label>
-      <div class="settings-data">
-        <select :id="`${field}-bridge_mode`" v-model="settings!.bridge.mode" :disabled="settings!.bridge.modbus" name="bridge_mode">
-          <option v-for="item in bridgeMode" :key="`bridge_mode_1${item}`" :value="item">{{ t(item) }}</option>
-        </select>
-      </div>
-
-      <template v-if="settings!.bridge.mode !== 'server'">
-        <label :for="`${field}-bridge_ip`">{{ t('bridge_ip') }}</label>
-        <div class="settings-data">
-          <IpInput :id="`${field}-bridge_ip`" v-model="settings!.bridge.ip" name="bridge_ip" />
+      <div class="card-body">
+        <div class="sub-section">
+          <div class="sub-section-label">{{ t('serial_section') }}</div>
+          <div class="field">
+            <label :for="`${field}-baudrate`">{{ t('baudrate') }}</label>
+            <select :id="`${field}-baudrate`" v-model="settings!.baudrate" name="baudrate">
+              <option v-for="item in baudrateOptions" :key="`baudrate_1_${item}`" :value="item">{{ item }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label :for="`${field}-parity`">{{ t('parity') }}</label>
+            <select :id="`${field}-parity`" v-model="settings!.parity" name="parity">
+              <option v-for="item in parityOptions" :key="`parity_1_${item}`" :value="item">{{ t(item) }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label :for="`${field}-stopbits`">{{ t('stopbits') }}</label>
+            <select :id="`${field}-stopbits`" v-model="settings!.stopbits" name="stopbits">
+              <option v-for="item in stopBits" :key="`stopbits_1_${item}`" :value="item">{{ item?.split('-')[0] }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label :for="`${field}-databits`">{{ t('databits') }}</label>
+            <select :id="`${field}-databits`" v-model="settings!.databits" name="databits">
+              <option v-for="item in dataBits" :key="`stopbits_1_${item}`" :value="item">{{ item?.split('-')[0] }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label :for="`${field}-fail_safe`">{{ t('failsafe') }}</label>
+            <div style="justify-self: end"><Switch :id="`${field}-fail_safe`" v-model="settings!.fail_safe" /></div>
+          </div>
+          <div class="field">
+            <label :for="`${field}-term`">{{ t('terminator') }}</label>
+            <div style="justify-self: end"><Switch :id="`${field}-term`" v-model="settings!.term" /></div>
+          </div>
+          <template v-if="field === 'rs485_2'">
+            <div class="field">
+              <label :for="`${field}-io_bus`">{{ t('io_bus') }}</label>
+              <div style="justify-self: end"><Switch :id="`${field}-io_bus`" v-model="ioBus" /></div>
+              <div class="hint">{{ t('io_bus_info') }}</div>
+            </div>
+          </template>
         </div>
-      </template>
 
-      <label :for="`${field}-bridge_port`">{{ t('port') }}</label>
-      <div class="settings-data">
-        <InputNumber
-          :id="`${field}-bridge_port`"
-          v-model="settings!.bridge.port"
-          name="bridge_port"
-          min="1"
-          max="65535"
-          class="rsSettings-port"
-          :invalid="hasPortsConflict"
-          required
-        />
+        <div class="sub-section">
+          <div class="sub-section-label">{{ t('tcp_section') }}</div>
+          <div class="field">
+            <label :for="`${field}-bridge_mb`">{{ t('modbus_mode') }}</label>
+            <select
+              :id="`${field}-bridge_mb`"
+              v-model="settings!.bridge.modbus"
+              name="bridge_mb"
+              @change="(ev: Event) => {
+                const target = ev.target as HTMLSelectElement;
+                if (target.value === 'true') {
+                  settings!.bridge.mode = 'server';
+                }
+              }">
+              <option v-for="item in bridgeModbus" :key="`bridge_mb_1${item}`" :value="item.value">{{ item.label }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label :for="`${field}-bridge_mode`">{{ t('bridge_mode') }}</label>
+            <select :id="`${field}-bridge_mode`" v-model="settings!.bridge.mode" :disabled="settings!.bridge.modbus" name="bridge_mode">
+              <option v-for="item in bridgeMode" :key="`bridge_mode_1${item}`" :value="item">{{ t(item) }}</option>
+            </select>
+          </div>
+          <template v-if="settings!.bridge.mode !== 'server'">
+            <div class="field">
+              <label :for="`${field}-bridge_ip`">{{ t('bridge_ip') }}</label>
+              <IpInput :id="`${field}-bridge_ip`" v-model="settings!.bridge.ip" name="bridge_ip" />
+            </div>
+          </template>
+          <div class="field">
+            <label :for="`${field}-bridge_port`">{{ t('port') }}</label>
+            <InputNumber
+              :id="`${field}-bridge_port`"
+              v-model="settings!.bridge.port"
+              name="bridge_port"
+              min="1"
+              max="65535"
+              class="rsSettings-port"
+              :invalid="hasPortsConflict"
+              required
+            />
+          </div>
+          <Info v-if="isChanged([field, 'io_bus']) && hasPortsConflict" :text="t('ports_conflict')" severity="error" />
+        </div>
       </div>
-      <Info v-if="isChanged([field, 'io_bus']) && hasPortsConflict" :text="t('ports_conflict')" severity="error" />
-
-      <Button
-        class="settings-submit"
-        type="submit"
-        :is-loading="isLoading"
-        :disabled="isSaveDisabled"
-      >
-        {{ t('save') }}
-      </Button>
     </form>
-  </fieldset>
+  </section>
 </template>
 
 <style>
@@ -175,6 +163,8 @@ const isSaveDisabled = computed(() => {
 <i18n>
 {
   "en": {
+    "serial_section": "Serial",
+    "tcp_section": "TCP gateway",
     "baudrate": "Baud rate",
     "parity": "Parity",
     "even": "Even",
@@ -193,6 +183,8 @@ const isSaveDisabled = computed(() => {
     "ports_conflict": "Port values must be unique"
   },
   "ru": {
+    "serial_section": "Последовательный порт",
+    "tcp_section": "TCP-шлюз",
     "baudrate": "Скорость",
     "parity": "Четность",
     "even": "Четный",
@@ -211,6 +203,8 @@ const isSaveDisabled = computed(() => {
     "ports_conflict": "Значение порта должно быть уникальным"
   },
   "kk": {
+    "serial_section": "Сериялық порт",
+    "tcp_section": "TCP шлюзі",
     "baudrate": "Жылдамдық",
     "parity": "Жұптылық",
     "even": "Жұп",
@@ -229,6 +223,8 @@ const isSaveDisabled = computed(() => {
     "ports_conflict": "Порт мәндері бірегей болуы керек"
   },
   "it": {
+    "serial_section": "Seriale",
+    "tcp_section": "Gateway TCP",
     "baudrate": "Velocità in baud",
     "parity": "Parità",
     "even": "Pari",
@@ -247,6 +243,8 @@ const isSaveDisabled = computed(() => {
     "ports_conflict": "I valori delle porte devono essere unici"
   },
   "de": {
+    "serial_section": "Seriell",
+    "tcp_section": "TCP-Gateway",
     "baudrate": "Baudrate",
     "parity": "Parität",
     "even": "Gerade",

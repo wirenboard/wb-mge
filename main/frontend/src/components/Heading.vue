@@ -42,23 +42,25 @@ watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostnam
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  margin-bottom: 24px;
-  align-items: center;
+  align-items: baseline;
+  padding: 22px 32px 18px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-surface);
 
   @media (max-width: 560px) {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  @media (max-width: 500px) {
-    font-size: 14px;
-    margin-bottom: 6px;
+    padding: 16px;
   }
 }
 
 .heading-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+
   @media (max-width: 500px) {
-    font-size: 24px;
+    font-size: 18px;
   }
 }
 

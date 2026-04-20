@@ -44,7 +44,8 @@ const { alerts } = useAlerts();
   margin-top: 6px;
   color: #fff;
   padding: 12px;
-  border-radius: var(--border-radius);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
   width: fit-content;
 }
 

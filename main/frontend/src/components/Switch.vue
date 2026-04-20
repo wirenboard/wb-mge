@@ -22,48 +22,58 @@ const value = defineModel<boolean>();
 </template>
 
 <style>
-.toggle-switchy {color:#fff;}
-.toggle-switchy > input + .toggle > .switch {background:#fff;transition:background 200ms linear, width 200ms linear, height 200ms linear, right 200ms linear;}
-.toggle-switchy > input:checked + .toggle {background:var(--primary-color);}
-.toggle-switchy > input + .toggle {transition:background 300ms ease;}
-.toggle-switchy > input:not(:checked) + .toggle {outline: 2px solid var(--primary-color);outline-offset:-2px;}
-.toggle-switchy > input:not(:checked) + .toggle > .switch {background:var(--primary-color);}
-.toggle-switchy > input:focus + .toggle,
-  .toggle-switchy > input:active + .toggle {box-shadow:var(--input-focus-shadow);}
+.toggle-switchy {
+  --w: 32px;
+  --h: 18px;
+  position: relative;
+  width: var(--w);
+  height: var(--h);
+  display: inline-block;
+  cursor: pointer;
+  flex-shrink: 0;
+}
 
-.toggle-switchy > input + .toggle {border-radius:4px;}
-.toggle-switchy > input + .toggle .switch {border-radius:6px;}
+.toggle-switchy > input {
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0;
+}
 
-.toggle-switchy {display:flex; align-items:center; user-select:none; position:relative; vertical-align:middle; margin-bottom:0;}
-.toggle-switchy:hover {cursor:pointer;}
-.toggle-switchy > input {position:absolute; opacity:0;}
-.toggle-switchy > input + .toggle {align-items:center; position:relative; cursor:pointer;}
-.toggle-switchy > input + .toggle {overflow:hidden; position:relative; flex-shrink:0;}
-.toggle-switchy > input[disabled] + .toggle {opacity:0.5;}
-.toggle-switchy > input[disabled] + .toggle:hover {cursor:not-allowed;}
-.toggle-switchy > input + .toggle {width:100%; height:100%; margin:0; cursor:pointer;}
-.toggle-switchy > input + .toggle > .switch {display:block; height:100%; position:absolute; right:0; box-sizing:border-box;}
+.toggle-switchy > input[disabled] { cursor: not-allowed; }
+.toggle-switchy > input[disabled] ~ .toggle { opacity: 0.5; cursor: not-allowed; }
 
-.toggle-switchy > input + .toggle:before,
-.toggle-switchy > input + .toggle:after {display:flex; align-items:center; position:absolute; z-index:2; height:100%;}
-.toggle-switchy > input + .toggle:before {right:55%; font-size: 14px;}
-.toggle-switchy > input + .toggle:after {left:50%;}
+.toggle-switchy .toggle {
+  position: absolute;
+  inset: 0;
+  background: #d5d8de;
+  border-radius: 999px;
+  transition: background 0.15s;
+}
 
-.toggle-switchy > input + .toggle:before {opacity:0;}
-.toggle-switchy > input:checked + .toggle:before {opacity:1;}
-.toggle-switchy > input:checked + .toggle:after {opacity:0;}
+.toggle-switchy .switch {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(var(--h) - 4px);
+  height: calc(var(--h) - 4px);
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s;
+}
 
-.toggle-switchy > input + .toggle:before,
-.toggle-switchy > input + .toggle:after {transition:all 200ms linear;}
+.toggle-switchy > input:checked + .toggle {
+  background: var(--primary-color);
+}
 
-.toggle-switchy > input + .toggle {width:34px; height:18px;}
-.toggle-switchy > input + .toggle > .switch {width:10px;height:10px;margin:4px}
-.toggle-switchy > input + .toggle:before,
-.toggle-switchy > input + .toggle:after {font-size:0.5rem;}
-.toggle-switchy > input:not(:checked) + .toggle > .switch {right:calc(100% - 18px);}
+.toggle-switchy > input:checked + .toggle > .switch {
+  transform: translateX(calc(var(--w) - var(--h)));
+}
 
-.toggle-switchy > input + .toggle,
-.toggle-switchy > input + .toggle > .switch {border-radius:50px;}
-.toggle-switchy > input + .toggle:before {right:50%; font-size: 12px;}
-.toggle-switchy > input + .toggle:after {left:50%; font-size: 12px;}
+.toggle-switchy > input:focus + .toggle {
+  box-shadow: var(--input-focus-shadow);
+}
 </style>

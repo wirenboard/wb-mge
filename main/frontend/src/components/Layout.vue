@@ -2,9 +2,7 @@
   <div class="container">
     <Sidebar />
     <main class="content">
-      <article class="content-wrapper">
-        <slot />
-      </article>
+      <slot />
     </main>
     <AlertsWrapper />
   </div>
@@ -17,28 +15,26 @@ import Sidebar from '@/components/Sidebar.vue';
 
 <style scoped>
 .container {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  height: 100vh;
+  overflow: hidden;
 
   @media (max-width: 680px) {
+    display: flex;
     flex-direction: column;
-    gap: 12px;
+    height: 100dvh;
   }
 }
+
 .content {
   overflow-y: auto;
-  width: 100vw;
-  padding: 18px 24px 24px;
-  height: 100%;
-  max-height: calc(100dvh - 42px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 
   @media (max-width: 680px) {
-    width: calc(100% - 24px);
-    padding: 0 12px 12px;
-    max-height: calc(100dvh - 84px);
+    flex: 1;
   }
-}
-
-.content-wrapper {
-  max-width: 936px;
 }
 </style>

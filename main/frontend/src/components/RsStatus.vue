@@ -9,43 +9,39 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <div class="rsStatus-label"><b>{{ title }}</b></div>
-  <div></div>
-
-  <div class="rsStatus-label">{{ t('modbus_mode') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
-
-  <div class="rsStatus-label">{{ t('bridge_mode') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
-
-  <div class="rsStatus-label">{{ t('tcp_port') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.port }}</div>
-
-  <div class="rsStatus-label">{{ t('tcp_count') }}</div>
-  <div class="rsStatus-value">{{ info.server_connections_count }}</div>
-
-  <div class="rsStatus-label">{{ t('status') }}</div>
-  <div class="rsStatus-value">{{ info.is_busy ? t('active') : t('not_active') }}</div>
-  <Info class="rsStatus-info" :text="t('status_info')" />
-
-  <template v-if="settings.bridge.modbus ">
-    <div class="rsStatus-label">{{ t('error_rate') }}</div>
-    <div class="rsStatus-value">{{ info.error_percentage }}%</div>
-    <Info class="rsStatus-info" :text="t('error_rate_description')" />
-  </template>
+  <div>
+    <div class="kv">
+      <div class="k">{{ t('modbus_mode') }}</div>
+      <div class="v">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
+    </div>
+    <div class="kv">
+      <div class="k">{{ t('bridge_mode') }}</div>
+      <div class="v">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
+    </div>
+    <div class="kv">
+      <div class="k">{{ t('tcp_port') }}</div>
+      <div class="v mono">{{ settings.bridge.port }}</div>
+    </div>
+    <div class="kv">
+      <div class="k">{{ t('tcp_count') }}</div>
+      <div class="v">{{ info.server_connections_count }}</div>
+    </div>
+    <div class="kv">
+      <div class="k">{{ t('status') }}</div>
+      <div class="v">{{ info.is_busy ? t('active') : t('not_active') }}</div>
+      <div class="hint">{{ t('status_info') }}</div>
+    </div>
+    <template v-if="settings.bridge.modbus">
+      <div class="kv">
+        <div class="k">{{ t('error_rate') }}</div>
+        <div class="v">{{ info.error_percentage }}%</div>
+        <div class="hint">{{ t('error_rate_description') }}</div>
+      </div>
+    </template>
+  </div>
 </template>
 
 <style>
-.rsStatus-label {
-  justify-self: start !important;
-}
-.rsStatus-value {
-  justify-self: end !important;
-}
-
-.rsStatus-info {
-  margin-top: -14px;
-}
 </style>
 
 <i18n>

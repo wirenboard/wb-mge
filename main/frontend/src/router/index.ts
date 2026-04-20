@@ -17,7 +17,7 @@ const router = createRouter({
       path: '/',
       name: 'dashboard',
       component: Dashboard,
-      meta: { requiresAuth: true, menuName: 'dashboard' },
+      meta: { requiresAuth: true, menuName: 'dashboard', menuGroup: 'overview', menuIcon: 'gauge' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();
@@ -31,7 +31,7 @@ const router = createRouter({
       path: '/settings',
       name: 'settings',
       component: Settings,
-      meta: { requiresAuth: true, menuName: 'settings' },
+      meta: { requiresAuth: true, menuName: 'settings', menuGroup: 'configuration', menuIcon: 'sliders' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();
@@ -46,7 +46,7 @@ const router = createRouter({
       path: '/system',
       name: 'system',
       component: System,
-      meta: { requiresAuth: true, menuName: 'system' },
+      meta: { requiresAuth: true, menuName: 'system', menuGroup: 'configuration', menuIcon: 'cpu' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();
