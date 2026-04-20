@@ -82,24 +82,36 @@ const updateInterface = () => {
       <div class="grid-2">
       <div class="stack">
         <section class="card">
+          <form autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
+            <div class="card-header">
+              <div class="card-title-wrap">
+                <div class="title">{{ t('device_name') }}</div>
+                <div class="sub">{{ t('device_name_sub') }}</div>
+              </div>
+              <Button
+                type="submit"
+                :disabled="!settings!.hostname || !isChanged(['hostname'])"
+              >
+                {{ t('save') }}
+              </Button>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="hostname">{{ t('hostname_label') }}</label>
+                <input id="hostname" v-model="settings!.hostname" type="text" class="mono" name="hostname">
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <section class="card">
           <div class="card-header">
-            <div class="title">{{ t('device') }}</div>
+            <div class="title">{{ t('device_info') }}</div>
           </div>
           <div class="card-body">
             <div class="kv">
-              <div class="k">{{ t('hostname') }}</div>
-              <div class="v">
-                <form class="system-saveWrapper" autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
-                  <input v-model="settings!.hostname" type="text" name="hostname">
-                  <button type="submit" :disabled="!settings!.hostname || !isChanged(['hostname'])">
-                    <SaveIcon class="system-save" />
-                  </button>
-                </form>
-              </div>
-            </div>
-            <div class="kv">
               <div class="k">{{ t('serial_num') }}</div>
-              <div class="v">{{ info!.serial_num }}</div>
+              <div class="v mono">{{ info!.serial_num }}</div>
             </div>
             <template v-if="uptime">
               <div class="kv">
@@ -115,31 +127,6 @@ const updateInterface = () => {
                 </div>
               </div>
             </template>
-            <div class="kv">
-              <div class="k">{{ t('firmware_version') }}</div>
-              <div class="v mono">{{ info?.firmware }}</div>
-            </div>
-            <div class="kv">
-              <div class="k">{{ t('firmware_update') }}</div>
-              <div class="v">
-                <FileUpload
-                  v-model="firmwareFile"
-                  :placeholder="t('choose_firmware')"
-                  accept=".bin"
-                  :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
-                  :is-loading="isUpdating"
-                  :disabled="loadedMethod === 'firmware'"
-                  @upload="updateFirmware"
-                />
-              </div>
-            </div>
-            <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
-            <div class="kv">
-              <div class="k">{{ t('reboot') }}</div>
-              <div class="v">
-                <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
-              </div>
-            </div>
           </div>
         </section>
 
@@ -200,8 +187,40 @@ const updateInterface = () => {
       </div>
 
       <div class="stack">
-        <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
+        <section class="card">
+          <div class="card-header">
+            <div class="title">{{ t('firmware') }}</div>
+          </div>
+          <div class="card-body">
+            <div class="kv">
+              <div class="k">{{ t('firmware_version') }}</div>
+              <div class="v mono">{{ info?.firmware }}</div>
+            </div>
+            <div class="kv">
+              <div class="k">{{ t('firmware_update') }}</div>
+              <div class="v">
+                <FileUpload
+                  v-model="firmwareFile"
+                  :placeholder="t('choose_firmware')"
+                  accept=".bin"
+                  :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
+                  :is-loading="isUpdating"
+                  :disabled="loadedMethod === 'firmware'"
+                  @upload="updateFirmware"
+                />
+              </div>
+            </div>
+            <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
+            <div class="kv">
+              <div class="k">{{ t('reboot') }}</div>
+              <div class="v">
+                <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
+              </div>
+            </div>
+          </div>
+        </section>
 
+        <Configuration :cmd="cmd" :loaded-method="loadedMethod" />
       </div>
       </div>
     </div>
@@ -229,8 +248,11 @@ const updateInterface = () => {
 {
   "en": {
     "title": "System",
-    "device": "Device",
-    "hostname": "Hostname",
+    "device_name": "Device name",
+    "device_name_sub": "Used as hostname and mDNS name on the local network",
+    "device_info": "Device information",
+    "firmware": "Firmware",
+    "hostname_label": "Name",
     "serial_num": "Serial number",
     "uptime": "Uptime",
     "uptime_days": "- | {n} day | {n} days | {n} days",
@@ -258,8 +280,11 @@ const updateInterface = () => {
   },
   "ru": {
     "title": "Система",
-    "device": "Устройство",
-    "hostname": "Название хоста",
+    "device_name": "Имя устройства",
+    "device_name_sub": "Используется как hostname и mDNS-имя в локальной сети",
+    "device_info": "Информация об устройстве",
+    "firmware": "Прошивка",
+    "hostname_label": "Имя",
     "serial_num": "Серийный номер",
     "uptime": "Время работы",
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
@@ -287,8 +312,11 @@ const updateInterface = () => {
   },
   "kk": {
     "title": "Жүйе",
-    "device": "Құрылғы",
-    "hostname": "Хост атауы",
+    "device_name": "Құрылғы атауы",
+    "device_name_sub": "Жергілікті желіде hostname және mDNS атауы ретінде қолданылады",
+    "device_info": "Құрылғы туралы ақпарат",
+    "firmware": "Микробағдарлама",
+    "hostname_label": "Атауы",
     "serial_num": "Сериялық нөмір",
     "uptime": "Жұмыс уақыты",
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
@@ -316,8 +344,11 @@ const updateInterface = () => {
   },
   "it": {
     "title": "Sistema",
-    "device": "Dispositivo",
-    "hostname": "Nome host",
+    "device_name": "Nome dispositivo",
+    "device_name_sub": "Usato come hostname e nome mDNS nella rete locale",
+    "device_info": "Informazioni dispositivo",
+    "firmware": "Firmware",
+    "hostname_label": "Nome",
     "serial_num": "Numero di serie",
     "uptime": "Tempo di attività",
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
@@ -345,8 +376,11 @@ const updateInterface = () => {
   },
   "de": {
     "title": "System",
-    "device": "Gerät",
-    "hostname": "Hostname",
+    "device_name": "Gerätename",
+    "device_name_sub": "Wird als Hostname und mDNS-Name im lokalen Netzwerk verwendet",
+    "device_info": "Geräteinformationen",
+    "firmware": "Firmware",
+    "hostname_label": "Name",
     "serial_num": "Seriennummer",
     "uptime": "Betriebszeit",
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
