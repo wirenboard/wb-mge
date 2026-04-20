@@ -3,6 +3,8 @@ import { onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
+import { useUptime } from '@/common/uptime';
+import { useRouter } from 'vue-router';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import Switch from '@/components/Switch.vue';
@@ -11,6 +13,8 @@ import RsStatus from '@/components/RsStatus.vue';
 const { t } = useI18n();
 const { info, startPolling, stopPolling } = useInfo();
 const { data: settings, updateSettings } = useSettings();
+const { uptime } = useUptime();
+const router = useRouter();
 
 onMounted(() => {
   startPolling();
@@ -38,13 +42,16 @@ const getDisplayValue = (val: string | boolean | number) => {
       <div class="stack">
         <section class="card">
           <div class="card-header">
-            <div class="title">{{ t('ethernet') }}</div>
+            <div class="card-title-row">
+              <div class="title">{{ t('ethernet') }}</div>
+              <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 1.5h-2.2l-.3 1.7a5.3 5.3 0 0 0-1.2.5l-1.4-1-1.6 1.6 1 1.4a5.3 5.3 0 0 0-.5 1.2l-1.7.3v2.2l1.7.3a5.3 5.3 0 0 0 .5 1.2l-1 1.4 1.6 1.6 1.4-1a5.3 5.3 0 0 0 1.2.5l.3 1.7h2.2l.3-1.7a5.3 5.3 0 0 0 1.2-.5l1.4 1 1.6-1.6-1-1.4a5.3 5.3 0 0 0 .5-1.2l1.7-.3v-2.2l-1.7-.3a5.3 5.3 0 0 0-.5-1.2l1-1.4-1.6-1.6-1.4 1a5.3 5.3 0 0 0-1.2-.5z"/><circle cx="8" cy="8" r="2.2"/></svg>
+              </button>
+            </div>
+            <span class="pill ok" v-if="info!.ethernet.con_eth"><span class="dot" />{{ t('connected') }}</span>
+            <span class="pill muted" v-else>{{ t('not_connected') }}</span>
           </div>
           <div class="card-body">
-            <div class="kv">
-              <div class="k">{{ t('status') }}</div>
-              <div class="v">{{ info!.ethernet.con_eth ? t('connected') : t('not_connected') }}</div>
-            </div>
             <div class="kv">
               <div class="k">{{ t('ip') }}</div>
               <div class="v mono">{{ getDisplayValue(info!.ethernet.ip) }}</div>
@@ -58,7 +65,14 @@ const getDisplayValue = (val: string | boolean | number) => {
 
         <section class="card">
           <div class="card-header">
-            <div class="title">{{ t('wifi') }}</div>
+            <div class="card-title-row">
+              <div class="title">{{ t('wifi') }}</div>
+              <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 1.5h-2.2l-.3 1.7a5.3 5.3 0 0 0-1.2.5l-1.4-1-1.6 1.6 1 1.4a5.3 5.3 0 0 0-.5 1.2l-1.7.3v2.2l1.7.3a5.3 5.3 0 0 0 .5 1.2l-1 1.4 1.6 1.6 1.4-1a5.3 5.3 0 0 0 1.2.5l.3 1.7h2.2l.3-1.7a5.3 5.3 0 0 0 1.2-.5l1.4 1 1.6-1.6-1-1.4a5.3 5.3 0 0 0 .5-1.2l1.7-.3v-2.2l-1.7-.3a5.3 5.3 0 0 0-.5-1.2l1-1.4-1.6-1.6-1.4 1a5.3 5.3 0 0 0-1.2-.5z"/><circle cx="8" cy="8" r="2.2"/></svg>
+              </button>
+            </div>
+            <span class="pill ok" v-if="info!.wifi.enabled"><span class="dot" />{{ t('enabled') }}</span>
+            <span class="pill muted" v-else>{{ t('disabled') }}</span>
           </div>
           <div class="card-body">
             <div class="kv">
@@ -113,14 +127,15 @@ const getDisplayValue = (val: string | boolean | number) => {
             </template>
           </div>
         </section>
-      </div>
 
-      <div class="stack">
         <section class="card">
           <div class="card-header">
-            <div class="title">{{ t('gateway') }}</div>
-            <div class="vout-control">
-              <span class="vout-label">V<sub>out</sub></span>
+            <div class="card-title-wrap">
+              <div class="title">{{ t('gateway') }}</div>
+              <div class="sub">{{ t('gateway_sub') }}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px;color:var(--text-secondary)">V<sub>out</sub></span>
               <Switch
                 id="power_vout"
                 v-model="settings!.vout"
@@ -133,12 +148,35 @@ const getDisplayValue = (val: string | boolean | number) => {
               <div class="k">{{ t('power') }}</div>
               <div class="v mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
             </div>
+            <template v-if="uptime">
+              <div class="kv">
+                <div class="k">{{ t('uptime') }}</div>
+                <div class="v muted">
+                  <template v-if="uptime.days">
+                    <span>{{ t('uptime_days', { n: uptime.days }) }} </span>
+                  </template>
+                  <template v-if="uptime.hours">
+                    <span>{{ t('uptime_hours', { n: uptime.hours }) }} </span>
+                  </template>
+                  <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+                </div>
+              </div>
+            </template>
           </div>
         </section>
+      </div>
 
+      <div class="stack">
         <section class="card">
           <div class="card-header">
-            <div class="title">RS-485 · Port 1</div>
+            <div class="card-title-row">
+              <div class="title">RS-485 · Port 1</div>
+              <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 1.5h-2.2l-.3 1.7a5.3 5.3 0 0 0-1.2.5l-1.4-1-1.6 1.6 1 1.4a5.3 5.3 0 0 0-.5 1.2l-1.7.3v2.2l1.7.3a5.3 5.3 0 0 0 .5 1.2l-1 1.4 1.6 1.6 1.4-1a5.3 5.3 0 0 0 1.2.5l.3 1.7h2.2l.3-1.7a5.3 5.3 0 0 0 1.2-.5l1.4 1 1.6-1.6-1-1.4a5.3 5.3 0 0 0 .5-1.2l1.7-.3v-2.2l-1.7-.3a5.3 5.3 0 0 0-.5-1.2l1-1.4-1.6-1.6-1.4 1a5.3 5.3 0 0 0-1.2-.5z"/><circle cx="8" cy="8" r="2.2"/></svg>
+              </button>
+            </div>
+            <span class="pill ok" v-if="info!.rs485_1.is_busy"><span class="dot" />{{ t('active') }}</span>
+            <span class="pill muted" v-else>{{ t('inactive') }}</span>
           </div>
           <div class="card-body">
             <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
@@ -147,7 +185,14 @@ const getDisplayValue = (val: string | boolean | number) => {
 
         <section class="card">
           <div class="card-header">
-            <div class="title">RS-485 · Port 2</div>
+            <div class="card-title-row">
+              <div class="title">RS-485 · Port 2</div>
+              <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 1.5h-2.2l-.3 1.7a5.3 5.3 0 0 0-1.2.5l-1.4-1-1.6 1.6 1 1.4a5.3 5.3 0 0 0-.5 1.2l-1.7.3v2.2l1.7.3a5.3 5.3 0 0 0 .5 1.2l-1 1.4 1.6 1.6 1.4-1a5.3 5.3 0 0 0 1.2.5l.3 1.7h2.2l.3-1.7a5.3 5.3 0 0 0 1.2-.5l1.4 1 1.6-1.6-1-1.4a5.3 5.3 0 0 0 .5-1.2l1.7-.3v-2.2l-1.7-.3a5.3 5.3 0 0 0-.5-1.2l1-1.4-1.6-1.6-1.4 1a5.3 5.3 0 0 0-1.2-.5z"/><circle cx="8" cy="8" r="2.2"/></svg>
+              </button>
+            </div>
+            <span class="pill ok" v-if="info!.rs485_2.is_busy"><span class="dot" />{{ t('active') }}</span>
+            <span class="pill muted" v-else>{{ t('inactive') }}</span>
           </div>
           <div class="card-body">
             <RsStatus title="RS-485 2" :info="info!.rs485_2" :settings="settings!.rs485_2" />
@@ -196,9 +241,16 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Power Vout",
-    "power": "Power",
-    "v": "V"
+    "gateway_sub": "Power & auxiliary output",
+    "power": "Supply voltage",
+    "v": "V",
+    "active": "Active",
+    "inactive": "Inactive",
+    "edit_settings": "Settings",
+    "uptime": "Uptime",
+    "uptime_days": "- | {n} day | {n} days | {n} days",
+    "uptime_hours": "less than an hour | {n} h | {n} h | {n} h",
+    "uptime_minutes": "{n} min"
   },
   "ru": {
     "title": "Обзор",
@@ -223,9 +275,16 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "дБ",
 
     "gateway": "Шлюз",
-    "power_vout": "Питание Vout",
+    "gateway_sub": "Питание и вспомогательный выход",
     "power": "Напряжение питания",
-    "v": "В"
+    "v": "В",
+    "active": "Активен",
+    "inactive": "Неактивен",
+    "edit_settings": "Настройки",
+    "uptime": "Время работы",
+    "uptime_days": "- | {n} день | {n} дня | {n} дней",
+    "uptime_hours": "- | {n} ч | {n} ч | {n} ч",
+    "uptime_minutes": "{n} мин"
   },
   "kk": {
     "title": "Шолу",
@@ -250,9 +309,16 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Vout кернеуі",
+    "gateway_sub": "Қуат және көмекші шығыс",
     "power": "Қорек кернеуі",
-    "v": "В"
+    "v": "В",
+    "active": "Белсенді",
+    "inactive": "Белсенді емес",
+    "edit_settings": "Баптаулар",
+    "uptime": "Жұмыс уақыты",
+    "uptime_days": "- | {n} күн | {n} күн | {n} күн",
+    "uptime_hours": "- | {n} сағ | {n} сағ | {n} сағ",
+    "uptime_minutes": "{n} мин"
   },
   "it": {
     "title": "Dashboard",
@@ -277,9 +343,16 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Tensione Vout",
+    "gateway_sub": "Alimentazione e uscita ausiliaria",
     "power": "Tensione di alimentazione",
-    "v": "V"
+    "v": "V",
+    "active": "Attivo",
+    "inactive": "Inattivo",
+    "edit_settings": "Impostazioni",
+    "uptime": "Tempo di attività",
+    "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
+    "uptime_hours": "- | {n} h | {n} h | {n} h",
+    "uptime_minutes": "{n} min"
   },
   "de": {
     "title": "Übersicht",
@@ -304,9 +377,16 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Vout-Versorgung",
+    "gateway_sub": "Stromversorgung und Hilfsausgang",
     "power": "Versorgungsspannung",
-    "v": "V"
+    "v": "V",
+    "active": "Aktiv",
+    "inactive": "Inaktiv",
+    "edit_settings": "Einstellungen",
+    "uptime": "Betriebszeit",
+    "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
+    "uptime_hours": "- | {n} h | {n} h | {n} h",
+    "uptime_minutes": "{n} min"
   }
 }
 </i18n>
