@@ -29,6 +29,7 @@ struct serial_desc_t {
     uart_port_t port_num;
     QueueHandle_t uart_queue;
     serial_receive_handler_t receive_handler;
+    serial_receive_handler_t sniff_handler;
     TaskHandle_t task_handle;
     EventGroupHandle_t event_group;
 };
