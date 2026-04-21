@@ -117,6 +117,10 @@ const updateInterface = () => {
                 <label for="hostname">{{ t('hostname_label') }}</label>
                 <input id="hostname" v-model="settings!.hostname" type="text" class="mono" name="hostname">
               </div>
+              <div class="kv">
+                <div class="k">{{ t('access_url_label') }}</div>
+                <div class="v mono muted">http://{{ settings!.hostname }}.local</div>
+              </div>
             </div>
           </form>
         </section>
@@ -294,6 +298,7 @@ const updateInterface = () => {
     "device_info": "Device information",
     "firmware": "Firmware",
     "hostname_label": "Name",
+    "access_url_label": "Access URL",
     "serial_num": "Serial number",
     "uptime": "Uptime",
     "uptime_days": "- | {n} day | {n} days | {n} days",
@@ -330,6 +335,7 @@ const updateInterface = () => {
     "device_info": "Информация об устройстве",
     "firmware": "Прошивка",
     "hostname_label": "Имя",
+    "access_url_label": "mDNS адрес",
     "serial_num": "Серийный номер",
     "uptime": "Время работы",
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
@@ -366,6 +372,7 @@ const updateInterface = () => {
     "device_info": "Құрылғы туралы ақпарат",
     "firmware": "Микробағдарлама",
     "hostname_label": "Атауы",
+    "access_url_label": "Қол жеткізу URL",
     "serial_num": "Сериялық нөмір",
     "uptime": "Жұмыс уақыты",
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
@@ -402,6 +409,7 @@ const updateInterface = () => {
     "device_info": "Informazioni dispositivo",
     "firmware": "Firmware",
     "hostname_label": "Nome",
+    "access_url_label": "URL di accesso",
     "serial_num": "Numero di serie",
     "uptime": "Tempo di attività",
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
@@ -438,6 +446,7 @@ const updateInterface = () => {
     "device_info": "Geräteinformationen",
     "firmware": "Firmware",
     "hostname_label": "Name",
+    "access_url_label": "Zugriffs-URL",
     "serial_num": "Seriennummer",
     "uptime": "Betriebszeit",
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
