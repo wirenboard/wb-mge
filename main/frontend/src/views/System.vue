@@ -241,8 +241,8 @@ const updateInterface = () => {
                   @upload="updateFirmware"
                 />
               </div>
+              <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
             </div>
-            <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
             <div class="kv">
               <div class="k">{{ t('reboot') }}</div>
               <div class="v">
