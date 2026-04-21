@@ -120,18 +120,32 @@ static void resp_timer_cb(TimerHandle_t timer)
     }
 }
 
+#define FAST_MODBUS_FUNC_1  0x46
+#define FAST_MODBUS_FUNC_2  0x60
+
+/* Strip leading 0xFF arbitration bytes only when the pattern matches Fast Modbus:
+ * there are leading 0xFF bytes AND after stripping the function code is 0x46 or 0x60.
+ * Raw data (with 0xFF) is preserved for display; stripped data is used for CRC/fields. */
+static void strip_arbitration(uint8_t *data, size_t len, uint8_t **effective, size_t *effective_len)
+{
+    *effective = data;
+    *effective_len = len;
+    if (len == 0 || data[0] != 0xFF) return;
+
+    uint8_t *t = data;
+    size_t tlen = fast_modbus_truncate_ff(&t, len);
+    if (tlen >= 4 && (t[1] == FAST_MODBUS_FUNC_1 || t[1] == FAST_MODBUS_FUNC_2)) {
+        *effective = t;
+        *effective_len = tlen;
+    }
+}
+
 static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
 {
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
     if (!ctx->enabled) return;
     if (len < 4) return;
-
-    /* Skip leading 0xFF arbitration bytes for CRC check and field extraction,
-     * but keep original data (with FF bytes) in the packet raw field */
-    uint8_t *trimmed = data;
-    size_t trimmed_len = fast_modbus_truncate_ff(&trimmed, len);
-    if (trimmed_len < 4) return;
 
     bool should_start_timer = false;
     bool should_stop_timer = false;
@@ -142,26 +156,26 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
 
     taskENTER_CRITICAL(&sniff_mux);
     if (ctx->state == SNIFF_IDLE) {
-        bool valid_crc = crc_check(trimmed, trimmed_len);
+        bool valid_crc = crc_check(data, len);
 
         if (!valid_crc) {
             req_pkt.port         = (uint8_t)port_index;
             req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
             req_pkt.is_master    = true;
             req_pkt.crc_valid    = false;
-            req_pkt.slave_id     = trimmed[0];
-            req_pkt.function     = trimmed[1];
+            req_pkt.slave_id     = data[0];
+            req_pkt.function     = data[1];
             memcpy(req_pkt.data, data, len);
             req_pkt.data_len     = (uint16_t)len;
             enqueue_req = true;
-        } else if (trimmed[0] == 0x00) {
+        } else if (data[0] == 0x00) {
             /* broadcast */
             req_pkt.port         = (uint8_t)port_index;
             req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
             req_pkt.is_master    = true;
             req_pkt.crc_valid    = true;
             req_pkt.slave_id     = 0;
-            req_pkt.function     = trimmed[1];
+            req_pkt.function     = data[1];
             memcpy(req_pkt.data, data, len);
             req_pkt.data_len     = (uint16_t)len;
             enqueue_req = true;
@@ -175,6 +189,17 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
             should_start_timer    = true;
         }
     } else { /* SNIFF_RES_WAIT */
+        /* Slave responses may be preceded by Fast Modbus arbitration 0xFF bytes.
+         * Strip them only when the pattern is recognized (leading 0xFF + Fast Modbus func code). */
+        uint8_t *effective;
+        size_t effective_len;
+        strip_arbitration(data, len, &effective, &effective_len);
+
+        if (effective_len < 4) {
+            ctx->state = SNIFF_IDLE;
+            goto exit_critical;
+        }
+
         should_stop_timer = true;
 
         req_pkt.port         = (uint8_t)port_index;
@@ -190,9 +215,9 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
         res_pkt.port         = (uint8_t)port_index;
         res_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
         res_pkt.is_master    = false;
-        res_pkt.crc_valid    = crc_check(trimmed, trimmed_len);
-        res_pkt.slave_id     = trimmed[0];
-        res_pkt.function     = trimmed[1];
+        res_pkt.crc_valid    = crc_check(effective, effective_len);
+        res_pkt.slave_id     = effective[0];
+        res_pkt.function     = effective[1];
         size_t copy_len      = len < SNIFFER_MAX_PACKET_LEN ? len : SNIFFER_MAX_PACKET_LEN;
         memcpy(res_pkt.data, data, copy_len);
         res_pkt.data_len     = (uint16_t)copy_len;
@@ -200,6 +225,7 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
 
         ctx->state = SNIFF_IDLE;
     }
+exit_critical:
     taskEXIT_CRITICAL(&sniff_mux);
 
     if (should_stop_timer) xTimerStop(ctx->resp_timer, 0);
