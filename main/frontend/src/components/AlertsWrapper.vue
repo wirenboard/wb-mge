@@ -35,7 +35,7 @@ const { alerts } = useAlerts();
   flex-direction: column;
   align-items: end;
   position: absolute;
-  bottom: 12px;
+  top: 12px;
   right: 12px;
 }
 
