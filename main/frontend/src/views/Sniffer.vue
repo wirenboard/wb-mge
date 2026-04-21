@@ -225,7 +225,7 @@ function directionLabel(dir: string, slave: string) {
 
 <template>
   <Layout>
-    <Heading :title="t('title')">
+    <Heading :title="t('title')" :crumbs="t('crumbs')">
       <template #default>
         <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
           {{ running ? t('stop') : t('start') }}
