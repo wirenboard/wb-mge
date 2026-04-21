@@ -131,11 +131,11 @@ function connectWs() {
       const msg = JSON.parse(ev.data as string)
       const row = parsePacket(msg)
       if (row) {
+        rows.value.push(row)
         if (rows.value.length >= 1000) {
           stopCapture()
           return
         }
-        rows.value.push(row)
         nextTick(() => {
           if (tableWrap.value) tableWrap.value.scrollTop = tableWrap.value.scrollHeight
         })
