@@ -42,8 +42,6 @@ extern const uint8_t inter_latin_end[] asm("_binary_inter_latin_woff2_gz_end");
 extern const uint8_t inter_cyrillic_start[] asm("_binary_inter_cyrillic_woff2_gz_start");
 extern const uint8_t inter_cyrillic_end[] asm("_binary_inter_cyrillic_woff2_gz_end");
 
-extern const uint8_t inter_latin_ext_start[] asm("_binary_inter_latin_ext_woff2_gz_start");
-extern const uint8_t inter_latin_ext_end[] asm("_binary_inter_latin_ext_woff2_gz_end");
 
 
 static const httpd_config_t httpd_default_config = HTTPD_DEFAULT_CONFIG();
@@ -96,14 +94,6 @@ static esp_err_t inter_cyrillic_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t inter_latin_ext_get_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "font/woff2");
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
-    httpd_resp_send(req, (const char *)inter_latin_ext_start, inter_latin_ext_end - inter_latin_ext_start);
-    return ESP_OK;
-}
 
 static esp_err_t favicon_get_handler(httpd_req_t *req)
 {
@@ -153,12 +143,6 @@ static const httpd_uri_t inter_cyrillic_get = {
     .uri = "/inter-cyrillic.woff2",
     .method = HTTP_GET,
     .handler = inter_cyrillic_get_handler,
-    .user_ctx = NULL,
-};
-static const httpd_uri_t inter_latin_ext_get = {
-    .uri = "/inter-latin-ext.woff2",
-    .method = HTTP_GET,
-    .handler = inter_latin_ext_get_handler,
     .user_ctx = NULL,
 };
 static const httpd_uri_t index_css_get = {
@@ -288,7 +272,6 @@ esp_err_t http_server_init(void)
         httpd_register_uri_handler(http_server, &favicon_get);
         httpd_register_uri_handler(http_server, &inter_latin_get);
         httpd_register_uri_handler(http_server, &inter_cyrillic_get);
-        httpd_register_uri_handler(http_server, &inter_latin_ext_get);
 
         httpd_register_uri_handler(http_server, &update_post);
         httpd_register_uri_handler(http_server, &info_get);

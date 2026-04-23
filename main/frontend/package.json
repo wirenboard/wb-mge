@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
     "@unhead/vue": "2.0.12",
     "ky": "1.8.1",
     "vue": "3.5.17",
