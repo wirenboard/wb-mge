@@ -114,9 +114,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Username",
     "password": "Password",
     "optional": "Optional",
-    "save": "Save",
-    "ssid": "SSID",
-    "pass_placeholder": "Leave blank to keep current"
+    "save": "Save"
   },
   "ru": {
     "title": "MQTT",
@@ -131,8 +129,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Имя пользователя",
     "password": "Пароль",
     "optional": "Необязательно",
-    "save": "Сохранить",
-    "pass_placeholder": "Оставьте пустым, чтобы не менять"
+    "save": "Сохранить"
   },
   "kk": {
     "title": "MQTT",
@@ -147,8 +144,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Пайдаланушы аты",
     "password": "Құпия сөз",
     "optional": "Міндетті емес",
-    "save": "Сақтау",
-    "pass_placeholder": "Өзгертпеу үшін бос қалдырыңыз"
+    "save": "Сақтау"
   },
   "it": {
     "title": "MQTT",
@@ -163,8 +159,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Nome utente",
     "password": "Password",
     "optional": "Opzionale",
-    "save": "Salva",
-    "pass_placeholder": "Lascia vuoto per mantenere l'attuale"
+    "save": "Salva"
   },
   "de": {
     "title": "MQTT",
@@ -179,8 +174,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Benutzername",
     "password": "Passwort",
     "optional": "Optional",
-    "save": "Speichern",
-    "pass_placeholder": "Leer lassen, um unverändert zu bleiben"
+    "save": "Speichern"
   }
 }
 </i18n>
