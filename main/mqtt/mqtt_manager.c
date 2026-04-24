@@ -9,24 +9,22 @@
 static const char *TAG = "mqtt_manager";
 
 static esp_mqtt_client_handle_t s_mqtt_client = NULL;
-static bool s_connected = false;
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
+    (void)handler_args;
+    (void)base;
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
 
     switch (event->event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT connected");
-        s_connected = true;
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "MQTT disconnected");
-        s_connected = false;
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGE(TAG, "MQTT error");
-        s_connected = false;
         break;
     default:
         break;
@@ -54,6 +52,8 @@ esp_err_t mqtt_manager_init(void)
         return ESP_OK;
     }
 
+    // esp_mqtt_client_init copies all config fields internally, so passing
+    // stack-allocated strings is safe here.
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.hostname = host,
         .broker.address.port = (uint32_t)port,
@@ -85,12 +85,6 @@ void mqtt_manager_restart(void)
         esp_mqtt_client_stop(s_mqtt_client);
         esp_mqtt_client_destroy(s_mqtt_client);
         s_mqtt_client = NULL;
-        s_connected = false;
     }
     mqtt_manager_init();
-}
-
-bool mqtt_manager_is_connected(void)
-{
-    return s_connected;
 }

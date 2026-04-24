@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "esp_log.h"
 #include "esp_bit_defs.h"
 #include "freertos/FreeRTOS.h"
@@ -405,27 +407,35 @@ esp_err_t settings_update(void)
         static char prev_host[SETTING_ITEM_MAX_STR_LEN] = {0};
         static int prev_port = -1;
         static char prev_user[SETTING_ITEM_MAX_STR_LEN] = {0};
+        static char prev_pass[SETTING_ITEM_MAX_STR_LEN] = {0};
         static bool prev_enabled = false;
         static bool mqtt_initialized = false;
 
         char cur_host[SETTING_ITEM_MAX_STR_LEN] = {0};
         char cur_user[SETTING_ITEM_MAX_STR_LEN] = {0};
+        char cur_pass[SETTING_ITEM_MAX_STR_LEN] = {0};
         int cur_port = setting_items_read_int(KEY_MQTT_PORT);
         bool cur_enabled = setting_items_read_bool(KEY_MQTT_ENABLED);
         setting_items_read(KEY_MQTT_HOST, cur_host);
         setting_items_read(KEY_MQTT_USER, cur_user);
+        setting_items_read(KEY_MQTT_PASS, cur_pass);
 
         if (!mqtt_initialized ||
             cur_enabled != prev_enabled ||
             cur_port != prev_port ||
             strncmp(cur_host, prev_host, SETTING_ITEM_MAX_STR_LEN) != 0 ||
-            strncmp(cur_user, prev_user, SETTING_ITEM_MAX_STR_LEN) != 0) {
+            strncmp(cur_user, prev_user, SETTING_ITEM_MAX_STR_LEN) != 0 ||
+            strncmp(cur_pass, prev_pass, SETTING_ITEM_MAX_STR_LEN) != 0) {
             if (mqtt_initialized) {
                 ESP_LOGD(TAG, "MQTT settings were changed");
                 flags |= MQTT_FLAG;
             }
             strncpy(prev_host, cur_host, SETTING_ITEM_MAX_STR_LEN - 1);
+            prev_host[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
             strncpy(prev_user, cur_user, SETTING_ITEM_MAX_STR_LEN - 1);
+            prev_user[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+            strncpy(prev_pass, cur_pass, SETTING_ITEM_MAX_STR_LEN - 1);
+            prev_pass[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
             prev_port = cur_port;
             prev_enabled = cur_enabled;
             mqtt_initialized = true;
