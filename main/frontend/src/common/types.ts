@@ -127,6 +127,14 @@ export interface Settings {
   cache_modbus_port: number;
   cache_modbus_server_enabled: boolean;
   cache_value_timeout_s: number;
+  mqtt: {
+    enabled: boolean;
+    host: string;
+    port: number;
+    user: string;
+    pass: string;
+    prefix: string;
+  };
   wifi_perm_disable?: boolean;
   wifi?: {
     mode: WiFiMode;

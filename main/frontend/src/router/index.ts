@@ -5,6 +5,7 @@ import { useSettings } from '@/common/settings';
 import type { LogoutResponse } from '@/common/types';
 import Dashboard from '@/views/Dashboard.vue';
 import Login from '@/views/Login.vue';
+import Mqtt from '@/views/Mqtt.vue';
 import Network from '@/views/Network.vue';
 import SerialPorts from '@/views/SerialPorts.vue';
 import RegisterMap from '@/views/RegisterMap.vue';
@@ -37,6 +38,20 @@ const router = createRouter({
       name: 'tcp_gateway',
       component: TcpGateway,
       meta: { requiresAuth: true, menuName: 'tcp_gateway', menuGroup: 'modbus_tools', menuIcon: 'plug' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
+    },
+    {
+      path: '/mqtt',
+      name: 'mqtt',
+      component: Mqtt,
+      meta: { requiresAuth: true, menuName: 'mqtt', menuGroup: 'configuration', menuIcon: 'mqtt' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();

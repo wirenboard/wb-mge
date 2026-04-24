@@ -52,6 +52,13 @@
 #define DEFAULT_CACHE_MODBUS_SERVER_ENABLED "true"
 #define DEFAULT_CACHE_VALUE_TIMEOUT_S       "60"
 
+#define DEFAULT_MQTT_ENABLED        "false"
+#define DEFAULT_MQTT_HOST           ""
+#define DEFAULT_MQTT_PORT           "1883"
+#define DEFAULT_MQTT_USER           ""
+#define DEFAULT_MQTT_PASS           ""
+#define DEFAULT_MQTT_PREFIX         "wb-mge"
+
 
 #ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"

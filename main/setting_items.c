@@ -239,6 +239,14 @@ static const setting_item_t setting_items[] = {
     {KEY_CACHE_MODBUS_SERVER_ENABLED, DEFAULT_CACHE_MODBUS_SERVER_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
     // Cache value timeout: 0 = disabled (always return cached value), 1..65535 = age threshold in seconds
     {KEY_CACHE_VALUE_TIMEOUT_S,       DEFAULT_CACHE_VALUE_TIMEOUT_S,       validate_timeout, SETTING_ITEM_TYPE_INT},
+
+    // MQTT settings
+    {KEY_MQTT_ENABLED, DEFAULT_MQTT_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_MQTT_HOST, DEFAULT_MQTT_HOST, NULL, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_PORT, DEFAULT_MQTT_PORT, validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_MQTT_USER, DEFAULT_MQTT_USER, NULL, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_PASS, DEFAULT_MQTT_PASS, NULL, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_PREFIX, DEFAULT_MQTT_PREFIX, NULL, SETTING_ITEM_TYPE_STRING},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

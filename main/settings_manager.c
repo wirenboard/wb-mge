@@ -60,6 +60,15 @@ static const setting_mapping_t ethernet_mappings[] = {
     {"dhcpc", KEY_ETH_DHCPC},
 };
 
+static const setting_mapping_t mqtt_mappings[] = {
+    {"enabled", KEY_MQTT_ENABLED},
+    {"host", KEY_MQTT_HOST},
+    {"port", KEY_MQTT_PORT},
+    {"user", KEY_MQTT_USER},
+    {"pass", KEY_MQTT_PASS},
+    {"prefix", KEY_MQTT_PREFIX},
+};
+
 static const setting_mapping_t rs485_base_mappings[] = {
     {"baudrate", "baudrate"},
     {"stopbits", "stopbits"},
@@ -657,6 +666,13 @@ esp_err_t settings_build_response_json(cJSON **response_json)
         return ESP_FAIL;
     }
 
+    // Add MQTT settings group
+    if (add_group_to_json(*response_json, "mqtt", mqtt_mappings, ARRAY_SIZE(mqtt_mappings)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add MQTT settings to JSON");
+        cJSON_Delete(*response_json);
+        return ESP_FAIL;
+    }
+
     return ESP_OK;
 }
 
@@ -912,6 +928,15 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     // running state against NVS and reconciles the ones that actually changed. Doing it here, in
     // the HTTP handler, meant the cache server was restarted BEFORE settings_update() re-applied
     // the RS-485 ports and the web server, so no port could be handed over between them.
+
+    // Process MQTT settings group
+    if (cJSON_HasObjectItem(request_json, "mqtt")) {
+        cJSON *mqtt_json = cJSON_GetObjectItem(request_json, "mqtt");
+        if (cJSON_IsObject(mqtt_json)) {
+            save_group_settings(mqtt_json, mqtt_mappings, ARRAY_SIZE(mqtt_mappings), NULL);
+        }
+    }
+
     settings_update();
 
     // Add success flag

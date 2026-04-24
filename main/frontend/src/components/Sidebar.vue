@@ -18,6 +18,7 @@ import ActivityIcon from '@/assets/activityIcon.svg?component';
 import PlugIcon from '@/assets/plugIcon.svg?component';
 import GridSidebarIcon from '@/assets/gridSidebarIcon.svg?component';
 import RepeatIcon from '@/assets/repeatIcon.svg?component';
+import MqttIcon from '@/assets/mqttIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
@@ -32,6 +33,7 @@ const MENU_ICONS: Record<string, Component> = {
   plug: PlugIcon,
   grid: GridSidebarIcon,
   repeat: RepeatIcon,
+  mqtt: MqttIcon,
 };
 
 function getMenuIcon(key: unknown): Component | undefined {

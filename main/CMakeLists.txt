@@ -38,7 +38,8 @@ set(COMPONENT_SRCS "main.c"
                    "debug_log.c"
                    "wb_test.c"
                    "coverage_dump.c"
-                   "update_rs485_mio_gpio_states.c")
+                   "update_rs485_mio_gpio_states.c"
+                   "mqtt/mqtt_manager.c")
 
 # Conditionally add files based on build type
 if($ENV{CONFIG_ETH_USE_OPENETH})
@@ -101,6 +102,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "wb_app_desc"
                             "voltage_monitor"
                             "qemu"
+                            "mqtt"
                         EMBED_TXTFILES
                             # Compressible text shell assets served with Content-Encoding: gzip.
                             frontend/dist/index.css.gz

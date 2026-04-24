@@ -13,6 +13,7 @@
 #include "network.h"
 #include "settings_update.h"
 #include "debug_log.h"
+#include "mqtt_manager.h"
 
 // Hardware-logic headers: needed by both builds. In QEMU these resolve to the
 // virtual IO bus (gpio_expander.h symbols come from virtual_io_qemu.c).
@@ -175,6 +176,7 @@ void app_main(void)
             sys_info.wifi_sta_is_connected)
         {
             ESP_ERROR_CHECK(port_manager_init());
+            mqtt_manager_init();
             break;
         } else {
             vTaskDelay(pdMS_TO_TICKS(1000));

@@ -8,6 +8,7 @@
 #include "setting_items.h"
 #include "update_rs485_mio_gpio_states.h"
 #include "cache_modbus_server.h"
+#include "mqtt_manager.h"
 
 
 #define SETTINGS_UPDATE_TASK_STACK_SIZE     (6 * 1024)
@@ -19,6 +20,7 @@
 #define ETHERNET_FLAG                       BIT10
 #define WIFI_FLAG                           BIT11
 #define CACHE_MODBUS_FLAG                   BIT12
+#define MQTT_FLAG                           BIT13
 
 #define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
@@ -293,6 +295,11 @@ static void settings_update_task(void *arg)
         network_update_wifi_settings();
     }
 
+    if (flags & MQTT_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to MQTT");
+        mqtt_manager_restart();
+    }
+
     ESP_LOGI(TAG, "Settings update task finished");
     update_task_handle = NULL;
     vTaskDelete(NULL);
@@ -391,6 +398,38 @@ esp_err_t settings_update(void)
     if (network_check_wifi_settings_changed()) {
         ESP_LOGD(TAG, "WiFi settings were changed");
         flags |= WIFI_FLAG;
+    }
+
+    {
+        // Check MQTT settings change by comparing current settings with cached values
+        static char prev_host[SETTING_ITEM_MAX_STR_LEN] = {0};
+        static int prev_port = -1;
+        static char prev_user[SETTING_ITEM_MAX_STR_LEN] = {0};
+        static bool prev_enabled = false;
+        static bool mqtt_initialized = false;
+
+        char cur_host[SETTING_ITEM_MAX_STR_LEN] = {0};
+        char cur_user[SETTING_ITEM_MAX_STR_LEN] = {0};
+        int cur_port = setting_items_read_int(KEY_MQTT_PORT);
+        bool cur_enabled = setting_items_read_bool(KEY_MQTT_ENABLED);
+        setting_items_read(KEY_MQTT_HOST, cur_host);
+        setting_items_read(KEY_MQTT_USER, cur_user);
+
+        if (!mqtt_initialized ||
+            cur_enabled != prev_enabled ||
+            cur_port != prev_port ||
+            strncmp(cur_host, prev_host, SETTING_ITEM_MAX_STR_LEN) != 0 ||
+            strncmp(cur_user, prev_user, SETTING_ITEM_MAX_STR_LEN) != 0) {
+            if (mqtt_initialized) {
+                ESP_LOGD(TAG, "MQTT settings were changed");
+                flags |= MQTT_FLAG;
+            }
+            strncpy(prev_host, cur_host, SETTING_ITEM_MAX_STR_LEN - 1);
+            strncpy(prev_user, cur_user, SETTING_ITEM_MAX_STR_LEN - 1);
+            prev_port = cur_port;
+            prev_enabled = cur_enabled;
+            mqtt_initialized = true;
+        }
     }
 
     if (flags) {

@@ -62,6 +62,14 @@
 // Enable MIO on RS485-2
 #define KEY_IO_BUS_ENABLED          "io_bus"
 
+// MQTT settings
+#define KEY_MQTT_ENABLED            "mqtt_enabled"
+#define KEY_MQTT_HOST               "mqtt_host"
+#define KEY_MQTT_PORT               "mqtt_port"
+#define KEY_MQTT_USER               "mqtt_user"
+#define KEY_MQTT_PASS               "mqtt_pass"
+#define KEY_MQTT_PREFIX             "mqtt_prefix"
+
 // WiFi modes
 #define WIFI_MODE_AP_STR            "ap"
 #define WIFI_MODE_STA_STR           "sta"
