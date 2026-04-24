@@ -5,6 +5,7 @@
 
 # VS Code Settings
 .vscode/
+*.code-workspace
 
 # JetBrains IDEA
 .idea
