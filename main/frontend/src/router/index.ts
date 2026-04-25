@@ -51,7 +51,7 @@ const router = createRouter({
       path: '/mqtt',
       name: 'mqtt',
       component: Mqtt,
-      meta: { requiresAuth: true, menuName: 'mqtt', menuGroup: 'modbusTools', menuIcon: 'mqtt' },
+      meta: { requiresAuth: true, menuName: 'mqtt', menuGroup: 'configuration', menuIcon: 'mqtt' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();

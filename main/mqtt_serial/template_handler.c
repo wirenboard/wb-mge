@@ -10,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <errno.h>
 
 static const char *TAG = "template_handler";
 
@@ -105,7 +104,6 @@ esp_err_t template_upload_post_handler(httpd_req_t *req)
     /* Save to SPIFFS */
     FILE *f = fopen(TEMPLATE_SPIFFS_PATH, "w");
     if (!f) {
-        ESP_LOGE(TAG, "fopen(%s, w) failed: errno=%d", TEMPLATE_SPIFFS_PATH, errno);
         free(buf);
         return json_utils_send_error(req, "Failed to open file for writing");
     }
