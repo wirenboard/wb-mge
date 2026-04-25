@@ -20,6 +20,7 @@ static const char *TAG = "modbus_rtu_esp32";
 struct mb_rtu_port {
     uart_port_t uart_num;
     int         response_timeout_ms;
+    int         silence_ms;  /* 3.5 char times, derived from baud rate */
 };
 
 /*
@@ -77,10 +78,16 @@ mb_rtu_port_t *mb_rtu_open(const char *device, int baud, char parity,
     /* RS-485 half-duplex mode */
     uart_set_mode((uart_port_t)port_num, UART_MODE_RS485_HALF_DUPLEX);
 
+    /* Modbus RTU inter-frame silence: 3.5 × 11 bits / baud, rounded up to ms.
+     * ceil(38500 / baud), minimum 2 ms. */
+    int silence_ms = (38500 + baud - 1) / baud;
+    if (silence_ms < 2) silence_ms = 2;
+
     mb_rtu_port_t *p = malloc(sizeof(*p));
     if (!p) return NULL;
     p->uart_num            = (uart_port_t)port_num;
     p->response_timeout_ms = (response_timeout_ms > 0) ? response_timeout_ms : 300;
+    p->silence_ms          = silence_ms;
     return p;
 }
 
@@ -103,8 +110,8 @@ static int port_send(mb_rtu_port_t *p, const uint8_t *buf, int len)
         ESP_LOGE(TAG, "uart_write_bytes: wrote %d of %d", written, len);
         return -1;
     }
-    /* Wait until all bytes are physically transmitted before switching to RX */
-    uart_wait_tx_done(p->uart_num, pdMS_TO_TICKS(100));
+    /* Wait until TX FIFO is empty. At 115200 baud 8 bytes = ~0.7ms; 10ms is plenty. */
+    uart_wait_tx_done(p->uart_num, pdMS_TO_TICKS(10));
     return 0;
 }
 
@@ -119,7 +126,8 @@ static int port_recv(mb_rtu_port_t *p, uint8_t *buf, int max_len, int timeout_ms
                                    pdMS_TO_TICKS(deadline));
         if (chunk <= 0) break;
         total   += chunk;
-        deadline = 20; /* short inter-character gap: keep reading until silence */
+        /* After first bytes arrive switch to inter-frame silence timeout (3.5 char times) */
+        deadline = p->silence_ms;
     }
     return total;
 }
