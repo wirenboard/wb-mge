@@ -94,6 +94,45 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
             </div>
           </form>
         </section>
+
+        <section class="card">
+          <form @submit.prevent="updateSettings({ mqts: {
+            enabled: data.mqts.enabled,
+            port: data.mqts.port,
+            slave_id: data.mqts.slave_id,
+          } })">
+            <div class="card-header">
+              <div class="title">{{ t('mqts_settings') }}</div>
+              <Button
+                type="submit"
+                :is-loading="isLoading && isChanged(['mqts'])"
+                :disabled="isLoading || !isChanged(['mqts'])"
+              >
+                {{ t('save') }}
+              </Button>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="mqts_enabled">{{ t('mqts_enabled') }}</label>
+                <div style="justify-self: end"><Switch id="mqts_enabled" v-model="data.mqts.enabled" /></div>
+              </div>
+
+              <template v-if="data.mqts.enabled">
+                <div class="field">
+                  <label for="mqts_port">{{ t('mqts_port') }}</label>
+                  <select id="mqts_port" v-model="data.mqts.port" name="mqts_port">
+                    <option :value="1">RS485-1</option>
+                    <option :value="2">RS485-2</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="mqts_slave_id">{{ t('mqts_slave_id') }}</label>
+                  <InputNumber id="mqts_slave_id" v-model="data.mqts.slave_id" name="mqts_slave_id" min="1" max="247" required />
+                </div>
+              </template>
+            </div>
+          </form>
+        </section>
       </div>
     </div>
   </Layout>
@@ -104,7 +143,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
   "en": {
     "title": "MQTT",
     "crumbs": "MQTT broker connection",
-    "mqtt_settings": "MQTT",
+    "mqtt_settings": "MQTT broker",
     "enabled": "Enable MQTT",
     "host": "Broker host",
     "host_placeholder": "e.g. 192.168.1.100",
@@ -114,12 +153,16 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Username",
     "password": "Password",
     "optional": "Optional",
-    "save": "Save"
+    "save": "Save",
+    "mqts_settings": "MQTT serial bridge",
+    "mqts_enabled": "Enable serial bridge",
+    "mqts_port": "RS485 port",
+    "mqts_slave_id": "Modbus slave ID"
   },
   "ru": {
     "title": "MQTT",
     "crumbs": "Подключение к MQTT-брокеру",
-    "mqtt_settings": "MQTT",
+    "mqtt_settings": "MQTT брокер",
     "enabled": "Включить MQTT",
     "host": "Хост брокера",
     "host_placeholder": "например 192.168.1.100",
@@ -129,12 +172,16 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Имя пользователя",
     "password": "Пароль",
     "optional": "Необязательно",
-    "save": "Сохранить"
+    "save": "Сохранить",
+    "mqts_settings": "MQTT serial bridge",
+    "mqts_enabled": "Включить serial bridge",
+    "mqts_port": "Порт RS485",
+    "mqts_slave_id": "Modbus slave ID"
   },
   "kk": {
     "title": "MQTT",
     "crumbs": "MQTT брокеріне қосылу",
-    "mqtt_settings": "MQTT",
+    "mqtt_settings": "MQTT брокер",
     "enabled": "MQTT қосу",
     "host": "Брокер хосты",
     "host_placeholder": "мысалы 192.168.1.100",
@@ -144,12 +191,16 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Пайдаланушы аты",
     "password": "Құпия сөз",
     "optional": "Міндетті емес",
-    "save": "Сақтау"
+    "save": "Сақтау",
+    "mqts_settings": "MQTT serial bridge",
+    "mqts_enabled": "Serial bridge қосу",
+    "mqts_port": "RS485 порты",
+    "mqts_slave_id": "Modbus slave ID"
   },
   "it": {
     "title": "MQTT",
     "crumbs": "Connessione al broker MQTT",
-    "mqtt_settings": "MQTT",
+    "mqtt_settings": "Broker MQTT",
     "enabled": "Abilita MQTT",
     "host": "Host broker",
     "host_placeholder": "es. 192.168.1.100",
@@ -159,12 +210,16 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Nome utente",
     "password": "Password",
     "optional": "Opzionale",
-    "save": "Salva"
+    "save": "Salva",
+    "mqts_settings": "MQTT serial bridge",
+    "mqts_enabled": "Abilita serial bridge",
+    "mqts_port": "Porta RS485",
+    "mqts_slave_id": "Modbus slave ID"
   },
   "de": {
     "title": "MQTT",
     "crumbs": "MQTT-Broker-Verbindung",
-    "mqtt_settings": "MQTT",
+    "mqtt_settings": "MQTT-Broker",
     "enabled": "MQTT aktivieren",
     "host": "Broker-Host",
     "host_placeholder": "z.B. 192.168.1.100",
@@ -174,7 +229,11 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "username": "Benutzername",
     "password": "Passwort",
     "optional": "Optional",
-    "save": "Speichern"
+    "save": "Speichern",
+    "mqts_settings": "MQTT serial bridge",
+    "mqts_enabled": "Serial bridge aktivieren",
+    "mqts_port": "RS485-Port",
+    "mqts_slave_id": "Modbus slave ID"
   }
 }
 </i18n>

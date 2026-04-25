@@ -59,6 +59,10 @@
 #define DEFAULT_MQTT_PASS           ""
 #define DEFAULT_MQTT_PREFIX         "wb-mge"
 
+#define DEFAULT_MQTS_ENABLED        "false"
+#define DEFAULT_MQTS_PORT           "1"
+#define DEFAULT_MQTS_SLAVE_ID       "1"
+
 
 #ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"

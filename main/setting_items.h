@@ -70,6 +70,11 @@
 #define KEY_MQTT_PASS               "mqtt_pass"
 #define KEY_MQTT_PREFIX             "mqtt_prefix"
 
+// MQTT serial bridge settings
+#define KEY_MQTS_ENABLED            "mqts_enabled"
+#define KEY_MQTS_PORT               "mqts_port"       // RS485 port: 1 or 2
+#define KEY_MQTS_SLAVE_ID           "mqts_slave_id"   // Modbus slave ID: 1-247
+
 // WiFi modes
 #define WIFI_MODE_AP_STR            "ap"
 #define WIFI_MODE_STA_STR           "sta"

@@ -247,6 +247,11 @@ static const setting_item_t setting_items[] = {
     {KEY_MQTT_USER, DEFAULT_MQTT_USER, NULL, SETTING_ITEM_TYPE_STRING},
     {KEY_MQTT_PASS, DEFAULT_MQTT_PASS, NULL, SETTING_ITEM_TYPE_STRING},
     {KEY_MQTT_PREFIX, DEFAULT_MQTT_PREFIX, NULL, SETTING_ITEM_TYPE_STRING},
+
+    // MQTT serial bridge settings
+    {KEY_MQTS_ENABLED, DEFAULT_MQTS_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_MQTS_PORT, DEFAULT_MQTS_PORT, validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_MQTS_SLAVE_ID, DEFAULT_MQTS_SLAVE_ID, validate_modbus_slave_id, SETTING_ITEM_TYPE_INT},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

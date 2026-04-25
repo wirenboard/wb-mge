@@ -39,7 +39,12 @@ set(COMPONENT_SRCS "main.c"
                    "wb_test.c"
                    "coverage_dump.c"
                    "update_rs485_mio_gpio_states.c"
-                   "mqtt/mqtt_manager.c")
+                   "mqtt/mqtt_manager.c"
+                   "mqtt_serial/template.c"
+                   "mqtt_serial/modbus_frame.c"
+                   "mqtt_serial/value_conv.c"
+                   "mqtt_serial/modbus_rtu_esp32.c"
+                   "mqtt_serial/mqtt_serial_bridge.c")
 
 # Conditionally add files based on build type
 if($ENV{CONFIG_ETH_USE_OPENETH})
@@ -103,11 +108,13 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "voltage_monitor"
                             "qemu"
                             "mqtt"
+                            "mqtt_serial"
                         EMBED_TXTFILES
                             # Compressible text shell assets served with Content-Encoding: gzip.
                             frontend/dist/index.css.gz
                             frontend/dist/index.html.gz
                             frontend/dist/index.js.gz
+                            mqtt_serial/device_template.json
                         EMBED_FILES
                             # Already-compressed binaries embedded RAW (woff2/webp) and served
                             # without Content-Encoding. EMBED_FILES preserves exact length and

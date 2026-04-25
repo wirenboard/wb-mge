@@ -69,6 +69,12 @@ static const setting_mapping_t mqtt_mappings[] = {
     {"prefix", KEY_MQTT_PREFIX},
 };
 
+static const setting_mapping_t mqts_mappings[] = {
+    {"enabled", KEY_MQTS_ENABLED},
+    {"port", KEY_MQTS_PORT},
+    {"slave_id", KEY_MQTS_SLAVE_ID},
+};
+
 static const setting_mapping_t rs485_base_mappings[] = {
     {"baudrate", "baudrate"},
     {"stopbits", "stopbits"},
@@ -673,6 +679,13 @@ esp_err_t settings_build_response_json(cJSON **response_json)
         return ESP_FAIL;
     }
 
+    // Add MQTT serial bridge settings group
+    if (add_group_to_json(*response_json, "mqts", mqts_mappings, ARRAY_SIZE(mqts_mappings)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add MQTS settings to JSON");
+        cJSON_Delete(*response_json);
+        return ESP_FAIL;
+    }
+
     return ESP_OK;
 }
 
@@ -934,6 +947,14 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         cJSON *mqtt_json = cJSON_GetObjectItem(request_json, "mqtt");
         if (cJSON_IsObject(mqtt_json)) {
             save_group_settings(mqtt_json, mqtt_mappings, ARRAY_SIZE(mqtt_mappings), NULL);
+        }
+    }
+
+    // Process MQTT serial bridge settings group
+    if (cJSON_HasObjectItem(request_json, "mqts")) {
+        cJSON *mqts_json = cJSON_GetObjectItem(request_json, "mqts");
+        if (cJSON_IsObject(mqts_json)) {
+            save_group_settings(mqts_json, mqts_mappings, ARRAY_SIZE(mqts_mappings), NULL);
         }
     }
 

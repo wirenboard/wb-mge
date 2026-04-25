@@ -136,6 +136,11 @@ export interface Settings {
     prefix: string;
   };
   wifi_perm_disable?: boolean;
+  mqts: {
+    enabled: boolean;
+    port: number;
+    slave_id: number;
+  };
   wifi?: {
     mode: WiFiMode;
     ap_ip_static: string;

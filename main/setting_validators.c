@@ -2,6 +2,7 @@
 #include "setting_items.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define MAX_HOSTNAME_LEN                    31
@@ -415,4 +416,13 @@ bool validate_wifi_password(const char *value)
         }
     }
     return true;
+}
+
+bool validate_modbus_slave_id(const char *value)
+{
+    if (!value || value[0] == '\0') return false;
+    char *end;
+    long v = strtol(value, &end, 10);
+    if (*end != '\0') return false;
+    return (v >= 1 && v <= 247);
 }

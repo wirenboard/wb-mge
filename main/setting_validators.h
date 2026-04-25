@@ -19,3 +19,4 @@ bool validate_bool(const char *value);
 bool validate_login(const char *value);
 bool validate_password(const char *value);
 bool validate_wifi_password(const char *value);
+bool validate_modbus_slave_id(const char *value);
