@@ -11,6 +11,7 @@
 #include "update_rs485_mio_gpio_states.h"
 #include "cache_modbus_server.h"
 #include "mqtt_manager.h"
+#include "mqtt_serial_bridge.h"
 
 
 #define SETTINGS_UPDATE_TASK_STACK_SIZE     (6 * 1024)
@@ -23,6 +24,7 @@
 #define WIFI_FLAG                           BIT11
 #define CACHE_MODBUS_FLAG                   BIT12
 #define MQTT_FLAG                           BIT13
+#define MQTS_FLAG                           BIT14
 
 #define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
@@ -302,6 +304,11 @@ static void settings_update_task(void *arg)
         mqtt_manager_restart();
     }
 
+    if (flags & MQTS_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to MQTT serial bridge");
+        mqtt_serial_bridge_start();
+    }
+
     ESP_LOGI(TAG, "Settings update task finished");
     update_task_handle = NULL;
     vTaskDelete(NULL);
@@ -439,6 +446,32 @@ esp_err_t settings_update(void)
             prev_port = cur_port;
             prev_enabled = cur_enabled;
             mqtt_initialized = true;
+        }
+    }
+
+    {
+        /* Check MQTT serial bridge settings change */
+        static bool prev_mqts_enabled = false;
+        static int  prev_mqts_port    = -1;
+        static int  prev_mqts_slave   = -1;
+        static bool mqts_initialized  = false;
+
+        bool cur_enabled = setting_items_read_bool(KEY_MQTS_ENABLED);
+        int  cur_port    = setting_items_read_int(KEY_MQTS_PORT);
+        int  cur_slave   = setting_items_read_int(KEY_MQTS_SLAVE_ID);
+
+        if (!mqts_initialized ||
+            cur_enabled  != prev_mqts_enabled ||
+            cur_port     != prev_mqts_port    ||
+            cur_slave    != prev_mqts_slave) {
+            if (mqts_initialized) {
+                ESP_LOGD(TAG, "MQTT serial bridge settings were changed");
+                flags |= MQTS_FLAG;
+            }
+            prev_mqts_enabled = cur_enabled;
+            prev_mqts_port    = cur_port;
+            prev_mqts_slave   = cur_slave;
+            mqts_initialized  = true;
         }
     }
 

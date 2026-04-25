@@ -70,6 +70,7 @@ typedef struct {
     QueueHandle_t            write_queue;   /* MQTT -> bridge task */
     int                      bridge_port_index; /* 0-based index for the port_manager port */
     pm_mode_t                saved_port_mode;   /* port mode to restore when the bridge stops */
+    volatile bool            mqtt_connected;
 } bridge_ctx_t;
 
 static bridge_ctx_t    g_ctx;
@@ -160,6 +161,12 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
     switch (event->event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT connected");
+        b->mqtt_connected = true;
+        /* Reset last_values so all channels are re-published after reconnect */
+        for (int i = 0; i < b->tmpl.num_channels; i++) {
+            free(b->last_values[i]);
+            b->last_values[i] = NULL;
+        }
         {
             char topic[TOPIC_MAX];
             snprintf(topic, sizeof(topic), "/devices/%s/meta/name", b->tmpl.device_id);
@@ -221,6 +228,7 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
 
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "MQTT disconnected, will reconnect automatically");
+        b->mqtt_connected = false;
         break;
     case MQTT_EVENT_ERROR:
         ESP_LOGE(TAG, "MQTT error event");
@@ -285,6 +293,10 @@ static int poll_channel(bridge_ctx_t *b, int idx)
     if (b->last_values[idx] && strcmp(b->last_values[idx], val_str) == 0)
         return 0;
 
+    /* Don't publish if MQTT not connected yet — keep last_values unchanged
+     * so we'll re-publish everything fresh after reconnect */
+    if (!b->mqtt_connected) return 0;
+
     free(b->last_values[idx]);
     b->last_values[idx] = strdup(val_str);
 
@@ -294,7 +306,7 @@ static int poll_channel(bridge_ctx_t *b, int idx)
     if (r < 0)
         ESP_LOGE(TAG, "publish failed for %s", topic);
     else
-        ESP_LOGD(TAG, "[PUB] %s = %s", topic, val_str);
+        ESP_LOGI(TAG, "[PUB] %s = %s", topic, val_str);
     return 0;
 }
 

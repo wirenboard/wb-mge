@@ -165,13 +165,24 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
         const char *fmt_str = json_str(ch, "format",   NULL);
 
         cJSON *addr_item = cJSON_GetObjectItemCaseSensitive(ch, "address");
-        if (!addr_item || !cJSON_IsNumber(addr_item)) continue;
+        if (!addr_item) continue;
+
+        uint32_t address;
+        if (cJSON_IsNumber(addr_item)) {
+            address = (uint32_t)(long)addr_item->valuedouble;
+        } else if (cJSON_IsString(addr_item)) {
+            char *end;
+            address = (uint32_t)strtoul(addr_item->valuestring, &end, 0);
+            if (end == addr_item->valuestring) continue; /* not a valid number */
+        } else {
+            continue;
+        }
 
         wb_channel_t *c = &out->channels[count];
         c->name     = strdup(name);
         c->reg_type = parse_reg_type(rt_str);
         c->format   = parse_format(fmt_str);
-        c->address  = (uint32_t)(int)addr_item->valuedouble;
+        c->address  = address;
         c->scale    = json_num(ch, "scale",  1.0);
         c->offset   = json_num(ch, "offset", 0.0);
         c->enabled  = enabled;
