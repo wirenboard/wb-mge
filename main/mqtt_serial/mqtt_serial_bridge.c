@@ -7,6 +7,7 @@
 #include "setting_items.h"
 #include "port_manager.h"   /* port_manager_set_mode / port_manager_get_mode */
 #include "mqtt_client.h"
+#include "template_handler.h"
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
@@ -43,12 +44,6 @@ static const char *TAG = "mqtt_serial_bridge";
 
 #define TOPIC_MAX   256
 #define WRITE_QUEUE_DEPTH  8
-
-/* ------------------------------------------------------------------
- * Embedded device template (compiled in via EMBED_TXTFILES)
- * ------------------------------------------------------------------ */
-extern const uint8_t device_template_start[] asm("_binary_device_template_json_start");
-extern const uint8_t device_template_end[]   asm("_binary_device_template_json_end");
 
 /* ------------------------------------------------------------------
  * Write command dispatched from MQTT event to bridge task
@@ -389,15 +384,14 @@ esp_err_t mqtt_serial_bridge_start(void)
         return ESP_OK;
     }
 
-    /* ---- Parse embedded template ---- */
-    size_t tmpl_len = (size_t)(device_template_end - device_template_start);
-    char *tmpl_buf = malloc(tmpl_len + 1);
-    if (!tmpl_buf) return ESP_ERR_NO_MEM;
-    memcpy(tmpl_buf, device_template_start, tmpl_len);
-    tmpl_buf[tmpl_len] = '\0';
-
+    /* ---- Load template (SPIFFS if available, else embedded default) ---- */
+    char *tmpl_buf = NULL;
+    size_t tmpl_len = 0;
+    if (template_handler_load(&tmpl_buf, &tmpl_len) != ESP_OK || !tmpl_buf) {
+        return ESP_FAIL;
+    }
     if (wb_template_parse_str(tmpl_buf, &g_ctx.tmpl) != 0) {
-        ESP_LOGE(TAG, "Failed to parse embedded device template");
+        ESP_LOGE(TAG, "Failed to parse device template");
         free(tmpl_buf);
         return ESP_FAIL;
     }

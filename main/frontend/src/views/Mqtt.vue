@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
@@ -6,9 +7,45 @@ import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import Switch from '@/components/Switch.vue';
 import InputNumber from '@/components/InputNumber.vue';
+import FileUpload from '@/components/FileUpload.vue';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
+
+const templateFile = ref<FileList | null>(null);
+const isUploadingTemplate = ref(false);
+const templateUploadResult = ref<string | null>(null);
+
+const uploadTemplate = async () => {
+  if (!templateFile.value?.length) return;
+  isUploadingTemplate.value = true;
+  templateUploadResult.value = null;
+  try {
+    const prefix = import.meta.env.DEV ? 'api/' : '';
+    const resp = await fetch(`${prefix}device-template`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: templateFile.value[0],
+    });
+    const json = await resp.json();
+    if (json.success) {
+      templateUploadResult.value = t('template_uploaded');
+      templateFile.value = null;
+    } else {
+      templateUploadResult.value = json.error || t('template_upload_error');
+    }
+  } catch {
+    templateUploadResult.value = t('template_upload_error');
+  } finally {
+    isUploadingTemplate.value = false;
+  }
+};
+
+const deleteTemplate = async () => {
+  const prefix = import.meta.env.DEV ? 'api/' : '';
+  await fetch(`${prefix}device-template`, { method: 'DELETE' });
+  templateUploadResult.value = t('template_deleted');
+};
 </script>
 
 <template>
@@ -123,6 +160,35 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
             </div>
           </form>
         </section>
+
+        <section class="card">
+          <div class="card-header">
+            <div class="title">{{ t('template_title') }}</div>
+            <Button
+              type="button"
+              variant="gray"
+              @click="deleteTemplate"
+            >
+              {{ t('template_reset') }}
+            </Button>
+          </div>
+          <div class="card-body">
+            <div class="field">
+              <label>{{ t('template_label') }}</label>
+              <FileUpload
+                v-model="templateFile"
+                :placeholder="t('template_choose')"
+                :uploading-placeholder="t('template_uploading')"
+                accept=".json"
+                :is-loading="isUploadingTemplate"
+                @upload="uploadTemplate"
+              />
+            </div>
+            <div v-if="templateUploadResult" class="field">
+              <span style="color: var(--color-text-secondary); font-size: 0.875rem">{{ templateUploadResult }}</span>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   </Layout>
@@ -147,7 +213,15 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Enable serial bridge",
     "mqts_port": "RS485 port",
-    "mqts_slave_id": "Modbus slave ID"
+    "mqts_slave_id": "Modbus slave ID",
+    "template_title": "Device template",
+    "template_label": "Template JSON file",
+    "template_choose": "Choose file",
+    "template_uploading": "Uploading...",
+    "template_reset": "Reset to default",
+    "template_uploaded": "Template uploaded successfully",
+    "template_deleted": "Template reset to default",
+    "template_upload_error": "Upload failed"
   },
   "ru": {
     "title": "MQTT",
@@ -166,7 +240,15 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Включить serial bridge",
     "mqts_port": "Порт RS485",
-    "mqts_slave_id": "Modbus slave ID"
+    "mqts_slave_id": "Modbus slave ID",
+    "template_title": "Шаблон устройства",
+    "template_label": "JSON-файл шаблона",
+    "template_choose": "Выбрать файл",
+    "template_uploading": "Загрузка...",
+    "template_reset": "Сбросить к умолчанию",
+    "template_uploaded": "Шаблон загружен",
+    "template_deleted": "Шаблон сброшен к умолчанию",
+    "template_upload_error": "Ошибка загрузки"
   },
   "kk": {
     "title": "MQTT",

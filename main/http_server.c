@@ -10,6 +10,7 @@
 #include "bridge/cache_multimaster.h"
 #include "bridge/port_manager.h"
 #include "coverage_dump.h"
+#include "template_handler.h"
 
 #include <esp_http_server.h>
 #include <sys/param.h>
@@ -282,6 +283,24 @@ static const httpd_uri_t hostname_get = {
     .handler = hostname_get_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t device_template_post = {
+    .uri = "/device-template",
+    .method = HTTP_POST,
+    .handler = template_upload_post_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t device_template_get = {
+    .uri = "/device-template",
+    .method = HTTP_GET,
+    .handler = template_get_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t device_template_delete = {
+    .uri = "/device-template",
+    .method = HTTP_DELETE,
+    .handler = template_delete_handler,
+    .user_ctx = NULL,
+};
 
 
 static uint16_t get_web_port_setting(void)
@@ -366,6 +385,9 @@ esp_err_t http_server_init_port(uint16_t port)
 #ifdef COVERAGE_BUILD
         coverage_dump_register_handlers(http_server);
 #endif
+        httpd_register_uri_handler(http_server, &device_template_post);
+        httpd_register_uri_handler(http_server, &device_template_get);
+        httpd_register_uri_handler(http_server, &device_template_delete);
     }
 
     if (http_server == NULL) {

@@ -44,7 +44,8 @@ set(COMPONENT_SRCS "main.c"
                    "mqtt_serial/modbus_frame.c"
                    "mqtt_serial/value_conv.c"
                    "mqtt_serial/modbus_rtu_esp32.c"
-                   "mqtt_serial/mqtt_serial_bridge.c")
+                   "mqtt_serial/mqtt_serial_bridge.c"
+                   "mqtt_serial/template_handler.c")
 
 # Conditionally add files based on build type
 if($ENV{CONFIG_ETH_USE_OPENETH})

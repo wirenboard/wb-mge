@@ -15,6 +15,7 @@
 #include "debug_log.h"
 #include "mqtt_manager.h"
 #include "mqtt_serial_bridge.h"
+#include "template_handler.h"
 
 // Hardware-logic headers: needed by both builds. In QEMU these resolve to the
 // virtual IO bus (gpio_expander.h symbols come from virtual_io_qemu.c).
@@ -132,6 +133,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
+    template_handler_init();  /* Mount SPIFFS for device templates */
 
     update_io_bus_control();
 
