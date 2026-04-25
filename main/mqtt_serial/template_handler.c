@@ -1,5 +1,5 @@
 #include "template_handler.h"
-#include "template.h"
+#include "mqtt_serial_bridge.h"
 #include "auth.h"
 #include "json_utils.h"
 
@@ -92,16 +92,7 @@ esp_err_t template_upload_post_handler(httpd_req_t *req)
     }
     buf[received] = '\0';
 
-    /* Validate JSON is parseable as a template */
-    wb_template_t tmpl;
-    if (wb_template_parse_str(buf, &tmpl) != 0) {
-        free(buf);
-        return json_utils_send_error(req, "Invalid template JSON");
-    }
-    ESP_LOGI(TAG, "Uploading template: '%s' (%d channels)", tmpl.device_name, tmpl.num_channels);
-    wb_template_free(&tmpl);
-
-    /* Save to SPIFFS */
+    /* Save to SPIFFS (bridge will validate on restart) */
     FILE *f = fopen(TEMPLATE_SPIFFS_PATH, "w");
     if (!f) {
         free(buf);
@@ -117,7 +108,10 @@ esp_err_t template_upload_post_handler(httpd_req_t *req)
         return json_utils_send_error(req, "Write error");
     }
 
-    ESP_LOGI(TAG, "Template saved to SPIFFS (%zu bytes)", written);
+    ESP_LOGI(TAG, "Template saved to SPIFFS (%zu bytes), restarting bridge", written);
+
+    /* Restart bridge with new template */
+    mqtt_serial_bridge_start();
 
     cJSON *resp = cJSON_CreateObject();
     cJSON_AddBoolToObject(resp, "success", true);
