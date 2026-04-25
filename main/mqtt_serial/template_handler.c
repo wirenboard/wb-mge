@@ -13,10 +13,6 @@
 
 static const char *TAG = "template_handler";
 
-/* Embedded default template */
-extern const uint8_t device_template_start[] asm("_binary_device_template_json_start");
-extern const uint8_t device_template_end[]   asm("_binary_device_template_json_end");
-
 esp_err_t template_handler_init(void)
 {
     esp_vfs_spiffs_conf_t conf = {
@@ -36,45 +32,41 @@ esp_err_t template_handler_init(void)
 
 esp_err_t template_handler_load(char **buf, size_t *len)
 {
-    /* Try SPIFFS file first */
     FILE *f = fopen(TEMPLATE_SPIFFS_PATH, "r");
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        long sz = ftell(f);
-        rewind(f);
-        if (sz > 0 && sz < TEMPLATE_MAX_SIZE) {
-            char *data = malloc((size_t)sz + 1);
-            if (data) {
-                size_t n = fread(data, 1, (size_t)sz, f);
-                fclose(f);
-                if (n != (size_t)sz) {
-                    /* Short read: corrupted file, fall through to embedded default */
-                    ESP_LOGW(TAG, "SPIFFS template read error (%zu of %ld bytes), using embedded default", n, sz);
-                    free(data);
-                } else {
-                    data[n] = '\0';
-                    *buf = data;
-                    *len = n;
-                    ESP_LOGI(TAG, "Loaded template from SPIFFS (%zu bytes)", n);
-                    return ESP_OK;
-                }
-            } else {
-                fclose(f);
-            }
-        } else {
-            fclose(f);
-        }
+    if (!f) {
+        ESP_LOGE(TAG, "No device template found at %s — upload one via web UI", TEMPLATE_SPIFFS_PATH);
+        return ESP_ERR_NOT_FOUND;
     }
 
-    /* Fallback: embedded default */
-    size_t tmpl_len = (size_t)(device_template_end - device_template_start);
-    char *data = malloc(tmpl_len + 1);
-    if (!data) return ESP_ERR_NO_MEM;
-    memcpy(data, device_template_start, tmpl_len);
-    data[tmpl_len] = '\0';
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    rewind(f);
+
+    if (sz <= 0 || sz >= TEMPLATE_MAX_SIZE) {
+        fclose(f);
+        ESP_LOGE(TAG, "Template file has invalid size: %ld", sz);
+        return ESP_FAIL;
+    }
+
+    char *data = malloc((size_t)sz + 1);
+    if (!data) {
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t n = fread(data, 1, (size_t)sz, f);
+    fclose(f);
+
+    if (n != (size_t)sz) {
+        free(data);
+        ESP_LOGE(TAG, "Template read error: got %zu of %ld bytes", n, sz);
+        return ESP_FAIL;
+    }
+
+    data[n] = '\0';
     *buf = data;
-    *len = tmpl_len;
-    ESP_LOGI(TAG, "Loaded embedded default template (%zu bytes)", tmpl_len);
+    *len = n;
+    ESP_LOGI(TAG, "Loaded template from SPIFFS (%zu bytes)", n);
     return ESP_OK;
 }
 
@@ -152,19 +144,3 @@ esp_err_t template_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* DELETE /api/device-template — remove custom template, revert to embedded */
-esp_err_t template_delete_handler(httpd_req_t *req)
-{
-    if (!auth_middleware_check(req)) return ESP_OK;
-
-    struct stat st;
-    if (stat(TEMPLATE_SPIFFS_PATH, &st) == 0) {
-        remove(TEMPLATE_SPIFFS_PATH);
-        ESP_LOGI(TAG, "Custom template deleted");
-    }
-
-    cJSON *resp = cJSON_CreateObject();
-    cJSON_AddBoolToObject(resp, "success", true);
-    json_utils_send_response(req, NULL, resp);
-    return ESP_OK;
-}

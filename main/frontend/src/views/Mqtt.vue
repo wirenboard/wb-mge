@@ -41,19 +41,6 @@ const uploadTemplate = async () => {
   }
 };
 
-const deleteTemplate = async () => {
-  try {
-    const prefix = import.meta.env.DEV ? 'api/' : '';
-    const resp = await fetch(`${prefix}device-template`, { method: 'DELETE' });
-    if (resp.ok) {
-      templateUploadResult.value = t('template_deleted');
-    } else {
-      templateUploadResult.value = t('template_upload_error');
-    }
-  } catch {
-    templateUploadResult.value = t('template_upload_error');
-  }
-};
 </script>
 
 <template>
@@ -172,13 +159,6 @@ const deleteTemplate = async () => {
         <section class="card">
           <div class="card-header">
             <div class="title">{{ t('template_title') }}</div>
-            <Button
-              type="button"
-              variant="gray"
-              @click="deleteTemplate"
-            >
-              {{ t('template_reset') }}
-            </Button>
           </div>
           <div class="card-body">
             <div class="field">
@@ -226,9 +206,7 @@ const deleteTemplate = async () => {
     "template_label": "Template JSON file",
     "template_choose": "Choose file",
     "template_uploading": "Uploading...",
-    "template_reset": "Reset to default",
     "template_uploaded_reboot": "Template uploaded. Reboot device to apply.",
-    "template_deleted": "Template reset to default. Reboot to apply.",
     "template_upload_error": "Upload failed"
   },
   "ru": {
@@ -253,9 +231,7 @@ const deleteTemplate = async () => {
     "template_label": "JSON-файл шаблона",
     "template_choose": "Выбрать файл",
     "template_uploading": "Загрузка...",
-    "template_reset": "Сбросить к умолчанию",
     "template_uploaded_reboot": "Шаблон загружен. Перезагрузите устройство для применения.",
-    "template_deleted": "Шаблон сброшен. Перезагрузите устройство.",
     "template_upload_error": "Ошибка загрузки"
   },
   "kk": {
@@ -280,9 +256,7 @@ const deleteTemplate = async () => {
     "template_label": "JSON шаблон файлы",
     "template_choose": "Файл таңдау",
     "template_uploading": "Жүктелуде...",
-    "template_reset": "Әдепкіге қайта орнату",
     "template_uploaded_reboot": "Шаблон жүктелді. Қолдану үшін қайта іске қосыңыз.",
-    "template_deleted": "Шаблон қайта орнатылды.",
     "template_upload_error": "Жүктеу қатесі"
   },
   "it": {

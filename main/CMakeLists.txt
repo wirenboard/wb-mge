@@ -115,7 +115,6 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             frontend/dist/index.css.gz
                             frontend/dist/index.html.gz
                             frontend/dist/index.js.gz
-                            mqtt_serial/device_template.json
                         EMBED_FILES
                             # Already-compressed binaries embedded RAW (woff2/webp) and served
                             # without Content-Encoding. EMBED_FILES preserves exact length and

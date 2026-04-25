@@ -19,4 +19,3 @@ esp_err_t template_handler_load(char **buf, size_t *len);
 /* HTTP handlers: register on the server */
 esp_err_t template_upload_post_handler(httpd_req_t *req);
 esp_err_t template_get_handler(httpd_req_t *req);
-esp_err_t template_delete_handler(httpd_req_t *req);

@@ -295,12 +295,6 @@ static const httpd_uri_t device_template_get = {
     .handler = template_get_handler,
     .user_ctx = NULL,
 };
-static const httpd_uri_t device_template_delete = {
-    .uri = "/device-template",
-    .method = HTTP_DELETE,
-    .handler = template_delete_handler,
-    .user_ctx = NULL,
-};
 
 
 static uint16_t get_web_port_setting(void)
@@ -387,7 +381,6 @@ esp_err_t http_server_init_port(uint16_t port)
 #endif
         httpd_register_uri_handler(http_server, &device_template_post);
         httpd_register_uri_handler(http_server, &device_template_get);
-        httpd_register_uri_handler(http_server, &device_template_delete);
     }
 
     if (http_server == NULL) {
