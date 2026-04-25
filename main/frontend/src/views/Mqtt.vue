@@ -207,7 +207,7 @@ const uploadTemplate = async () => {
     "template_choose": "Choose file",
     "template_upload": "Upload",
     "template_uploading": "Uploading...",
-    "template_uploaded_reboot": "Template uploaded. Reboot device to apply.",
+    "template_uploaded_reboot": "Template uploaded. Bridge restarting...",
     "template_upload_error": "Upload failed"
   },
   "ru": {
@@ -233,7 +233,7 @@ const uploadTemplate = async () => {
     "template_choose": "Выбрать файл",
     "template_upload": "Загрузить",
     "template_uploading": "Загрузка...",
-    "template_uploaded_reboot": "Шаблон загружен. Перезагрузите устройство для применения.",
+    "template_uploaded_reboot": "Шаблон загружен. Мост перезапускается...",
     "template_upload_error": "Ошибка загрузки"
   },
   "kk": {
@@ -259,7 +259,7 @@ const uploadTemplate = async () => {
     "template_choose": "Файл таңдау",
     "template_upload": "Жүктеу",
     "template_uploading": "Жүктелуде...",
-    "template_uploaded_reboot": "Шаблон жүктелді. Қолдану үшін қайта іске қосыңыз.",
+    "template_uploaded_reboot": "Шаблон жүктелді. Көпір қайта іске қосылуда...",
     "template_upload_error": "Жүктеу қатесі"
   },
   "it": {
@@ -279,7 +279,14 @@ const uploadTemplate = async () => {
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Abilita serial bridge",
     "mqts_port": "Porta RS485",
-    "mqts_slave_id": "Modbus slave ID"
+    "mqts_slave_id": "Modbus slave ID",
+    "template_title": "Template dispositivo",
+    "template_label": "File JSON template",
+    "template_choose": "Scegli file",
+    "template_upload": "Carica",
+    "template_uploading": "Caricamento...",
+    "template_uploaded_reboot": "Template caricato. Bridge in riavvio...",
+    "template_upload_error": "Errore di caricamento"
   },
   "de": {
     "title": "Serial-MQTT Bridge",
@@ -298,7 +305,14 @@ const uploadTemplate = async () => {
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Serial bridge aktivieren",
     "mqts_port": "RS485-Port",
-    "mqts_slave_id": "Modbus slave ID"
+    "mqts_slave_id": "Modbus slave ID",
+    "template_title": "Ger\u00e4tevorlage",
+    "template_label": "JSON-Vorlagendatei",
+    "template_choose": "Datei ausw\u00e4hlen",
+    "template_upload": "Hochladen",
+    "template_uploading": "Hochladen...",
+    "template_uploaded_reboot": "Vorlage hochgeladen. Bridge wird neu gestartet...",
+    "template_upload_error": "Upload fehlgeschlagen"
   }
 }
 </i18n>
