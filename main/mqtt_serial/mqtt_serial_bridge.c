@@ -290,15 +290,7 @@ static int poll_channel(bridge_ctx_t *b, int idx)
         }
     }
 
-    if (b->last_values[idx] && strcmp(b->last_values[idx], val_str) == 0)
-        return 0;
-
-    /* Don't publish if MQTT not connected yet — keep last_values unchanged
-     * so we'll re-publish everything fresh after reconnect */
     if (!b->mqtt_connected) return 0;
-
-    free(b->last_values[idx]);
-    b->last_values[idx] = strdup(val_str);
 
     char topic[TOPIC_MAX];
     make_value_topic(b->tmpl.device_id, ch->name, topic, sizeof(topic));
@@ -306,7 +298,7 @@ static int poll_channel(bridge_ctx_t *b, int idx)
     if (r < 0)
         ESP_LOGE(TAG, "publish failed for %s", topic);
     else
-        ESP_LOGI(TAG, "[PUB] %s = %s", topic, val_str);
+        ESP_LOGD(TAG, "[PUB] %s = %s", topic, val_str);
     return 0;
 }
 
@@ -336,7 +328,6 @@ static void bridge_task(void *pvParameters)
             if (xEventGroupGetBits(g_stop_eg) & EV_STOP_REQ) goto done;
 
             if (poll_channel(b, i) == 0) cycle_ok = 1;
-            vTaskDelay(pdMS_TO_TICKS(20));
         }
 
         if (cycle_ok) {

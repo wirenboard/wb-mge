@@ -97,7 +97,7 @@ void mb_rtu_close(mb_rtu_port_t *port)
 
 static int port_send(mb_rtu_port_t *p, const uint8_t *buf, int len)
 {
-    uart_flush(p->uart_num);
+    uart_flush_input(p->uart_num);
     int written = uart_write_bytes(p->uart_num, (const char *)buf, (size_t)len);
     if (written != len) {
         ESP_LOGE(TAG, "uart_write_bytes: wrote %d of %d", written, len);
@@ -110,9 +110,6 @@ static int port_send(mb_rtu_port_t *p, const uint8_t *buf, int len)
 
 static int port_recv(mb_rtu_port_t *p, uint8_t *buf, int max_len, int timeout_ms)
 {
-    /* Flush any stale RX data */
-    uart_flush_input(p->uart_num);
-
     int total    = 0;
     int deadline = timeout_ms;
 
