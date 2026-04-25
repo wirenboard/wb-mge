@@ -22,14 +22,14 @@ const uploadTemplate = async () => {
   templateUploadResult.value = null;
   try {
     const prefix = import.meta.env.DEV ? 'api/' : '';
+    const text = await templateFile.value[0].text();
     const resp = await fetch(`${prefix}device-template`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: templateFile.value[0],
+      body: text,
     });
     const json = await resp.json();
     if (json.success) {
-      templateUploadResult.value = t('template_uploaded');
+      templateUploadResult.value = t('template_uploaded_reboot');
       templateFile.value = null;
     } else {
       templateUploadResult.value = json.error || t('template_upload_error');
@@ -42,9 +42,17 @@ const uploadTemplate = async () => {
 };
 
 const deleteTemplate = async () => {
-  const prefix = import.meta.env.DEV ? 'api/' : '';
-  await fetch(`${prefix}device-template`, { method: 'DELETE' });
-  templateUploadResult.value = t('template_deleted');
+  try {
+    const prefix = import.meta.env.DEV ? 'api/' : '';
+    const resp = await fetch(`${prefix}device-template`, { method: 'DELETE' });
+    if (resp.ok) {
+      templateUploadResult.value = t('template_deleted');
+    } else {
+      templateUploadResult.value = t('template_upload_error');
+    }
+  } catch {
+    templateUploadResult.value = t('template_upload_error');
+  }
 };
 </script>
 
@@ -219,8 +227,8 @@ const deleteTemplate = async () => {
     "template_choose": "Choose file",
     "template_uploading": "Uploading...",
     "template_reset": "Reset to default",
-    "template_uploaded": "Template uploaded successfully",
-    "template_deleted": "Template reset to default",
+    "template_uploaded_reboot": "Template uploaded. Reboot device to apply.",
+    "template_deleted": "Template reset to default. Reboot to apply.",
     "template_upload_error": "Upload failed"
   },
   "ru": {
@@ -246,8 +254,8 @@ const deleteTemplate = async () => {
     "template_choose": "Выбрать файл",
     "template_uploading": "Загрузка...",
     "template_reset": "Сбросить к умолчанию",
-    "template_uploaded": "Шаблон загружен",
-    "template_deleted": "Шаблон сброшен к умолчанию",
+    "template_uploaded_reboot": "Шаблон загружен. Перезагрузите устройство для применения.",
+    "template_deleted": "Шаблон сброшен. Перезагрузите устройство.",
     "template_upload_error": "Ошибка загрузки"
   },
   "kk": {
@@ -267,7 +275,15 @@ const deleteTemplate = async () => {
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Serial bridge қосу",
     "mqts_port": "RS485 порты",
-    "mqts_slave_id": "Modbus slave ID"
+    "mqts_slave_id": "Modbus slave ID",
+    "template_title": "Құрылғы шаблоны",
+    "template_label": "JSON шаблон файлы",
+    "template_choose": "Файл таңдау",
+    "template_uploading": "Жүктелуде...",
+    "template_reset": "Әдепкіге қайта орнату",
+    "template_uploaded_reboot": "Шаблон жүктелді. Қолдану үшін қайта іске қосыңыз.",
+    "template_deleted": "Шаблон қайта орнатылды.",
+    "template_upload_error": "Жүктеу қатесі"
   },
   "it": {
     "title": "MQTT",

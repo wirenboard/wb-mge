@@ -4,7 +4,7 @@
 #include <esp_http_server.h>
 
 #define TEMPLATE_SPIFFS_PATH    "/spiffs/device_template.json"
-#define TEMPLATE_MAX_SIZE       (256 * 1024)  /* 256 KB */
+#define TEMPLATE_MAX_SIZE       (192 * 1024)  /* 192 KB — leaves SPIFFS metadata room in 256 KB partition */
 
 /* Mount SPIFFS. Call once at startup. */
 esp_err_t template_handler_init(void);

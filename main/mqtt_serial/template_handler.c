@@ -47,14 +47,23 @@ esp_err_t template_handler_load(char **buf, size_t *len)
             if (data) {
                 size_t n = fread(data, 1, (size_t)sz, f);
                 fclose(f);
-                data[n] = '\0';
-                *buf = data;
-                *len = n;
-                ESP_LOGI(TAG, "Loaded template from SPIFFS (%zu bytes)", n);
-                return ESP_OK;
+                if (n != (size_t)sz) {
+                    /* Short read: corrupted file, fall through to embedded default */
+                    ESP_LOGW(TAG, "SPIFFS template read error (%zu of %ld bytes), using embedded default", n, sz);
+                    free(data);
+                } else {
+                    data[n] = '\0';
+                    *buf = data;
+                    *len = n;
+                    ESP_LOGI(TAG, "Loaded template from SPIFFS (%zu bytes)", n);
+                    return ESP_OK;
+                }
+            } else {
+                fclose(f);
             }
+        } else {
+            fclose(f);
         }
-        fclose(f);
     }
 
     /* Fallback: embedded default */
@@ -110,7 +119,9 @@ esp_err_t template_upload_post_handler(httpd_req_t *req)
     fclose(f);
     free(buf);
 
-    if ((int)written != received) {
+    if (written != (size_t)received) {
+        /* Remove corrupt partial file */
+        remove(TEMPLATE_SPIFFS_PATH);
         return json_utils_send_error(req, "Write error");
     }
 
