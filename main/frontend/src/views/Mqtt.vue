@@ -59,16 +59,6 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
                   <InputNumber id="mqtt_port" v-model="data.mqtt.port" name="mqtt_port" min="1" max="65535" required />
                 </div>
                 <div class="field">
-                  <label for="mqtt_prefix">{{ t('prefix') }}</label>
-                  <input
-                    id="mqtt_prefix"
-                    v-model="data.mqtt.prefix"
-                    type="text"
-                    name="mqtt_prefix"
-                    :placeholder="t('prefix_placeholder')"
-                  />
-                </div>
-                <div class="field">
                   <label for="mqtt_user">{{ t('username') }}</label>
                   <input
                     id="mqtt_user"
