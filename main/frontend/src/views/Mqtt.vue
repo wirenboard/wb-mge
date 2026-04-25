@@ -185,8 +185,8 @@ const uploadTemplate = async () => {
 <i18n>
 {
   "en": {
-    "title": "MQTT",
-    "crumbs": "MQTT broker connection",
+    "title": "Serial-MQTT Bridge",
+    "crumbs": "Serial to MQTT bridge",
     "mqtt_settings": "MQTT broker",
     "enabled": "Enable MQTT",
     "host": "Broker host",
@@ -211,8 +211,8 @@ const uploadTemplate = async () => {
     "template_upload_error": "Upload failed"
   },
   "ru": {
-    "title": "MQTT",
-    "crumbs": "Подключение к MQTT-брокеру",
+    "title": "Serial-MQTT Bridge",
+    "crumbs": "Мост Serial–MQTT",
     "mqtt_settings": "MQTT брокер",
     "enabled": "Включить MQTT",
     "host": "Хост брокера",
@@ -237,8 +237,8 @@ const uploadTemplate = async () => {
     "template_upload_error": "Ошибка загрузки"
   },
   "kk": {
-    "title": "MQTT",
-    "crumbs": "MQTT брокеріне қосылу",
+    "title": "Serial-MQTT Bridge",
+    "crumbs": "Serial–MQTT көпірі",
     "mqtt_settings": "MQTT брокер",
     "enabled": "MQTT қосу",
     "host": "Брокер хосты",
@@ -263,8 +263,8 @@ const uploadTemplate = async () => {
     "template_upload_error": "Жүктеу қатесі"
   },
   "it": {
-    "title": "MQTT",
-    "crumbs": "Connessione al broker MQTT",
+    "title": "Serial-MQTT Bridge",
+    "crumbs": "Bridge Serial–MQTT",
     "mqtt_settings": "Broker MQTT",
     "enabled": "Abilita MQTT",
     "host": "Host broker",
@@ -282,8 +282,8 @@ const uploadTemplate = async () => {
     "mqts_slave_id": "Modbus slave ID"
   },
   "de": {
-    "title": "MQTT",
-    "crumbs": "MQTT-Broker-Verbindung",
+    "title": "Serial-MQTT Bridge",
+    "crumbs": "Serial-MQTT-Bridge",
     "mqtt_settings": "MQTT-Broker",
     "enabled": "MQTT aktivieren",
     "host": "Broker-Host",
