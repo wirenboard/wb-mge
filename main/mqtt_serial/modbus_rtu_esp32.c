@@ -4,8 +4,10 @@
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +22,8 @@ static const char *TAG = "modbus_rtu_esp32";
 struct mb_rtu_port {
     uart_port_t uart_num;
     int         response_timeout_ms;
-    int         silence_ms;  /* 3.5 char times, derived from baud rate */
+    int         silence_ms;         /* 3.5 char times, derived from baud rate */
+    QueueHandle_t event_queue;
 };
 
 /*
@@ -63,12 +66,13 @@ mb_rtu_port_t *mb_rtu_open(const char *device, int baud, char parity,
         return NULL;
     }
 
-    /* Install driver without event queue — we use direct uart_read_bytes */
+    /* Install driver with event queue for immediate data notifications */
+    QueueHandle_t event_queue = NULL;
     err = uart_driver_install((uart_port_t)port_num,
                               MB_UART_BUF_SIZE, MB_UART_BUF_SIZE,
-                              0, NULL, 0);
+                              MB_UART_QUEUE_SIZE, &event_queue, 0);
     if (err == ESP_ERR_INVALID_STATE) {
-        /* Driver already installed (shared port) — that is OK */
+        /* Driver already installed — just reconfigure, event_queue stays NULL */
         ESP_LOGW(TAG, "UART%d driver already installed, reconfiguring only", port_num);
     } else if (err != ESP_OK) {
         ESP_LOGE(TAG, "uart_driver_install failed: %s", esp_err_to_name(err));
@@ -88,6 +92,7 @@ mb_rtu_port_t *mb_rtu_open(const char *device, int baud, char parity,
     p->uart_num            = (uart_port_t)port_num;
     p->response_timeout_ms = (response_timeout_ms > 0) ? response_timeout_ms : 300;
     p->silence_ms          = silence_ms;
+    p->event_queue         = event_queue;
     return p;
 }
 
@@ -110,25 +115,56 @@ static int port_send(mb_rtu_port_t *p, const uint8_t *buf, int len)
         ESP_LOGE(TAG, "uart_write_bytes: wrote %d of %d", written, len);
         return -1;
     }
-    /* Wait until TX FIFO is empty. At 115200 baud 8 bytes = ~0.7ms; 10ms is plenty. */
-    uart_wait_tx_done(p->uart_num, pdMS_TO_TICKS(10));
     return 0;
 }
 
 static int port_recv(mb_rtu_port_t *p, uint8_t *buf, int max_len, int timeout_ms)
 {
-    int total    = 0;
-    int deadline = timeout_ms;
+    int total = 0;
 
-    while (total < max_len && deadline > 0) {
-        int chunk = uart_read_bytes(p->uart_num, buf + total,
-                                   (size_t)(max_len - total),
-                                   pdMS_TO_TICKS(deadline));
-        if (chunk <= 0) break;
-        total   += chunk;
-        /* After first bytes arrive switch to inter-frame silence timeout (3.5 char times) */
-        deadline = p->silence_ms;
+    if (p->event_queue) {
+        /* Wait for UART_DATA event which fires immediately when bytes arrive */
+        int64_t deadline_us = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+        while (total < max_len) {
+            int64_t now = esp_timer_get_time();
+            int64_t remain_us = deadline_us - now;
+            if (remain_us <= 0) break;
+            TickType_t ticks = (TickType_t)(remain_us / 1000 / portTICK_PERIOD_MS);
+            if (ticks == 0) ticks = 1;
+
+            uart_event_t event;
+            if (xQueueReceive(p->event_queue, &event, ticks) != pdTRUE) break;
+
+            if (event.type == UART_DATA) {
+                int chunk = uart_read_bytes(p->uart_num, buf + total,
+                                           (size_t)(max_len - total), 0);
+                if (chunk > 0) {
+                    total += chunk;
+                    /* After first data, switch to silence timeout for end-of-frame */
+                    deadline_us = esp_timer_get_time() + (int64_t)p->silence_ms * 1000;
+                }
+            } else if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL) {
+                uart_flush_input(p->uart_num);
+                xQueueReset(p->event_queue);
+                break;
+            }
+        }
+    } else {
+        /* Fallback: direct read (slower, no event queue) */
+        int chunk = uart_read_bytes(p->uart_num, buf, (size_t)max_len,
+                                   pdMS_TO_TICKS(timeout_ms));
+        if (chunk > 0) {
+            total += chunk;
+            while (total < max_len) {
+                chunk = uart_read_bytes(p->uart_num, buf + total,
+                                       (size_t)(max_len - total),
+                                       pdMS_TO_TICKS(p->silence_ms));
+                if (chunk <= 0) break;
+                total += chunk;
+            }
+        }
     }
+
     return total;
 }
 
