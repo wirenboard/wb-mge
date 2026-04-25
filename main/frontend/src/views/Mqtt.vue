@@ -166,7 +166,7 @@ const uploadTemplate = async () => {
               <FileUpload
                 v-model="templateFile"
                 :placeholder="t('template_choose')"
-                :uploading-placeholder="t('template_uploading')"
+                :uploading-placeholder="isUploadingTemplate ? t('template_uploading') : t('template_upload')"
                 accept=".json"
                 :is-loading="isUploadingTemplate"
                 @upload="uploadTemplate"
@@ -205,6 +205,7 @@ const uploadTemplate = async () => {
     "template_title": "Device template",
     "template_label": "Template JSON file",
     "template_choose": "Choose file",
+    "template_upload": "Upload",
     "template_uploading": "Uploading...",
     "template_uploaded_reboot": "Template uploaded. Reboot device to apply.",
     "template_upload_error": "Upload failed"
@@ -230,6 +231,7 @@ const uploadTemplate = async () => {
     "template_title": "Шаблон устройства",
     "template_label": "JSON-файл шаблона",
     "template_choose": "Выбрать файл",
+    "template_upload": "Загрузить",
     "template_uploading": "Загрузка...",
     "template_uploaded_reboot": "Шаблон загружен. Перезагрузите устройство для применения.",
     "template_upload_error": "Ошибка загрузки"
@@ -255,6 +257,7 @@ const uploadTemplate = async () => {
     "template_title": "Құрылғы шаблоны",
     "template_label": "JSON шаблон файлы",
     "template_choose": "Файл таңдау",
+    "template_upload": "Жүктеу",
     "template_uploading": "Жүктелуде...",
     "template_uploaded_reboot": "Шаблон жүктелді. Қолдану үшін қайта іске қосыңыз.",
     "template_upload_error": "Жүктеу қатесі"
