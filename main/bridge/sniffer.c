@@ -61,6 +61,17 @@ static SemaphoreHandle_t ws_mutex = NULL;
 static uint32_t packet_counter = 0;
 
 
+/* Convert internal 0-based port index to external 1-based port name */
+static unsigned port_index_to_name(unsigned index) { return index + 1; }
+
+/* Convert external 1-based port name to internal 0-based index.
+ * Returns BRIDGES_COUNT if the name is out of range. */
+static unsigned port_name_to_index(unsigned name)
+{
+    if (name < 1 || name > BRIDGES_COUNT) return BRIDGES_COUNT;
+    return name - 1;
+}
+
 static bool crc_check(const uint8_t *data, size_t len)
 {
     if (len < 4) return false;
@@ -282,7 +293,7 @@ static void sniffer_ws_task(void *arg)
                 "{\"type\":\"timeout\",\"id\":%" PRIu32 ",\"port\":%u"
                 ",\"timestamp_us\":%" PRIu64
                 ",\"slave_id\":%u,\"function\":%u}",
-                packet_counter, pkt.port, pkt.timestamp_us,
+                packet_counter, port_index_to_name(pkt.port), pkt.timestamp_us,
                 pkt.slave_id, pkt.function);
         } else {
             bytes_to_hex(pkt.data, pkt.data_len, hex_str, sizeof(hex_str));
@@ -291,7 +302,7 @@ static void sniffer_ws_task(void *arg)
                 ",\"timestamp_us\":%" PRIu64
                 ",\"dir\":\"%s\",\"slave_id\":%u,\"function\":%u"
                 ",\"crc_valid\":%s,\"raw\":\"%s\",\"size\":%u}",
-                packet_counter, pkt.port, pkt.timestamp_us,
+                packet_counter, port_index_to_name(pkt.port), pkt.timestamp_us,
                 pkt.is_master ? "master" : "slave",
                 pkt.slave_id, pkt.function,
                 pkt.crc_valid ? "true" : "false",
@@ -362,10 +373,10 @@ static esp_err_t sniffer_ws_handler(httpd_req_t *req)
                 else        sniffer_disable(i);
             }
         } else if (cJSON_IsNumber(port)) {
-            unsigned p = (unsigned)port->valuedouble;
-            if (p < BRIDGES_COUNT) {
-                if (enable) sniffer_enable(p);
-                else        sniffer_disable(p);
+            unsigned idx = port_name_to_index((unsigned)port->valuedouble);
+            if (idx < BRIDGES_COUNT) {
+                if (enable) sniffer_enable(idx);
+                else        sniffer_disable(idx);
             }
         }
     }
@@ -377,9 +388,9 @@ static esp_err_t sniffer_ws_handler(httpd_req_t *req)
 static esp_err_t sniffer_status_handler(httpd_req_t *req)
 {
     char resp[64];
-    snprintf(resp, sizeof(resp), "{\"port_0\":%s,\"port_1\":%s}",
-        sniff_ctx[0].enabled ? "true" : "false",
-        sniff_ctx[1].enabled ? "true" : "false");
+    snprintf(resp, sizeof(resp), "{\"port_%u\":%s,\"port_%u\":%s}",
+        port_index_to_name(0), sniff_ctx[0].enabled ? "true" : "false",
+        port_index_to_name(1), sniff_ctx[1].enabled ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, (ssize_t)strlen(resp));
     return ESP_OK;
