@@ -121,15 +121,11 @@ function getWsUrl(): string {
   return `${proto}://${location.host}/sniffer/ws`
 }
 
-function portFilterToWsPort(p: string): number {
-  return parseInt(p)
-}
-
-function sendPortStart(port: string | number) {
+function sendPortStart(port: number) {
   ws.value?.send(JSON.stringify({ cmd: 'start', port }))
 }
 
-function sendPortStop(port: string | number) {
+function sendPortStop(port: number) {
   ws.value?.send(JSON.stringify({ cmd: 'stop', port }))
 }
 
@@ -138,7 +134,7 @@ function connectWs() {
   ws.value = new WebSocket(getWsUrl())
   ws.value.onopen = () => {
     wsStatus.value = 'connected'
-    sendPortStart(portFilterToWsPort(portFilter.value))
+    sendPortStart(parseInt(portFilter.value))
   }
   ws.value.onmessage = (ev) => {
     try {
@@ -178,15 +174,15 @@ function startCapture() {
 function stopCapture() {
   running.value = false
   wsStatus.value = 'disconnected'
-  sendPortStop(portFilterToWsPort(portFilter.value))
+  sendPortStop(parseInt(portFilter.value))
   ws.value?.close()
   ws.value = null
 }
 
 watch(portFilter, (newPort, oldPort) => {
   if (!running.value || ws.value === null || wsStatus.value !== 'connected') return
-  sendPortStop(portFilterToWsPort(oldPort))
-  sendPortStart(portFilterToWsPort(newPort))
+  sendPortStop(parseInt(oldPort))
+  sendPortStart(parseInt(newPort))
 })
 
 function clearLogs() {

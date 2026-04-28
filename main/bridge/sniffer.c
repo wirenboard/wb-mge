@@ -364,20 +364,12 @@ static esp_err_t sniffer_ws_handler(httpd_req_t *req)
     cJSON *cmd  = cJSON_GetObjectItem(root, "cmd");
     cJSON *port = cJSON_GetObjectItem(root, "port");
 
-    if (cmd && cJSON_IsString(cmd) && port) {
+    if (cmd && cJSON_IsString(cmd) && cJSON_IsNumber(port)) {
         bool enable = (strcmp(cmd->valuestring, "start") == 0);
-
-        if (cJSON_IsString(port) && strcmp(port->valuestring, "all") == 0) {
-            for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-                if (enable) sniffer_enable(i);
-                else        sniffer_disable(i);
-            }
-        } else if (cJSON_IsNumber(port)) {
-            unsigned idx = port_name_to_index((unsigned)port->valuedouble);
-            if (idx < BRIDGES_COUNT) {
-                if (enable) sniffer_enable(idx);
-                else        sniffer_disable(idx);
-            }
+        unsigned idx = port_name_to_index((unsigned)port->valuedouble);
+        if (idx < BRIDGES_COUNT) {
+            if (enable) sniffer_enable(idx);
+            else        sniffer_disable(idx);
         }
     }
 
