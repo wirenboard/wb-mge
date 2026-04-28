@@ -27,11 +27,14 @@ ifeq ($(UNAME_S),Darwin)
     GREP := $(shell which ggrep 2>/dev/null || which grep)
     # Try to find GNU find first, then use system find with compatible syntax
     FIND := $(shell which gfind 2>/dev/null || echo "find")
+    # On macOS idf.py is not in PATH by default; resolve via IDF_PATH set by activate script
+    IDF_PY ?= $(if $(IDF_PATH),$(IDF_PATH)/tools/idf.py,idf.py)
 else
     # Linux and other Unix-like systems
     SED := sed
     GREP := grep
     FIND := find
+    IDF_PY ?= idf.py
 endif
 
 #######################################
@@ -101,7 +104,7 @@ build-frontend:
 
 build-idf-project:
 	@echo 'Building ESP-IDF project'
-	@idf.py $(addprefix -D, $(DEFS)) build
+	@$(IDF_PY) $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
 
 prepare_release:
@@ -113,7 +116,7 @@ prepare_release:
 clean:
 	@echo 'Cleaning project'
 	@rm -rf $(BUILD_DIR)
-	@idf.py fullclean
+	@$(IDF_PY) fullclean
 	@rm -rf $(RELEASE_DIR)
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist

@@ -44,6 +44,20 @@ cd esp-idf
 source export.sh
 ```
 
+Для MacOS:
+
+```bash
+# Установка Espressif Installation Manager
+brew install eim
+
+# Установка ESP-IDF
+eim install -i v5.4
+
+# Активация окружения
+source ~/.espressif/tools/activate_idf_v5.4.sh  
+```
+
+
 ### 2. Клонирование репозитория
 
 ```bash
