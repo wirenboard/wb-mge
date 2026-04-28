@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted, nextTick } from 'vue';
+import { ref, computed, watch, onUnmounted, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -32,8 +32,10 @@ const tableWrap = ref<HTMLElement | null>(null);
 const selected = ref<number | null>(null);
 const filter = ref('');
 const onlyErrors = ref(false);
-const portFilter = ref('all');
-const portOptions = ['all', 'A', 'B'];
+const portFilter = ref('1');
+const portOptions = ['1', '2'];
+const selectedSlaves = ref<Set<string>>(new Set());
+const selectedFcs = ref<Set<string>>(new Set());
 
 const FC_NAMES: Record<number, string> = {
   1: 'Read Coils',
@@ -119,12 +121,24 @@ function getWsUrl(): string {
   return `${proto}://${location.host}/sniffer/ws`
 }
 
+function portFilterToWsPort(p: string): number {
+  return parseInt(p)
+}
+
+function sendPortStart(port: string | number) {
+  ws.value?.send(JSON.stringify({ cmd: 'start', port }))
+}
+
+function sendPortStop(port: string | number) {
+  ws.value?.send(JSON.stringify({ cmd: 'stop', port }))
+}
+
 function connectWs() {
   lastTimestampUs = 0
   ws.value = new WebSocket(getWsUrl())
   ws.value.onopen = () => {
     wsStatus.value = 'connected'
-    ws.value?.send(JSON.stringify({ cmd: 'start', port: 'all' }))
+    sendPortStart(portFilterToWsPort(portFilter.value))
   }
   ws.value.onmessage = (ev) => {
     try {
@@ -164,10 +178,16 @@ function startCapture() {
 function stopCapture() {
   running.value = false
   wsStatus.value = 'disconnected'
-  ws.value?.send(JSON.stringify({ cmd: 'stop', port: 'all' }))
+  sendPortStop(portFilterToWsPort(portFilter.value))
   ws.value?.close()
   ws.value = null
 }
+
+watch(portFilter, (newPort, oldPort) => {
+  if (!running.value || ws.value === null || wsStatus.value !== 'connected') return
+  sendPortStop(portFilterToWsPort(oldPort))
+  sendPortStart(portFilterToWsPort(newPort))
+})
 
 function clearLogs() {
   rows.value = []
@@ -180,10 +200,8 @@ const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length
 
 const filteredRows = computed(() => {
   let r = rows.value
-  if (portFilter.value !== 'all') {
-    const p = portFilter.value === 'A' ? 0 : 1
-    r = r.filter(x => x.port === p)
-  }
+  const p = parseInt(portFilter.value)
+  r = r.filter(x => x.port === p)
   if (onlyErrors.value) r = r.filter(x => x.crc === 'ERR')
   if (filter.value.trim()) {
     const f = filter.value.toLowerCase()
@@ -255,7 +273,7 @@ function directionLabel(dir: string, slave: string) {
           :class="['port-btn', { active: portFilter === p }]"
           @click="portFilter = p"
         >
-          {{ p === 'all' ? t('all_ports') : 'Port ' + p }}
+          Port {{ p }}
         </button>
       </div>
 
@@ -727,7 +745,6 @@ function directionLabel(dir: string, slave: string) {
     "stop": "Stop",
     "clear": "Clear",
     "filter_placeholder": "Filter by Slave ID / FC / payload\u2026",
-    "all_ports": "All ports",
     "errors_only": "Errors only",
     "packets": "packets",
     "error": "error",
@@ -750,7 +767,6 @@ function directionLabel(dir: string, slave: string) {
     "stop": "Стоп",
     "clear": "Очистить",
     "filter_placeholder": "Фильтр по Slave ID / FC / payload…",
-    "all_ports": "Все порты",
     "errors_only": "Только ошибки",
     "packets": "пакетов",
     "error": "ошибка",
@@ -773,7 +789,6 @@ function directionLabel(dir: string, slave: string) {
     "stop": "Тоқтату",
     "clear": "Тазалау",
     "filter_placeholder": "Slave ID / FC / payload бойынша сүзу…",
-    "all_ports": "Барлық порттар",
     "errors_only": "Тек қателер",
     "packets": "пакет",
     "error": "қате",
@@ -796,7 +811,6 @@ function directionLabel(dir: string, slave: string) {
     "stop": "Ferma",
     "clear": "Cancella",
     "filter_placeholder": "Filtra per Slave ID / FC / payload…",
-    "all_ports": "Tutte le porte",
     "errors_only": "Solo errori",
     "packets": "pacchetti",
     "error": "errore",
@@ -819,7 +833,6 @@ function directionLabel(dir: string, slave: string) {
     "stop": "Stopp",
     "clear": "Löschen",
     "filter_placeholder": "Filtern nach Slave-ID / FC / Payload…",
-    "all_ports": "Alle Ports",
     "errors_only": "Nur Fehler",
     "packets": "Pakete",
     "error": "Fehler",
