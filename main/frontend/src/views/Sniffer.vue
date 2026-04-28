@@ -30,7 +30,6 @@ const wsStatus = ref<'connected' | 'disconnected' | 'reconnecting'>('disconnecte
 
 const tableWrap = ref<HTMLElement | null>(null);
 const selected = ref<number | null>(null);
-const filter = ref('');
 const onlyErrors = ref(false);
 const portFilter = ref('1');
 const portOptions = ['1', '2'];
@@ -199,14 +198,6 @@ const filteredRows = computed(() => {
   const p = parseInt(portFilter.value)
   r = r.filter(x => x.port === p)
   if (onlyErrors.value) r = r.filter(x => x.crc === 'ERR')
-  if (filter.value.trim()) {
-    const f = filter.value.toLowerCase()
-    r = r.filter(x =>
-      x.slave.toLowerCase().includes(f) ||
-      x.fc.toLowerCase().includes(f) ||
-      x.pl.toLowerCase().includes(f)
-    )
-  }
   return r
 });
 
@@ -251,18 +242,6 @@ function directionLabel(dir: string, slave: string) {
 
     <!-- Filter bar -->
     <div class="filter-bar">
-      <div class="filter-search">
-        <svg class="filter-search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="7" cy="7" r="5" /><path d="m11 11 3 3" />
-        </svg>
-        <input
-          v-model="filter"
-          type="text"
-          :placeholder="t('filter_placeholder')"
-          class="filter-input"
-        />
-      </div>
-
       <div class="filter-ports">
         <button
           v-for="p in portOptions" :key="p"
@@ -390,25 +369,6 @@ function directionLabel(dir: string, slave: string) {
   padding: 10px 32px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-color);
-}
-
-.filter-search {
-  position: relative;
-  flex: 1;
-  max-width: 340px;
-}
-
-.filter-search-icon {
-  position: absolute;
-  left: 9px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-muted);
-  pointer-events: none;
-}
-
-.filter-input {
-  padding-left: 28px !important;
 }
 
 .filter-ports {
@@ -716,9 +676,6 @@ function directionLabel(dir: string, slave: string) {
     flex-wrap: wrap;
     padding: 10px 12px;
   }
-  .filter-search {
-    max-width: none;
-  }
   .filter-stats {
     flex-wrap: wrap;
     gap: 8px;
@@ -740,7 +697,6 @@ function directionLabel(dir: string, slave: string) {
     "start": "Start",
     "stop": "Stop",
     "clear": "Clear",
-    "filter_placeholder": "Filter by Slave ID / FC / payload\u2026",
     "errors_only": "Errors only",
     "packets": "packets",
     "error": "error",
@@ -762,7 +718,6 @@ function directionLabel(dir: string, slave: string) {
     "start": "Старт",
     "stop": "Стоп",
     "clear": "Очистить",
-    "filter_placeholder": "Фильтр по Slave ID / FC / payload…",
     "errors_only": "Только ошибки",
     "packets": "пакетов",
     "error": "ошибка",
@@ -784,7 +739,6 @@ function directionLabel(dir: string, slave: string) {
     "start": "Бастау",
     "stop": "Тоқтату",
     "clear": "Тазалау",
-    "filter_placeholder": "Slave ID / FC / payload бойынша сүзу…",
     "errors_only": "Тек қателер",
     "packets": "пакет",
     "error": "қате",
@@ -806,7 +760,6 @@ function directionLabel(dir: string, slave: string) {
     "start": "Avvia",
     "stop": "Ferma",
     "clear": "Cancella",
-    "filter_placeholder": "Filtra per Slave ID / FC / payload…",
     "errors_only": "Solo errori",
     "packets": "pacchetti",
     "error": "errore",
@@ -828,7 +781,6 @@ function directionLabel(dir: string, slave: string) {
     "start": "Start",
     "stop": "Stopp",
     "clear": "Löschen",
-    "filter_placeholder": "Filtern nach Slave-ID / FC / Payload…",
     "errors_only": "Nur Fehler",
     "packets": "Pakete",
     "error": "Fehler",
