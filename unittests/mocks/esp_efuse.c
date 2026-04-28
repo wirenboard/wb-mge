@@ -15,6 +15,8 @@
 #define WIFI_PASS_EFUSE_OFFSET                  0
 #define WIFI_PASS_EFUSE_MAX_LEN                 12
 
+esp_efuse_block_t mock_read_block = EFUSE_BLK0;
+size_t mock_read_offset = 0;
 esp_err_t mock_esp_efuse_read_block_return = ESP_OK;
 
 static uint8_t efuse_blocks[EFUSE_BLK_MAX][BLOCK_SIZE] = {0};
@@ -75,6 +77,8 @@ esp_err_t esp_efuse_read_block(esp_efuse_block_t blk, void* dst_key, size_t offs
 
 void mock_esp_efuse_reset(void)
 {
+    mock_read_block = EFUSE_BLK0;
+    mock_read_offset = 0;
     mock_esp_efuse_read_block_return = ESP_OK;
     memset(efuse_blocks, 0, sizeof(efuse_blocks));
     mock_esp_efuse_set_signature(TEST_DEVICE_SIGNATURE);
