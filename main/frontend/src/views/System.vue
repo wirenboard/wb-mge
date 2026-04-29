@@ -9,6 +9,7 @@ import { useInfo } from '@/common/info';
 import { documentation, email, support, website, firmwareLatest, firmwareLatestVersion } from '@/common/links';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
+import Switch from '@/components/Switch.vue';
 import type { CommandResponse } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Configuration from '@/components/Configuration.vue';
@@ -148,6 +149,29 @@ const updateInterface = () => {
                 </div>
               </div>
             </template>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <div class="card-title-wrap">
+              <div class="title">{{ t('power_title') }}</div>
+              <div class="sub">{{ t('power_sub') }}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px;color:var(--text-secondary)">V<sub>out</sub></span>
+              <Switch
+                id="system_vout"
+                v-model="settings!.vout"
+                @change="() => updateSettings({ vout: settings!.vout })"
+              />
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="kv">
+              <div class="k">{{ t('power') }}</div>
+              <div class="v mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
+            </div>
           </div>
         </section>
 
@@ -301,6 +325,10 @@ const updateInterface = () => {
     "hostname_label": "Name",
     "access_url_label": "Access URL",
     "serial_num": "Serial number",
+    "power_title": "Power",
+    "power_sub": "Supply & auxiliary output",
+    "power": "Supply voltage",
+    "v": "V",
     "uptime": "Uptime",
     "uptime_days": "- | {n} day | {n} days | {n} days",
     "uptime_hours": "less than an hour | {n} hour | {n} hours | {n} hours",
@@ -338,6 +366,10 @@ const updateInterface = () => {
     "hostname_label": "Имя",
     "access_url_label": "mDNS адрес",
     "serial_num": "Серийный номер",
+    "power_title": "Питание",
+    "power_sub": "Питание и вспомогательный выход",
+    "power": "Напряжение питания",
+    "v": "В",
     "uptime": "Время работы",
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
     "uptime_hours": "- | {n} час | {n} часа | {n} часов",
@@ -375,6 +407,10 @@ const updateInterface = () => {
     "hostname_label": "Атауы",
     "access_url_label": "Қол жеткізу URL",
     "serial_num": "Сериялық нөмір",
+    "power_title": "Қуат",
+    "power_sub": "Қуат және көмекші шығыс",
+    "power": "Қорек кернеуі",
+    "v": "В",
     "uptime": "Жұмыс уақыты",
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
     "uptime_hours": "бір сағаттан аз | {n} сағат | {n} сағат | {n} сағат",
@@ -412,6 +448,10 @@ const updateInterface = () => {
     "hostname_label": "Nome",
     "access_url_label": "URL di accesso",
     "serial_num": "Numero di serie",
+    "power_title": "Alimentazione",
+    "power_sub": "Alimentazione e uscita ausiliaria",
+    "power": "Tensione di alimentazione",
+    "v": "V",
     "uptime": "Tempo di attività",
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
     "uptime_hours": "meno di un'ora | {n} ora | {n} ore | {n} ore",
@@ -449,6 +489,10 @@ const updateInterface = () => {
     "hostname_label": "Name",
     "access_url_label": "Zugriffs-URL",
     "serial_num": "Seriennummer",
+    "power_title": "Stromversorgung",
+    "power_sub": "Versorgung und Hilfsausgang",
+    "power": "Versorgungsspannung",
+    "v": "V",
     "uptime": "Betriebszeit",
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
     "uptime_hours": "weniger als eine Stunde | {n} Stunde | {n} Stunden | {n} Stunden",

@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
+import { firmwareLatest, firmwareLatestVersion } from '@/common/links';
 import { useRouter } from 'vue-router';
+import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
-import Switch from '@/components/Switch.vue';
 import RsStatus from '@/components/RsStatus.vue';
 
 const { t } = useI18n();
@@ -15,6 +16,23 @@ const { info, startPolling, stopPolling } = useInfo();
 const { data: settings, updateSettings } = useSettings();
 const { uptime } = useUptime();
 const router = useRouter();
+
+const latestVersion = ref<string | null>(null);
+const latestVersionError = ref(false);
+
+onMounted(async () => {
+  try {
+    const res = await fetch(firmwareLatestVersion);
+    if (!res.ok) throw new Error();
+    latestVersion.value = (await res.text()).trim();
+  } catch {
+    latestVersionError.value = true;
+  }
+});
+
+const hasUpdate = computed(() =>
+  latestVersion.value && info.value?.firmware && latestVersion.value !== info.value.firmware
+);
 
 onMounted(() => {
   startPolling();
@@ -130,18 +148,7 @@ const getDisplayValue = (val: string | boolean | number) => {
 
         <section class="card">
           <div class="card-header">
-            <div class="card-title-wrap">
-              <div class="title">{{ t('gateway') }}</div>
-              <div class="sub">{{ t('gateway_sub') }}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="font-size:12px;color:var(--text-secondary)">V<sub>out</sub></span>
-              <Switch
-                id="power_vout"
-                v-model="settings!.vout"
-                @change="() => updateSettings({ vout: settings!.vout })"
-              />
-            </div>
+            <div class="title">{{ t('gateway') }}</div>
           </div>
           <div class="card-body">
             <div class="kv">
@@ -162,6 +169,13 @@ const getDisplayValue = (val: string | boolean | number) => {
                 </div>
               </div>
             </template>
+            <div class="kv">
+              <div class="k">{{ t('firmware_version') }}</div>
+              <div class="v firmware-row">
+                <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted" style="font-size:11.5px">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted" style="font-size:11.5px">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
+                <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
+              </div>
+            </div>
           </div>
         </section>
       </div>
@@ -205,18 +219,24 @@ const getDisplayValue = (val: string | boolean | number) => {
 </template>
 
 <style>
-.vout-control {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.vout-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
 .uptime-value {
   display: flex;
   gap: 4px;
+}
+.firmware-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.firmware-update-link {
+  font-size: 11.5px;
+  color: var(--color-primary, #2563eb);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.firmware-update-link:hover {
+  text-decoration: underline;
 }
 </style>
 
@@ -255,7 +275,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime": "Uptime",
     "uptime_days": "- | {n} day | {n} days | {n} days",
     "uptime_hours": "less than an hour | {n} h | {n} h | {n} h",
-    "uptime_minutes": "{n} min"
+    "uptime_minutes": "{n} min",
+    "firmware_version": "Firmware",
+    "firmware_latest": "up to date",
+    "firmware_latest_label": "latest",
+    "firmware_update_btn": "Update"
   },
   "ru": {
     "title": "Обзор",
@@ -290,7 +314,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime": "Время работы",
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
     "uptime_hours": "- | {n} ч | {n} ч | {n} ч",
-    "uptime_minutes": "{n} мин"
+    "uptime_minutes": "{n} мин",
+    "firmware_version": "Прошивка",
+    "firmware_latest": "актуальная",
+    "firmware_latest_label": "последняя",
+    "firmware_update_btn": "Обновить"
   },
   "kk": {
     "title": "Шолу",
@@ -325,7 +353,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime": "Жұмыс уақыты",
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
     "uptime_hours": "- | {n} сағ | {n} сағ | {n} сағ",
-    "uptime_minutes": "{n} мин"
+    "uptime_minutes": "{n} мин",
+    "firmware_version": "Бағдарлама",
+    "firmware_latest": "өзекті",
+    "firmware_latest_label": "соңғы",
+    "firmware_update_btn": "Жаңарту"
   },
   "it": {
     "title": "Dashboard",
@@ -360,7 +392,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime": "Tempo di attività",
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
     "uptime_hours": "- | {n} h | {n} h | {n} h",
-    "uptime_minutes": "{n} min"
+    "uptime_minutes": "{n} min",
+    "firmware_version": "Firmware",
+    "firmware_latest": "aggiornato",
+    "firmware_latest_label": "ultima",
+    "firmware_update_btn": "Aggiorna"
   },
   "de": {
     "title": "Übersicht",
@@ -395,7 +431,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime": "Betriebszeit",
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
     "uptime_hours": "- | {n} h | {n} h | {n} h",
-    "uptime_minutes": "{n} min"
+    "uptime_minutes": "{n} min",
+    "firmware_version": "Firmware",
+    "firmware_latest": "aktuell",
+    "firmware_latest_label": "neueste",
+    "firmware_update_btn": "Aktualisieren"
   }
 }
 </i18n>
