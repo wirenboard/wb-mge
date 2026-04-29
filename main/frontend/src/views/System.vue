@@ -119,7 +119,7 @@ const updateInterface = () => {
               </div>
               <div class="kv">
                 <div class="k">{{ t('access_url_label') }}</div>
-                <div class="v mono muted">http://{{ settings!.hostname }}.local</div>
+                <a class="v mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
               </div>
             </div>
           </form>
