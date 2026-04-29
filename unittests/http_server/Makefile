@@ -18,6 +18,7 @@ INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main
+INC += $(PROJ_DIR)/main/bridge
 INC += $(IDF_PATH)/components/esp_common/include
 
 # List of tests
