@@ -1,3 +1,11 @@
+2026-05-18 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
+    * version:  1.1.2
+    * added:    redesigned UI with new design system and component updates
+    * added:    Inter variable font with latin and cyrillic subsets
+    * change:    split settings into separate Network and Serial Ports pages, add TCP gateway page
+    * added:    latest firmware version display with download link
+    * fix:      immutable caching headers for static font assets
+
 2026-05-08 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
     * version:  1.1.2
     * added:    firmware source code is now open source and publicly available, 
