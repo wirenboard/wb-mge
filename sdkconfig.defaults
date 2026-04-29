@@ -23,27 +23,41 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_FREERTOS_HZ=500
 
 #
-# Enable DEBUG log messages activated by esp_log_level_set()
-#
-CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
-CONFIG_LOG_MAXIMUM_LEVEL=4
-
-#
 # LWIP
 #
 CONFIG_LWIP_MAX_SOCKETS=15
 CONFIG_LWIP_STATS=y
 
-#
-# eFuse Bit Manager
-#
-# Only for debug purposes, must be disabled in production!
-# CONFIG_EFUSE_VIRTUAL=y
-
 # Task Watchdog Timer panic on timeout (reset system)
 CONFIG_ESP_TASK_WDT_PANIC=y
+
+# Preparing for a firmware update may take about 5-7 seconds
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 
 #
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+#
+# ADC Calibration Configurations
+#
+# Disable ADC two-point calibration because really these calibrations
+# are are not present in the eFuse (bytes 12-15 in block 3) and to
+# prevent conflict with device signature stored in block 3
+CONFIG_ADC_CALI_EFUSE_TP_ENABLE=n
+
+#
+# Enable DEBUG log messages activated by esp_log_level_set()
+#
+# Only for debug purposes, must be disabled in production!
+#
+# CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+# CONFIG_LOG_MAXIMUM_LEVEL=4
+
+#
+# eFuse Bit Manager
+#
+# Only for debug purposes, must be disabled in production!
+#
+# CONFIG_EFUSE_VIRTUAL=y
