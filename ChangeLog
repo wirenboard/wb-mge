@@ -1,5 +1,12 @@
 2026-05-18 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
     * version:  1.2.0
+
+2026-04-29 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
+    * version:  1.1.3
+    * fix:      OTA update returning 400 on macOS due to application/macbinary Content-Type
+
+2026-04-29 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
+    * version:  1.1.2
     * added:    redesigned UI with new design system and component updates
     * change:    split settings into separate Network and Serial Ports pages, add TCP gateway page
     * added:    latest firmware version display with download link

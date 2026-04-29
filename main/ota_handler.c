@@ -65,13 +65,20 @@ static esp_err_t ota_validate_fw_desc(wb_app_desc_t* ota_fw_desc)
 }
 
 
+static bool ota_is_valid_content_type(const char *content_type)
+{
+    return (strstr(content_type, "application/octet-stream") != NULL) ||
+           (strstr(content_type, "application/macbinary") != NULL);
+}
+
+
 static esp_err_t ota_validate_content_type(httpd_req_t *req)
 {
     char content_type[64];
     if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) == ESP_OK) {
-        if (strstr(content_type, "application/octet-stream") == NULL) {
+        if (!ota_is_valid_content_type(content_type)) {
             ESP_LOGW(TAG, "Invalid content type for OTA update: %s", content_type);
-            return json_utils_send_error(req, "Invalid content type. Expected: application/octet-stream");
+            return ESP_FAIL;
         }
     } else {
         ESP_LOGW(TAG, "No Content-Type header found, proceeding anyway");
