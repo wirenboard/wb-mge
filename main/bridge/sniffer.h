@@ -2,8 +2,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
-#include "esp_http_server.h"
 #include "serial.h"
+
+#ifndef __unittest_env__
+#include "esp_http_server.h"
+#else
+typedef void* httpd_handle_t;
+#endif
 
 esp_err_t sniffer_init(void);
 void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc);
