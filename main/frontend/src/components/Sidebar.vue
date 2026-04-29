@@ -227,7 +227,7 @@ watch(
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: var(--text-on-dark-muted);
+  color: #6e7580;
   padding: 12px 10px 6px;
 }
 
@@ -369,7 +369,7 @@ watch(
 }
 
 .sb-port-k {
-  color: var(--text-on-dark-muted);
+  color: #6e7580;
 }
 
 .sb-port-v {
