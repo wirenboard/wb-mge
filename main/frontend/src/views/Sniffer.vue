@@ -30,7 +30,6 @@ const wsStatus = ref<'connected' | 'disconnected' | 'reconnecting'>('disconnecte
 
 const tableWrap = ref<HTMLElement | null>(null);
 const selected = ref<number | null>(null);
-const onlyErrors = ref(false);
 const portFilter = ref('1');
 const portOptions = ['1', '2'];
 const selectedSlaves = ref<Set<string>>(new Set());
@@ -45,6 +44,11 @@ const FC_NAMES: Record<number, string> = {
   6: 'Write Single Reg',
   15: 'Write Multiple Coils',
   16: 'Write Multiple Regs',
+}
+
+const FC_KIND: Record<number, 'read' | 'write'> = {
+  1: 'read', 2: 'read', 3: 'read', 4: 'read',
+  5: 'write', 6: 'write', 15: 'write', 16: 'write',
 }
 
 function formatTimestamp(us: number): string {
@@ -191,13 +195,66 @@ function clearLogs() {
 
 onUnmounted(() => stopCapture())
 
-const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
+// Rows filtered by port only (for facet stats)
+const portRows = computed(() => {
+  const p = parseInt(portFilter.value)
+  return rows.value.filter(x => x.port === p)
+})
+
+// Slave stats for facet rail
+const slaveStats = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const r of portRows.value) {
+    counts[r.slave] = (counts[r.slave] ?? 0) + 1
+  }
+  return counts
+})
+
+const activeSlaves = computed(() =>
+  Object.keys(slaveStats.value).sort((a, b) => slaveStats.value[b] - slaveStats.value[a])
+)
+
+const maxSlaveCount = computed(() =>
+  Math.max(1, ...Object.values(slaveStats.value))
+)
+
+// FC stats for facet rail
+const fcStats = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const r of portRows.value) {
+    const code = r.fc.split(' ')[0]
+    counts[code] = (counts[code] ?? 0) + 1
+  }
+  return counts
+})
+
+const activeFcs = computed(() =>
+  Object.keys(fcStats.value).sort((a, b) => fcStats.value[b] - fcStats.value[a])
+)
+
+const maxFcCount = computed(() =>
+  Math.max(1, ...Object.values(fcStats.value))
+)
+
+function fcCodeNum(hexCode: string): number {
+  return parseInt(hexCode, 16)
+}
+
+function toggleSet(set: Set<string>, val: string): Set<string> {
+  const n = new Set(set)
+  n.has(val) ? n.delete(val) : n.add(val)
+  return n
+}
+
+function selectFcKind(kind: 'read' | 'write') {
+  const codes = activeFcs.value.filter(code => FC_KIND[fcCodeNum(code)] === kind)
+  selectedFcs.value = new Set(codes)
+}
 
 const filteredRows = computed(() => {
-  let r = rows.value
-  const p = parseInt(portFilter.value)
-  r = r.filter(x => x.port === p)
-  if (onlyErrors.value) r = r.filter(x => x.crc === 'ERR')
+  let r = portRows.value
+  if (selectedSlaves.value.size > 0) r = r.filter(x => selectedSlaves.value.has(x.slave))
+  if (selectedFcs.value.size > 0) r = r.filter(x => selectedFcs.value.has(x.fc.split(' ')[0]))
   return r
 });
 
@@ -232,6 +289,13 @@ function directionLabel(dir: string, slave: string) {
   <Layout>
     <Heading :title="t('title')" :crumbs="t('crumbs')">
       <template #default>
+        <div class="filter-ports">
+          <button
+            v-for="p in portOptions" :key="p"
+            :class="['port-btn', { active: portFilter === p }]"
+            @click="portFilter = p"
+          >Port {{ p }}</button>
+        </div>
         <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
           {{ running ? t('stop') : t('start') }}
         </Button>
@@ -240,33 +304,74 @@ function directionLabel(dir: string, slave: string) {
     </Heading>
     <span v-if="wsStatus !== 'connected'" class="ws-status">{{ wsStatus === 'reconnecting' ? 'Reconnecting…' : 'Disconnected' }}</span>
 
-    <!-- Filter bar -->
-    <div class="filter-bar">
-      <div class="filter-ports">
-        <button
-          v-for="p in portOptions" :key="p"
-          :class="['port-btn', { active: portFilter === p }]"
-          @click="portFilter = p"
-        >
-          Port {{ p }}
-        </button>
-      </div>
+    <!-- Main area: facet rail + log table -->
+    <div class="sniffer-main">
+      <!-- Facet rail -->
+      <aside class="facet-rail">
+        <!-- Slave ID section -->
+        <div class="facet-section">
+          <div class="facet-section-header">
+            <div>
+              <div class="facet-section-title">Slave ID</div>
+              <div class="facet-section-hint">{{ activeSlaves.length }} seen · {{ selectedSlaves.size || 'all' }} selected</div>
+            </div>
+            <button class="facet-clear" :style="{ visibility: selectedSlaves.size > 0 ? 'visible' : 'hidden' }" @click="selectedSlaves = new Set()">clear</button>
+          </div>
+          <button
+            v-for="slave in activeSlaves" :key="slave"
+            class="facet-row"
+            :data-on="selectedSlaves.has(slave) ? 'true' : 'false'"
+            @click="selectedSlaves = toggleSet(selectedSlaves, slave)"
+          >
+            <span class="facet-check">
+              <svg v-if="selectedSlaves.has(slave)" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M1.5 5l2.3 2.3L8.5 2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="mono" style="font-weight:600">{{ slave }}</span>
+            <span class="facet-label mono muted" style="font-size:11px">0x{{ slave }} · {{ parseInt(slave, 16) }}</span>
+            <span class="facet-count">{{ slaveStats[slave] }}</span>
+            <span class="facet-bar"><span :style="{ width: `${(slaveStats[slave] / maxSlaveCount) * 100}%` }"/></span>
+          </button>
+        </div>
 
-      <label class="filter-errors">
-        <input type="checkbox" v-model="onlyErrors" />
-        {{ t('errors_only') }}
-      </label>
+        <!-- Function code section -->
+        <div class="facet-section">
+          <div class="facet-section-header">
+            <div>
+              <div class="facet-section-title">Function code</div>
+              <div class="facet-section-hint">{{ activeFcs.length }} seen · {{ selectedFcs.size || 'all' }} selected</div>
+            </div>
+            <button class="facet-clear" :style="{ visibility: selectedFcs.size > 0 ? 'visible' : 'hidden' }" @click="selectedFcs = new Set()">clear</button>
+          </div>
+          <div class="facet-fc-btns">
+            <button class="facet-kind-btn" @click="selectFcKind('read')">Reads</button>
+            <button class="facet-kind-btn" @click="selectFcKind('write')">Writes</button>
+          </div>
+          <button
+            v-for="code in activeFcs" :key="code"
+            class="facet-row"
+            :data-on="selectedFcs.has(code) ? 'true' : 'false'"
+            @click="selectedFcs = toggleSet(selectedFcs, code)"
+          >
+            <span class="facet-check">
+              <svg v-if="selectedFcs.has(code)" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M1.5 5l2.3 2.3L8.5 2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="mono" style="font-weight:600">{{ code }}</span>
+            <span class="facet-label">
+              {{ FC_NAMES[fcCodeNum(code)] || 'Unknown' }}
+              <span v-if="FC_KIND[fcCodeNum(code)]" :class="`facet-kind facet-kind-${FC_KIND[fcCodeNum(code)]}`">{{ FC_KIND[fcCodeNum(code)] }}</span>
+            </span>
+            <span class="facet-count">{{ fcStats[code] }}</span>
+            <span class="facet-bar"><span :style="{ width: `${(fcStats[code] / maxFcCount) * 100}%` }"/></span>
+          </button>
+        </div>
+      </aside>
 
-      <div class="filter-spacer" />
-
-      <div class="filter-stats">
-        <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
-        <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
-      </div>
-    </div>
-
-    <!-- Log table --> 
-    <div class="sniffer-body">
+      <!-- Log table -->
+      <div class="sniffer-body">
       <div class="sniffer-table-wrap" ref="tableWrap">
         <table class="sniffer-table">
           <thead>
@@ -356,31 +461,23 @@ function directionLabel(dir: string, slave: string) {
           </div>
         </div>
       </div>
-    </div>
+      </div><!-- /sniffer-body -->
+    </div><!-- /sniffer-main -->
   </Layout>
 </template>
 
 <style scoped>
-/* Filter bar */
-.filter-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 32px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-color);
-}
-
+/* Port selector in heading */
 .filter-ports {
   display: flex;
   gap: 4px;
 }
 
 .port-btn {
-  height: 26px;
-  padding: 0 10px;
-  font-size: 12px;
-  background: var(--bg-surface);
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  background: transparent;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
   border-radius: var(--r-sm);
@@ -399,40 +496,199 @@ function directionLabel(dir: string, slave: string) {
   color: #fff;
 }
 
-.filter-errors {
+/* Sniffer main layout */
+.sniffer-main {
+  flex: 1;
   display: flex;
+  min-height: 0;
+}
+
+/* Facet rail */
+.facet-rail {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--bg-surface-subtle);
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  padding: 6px 0 14px;
+}
+
+.facet-section {
+  padding: 14px 0 4px;
+}
+
+.facet-section-header {
+  padding: 0 16px 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.facet-section-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.facet-section-hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.facet-clear {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.facet-row {
+  width: 100%;
+  appearance: none;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 16px 32px 1fr auto 44px;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  padding: 6px 16px;
+  cursor: pointer;
   font-size: 12px;
   color: var(--text-secondary);
-  cursor: pointer;
-  white-space: nowrap;
+  text-align: left;
 }
 
-.filter-errors input {
-  margin: 0;
-  accent-color: var(--danger-color);
-}
-
-.filter-spacer {
-  flex: 1;
-}
-
-.filter-stats {
-  display: flex;
-  gap: 14px;
-  font-size: 12px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.filter-stats b {
-  font-weight: 500;
+.facet-row:hover {
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: var(--bg-surface);
   color: var(--text-color);
 }
 
-.stat-err {
-  color: var(--mb-err) !important;
+.facet-row:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: -2px;
+}
+
+.facet-row[data-on="true"] {
+  background: color-mix(in oklch, var(--primary-color) 6%, white);
+  color: var(--text-color);
+  border-left-color: var(--primary-color);
+}
+
+.facet-row[data-on="true"] .facet-count {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.facet-check {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.2px solid var(--border-strong);
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.facet-row[data-on="true"] .facet-check {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.facet-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.facet-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.facet-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in oklch, var(--border-color) 60%, white);
+  overflow: hidden;
+}
+
+.facet-bar span {
+  display: block;
+  height: 100%;
+  background: color-mix(in oklch, var(--primary-color) 65%, white);
+}
+
+.facet-row[data-on="true"] .facet-bar span {
+  background: var(--primary-color);
+}
+
+.facet-kind {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+.facet-kind-read {
+  color: var(--mb-master);
+  background: color-mix(in oklch, var(--mb-master) 10%, white);
+}
+
+.facet-kind-write {
+  color: color-mix(in oklch, var(--warn, #f59e0b) 50%, #000);
+  background: color-mix(in oklch, var(--warn, #f59e0b) 15%, white);
+}
+
+.facet-kind-unknown {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.facet-fc-btns {
+  padding: 0 16px 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.facet-kind-btn {
+  flex: 1;
+  height: 22px;
+  font-size: 11px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.facet-kind-btn:hover {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-strong);
 }
 
 /* Sniffer body */
@@ -672,14 +928,6 @@ function directionLabel(dir: string, slave: string) {
 }
 
 @media (max-width: 680px) {
-  .filter-bar {
-    flex-wrap: wrap;
-    padding: 10px 12px;
-  }
-  .filter-stats {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
   .detail-panel {
     padding: 12px;
   }
