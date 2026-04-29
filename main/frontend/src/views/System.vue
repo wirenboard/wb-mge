@@ -137,12 +137,12 @@ const updateInterface = () => {
             <template v-if="uptime">
               <div class="kv">
                 <div class="k">{{ t('uptime') }}</div>
-                <div class="v muted">
+                <div class="v muted uptime-value">
                   <template v-if="uptime.days">
-                    <span class="system-uptime">{{ t('uptime_days', { n: uptime.days }) }}</span>
+                    <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
                   </template>
                   <template v-if="uptime.hours">
-                    <span class="system-uptime">{{ t('uptime_hours', { n: uptime.hours }) }}</span>
+                    <span>{{ t('uptime_hours', { n: uptime.hours }) }}</span>
                   </template>
                   <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
                 </div>
@@ -283,8 +283,9 @@ const updateInterface = () => {
   height: 12px;
 }
 
-.system-uptime {
-  margin-right: 4px;
+.uptime-value {
+  display: flex;
+  gap: 4px;
 }
 </style>
 
