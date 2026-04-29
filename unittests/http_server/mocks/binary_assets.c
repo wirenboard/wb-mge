@@ -1,5 +1,13 @@
 #include <stdint.h>
 
+static const uint8_t inter_latin_data[] = {
+    0x1F, 0x8B, 0x08, 0x00
+};
+
+static const uint8_t inter_cyrillic_data[] = {
+    0x1F, 0x8B, 0x08, 0x00
+};
+
 static const uint8_t favicon_data[] = {
     0x47, 0x49, 0x46, 0x38, 0x00, 0x3B, 0xA2, 0x7C, 0xE1
 };
@@ -27,3 +35,9 @@ const uint8_t * index_js_end asm("_binary_index_js_gz_end") = js_data + sizeof(j
 
 const uint8_t * index_html_start asm("_binary_index_html_gz_start") = html_data;
 const uint8_t * index_html_end asm("_binary_index_html_gz_end") = html_data + sizeof(html_data);
+
+const uint8_t * inter_latin_start asm("_binary_inter_latin_woff2_gz_start") = inter_latin_data;
+const uint8_t * inter_latin_end asm("_binary_inter_latin_woff2_gz_end") = inter_latin_data + sizeof(inter_latin_data);
+
+const uint8_t * inter_cyrillic_start asm("_binary_inter_cyrillic_woff2_gz_start") = inter_cyrillic_data;
+const uint8_t * inter_cyrillic_end asm("_binary_inter_cyrillic_woff2_gz_end") = inter_cyrillic_data + sizeof(inter_cyrillic_data);
