@@ -51,7 +51,7 @@ const login = async () => {
         </div>
 
         <div class="login-hero">
-          <h1>Modbus&nbsp;<em>interface converter</em>.<br>Sniffer, repeater, gateway, master.</h1>
+          <h1>Modbus&nbsp;<em>interface gateway</em>.</h1>
           <p>{{ t('description') }}</p>
         </div>
 

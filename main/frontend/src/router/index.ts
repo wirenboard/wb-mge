@@ -30,20 +30,6 @@ const router = createRouter({
       }],
     },
     {
-      path: '/sniffer',
-      name: 'sniffer',
-      component: Sniffer,
-      meta: { requiresAuth: true, menuName: 'sniffer', menuGroup: 'modbus_tools', menuIcon: 'activity' },
-      beforeEnter: [checkSession, async () => {
-        const { fetchInfo } = useInfo();
-        const { refresh } = useSettings();
-        await Promise.all([
-          fetchInfo(),
-          refresh(),
-        ]);
-      }],
-    },
-    {
       path: '/tcp-gateway',
       name: 'tcp_gateway',
       component: TcpGateway,
