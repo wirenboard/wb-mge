@@ -276,6 +276,27 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
 
         should_stop_timer = true;
 
+        /* If the packet arriving in RES_WAIT is itself a Fast Modbus master broadcast
+         * (0xFD + FC46/60), we caught the state machine out of phase. Discard the
+         * buffered request, emit the FD 46 as a standalone MASTER packet and mark the
+         * flag so the following all-FF arbitration is recognized. */
+        if (effective[0] == 0xFD &&
+            (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2)) {
+            req_pkt.port         = (uint8_t)port_index;
+            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
+            req_pkt.is_master    = true;
+            req_pkt.crc_valid    = crc_check(effective, effective_len);
+            req_pkt.slave_id     = effective[0];
+            req_pkt.function     = effective[1];
+            size_t fm_cpy        = len < SNIFFER_MAX_PACKET_LEN ? len : SNIFFER_MAX_PACKET_LEN;
+            memcpy(req_pkt.data, data, fm_cpy);
+            req_pkt.data_len     = (uint16_t)fm_cpy;
+            enqueue_req = true;
+            ctx->last_was_fast_modbus = true;
+            ctx->state = SNIFF_IDLE;
+            goto exit_critical;
+        }
+
         req_pkt.port         = (uint8_t)port_index;
         req_pkt.timestamp_us = ctx->req_timestamp_us;
         req_pkt.is_master    = true;
@@ -297,6 +318,7 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
         res_pkt.data_len     = (uint16_t)copy_len;
         enqueue_res = true;
 
+        ctx->last_was_fast_modbus = false;
         ctx->state = SNIFF_IDLE;
     }
 exit_critical:
