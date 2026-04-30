@@ -385,7 +385,7 @@ static void sniffer_ws_task(void *arg)
             snprintf(json_buf, SNIFFER_JSON_BUF_SIZE,
                 "{\"type\":\"packet\",\"id\":%" PRIu32 ",\"port\":%u"
                 ",\"timestamp_us\":%" PRIu64
-                ",\"dir\":\"%s\",\"slave_id\":%u,\"function\":%u"
+                ",\"sender\":\"%s\",\"slave_id\":%u,\"function\":%u"
                 ",\"crc_valid\":%s,\"raw\":\"%s\",\"size\":%u}",
                 packet_counter, port_index_to_name(pkt.port), pkt.timestamp_us,
                 pkt.is_master ? "master" : "slave",
