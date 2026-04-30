@@ -45,6 +45,7 @@ typedef struct {
 typedef struct {
     sniff_state_t  state;
     bool           enabled;
+    bool           last_was_fast_modbus;
     uint8_t        req_buf[SNIFFER_MAX_PACKET_LEN];
     uint16_t       req_len;
     uint64_t       req_timestamp_us;
@@ -169,7 +170,29 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
     if (ctx->state == SNIFF_IDLE) {
         bool valid_crc = crc_check(data, len);
 
-        if (!valid_crc) {
+        /* Check if this is a Fast Modbus arbitration response (all 0xFF bytes)
+         * following a FD 46 command — it has no CRC and should be shown as SLAVE OK */
+        bool is_arbitration = false;
+        if (!valid_crc && ctx->last_was_fast_modbus) {
+            bool all_ff = true;
+            for (size_t i = 0; i < len; i++) {
+                if (data[i] != 0xFF) { all_ff = false; break; }
+            }
+            is_arbitration = all_ff;
+        }
+
+        if (is_arbitration) {
+            req_pkt.port         = (uint8_t)port_index;
+            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
+            req_pkt.is_master    = false;
+            req_pkt.crc_valid    = true;
+            req_pkt.slave_id     = data[0];
+            req_pkt.function     = data[1];
+            memcpy(req_pkt.data, data, len);
+            req_pkt.data_len     = (uint16_t)len;
+            enqueue_req = true;
+            ctx->last_was_fast_modbus = false;
+        } else if (!valid_crc) {
             req_pkt.port         = (uint8_t)port_index;
             req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
             req_pkt.is_master    = true;
@@ -179,6 +202,7 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
             memcpy(req_pkt.data, data, len);
             req_pkt.data_len     = (uint16_t)len;
             enqueue_req = true;
+            ctx->last_was_fast_modbus = false;
         } else if (data[0] == 0x00) {
             /* broadcast */
             req_pkt.port         = (uint8_t)port_index;
@@ -190,6 +214,21 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
             memcpy(req_pkt.data, data, len);
             req_pkt.data_len     = (uint16_t)len;
             enqueue_req = true;
+            ctx->last_was_fast_modbus = false;
+        } else if (data[0] == 0xFD &&
+                   (data[1] == FAST_MODBUS_FUNC_1 || data[1] == FAST_MODBUS_FUNC_2)) {
+            /* Fast Modbus broadcast to 0xFD — master sends, no slave response expected.
+             * Mark flag so the next all-FF packet is recognized as arbitration. */
+            req_pkt.port         = (uint8_t)port_index;
+            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
+            req_pkt.is_master    = true;
+            req_pkt.crc_valid    = true;
+            req_pkt.slave_id     = data[0];
+            req_pkt.function     = data[1];
+            memcpy(req_pkt.data, data, len);
+            req_pkt.data_len     = (uint16_t)len;
+            enqueue_req = true;
+            ctx->last_was_fast_modbus = true;
         } else {
             /* Normal unicast request: save and wait for response */
             size_t copy_len = len < SNIFFER_MAX_PACKET_LEN ? len : SNIFFER_MAX_PACKET_LEN;
@@ -198,6 +237,7 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
             ctx->req_timestamp_us = (uint64_t)esp_timer_get_time();
             ctx->state            = SNIFF_RES_WAIT;
             should_start_timer    = true;
+            ctx->last_was_fast_modbus = false;
         }
     } else { /* SNIFF_RES_WAIT */
         /* Slave responses may be preceded by Fast Modbus arbitration 0xFF bytes.
@@ -207,6 +247,29 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
         strip_arbitration(data, len, &effective, &effective_len);
 
         if (effective_len < 4) {
+            /* Arbitration-only response (e.g. FF FF FF FF FF) — flush the
+             * buffered request so the state machine stays in phase. */
+            req_pkt.port         = (uint8_t)port_index;
+            req_pkt.timestamp_us = ctx->req_timestamp_us;
+            req_pkt.is_master    = true;
+            req_pkt.crc_valid    = true;
+            req_pkt.slave_id     = ctx->req_buf[0];
+            req_pkt.function     = ctx->req_buf[1];
+            memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
+            req_pkt.data_len     = ctx->req_len;
+            enqueue_req = true;
+
+            res_pkt.port         = (uint8_t)port_index;
+            res_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
+            res_pkt.is_master    = false;
+            res_pkt.crc_valid    = false;
+            res_pkt.slave_id     = data[0];
+            res_pkt.function     = data[1];
+            size_t arb_cpy       = len < SNIFFER_MAX_PACKET_LEN ? len : SNIFFER_MAX_PACKET_LEN;
+            memcpy(res_pkt.data, data, arb_cpy);
+            res_pkt.data_len     = (uint16_t)arb_cpy;
+            enqueue_res = true;
+
             ctx->state = SNIFF_IDLE;
             goto exit_critical;
         }
