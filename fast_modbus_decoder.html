@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fast Modbus Packet Decoder</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', monospace, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+  h1 { color: #7eb8f7; margin-bottom: 20px; font-size: 1.4em; }
+  .container { max-width: 900px; margin: 0 auto; }
+
+  .input-section { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; margin-bottom: 6px; color: #a0b4cc; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  textarea {
+    width: 100%; background: #0d1117; color: #58a6ff; border: 1px solid #30363d;
+    border-radius: 6px; padding: 10px; font-family: 'Courier New', monospace;
+    font-size: 0.95em; resize: vertical; min-height: 70px;
+  }
+  textarea:focus { outline: none; border-color: #58a6ff; }
+
+  .direction-row { display: flex; gap: 12px; margin-top: 12px; align-items: center; }
+  .dir-btn {
+    padding: 8px 20px; border: 1px solid #30363d; border-radius: 6px;
+    background: #21262d; color: #e0e0e0; cursor: pointer; font-size: 0.9em; transition: all 0.15s;
+  }
+  .dir-btn.active { background: #0f3460; border-color: #58a6ff; color: #58a6ff; }
+  .dir-btn:hover { border-color: #58a6ff; }
+
+  .decode-btn {
+    margin-top: 12px; padding: 10px 28px; background: #0f3460; color: #7eb8f7;
+    border: 1px solid #58a6ff; border-radius: 6px; cursor: pointer; font-size: 1em;
+    transition: all 0.15s;
+  }
+  .decode-btn:hover { background: #1a4a7a; }
+
+  .result { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; }
+  .result h2 { color: #7eb8f7; font-size: 1em; margin-bottom: 12px; border-bottom: 1px solid #0f3460; padding-bottom: 8px; }
+
+  .packet-type { font-size: 1.1em; font-weight: bold; margin-bottom: 14px; }
+  .packet-type span { padding: 4px 12px; border-radius: 4px; }
+  .type-master { background: #0d2a0d; color: #56d364; border: 1px solid #238636; }
+  .type-slave { background: #1a1a0d; color: #e3b341; border: 1px solid #9e6a03; }
+  .type-arb { background: #1a0d1a; color: #bc8cff; border: 1px solid #6e40c9; }
+  .type-error { background: #2d1117; color: #f85149; border: 1px solid #6e1c1c; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+  th { background: #0f3460; color: #7eb8f7; padding: 8px 10px; text-align: left; font-weight: 600; }
+  td { padding: 7px 10px; border-bottom: 1px solid #1e2d3d; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1e2d3d; }
+
+  .hex { font-family: 'Courier New', monospace; color: #58a6ff; }
+  .desc { color: #c9d1d9; }
+  .val { color: #56d364; font-weight: bold; }
+  .bytes-highlight { background: #0d2a0d; border-radius: 3px; padding: 1px 5px; }
+
+  .error-msg { color: #f85149; background: #2d1117; border: 1px solid #6e1c1c; border-radius: 6px; padding: 12px; margin-top: 8px; }
+  .raw-bytes { font-family: 'Courier New', monospace; color: #8b949e; margin-top: 12px; font-size: 0.8em; word-break: break-all; }
+
+  .string-val { color: #d2a8ff; }
+  .section-header td { background: #0f3460 !important; color: #7eb8f7; font-style: italic; font-size: 0.8em; padding: 4px 10px; }
+  .examples { margin-top: 10px; }
+  .example-btn { margin: 3px; padding: 4px 10px; background: #21262d; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 0.78em; color: #8b949e; }
+  .example-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+  .warn { color: #e3b341; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Fast Modbus Packet Decoder</h1>
+
+  <div class="input-section">
+    <label>HEX пакет (с пробелами или без)</label>
+    <textarea id="hexInput" placeholder="FD 60 03 00 06 24 66 83 C4 61  или  FD600300062466C461"></textarea>
+
+    <div class="direction-row">
+      <span style="color:#a0b4cc;font-size:0.85em;">Направление:</span>
+      <button class="dir-btn active" id="btn-master" onclick="setDir('master')">MASTER → SLAVE</button>
+      <button class="dir-btn" id="btn-slave" onclick="setDir('slave')">SLAVE → MASTER</button>
+    </div>
+
+    <div class="examples">
+      <span style="color:#8b949e;font-size:0.78em;">Примеры: </span>
+      <button class="example-btn" onclick="loadExample('FD 60 01 09 F0','master')">Scan Start</button>
+      <button class="example-btn" onclick="loadExample('FF FF FF FF FF FF FF FF FF FF','slave')">Arbitration</button>
+      <button class="example-btn" onclick="loadExample('FD 60 03 00 06 24 66 83 C4 61','slave')">Scan Response</button>
+      <button class="example-btn" onclick="loadExample('FD 60 08 00 06 24 66 03 00 C8 00 14 9D 24','master')">Cmd Send</button>
+      <button class="example-btn" onclick="loadExample('FD 60 09 00 06 24 66 03 28 00 57 00 42 00 4D 00 53 00 57 00 34 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 A9 78','slave')">Cmd Response (name)</button>
+      <button class="example-btn" onclick="loadExample('FD 60 02 49 F1','master')">Scan Continue</button>
+      <button class="example-btn" onclick="loadExample('FD 60 04 C9 F3','slave')">Scan End</button>
+    </div>
+
+    <button class="decode-btn" onclick="decodeUI()">Декодировать</button>
+  </div>
+
+  <div class="result" id="result" style="display:none"></div>
+</div>
+
+<script>
+// ============================================================
+// PURE DECODER — returns structured data, no HTML
+// ============================================================
+
+/**
+ * Parse hex string (with or without spaces) into byte array.
+ * Returns [] on error.
+ * @param {string} str
+ * @returns {number[]}
+ */
+function parseHex(str) {
+  const clean = str.trim().replace(/\s+/g, '');
+  if (clean.length === 0) return [];
+  if (clean.length % 2 !== 0) return [];
+  const result = [];
+  for (let i = 0; i < clean.length; i += 2) {
+    const b = parseInt(clean.slice(i, i + 2), 16);
+    if (isNaN(b)) return [];
+    result.push(b);
+  }
+  return result;
+}
+
+function u16be(arr, i) { return ((arr[i] << 8) | arr[i + 1]) >>> 0; }
+function u32be(arr, i) { return ((arr[i] << 24) | (arr[i + 1] << 16) | (arr[i + 2] << 8) | arr[i + 3]) >>> 0; }
+
+/**
+ * Decode UTF-16 big-endian register data to string.
+ * Stops at first null word.
+ * @param {number[]} bytes
+ * @returns {string}
+ */
+function decodeUtf16be(bytes) {
+  let s = '';
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    const cp = (bytes[i] << 8) | bytes[i + 1];
+    if (cp === 0) break;
+    s += String.fromCodePoint(cp);
+  }
+  return s;
+}
+
+const MODBUS_FUNCTIONS = {
+  1: 'Read Coils',
+  2: 'Read Discrete Inputs',
+  3: 'Read Holding Registers',
+  4: 'Read Input Registers',
+  5: 'Write Single Coil',
+  6: 'Write Single Register',
+  15: 'Write Multiple Coils',
+  16: 'Write Multiple Registers',
+};
+
+/**
+ * Decode Modbus PDU (request side) from byte array at offset.
+ * Returns { ok, fc, fcName, fields, error }
+ */
+function decodePduRequest(bytes, offset) {
+  if (offset >= bytes.length) return { ok: false, error: 'PDU missing' };
+  const fc = bytes[offset];
+  const fcName = MODBUS_FUNCTIONS[fc] || `Unknown (0x${fc.toString(16).toUpperCase()})`;
+  const fields = [{ name: 'Modbus функция', hex: [fc], value: `${fc} — ${fcName}` }];
+
+  if ((fc === 1 || fc === 2 || fc === 3 || fc === 4) && bytes.length >= offset + 5) {
+    const reg = u16be(bytes, offset + 1);
+    const cnt = u16be(bytes, offset + 3);
+    fields.push({ name: 'Начальный регистр', hex: bytes.slice(offset + 1, offset + 3), value: `0x${reg.toString(16).toUpperCase().padStart(4, '0')} = ${reg}` });
+    fields.push({ name: 'Количество регистров', hex: bytes.slice(offset + 3, offset + 5), value: `${cnt}` });
+    return { ok: true, fc, fcName, fields, pduEnd: offset + 5 };
+  }
+  if (fc === 6 && bytes.length >= offset + 5) {
+    const reg = u16be(bytes, offset + 1);
+    const val = u16be(bytes, offset + 3);
+    fields.push({ name: 'Регистр', hex: bytes.slice(offset + 1, offset + 3), value: `0x${reg.toString(16).toUpperCase().padStart(4, '0')} = ${reg}` });
+    fields.push({ name: 'Значение', hex: bytes.slice(offset + 3, offset + 5), value: `${val} (0x${val.toString(16).toUpperCase()})` });
+    return { ok: true, fc, fcName, fields, pduEnd: offset + 5 };
+  }
+  if (fc === 16 && bytes.length >= offset + 6) {
+    const reg = u16be(bytes, offset + 1);
+    const cnt = u16be(bytes, offset + 3);
+    const byteCount = bytes[offset + 5];
+    fields.push({ name: 'Начальный регистр', hex: bytes.slice(offset + 1, offset + 3), value: `0x${reg.toString(16).toUpperCase().padStart(4, '0')} = ${reg}` });
+    fields.push({ name: 'Количество регистров', hex: bytes.slice(offset + 3, offset + 5), value: `${cnt}` });
+    fields.push({ name: 'Байт данных', hex: [byteCount], value: `${byteCount}` });
+    if (bytes.length >= offset + 6 + byteCount) {
+      const data = bytes.slice(offset + 6, offset + 6 + byteCount);
+      fields.push({ name: 'Данные', hex: data, value: decodeUtf16be(data) || '(binary)' });
+      return { ok: true, fc, fcName, fields, pduEnd: offset + 6 + byteCount };
+    }
+    return { ok: false, fc, fcName, fields, error: 'Данные PDU обрезаны' };
+  }
+
+  // Modbus error response (fc with 0x80 set)
+  if (fc & 0x80) {
+    const origFc = fc & 0x7F;
+    const errCode = bytes[offset + 1];
+    const errNames = { 1: 'ILLEGAL FUNCTION', 2: 'ILLEGAL DATA ADDRESS', 3: 'ILLEGAL DATA VALUE', 4: 'SLAVE DEVICE FAILURE' };
+    fields[0] = { name: 'Modbus ошибка', hex: [fc], value: `Ошибка для функции ${origFc} (0x${origFc.toString(16).toUpperCase()})` };
+    if (bytes.length > offset + 1) {
+      fields.push({ name: 'Код ошибки', hex: [errCode], value: `${errCode} — ${errNames[errCode] || 'Unknown'}` });
+    }
+    return { ok: true, fc, fcName: `Error response for fc=${origFc}`, fields, pduEnd: offset + 2, isError: true };
+  }
+
+  return { ok: true, fc, fcName, fields, pduEnd: offset + 1 };
+}
+
+/**
+ * Decode Modbus PDU (response side) from byte array at offset.
+ */
+function decodePduResponse(bytes, offset) {
+  if (offset >= bytes.length) return { ok: false, error: 'PDU missing' };
+  const fc = bytes[offset];
+  const fcName = MODBUS_FUNCTIONS[fc] || `Unknown (0x${fc.toString(16).toUpperCase()})`;
+  const fields = [{ name: 'Modbus функция', hex: [fc], value: `${fc} — ${fcName}` }];
+
+  if ((fc === 1 || fc === 2 || fc === 3 || fc === 4) && bytes.length >= offset + 2) {
+    const byteCount = bytes[offset + 1];
+    fields.push({ name: 'Байт данных', hex: [byteCount], value: `${byteCount} = ${byteCount / 2} регистров` });
+    if (bytes.length >= offset + 2 + byteCount) {
+      const data = bytes.slice(offset + 2, offset + 2 + byteCount);
+      const regs = [];
+      for (let i = 0; i + 1 < data.length; i += 2) {
+        regs.push({ index: i / 2, hex: data.slice(i, i + 2), value: u16be(data, i) });
+      }
+      fields.push({ name: 'Регистры', hex: data, registers: regs });
+      const str = decodeUtf16be(data);
+      if (str) fields.push({ name: 'UTF-16BE строка', hex: data, value: str });
+      return { ok: true, fc, fcName, fields, pduEnd: offset + 2 + byteCount };
+    }
+    return { ok: false, fc, fcName, fields, error: 'Данные ответа обрезаны' };
+  }
+  if (fc === 6 && bytes.length >= offset + 5) {
+    const reg = u16be(bytes, offset + 1);
+    const val = u16be(bytes, offset + 3);
+    fields.push({ name: 'Регистр', hex: bytes.slice(offset + 1, offset + 3), value: `${reg}` });
+    fields.push({ name: 'Значение', hex: bytes.slice(offset + 3, offset + 5), value: `${val}` });
+    return { ok: true, fc, fcName, fields, pduEnd: offset + 5 };
+  }
+
+  // Modbus error response
+  if (fc & 0x80) {
+    const origFc = fc & 0x7F;
+    const errCode = bytes.length > offset + 1 ? bytes[offset + 1] : null;
+    const errNames = { 1: 'ILLEGAL FUNCTION', 2: 'ILLEGAL DATA ADDRESS', 3: 'ILLEGAL DATA VALUE', 4: 'SLAVE DEVICE FAILURE' };
+    fields[0] = { name: 'Modbus ошибка', hex: [fc], value: `Ошибка для функции ${origFc} (0x${origFc.toString(16).toUpperCase()})` };
+    if (errCode !== null) {
+      fields.push({ name: 'Код ошибки', hex: [errCode], value: `${errCode} — ${errNames[errCode] || 'Unknown'}` });
+    }
+    return { ok: true, fc, fcName: `Error response for fc=${origFc}`, fields, pduEnd: offset + 2, isError: true };
+  }
+
+  return { ok: true, fc, fcName, fields, pduEnd: offset + 1 };
+}
+
+/**
+ * Main decoder. Returns structured packet description.
+ *
+ * Result shape:
+ * {
+ *   type: 'arbitration' | 'scan_start' | 'scan_continue' | 'scan_response' |
+ *         'scan_end' | 'cmd_send' | 'cmd_response' | 'unknown' | 'error',
+ *   subcommand: number | null,
+ *   direction: 'master' | 'slave' | 'bus',
+ *   error: string | null,           // parse error description
+ *   warnings: string[],             // non-fatal issues (truncated, etc.)
+ *   fields: Array<{                 // top-level decoded fields
+ *     name: string,
+ *     hex: number[],
+ *     value: string | null,
+ *     section?: true,               // section separator row
+ *   }>,
+ *   // type-specific parsed values:
+ *   serialNumber?: number,          // scan_response, cmd_send, cmd_response
+ *   modbusAddress?: number,         // scan_response
+ *   pdu?: object,                   // cmd_send / cmd_response PDU decode result
+ *   arbitrationBytes?: number,      // arbitration
+ * }
+ *
+ * @param {number[]} bytes
+ * @returns {object}
+ */
+function decodePacket(bytes) {
+  if (!bytes || bytes.length === 0) {
+    return { type: 'error', error: 'Пустой пакет', fields: [], warnings: [] };
+  }
+
+  // Arbitration: all 0xFF
+  if (bytes.every(b => b === 0xFF)) {
+    return {
+      type: 'arbitration',
+      direction: 'bus',
+      subcommand: null,
+      error: null,
+      warnings: [],
+      arbitrationBytes: bytes.length,
+      fields: [
+        { name: 'Арбитражные байты', hex: bytes, value: `${bytes.length} байт — устройства конкурируют; каждый 0xFF = доминантный бит` },
+      ],
+    };
+  }
+
+  // Validate header
+  if (bytes.length < 3) {
+    return { type: 'error', error: `Пакет слишком короткий (${bytes.length} байт, минимум 3)`, fields: [], warnings: [] };
+  }
+  if (bytes[0] !== 0xFD) {
+    return { type: 'error', error: `Неверный первый байт: 0x${bytes[0].toString(16).toUpperCase()} (ожидается 0xFD)`, fields: [], warnings: [] };
+  }
+  if (bytes[1] !== 0x60 && bytes[1] !== 0x46) {
+    return { type: 'error', error: `Неверный subcommand byte: 0x${bytes[1].toString(16).toUpperCase()} (ожидается 0x60 или 0x46)`, fields: [], warnings: [] };
+  }
+
+  const extByte = bytes[1];
+  const sub = bytes[2];
+  const warnings = [];
+  if (extByte === 0x60) warnings.push('Используется устаревший subcommand 0x60 (deprecated). Рекомендуется 0x46.');
+
+  const baseFields = [
+    { name: 'Broadcast адрес', hex: [bytes[0]], value: '0xFD' },
+    { name: extByte === 0x60 ? 'Extended cmd (legacy 0x60, deprecated)' : 'Extended cmd (0x46)', hex: [extByte], value: null },
+  ];
+
+  // --- Scan Start 0x01 ---
+  if (sub === 0x01) {
+    const fields = [...baseFields,
+      { name: 'Функция: Scan Start', hex: [sub], value: 'Сброс флага сканирования у всех устройств, запуск арбитража' },
+    ];
+    if (bytes.length < 5) warnings.push(`Пакет обрезан: ${bytes.length} байт, ожидается 5`);
+    else fields.push({ name: 'CRC', hex: bytes.slice(3, 5), value: null });
+    return { type: 'scan_start', direction: 'master', subcommand: sub, error: null, warnings, fields };
+  }
+
+  // --- Scan Continue 0x02 ---
+  if (sub === 0x02) {
+    const fields = [...baseFields,
+      { name: 'Функция: Scan Continue', hex: [sub], value: 'Запрос следующего неотсканированного устройства' },
+    ];
+    if (bytes.length < 5) warnings.push(`Пакет обрезан: ${bytes.length} байт, ожидается 5`);
+    else fields.push({ name: 'CRC', hex: bytes.slice(3, 5), value: null });
+    return { type: 'scan_continue', direction: 'master', subcommand: sub, error: null, warnings, fields };
+  }
+
+  // --- Scan Response 0x03 ---
+  if (sub === 0x03) {
+    if (bytes.length < 10) {
+      return { type: 'scan_response', direction: 'slave', subcommand: sub, error: `Пакет обрезан: ${bytes.length} байт, ожидается 10`, warnings, fields: baseFields };
+    }
+    const sn = u32be(bytes, 3);
+    const addr = bytes[7];
+    const fields = [...baseFields,
+      { name: 'Функция: Scan Response', hex: [sub], value: 'Победитель арбитража сообщает свои данные' },
+      { name: 'Серийный номер (big endian)', hex: bytes.slice(3, 7), value: `0x${sn.toString(16).toUpperCase().padStart(8, '0')} = ${sn}` },
+      { name: 'Modbus-адрес устройства', hex: [addr], value: `${addr} (0x${addr.toString(16).toUpperCase()})` },
+      { name: 'CRC', hex: bytes.slice(8, 10), value: null },
+    ];
+    return { type: 'scan_response', direction: 'slave', subcommand: sub, error: null, warnings, fields, serialNumber: sn, modbusAddress: addr };
+  }
+
+  // --- Scan End 0x04 ---
+  if (sub === 0x04) {
+    const fields = [...baseFields,
+      { name: 'Функция: Scan End', hex: [sub], value: 'Все устройства отсканированы, новых нет' },
+    ];
+    if (bytes.length < 5) warnings.push(`Пакет обрезан: ${bytes.length} байт, ожидается 5`);
+    else fields.push({ name: 'CRC', hex: bytes.slice(3, 5), value: null });
+    return { type: 'scan_end', direction: 'slave', subcommand: sub, error: null, warnings, fields };
+  }
+
+  // --- Cmd Send 0x08 ---
+  if (sub === 0x08) {
+    if (bytes.length < 8) {
+      return { type: 'cmd_send', direction: 'master', subcommand: sub, error: `Пакет обрезан: ${bytes.length} байт, минимум 8`, warnings, fields: baseFields };
+    }
+    const sn = u32be(bytes, 3);
+    const fields = [...baseFields,
+      { name: 'Функция: Cmd Send (по серийному номеру)', hex: [sub], value: null },
+      { name: 'Серийный номер (big endian)', hex: bytes.slice(3, 7), value: `0x${sn.toString(16).toUpperCase().padStart(8, '0')} = ${sn}` },
+      { name: null, section: true, label: '--- Modbus PDU ---' },
+    ];
+    const pdu = decodePduRequest(bytes, 7);
+    for (const f of pdu.fields) fields.push(f);
+    if (!pdu.ok) warnings.push(pdu.error || 'PDU не удалось декодировать');
+    if (pdu.pduEnd && bytes.length >= pdu.pduEnd + 2) {
+      fields.push({ name: 'CRC', hex: bytes.slice(pdu.pduEnd, pdu.pduEnd + 2), value: null });
+    } else if (pdu.pduEnd) {
+      warnings.push('CRC отсутствует или пакет обрезан');
+    }
+    return { type: 'cmd_send', direction: 'master', subcommand: sub, error: null, warnings, fields, serialNumber: sn, pdu };
+  }
+
+  // --- Cmd Response 0x09 ---
+  if (sub === 0x09) {
+    if (bytes.length < 8) {
+      return { type: 'cmd_response', direction: 'slave', subcommand: sub, error: `Пакет обрезан: ${bytes.length} байт, минимум 8`, warnings, fields: baseFields };
+    }
+    const sn = u32be(bytes, 3);
+    const fields = [...baseFields,
+      { name: 'Функция: Cmd Response (по серийному номеру)', hex: [sub], value: null },
+      { name: 'Серийный номер (big endian)', hex: bytes.slice(3, 7), value: `0x${sn.toString(16).toUpperCase().padStart(8, '0')} = ${sn}` },
+      { name: null, section: true, label: '--- Modbus PDU ---' },
+    ];
+    const pdu = decodePduResponse(bytes, 7);
+    for (const f of pdu.fields) {
+      if (f.registers) {
+        fields.push({ name: f.name, hex: f.hex, value: null });
+        for (const r of f.registers) {
+          fields.push({ name: `  Регистр +${r.index}`, hex: r.hex, value: `${r.value} (0x${r.value.toString(16).toUpperCase().padStart(4, '0')})` });
+        }
+      } else {
+        fields.push(f);
+      }
+    }
+    if (!pdu.ok) warnings.push(pdu.error || 'PDU не удалось декодировать');
+    if (pdu.pduEnd && bytes.length >= pdu.pduEnd + 2) {
+      fields.push({ name: 'CRC', hex: bytes.slice(pdu.pduEnd, pdu.pduEnd + 2), value: null });
+    } else if (pdu.pduEnd) {
+      warnings.push('CRC отсутствует или пакет обрезан');
+    }
+    return { type: 'cmd_response', direction: 'slave', subcommand: sub, error: null, warnings, fields, serialNumber: sn, pdu };
+  }
+
+  return {
+    type: 'unknown',
+    direction: 'unknown',
+    subcommand: sub,
+    error: `Неизвестная субкоманда: 0x${sub.toString(16).toUpperCase()}`,
+    warnings,
+    fields: baseFields,
+  };
+}
+
+// ============================================================
+// UI RENDERING
+// ============================================================
+
+let direction = 'master';
+
+function setDir(d) {
+  direction = d;
+  document.getElementById('btn-master').classList.toggle('active', d === 'master');
+  document.getElementById('btn-slave').classList.toggle('active', d === 'slave');
+}
+
+function loadExample(hex, dir) {
+  document.getElementById('hexInput').value = hex;
+  setDir(dir);
+  decodeUI();
+}
+
+function hexStr(arr) { return arr.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' '); }
+
+function renderPacket(pkt, rawBytes) {
+  const typeLabels = {
+    arbitration: ['type-arb', 'Арбитраж (FF bytes)'],
+    scan_start: ['type-master', 'MASTER → Scan Start'],
+    scan_continue: ['type-master', 'MASTER → Scan Continue'],
+    scan_response: ['type-slave', 'SLAVE → Scan Response'],
+    scan_end: ['type-slave', 'SLAVE → Scan End'],
+    cmd_send: ['type-master', 'MASTER → Cmd Send (по серийному номеру)'],
+    cmd_response: ['type-slave', 'SLAVE → Cmd Response (по серийному номеру)'],
+    unknown: ['type-error', 'Неизвестный тип'],
+    error: ['type-error', 'Ошибка разбора'],
+  };
+  const [cls, label] = typeLabels[pkt.type] || ['type-error', pkt.type];
+
+  let html = `<h2>Результат декодирования</h2>`;
+  html += `<div class="packet-type"><span class="${cls}">${label}</span></div>`;
+
+  if (pkt.error) {
+    html += `<div class="error-msg">${pkt.error}</div>`;
+  }
+
+  if (pkt.warnings && pkt.warnings.length > 0) {
+    html += pkt.warnings.map(w => `<div class="warn">⚠ ${w}</div>`).join('');
+  }
+
+  if (pkt.fields && pkt.fields.length > 0) {
+    let rows = '';
+    for (const f of pkt.fields) {
+      if (f.section) {
+        rows += `<tr class="section-header"><td colspan="3">${f.label}</td></tr>`;
+      } else {
+        rows += `<tr>
+          <td class="hex bytes-highlight">${hexStr(f.hex || [])}</td>
+          <td class="desc">${f.name || ''}</td>
+          <td class="val">${f.value !== null && f.value !== undefined ? f.value : ''}</td>
+        </tr>`;
+      }
+    }
+    html += `<table><thead><tr><th>Байты (HEX)</th><th>Поле</th><th>Значение</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  html += `<div class="raw-bytes">RAW: ${hexStr(rawBytes)} (${rawBytes.length} байт)</div>`;
+  return html;
+}
+
+function decodeUI() {
+  const input = document.getElementById('hexInput').value;
+  const resultDiv = document.getElementById('result');
+  resultDiv.style.display = 'block';
+
+  const bytes = parseHex(input);
+  if (bytes.length === 0) {
+    resultDiv.innerHTML = '<div class="error-msg">Введите корректные HEX байты пакета</div>';
+    return;
+  }
+
+  const pkt = decodePacket(bytes);
+  resultDiv.innerHTML = renderPacket(pkt, bytes);
+}
+
+document.getElementById('hexInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); decodeUI(); }
+});
+
+// Export for Node.js testing
+if (typeof module !== 'undefined') {
+  module.exports = { parseHex, decodePacket, decodeUtf16be, u16be, u32be };
+}
+</script>
+</body>
+</html>
