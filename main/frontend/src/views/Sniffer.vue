@@ -38,6 +38,7 @@ const portFilter = ref('1');
 const portOptions = ['1', '2'];
 const selectedSlaves = ref<Set<string>>(new Set());
 const selectedFcs = ref<Set<string>>(new Set());
+const hideErrors = ref(false);
 
 const FC_NAMES: Record<number, string> = {
   1: 'Read Coils',
@@ -339,6 +340,7 @@ function toggleSet(set: Set<string>, val: string): Set<string> {
 
 const filteredRows = computed(() => {
   let r = portRows.value
+  if (hideErrors.value) r = r.filter(x => x.crc !== 'ERR')
   if (selectedSlaves.value.size > 0) r = r.filter(x => selectedSlaves.value.has(x.slave))
   if (selectedFcs.value.size > 0) r = r.filter(x => selectedFcs.value.has(x.fc_code))
   return r
@@ -404,6 +406,10 @@ function exportCsv() {
         <div class="heading-stats">
           <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
           <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
+          <label v-if="errorCount > 0" class="hide-errors-toggle">
+            <input type="checkbox" v-model="hideErrors" />
+            {{ t('hide_errors') }}
+          </label>
         </div>
         <span class="heading-sep" />
         <div class="filter-ports">
@@ -572,6 +578,21 @@ function exportCsv() {
 
 .stat-err {
   color: var(--mb-err) !important;
+}
+
+.hide-errors-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.hide-errors-toggle input {
+  cursor: pointer;
+  accent-color: var(--primary-color);
 }
 
 /* Port selector in heading */
@@ -939,7 +960,8 @@ function exportCsv() {
     "quantity": "Quantity",
     "size": "Size",
     "raw_bytes": "Raw bytes",
-    "export_csv": "Export CSV"
+    "export_csv": "Export CSV",
+    "hide_errors": "Hide errors"
   },
   "ru": {
     "title": "Sniffer",
@@ -961,7 +983,8 @@ function exportCsv() {
     "quantity": "Количество",
     "size": "Размер",
     "raw_bytes": "Сырые байты",
-    "export_csv": "Экспорт CSV"
+    "export_csv": "Экспорт CSV",
+    "hide_errors": "Скрыть ошибки"
   },
   "kk": {
     "title": "Sniffer",
@@ -983,7 +1006,8 @@ function exportCsv() {
     "quantity": "Саны",
     "size": "Өлшемі",
     "raw_bytes": "Шикі байттар",
-    "export_csv": "CSV жүктеу"
+    "export_csv": "CSV жүктеу",
+    "hide_errors": "Қателерді жасыру"
   },
   "it": {
     "title": "Sniffer",
@@ -1005,7 +1029,8 @@ function exportCsv() {
     "quantity": "Quantità",
     "size": "Dimensione",
     "raw_bytes": "Byte grezzi",
-    "export_csv": "Esporta CSV"
+    "export_csv": "Esporta CSV",
+    "hide_errors": "Nascondi errori"
   },
   "de": {
     "title": "Sniffer",
@@ -1027,7 +1052,8 @@ function exportCsv() {
     "quantity": "Anzahl",
     "size": "Größe",
     "raw_bytes": "Rohbytes",
-    "export_csv": "CSV exportieren"
+    "export_csv": "CSV exportieren",
+    "hide_errors": "Fehler ausblenden"
   }
 }
 </i18n>
