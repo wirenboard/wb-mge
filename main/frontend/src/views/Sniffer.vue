@@ -317,6 +317,11 @@ function exportCsv() {
   <Layout>
     <Heading :title="t('title')" :crumbs="t('crumbs')">
       <template #default>
+        <div class="heading-stats">
+          <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
+          <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
+        </div>
+        <span class="heading-sep" />
         <div class="filter-ports">
           <button
             v-for="p in portOptions" :key="p"
@@ -324,18 +329,15 @@ function exportCsv() {
             @click="portFilter = p"
           >Port {{ p }}</button>
         </div>
-        <div class="heading-stats">
-          <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
-          <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
-        </div>
+        <span class="heading-sep" />
+        <Button variant="outline" @click="exportCsv()" :disabled="filteredRows.length === 0">{{ t('export_csv') }}</Button>
+        <span class="heading-sep" />
+        <Button variant="outline" @click="clearLogs()">{{ t('clear') }}</Button>
         <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
           {{ running ? t('stop') : t('start') }}
         </Button>
-        <Button variant="outline" @click="clearLogs()">{{ t('clear') }}</Button>
-        <Button variant="outline" @click="exportCsv()" :disabled="filteredRows.length === 0">{{ t('export_csv') }}</Button>
       </template>
     </Heading>
-    <span v-if="wsStatus !== 'connected'" class="ws-status">{{ wsStatus === 'reconnecting' ? 'Reconnecting…' : 'Disconnected' }}</span>
 
     <!-- Main area: facet rail + log table -->
     <div class="sniffer-main">
@@ -496,6 +498,11 @@ function exportCsv() {
 </template>
 
 <style scoped>
+.heading-sep {
+  display: inline-block;
+  width: 24px;
+}
+
 /* Heading stats counter */
 .heading-stats {
   display: flex;
@@ -860,15 +867,6 @@ function exportCsv() {
   color: var(--text-muted);
   background: color-mix(in oklch, var(--text-muted) 6%, var(--bg-surface));
   border-color: color-mix(in oklch, var(--text-muted) 20%, var(--bg-surface));
-}
-
-.ws-status {
-  display: block;
-  font-size: 12px;
-  color: var(--text-muted);
-  padding: 4px 32px;
-  background: color-mix(in oklch, var(--text-muted) 6%, var(--bg-surface));
-  border-bottom: 1px solid var(--border-color);
 }
 
 /* Hex payload */
