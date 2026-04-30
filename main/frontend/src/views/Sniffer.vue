@@ -487,7 +487,6 @@ function exportCsv() {
             <tr
               v-for="r in filteredRows" :key="r.id"
               :class="{ selected: selected === r.id, 'err-row': r.crc === 'ERR' }"
-              :title="r.tooltip || undefined"
               @click="selected = r.id"
             >
               <td class="mono muted">{{ r.id }}</td>
@@ -495,7 +494,7 @@ function exportCsv() {
               <td class="mono muted">{{ r.dt }}</td>
               <td><span :class="dirPillClass(r.dir)">{{ r.dir }}</span></td>
               <td class="mono" style="font-weight:500" :title="SLAVE_NAMES[parseInt(r.slave, 16)] ? `0x${r.slave} · ${SLAVE_NAMES[parseInt(r.slave, 16)]}` : `0x${r.slave} (${parseInt(r.slave, 16)})`">0x{{ r.slave }}</td>
-              <td class="mono fc-cell">{{ r.fc }}</td>
+              <td class="mono fc-cell" :title="r.tooltip || undefined">{{ r.fc }}</td>
               <td>
                 <span class="hex-payload">
                   <span
