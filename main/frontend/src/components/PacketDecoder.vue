@@ -120,14 +120,29 @@ const HEX_FIELDS = new Set([
 ])
 
 // Fields that also need decimal shown in parentheses
-const DEC_ALSO = new Set(['serial_number', 'modbus_address', 'register', 'read_register', 'write_register', 'value', 'fifo_pointer'])
+const DEC_ALSO = new Set(['serial_number', 'modbus_address', 'address', 'register', 'read_register', 'write_register', 'value', 'fifo_pointer'])
+
+// Well-known special addresses with human-readable names
+const ADDR_NOTES: Record<number, string> = {
+  0x00: 'broadcast',
+  0xFD: 'Fast Modbus broadcast',
+  0xF8: 'reserved',
+  0xF9: 'reserved',
+  0xFA: 'reserved',
+  0xFB: 'reserved',
+  0xFC: 'reserved',
+  0xFE: 'reserved',
+  0xFF: 'FM Bus Arbitration',
+}
 
 function fmtVal(key: string, raw: string): string {
   if (HEX_FIELDS.has(key) && /^[0-9A-Fa-f]+$/.test(raw)) {
     const hex = `0x${raw.toUpperCase()}`
     if (DEC_ALSO.has(key)) {
       const dec = parseInt(raw, 16)
-      return `${hex} (${dec})`
+      const note = (key === 'address' || key === 'modbus_address') ? ADDR_NOTES[dec] : undefined
+      const suffix = note ? ` ${note}` : ''
+      return `${hex} (${dec}${suffix})`
     }
     return hex
   }
