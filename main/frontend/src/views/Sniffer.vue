@@ -52,7 +52,7 @@ const FC_NAMES: Record<number, string> = {
 
 const SLAVE_NAMES: Record<number, string> = {
   253: 'Fast Modbus broadcast',
-  255: 'Bus arbitration',
+  255: 'FM Bus Arbitration',
 }
 
 function formatTimestamp(us: number): string {
@@ -416,9 +416,11 @@ function exportCsv() {
                 <path d="M1.5 5l2.3 2.3L8.5 2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </span>
-            <span class="mono" style="font-weight:600">{{ slave }}</span>
-            <span class="facet-label mono muted" style="font-size:11px">
-              {{ SLAVE_NAMES[parseInt(slave, 16)] ?? `0x${slave} · ${parseInt(slave, 16)}` }}
+            <span class="facet-id-label">
+              <span class="mono" style="font-weight:600">{{ slave }}</span>
+              <span class="facet-label mono muted" style="font-size:11px">
+                {{ SLAVE_NAMES[parseInt(slave, 16)] ?? `0x${slave} · ${parseInt(slave, 16)}` }}
+              </span>
             </span>
             <span class="facet-count">{{ slaveStats[slave] }}</span>
             <span class="facet-bar"><span :style="{ width: `${(slaveStats[slave] / maxSlaveCount) * 100}%` }"/></span>
@@ -445,9 +447,11 @@ function exportCsv() {
                 <path d="M1.5 5l2.3 2.3L8.5 2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </span>
-            <span class="mono" style="font-weight:600">{{ code }}</span>
-            <span class="facet-label">
-              {{ FC_NAMES[fcCodeNum(code)] || 'Unknown' }}
+            <span class="facet-id-label">
+              <span class="mono" style="font-weight:600">{{ code }}</span>
+              <span class="facet-label">
+                {{ FC_NAMES[fcCodeNum(code)] || 'Unknown' }}
+              </span>
             </span>
             <span class="facet-count">{{ fcStats[code] }}</span>
             <span class="facet-bar"><span :style="{ width: `${(fcStats[code] / maxFcCount) * 100}%` }"/></span>
@@ -667,7 +671,7 @@ function exportCsv() {
   outline: none;
   background: transparent;
   display: grid;
-  grid-template-columns: 16px 32px 1fr auto 44px;
+  grid-template-columns: 16px 1fr auto 44px;
   align-items: center;
   gap: 10px;
   padding: 6px 16px;
@@ -718,15 +722,20 @@ function exportCsv() {
   border-color: var(--primary-color);
 }
 
+.facet-id-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
 .facet-label {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   font-size: 12px;
-  display: flex;
-  gap: 6px;
-  align-items: baseline;
 }
 
 .facet-count {
