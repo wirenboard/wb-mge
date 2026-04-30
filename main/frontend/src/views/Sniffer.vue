@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
+import PacketDecoder from '@/components/PacketDecoder.vue';
 
 const { t } = useI18n();
 
@@ -541,53 +542,7 @@ function exportCsv() {
       </div>
 
       <!-- Detail panel -->
-      <div v-if="sel" class="detail-panel">
-        <div class="detail-header">
-          <div class="detail-header-left">
-            <span class="detail-title">Packet #{{ sel.id }}</span>
-            <span :class="senderPillClass(sel.sender)">{{ sel.sender }}</span>
-            <span class="muted detail-dir-label">{{ directionLabel(sel.sender, sel.slave) }}</span>
-          </div>
-          <span class="mono muted detail-time">{{ sel.t }} &middot; &Delta;t {{ sel.dt }}</span>
-        </div>
-
-        <div class="detail-grid">
-          <div>
-            <div class="sub-section-label">Header</div>
-            <div class="kv" style="padding:5px 0"><div class="k">Slave ID</div><div class="v mono">
-              <span v-if="sel.isArbitration" class="muted">— (arbitration, no addressing)</span>
-              <span v-else>0x{{ sel.slave }} ({{ parseInt(sel.slave, 16) }}){{ SLAVE_NAMES[parseInt(sel.slave, 16)] ? ' · ' + SLAVE_NAMES[parseInt(sel.slave, 16)] : '' }}</span>
-            </div></div>
-            <div class="kv" style="padding:5px 0"><div class="k">Function</div><div class="v mono">{{ sel.fc }}</div></div>
-            <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">{{ t('col_sender') }}</div><div class="v">{{ sel.sender === 'MASTER' ? 'Request' : sel.sender === 'SLAVE' ? 'Response' : 'Error response' }}</div></div>
-          </div>
-
-          <div>
-            <div class="sub-section-label">{{ t('parsed') }}</div>
-            <div class="kv" style="padding:5px 0"><div class="k">CRC</div><div class="v mono" :style="{ color: sel.crc === 'ERR' ? 'var(--mb-err)' : sel.crc === 'N/A' ? 'var(--text-muted)' : 'var(--mb-ok)' }">
-              {{ sel.crc === 'ERR' ? '\u2715 Mismatch' : sel.crc === 'N/A' ? '— N/A (arbitration frame)' : '\u2713 Valid' }}
-            </div></div>
-            <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">Size</div><div class="v mono">{{ sel.bytes }} bytes</div></div>
-          </div>
-
-          <div>
-            <div class="sub-section-label">{{ t('raw_bytes') }}</div>
-            <div class="raw-bytes-box">
-              <span
-                v-for="(b, i) in sel.bytes_arr" :key="i"
-                class="raw-byte"
-                :style="hexByteStyle(b, i, sel.bytes_arr)"
-              >{{ b }}</span>
-            </div>
-            <div class="raw-legend">
-              <span><span class="legend-dot" style="background:var(--mb-master)" />Slave ID</span>
-              <span><span class="legend-dot" style="background:var(--mb-hex-slot)" />FC</span>
-              <span><span class="legend-dot" style="background:var(--mb-data)" />Data</span>
-              <span><span class="legend-dot" style="background:var(--mb-hex-crc)" />CRC</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PacketDecoder v-if="sel" :packet="sel" />
       </div><!-- /sniffer-body -->
     </div><!-- /sniffer-main -->
   </Layout>
@@ -953,92 +908,10 @@ function exportCsv() {
   font-size: 11px;
 }
 
-/* Detail panel */
-.detail-panel {
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-surface-subtle);
-  padding: 16px 32px 18px;
-  flex-shrink: 0;
-}
-
-.detail-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.detail-header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.detail-title {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.detail-dir-label {
-  font-size: 12px;
-}
-
-.detail-time {
-  font-size: 11px;
-}
-
-.detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.2fr;
-  gap: 24px;
-}
-
-/* Raw bytes box */
-.raw-bytes-box {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: var(--r-md);
-  padding: 10px 12px;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  line-height: 1.8;
-}
-
-.raw-byte {
-  margin-right: 6px;
-  display: inline-block;
-}
-
-.raw-legend {
-  margin-top: 8px;
-  display: flex;
-  gap: 14px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.legend-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  margin-right: 5px;
-  vertical-align: middle;
-}
-
 /* Responsive */
-@media (max-width: 1024px) {
-  .detail-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
 @media (max-width: 680px) {
-  .detail-panel {
-    padding: 12px;
-  }
-  .detail-grid {
-    grid-template-columns: 1fr;
+  .sniffer-main {
+    flex-direction: column;
   }
 }
 </style>
