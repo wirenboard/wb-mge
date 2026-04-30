@@ -50,11 +50,6 @@ const FC_NAMES: Record<number, string> = {
   255: 'FM Arbitration',
 }
 
-const FC_KIND: Record<number, 'read' | 'write'> = {
-  1: 'read', 2: 'read', 3: 'read', 4: 'read',
-  5: 'write', 6: 'write', 15: 'write', 16: 'write',
-}
-
 const SLAVE_NAMES: Record<number, string> = {
   253: 'Fast Modbus broadcast',
   255: 'Bus arbitration',
@@ -311,11 +306,6 @@ function toggleSet(set: Set<string>, val: string): Set<string> {
   return n
 }
 
-function selectFcKind(kind: 'read' | 'write') {
-  const codes = activeFcs.value.filter(code => FC_KIND[fcCodeNum(code)] === kind)
-  selectedFcs.value = new Set(codes)
-}
-
 const filteredRows = computed(() => {
   let r = portRows.value
   if (selectedSlaves.value.size > 0) r = r.filter(x => selectedSlaves.value.has(x.slave))
@@ -458,7 +448,6 @@ function exportCsv() {
             <span class="mono" style="font-weight:600">{{ code }}</span>
             <span class="facet-label">
               {{ FC_NAMES[fcCodeNum(code)] || 'Unknown' }}
-              <span v-if="FC_KIND[fcCodeNum(code)]" :class="`facet-kind facet-kind-${FC_KIND[fcCodeNum(code)]}`">{{ FC_KIND[fcCodeNum(code)] }}</span>
             </span>
             <span class="facet-count">{{ fcStats[code] }}</span>
             <span class="facet-bar"><span :style="{ width: `${(fcStats[code] / maxFcCount) * 100}%` }"/></span>
@@ -762,53 +751,6 @@ function exportCsv() {
 
 .facet-row[data-on="true"] .facet-bar span {
   background: var(--primary-color);
-}
-
-.facet-kind {
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 1px 5px;
-  border-radius: 2px;
-  font-weight: 600;
-  margin-left: 2px;
-}
-
-.facet-kind-read {
-  color: var(--mb-master);
-  background: color-mix(in oklch, var(--mb-master) 10%, white);
-}
-
-.facet-kind-write {
-  color: color-mix(in oklch, var(--warn, #f59e0b) 50%, #000);
-  background: color-mix(in oklch, var(--warn, #f59e0b) 15%, white);
-}
-
-.facet-kind-unknown {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.facet-fc-btns {
-  padding: 0 16px 8px;
-  display: flex;
-  gap: 6px;
-}
-
-.facet-kind-btn {
-  flex: 1;
-  height: 22px;
-  font-size: 11px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-}
-
-.facet-kind-btn:hover {
-  background: var(--bg-surface-subtle);
-  border-color: var(--border-strong);
 }
 
 /* Sniffer body */
