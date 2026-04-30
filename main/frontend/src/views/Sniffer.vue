@@ -195,6 +195,8 @@ function clearLogs() {
 
 onUnmounted(() => stopCapture())
 
+const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
+
 // Rows filtered by port only (for facet stats)
 const portRows = computed(() => {
   const p = parseInt(portFilter.value)
@@ -283,6 +285,32 @@ function directionLabel(dir: string, slave: string) {
   if (dir === 'SLAVE') return `Slave 0x${slave} \u2192 Master`;
   return 'Error response';
 }
+
+function exportCsv() {
+  const headers = ['#', 'Time', 'Δt', 'Dir', 'Slave', 'Function code', 'Payload (HEX)', 'Bytes', 'CRC']
+  const csvRows = [headers.join(',')]
+  for (const r of filteredRows.value) {
+    const row = [
+      r.id,
+      r.t,
+      r.dt,
+      r.dir,
+      `0x${r.slave}`,
+      `"${r.fc}"`,
+      `"${r.pl}"`,
+      r.bytes,
+      r.crc,
+    ]
+    csvRows.push(row.join(','))
+  }
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `sniffer_port${portFilter.value}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -296,10 +324,15 @@ function directionLabel(dir: string, slave: string) {
             @click="portFilter = p"
           >Port {{ p }}</button>
         </div>
+        <div class="heading-stats">
+          <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
+          <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
+        </div>
         <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
           {{ running ? t('stop') : t('start') }}
         </Button>
         <Button variant="outline" @click="clearLogs()">{{ t('clear') }}</Button>
+        <Button variant="outline" @click="exportCsv()" :disabled="filteredRows.length === 0">{{ t('export_csv') }}</Button>
       </template>
     </Heading>
     <span v-if="wsStatus !== 'connected'" class="ws-status">{{ wsStatus === 'reconnecting' ? 'Reconnecting…' : 'Disconnected' }}</span>
@@ -343,10 +376,6 @@ function directionLabel(dir: string, slave: string) {
               <div class="facet-section-hint">{{ activeFcs.length }} seen · {{ selectedFcs.size || 'all' }} selected</div>
             </div>
             <button class="facet-clear" :style="{ visibility: selectedFcs.size > 0 ? 'visible' : 'hidden' }" @click="selectedFcs = new Set()">clear</button>
-          </div>
-          <div class="facet-fc-btns">
-            <button class="facet-kind-btn" @click="selectFcKind('read')">Reads</button>
-            <button class="facet-kind-btn" @click="selectFcKind('write')">Writes</button>
           </div>
           <button
             v-for="code in activeFcs" :key="code"
@@ -467,6 +496,25 @@ function directionLabel(dir: string, slave: string) {
 </template>
 
 <style scoped>
+/* Heading stats counter */
+.heading-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  align-items: center;
+}
+
+.heading-stats b {
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.stat-err {
+  color: var(--mb-err) !important;
+}
+
 /* Port selector in heading */
 .filter-ports {
   display: flex;
@@ -710,6 +758,7 @@ function directionLabel(dir: string, slave: string) {
   width: 100%;
   border-collapse: collapse;
   font-size: 12.5px;
+  table-layout: fixed;
 }
 
 .sniffer-table thead {
@@ -768,6 +817,7 @@ function directionLabel(dir: string, slave: string) {
 .col-sender { width: 76px; }
 .col-slave { width: 80px; }
 .col-fc { width: 200px; }
+.col-payload { max-width: 0; width: 100%; }
 .col-bytes { width: 60px; }
 .col-crc { width: 60px; }
 
@@ -827,6 +877,11 @@ function directionLabel(dir: string, slave: string) {
   font-size: 12px;
   letter-spacing: 0.02em;
   font-weight: 500;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .hex-byte {
@@ -958,7 +1013,8 @@ function directionLabel(dir: string, slave: string) {
     "start_addr": "Starting address",
     "quantity": "Quantity",
     "size": "Size",
-    "raw_bytes": "Raw bytes"
+    "raw_bytes": "Raw bytes",
+    "export_csv": "Export CSV"
   },
   "ru": {
     "title": "Sniffer",
@@ -979,7 +1035,8 @@ function directionLabel(dir: string, slave: string) {
     "start_addr": "Начальный адрес",
     "quantity": "Количество",
     "size": "Размер",
-    "raw_bytes": "Сырые байты"
+    "raw_bytes": "Сырые байты",
+    "export_csv": "Экспорт CSV"
   },
   "kk": {
     "title": "Sniffer",
@@ -1000,7 +1057,8 @@ function directionLabel(dir: string, slave: string) {
     "start_addr": "Бастапқы адрес",
     "quantity": "Саны",
     "size": "Өлшемі",
-    "raw_bytes": "Шикі байттар"
+    "raw_bytes": "Шикі байттар",
+    "export_csv": "CSV жүктеу"
   },
   "it": {
     "title": "Sniffer",
@@ -1021,7 +1079,8 @@ function directionLabel(dir: string, slave: string) {
     "start_addr": "Indirizzo iniziale",
     "quantity": "Quantità",
     "size": "Dimensione",
-    "raw_bytes": "Byte grezzi"
+    "raw_bytes": "Byte grezzi",
+    "export_csv": "Esporta CSV"
   },
   "de": {
     "title": "Sniffer",
@@ -1042,7 +1101,8 @@ function directionLabel(dir: string, slave: string) {
     "start_addr": "Startadresse",
     "quantity": "Anzahl",
     "size": "Größe",
-    "raw_bytes": "Rohbytes"
+    "raw_bytes": "Rohbytes",
+    "export_csv": "CSV exportieren"
   }
 }
 </i18n>
