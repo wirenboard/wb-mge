@@ -18,7 +18,8 @@ type SniffRow = {
   pl: string
   bytes_arr: string[]
   bytes: number
-  crc: 'OK' | 'ERR'
+  crc: 'OK' | 'ERR' | 'N/A'
+  isArbitration: boolean
   t: string
   dt: string
   tooltip: string
@@ -47,6 +48,7 @@ const FC_NAMES: Record<number, string> = {
   15: 'Write Multiple Coils',
   16: 'Write Multiple Regs',
   70: 'Fast Modbus',
+  96: 'Fast Modbus (legacy)',
   255: 'FM Arbitration',
 }
 
@@ -131,31 +133,53 @@ function parsePacket(msg: any): SniffRow | null {
       bytes_arr: [],
       bytes: 0,
       crc: 'ERR',
+      isArbitration: false,
       t: formatTimestamp(msg.timestamp_us),
       dt,
       tooltip: `No response from slave 0x${slave} within timeout`,
     }
   }
   if (msg.type === 'packet') {
-    const fcName = FC_NAMES[msg.function] ?? `FC${msg.function}`
-    const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase()
-    const sender = msg.sender === 'master' ? 'MASTER' : 'SLAVE'
-    const crc = msg.crc_valid ? 'OK' : 'ERR'
     const pl = hexToPayloadString(msg.raw)
     const dt = formatDt(msg.timestamp_us, lastTimestampUs)
     lastTimestampUs = msg.timestamp_us
 
+    /* Detect Fast Modbus arbitration: all bytes are 0xFF */
+    const isArbitration = msg.raw && /^(FF)+$/i.test(msg.raw)
+
+    if (isArbitration) {
+      return {
+        id: msg.id,
+        port: msg.port,
+        timestamp_us: msg.timestamp_us,
+        sender: 'SLAVE',
+        slave: '—',
+        fc: 'FM Arbitration',
+        fc_code: 'FF',
+        pl,
+        bytes_arr: hexToPayloadString(msg.raw).split(' '),
+        bytes: msg.size,
+        crc: 'N/A',
+        isArbitration: true,
+        t: formatTimestamp(msg.timestamp_us),
+        dt,
+        tooltip: 'Fast Modbus Bus Arbitration: devices simultaneously assert 0xFF bytes to resolve which one responds. No CRC — not a Modbus frame.',
+      }
+    }
+
+    const fcName = FC_NAMES[msg.function] ?? `FC${msg.function}`
+    const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase()
+    const sender = msg.sender === 'master' ? 'MASTER' : 'SLAVE'
+    const crc = msg.crc_valid ? 'OK' : 'ERR'
+
     /* Build FC display: no numeric prefix for named functions */
     let fcDisplay = fcName
     let tooltip = FC_TOOLTIPS[msg.function] ?? ''
-    if (msg.function === 0x46 && msg.raw && msg.raw.length >= 6) {
+    if ((msg.function === 0x46 || msg.function === 0x60) && msg.raw && msg.raw.length >= 6) {
       const sub = parseInt(msg.raw.slice(4, 6), 16)
-      const subName = FAST_MODBUS_SUBCMDS[sub] ?? `FC${sub.toString(16).padStart(2, '0').toUpperCase()}`
+      const subName = FAST_MODBUS_SUBCMDS[sub] ?? `FM subcmd 0x${sub.toString(16).padStart(2, '0').toUpperCase()}`
       fcDisplay = `${subName}`
       tooltip = FAST_MODBUS_TOOLTIPS[sub] ?? `Fast Modbus subcommand 0x${sub.toString(16).padStart(2, '0').toUpperCase()}`
-    }
-    if (msg.slave_id === 0xFF && msg.function === 0xFF) {
-      tooltip = 'Fast Modbus Bus Arbitration: all devices with data transmit simultaneously. The result is a wired-AND of all responses (0xFF = no winner, or collision). Master reads this to determine if any device won arbitration.'
     }
 
     return {
@@ -170,6 +194,7 @@ function parsePacket(msg: any): SniffRow | null {
       bytes_arr: hexToPayloadString(msg.raw).split(' '),
       bytes: msg.size,
       crc,
+      isArbitration: false,
       t: formatTimestamp(msg.timestamp_us),
       dt,
       tooltip,
@@ -255,6 +280,10 @@ function clearLogs() {
 onUnmounted(() => stopCapture())
 
 const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
+
+function hexByteArbitrationStyle() {
+  return { color: 'var(--text-muted)', fontWeight: '400' };
+}
 
 // Rows filtered by port only (for facet stats)
 const portRows = computed(() => {
@@ -466,40 +495,44 @@ function exportCsv() {
           <thead>
             <tr>
               <th class="col-id">#</th>
-              <th class="col-time">{{ t('col_time') }}</th>
+              <th class="col-time">Time</th>
               <th class="col-dt">&Delta;t</th>
-              <th class="col-sender">{{ t('col_dir') }}</th>
+              <th class="col-sender">{{ t('col_sender') }}</th>
               <th class="col-slave">Slave</th>
-              <th class="col-fc">{{ t('col_fc') }}</th>
-              <th class="col-payload">{{ t('col_payload') }}</th>
-              <th class="col-bytes">{{ t('col_bytes') }}</th>
+              <th class="col-fc">Function</th>
+              <th class="col-payload">Payload</th>
+              <th class="col-bytes">Bytes</th>
               <th class="col-crc">CRC</th>
             </tr>
           </thead>
           <tbody>
             <tr
               v-for="r in filteredRows" :key="r.id"
-              :class="{ selected: selected === r.id, 'err-row': r.crc === 'ERR' }"
+              :class="{ selected: selected === r.id, 'err-row': r.crc === 'ERR' && !r.isArbitration }"
               @click="selected = r.id"
             >
               <td class="mono muted">{{ r.id }}</td>
               <td class="mono">{{ r.t }}</td>
               <td class="mono muted">{{ r.dt }}</td>
               <td><span :class="senderPillClass(r.sender)">{{ r.sender }}</span></td>
-              <td class="mono" style="font-weight:500" :title="SLAVE_NAMES[parseInt(r.slave, 16)] ? `0x${r.slave} · ${SLAVE_NAMES[parseInt(r.slave, 16)]}` : `0x${r.slave} (${parseInt(r.slave, 16)})`">0x{{ r.slave }}</td>
+              <td class="mono" style="font-weight:500" :title="r.isArbitration ? undefined : (SLAVE_NAMES[parseInt(r.slave, 16)] ? `0x${r.slave} · ${SLAVE_NAMES[parseInt(r.slave, 16)]}` : `0x${r.slave} (${parseInt(r.slave, 16)})`)">
+                <span v-if="r.isArbitration" class="muted">—</span>
+                <span v-else>0x{{ r.slave }}</span>
+              </td>
               <td class="mono fc-cell" :title="r.tooltip || undefined">{{ r.fc }}</td>
               <td>
                 <span class="hex-payload">
                   <span
                     v-for="(b, i) in r.bytes_arr" :key="i"
                     class="hex-byte"
-                    :style="hexByteStyle(b, i, r.bytes_arr)"
+                    :style="r.isArbitration ? hexByteArbitrationStyle() : hexByteStyle(b, i, r.bytes_arr)"
                   >{{ b }}</span>
                 </span>
               </td>
               <td class="mono muted">{{ r.bytes }}</td>
               <td>
                 <span v-if="r.crc === 'ERR'" class="crc-err mono">ERR</span>
+                <span v-else-if="r.crc === 'N/A'" class="muted mono">—</span>
                 <span v-else class="crc-ok mono">OK</span>
               </td>
             </tr>
@@ -521,15 +554,20 @@ function exportCsv() {
         <div class="detail-grid">
           <div>
             <div class="sub-section-label">Header</div>
-            <div class="kv" style="padding:5px 0"><div class="k">Slave ID</div><div class="v mono">0x{{ sel.slave }} ({{ parseInt(sel.slave, 16) }}){{ SLAVE_NAMES[parseInt(sel.slave, 16)] ? ' · ' + SLAVE_NAMES[parseInt(sel.slave, 16)] : '' }}</div></div>
-            <div class="kv" style="padding:5px 0"><div class="k">{{ t('col_fc') }}</div><div class="v mono">{{ sel.fc }}</div></div>
+            <div class="kv" style="padding:5px 0"><div class="k">Slave ID</div><div class="v mono">
+              <span v-if="sel.isArbitration" class="muted">— (arbitration, no addressing)</span>
+              <span v-else>0x{{ sel.slave }} ({{ parseInt(sel.slave, 16) }}){{ SLAVE_NAMES[parseInt(sel.slave, 16)] ? ' · ' + SLAVE_NAMES[parseInt(sel.slave, 16)] : '' }}</span>
+            </div></div>
+            <div class="kv" style="padding:5px 0"><div class="k">Function</div><div class="v mono">{{ sel.fc }}</div></div>
             <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">{{ t('col_sender') }}</div><div class="v">{{ sel.sender === 'MASTER' ? 'Request' : sel.sender === 'SLAVE' ? 'Response' : 'Error response' }}</div></div>
           </div>
 
           <div>
             <div class="sub-section-label">{{ t('parsed') }}</div>
-            <div class="kv" style="padding:5px 0"><div class="k">CRC</div><div class="v mono" :style="{ color: sel.crc === 'ERR' ? 'var(--mb-err)' : 'var(--mb-ok)' }">{{ sel.crc === 'ERR' ? '\u2715 Mismatch' : '\u2713 Valid' }}</div></div>
-            <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">{{ t('size') }}</div><div class="v mono">{{ sel.bytes }} {{ t('col_bytes').toLowerCase() }}</div></div>
+            <div class="kv" style="padding:5px 0"><div class="k">CRC</div><div class="v mono" :style="{ color: sel.crc === 'ERR' ? 'var(--mb-err)' : sel.crc === 'N/A' ? 'var(--text-muted)' : 'var(--mb-ok)' }">
+              {{ sel.crc === 'ERR' ? '\u2715 Mismatch' : sel.crc === 'N/A' ? '— N/A (arbitration frame)' : '\u2713 Valid' }}
+            </div></div>
+            <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">Size</div><div class="v mono">{{ sel.bytes }} bytes</div></div>
           </div>
 
           <div>
@@ -690,8 +728,7 @@ function exportCsv() {
 }
 
 .facet-row:focus-visible {
-  outline: 2px solid var(--primary-color);
-  outline-offset: -2px;
+  outline: none;
 }
 
 .facet-row[data-on="true"] {
