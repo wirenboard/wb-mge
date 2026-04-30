@@ -128,7 +128,34 @@ clean:
 		fi; \
 	done
 
-.PHONY: all unittests build-frontend build-idf-project prepare_release clean
+#######################################
+# OTA flash
+#######################################
+
+OTA_HOST ?= 192.168.1.1
+OTA_USER ?= admin
+OTA_PASS ?= admin
+OTA_COOKIE_FILE := /tmp/mge_ota_cookie.txt
+
+ota-flash:
+	@echo "Flashing $(RELEASE_DIR)/$(RELEASE_FILE_NAME) to http://$(OTA_HOST)/ ..."
+	@AUTH_RESULT=$$(curl -s -c $(OTA_COOKIE_FILE) -X POST http://$(OTA_HOST)/auth \
+		-H "Content-Type: application/json" \
+		-d '{"login":"$(OTA_USER)","pass":"$(OTA_PASS)"}'); \
+	echo "$$AUTH_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('auth') else 1)" \
+		|| (echo "ERROR: Authentication failed: $$AUTH_RESULT"; exit 1)
+	@echo "Authenticated, uploading firmware..."
+	@curl --progress-bar -b $(OTA_COOKIE_FILE) \
+		-X POST http://$(OTA_HOST)/update \
+		-H "Content-Type: application/octet-stream" \
+		--data-binary @$(RELEASE_DIR)/$(RELEASE_FILE_NAME) \
+		--max-time 60 \
+		| python3 -c "import sys,json; d=json.load(sys.stdin); exit(0) if d.get('success') else (print('ERROR:', d), exit(1))" \
+		|| (echo "ERROR: Firmware upload failed"; exit 1)
+	@rm -f $(OTA_COOKIE_FILE)
+	@echo "OTA flash complete, device is rebooting"
+
+.PHONY: all unittests build-frontend build-idf-project prepare_release clean ota-flash
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk
