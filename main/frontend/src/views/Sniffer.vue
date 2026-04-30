@@ -292,10 +292,11 @@ const portRows = computed(() => {
   return rows.value.filter(x => x.port === p)
 })
 
-// Slave stats for facet rail
+// Slave stats for facet rail — arbitration packets have no real slave address, skip them
 const slaveStats = computed(() => {
   const counts: Record<string, number> = {}
   for (const r of portRows.value) {
+    if (r.isArbitration) continue
     counts[r.slave] = (counts[r.slave] ?? 0) + 1
   }
   return counts
@@ -449,7 +450,7 @@ function exportCsv() {
             <span class="facet-id-label">
               <span class="mono" style="font-weight:600">{{ slave }}</span>
               <span class="facet-label mono muted" style="font-size:11px">
-                {{ SLAVE_NAMES[parseInt(slave, 16)] ?? `0x${slave} · ${parseInt(slave, 16)}` }}
+                {{ SLAVE_NAMES[parseInt(slave, 16)] ?? (isNaN(parseInt(slave, 16)) ? slave : `0x${slave} · ${parseInt(slave, 16)}`) }}
               </span>
             </span>
             <span class="facet-count">{{ slaveStats[slave] }}</span>
