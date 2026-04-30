@@ -44,11 +44,18 @@ const FC_NAMES: Record<number, string> = {
   6: 'Write Single Reg',
   15: 'Write Multiple Coils',
   16: 'Write Multiple Regs',
+  70: 'Fast Modbus',
+  255: 'Arbitration',
 }
 
 const FC_KIND: Record<number, 'read' | 'write'> = {
   1: 'read', 2: 'read', 3: 'read', 4: 'read',
   5: 'write', 6: 'write', 15: 'write', 16: 'write',
+}
+
+const SLAVE_NAMES: Record<number, string> = {
+  253: 'Fast Modbus broadcast',
+  255: 'Bus arbitration',
 }
 
 function formatTimestamp(us: number): string {
@@ -101,13 +108,32 @@ function parsePacket(msg: any): SniffRow | null {
     const pl = hexToPayloadString(msg.raw)
     const dt = formatDt(msg.timestamp_us, lastTimestampUs)
     lastTimestampUs = msg.timestamp_us
+    /* For Fast Modbus FC 0x46, show subcommand name from raw payload byte [2] */
+    const FAST_MODBUS_SUBCMDS: Record<number, string> = {
+      0x01: 'Scan Start',
+      0x02: 'Scan Continue',
+      0x03: 'Scan Response',
+      0x04: 'Scan End',
+      0x08: 'Cmd Send',
+      0x09: 'Cmd Response',
+      0x10: 'Event Request',
+      0x11: 'Event Transfer',
+      0x12: 'Event Confirm',
+      0x18: 'Event Config',
+    }
+    let fcDisplay = `${msg.function.toString(16).padStart(2, '0').toUpperCase()} ${fcName}`
+    if (msg.function === 0x46 && msg.raw && msg.raw.length >= 6) {
+      const sub = parseInt(msg.raw.slice(4, 6), 16)
+      const subName = FAST_MODBUS_SUBCMDS[sub] ?? `FC${sub.toString(16).padStart(2, '0').toUpperCase()}`
+      fcDisplay = `46 ${subName}`
+    }
     return {
       id: msg.id,
       port: msg.port,
       timestamp_us: msg.timestamp_us,
       dir: crc === 'ERR' ? 'ERR' : dir,
       slave,
-      fc: `${msg.function.toString(16).padStart(2, '0').toUpperCase()} ${fcName}`,
+      fc: fcDisplay,
       pl,
       bytes_arr: hexToPayloadString(msg.raw).split(' '),
       bytes: msg.size,
@@ -364,7 +390,9 @@ function exportCsv() {
               </svg>
             </span>
             <span class="mono" style="font-weight:600">{{ slave }}</span>
-            <span class="facet-label mono muted" style="font-size:11px">0x{{ slave }} · {{ parseInt(slave, 16) }}</span>
+            <span class="facet-label mono muted" style="font-size:11px">
+              {{ SLAVE_NAMES[parseInt(slave, 16)] ?? `0x${slave} · ${parseInt(slave, 16)}` }}
+            </span>
             <span class="facet-count">{{ slaveStats[slave] }}</span>
             <span class="facet-bar"><span :style="{ width: `${(slaveStats[slave] / maxSlaveCount) * 100}%` }"/></span>
           </button>
@@ -428,7 +456,7 @@ function exportCsv() {
               <td class="mono">{{ r.t }}</td>
               <td class="mono muted">{{ r.dt }}</td>
               <td><span :class="dirPillClass(r.dir)">{{ r.dir }}</span></td>
-              <td class="mono" style="font-weight:500" :title="`0x${r.slave} (${parseInt(r.slave, 16)})`">0x{{ r.slave }}</td>
+              <td class="mono" style="font-weight:500" :title="SLAVE_NAMES[parseInt(r.slave, 16)] ? `0x${r.slave} · ${SLAVE_NAMES[parseInt(r.slave, 16)]}` : `0x${r.slave} (${parseInt(r.slave, 16)})`">0x{{ r.slave }}</td>
               <td class="mono fc-cell">{{ r.fc }}</td>
               <td>
                 <span class="hex-payload">
@@ -463,7 +491,7 @@ function exportCsv() {
         <div class="detail-grid">
           <div>
             <div class="sub-section-label">Header</div>
-            <div class="kv" style="padding:5px 0"><div class="k">Slave ID</div><div class="v mono">0x{{ sel.slave }} ({{ parseInt(sel.slave, 16) }})</div></div>
+            <div class="kv" style="padding:5px 0"><div class="k">Slave ID</div><div class="v mono">0x{{ sel.slave }} ({{ parseInt(sel.slave, 16) }}){{ SLAVE_NAMES[parseInt(sel.slave, 16)] ? ' · ' + SLAVE_NAMES[parseInt(sel.slave, 16)] : '' }}</div></div>
             <div class="kv" style="padding:5px 0"><div class="k">{{ t('col_fc') }}</div><div class="v mono">{{ sel.fc }}</div></div>
             <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">{{ t('col_dir') }}</div><div class="v">{{ sel.dir === 'MASTER' ? 'Request' : sel.dir === 'SLAVE' ? 'Response' : 'Error response' }}</div></div>
           </div>
