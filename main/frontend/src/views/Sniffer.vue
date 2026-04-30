@@ -11,7 +11,7 @@ type SniffRow = {
   id: number
   port: number
   timestamp_us: number
-  dir: 'MASTER' | 'SLAVE' | 'TIMEOUT' | 'ERR'
+  sender: 'MASTER' | 'SLAVE' | 'TIMEOUT' | 'ERR'
   slave: string
   fc: string
   fc_code: string
@@ -128,7 +128,7 @@ function parsePacket(msg: any): SniffRow | null {
       id: msg.id,
       port: msg.port,
       timestamp_us: msg.timestamp_us,
-      dir: 'TIMEOUT',
+      sender: 'TIMEOUT',
       slave,
       fc: fcName,
       fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
@@ -144,7 +144,7 @@ function parsePacket(msg: any): SniffRow | null {
   if (msg.type === 'packet') {
     const fcName = FC_NAMES[msg.function] ?? `FC${msg.function}`
     const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase()
-    const dir = msg.dir === 'master' ? 'MASTER' : 'SLAVE'
+    const sender = msg.sender === 'master' ? 'MASTER' : 'SLAVE'
     const crc = msg.crc_valid ? 'OK' : 'ERR'
     const pl = hexToPayloadString(msg.raw)
     const dt = formatDt(msg.timestamp_us, lastTimestampUs)
@@ -167,7 +167,7 @@ function parsePacket(msg: any): SniffRow | null {
       id: msg.id,
       port: msg.port,
       timestamp_us: msg.timestamp_us,
-      dir: crc === 'ERR' ? 'ERR' : dir,
+      sender: crc === 'ERR' ? 'ERR' : sender,
       slave,
       fc: fcDisplay,
       fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
@@ -327,8 +327,8 @@ const sel = computed(() =>
   selected.value !== null ? filteredRows.value.find(r => r.id === selected.value) ?? null : null
 );
 
-function dirPillClass(dir: string) {
-  return 'dir-pill dir-' + dir.toLowerCase();
+function senderPillClass(sender: string) {
+  return 'sender-pill sender-' + sender.toLowerCase();
 }
 
 function hexByteStyle(byte: string, index: number, arr: string[]) {
@@ -343,21 +343,21 @@ function hexByteStyle(byte: string, index: number, arr: string[]) {
   return { color: 'var(--mb-data)' };
 }
 
-function directionLabel(dir: string, slave: string) {
-  if (dir === 'MASTER') return `Master \u2192 Slave 0x${slave}`;
-  if (dir === 'SLAVE') return `Slave 0x${slave} \u2192 Master`;
+function directionLabel(sender: string, slave: string) {
+  if (sender === 'MASTER') return `Master \u2192 Slave 0x${slave}`;
+  if (sender === 'SLAVE') return `Slave 0x${slave} \u2192 Master`;
   return 'Error response';
 }
 
 function exportCsv() {
-  const headers = ['#', 'Time', 'Δt', 'Dir', 'Slave', 'Function code', 'Payload (HEX)', 'Bytes', 'CRC']
+  const headers = ['#', 'Time', 'Δt', 'Sender', 'Slave', 'Function code', 'Payload (HEX)', 'Bytes', 'CRC']
   const csvRows = [headers.join(',')]
   for (const r of filteredRows.value) {
     const row = [
       r.id,
       r.t,
       r.dt,
-      r.dir,
+      r.sender,
       `0x${r.slave}`,
       `"${r.fc}"`,
       `"${r.pl}"`,
@@ -492,7 +492,7 @@ function exportCsv() {
               <td class="mono muted">{{ r.id }}</td>
               <td class="mono">{{ r.t }}</td>
               <td class="mono muted">{{ r.dt }}</td>
-              <td><span :class="dirPillClass(r.dir)">{{ r.dir }}</span></td>
+              <td><span :class="senderPillClass(r.sender)">{{ r.sender }}</span></td>
               <td class="mono" style="font-weight:500" :title="SLAVE_NAMES[parseInt(r.slave, 16)] ? `0x${r.slave} · ${SLAVE_NAMES[parseInt(r.slave, 16)]}` : `0x${r.slave} (${parseInt(r.slave, 16)})`">0x{{ r.slave }}</td>
               <td class="mono fc-cell" :title="r.tooltip || undefined">{{ r.fc }}</td>
               <td>
@@ -519,8 +519,8 @@ function exportCsv() {
         <div class="detail-header">
           <div class="detail-header-left">
             <span class="detail-title">Packet #{{ sel.id }}</span>
-            <span :class="dirPillClass(sel.dir)">{{ sel.dir }}</span>
-            <span class="muted detail-dir-label">{{ directionLabel(sel.dir, sel.slave) }}</span>
+            <span :class="senderPillClass(sel.sender)">{{ sel.sender }}</span>
+            <span class="muted detail-dir-label">{{ directionLabel(sel.sender, sel.slave) }}</span>
           </div>
           <span class="mono muted detail-time">{{ sel.t }} &middot; &Delta;t {{ sel.dt }}</span>
         </div>
@@ -530,7 +530,7 @@ function exportCsv() {
             <div class="sub-section-label">Header</div>
             <div class="kv" style="padding:5px 0"><div class="k">Slave ID</div><div class="v mono">0x{{ sel.slave }} ({{ parseInt(sel.slave, 16) }}){{ SLAVE_NAMES[parseInt(sel.slave, 16)] ? ' · ' + SLAVE_NAMES[parseInt(sel.slave, 16)] : '' }}</div></div>
             <div class="kv" style="padding:5px 0"><div class="k">{{ t('col_fc') }}</div><div class="v mono">{{ sel.fc }}</div></div>
-            <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">{{ t('col_dir') }}</div><div class="v">{{ sel.dir === 'MASTER' ? 'Request' : sel.dir === 'SLAVE' ? 'Response' : 'Error response' }}</div></div>
+            <div class="kv" style="padding:5px 0;border-bottom:0"><div class="k">{{ t('col_sender') }}</div><div class="v">{{ sel.sender === 'MASTER' ? 'Request' : sel.sender === 'SLAVE' ? 'Response' : 'Error response' }}</div></div>
           </div>
 
           <div>
@@ -898,8 +898,8 @@ function exportCsv() {
   color: var(--text-secondary);
 }
 
-/* Direction pill */
-.dir-pill {
+/* Sender pill */
+.sender-pill {
   display: inline-block;
   font-family: var(--font-mono);
   font-size: 11px;
@@ -910,25 +910,25 @@ function exportCsv() {
   letter-spacing: 0.04em;
 }
 
-.dir-master {
+.sender-master {
   color: var(--mb-master);
   background: color-mix(in oklch, var(--mb-master) 8%, white);
   border-color: color-mix(in oklch, var(--mb-master) 25%, white);
 }
 
-.dir-slave {
+.sender-slave {
   color: var(--mb-slave);
   background: color-mix(in oklch, var(--mb-slave) 6%, white);
   border-color: color-mix(in oklch, var(--mb-slave) 22%, white);
 }
 
-.dir-err {
+.sender-err {
   color: var(--mb-err);
   background: color-mix(in oklch, var(--mb-err) 8%, white);
   border-color: color-mix(in oklch, var(--mb-err) 25%, white);
 }
 
-.dir-timeout {
+.sender-timeout {
   color: var(--text-muted);
   background: color-mix(in oklch, var(--text-muted) 6%, var(--bg-surface));
   border-color: color-mix(in oklch, var(--text-muted) 20%, var(--bg-surface));
@@ -1068,7 +1068,7 @@ function exportCsv() {
     "error": "error",
     "errors": "errors",
     "col_time": "Time",
-    "col_dir": "Sender",
+    "col_sender": "Sender",
     "col_fc": "Function code",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Bytes",
@@ -1090,7 +1090,7 @@ function exportCsv() {
     "error": "ошибка",
     "errors": "ошибок",
     "col_time": "Время",
-    "col_dir": "Отправитель",
+    "col_sender": "Отправитель",
     "col_fc": "Код функции",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Байт",
@@ -1112,7 +1112,7 @@ function exportCsv() {
     "error": "қате",
     "errors": "қате",
     "col_time": "Уақыт",
-    "col_dir": "Жіберуші",
+    "col_sender": "Жіберуші",
     "col_fc": "Функция коды",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Байт",
@@ -1134,7 +1134,7 @@ function exportCsv() {
     "error": "errore",
     "errors": "errori",
     "col_time": "Ora",
-    "col_dir": "Mittente",
+    "col_sender": "Mittente",
     "col_fc": "Codice funzione",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Byte",
@@ -1156,7 +1156,7 @@ function exportCsv() {
     "error": "Fehler",
     "errors": "Fehler",
     "col_time": "Zeit",
-    "col_dir": "Absender",
+    "col_sender": "Absender",
     "col_fc": "Funktionscode",
     "col_payload": "Payload (HEX)",
     "col_bytes": "Bytes",
