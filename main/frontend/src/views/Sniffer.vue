@@ -14,12 +14,14 @@ type SniffRow = {
   dir: 'MASTER' | 'SLAVE' | 'TIMEOUT' | 'ERR'
   slave: string
   fc: string
+  fc_code: string
   pl: string
   bytes_arr: string[]
   bytes: number
   crc: 'OK' | 'ERR'
   t: string
   dt: string
+  tooltip: string
 }
 
 const rows = ref<SniffRow[]>([]);
@@ -45,7 +47,7 @@ const FC_NAMES: Record<number, string> = {
   15: 'Write Multiple Coils',
   16: 'Write Multiple Regs',
   70: 'Fast Modbus',
-  255: 'Arbitration',
+  255: 'FM Arbitration',
 }
 
 const FC_KIND: Record<number, 'read' | 'write'> = {
@@ -78,6 +80,43 @@ function hexToPayloadString(raw: string): string {
   return raw.match(/.{1,2}/g)?.join(' ') ?? raw
 }
 
+const FAST_MODBUS_SUBCMDS: Record<number, string> = {
+  0x01: 'FM Scan Start',
+  0x02: 'FM Scan Continue',
+  0x03: 'FM Scan Response',
+  0x04: 'FM Scan End',
+  0x08: 'FM Cmd Send',
+  0x09: 'FM Cmd Response',
+  0x10: 'FM Event Request',
+  0x11: 'FM Event Transfer',
+  0x12: 'FM Event Confirm',
+  0x18: 'FM Event Config',
+}
+
+const FAST_MODBUS_TOOLTIPS: Record<number, string> = {
+  0x01: 'Fast Modbus Scan Start: master resets scan status on all unscanned devices. Devices participate in arbitration; lowest serial number wins.',
+  0x02: 'Fast Modbus Scan Continue: master continues scanning. Devices not yet scanned participate in arbitration.',
+  0x03: 'Fast Modbus Scan Response: device responds with its serial number and data during scan arbitration.',
+  0x04: 'Fast Modbus Scan End: master signals end of scan. Only devices that already responded may reply.',
+  0x08: 'Fast Modbus Cmd Send: master sends a standard Modbus command via Fast Modbus addressing.',
+  0x09: 'Fast Modbus Cmd Response: device responds to a Fast Modbus standard command.',
+  0x10: 'Fast Modbus Event Request: master polls all devices for pending events. Devices with events participate in arbitration.',
+  0x11: 'Fast Modbus Event Transfer: winning device sends its pending event data to master.',
+  0x12: 'Fast Modbus Event Confirm: master acknowledges receipt of event. Ends the event polling round.',
+  0x18: 'Fast Modbus Event Config: master configures event reporting settings on device.',
+}
+
+const FC_TOOLTIPS: Record<number, string> = {
+  1: 'Read Coils (FC01): read 1–2000 discrete output coils. Request: addr(2) + count(2). Response: N bytes of coil values.',
+  2: 'Read Discrete Inputs (FC02): read 1–2000 discrete input bits. Request: addr(2) + count(2). Response: N bytes of input values.',
+  3: 'Read Holding Regs (FC03): read 1–125 holding registers. Request: addr(2) + count(2). Response: count×2 bytes of register values.',
+  4: 'Read Input Regs (FC04): read 1–125 input registers. Request: addr(2) + count(2). Response: count×2 bytes of register values.',
+  5: 'Write Single Coil (FC05): write one coil ON (0xFF00) or OFF (0x0000). Request: addr(2) + value(2). Response: echo of request.',
+  6: 'Write Single Reg (FC06): write one holding register. Request: addr(2) + value(2). Response: echo of request.',
+  15: 'Write Multiple Coils (FC15): write N coils. Request: addr(2) + count(2) + byte_count(1) + data. Response: addr+count.',
+  16: 'Write Multiple Regs (FC16): write N holding registers. Request: addr(2) + count(2) + byte_count(1) + data. Response: addr+count.',
+}
+
 function parsePacket(msg: any): SniffRow | null {
   if (typeof msg.id !== 'number') return null
   if (msg.type === 'timeout') {
@@ -91,13 +130,15 @@ function parsePacket(msg: any): SniffRow | null {
       timestamp_us: msg.timestamp_us,
       dir: 'TIMEOUT',
       slave,
-      fc: `${msg.function.toString(16).padStart(2, '0').toUpperCase()} ${fcName}`,
+      fc: fcName,
+      fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
       pl: '',
       bytes_arr: [],
       bytes: 0,
       crc: 'ERR',
       t: formatTimestamp(msg.timestamp_us),
       dt,
+      tooltip: `No response from slave 0x${slave} within timeout`,
     }
   }
   if (msg.type === 'packet') {
@@ -108,25 +149,20 @@ function parsePacket(msg: any): SniffRow | null {
     const pl = hexToPayloadString(msg.raw)
     const dt = formatDt(msg.timestamp_us, lastTimestampUs)
     lastTimestampUs = msg.timestamp_us
-    /* For Fast Modbus FC 0x46, show subcommand name from raw payload byte [2] */
-    const FAST_MODBUS_SUBCMDS: Record<number, string> = {
-      0x01: 'Scan Start',
-      0x02: 'Scan Continue',
-      0x03: 'Scan Response',
-      0x04: 'Scan End',
-      0x08: 'Cmd Send',
-      0x09: 'Cmd Response',
-      0x10: 'Event Request',
-      0x11: 'Event Transfer',
-      0x12: 'Event Confirm',
-      0x18: 'Event Config',
-    }
-    let fcDisplay = `${msg.function.toString(16).padStart(2, '0').toUpperCase()} ${fcName}`
+
+    /* Build FC display: no numeric prefix for named functions */
+    let fcDisplay = fcName
+    let tooltip = FC_TOOLTIPS[msg.function] ?? ''
     if (msg.function === 0x46 && msg.raw && msg.raw.length >= 6) {
       const sub = parseInt(msg.raw.slice(4, 6), 16)
       const subName = FAST_MODBUS_SUBCMDS[sub] ?? `FC${sub.toString(16).padStart(2, '0').toUpperCase()}`
-      fcDisplay = `46 ${subName}`
+      fcDisplay = `${subName}`
+      tooltip = FAST_MODBUS_TOOLTIPS[sub] ?? `Fast Modbus subcommand 0x${sub.toString(16).padStart(2, '0').toUpperCase()}`
     }
+    if (msg.slave_id === 0xFF && msg.function === 0xFF) {
+      tooltip = 'Fast Modbus Bus Arbitration: all devices with data transmit simultaneously. The result is a wired-AND of all responses (0xFF = no winner, or collision). Master reads this to determine if any device won arbitration.'
+    }
+
     return {
       id: msg.id,
       port: msg.port,
@@ -134,12 +170,14 @@ function parsePacket(msg: any): SniffRow | null {
       dir: crc === 'ERR' ? 'ERR' : dir,
       slave,
       fc: fcDisplay,
+      fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
       pl,
       bytes_arr: hexToPayloadString(msg.raw).split(' '),
       bytes: msg.size,
       crc,
       t: formatTimestamp(msg.timestamp_us),
       dt,
+      tooltip,
     }
   }
   return null
@@ -250,8 +288,7 @@ const maxSlaveCount = computed(() =>
 const fcStats = computed(() => {
   const counts: Record<string, number> = {}
   for (const r of portRows.value) {
-    const code = r.fc.split(' ')[0]
-    counts[code] = (counts[code] ?? 0) + 1
+    counts[r.fc_code] = (counts[r.fc_code] ?? 0) + 1
   }
   return counts
 })
@@ -282,7 +319,7 @@ function selectFcKind(kind: 'read' | 'write') {
 const filteredRows = computed(() => {
   let r = portRows.value
   if (selectedSlaves.value.size > 0) r = r.filter(x => selectedSlaves.value.has(x.slave))
-  if (selectedFcs.value.size > 0) r = r.filter(x => selectedFcs.value.has(x.fc.split(' ')[0]))
+  if (selectedFcs.value.size > 0) r = r.filter(x => selectedFcs.value.has(x.fc_code))
   return r
 });
 
@@ -450,6 +487,7 @@ function exportCsv() {
             <tr
               v-for="r in filteredRows" :key="r.id"
               :class="{ selected: selected === r.id, 'err-row': r.crc === 'ERR' }"
+              :title="r.tooltip || undefined"
               @click="selected = r.id"
             >
               <td class="mono muted">{{ r.id }}</td>
