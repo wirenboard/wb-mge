@@ -56,7 +56,7 @@ const TYPE_LABELS: Record<string, string> = {
   rtu_frame: 'RTU Frame',
   arbitration: 'Arbitration',
   parse_error: 'Parse Error',
-  fast_modbus: 'Fast Modbus',
+  fast_modbus: 'Fast Modbus (Extended Function)',
   modbus_rtu: 'Modbus RTU',
   scan_start: 'Scan Start (0x01)',
   scan_continue: 'Scan Continue (0x02)',
@@ -150,7 +150,8 @@ function fmtVal(key: string, raw: string): string {
 }
 
 const FIELD_LABELS: Record<string, string> = {
-  address: 'Slave address', crc: 'CRC', ext_byte: 'Ext byte',
+  address: 'Slave address', crc: 'CRC',  ext_byte: 'FM Command',
+  subcommand: 'FM Subcommand',
   serial_number: 'Serial number', modbus_address: 'Modbus address',
   fc: 'Function code', register: 'Register', count: 'Count', value: 'Value',
   byte_count: 'Byte count', data: 'Data', sub_function: 'Sub-function',
@@ -166,7 +167,7 @@ const FIELD_LABELS: Record<string, string> = {
   output_data: 'Output data', server_id: 'Server ID', run_indicator: 'Run indicator',
   additional_data: 'Additional data', and_mask: 'AND mask', or_mask: 'OR mask',
   request_data_length: 'Request data len', resp_data_length: 'Response data len',
-  subcommand: 'Subcommand', reference_type: 'Reference type',
+  reference_type: 'Reference type',
   file_number: 'File number', record_number: 'Record number',
   record_length: 'Record length', file_resp_length: 'File resp len',
 }

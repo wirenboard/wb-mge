@@ -42,6 +42,7 @@ export interface FastModbusPayload {
   type: 'fast_modbus';
   raw: string;
   ext_byte: string;
+  subcommand: string;  // hex byte of the subcommand (e.g. '03' for scan_response)
   payload: FastModbusSubcommand | ParseError;
 }
 
@@ -469,6 +470,7 @@ export function decodePacket(input: string | number[], direction: Direction = 'r
   if (address === 0xfd && (bytes[1] === 0x60 || bytes[1] === 0x46)) {
     const extByte = bytes[1];
     const fmBytes = bytes.slice(2, bytes.length - 2);
+    const subByte = fmBytes.length > 0 ? toHex([fmBytes[0]]) : '??';
     return {
       type: 'rtu_frame',
       raw,
@@ -478,6 +480,7 @@ export function decodePacket(input: string | number[], direction: Direction = 'r
         type: 'fast_modbus',
         raw: toHex(bytes.slice(1, bytes.length - 2)),
         ext_byte: toHex([extByte]),
+        subcommand: subByte,
         payload: decodeFastModbusPayload(fmBytes),
       },
     };
