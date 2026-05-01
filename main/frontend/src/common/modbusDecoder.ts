@@ -538,8 +538,10 @@ export function decodePacket(input: string | number[], direction: Direction = 'r
     const parsed = parseHex(input);
     if (parsed === null) return { type: 'parse_error', reason: 'invalid_hex', raw: input };
     bytes = parsed;
+  } else if (Array.isArray(input) || (input != null && typeof input === 'object')) {
+    bytes = Array.from(input as number[]);
   } else {
-    bytes = Array.from(input);
+    return { type: 'parse_error', reason: 'invalid_input', raw: String(input) };
   }
 
   if (bytes.length === 0) return { type: 'parse_error', reason: 'empty', raw: '' };

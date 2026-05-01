@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import vue from '@vitejs/plugin-vue';
 import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite';
 import { defineConfig, loadEnv } from 'vite';
@@ -39,6 +40,10 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': '/src',
       },
+    },
+    test: {
+      environment: 'node',
+      include: ['src/**/*.test.ts'],
     },
   };
 });
