@@ -57,8 +57,8 @@ export type FastModbusSubcommand =
   | { type: 'scan_continue'; raw: string; }
   | { type: 'scan_response'; raw: string; serial_number: string; modbus_address: string; }
   | { type: 'scan_end'; raw: string; }
-  | { type: 'command_by_serial'; raw: string; serial_number: string; payload: PduResult | ParseError; }
-  | { type: 'response_by_serial'; raw: string; serial_number: string; payload: PduResult | ParseError; }
+  | { type: 'command_by_serial'; raw: string; serial_number: string; function_code: string; payload: PduResult | ParseError; }
+  | { type: 'response_by_serial'; raw: string; serial_number: string; function_code: string; payload: PduResult | ParseError; }
   | ParseError;
 
 export interface PduResult {
@@ -423,11 +423,15 @@ function decodeFastModbusPayload(bytes: number[]): FastModbusSubcommand {
   if (sub === 0x04) return { type: 'scan_end', raw };
   if (sub === 0x08) {
     if (bytes.length < 6) return { type: 'parse_error', reason: 'command_by_serial_too_short', raw };
-    return { type: 'command_by_serial', raw, serial_number: toHex(bytes.slice(1, 5)), payload: decodeStdPduRequest(bytes.slice(5)) };
+    const pdu = decodeStdPduRequest(bytes.slice(5));
+    const fcVal = 'fc' in pdu ? String(pdu.fc) : '??';
+    return { type: 'command_by_serial', raw, serial_number: toHex(bytes.slice(1, 5)), function_code: fcVal, payload: pdu };
   }
   if (sub === 0x09) {
     if (bytes.length < 6) return { type: 'parse_error', reason: 'response_by_serial_too_short', raw };
-    return { type: 'response_by_serial', raw, serial_number: toHex(bytes.slice(1, 5)), payload: decodeStdPduResponse(bytes.slice(5)) };
+    const pdu = decodeStdPduResponse(bytes.slice(5));
+    const fcVal = 'fc' in pdu ? String(pdu.fc) : '??';
+    return { type: 'response_by_serial', raw, serial_number: toHex(bytes.slice(1, 5)), function_code: fcVal, payload: pdu };
   }
   return { type: 'parse_error', reason: 'unknown_subcommand', raw, subcommand: toHex([sub]) };
 }
