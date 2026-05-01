@@ -5,11 +5,9 @@ import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import PacketDecoder from '@/components/PacketDecoder.vue';
-import { decodePacket, type Direction } from '@/common/modbusDecoder';
+import { decodePacket, getByteRoles, type ByteRole, type Direction } from '@/common/modbusDecoder';
 
 const { t } = useI18n();
-
-type ByteRole = 'address' | 'fc' | 'ext' | 'subcommand' | 'serial' | 'data' | 'crc' | 'arbitration' | 'unknown'
 
 type SniffRow = {
   id: number
@@ -120,61 +118,6 @@ const FC_TOOLTIPS: Record<number, string> = {
   16: 'Write Multiple Regs (FC16): write N holding registers. Request: addr(2) + count(2) + byte_count(1) + data. Response: addr+count.',
 }
 
-/**
- * Compute per-byte roles by calling the real parser on `pl`.
- * Returns array of ByteRole, one per byte in the payload string.
- */
-function getByteRoles(pl: string, direction: Direction): ByteRole[] {
-  if (!pl) return []
-  const bytes_arr = pl.split(' ')
-  const n = bytes_arr.length
-  const roles: ByteRole[] = new Array(n).fill('unknown' as ByteRole)
-
-  const decoded = decodePacket(pl, direction)
-
-  if (decoded.type === 'arbitration') {
-    return new Array(n).fill('arbitration' as ByteRole)
-  }
-
-  if (decoded.type !== 'rtu_frame') {
-    return roles
-  }
-
-  // Byte 0 = address
-  roles[0] = 'address'
-  // Last 2 bytes = CRC
-  roles[n - 2] = 'crc'
-  roles[n - 1] = 'crc'
-
-  const pl2 = decoded.payload
-  if (pl2.type === 'fast_modbus') {
-    // byte 1 = ext_byte, byte 2 = subcommand
-    if (n > 1) roles[1] = 'ext'
-    if (n > 2) roles[2] = 'subcommand'
-
-    const sub = pl2.payload
-    if (sub.type === 'scan_response') {
-      // [addr][ext][sub][serial×4][modbus_addr] — byte 7 is the new modbus address of the device
-      for (let i = 3; i <= 6 && i < n - 2; i++) roles[i] = 'serial'
-      if (n > 7 + 2) roles[7] = 'address'
-    } else if (sub.type === 'command_by_serial' || sub.type === 'response_by_serial') {
-      // [addr][ext][sub][serial×4][fc][data...]
-      for (let i = 3; i <= 6 && i < n - 2; i++) roles[i] = 'serial'
-      if (n > 7 + 2) roles[7] = 'fc'
-      for (let i = 8; i < n - 2; i++) roles[i] = 'data'
-    } else {
-      // scan_start/end/continue, event cmds: bytes 3+ are data
-      for (let i = 3; i < n - 2; i++) roles[i] = 'data'
-    }
-  } else {
-    // Standard Modbus RTU: byte 1 = FC, bytes 2..n-3 = data
-    if (n > 1) roles[1] = 'fc'
-    for (let i = 2; i < n - 2; i++) roles[i] = 'data'
-  }
-
-  return roles
-}
-
 function parsePacket(msg: any): SniffRow | null {
   if (typeof msg.id !== 'number') return null
   if (msg.type === 'timeout') {
@@ -211,6 +154,7 @@ function parsePacket(msg: any): SniffRow | null {
 
     if (isArbitration) {
       const bytes_arr = hexToPayloadString(msg.raw).split(' ')
+      const decoded = decodePacket(pl, 'response')
       return {
         id: msg.id,
         port: msg.port,
@@ -221,7 +165,7 @@ function parsePacket(msg: any): SniffRow | null {
         fc_code: 'FF',
         pl,
         bytes_arr,
-        byte_roles: new Array(bytes_arr.length).fill('arbitration' as ByteRole),
+        byte_roles: getByteRoles(decoded),
         bytes: msg.size,
         crc: 'N/A',
         isArbitration: true,
@@ -248,6 +192,7 @@ function parsePacket(msg: any): SniffRow | null {
     }
 
     const bytes_arr = hexToPayloadString(msg.raw).split(' ')
+    const decoded = decodePacket(pl, direction)
     return {
       id: msg.id,
       port: msg.port,
@@ -258,7 +203,7 @@ function parsePacket(msg: any): SniffRow | null {
       fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
       pl,
       bytes_arr,
-      byte_roles: getByteRoles(pl, direction),
+      byte_roles: getByteRoles(decoded),
       bytes: msg.size,
       crc,
       isArbitration: false,
@@ -350,15 +295,18 @@ const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length
 
 function byteRoleStyle(role: ByteRole) {
   switch (role) {
-    case 'address':     return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' }
-    case 'fc':          return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' }
-    case 'ext':         return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' }
-    case 'subcommand':  return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' }
-    case 'serial':      return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' }
-    case 'crc':         return { color: 'var(--mb-hex-crc)' }
-    case 'data':        return { color: 'var(--mb-data)' }
-    case 'arbitration': return { color: 'var(--text-muted)', fontWeight: '400' }
-    default:            return { color: 'var(--mb-data)' }
+    case 'address':        return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' }
+    case 'fc':             return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' }
+    case 'subcommand':     return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' }
+    case 'serial':         return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' }
+    case 'crc':            return { color: 'var(--mb-hex-crc)' }
+    case 'data':           return { color: 'var(--mb-data)' }
+    case 'arbitration':    return { color: 'var(--text-muted)', fontWeight: '400' }
+    // FM wrapper "not real" fields — same hue but paler background
+    case 'fm-addr':        return { color: '#fff', background: 'color-mix(in oklch, var(--mb-master) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' }
+    case 'fm-ext':         return { color: '#fff', background: 'color-mix(in oklch, var(--mb-hex-slot) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' }
+    case 'fm-subcommand':  return { color: '#fff', background: 'color-mix(in oklch, var(--mb-hex-slot) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' }
+    default:               return { color: 'var(--mb-data)' }
   }
 }
 

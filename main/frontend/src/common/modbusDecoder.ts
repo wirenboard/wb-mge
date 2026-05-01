@@ -70,6 +70,91 @@ export interface PduResult {
 
 export type DecodedPacket = RtuFrame | Arbitration | ParseError;
 
+/**
+ * Semantic role of a single byte in a packet, used for colour-coding.
+ * 'fm-addr' / 'fm-ext' / 'fm-subcommand' = Fast Modbus wrapper fields (fake/indirect).
+ * 'address' / 'fc' / 'subcommand' = real protocol fields.
+ */
+export type ByteRole =
+  | 'address'       // real slave address (std Modbus, or FM broadcast for non-nested FM cmds)
+  | 'fc'            // real function code (std Modbus inner FC inside FM nested command)
+  | 'subcommand'    // FM subcommand byte when it's a "real" leaf command (no nesting)
+  | 'serial'        // FM 4-byte serial number
+  | 'data'          // payload data bytes
+  | 'crc'           // CRC bytes
+  | 'arbitration'   // FM bus arbitration (all 0xFF)
+  | 'fm-addr'       // FM wrapper address (0xFD) — fake, present only when nested command exists
+  | 'fm-ext'        // FM ext_byte (0x60/0x46) — fake, present only when nested command exists
+  | 'fm-subcommand' // FM subcommand byte when it wraps another command (command/response by serial)
+  | 'unknown';
+
+/**
+ * Return per-byte semantic roles for a decoded packet.
+ * The roles array has one entry per byte in the original raw packet.
+ */
+export function getByteRoles(decoded: DecodedPacket): ByteRole[] {
+  if (decoded.type === 'arbitration') {
+    const n = decoded.raw.length / 2;
+    return new Array(n).fill('arbitration' as ByteRole);
+  }
+
+  if (decoded.type !== 'rtu_frame') {
+    const n = decoded.raw ? decoded.raw.length / 2 : 0;
+    return new Array(n).fill('unknown' as ByteRole);
+  }
+
+  const n = decoded.raw.length / 2;
+  const roles: ByteRole[] = new Array(n).fill('unknown' as ByteRole);
+
+  // CRC is always the last 2 bytes
+  roles[n - 2] = 'crc';
+  roles[n - 1] = 'crc';
+
+  const pl = decoded.payload;
+
+  if (pl.type === 'fast_modbus') {
+    const sub = pl.payload;
+    const hasNestedCommand = sub.type === 'command_by_serial' || sub.type === 'response_by_serial';
+
+    if (hasNestedCommand) {
+      // Wrapper layer — addr/ext/subcommand are all "fake" wrappers
+      roles[0] = 'fm-addr';        // 0xFD broadcast — not a real slave address
+      roles[1] = 'fm-ext';         // 0x60/0x46 ext byte — FM wrapper marker
+      roles[2] = 'fm-subcommand';  // 0x08/0x09 — wrapping subcommand
+
+      // bytes 3..6 = serial number (real device identifier)
+      for (let i = 3; i <= 6 && i < n - 2; i++) roles[i] = 'serial';
+
+      // byte 7 = real function code of the nested Modbus command
+      if (7 < n - 2) roles[7] = 'fc';
+
+      // bytes 8..n-3 = data of the nested PDU
+      for (let i = 8; i < n - 2; i++) roles[i] = 'data';
+    } else {
+      // No nesting — addr/ext/subcommand are all "real" FM protocol fields
+      roles[0] = 'address';    // 0xFD is the real FM broadcast address
+      roles[1] = 'fc';         // ext_byte acts as FC in FM framing
+      roles[2] = 'subcommand'; // the real FM subcommand
+
+      if (sub.type === 'scan_response') {
+        // bytes 3..6 = serial number, byte 7 = new modbus address assigned
+        for (let i = 3; i <= 6 && i < n - 2; i++) roles[i] = 'serial';
+        if (7 < n - 2) roles[7] = 'data'; // modbus_address is data in a response context
+      } else {
+        // scan_start/end/continue, event cmds — everything else is data
+        for (let i = 3; i < n - 2; i++) roles[i] = 'data';
+      }
+    }
+  } else {
+    // Standard Modbus RTU
+    roles[0] = 'address';
+    if (1 < n - 2) roles[1] = 'fc';
+    for (let i = 2; i < n - 2; i++) roles[i] = 'data';
+  }
+
+  return roles;
+}
+
 // ============================================================
 // Utilities
 // ============================================================
