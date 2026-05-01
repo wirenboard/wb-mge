@@ -86,8 +86,8 @@ const FAST_MODBUS_SUBCMDS: Record<number, string> = {
   0x02: 'FM Scan Continue',
   0x03: 'FM Scan Response',
   0x04: 'FM Scan End',
-  0x08: 'FM Cmd Send',
-  0x09: 'FM Cmd Response',
+  0x08: 'FM Cmd',
+  0x09: 'FM Cmd',
   0x10: 'FM Event Request',
   0x11: 'FM Event Transfer',
   0x12: 'FM Event Confirm',
@@ -193,6 +193,16 @@ function parsePacket(msg: any): SniffRow | null {
 
     const bytes_arr = hexToPayloadString(msg.raw).split(' ')
     const decoded = decodePacket(pl, direction)
+
+    /* For FM Cmd (command/response_by_serial), append nested function name in parens */
+    if (decoded.type === 'rtu_frame' && decoded.payload.type === 'fast_modbus') {
+      const fmSub = decoded.payload.payload
+      if ((fmSub.type === 'command_by_serial' || fmSub.type === 'response_by_serial') && 'function_code' in fmSub) {
+        const innerFcNum = parseInt(fmSub.function_code, 16)
+        const innerFcName = FC_NAMES[innerFcNum] ?? `FC${fmSub.function_code}`
+        fcDisplay = `${fcDisplay} (${innerFcName})`
+      }
+    }
     return {
       id: msg.id,
       port: msg.port,
@@ -857,11 +867,11 @@ function exportCsv() {
 .col-time { width: 100px; }
 .col-dt { width: 68px; }
 .col-sender { width: 76px; }
-.col-slave { width: 80px; }
-.col-fc { width: 200px; }
+.col-slave { width: 54px; }
+.col-fc { width: 240px; }
 .col-payload { max-width: 0; width: 100%; }
 .col-bytes { width: 60px; }
-.col-crc { width: 60px; }
+.col-crc { width: 50px; }
 
 .fc-cell {
   font-size: 12px;
