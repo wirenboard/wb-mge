@@ -116,12 +116,12 @@ export function getByteRoles(decoded: DecodedPacket): ByteRole[] {
     const sub = pl.payload;
     const hasNestedCommand = sub.type === 'command_by_serial' || sub.type === 'response_by_serial';
 
-    // addr (0xFD) and ext_byte (0x60/0x46) are ALWAYS fake wrappers in FM
+    // addr (0xFD) is ALWAYS a fake wrapper in FM
     roles[0] = 'fm-addr';
-    roles[1] = 'fm-ext';
 
     if (hasNestedCommand) {
-      // subcommand 0x08/0x09 is also a fake wrapper
+      // With nested command: ext_byte and subcommand are also fake wrappers
+      roles[1] = 'fm-ext';
       roles[2] = 'fm-subcommand';
 
       // bytes 3..6 = serial number (real device identifier)
@@ -133,7 +133,8 @@ export function getByteRoles(decoded: DecodedPacket): ByteRole[] {
       // bytes 8..n-3 = data of the nested PDU
       for (let i = 8; i < n - 2; i++) roles[i] = 'data';
     } else {
-      // subcommand is real (scan_start/end/continue/response, event cmds)
+      // Without nested command: ext_byte and subcommand are real FM fields
+      roles[1] = 'fc';
       roles[2] = 'subcommand';
 
       if (sub.type === 'scan_response') {
