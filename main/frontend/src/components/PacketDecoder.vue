@@ -514,12 +514,12 @@ const chunks32 = computed<Chunk32[]>(() => {
               <span class="tree-key">{{ row.label }}</span>
               <span :class="['tree-val', { 'tree-val-error': row.isError }]">{{ row.value }}</span>
               <!-- Magnifier icon for data fields — opens interpretation popup -->
-              <button v-if="row.isDataField && leafBytes.length >= 2" class="data-icon-btn" title="Interpret data" @click.stop="showDataPopup = !showDataPopup">
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <span v-if="row.isDataField && leafBytes.length >= 2" class="data-icon-btn" title="Interpret data" @click.stop="showDataPopup = !showDataPopup">
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" style="display:block">
                   <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.5"/>
                   <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                 </svg>
-              </button>
+              </span>
             </template>
 
             <template v-else-if="row.isArray">
@@ -708,22 +708,19 @@ const chunks32 = computed<Chunk32[]>(() => {
 .array-items { display: flex; flex-direction: column; gap: 1px; }
 .array-item  { display: flex; gap: 6px; font-size: 11.5px; }
 
-/* Magnifier button */
+/* Magnifier icon */
 .data-icon-btn {
   flex-shrink: 0;
-  background: transparent;
-  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 4px;
-  line-height: 0;
-  transition: color 0.12s, border-color 0.12s;
+  line-height: 1;
+  transition: color 0.12s;
 }
 
 .data-icon-btn:hover {
   color: var(--primary-color);
-  border-color: var(--border-color);
 }
 
 /* Hex editor */
