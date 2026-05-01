@@ -116,11 +116,13 @@ export function getByteRoles(decoded: DecodedPacket): ByteRole[] {
     const sub = pl.payload;
     const hasNestedCommand = sub.type === 'command_by_serial' || sub.type === 'response_by_serial';
 
+    // addr (0xFD) and ext_byte (0x60/0x46) are ALWAYS fake wrappers in FM
+    roles[0] = 'fm-addr';
+    roles[1] = 'fm-ext';
+
     if (hasNestedCommand) {
-      // Wrapper layer — addr/ext/subcommand are all "fake" wrappers
-      roles[0] = 'fm-addr';        // 0xFD broadcast — not a real slave address
-      roles[1] = 'fm-ext';         // 0x60/0x46 ext byte — FM wrapper marker
-      roles[2] = 'fm-subcommand';  // 0x08/0x09 — wrapping subcommand
+      // subcommand 0x08/0x09 is also a fake wrapper
+      roles[2] = 'fm-subcommand';
 
       // bytes 3..6 = serial number (real device identifier)
       for (let i = 3; i <= 6 && i < n - 2; i++) roles[i] = 'serial';
@@ -131,15 +133,13 @@ export function getByteRoles(decoded: DecodedPacket): ByteRole[] {
       // bytes 8..n-3 = data of the nested PDU
       for (let i = 8; i < n - 2; i++) roles[i] = 'data';
     } else {
-      // No nesting — addr/ext/subcommand are all "real" FM protocol fields
-      roles[0] = 'address';    // 0xFD is the real FM broadcast address
-      roles[1] = 'fc';         // ext_byte acts as FC in FM framing
-      roles[2] = 'subcommand'; // the real FM subcommand
+      // subcommand is real (scan_start/end/continue/response, event cmds)
+      roles[2] = 'subcommand';
 
       if (sub.type === 'scan_response') {
-        // bytes 3..6 = serial number, byte 7 = new modbus address assigned
+        // bytes 3..6 = serial number, byte 7 = new modbus address (data)
         for (let i = 3; i <= 6 && i < n - 2; i++) roles[i] = 'serial';
-        if (7 < n - 2) roles[7] = 'data'; // modbus_address is data in a response context
+        if (7 < n - 2) roles[7] = 'data';
       } else {
         // scan_start/end/continue, event cmds — everything else is data
         for (let i = 3; i < n - 2; i++) roles[i] = 'data';
