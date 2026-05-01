@@ -56,7 +56,7 @@ const TYPE_LABELS: Record<string, string> = {
   rtu_frame: 'RTU Frame',
   arbitration: 'Arbitration',
   parse_error: 'Parse Error',
-  fast_modbus: 'Fast Modbus (Extended Function)',
+  fast_modbus: 'Fast Modbus',
   modbus_rtu: 'Modbus RTU',
   scan_start: 'Scan Start (0x01)',
   scan_continue: 'Scan Continue (0x02)',
@@ -108,6 +108,20 @@ const TYPE_LABELS: Record<string, string> = {
   mei_read_device_identification_response: 'FC2B/0E Device ID Response',
 }
 
+// Mapping from FC hex value to human-readable name (for function_code field display)
+const FC_DISPLAY_NAMES: Record<string, string> = {
+  '01': 'Read Coils', '02': 'Read Discrete Inputs',
+  '03': 'Read Holding Registers', '04': 'Read Input Registers',
+  '05': 'Write Single Coil', '06': 'Write Single Register',
+  '07': 'Read Exception Status', '08': 'Diagnostics',
+  '0B': 'Get Comm Event Counter', '0C': 'Get Comm Event Log',
+  '0F': 'Write Multiple Coils', '10': 'Write Multiple Registers',
+  '11': 'Report Server ID', '14': 'Read File Record',
+  '15': 'Write File Record', '16': 'Mask Write Register',
+  '17': 'Read/Write Multiple Registers', '18': 'Read FIFO Queue',
+  '2B': 'MEI Transport',
+}
+
 // Fields whose values are plain hex strings — display with 0x prefix
 const HEX_FIELDS = new Set([
   'address', 'crc', 'ext_byte', 'serial_number', 'modbus_address',
@@ -135,7 +149,42 @@ const ADDR_NOTES: Record<number, string> = {
   0xFF: 'FM Bus Arbitration',
 }
 
+// All lookup tables use UPPERCASE hex keys; all lookups use .toUpperCase()
+const EXT_BYTE_NAMES: Record<string, string> = {
+  '60': 'Extended function command (legacy)',
+  '46': 'Extended function command',
+}
+
+const FM_SUBCOMMAND_NAMES: Record<string, string> = {
+  '01': 'Scan Start',
+  '02': 'Scan Continue',
+  '03': 'Scan Response',
+  '04': 'Scan End',
+  '08': 'Command by Serial',
+  '09': 'Response by Serial',
+  '10': 'Event Request',
+  '11': 'Event Transfer',
+  '12': 'Event Confirm',
+  '18': 'Event Config',
+}
+// Note: single-digit hex values like '60' are 2-char and match toUpperCase() output directly
+
 function fmtVal(key: string, raw: string): string {
+  if (key === 'function_code' && /^[0-9A-Fa-f]+$/.test(raw)) {
+    const upper = raw.toUpperCase()
+    const name = FC_DISPLAY_NAMES[upper] ?? 'Unknown'
+    return `0x${upper} (${name})`
+  }
+  if (key === 'ext_byte' && /^[0-9A-Fa-f]+$/.test(raw)) {
+    const upper = raw.toUpperCase()
+    const name = EXT_BYTE_NAMES[upper] ?? 'Unknown'
+    return `0x${upper} (${name})`
+  }
+  if (key === 'subcommand' && /^[0-9A-Fa-f]+$/.test(raw)) {
+    const upper = raw.toUpperCase()
+    const name = FM_SUBCOMMAND_NAMES[upper] ?? 'Unknown'
+    return `0x${upper} (${name})`
+  }
   if (HEX_FIELDS.has(key) && /^[0-9A-Fa-f]+$/.test(raw)) {
     const hex = `0x${raw.toUpperCase()}`
     if (DEC_ALSO.has(key)) {
@@ -153,7 +202,7 @@ const FIELD_LABELS: Record<string, string> = {
   address: 'Slave address', crc: 'CRC',  ext_byte: 'FM Command',
   subcommand: 'FM Subcommand',
   serial_number: 'Serial number', modbus_address: 'Modbus address',
-  fc: 'Function code', register: 'Register', count: 'Count', value: 'Value',
+  fc: 'Function code', function_code: 'Function', register: 'Register', count: 'Count', value: 'Value',
   byte_count: 'Byte count', data: 'Data', sub_function: 'Sub-function',
   status: 'Status', event_count: 'Event count', message_count: 'Message count',
   events: 'Events', read_register: 'Read register', read_count: 'Read count',
@@ -258,7 +307,10 @@ function fieldRanges(obj: Record<string, unknown>, nodeByteStart: number): Recor
   return r
 }
 
-const SKIP_FIELDS = new Set(['type', 'raw', 'payload', 'objects', 'sub_requests', 'sub_responses'])
+// 'fc' is always shown as part of the section type label (e.g. "FC03 Read Holding Registers")
+// so we skip it as a field to avoid duplication.
+// 'reserved_address' is rendered separately with a warning message.
+const SKIP_FIELDS = new Set(['type', 'raw', 'payload', 'objects', 'sub_requests', 'sub_responses', 'fc', 'reserved_address'])
 
 function flattenNode(obj: Record<string, unknown>, depth: number, fhex: string, parentStart: number): TreeRow[] {
   const rows: TreeRow[] = []
@@ -267,10 +319,17 @@ function flattenNode(obj: Record<string, unknown>, depth: number, fhex: string, 
   const range = rawToRange(nodeRaw, fhex, parentStart)
   const fRanges = fieldRanges(obj, range.start)
 
-  rows.push({ depth, label: TYPE_LABELS[t] ?? t, byteStart: range.start, byteEnd: range.end, isSection: true, isField: false, isError: t === 'parse_error' })
+  // Check if this node has any meaningful content beyond the type label itself
+  const hasScalars = Object.entries(obj).some(([k, v]) => !SKIP_FIELDS.has(k) && typeof v !== 'object')
+  const hasArrays = ['sub_requests', 'sub_responses', 'objects'].some(ak => Array.isArray(obj[ak]))
+  const hasChild = obj.payload && typeof obj.payload === 'object'
+  // Only add section header if node has content OR is top-level (depth 0)
+  if (depth === 0 || hasScalars || hasArrays || hasChild) {
+    rows.push({ depth, label: TYPE_LABELS[t] ?? t, byteStart: range.start, byteEnd: range.end, isSection: true, isField: false, isError: t === 'parse_error' })
+  }
 
   for (const [k, v] of Object.entries(obj)) {
-    if (SKIP_FIELDS.has(k) || k === 'reserved_address') continue
+    if (SKIP_FIELDS.has(k)) continue
     if (typeof v === 'object') continue
     const fr = fRanges[k]
     const bStart = fr ? fr.start : range.start
