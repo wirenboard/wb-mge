@@ -3,6 +3,12 @@
 #include "fast_modbus.h"
 #include "bridge.h"
 
+/* In unit test builds sniffer.h only provides httpd_handle_t; include the full
+ * stub so that httpd_req_t, httpd_ws_frame_t, httpd_uri_t, etc. are available. */
+#ifdef __unittest_env__
+#include "esp_http_server.h"
+#endif
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -15,6 +21,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <inttypes.h>
+
+/* Allow unit tests to access helper functions that are otherwise static */
+#ifdef __unittest_env__
+#define SNIFFER_STATIC
+#else
+#define SNIFFER_STATIC static
+#endif
 
 static const char *TAG = "sniffer";
 
@@ -72,7 +85,7 @@ static unsigned port_name_to_index(unsigned name)
     return name - 1;
 }
 
-static bool crc_check(const uint8_t *data, size_t len)
+SNIFFER_STATIC bool crc_check(const uint8_t *data, size_t len)
 {
     if (len < 4) return false;
     uint16_t crc_calc = modbus_crc16(data, (uint16_t)(len - 2));
@@ -82,7 +95,7 @@ static bool crc_check(const uint8_t *data, size_t len)
     return (data[len - 2] == crc_lo) && (data[len - 1] == crc_hi);
 }
 
-static void bytes_to_hex(const uint8_t *data, uint16_t len, char *out, size_t out_size)
+SNIFFER_STATIC void bytes_to_hex(const uint8_t *data, uint16_t len, char *out, size_t out_size)
 {
     size_t pos = 0;
     for (uint16_t i = 0; i < len && (pos + 2) < out_size; i++) {
@@ -137,7 +150,7 @@ static void resp_timer_cb(TimerHandle_t timer)
 /* Strip leading 0xFF arbitration bytes only when the pattern matches Fast Modbus:
  * there are leading 0xFF bytes AND after stripping the function code is 0x46 or 0x60.
  * Raw data (with 0xFF) is preserved for display; stripped data is used for CRC/fields. */
-static void strip_arbitration(uint8_t *data, size_t len, uint8_t **effective, size_t *effective_len)
+SNIFFER_STATIC void strip_arbitration(uint8_t *data, size_t len, uint8_t **effective, size_t *effective_len)
 {
     *effective = data;
     *effective_len = len;
@@ -152,7 +165,7 @@ static void strip_arbitration(uint8_t *data, size_t len, uint8_t **effective, si
 }
 
 /* Determine if subcmd is a slave response (vs master request) for FM packets */
-static bool fm_is_slave_subcmd(uint8_t subcmd)
+SNIFFER_STATIC bool fm_is_slave_subcmd(uint8_t subcmd)
 {
     return (subcmd == 0x03 || subcmd == 0x04 ||
             subcmd == 0x09 || subcmd == 0x11 || subcmd == 0x12);
