@@ -3,6 +3,7 @@
 #include "fast_modbus.h"
 #include "bridge.h"
 #include "serial.h"
+#include "stream_splitter.h"
 
 /* In unit test builds sniffer.h only provides httpd_handle_t; include the full
  * stub so that httpd_req_t, httpd_ws_frame_t, httpd_uri_t, etc. are available. */
@@ -221,6 +222,33 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
     uint8_t *effective;
     size_t effective_len;
     strip_arbitration(data, len, &effective, &effective_len);
+
+    /* When the effective buffer is longer than a single minimum-size Modbus frame
+     * (4 bytes req + 4 bytes resp = 8 bytes minimum for two back-to-back frames),
+     * its CRC is invalid (meaning it is not a single valid frame), and it is not
+     * an FM arbitration or FM broadcast packet, attempt to split it into individual
+     * frames and process each one separately. */
+    bool is_fm = (effective[0] == 0xFD &&
+                  (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2));
+    bool is_arb = (effective[0] == 0xFF);
+
+    if (effective_len > 8 && !crc_check(effective, effective_len) && !is_fm && !is_arb) {
+        stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+        int nframes = stream_split(effective, effective_len,
+                                   ctx->req_len >= 2 ? ctx->req_buf[0] : 0,
+                                   ctx->req_len >= 2 ? ctx->req_buf[1] : 0,
+                                   frames);
+        if (nframes > 1) {
+            /* Successfully split into multiple frames — process each individually */
+            for (int fi = 0; fi < nframes; fi++) {
+                sniffer_process(port_index,
+                                (uint8_t *)(uintptr_t)frames[fi].data,
+                                frames[fi].len);
+            }
+            return; /* original merged buffer fully handled */
+        }
+        /* nframes == 1: splitter found nothing useful, fall through to normal path */
+    }
 
     bool should_start_timer = false;
     bool should_stop_timer = false;
