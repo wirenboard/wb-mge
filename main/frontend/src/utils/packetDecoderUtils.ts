@@ -141,10 +141,8 @@ export const FIELD_LABELS: Record<string, string> = {
   record_length: 'Record length', file_resp_length: 'File resp len',
 }
 
-// 'fc' is always shown as part of the section type label (e.g. "FC03 Read Holding Registers")
-// so we skip it as a field to avoid duplication.
 // 'reserved_address' is rendered separately with a warning message.
-export const SKIP_FIELDS = new Set(['type', 'raw', 'payload', 'objects', 'sub_requests', 'sub_responses', 'fc', 'reserved_address'])
+export const SKIP_FIELDS = new Set(['type', 'raw', 'payload', 'objects', 'sub_requests', 'sub_responses', 'reserved_address'])
 
 // ============================================================
 // Types
@@ -177,8 +175,15 @@ export type EndiannessKey = 'abcd' | 'cdab' | 'badc' | 'dcba'
  * - Known enum fields (function_code, ext_byte, subcommand) get human-readable name in parens.
  */
 export function fmtVal(key: string, raw: string): string {
-  if (key === 'function_code' && /^[0-9A-Fa-f]+$/.test(raw)) {
+  if ((key === 'fc' || key === 'function_code') && /^[0-9A-Fa-f]+$/.test(raw)) {
     const upper = raw.toUpperCase()
+    const val = parseInt(upper, 16)
+    if (val & 0x80) {
+      // Error FC: bit 7 is set — original FC is val & 0x7F
+      const origHex = (val & 0x7f).toString(16).toUpperCase().padStart(2, '0')
+      const origName = FC_DISPLAY_NAMES[origHex] ?? 'Unknown'
+      return `0x${upper} (Error: ${origName})`
+    }
     const name = FC_DISPLAY_NAMES[upper] ?? 'Unknown'
     return `0x${upper} (${name})`
   }
