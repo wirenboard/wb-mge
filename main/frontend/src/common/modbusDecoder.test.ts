@@ -401,7 +401,7 @@ describe('raw field integrity', () => {
   it('command_by_serial raw includes sub + serial + pdu', () => {
     const r = decodePacket('FD 60 08 00 06 24 66 03 00 C8 00 14 9D 24');
     // from sub(08) through end-of-pdu (before CRC)
-    expect((r.payload as any).payload.raw).toBe('0800062466030 0C80014'.replace(/\s/g, ''));
+    expect((r.payload as any).payload.raw).toBe('08000624660300C80014');
     // Also verify pdu raw
     const pduRaw = (r.payload as any).payload.payload.raw;
     expect(pduRaw).toBe('0300C80014');
@@ -777,7 +777,7 @@ describe('Standard RTU — FC 17 Read/Write Multiple Registers', () => {
     const p = pdu(r);
     expect(p.type).toBe('read_write_multiple_registers_response');
     expect(p.byte_count).toBe(12);
-    expect(p.data).toBe('00FE0ACD0001000300 0D00FF'.replace(/\s/g, ''));
+    expect(p.data).toBe('00FE0ACD00010003000D00FF');
   });
 });
 
