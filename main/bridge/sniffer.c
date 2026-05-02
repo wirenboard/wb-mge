@@ -31,18 +31,19 @@
 
 static const char *TAG = "sniffer";
 
-#define SNIFFER_MAX_PACKET_LEN  256
 #define SNIFFER_QUEUE_LEN       64
 #define SNIFFER_RESP_TIMEOUT_MS 200
 #define SNIFFER_WS_TASK_STACK   (1024 * 5)
 #define SNIFFER_WS_TASK_PRIO    3
-#define SNIFFER_JSON_BUF_SIZE   1200
 
 typedef enum {
     SNIFF_IDLE = 0,
     SNIFF_RES_WAIT,
 } sniff_state_t;
 
+/* In unit test builds sniff_packet_t is declared in sniffer.h under
+ * #ifdef __unittest_env__ to allow tests to access it without duplication. */
+#ifndef __unittest_env__
 typedef struct {
     uint8_t  port;
     uint64_t timestamp_us;
@@ -54,6 +55,7 @@ typedef struct {
     uint8_t  data[SNIFFER_MAX_PACKET_LEN];
     uint16_t data_len;
 } sniff_packet_t;
+#endif
 
 typedef struct {
     sniff_state_t  state;
@@ -103,6 +105,38 @@ SNIFFER_STATIC void bytes_to_hex(const uint8_t *data, uint16_t len, char *out, s
         pos += 2;
     }
     out[pos] = '\0';
+}
+
+/* Format a timeout JSON message into buf (at most buf_size bytes).
+ * Returns the number of characters written (like snprintf). */
+SNIFFER_STATIC int format_timeout_json(char *buf, size_t buf_size,
+                                       uint32_t id, const sniff_packet_t *pkt)
+{
+    return snprintf(buf, buf_size,
+        "{\"type\":\"timeout\",\"id\":%" PRIu32 ",\"port\":%u"
+        ",\"timestamp_us\":%" PRIu64
+        ",\"slave_id\":%u,\"function\":%u}",
+        id, port_index_to_name(pkt->port), pkt->timestamp_us,
+        pkt->slave_id, pkt->function);
+}
+
+/* Format a normal (non-timeout) packet JSON message into buf.
+ * Returns the number of characters written (like snprintf). */
+SNIFFER_STATIC int format_packet_json(char *buf, size_t buf_size,
+                                       uint32_t id, const sniff_packet_t *pkt)
+{
+    char hex_str[SNIFFER_MAX_PACKET_LEN * 2 + 1];
+    bytes_to_hex(pkt->data, pkt->data_len, hex_str, sizeof(hex_str));
+    return snprintf(buf, buf_size,
+        "{\"type\":\"packet\",\"id\":%" PRIu32 ",\"port\":%u"
+        ",\"timestamp_us\":%" PRIu64
+        ",\"sender\":\"%s\",\"slave_id\":%u,\"function\":%u"
+        ",\"crc_valid\":%s,\"raw\":\"%s\",\"size\":%u}",
+        id, port_index_to_name(pkt->port), pkt->timestamp_us,
+        pkt->is_master ? "master" : "slave",
+        pkt->slave_id, pkt->function,
+        pkt->crc_valid ? "true" : "false",
+        hex_str, pkt->data_len);
 }
 
 /* Try to enqueue packet; on failure log and reset port state to IDLE */
@@ -350,7 +384,6 @@ static void sniffer_ws_task(void *arg)
 {
     (void)arg;
     sniff_packet_t pkt;
-    char hex_str[SNIFFER_MAX_PACKET_LEN * 2 + 1];
     char *json_buf = malloc(SNIFFER_JSON_BUF_SIZE);
 
     if (!json_buf) {
@@ -372,24 +405,9 @@ static void sniffer_ws_task(void *arg)
         packet_counter++;
 
         if (pkt.is_timeout) {
-            snprintf(json_buf, SNIFFER_JSON_BUF_SIZE,
-                "{\"type\":\"timeout\",\"id\":%" PRIu32 ",\"port\":%u"
-                ",\"timestamp_us\":%" PRIu64
-                ",\"slave_id\":%u,\"function\":%u}",
-                packet_counter, port_index_to_name(pkt.port), pkt.timestamp_us,
-                pkt.slave_id, pkt.function);
+            format_timeout_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, &pkt);
         } else {
-            bytes_to_hex(pkt.data, pkt.data_len, hex_str, sizeof(hex_str));
-            snprintf(json_buf, SNIFFER_JSON_BUF_SIZE,
-                "{\"type\":\"packet\",\"id\":%" PRIu32 ",\"port\":%u"
-                ",\"timestamp_us\":%" PRIu64
-                ",\"sender\":\"%s\",\"slave_id\":%u,\"function\":%u"
-                ",\"crc_valid\":%s,\"raw\":\"%s\",\"size\":%u}",
-                packet_counter, port_index_to_name(pkt.port), pkt.timestamp_us,
-                pkt.is_master ? "master" : "slave",
-                pkt.slave_id, pkt.function,
-                pkt.crc_valid ? "true" : "false",
-                hex_str, pkt.data_len);
+            format_packet_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, &pkt);
         }
 
         httpd_ws_frame_t ws_frame = {
