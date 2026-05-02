@@ -16,7 +16,6 @@
 #include <string.h>
 
 #define SERIAL_BUF_SIZE                 (1000)
-#define SERIAL_READ_TOUT                10
 #define SERIAL_TASK_STACK_SIZE          (1024 * 4)
 #define SERIAL_TASK_PRIORITY            12
 #define SERIAL_QUEUE_SIZE               20
@@ -239,9 +238,9 @@ static void verify_uart_set_rx_timeout_args(void)
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
-        SERIAL_READ_TOUT,
+        SERIAL_RX_TOUT_SNIFFER,
         mock_uart_set_rx_timeout_data.rx_timeout,
-        "uart_set_rx_timeout should be called with SERIAL_READ_TOUT"
+        "uart_set_rx_timeout should be called with SERIAL_RX_TOUT_SNIFFER"
     );
 }
 

@@ -22,8 +22,10 @@
 /* sniff_packet_t is declared in sniffer.h under __unittest_env__.
  * serial_desc_t is provided by the mock serial.h (unittests/sniffer/mocks/serial.h)
  * which is included transitively via sniffer.h — do NOT include serial.h directly
- * here to avoid conflict between the mock typedef and the production header. */
+ * here to avoid conflict between the mock typedef and the production header.
+ * Mock tracking data for serial_set_rx_timeout is exposed via serial_mock.h instead. */
 #include "sniffer.h"
+#include "serial_mock.h"
 
 /* FreeRTOS queue and timer mocks */
 #include "freertos/queue.h"
@@ -79,6 +81,7 @@ void setUp(void)
     /* Reset mock state first so that sniffer_init() uses fresh mocks */
     mock_freertos_queue_reset();
     mock_freertos_timers_reset();
+    mock_serial_reset();
 
     memset(&s_desc0, 0, sizeof(s_desc0));
     memset(&s_desc1, 0, sizeof(s_desc1));
@@ -503,6 +506,75 @@ void test_tc9_scan_response_with_leading_ff(void)
 }
 
 /* ============================================================
+ * TC-RX1 — sniffer_enable() switches RX timeout to SNIFFER value
+ * ============================================================ */
+void test_rx_timeout_enable_sets_sniffer_value(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-RX1: sniffer_enable() must set RX timeout to SERIAL_RX_TOUT_SNIFFER");
+    LOG_MESSAGE();
+
+    /* setUp already calls sniffer_enable(0), reset counters to test a fresh call */
+    mock_serial_reset();
+
+    sniffer_disable(0);
+    mock_serial_reset();
+
+    sniffer_enable(0);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_set_rx_timeout_data.called,
+        "serial_set_rx_timeout must be called once on sniffer_enable");
+    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_RX_TOUT_SNIFFER, mock_serial_set_rx_timeout_data.tout_symbols,
+        "sniffer_enable must set timeout to SERIAL_RX_TOUT_SNIFFER");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(&s_desc0, mock_serial_set_rx_timeout_data.desc,
+        "serial_set_rx_timeout must be called with the correct serial descriptor");
+}
+
+/* ============================================================
+ * TC-RX2 — sniffer_disable() switches RX timeout to PROXY value
+ * ============================================================ */
+void test_rx_timeout_disable_sets_proxy_value(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-RX2: sniffer_disable() must set RX timeout to SERIAL_RX_TOUT_PROXY");
+    LOG_MESSAGE();
+
+    mock_serial_reset();
+    sniffer_disable(0);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_set_rx_timeout_data.called,
+        "serial_set_rx_timeout must be called once on sniffer_disable");
+    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_RX_TOUT_PROXY, mock_serial_set_rx_timeout_data.tout_symbols,
+        "sniffer_disable must set timeout to SERIAL_RX_TOUT_PROXY");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(&s_desc0, mock_serial_set_rx_timeout_data.desc,
+        "serial_set_rx_timeout must be called with the correct serial descriptor");
+}
+
+/* ============================================================
+ * TC-RX3 — after sniffer_detach(), enable/disable do not call serial_set_rx_timeout
+ * ============================================================ */
+void test_rx_timeout_not_called_after_detach(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-RX3: after sniffer_detach(), serial_set_rx_timeout must not be called");
+    LOG_MESSAGE();
+
+    sniffer_detach(0);
+    mock_serial_reset();
+
+    sniffer_enable(0);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
+        "serial_set_rx_timeout must NOT be called after sniffer_detach (enable)");
+
+    sniffer_disable(0);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
+        "serial_set_rx_timeout must NOT be called after sniffer_detach (disable)");
+}
+
+/* ============================================================
  * main
  * ============================================================ */
 
@@ -519,6 +591,9 @@ int main(void)
     RUN_TEST(test_tc7_timeout_no_response);
     RUN_TEST(test_tc8_fm_subcmd_determines_direction);
     RUN_TEST(test_tc9_scan_response_with_leading_ff);
+    RUN_TEST(test_rx_timeout_enable_sets_sniffer_value);
+    RUN_TEST(test_rx_timeout_disable_sets_proxy_value);
+    RUN_TEST(test_rx_timeout_not_called_after_detach);
 
     return UNITY_END();
 }
