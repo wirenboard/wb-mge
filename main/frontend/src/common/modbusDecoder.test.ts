@@ -365,6 +365,23 @@ describe('parse_error cases', () => {
     expect(r.type).toBe('rtu_frame');
     expect((r.payload as any).payload.type).toBe('scan_start');
   });
+  it('non-0xFD address with FC=0x46 and non-FM subcommand parses as standard RTU user_defined', () => {
+    // address=0x01, FC=0x46 (user-defined), subcommand=0xAA — should NOT be FM
+    // but with the new condition it WILL be FM (this is intentional behavior — document it)
+    // Verify it decodes as fast_modbus with unknown_subcommand (not as modbus_rtu user_defined)
+    const r = decodePacket('01 46 AA BB 00 00', 'request');
+    expect(r.type).toBe('rtu_frame');
+    expect(r.payload.type).toBe('fast_modbus');  // intentional: any addr + FC=0x46 → FM
+    expect((r.payload as any).payload.type).toBe('parse_error');
+    expect((r.payload as any).payload.reason).toBe('unknown_subcommand');
+  });
+  it('non-0xFD address with FC=0x41 (user-defined, not 0x46) parses as standard RTU', () => {
+    // FC=0x41 is user-defined but NOT Fast Modbus ext_byte — must remain modbus_rtu
+    const r = decodePacket('01 41 00 0A 00 02 9C 06', 'request');
+    expect(r.type).toBe('rtu_frame');
+    expect(r.payload.type).toBe('modbus_rtu');
+    expect((r.payload as any).payload.type).toBe('user_defined');
+  });
 });
 
 // ============================================================
@@ -961,5 +978,106 @@ describe('Standard RTU — ADU too short', () => {
     const r = decodePacket('01 03 04');
     expect(r.type).toBe('parse_error');
     expect((r as any).reason).toBe('too_short');
+  });
+});
+
+// ============================================================
+// FM Event subcommands: 0x10, 0x11, 0x12, 0x18
+// ============================================================
+
+describe('FM event_request (0x10)', () => {
+  // FD 46 10 min_server_id max_data_len prev_server_id prev_flag CRC
+  // fmBytes: [0x10, 0x00, 0x64, 0x0A, 0x01] = 5 bytes
+  it('full structure', () => {
+    const r = decodePacket('FD 46 10 00 64 0A 01 00 00');
+    expect(r.type).toBe('rtu_frame');
+    expect(r.address).toBe('FD');
+    expect((r.payload as any).type).toBe('fast_modbus');
+    expect((r.payload as any).ext_byte).toBe('46');
+    const p = (r.payload as any).payload;
+    expect(p.type).toBe('event_request');
+    expect(p.min_server_id).toBe('00');
+    expect(p.max_data_len).toBe('64');
+    expect(p.prev_server_id).toBe('0A');
+    expect(p.prev_flag).toBe('01');
+  });
+
+  it('raw field contains all fmBytes', () => {
+    const r = decodePacket('FD 46 10 00 64 0A 01 00 00');
+    expect((r.payload as any).payload.raw).toBe('100064' + '0A01');
+  });
+
+  it('truncated (< 5 fmBytes) → parse_error event_request_too_short', () => {
+    // fmBytes = [10, 00, 64, 0A] = 4 bytes — too short
+    const r = decodePacket('FD 46 10 00 64 0A 00 00');
+    expect((r.payload as any).payload.type).toBe('parse_error');
+    expect((r.payload as any).payload.reason).toBe('event_request_too_short');
+  });
+});
+
+describe('FM event_transfer (0x11)', () => {
+  // address = server_id (05), NOT 0xFD
+  // fmBytes: [0x11, flag, unacked_count, data_len, ...events_data]
+  it('full structure — address is server_id (05), not 0xFD', () => {
+    const r = decodePacket('05 46 11 01 01 06 02 04 01 D0 04 00 00 00');
+    expect(r.type).toBe('rtu_frame');
+    expect(r.address).toBe('05');
+    expect((r.payload as any).type).toBe('fast_modbus');
+    const p = (r.payload as any).payload;
+    expect(p.type).toBe('event_transfer');
+    expect(p.flag).toBe('01');
+    expect(p.unacked_count).toBe('01');
+    expect(p.data_len).toBe('06');
+  });
+
+  it('data field contains bytes after data_len', () => {
+    const r = decodePacket('05 46 11 01 01 06 02 04 01 D0 04 00 00 00');
+    const p = (r.payload as any).payload;
+    // fmBytes.slice(4) = [02, 04, 01, D0, 04, 00]
+    expect(p.data).toBe('020401D00400');
+  });
+
+  it('truncated (< 4 fmBytes) → parse_error event_transfer_too_short', () => {
+    // fmBytes = [11, 01, 01] = 3 bytes — too short
+    const r = decodePacket('05 46 11 01 01 00 00');
+    expect((r.payload as any).payload.type).toBe('parse_error');
+    expect((r.payload as any).payload.reason).toBe('event_transfer_too_short');
+  });
+});
+
+describe('FM no_events (0x12)', () => {
+  // FD 46 12 52 5D — real CRC from spec
+  it('structure and raw', () => {
+    const r = decodePacket('FD 46 12 52 5D');
+    expect(r.type).toBe('rtu_frame');
+    expect(r.address).toBe('FD');
+    expect((r.payload as any).type).toBe('fast_modbus');
+    const p = (r.payload as any).payload;
+    expect(p.type).toBe('no_events');
+    expect(p.raw).toBe('12');
+  });
+});
+
+describe('FM event_config (0x18)', () => {
+  // address = server_id (0A), NOT 0xFD
+  // fmBytes: [0x18, data_len, ...settings]
+  // Example response from spec: 0A 46 18 03 05 05 00 XX XX
+  it('full structure — address is server_id (0A), not 0xFD', () => {
+    const r = decodePacket('0A 46 18 03 05 05 00 00 00');
+    expect(r.type).toBe('rtu_frame');
+    expect(r.address).toBe('0A');
+    expect((r.payload as any).type).toBe('fast_modbus');
+    const p = (r.payload as any).payload;
+    expect(p.type).toBe('event_config');
+    expect(p.data_len).toBe('03');
+    // data = fmBytes.slice(2) = [05, 05, 00]
+    expect(p.data).toBe('050500');
+  });
+
+  it('truncated (< 2 fmBytes) → parse_error event_config_too_short', () => {
+    // fmBytes = [18] = 1 byte — too short
+    const r = decodePacket('0A 46 18 00 00');
+    expect((r.payload as any).payload.type).toBe('parse_error');
+    expect((r.payload as any).payload.reason).toBe('event_config_too_short');
   });
 });

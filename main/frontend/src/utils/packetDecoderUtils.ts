@@ -14,6 +14,10 @@ export const TYPE_LABELS: Record<string, string> = {
   scan_end: 'Scan End',
   command_by_serial: 'Command by Serial',
   response_by_serial: 'Response by Serial',
+  event_request: 'Event Request',
+  event_transfer: 'Event Transfer',
+  no_events: 'No Events',
+  event_config: 'Event Config',
   read_coils: 'Read Coils',
   read_discrete_inputs: 'Read Discrete Inputs',
   read_holding_registers: 'Read Holding Registers',
@@ -81,6 +85,7 @@ export const HEX_FIELDS = new Set([
   'conformity_level', 'more_follows', 'next_object_id',
   'original_fc', 'output_data', 'server_id', 'run_indicator',
   'and_mask', 'or_mask', 'subcommand', 'reference_type',
+  'min_server_id', 'prev_server_id', 'prev_flag', 'flag',
 ])
 
 /** Fields that also need decimal shown in parentheses */
@@ -139,6 +144,9 @@ export const FIELD_LABELS: Record<string, string> = {
   reference_type: 'Reference type',
   file_number: 'File number', record_number: 'Record number',
   record_length: 'Record length', file_resp_length: 'File resp len',
+  min_server_id: 'Min server ID', max_data_len: 'Max data len',
+  prev_server_id: 'Prev server ID', prev_flag: 'Prev flag',
+  flag: 'Packet flag', unacked_count: 'Unacked events', data_len: 'Data len',
 }
 
 // 'reserved_address' is rendered separately with a warning message.
