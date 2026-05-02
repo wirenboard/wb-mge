@@ -197,3 +197,8 @@ void mock_freertos_queue_reset(void)
     memset(&mock_uxQueueMessagesWaiting_data, 0, sizeof(mock_uxQueueMessagesWaiting_data));
     memset(&mock_xQueueReset_data, 0, sizeof(mock_xQueueReset_data));
 }
+
+QueueHandle_t mock_get_last_created_queue(void)
+{
+    return created_queue;
+}
