@@ -25,7 +25,6 @@
 // However, since the device can work in "transparent" gateway mode, the buffer size should be chosen with a margin
 // When the buffer overflows, UART_BUFFER_FULL event will occur
 #define SERIAL_BUF_SIZE                 (1000)
-#define SERIAL_READ_TOUT                10          // UART receive delay in symbols (1 symbol ~= 11 bits), with margin
 #define SERIAL_TASK_STACK_SIZE          (1024 * 4)
 #define SERIAL_TASK_PRIORITY            12
 #define SERIAL_QUEUE_SIZE               20          // UART event queue size
@@ -168,7 +167,7 @@ static esp_err_t configure_uart_parameters(serial_config_t *serial_config)
     // the end of a packet if its length is equal to the UART receive buffer size
     uart_set_always_rx_timeout(serial_config->port_num, true);
 
-    err = uart_set_rx_timeout(serial_config->port_num, SERIAL_READ_TOUT);
+    err = uart_set_rx_timeout(serial_config->port_num, SERIAL_RX_TOUT_SNIFFER);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Error during UART receive timeout set");
         return err;
@@ -257,6 +256,17 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 esp_err_t serial_wait_tx_done(serial_desc_t *desc, TickType_t timeout_ticks)
 {
     return uart_wait_tx_done(desc->port_num, timeout_ticks);
+}
+
+esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols)
+{
+    esp_err_t err = uart_set_rx_timeout(desc->port_num, tout_symbols);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "UART[%d] failed to set RX timeout to %u symbols", desc->port_num, tout_symbols);
+        return err;
+    }
+    ESP_LOGD(TAG, "UART[%d] RX timeout set to %u symbols", desc->port_num, tout_symbols);
+    return ESP_OK;
 }
 
 esp_err_t serial_deinit(serial_desc_t *desc)
