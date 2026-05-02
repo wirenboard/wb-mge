@@ -20,6 +20,7 @@ AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/timers.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/malloc.c
 AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 AUX_SRC += mocks/tcp_server.c
+AUX_SRC += mocks/serial.c
 
 # Include directories
 INC += mocks
