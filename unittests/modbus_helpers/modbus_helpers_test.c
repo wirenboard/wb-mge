@@ -18,17 +18,17 @@
 #define MODBUS_TCP_TRANSACTION_ID                   0x1234
 
 const uint8_t valid_rtu_request[] = { 0x9F, 0x03, 0x00, 0xC8, 0x00, 0x06, 0x58, 0x48 };
-const size_t valid_rtu_request_len = sizeof(valid_rtu_request);
+#define valid_rtu_request_len sizeof(valid_rtu_request)
 const uint8_t valid_rtu_response[] = { 0x9F, 0x03, 0x06, 0x57, 0x42, 0x4D, 0x52, 0x36, 0x43, 0x54, 0x17 };
-const size_t valid_rtu_response_len = sizeof(valid_rtu_response);
+#define valid_rtu_response_len sizeof(valid_rtu_response)
 
 const uint8_t valid_short_rtu_request[] = { 0xFD, 0x46, 0x01, 0x13, 0x90 };
-const size_t valid_short_rtu_request_len = sizeof(valid_short_rtu_request);
+#define valid_short_rtu_request_len sizeof(valid_short_rtu_request)
 const uint8_t valid_short_rtu_response[] = { 0xFD, 0x46, 0x12, 0x52, 0x5D };
-const size_t valid_short_rtu_response_len = sizeof(valid_short_rtu_response);
+#define valid_short_rtu_response_len sizeof(valid_short_rtu_response)
 
 const uint8_t valid_tcp_request[] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x9F, 0x03, 0x00, 0xC8, 0x00, 0x06};
-const size_t valid_tcp_request_len = sizeof(valid_tcp_request);
+#define valid_tcp_request_len sizeof(valid_tcp_request)
 
 void setUp(void)
 {
@@ -66,7 +66,8 @@ void test_modbus_crc16_known_frame(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_crc16 - known frame");
     LOG_MESSAGE();
 
-    const size_t buf_len = valid_rtu_request_len - MODBUS_RTU_CRC16_LEN;
+    /* Use enum to get a compile-time constant, avoiding VLA warnings */
+    enum { buf_len = sizeof(valid_rtu_request) - sizeof(uint16_t) };
     uint8_t buf[buf_len];
     memcpy(buf, valid_rtu_request, buf_len);
     TEST_ASSERT_EQUAL_HEX16(0x4858, modbus_crc16(buf, buf_len));
@@ -98,7 +99,8 @@ void test_modbus_rtu_check_request_short_len_fail(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_request - short length fail");
     LOG_MESSAGE();
 
-    const size_t short_len = MODBUS_RTU_REQUEST_MIN_LEN - 1;
+    /* Use enum to get a compile-time constant, avoiding VLA warnings */
+    enum { short_len = MODBUS_RTU_REQUEST_MIN_LEN - 1 };
     uint8_t buf[short_len];
     memcpy(buf, valid_short_rtu_request, short_len);
 
@@ -260,7 +262,8 @@ void test_modbus_tcp_check_request_short_len(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_tcp_check_request - short length");
     LOG_MESSAGE();
 
-    const size_t short_len = MODBUS_TCP_REQUEST_MIN_LEN - 1;
+    /* Use enum to get a compile-time constant, avoiding VLA warnings */
+    enum { short_len = MODBUS_TCP_REQUEST_MIN_LEN - 1 };
     uint8_t buf[short_len];
     memcpy(buf, valid_tcp_request, short_len);
 
