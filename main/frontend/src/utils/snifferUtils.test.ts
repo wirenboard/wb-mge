@@ -246,14 +246,15 @@ describe('parsePacket', () => {
 
   it('FM Cmd packet (function=0x46, subcmd=0x08) appends inner FC name to display', () => {
     // Fast Modbus Cmd packet: addr=FD, ext=46, subcmd=08, serial=00062466, inner FC=03 (Read Holding Regs)
-    const raw = 'FD460800062466010300000002';
+    // Structure: FD 46 08 <serial:00062466> <inner PDU: 03 00C8 0014> <crc:0000>
+    const raw = 'FD4608000624660300C800140000';
     const msg = {
       id: 6,
       port: 1,
       type: 'packet',
       timestamp_us: 7000000,
       raw,
-      size: 13,
+      size: 14,
       function: 0x46,
       slave_id: 0xFD,
       sender: 'master',
