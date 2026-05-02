@@ -2,6 +2,7 @@
 #include "modbus_helpers.h"
 #include "fast_modbus.h"
 #include "bridge.h"
+#include "serial.h"
 
 /* In unit test builds sniffer.h only provides httpd_handle_t; include the full
  * stub so that httpd_req_t, httpd_ws_frame_t, httpd_uri_t, etc. are available. */
@@ -65,6 +66,7 @@ typedef struct {
     uint64_t       req_timestamp_us;
     TimerHandle_t  resp_timer;
     unsigned       port_index;
+    serial_desc_t *serial_desc;
 } sniff_ctx_t;
 
 static sniff_ctx_t sniff_ctx[BRIDGES_COUNT];
@@ -548,12 +550,28 @@ void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
 {
     if (port_index >= BRIDGES_COUNT) return;
     serial_desc->sniff_handler = s_port_callbacks[port_index];
+    sniff_ctx[port_index].serial_desc = serial_desc;
+}
+
+void sniffer_detach(unsigned port_index)
+{
+    if (port_index >= BRIDGES_COUNT) return;
+    // Disable sniffer and clear the serial_desc pointer to avoid use-after-free
+    // when serial port is reinitialized
+    sniffer_disable(port_index);
+    sniff_ctx[port_index].serial_desc = NULL;
 }
 
 void sniffer_enable(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) return;
     sniff_ctx[port_index].enabled = true;
+    if (sniff_ctx[port_index].serial_desc) {
+        esp_err_t err = serial_set_rx_timeout(sniff_ctx[port_index].serial_desc, SERIAL_RX_TOUT_SNIFFER);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Port %u: failed to set RX timeout to sniffer value: %s", port_index, esp_err_to_name(err));
+        }
+    }
     ESP_LOGI(TAG, "Sniffer enabled on port %u", port_index);
 }
 
@@ -561,6 +579,12 @@ void sniffer_disable(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) return;
     sniff_ctx[port_index].enabled = false;
+    if (sniff_ctx[port_index].serial_desc) {
+        esp_err_t err = serial_set_rx_timeout(sniff_ctx[port_index].serial_desc, SERIAL_RX_TOUT_PROXY);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Port %u: failed to set RX timeout to proxy value: %s", port_index, esp_err_to_name(err));
+        }
+    }
     xTimerStop(sniff_ctx[port_index].resp_timer, 0);
     sniff_ctx[port_index].state = SNIFF_IDLE;
     ESP_LOGI(TAG, "Sniffer disabled on port %u", port_index);

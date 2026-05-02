@@ -295,6 +295,8 @@ esp_err_t bridge_port_deinit(unsigned index)
     bridge_config_t* cfg = &bridge_current_cfg[index];
 
     ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
+    // Detach sniffer before serial port is freed to prevent use-after-free
+    sniffer_detach(index);
     if (cfg->bridge_mb) {
         modbus_tcp_deinit_port(index);
     } else {

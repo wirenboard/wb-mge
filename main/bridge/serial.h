@@ -9,6 +9,11 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
+// RX timeout in UART symbol periods for sniffer mode (Modbus packet boundary detection)
+#define SERIAL_RX_TOUT_SNIFFER  3
+// RX timeout in UART symbol periods for transparent proxy mode (minimal latency)
+#define SERIAL_RX_TOUT_PROXY    10
+
 typedef struct {
     uart_port_t port_num;
     int tx_pin;
@@ -38,3 +43,4 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
 esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len);
 esp_err_t serial_wait_tx_done(serial_desc_t *desc, TickType_t timeout_ticks);
 esp_err_t serial_deinit(serial_desc_t *desc);
+esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols);
