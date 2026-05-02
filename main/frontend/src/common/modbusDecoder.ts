@@ -59,6 +59,10 @@ export type FastModbusSubcommand =
   | { type: 'scan_end'; raw: string; }
   | { type: 'command_by_serial'; raw: string; serial_number: string; function_code: string; payload: PduResult | ParseError; }
   | { type: 'response_by_serial'; raw: string; serial_number: string; function_code: string; payload: PduResult | ParseError; }
+  | { type: 'event_request'; raw: string; min_server_id: string; max_data_len: string; prev_server_id: string; prev_flag: string; }
+  | { type: 'event_transfer'; raw: string; flag: string; unacked_count: string; data_len: string; data: string; }
+  | { type: 'no_events'; raw: string; }
+  | { type: 'event_config'; raw: string; data_len: string; data: string; }
   | ParseError;
 
 export interface PduResult {
@@ -115,9 +119,11 @@ export function getByteRoles(decoded: DecodedPacket): ByteRole[] {
   if (pl.type === 'fast_modbus') {
     const sub = pl.payload;
     const hasNestedCommand = sub.type === 'command_by_serial' || sub.type === 'response_by_serial';
+    // For device-addressed FM packets (event_transfer, event_config), byte 0 is the real server_id
+    const isDeviceAddressed = sub.type === 'event_transfer' || sub.type === 'event_config';
 
-    // addr (0xFD) is ALWAYS a fake wrapper in FM
-    roles[0] = 'fm-addr';
+    // addr byte: real server_id for device-addressed FM packets, fake wrapper for broadcast FM
+    roles[0] = isDeviceAddressed ? 'address' : 'fm-addr';
 
     if (hasNestedCommand) {
       // With nested command: ext_byte and subcommand are also fake wrappers
@@ -519,6 +525,48 @@ function decodeFastModbusPayload(bytes: number[]): FastModbusSubcommand {
     const fcVal = 'fc' in pdu ? String(pdu.fc) : '??';
     return { type: 'response_by_serial', raw, serial_number: toHex(bytes.slice(1, 5)), function_code: fcVal, payload: pdu };
   }
+  // 0x10: Event Request — FD 46 10 min_server_id max_data_len prev_server_id prev_flag CRC
+  // fmBytes: [0x10, min_server_id, max_data_len, prev_server_id, prev_flag] = 5 bytes
+  if (sub === 0x10) {
+    if (bytes.length < 5) return { type: 'parse_error', reason: 'event_request_too_short', raw };
+    return {
+      type: 'event_request',
+      raw,
+      min_server_id: toHex([bytes[1]]),
+      max_data_len: toHex([bytes[2]]),
+      prev_server_id: toHex([bytes[3]]),
+      prev_flag: toHex([bytes[4]]),
+    };
+  }
+  // 0x11: Event Transfer — <server_id> 46 11 flag unacked_count data_len <events> CRC
+  // fmBytes: [0x11, flag, unacked_count, data_len, ...events_data]
+  if (sub === 0x11) {
+    if (bytes.length < 4) return { type: 'parse_error', reason: 'event_transfer_too_short', raw };
+    const dataLen = bytes[3];
+    return {
+      type: 'event_transfer',
+      raw,
+      flag: toHex([bytes[1]]),
+      unacked_count: toHex([bytes[2]]),
+      data_len: toHex([dataLen]),
+      data: toHex(bytes.slice(4)),
+    };
+  }
+  // 0x12: No Events — FD 46 12 CRC
+  // fmBytes: [0x12] — just 1 byte
+  if (sub === 0x12) return { type: 'no_events', raw };
+  // 0x18: Event Config — <server_id> 46 18 data_len <settings> CRC
+  // fmBytes: [0x18, data_len, ...settings]
+  if (sub === 0x18) {
+    if (bytes.length < 2) return { type: 'parse_error', reason: 'event_config_too_short', raw };
+    const dataLen = bytes[1];
+    return {
+      type: 'event_config',
+      raw,
+      data_len: toHex([dataLen]),
+      data: toHex(bytes.slice(2)),
+    };
+  }
   return { type: 'parse_error', reason: 'unknown_subcommand', raw, subcommand: toHex([sub]) };
 }
 
@@ -558,8 +606,13 @@ export function decodePacket(input: string | number[], direction: Direction = 'r
   const addressHex = toHex([address]);
   const crc = toHex(bytes.slice(-2));
 
-  // Fast Modbus: address=0xFD, ext_byte=0x60|0x46
-  if (address === 0xfd && (bytes[1] === 0x60 || bytes[1] === 0x46)) {
+  // Fast Modbus detection:
+  //   - broadcast commands (scan, event request/no-events): address=0xFD, ext_byte=0x60|0x46
+  //   - device-addressed commands (event transfer 0x11, event config 0x18): server_id (0x01-0xF7), ext_byte=0x46 only
+  if (
+    (address === 0xfd && (bytes[1] === 0x60 || bytes[1] === 0x46)) ||
+    (address >= 0x01 && address <= 0xf7 && bytes[1] === 0x46)
+  ) {
     const extByte = bytes[1];
     const fmBytes = bytes.slice(2, bytes.length - 2);
     const subByte = fmBytes.length > 0 ? toHex([fmBytes[0]]) : '??';

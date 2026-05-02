@@ -88,8 +88,8 @@ describe('fmtVal', () => {
     expect(fmtVal('function_code', '03')).toBe('0x03 (Read Holding Registers)');
   });
 
-  it('function_code FF → Unknown', () => {
-    expect(fmtVal('function_code', 'FF')).toBe('0xFF (Unknown)');
+  it('function_code FF → Error: Unknown (0xFF has bit 7 set, treated as exception FC)', () => {
+    expect(fmtVal('function_code', 'FF')).toBe('0xFF (Error: Unknown)');
   });
 
   it('ext_byte 46 → Extended function command', () => {
