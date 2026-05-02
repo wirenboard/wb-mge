@@ -1,32 +1,27 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { decodePacket, parseHex, type DecodedPacket, type Direction } from '@/common/modbusDecoder'
+import {
+  type TreeRow,
+  type EndiannessKey,
+  ENDIAN_CONFIGS,
+  flattenNode,
+  isPrintable,
+  f32str,
+} from '@/utils/packetDecoderUtils'
+import { type SniffRow } from '@/utils/snifferUtils'
 
 // ============================================================
 // Props
 // ============================================================
 
-interface SniffRowLike {
-  id: number
-  sender: string
-  slave: string
-  fc: string
-  pl: string
-  bytes: number
-  crc: 'OK' | 'ERR' | 'N/A'
-  isArbitration: boolean
-  t: string
-  dt: string
-}
-
-const props = defineProps<{ packet: SniffRowLike }>()
+const props = defineProps<{ packet: SniffRow }>()
 
 // ============================================================
 // State
 // ============================================================
 
 const hoveredRange = ref<{ start: number; end: number } | null>(null)
-type EndiannessKey = 'abcd' | 'cdab' | 'badc' | 'dcba'
 const activeEndianness = ref<EndiannessKey>('abcd')
 type BitMode = '16' | '32'
 const activeBitMode = ref<BitMode>('16')
@@ -49,311 +44,8 @@ const fullHex = computed<string>(() =>
 )
 
 // ============================================================
-// Human-readable labels
-// ============================================================
-
-const TYPE_LABELS: Record<string, string> = {
-  rtu_frame: 'RTU Frame',
-  arbitration: 'Arbitration',
-  parse_error: 'Parse Error',
-  fast_modbus: 'Fast Modbus',
-  modbus_rtu: 'Modbus RTU',
-  scan_start: 'Scan Start',
-  scan_continue: 'Scan Continue',
-  scan_response: 'Scan Response',
-  scan_end: 'Scan End',
-  command_by_serial: 'Command by Serial',
-  response_by_serial: 'Response by Serial',
-  read_coils: 'Read Coils',
-  read_discrete_inputs: 'Read Discrete Inputs',
-  read_holding_registers: 'Read Holding Registers',
-  read_input_registers: 'Read Input Registers',
-  write_single_coil: 'Write Single Coil',
-  write_single_register: 'Write Single Register',
-  read_exception_status: 'Read Exception Status',
-  diagnostics: 'Diagnostics',
-  get_comm_event_counter: 'Comm Event Counter',
-  get_comm_event_log: 'Comm Event Log',
-  write_multiple_coils: 'Write Multiple Coils',
-  write_multiple_registers: 'Write Multiple Registers',
-  report_server_id: 'Report Server ID',
-  read_file_record: 'Read File Record',
-  write_file_record: 'Write File Record',
-  mask_write_register: 'Mask Write Register',
-  read_write_multiple_registers: 'Read/Write Multiple Registers',
-  read_fifo_queue: 'Read FIFO Queue',
-  mei_transport: 'MEI Transport',
-  mei_read_device_identification: 'Read Device Identification',
-  mei_canopen: 'CANopen',
-  modbus_error: 'Modbus Exception',
-  user_defined: 'User-Defined FC',
-  vendor_specific: 'Vendor-Specific FC',
-  read_coils_response: 'Read Coils Response',
-  read_discrete_inputs_response: 'Read Discrete Inputs Response',
-  read_holding_registers_response: 'Read Holding Registers Response',
-  read_input_registers_response: 'Read Input Registers Response',
-  write_single_coil_response: 'Write Single Coil Echo',
-  write_single_register_response: 'Write Single Register Echo',
-  read_exception_status_response: 'Exception Status Response',
-  diagnostics_response: 'Diagnostics Response',
-  get_comm_event_counter_response: 'Comm Event Counter Response',
-  get_comm_event_log_response: 'Comm Event Log Response',
-  write_multiple_coils_response: 'Write Multiple Coils Response',
-  write_multiple_registers_response: 'Write Multiple Registers Response',
-  report_server_id_response: 'Report Server ID Response',
-  read_file_record_response: 'Read File Record Response',
-  mask_write_register_response: 'Mask Write Register Echo',
-  read_write_multiple_registers_response: 'Read/Write Multiple Registers Response',
-  read_fifo_queue_response: 'Read FIFO Queue Response',
-  mei_read_device_identification_response: 'Device ID Response',
-}
-
-// Mapping from FC hex value to human-readable name (for function_code field display)
-const FC_DISPLAY_NAMES: Record<string, string> = {
-  '01': 'Read Coils', '02': 'Read Discrete Inputs',
-  '03': 'Read Holding Registers', '04': 'Read Input Registers',
-  '05': 'Write Single Coil', '06': 'Write Single Register',
-  '07': 'Read Exception Status', '08': 'Diagnostics',
-  '0B': 'Get Comm Event Counter', '0C': 'Get Comm Event Log',
-  '0F': 'Write Multiple Coils', '10': 'Write Multiple Registers',
-  '11': 'Report Server ID', '14': 'Read File Record',
-  '15': 'Write File Record', '16': 'Mask Write Register',
-  '17': 'Read/Write Multiple Registers', '18': 'Read FIFO Queue',
-  '2B': 'MEI Transport',
-}
-
-// Fields whose values are plain hex strings — display with 0x prefix
-const HEX_FIELDS = new Set([
-  'address', 'crc', 'ext_byte', 'serial_number', 'modbus_address',
-  'fc', 'register', 'value', 'data', 'sub_function', 'events',
-  'read_register', 'write_register', 'write_data', 'additional_data',
-  'fifo_pointer', 'mei_type', 'read_device_id_code', 'object_id',
-  'conformity_level', 'more_follows', 'next_object_id',
-  'original_fc', 'output_data', 'server_id', 'run_indicator',
-  'and_mask', 'or_mask', 'subcommand', 'reference_type',
-])
-
-// Fields that also need decimal shown in parentheses
-const DEC_ALSO = new Set(['serial_number', 'modbus_address', 'address', 'register', 'read_register', 'write_register', 'value', 'fifo_pointer'])
-
-// Well-known special addresses with human-readable names
-const ADDR_NOTES: Record<number, string> = {
-  0x00: 'broadcast',
-  0xFD: 'Fast Modbus broadcast',
-  0xF8: 'reserved',
-  0xF9: 'reserved',
-  0xFA: 'reserved',
-  0xFB: 'reserved',
-  0xFC: 'reserved',
-  0xFE: 'reserved',
-  0xFF: 'FM Bus Arbitration',
-}
-
-// All lookup tables use UPPERCASE hex keys; all lookups use .toUpperCase()
-const EXT_BYTE_NAMES: Record<string, string> = {
-  '60': 'Extended function command (legacy)',
-  '46': 'Extended function command',
-}
-
-const FM_SUBCOMMAND_NAMES: Record<string, string> = {
-  '01': 'Scan Start',
-  '02': 'Scan Continue',
-  '03': 'Scan Response',
-  '04': 'Scan End',
-  '08': 'Command by Serial',
-  '09': 'Response by Serial',
-  '10': 'Event Request',
-  '11': 'Event Transfer',
-  '12': 'Event Confirm',
-  '18': 'Event Config',
-}
-// Note: single-digit hex values like '60' are 2-char and match toUpperCase() output directly
-
-function fmtVal(key: string, raw: string): string {
-  if (key === 'function_code' && /^[0-9A-Fa-f]+$/.test(raw)) {
-    const upper = raw.toUpperCase()
-    const name = FC_DISPLAY_NAMES[upper] ?? 'Unknown'
-    return `0x${upper} (${name})`
-  }
-  if (key === 'ext_byte' && /^[0-9A-Fa-f]+$/.test(raw)) {
-    const upper = raw.toUpperCase()
-    const name = EXT_BYTE_NAMES[upper] ?? 'Unknown'
-    return `0x${upper} (${name})`
-  }
-  if (key === 'subcommand' && /^[0-9A-Fa-f]+$/.test(raw)) {
-    const upper = raw.toUpperCase()
-    const name = FM_SUBCOMMAND_NAMES[upper] ?? 'Unknown'
-    return `0x${upper} (${name})`
-  }
-  if (HEX_FIELDS.has(key) && /^[0-9A-Fa-f]+$/.test(raw)) {
-    const hex = `0x${raw.toUpperCase()}`
-    if (DEC_ALSO.has(key)) {
-      const dec = parseInt(raw, 16)
-      const note = (key === 'address' || key === 'modbus_address') ? ADDR_NOTES[dec] : undefined
-      const suffix = note ? ` ${note}` : ''
-      return `${hex} (${dec}${suffix})`
-    }
-    return hex
-  }
-  return raw
-}
-
-const FIELD_LABELS: Record<string, string> = {
-  address: 'Slave address', crc: 'CRC',  ext_byte: 'FM Command',
-  subcommand: 'FM Subcommand',
-  serial_number: 'Serial number', modbus_address: 'Modbus address',
-  fc: 'Function code', function_code: 'Function', register: 'Register', count: 'Count', value: 'Value',
-  byte_count: 'Byte count', data: 'Data', sub_function: 'Sub-function',
-  status: 'Status', event_count: 'Event count', message_count: 'Message count',
-  events: 'Events', read_register: 'Read register', read_count: 'Read count',
-  write_register: 'Write register', write_count: 'Write count',
-  write_byte_count: 'Write byte count', write_data: 'Write data',
-  fifo_pointer: 'FIFO pointer', fifo_count: 'FIFO count', mei_type: 'MEI type',
-  read_device_id_code: 'Read Device ID code', object_id: 'Object ID',
-  conformity_level: 'Conformity level', more_follows: 'More follows',
-  next_object_id: 'Next object ID', number_of_objects: 'Num objects',
-  original_fc: 'Original FC', error_code: 'Exception code', reason: 'Reason',
-  output_data: 'Output data', server_id: 'Server ID', run_indicator: 'Run indicator',
-  additional_data: 'Additional data', and_mask: 'AND mask', or_mask: 'OR mask',
-  request_data_length: 'Request data len', resp_data_length: 'Response data len',
-  reference_type: 'Reference type',
-  file_number: 'File number', record_number: 'Record number',
-  record_length: 'Record length', file_resp_length: 'File resp len',
-}
-
-// ============================================================
 // Tree — flatten decoded object into rows
 // ============================================================
-
-interface TreeRow {
-  depth: number;
-  label: string;
-  key?: string;
-  value?: string;
-  byteStart: number;
-  byteEnd: number;
-  isSection: boolean;
-  isField: boolean;
-  isError: boolean;
-  isDataField?: boolean;  // the "data" field — show magnifier icon
-  isArray?: boolean;
-  arrayItems?: { label: string; value: string; }[];
-}
-
-/**
- * Find byte range of nodeRaw within the full packet hex,
- * starting search at parentStart to avoid false matches.
- */
-function rawToRange(nodeRaw: string, fhex: string, parentStart: number): { start: number; end: number } {
-  if (!nodeRaw) return { start: parentStart, end: parentStart }
-  const upper = nodeRaw.toUpperCase()
-  const idx = fhex.indexOf(upper, parentStart * 2)
-  if (idx === -1 || idx % 2 !== 0) return { start: parentStart, end: parentStart }
-  return { start: idx / 2, end: idx / 2 + upper.length / 2 }
-}
-
-/**
- * Compute per-field byte ranges within a PDU node.
- * Returns map of fieldName → {start, end} relative to fullHex.
- * We know the internal structure from the node type.
- */
-function fieldRanges(obj: Record<string, unknown>, nodeByteStart: number): Record<string, { start: number; end: number }> {
-  const r: Record<string, { start: number; end: number }> = {}
-  const s = nodeByteStart
-  const t = obj.type as string
-  // For each known PDU structure, compute field offsets
-  // Offset order corresponds to on-wire byte order
-  if (['read_coils','read_discrete_inputs','read_holding_registers','read_input_registers'].includes(t)) {
-    // request: FC(1) reg(2) count(2)
-    r.fc = { start: s, end: s + 1 }
-    r.register = { start: s + 1, end: s + 3 }
-    r.count = { start: s + 3, end: s + 5 }
-  } else if (['read_coils_response','read_discrete_inputs_response','read_holding_registers_response','read_input_registers_response'].includes(t)) {
-    // response: FC(1) byteCount(1) data(N)
-    r.fc = { start: s, end: s + 1 }
-    r.byte_count = { start: s + 1, end: s + 2 }
-    const bc = obj.byte_count as number ?? 0
-    r.data = { start: s + 2, end: s + 2 + bc }
-  } else if (['write_single_coil','write_single_register','write_single_coil_response','write_single_register_response'].includes(t)) {
-    r.fc = { start: s, end: s + 1 }
-    r.register = { start: s + 1, end: s + 3 }
-    r.value = { start: s + 3, end: s + 5 }
-  } else if (['write_multiple_coils','write_multiple_registers'].includes(t)) {
-    r.fc = { start: s, end: s + 1 }
-    r.register = { start: s + 1, end: s + 3 }
-    r.count = { start: s + 3, end: s + 5 }
-    r.byte_count = { start: s + 5, end: s + 6 }
-    const bc = obj.byte_count as number ?? 0
-    r.data = { start: s + 6, end: s + 6 + bc }
-  } else if (['write_multiple_coils_response','write_multiple_registers_response'].includes(t)) {
-    r.fc = { start: s, end: s + 1 }
-    r.register = { start: s + 1, end: s + 3 }
-    r.count = { start: s + 3, end: s + 5 }
-  } else if (t === 'modbus_error') {
-    r.fc = { start: s, end: s + 1 }
-    r.original_fc = { start: s, end: s + 1 }
-    r.error_code = { start: s + 1, end: s + 2 }
-  } else if (t === 'scan_response') {
-    // sub(1) serial(4) addr(1)
-    r.serial_number = { start: s + 1, end: s + 5 }
-    r.modbus_address = { start: s + 5, end: s + 6 }
-  } else if (['command_by_serial','response_by_serial'].includes(t)) {
-    r.serial_number = { start: s + 1, end: s + 5 }
-  } else if (t === 'rtu_frame') {
-    r.address = { start: s, end: s + 1 }
-    const rawLen = (obj.raw as string ?? '').length / 2
-    r.crc = { start: s + rawLen - 2, end: s + rawLen }
-  }
-  return r
-}
-
-// 'fc' is always shown as part of the section type label (e.g. "FC03 Read Holding Registers")
-// so we skip it as a field to avoid duplication.
-// 'reserved_address' is rendered separately with a warning message.
-const SKIP_FIELDS = new Set(['type', 'raw', 'payload', 'objects', 'sub_requests', 'sub_responses', 'fc', 'reserved_address'])
-
-function flattenNode(obj: Record<string, unknown>, depth: number, fhex: string, parentStart: number): TreeRow[] {
-  const rows: TreeRow[] = []
-  const t = (obj.type as string) ?? '?'
-  const nodeRaw = (obj.raw as string) ?? ''
-  const range = rawToRange(nodeRaw, fhex, parentStart)
-  const fRanges = fieldRanges(obj, range.start)
-
-  // Check if this node has any meaningful content beyond the type label itself
-  const hasScalars = Object.entries(obj).some(([k, v]) => !SKIP_FIELDS.has(k) && typeof v !== 'object')
-  const hasArrays = ['sub_requests', 'sub_responses', 'objects'].some(ak => Array.isArray(obj[ak]))
-  const hasChild = obj.payload && typeof obj.payload === 'object'
-  // Only add section header if node has content OR is top-level (depth 0)
-  if (depth === 0 || hasScalars || hasArrays || hasChild) {
-    rows.push({ depth, label: TYPE_LABELS[t] ?? t, byteStart: range.start, byteEnd: range.end, isSection: true, isField: false, isError: t === 'parse_error' })
-  }
-
-  for (const [k, v] of Object.entries(obj)) {
-    if (SKIP_FIELDS.has(k)) continue
-    if (typeof v === 'object') continue
-    const fr = fRanges[k]
-    const bStart = fr ? fr.start : range.start
-    const bEnd = fr ? fr.end : range.end
-    const isDataField = k === 'data' || k === 'write_data'
-    rows.push({ depth: depth + 1, label: FIELD_LABELS[k] ?? k, key: k, value: fmtVal(k, String(v)), byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
-  }
-
-  if ((obj as Record<string, unknown>).reserved_address) {
-    rows.push({ depth: depth + 1, label: 'Warning', value: 'Reserved address (0xF8–0xFF)', byteStart: range.start, byteEnd: range.end, isSection: false, isField: true, isError: true })
-  }
-
-  for (const ak of ['sub_requests', 'sub_responses', 'objects'] as const) {
-    const arr = obj[ak]
-    if (!Array.isArray(arr)) continue
-    rows.push({ depth: depth + 1, label: `${ak.replace(/_/g, ' ')} (${arr.length})`, byteStart: range.start, byteEnd: range.end, isSection: false, isField: false, isError: false, isArray: true, arrayItems: arr.map((item: Record<string, unknown>, i: number) => ({ label: `[${i}]`, value: Object.entries(item).filter(([, v]) => typeof v !== 'object').map(([k, v]) => `${FIELD_LABELS[k] ?? k}: ${v}`).join(' · ') })) })
-  }
-
-  if (obj.payload && typeof obj.payload === 'object') {
-    rows.push(...flattenNode(obj.payload as Record<string, unknown>, depth + 1, fhex, range.start))
-  }
-
-  return rows
-}
 
 const treeRows = computed<TreeRow[]>(() =>
   flattenNode(decoded.value as unknown as Record<string, unknown>, 0, fullHex.value, 0)
@@ -375,8 +67,6 @@ function onRowLeave() { hoveredRange.value = null }
 function isByteHighlighted(i: number): boolean {
   return hoveredRange.value !== null && i >= hoveredRange.value.start && i < hoveredRange.value.end
 }
-
-function isPrintable(b: number): boolean { return b >= 0x20 && b < 0x7f }
 
 const HEX_ROW = 8
 
@@ -443,22 +133,6 @@ const regs16 = computed<{ index: number; dec: number; hex: string; }[]>(() => {
 })
 
 interface Chunk32 { offset: string; hex: string; uint32: number; int32: number; float32: string; }
-
-const ENDIAN_CONFIGS: Record<EndiannessKey, { label: string; desc: string; fn: (b: number[], i: number) => number; }> = {
-  abcd: { label: 'AB CD', desc: 'Big Endian',    fn: (b, i) => ((b[i] << 24) | (b[i+1] << 16) | (b[i+2] << 8) | b[i+3]) >>> 0 },
-  cdab: { label: 'CD AB', desc: 'Mid-Little',    fn: (b, i) => ((b[i+2] << 24) | (b[i+3] << 16) | (b[i] << 8) | b[i+1]) >>> 0 },
-  badc: { label: 'BA DC', desc: 'Byte-swap',     fn: (b, i) => ((b[i+1] << 24) | (b[i] << 16) | (b[i+3] << 8) | b[i+2]) >>> 0 },
-  dcba: { label: 'DC BA', desc: 'Little Endian', fn: (b, i) => ((b[i+3] << 24) | (b[i+2] << 16) | (b[i+1] << 8) | b[i]) >>> 0 },
-}
-
-function f32str(u: number): string {
-  const view = new DataView(new ArrayBuffer(4))
-  view.setUint32(0, u, false)
-  const f = view.getFloat32(0, false)
-  if (isNaN(f)) return 'NaN'
-  if (Math.abs(f) < 1e-6 && f !== 0) return f.toExponential(4)
-  return parseFloat(f.toPrecision(7)).toString()
-}
 
 const chunks32 = computed<Chunk32[]>(() => {
   const b = leafBytes.value
