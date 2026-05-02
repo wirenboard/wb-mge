@@ -74,3 +74,6 @@ UBaseType_t uxQueueMessagesWaiting(const QueueHandle_t xQueue);
 BaseType_t xQueueReset(QueueHandle_t xQueue);
 
 void mock_freertos_queue_reset(void);
+
+/* Returns the handle of the last queue created by xQueueCreate, or NULL */
+QueueHandle_t mock_get_last_created_queue(void);
