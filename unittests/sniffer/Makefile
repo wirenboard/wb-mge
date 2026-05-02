@@ -26,6 +26,7 @@ INC += mocks
 INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += $(PROJ_DIR)/main
+INC += $(PROJ_DIR)/main/bridge
 INC += $(IDF_PATH)/components/esp_common/include
 INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include
 
