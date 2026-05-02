@@ -96,7 +96,8 @@ build-frontend:
 	@{ \
 		set -e && \
 		cd main/frontend/ && \
-		npm install &&\
+		npm install && \
+		npm run test && \
 		npm run build && \
 		$(FIND) dist/ -type f -name "*.gz" -exec rm -f {} \; && \
 		$(FIND) dist/ -type f -exec gzip -k {} \; ; \
