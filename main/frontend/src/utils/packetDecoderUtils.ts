@@ -266,6 +266,35 @@ export const COIL_DATA_TYPES = new Set([
   'write_multiple_coils',
 ])
 
+/** Mapping from PDU type to Modicon address-space prefix digit */
+const MODICON_PREFIX: Record<string, number> = {
+  // Coils (0x): FC 01/05/0F
+  read_coils: 0, write_single_coil: 0, write_multiple_coils: 0,
+  read_coils_response: 0, write_single_coil_response: 0, write_multiple_coils_response: 0,
+  // Discrete inputs (1x): FC 02
+  read_discrete_inputs: 1, read_discrete_inputs_response: 1,
+  // Input registers (3x): FC 04
+  read_input_registers: 3, read_input_registers_response: 3,
+  // Holding registers (4x): FC 03/06/10/16/17
+  read_holding_registers: 4, read_holding_registers_response: 4,
+  write_single_register: 4, write_single_register_response: 4,
+  write_multiple_registers: 4, write_multiple_registers_response: 4,
+  mask_write_register: 4, mask_write_register_response: 4,
+  read_write_multiple_registers: 4, read_write_multiple_registers_response: 4,
+}
+
+/**
+ * Return Modicon address notation string for a given wire address and prefix digit.
+ * Uses 5-digit notation (prefix + 4-digit address) when wireAddr+1 fits in 4 digits (<=9999),
+ * otherwise 6-digit notation (prefix + 5-digit address).
+ * Example: wire 0, prefix 4 → "Modicon: 40001"; wire 0, prefix 0 → "Modicon: 00001".
+ */
+export function modiconStr(wireAddr: number, prefix: number): string {
+  const addr1 = wireAddr + 1                          // 1-based address
+  const digits = addr1 <= 9999 ? 4 : 5               // 5-digit or 6-digit notation
+  return `Modicon: ${prefix}${String(addr1).padStart(digits, '0')}`
+}
+
 /**
  * Format a hex coil/discrete data string as "0x<HEX>  (<binary bytes>)".
  * Each byte is shown as 8 binary digits (MSB on left), bytes separated by space.
@@ -417,7 +446,22 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
     const bEnd = fr ? fr.end : range.end
     const isDataField = k === 'data' || k === 'write_data'
     const label = (k === 'register' && REGISTER_LABELS[t]) ? REGISTER_LABELS[t] : (FIELD_LABELS[k] ?? k)
-    const value = (k === 'data' && COIL_DATA_TYPES.has(t)) ? fmtCoilData(String(v)) : fmtVal(k, String(v))
+    let value: string
+    if (k === 'data' && COIL_DATA_TYPES.has(t)) {
+      value = fmtCoilData(String(v))
+    } else if ((k === 'register' || k === 'read_register' || k === 'write_register') && /^[0-9A-Fa-f]{2,}$/.test(String(v))) {
+      // Format register with Modicon notation if PDU type is known
+      const wireAddr = parseInt(String(v), 16)
+      const prefix = MODICON_PREFIX[t]
+      const hexStr = `0x${String(v).toUpperCase()}`
+      if (prefix !== undefined) {
+        value = `${hexStr} (${wireAddr}, ${modiconStr(wireAddr, prefix)})`
+      } else {
+        value = `${hexStr} (${wireAddr})`
+      }
+    } else {
+      value = fmtVal(k, String(v))
+    }
     rows.push({ depth: depth + 1, label, key: k, value, tooltip: FIELD_TOOLTIPS[k], byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
   }
 

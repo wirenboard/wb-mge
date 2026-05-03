@@ -7,6 +7,7 @@ import {
   fmtCoilData,
   fieldRanges,
   flattenNode,
+  modiconStr,
 } from './packetDecoderUtils';
 import { decodePacket } from '../common/modbusDecoder';
 
@@ -209,7 +210,7 @@ describe('flattenNode', () => {
     expect(rows).toContainEqual({ depth: 2, label: 'Read Holding Registers' });
 
     // PDU fields — fc must NOT appear here (depth 3)
-    expect(rows).toContainEqual({ depth: 3, label: 'Starting Address', value: '0x0061 (97)' });
+    expect(rows).toContainEqual({ depth: 3, label: 'Starting Address', value: '0x0061 (97, Modicon: 40098)' });
     expect(rows).toContainEqual({ depth: 3, label: 'Count', value: '2' });
 
     // Assert exactly ONE row with label 'Function code'
@@ -283,7 +284,7 @@ describe('flattenNode', () => {
     expect(rows).toContainEqual({ depth: 3, label: 'Read Holding Registers' });
 
     // PDU fields at depth 4
-    expect(rows).toContainEqual({ depth: 4, label: 'Starting Address', value: '0x0061 (97)' });
+    expect(rows).toContainEqual({ depth: 4, label: 'Starting Address', value: '0x0061 (97, Modicon: 40098)' });
     expect(rows).toContainEqual({ depth: 4, label: 'Count', value: '2' });
 
     // The 'fc' field inside the PDU must be suppressed — no row with label 'Function code'
@@ -345,5 +346,73 @@ describe('fmtCoilData', () => {
 
   it('empty string → "0x" (edge case: no binary suffix)', () => {
     expect(fmtCoilData('')).toBe('0x');
+  });
+});
+
+// ============================================================
+// modiconStr
+// ============================================================
+describe('modiconStr', () => {
+  it('wire 0 + prefix 4 → "Modicon: 40001"', () => {
+    expect(modiconStr(0, 4)).toBe('Modicon: 40001');
+  });
+  it('wire 0 + prefix 0 → "Modicon: 00001" (zero-padded, not "Modicon: 1")', () => {
+    expect(modiconStr(0, 0)).toBe('Modicon: 00001');
+  });
+  it('wire 19 (0x13) + prefix 0 → "Modicon: 00020"', () => {
+    expect(modiconStr(0x13, 0)).toBe('Modicon: 00020');
+  });
+  it('wire 0 + prefix 3 → "Modicon: 30001"', () => {
+    expect(modiconStr(0, 3)).toBe('Modicon: 30001');
+  });
+  it('wire 99 + prefix 4 → "Modicon: 40100"', () => {
+    expect(modiconStr(99, 4)).toBe('Modicon: 40100');
+  });
+  it('wire 0 + prefix 1 → "Modicon: 10001" (discrete inputs)', () => {
+    expect(modiconStr(0, 1)).toBe('Modicon: 10001');
+  });
+  it('wire 9998 + prefix 4 → "Modicon: 49999" (last 5-digit address)', () => {
+    expect(modiconStr(9998, 4)).toBe('Modicon: 49999');
+  });
+  it('wire 9999 + prefix 4 → "Modicon: 410000" (first 6-digit address)', () => {
+    expect(modiconStr(9999, 4)).toBe('Modicon: 410000');
+  });
+});
+
+// ============================================================
+// flattenNode — register Modicon notation
+// ============================================================
+describe('flattenNode — register Modicon notation', () => {
+  it('FC03 read holding registers: register 0x0000 shows Modicon 40001', () => {
+    // addr=0x01, FC=0x03, reg=0x0000, count=2, CRC=computed
+    const rows = treeLabels('01030000000284 0A', 'request');
+    const regRow = rows.find(r => r.label === 'Starting Address');
+    expect(regRow?.value).toContain('Modicon: 40001');
+    expect(regRow?.value).toContain('0x0000');
+  });
+  it('FC03 read holding registers: register 0x0013 shows Modicon 40020', () => {
+    // addr=0x01, FC=0x03, reg=0x0013, count=2, CRC=0x9403
+    const rows = treeLabels('01 03 00 13 00 02 94 03', 'request');
+    const regRow = rows.find(r => r.label === 'Starting Address');
+    expect(regRow?.value).toContain('Modicon: 40020');
+  });
+  it('FC04 read input registers: register 0x0005 shows Modicon 30006', () => {
+    // addr=0x03, FC=0x04, reg=0x0005, count=1, CRC=0x2920
+    const rows = treeLabels('03 04 00 05 00 01 20 29', 'request');
+    const regRow = rows.find(r => r.label === 'Starting Address');
+    expect(regRow?.value).toContain('Modicon: 30006');
+  });
+  it('FC01 read coils: register 0x0013 shows Modicon 00020', () => {
+    // addr=0x11, FC=0x01, reg=0x0013, count=0x13, CRC=0x928E
+    const rows = treeLabels('11 01 00 13 00 13 8E 92', 'request');
+    const regRow = rows.find(r => r.label === 'Starting Address');
+    expect(regRow?.value).toContain('Modicon: 00020');
+  });
+  it('FC02 read discrete inputs: register 0x00C4 shows Modicon 10197', () => {
+    // addr=0x11, FC=0x02, reg=0x00C4 (196), count=0x16, CRC=0xA9BA
+    const rows = treeLabels('11 02 00 C4 00 16 BA A9', 'request');
+    const regRow = rows.find(r => r.label === 'Starting Address');
+    expect(regRow?.value).toContain('Modicon: 10197');
+    expect(regRow?.value).toContain('0x00C4');
   });
 });
