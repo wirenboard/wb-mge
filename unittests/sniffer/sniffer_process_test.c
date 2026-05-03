@@ -10,6 +10,10 @@
  * TC-7  Timeout: no response within 200 ms
  * TC-8  Fast Modbus subcommand determines sender direction (FC 0x60)
  * TC-9  Scan Response with leading arbitration byte arrives in IDLE
+ * TC-10 Orphan response FC04 at startup (first packet is a slave response)
+ * TC-11 Orphan response FC01 with bytecount=1 (unambiguous: len=6, not 8)
+ * TC-12 FC01 with len=8 treated as request even if data[2]=3 (not the ambiguous case)
+ * TC-13 FC01 len=8 data[2]=3 — truly ambiguous case — priority rule picks REQUEST
  */
 
 #include "unity.h"
@@ -300,10 +304,11 @@ void test_tc5_all_ff_without_preceding_fd46(void)
     LOG_MESSAGE();
 
     /*
-     * Packet 1: 83 03 04 00 03 00 1E 28 33 (valid CRC, non-broadcast, non-FM)
-     * In IDLE → goes to RES_WAIT; nothing enqueued.
+     * Packet 1: 83 03 00 01 00 04 0B EB (valid CRC, FC03 request, len=8)
+     * classify_direction: FC03, len==8 → DIRECTION_REQUEST → goes to RES_WAIT.
+     * Nothing enqueued.
      */
-    uint8_t p1[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
+    uint8_t p1[] = {0x83, 0x03, 0x00, 0x01, 0x00, 0x04, 0x0B, 0xEB};
     SEND0(p1);
     assert_queue_empty();
 
@@ -575,6 +580,185 @@ void test_rx_timeout_not_called_after_detach(void)
 }
 
 /* ============================================================
+ * TC-10 — Orphan response FC04 at startup (first packet is a slave response)
+ * ============================================================ */
+
+void test_tc10_orphan_fc04_response_at_startup(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-10: Orphan FC04 response at startup — first packet classified as slave");
+    LOG_MESSAGE();
+
+    /*
+     * Packet 1: FC04 response (13 bytes).
+     * addr=0x83, fc=0x04, bytecount=0x08 (8 bytes of register data).
+     * len=13, 5+data[2]=5+8=13 → DIRECTION_RESPONSE.
+     * Sniffer starts in IDLE; classify_direction returns RESPONSE.
+     * Expected: emitted immediately as is_master=false, crc_valid=true.
+     * State stays SNIFF_IDLE.
+     */
+    uint8_t pkt1[] = {0x83, 0x04, 0x08, 0x02, 0xE6, 0x00, 0x00, 0x00, 0x00, 0x01, 0x35, 0x41, 0xE7};
+    SEND0(pkt1);
+
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p1.is_master,
+        "TC-10 pkt1: FC04 response must be classified as SLAVE (is_master=false)");
+    TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,
+        "TC-10 pkt1: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id,
+        "TC-10 pkt1: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x04, p1.function,
+        "TC-10 pkt1: function must be 0x04");
+    assert_queue_empty();
+
+    /*
+     * Packet 2: normal FC03 request (8 bytes, CRC OK).
+     * len=8 → DIRECTION_REQUEST → buffered in RES_WAIT.
+     */
+    uint8_t pkt2[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
+    SEND0(pkt2);
+    /* Still in RES_WAIT — nothing enqueued yet */
+    assert_queue_empty();
+
+    /*
+     * Packet 3: FC03 response (9 bytes, CRC OK).
+     * Both packets (request MASTER + response SLAVE) must be emitted.
+     */
+    uint8_t pkt3[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
+    SEND0(pkt3);
+
+    sniff_packet_t p2 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p2.is_master,
+        "TC-10 pkt2: FC03 request must be MASTER");
+    TEST_ASSERT_TRUE_MESSAGE(p2.crc_valid,
+        "TC-10 pkt2: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p2.slave_id, "TC-10 pkt2: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p2.function, "TC-10 pkt2: function must be 0x03");
+
+    sniff_packet_t p3 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p3.is_master,
+        "TC-10 pkt3: FC03 response must be SLAVE");
+    TEST_ASSERT_TRUE_MESSAGE(p3.crc_valid,
+        "TC-10 pkt3: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p3.slave_id, "TC-10 pkt3: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p3.function, "TC-10 pkt3: function must be 0x03");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-11 — Orphan response FC01 with bytecount=1 (unambiguous: len=6, not 8)
+ * ============================================================ */
+
+void test_tc11_orphan_fc01_response_len6(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-11: Orphan FC01 response len=6 — unambiguous DIRECTION_RESPONSE");
+    LOG_MESSAGE();
+
+    /*
+     * Packet: addr=0x83, fc=0x01, bytecount=0x01, data=0x00, CRC=79 F0.
+     * len=6, 5+data[2]=5+1=6, len != 8 → DIRECTION_RESPONSE.
+     * Expected: emitted as is_master=false, state stays IDLE.
+     */
+    uint8_t pkt[] = {0x83, 0x01, 0x01, 0x00, 0x79, 0xF0};
+    SEND0(pkt);
+
+    sniff_packet_t p = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p.is_master,
+        "TC-11: FC01 response (len=6) must be classified as SLAVE (is_master=false)");
+    TEST_ASSERT_TRUE_MESSAGE(p.crc_valid,
+        "TC-11: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p.slave_id,
+        "TC-11: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p.function,
+        "TC-11: function must be 0x01");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-12 — FC01 with len=8 treated as request even if data[2]=0x14 (not 3)
+ * ============================================================ */
+
+void test_tc12_fc01_len8_treated_as_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-12: FC01 len=8 always treated as request (DIRECTION_REQUEST)");
+    LOG_MESSAGE();
+
+    /*
+     * Packet: addr=0x83, fc=0x01, start_addr=0x14B4, count=7, CRC=26 3C.
+     * len=8, data[2]=0x14 (not 3) → DIRECTION_REQUEST (len==8 rule).
+     * Expected: buffered in RES_WAIT; nothing enqueued yet.
+     */
+    uint8_t pkt_req[] = {0x83, 0x01, 0x14, 0xB4, 0x00, 0x07, 0x26, 0x3C};
+    SEND0(pkt_req);
+    assert_queue_empty();
+
+    /*
+     * Response: addr=0x83, fc=0x01, bytecount=0x01, data=0x7F, CRC=38 10.
+     * len=6, 5+data[2]=5+1=6 → DIRECTION_RESPONSE (but this arrives in RES_WAIT,
+     * so it is unconditionally treated as a response).
+     * Both request (MASTER) and response (SLAVE) must be emitted.
+     */
+    uint8_t pkt_res[] = {0x83, 0x01, 0x01, 0x7F, 0x38, 0x10};
+    SEND0(pkt_res);
+
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p1.is_master,
+        "TC-12: buffered FC01 request must be MASTER");
+    TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,
+        "TC-12: request crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id,
+        "TC-12: request slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p1.function,
+        "TC-12: request function must be 0x01");
+
+    sniff_packet_t p2 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p2.is_master,
+        "TC-12: FC01 response must be SLAVE");
+    TEST_ASSERT_TRUE_MESSAGE(p2.crc_valid,
+        "TC-12: response crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p2.slave_id,
+        "TC-12: response slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p2.function,
+        "TC-12: response function must be 0x01");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-13 — FC01 len=8 AND data[2]=3: truly ambiguous case, priority rule → REQUEST
+ * ============================================================ */
+
+void test_tc13_fc01_len8_data2_3_ambiguous_treated_as_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-13: FC01 len=8 data[2]=3 — truly ambiguous case, len==8 priority → REQUEST");
+    LOG_MESSAGE();
+
+    /*
+     * Packet: addr=0x83, fc=0x01, start_hi=0x03, start_lo=0x00, count_hi=0x00, count_lo=0x03,
+     *         CRC=0x62, 0x6D.
+     * len=8 AND data[2]=0x03 — this is the ONLY case where both formulas match:
+     *   request formula: fixed 8 bytes ✓
+     *   response formula: 5 + data[2] = 5 + 3 = 8 ✓
+     * The priority rule "len==8 → DIRECTION_REQUEST" must win.
+     * Expected: packet is buffered in SNIFF_RES_WAIT, nothing enqueued yet.
+     * NOT emitted as an orphan response (which would happen if DIRECTION_RESPONSE won).
+     */
+    uint8_t pkt_req[] = {0x83, 0x01, 0x03, 0x00, 0x00, 0x03, 0x62, 0x6D};
+    SEND0(pkt_req);
+    /* Must be buffered in RES_WAIT — queue must be empty */
+    assert_queue_empty();
+}
+
+/* ============================================================
  * main
  * ============================================================ */
 
@@ -591,6 +775,10 @@ int main(void)
     RUN_TEST(test_tc7_timeout_no_response);
     RUN_TEST(test_tc8_fm_subcmd_determines_direction);
     RUN_TEST(test_tc9_scan_response_with_leading_ff);
+    RUN_TEST(test_tc10_orphan_fc04_response_at_startup);
+    RUN_TEST(test_tc11_orphan_fc01_response_len6);
+    RUN_TEST(test_tc12_fc01_len8_treated_as_request);
+    RUN_TEST(test_tc13_fc01_len8_data2_3_ambiguous_treated_as_request);
     RUN_TEST(test_rx_timeout_enable_sets_sniffer_value);
     RUN_TEST(test_rx_timeout_disable_sets_proxy_value);
     RUN_TEST(test_rx_timeout_not_called_after_detach);
