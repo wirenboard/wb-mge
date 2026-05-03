@@ -49,6 +49,7 @@ export interface FastModbusPayload {
 export interface ModbusRtuPayload {
   type: 'modbus_rtu';
   raw: string;
+  fc: string;   // hex FC byte, e.g. "03" — mirrors the fc field in the PDU for display at this layer
   payload: PduResult | ParseError;
 }
 
@@ -637,6 +638,7 @@ export function decodePacket(input: string | number[], direction: Direction = 'r
   const payload: ModbusRtuPayload = {
     type: 'modbus_rtu',
     raw: toHex(pduBytes),
+    fc: toHex([pduBytes[0]]),  // FC byte is pduBytes[0] (same as bytes[1] — after the address byte)
     payload: decodePdu(pduBytes),
   };
 
