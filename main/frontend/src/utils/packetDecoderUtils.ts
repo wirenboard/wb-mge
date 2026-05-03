@@ -259,6 +259,27 @@ export type EndiannessKey = 'abcd' | 'cdab' | 'badc' | 'dcba'
 // Pure utility functions
 // ============================================================
 
+/** PDU types whose `data` field carries bit-packed coil/discrete input bytes */
+export const COIL_DATA_TYPES = new Set([
+  'read_coils_response',
+  'read_discrete_inputs_response',
+  'write_multiple_coils',
+])
+
+/**
+ * Format a hex coil/discrete data string as "0x<HEX>  (<binary bytes>)".
+ * Each byte is shown as 8 binary digits (MSB on left), bytes separated by space.
+ * Example: fmtCoilData('CD6B05') → '0xCD6B05  (11001101 01101011 00000101)'
+ */
+export function fmtCoilData(hexStr: string): string {
+  const upper = hexStr.toUpperCase()
+  const hex = `0x${upper}`
+  if (!upper || upper.length % 2 !== 0) return hex
+  const pairs = upper.match(/.{2}/g) ?? []
+  const binaryStr = pairs.map(b => parseInt(b, 16).toString(2).padStart(8, '0')).join(' ')
+  return `${hex}  (${binaryStr})`
+}
+
 /**
  * Format a field value for display.
  * - Hex fields get 0x prefix and optional decimal annotation.
@@ -396,7 +417,8 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
     const bEnd = fr ? fr.end : range.end
     const isDataField = k === 'data' || k === 'write_data'
     const label = (k === 'register' && REGISTER_LABELS[t]) ? REGISTER_LABELS[t] : (FIELD_LABELS[k] ?? k)
-    rows.push({ depth: depth + 1, label, key: k, value: fmtVal(k, String(v)), tooltip: FIELD_TOOLTIPS[k], byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
+    const value = (k === 'data' && COIL_DATA_TYPES.has(t)) ? fmtCoilData(String(v)) : fmtVal(k, String(v))
+    rows.push({ depth: depth + 1, label, key: k, value, tooltip: FIELD_TOOLTIPS[k], byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
   }
 
   if ((obj as Record<string, unknown>).reserved_address) {
