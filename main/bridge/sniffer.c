@@ -4,6 +4,7 @@
 #include "bridge.h"
 #include "serial.h"
 #include "stream_splitter.h"
+#include "cache_multimaster.h"
 
 /* In unit test builds sniffer.h only provides httpd_handle_t; include the full
  * stub so that httpd_req_t, httpd_ws_frame_t, httpd_uri_t, etc. are available. */
@@ -567,6 +568,26 @@ static void sniffer_ws_task(void *arg)
 
     while (1) {
         xQueueReceive(sniff_queue, &pkt, portMAX_DELAY);
+
+        /* Feed packet to caching multimaster regardless of WS client connection state.
+         * Cache accumulates data even when no WS client is connected. */
+        if (cache_multimaster_is_enabled()) {
+            if (pkt.is_master && !pkt.is_timeout &&
+                (pkt.function == 0x01 || pkt.function == 0x02 ||
+                 pkt.function == 0x03 || pkt.function == 0x04) &&
+                pkt.crc_valid && pkt.data_len >= 8) {
+                uint16_t start_reg = ((uint16_t)pkt.data[2] << 8) | pkt.data[3];
+                uint16_t count     = ((uint16_t)pkt.data[4] << 8) | pkt.data[5];
+                cache_multimaster_on_request(pkt.port, pkt.slave_id, pkt.function,
+                                             start_reg, count);
+            } else if (!pkt.is_master && !pkt.is_timeout &&
+                       (pkt.function == 0x01 || pkt.function == 0x02 ||
+                        pkt.function == 0x03 || pkt.function == 0x04) &&
+                       pkt.crc_valid && pkt.data_len >= 5) {
+                cache_multimaster_on_response(pkt.port, pkt.slave_id, pkt.function,
+                                              pkt.data, pkt.data_len, pkt.timestamp_us);
+            }
+        }
 
         xSemaphoreTake(ws_mutex, portMAX_DELAY);
         int fd = ws_client_fd;

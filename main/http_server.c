@@ -7,6 +7,7 @@
 #include "ota_handler.h"
 #include "wb_test.h"
 #include "bridge/sniffer.h"
+#include "bridge/cache_multimaster.h"
 
 #include <esp_http_server.h>
 #include <sys/param.h>
@@ -15,7 +16,7 @@
 #include "esp_log.h"
 #include "setting_items.h"
 
-#define MAX_URI_HANDLERS                    25
+#define MAX_URI_HANDLERS                    30
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 
@@ -315,6 +316,13 @@ esp_err_t http_server_init(void)
             return ESP_FAIL;
         }
         sniffer_register_handlers(http_server);
+
+        if (cache_multimaster_init() != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize cache multimaster");
+            httpd_stop(http_server);
+            return ESP_FAIL;
+        }
+        cache_multimaster_register_handlers(http_server);
     }
 
     if (http_server == NULL) {

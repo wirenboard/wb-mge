@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
+import { api } from '@/utils/api';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
@@ -9,6 +11,60 @@ import Switch from '@/components/Switch.vue';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
+
+// Cache multimaster state
+const cacheEnabled = ref(false);
+const cacheEntries = ref(0);
+const cachePort = ref<'1' | '2'>('1');
+const cacheLoading = ref(false);
+
+async function fetchCacheStatus() {
+  /* Set cacheLoading=true before fetching so that the cacheEnabled watcher
+   * does not fire toggleCache() when the initial value is applied. */
+  cacheLoading.value = true;
+  try {
+    const status = await api<{ enabled: boolean; entries: number }>('cache/status');
+    cacheEnabled.value = status.enabled;
+    cacheEntries.value = status.entries;
+  } catch {
+    // Silently ignore — backend may not support this yet
+  } finally {
+    cacheLoading.value = false;
+  }
+}
+
+async function toggleCache(enabled: boolean) {
+  cacheLoading.value = true;
+  try {
+    const endpoint = enabled ? 'cache/enable' : 'cache/disable';
+    await api<{ enabled: boolean }>(endpoint, { method: 'POST' });
+    cacheEnabled.value = enabled;
+    if (!enabled) cacheEntries.value = 0;
+  } catch {
+    // Ignore errors silently
+  } finally {
+    cacheLoading.value = false;
+  }
+}
+
+function setCachePort(p: string) {
+  if (p === '1' || p === '2') cachePort.value = p;
+}
+
+function downloadCacheCsv() {
+  const prefix = import.meta.env.DEV ? '/api/' : '/';
+  window.open(`${prefix}cache/csv?port=${cachePort.value}`);
+}
+
+// Watch for toggle changes but skip during initial fetch
+watch(cacheEnabled, async (val) => {
+  if (cacheLoading.value) return;
+  await toggleCache(val);
+});
+
+onMounted(() => {
+  fetchCacheStatus();
+});
 </script>
 
 <template>
@@ -55,11 +111,77 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
               </div>
             </form>
           </section>
+
+          <section class="card">
+            <div class="card-header">
+              <div class="card-title-wrap">
+                <div class="title">{{ t('cache_mm_title') }}</div>
+                <div class="sub">{{ t('cache_mm_sub') }}</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span v-if="cacheEnabled" class="muted" style="font-size:12px">{{ cacheEntries }} {{ t('cache_entries') }}</span>
+                <Switch id="cache_mm" v-model="cacheEnabled" :disabled="cacheLoading" />
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label>{{ t('cache_port') }}</label>
+                <div class="port-btns">
+                  <button
+                    v-for="p in ['1', '2']"
+                    :key="p"
+                    type="button"
+                    :class="['port-btn', { active: cachePort === p }]"
+                    @click="setCachePort(p)"
+                  >Port {{ p }}</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>{{ t('cache_download') }}</label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  :disabled="!cacheEnabled || cacheEntries === 0"
+                  @click="downloadCacheCsv"
+                >{{ t('cache_download_btn') }}</Button>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </div>
   </Layout>
 </template>
+
+<style scoped>
+.port-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.port-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.port-btn:hover {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-strong);
+}
+
+.port-btn.active {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+  color: #fff;
+}
+</style>
 
 <i18n>
 {
@@ -72,7 +194,13 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "port1_sub": "Wired terminal · left",
     "port2_sub": "Wired terminal · right + I/O bus",
     "port_1": "RS-485 · Port 1",
-    "port_2": "RS-485 · Port 2"
+    "port_2": "RS-485 · Port 2",
+    "cache_mm_title": "Caching Multimaster",
+    "cache_mm_sub": "Passive register value cache for FC03/FC04 read exchanges",
+    "cache_entries": "entries",
+    "cache_port": "Port",
+    "cache_download": "Export",
+    "cache_download_btn": "Download CSV"
   },
   "ru": {
     "title": "Последовательные порты",
@@ -83,7 +211,13 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "port1_sub": "Левый клеммник",
     "port2_sub": "Правый клеммник + I/O bus",
     "port_1": "RS-485 · Порт 1",
-    "port_2": "RS-485 · Порт 2"
+    "port_2": "RS-485 · Порт 2",
+    "cache_mm_title": "Кеширующий мультимастер",
+    "cache_mm_sub": "Пассивный кэш значений регистров для запросов FC03/FC04",
+    "cache_entries": "записей",
+    "cache_port": "Порт",
+    "cache_download": "Экспорт",
+    "cache_download_btn": "Скачать CSV"
   },
   "kk": {
     "title": "Сериялық порттар",
@@ -94,7 +228,13 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "port1_sub": "Сымды клемма · сол",
     "port2_sub": "Сымды клемма · оң + I/O bus",
     "port_1": "RS-485 · Порт 1",
-    "port_2": "RS-485 · Порт 2"
+    "port_2": "RS-485 · Порт 2",
+    "cache_mm_title": "Кэштеуші мультимастер",
+    "cache_mm_sub": "FC03/FC04 оқу алмасулары үшін регистр мәндерінің пассивті кэші",
+    "cache_entries": "жазба",
+    "cache_port": "Порт",
+    "cache_download": "Экспорт",
+    "cache_download_btn": "CSV жүктеу"
   },
   "it": {
     "title": "Porte seriali",
@@ -105,7 +245,13 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "port1_sub": "Morsettiera · sinistra",
     "port2_sub": "Morsettiera · destra + I/O bus",
     "port_1": "RS-485 · Porta 1",
-    "port_2": "RS-485 · Porta 2"
+    "port_2": "RS-485 · Porta 2",
+    "cache_mm_title": "Cache Multimaster",
+    "cache_mm_sub": "Cache passivo dei valori di registro per scambi FC03/FC04",
+    "cache_entries": "voci",
+    "cache_port": "Porta",
+    "cache_download": "Esporta",
+    "cache_download_btn": "Scarica CSV"
   },
   "de": {
     "title": "Serielle Schnittstellen",
@@ -116,7 +262,13 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "port1_sub": "Klemmenleiste · links",
     "port2_sub": "Klemmenleiste · rechts + I/O bus",
     "port_1": "RS-485 · Port 1",
-    "port_2": "RS-485 · Port 2"
+    "port_2": "RS-485 · Port 2",
+    "cache_mm_title": "Caching Multimaster",
+    "cache_mm_sub": "Passiver Registerwert-Cache für FC03/FC04-Lesevorgänge",
+    "cache_entries": "Einträge",
+    "cache_port": "Port",
+    "cache_download": "Export",
+    "cache_download_btn": "CSV herunterladen"
   }
 }
 </i18n>
