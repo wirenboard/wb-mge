@@ -13,6 +13,7 @@ TESTED_SRC += $(PROJ_DIR)/main/bridge/sniffer.c
 # Auxiliary source files used in this test
 AUX_SRC += $(PROJ_DIR)/main/bridge/modbus_helpers.c
 AUX_SRC += $(PROJ_DIR)/main/bridge/fast_modbus.c
+AUX_SRC += $(PROJ_DIR)/main/bridge/stream_splitter.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/queue.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/task.c

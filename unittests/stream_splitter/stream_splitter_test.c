@@ -252,6 +252,255 @@ void test_empty_buffer_no_crash(void)
     TEST_ASSERT_TRUE(n >= 0);
 }
 
+/* TC-10: FC03 large response (byte_count=32, total 37 bytes) + FC06 request (8 bytes).
+ * Buffer from errors.csv row 63 (45 bytes total).
+ * FC03 resp: byte_count=0x20=32 → len = 3 + 32 + 2 = 37.
+ * FC06 req:  fixed 8 bytes. */
+void test_tc10_fc03_large_response_plus_fc06_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-10: FC03 large response (37b, byte_count=32) + FC06 request");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* frame 0: FC03 response, byte_count=0x20=32, total 37 bytes */
+        /* header(3) + 32 data bytes + CRC(2) = 37 */
+        0x83, 0x03, 0x20,
+        0x00, 0x34, 0x00, 0x2E, 0x00, 0x33, 0x00, 0x35,
+        0x00, 0x2E, 0x00, 0x35, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x41, 0x40,
+        /* frame 1: FC06 request, 8 bytes */
+        0x83, 0x06, 0x00, 0x5B, 0x00, 0x14, 0xE6, 0x34
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(37, frames[0].len, "frame[0] len must be 37");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+}
+
+/* TC-11: FC03 short response (byte_count=2, total 7 bytes) + FC04 request (8 bytes).
+ * Buffer from errors.csv row 76 (15 bytes total).
+ * FC03 resp: byte_count=2 → len = 3 + 2 + 2 = 7.
+ * FC04 req:  fixed 8 bytes. */
+void test_tc11_fc03_short_response_plus_fc04_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-11: FC03 short response (7b, byte_count=2) + FC04 request");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* frame 0: FC03 response, byte_count=2, total 7 bytes */
+        0x83, 0x03, 0x02, 0x00, 0x1E, 0x40, 0x52,
+        /* frame 1: FC04 request, 8 bytes */
+        0x83, 0x04, 0x00, 0x03, 0x00, 0x09, 0xDE, 0x2E
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(7, frames[0].len, "frame[0] len must be 7");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+}
+
+/* TC-12: FC04 large response (byte_count=28, total 33 bytes) + FC01 request (8 bytes).
+ * Buffer from errors.csv row 91 (41 bytes total).
+ * FC04 resp: byte_count=0x1C=28 → len = 3 + 28 + 2 = 33.
+ * FC01 req:  fixed 8 bytes.
+ * Extra check: frames[0].len + frames[1].len == sizeof(buf) (full byte coverage). */
+void test_tc12_fc04_large_response_plus_fc01_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-12: FC04 large response (33b, byte_count=28) + FC01 request, full coverage");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* frame 0: FC04 response, byte_count=0x1C=28, total 33 bytes */
+        /* header(3) + 28 data bytes + CRC(2) = 33 */
+        0x83, 0x04, 0x1C,
+        0x00, 0x06, 0x24, 0x66, 0xFF, 0xFE, 0xFF, 0xFE,
+        0xFF, 0xFE, 0xFF, 0xFE, 0xFF, 0xFE, 0xFF, 0xFE,
+        0xFF, 0xFE, 0x03, 0xF5, 0x00, 0x12,
+        0x07, 0xFF, 0x00, 0x0A, 0x00, 0x0E, 0x8A, 0xE9,
+        /* frame 1: FC01 request, 8 bytes */
+        0x83, 0x01, 0x00, 0x00, 0x00, 0x0C, 0x22, 0x2D
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(33, frames[0].len, "frame[0] len must be 33");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+    /* full byte coverage: no bytes left unaccounted */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(buf), frames[0].len + frames[1].len,
+        "sum of frame lengths must equal buffer size");
+}
+
+/* TC-13: three consecutive FC06 frames (8 bytes each, 24 bytes total).
+ * Pattern from errors.csv rows 64+65.
+ * All three frames are FC06 write-single-register echoes. */
+void test_tc13_three_fc06_frames_consecutive(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-13: three consecutive FC06 frames (8b each, 24b total)");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* frame 0: FC06, 8 bytes */
+        0x83, 0x06, 0x00, 0x5B, 0x00, 0x14, 0xE6, 0x34,
+        /* frame 1: FC06, 8 bytes */
+        0x83, 0x06, 0x00, 0x71, 0x00, 0x00, 0xC7, 0xF3,
+        /* frame 2: FC06, 8 bytes */
+        0x83, 0x06, 0x00, 0xF5, 0x00, 0x00, 0x87, 0xDA
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, n, "expected 3 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[0].len, "frame[0] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[2].len, "frame[2] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[2].crc_valid, "frame[2] CRC must be valid");
+}
+
+/* TC-14: FC01 response (byte_count=1, total 6 bytes) + FC03 request (8 bytes).
+ * Buffer from errors.csv row 85 (14 bytes total).
+ * FC01 resp: byte_count=1 → len = 3 + 1 + 2 = 6. Boundary found via Level 3 CRC scan.
+ * FC03 req:  fixed 8 bytes. */
+void test_tc14_fc01_short_response_plus_fc03_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14: FC01 resp (6b, byte_count=1) via Level 3 CRC scan + FC03 req");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* frame 0: FC01 response, byte_count=1, total 6 bytes */
+        0x83, 0x01, 0x01, 0x00, 0x79, 0xF0,
+        /* frame 1: FC03 request, 8 bytes */
+        0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(6, frames[0].len, "frame[0] len must be 6");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+}
+
+/* TC-15: FC04 response (byte_count=18, total 23 bytes) + FC04 request (8 bytes) with context hint.
+ * Buffer from errors.csv row 99 (31 bytes total).
+ * context_slave=0x83, context_fc=0x04 → Level 1 finds FC04 resp boundary directly.
+ * FC04 resp: byte_count=0x12=18 → len = 3 + 18 + 2 = 23.
+ * FC04 req:  fixed 8 bytes. */
+void test_tc15_fc04_response_plus_fc04_request_with_context(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-15: FC04 resp (23b, byte_count=18) + FC04 req, context_fc=0x04 (Level 1)");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* frame 0: FC04 response, byte_count=0x12=18, total 23 bytes */
+        0x83, 0x04, 0x12,
+        0x10, 0x5D, 0x0C, 0x09, 0x07, 0x17, 0xFF, 0xFE,
+        0xFF, 0xFE, 0x01, 0xD2, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x92, 0x07, 0x4E,
+        /* frame 1: FC04 request, 8 bytes */
+        0x83, 0x04, 0x01, 0x0E, 0x00, 0x0E, 0x0F, 0xD3
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0x83, 0x04, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(23, frames[0].len, "frame[0] len must be 23");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+}
+
+/* TC-16: FC03 response (byte_count=4, total 9 bytes) + FC04 request (8 bytes) with context hint.
+ * Buffer from errors.csv row 98 (17 bytes total).
+ * context_slave=0x83, context_fc=0x03 → Level 1 finds FC03 resp boundary directly.
+ * FC03 resp: byte_count=4 → len = 3 + 4 + 2 = 9.
+ * FC04 req:  fixed 8 bytes. */
+void test_tc16_fc03_response_plus_fc04_request_with_context(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-16: FC03 resp (9b, byte_count=4) + FC04 req, context_fc=0x03 (Level 1)");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* frame 0: FC03 response, byte_count=4, total 9 bytes */
+        0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33,
+        /* frame 1: FC04 request, 8 bytes */
+        0x83, 0x04, 0x00, 0x03, 0x00, 0x09, 0xDE, 0x2E
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0x83, 0x03, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(9, frames[0].len, "frame[0] len must be 9");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+}
+
+/* TC-17: FC06 echo response (8 bytes) + FM Event Config packet (FC=0x46, 19 bytes) glued.
+ * Buffer from errors.csv row 66 (27 bytes total).
+ * FC06 echo: standard 8-byte frame with valid CRC.
+ * FM 0x46 packet: slave=0x83 fc=0x46 len=19, CRC found via Level 3 scan. */
+void test_tc17_fc06_echo_plus_fm_event_config(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-17: FC06 echo (8b) + FM Event Config FC=0x46 (19b) glued");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* frame 0: FC06 echo, 8 bytes */
+        0x83, 0x06, 0x00, 0xF5, 0x00, 0x00, 0x87, 0xDA,
+        /* frame 1: FM Event Config, FC=0x46, 19 bytes */
+        0x83, 0x46, 0x18, 0x0D, 0x04, 0x01, 0x18, 0x04,
+        0x01, 0x00, 0x00, 0x01, 0x0F, 0x00, 0x00, 0x01,
+        0x00, 0xD2, 0x1F
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[0].len, "frame[0] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(19, frames[1].len, "frame[1] len must be 19");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -266,6 +515,14 @@ int main(void)
     RUN_TEST(test_crc_scan_fallback_level3);
     RUN_TEST(test_too_short_buffer);
     RUN_TEST(test_empty_buffer_no_crash);
+    RUN_TEST(test_tc10_fc03_large_response_plus_fc06_request);
+    RUN_TEST(test_tc11_fc03_short_response_plus_fc04_request);
+    RUN_TEST(test_tc12_fc04_large_response_plus_fc01_request);
+    RUN_TEST(test_tc13_three_fc06_frames_consecutive);
+    RUN_TEST(test_tc14_fc01_short_response_plus_fc03_request);
+    RUN_TEST(test_tc15_fc04_response_plus_fc04_request_with_context);
+    RUN_TEST(test_tc16_fc03_response_plus_fc04_request_with_context);
+    RUN_TEST(test_tc17_fc06_echo_plus_fm_event_config);
 
     return UNITY_END();
 }

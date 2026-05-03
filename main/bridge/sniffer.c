@@ -187,13 +187,15 @@ static void resp_timer_cb(TimerHandle_t timer)
 /* Strip leading 0xFF arbitration bytes only when the pattern matches Fast Modbus:
  * there are leading 0xFF bytes AND after stripping the function code is 0x46 or 0x60.
  * Raw data (with 0xFF) is preserved for display; stripped data is used for CRC/fields. */
-SNIFFER_STATIC void strip_arbitration(uint8_t *data, size_t len, uint8_t **effective, size_t *effective_len)
+SNIFFER_STATIC void strip_arbitration(const uint8_t *data, size_t len, const uint8_t **effective, size_t *effective_len)
 {
     *effective = data;
     *effective_len = len;
     if (len == 0 || data[0] != 0xFF) return;
 
-    uint8_t *t = data;
+    /* fast_modbus_truncate_ff only advances the pointer; it does not write
+     * through it, so casting away const here is safe. */
+    uint8_t *t = (uint8_t *)(uintptr_t)data;
     size_t tlen = fast_modbus_truncate_ff(&t, len);
     if (tlen >= 4 && (t[1] == FAST_MODBUS_FUNC_1 || t[1] == FAST_MODBUS_FUNC_2)) {
         *effective = t;
@@ -208,7 +210,7 @@ SNIFFER_STATIC bool fm_is_slave_subcmd(uint8_t subcmd)
             subcmd == 0x09 || subcmd == 0x11 || subcmd == 0x12);
 }
 
-static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
+static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len)
 {
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
@@ -219,7 +221,7 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
      * If the packet starts with 0xFF and after stripping has a valid FM header
      * (0xFD + FC46/60), effective points into data past the 0xFF bytes.
      * For all-0xFF packets or non-FM packets, effective == data. */
-    uint8_t *effective;
+    const uint8_t *effective;
     size_t effective_len;
     strip_arbitration(data, len, &effective, &effective_len);
 
@@ -232,6 +234,10 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
                   (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2));
     bool is_arb = (effective[0] == 0xFF);
 
+    /* NOTE: the recursive calls below must happen BEFORE taskENTER_CRITICAL.
+     * Moving this block inside the critical section would cause a spinlock
+     * deadlock because each recursive sniffer_process() call acquires the
+     * same portMUX. */
     if (effective_len > 8 && !crc_check(effective, effective_len) && !is_fm && !is_arb) {
         stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
         int nframes = stream_split(effective, effective_len,
@@ -241,9 +247,7 @@ static void sniffer_process(unsigned port_index, uint8_t *data, size_t len)
         if (nframes > 1) {
             /* Successfully split into multiple frames — process each individually */
             for (int fi = 0; fi < nframes; fi++) {
-                sniffer_process(port_index,
-                                (uint8_t *)(uintptr_t)frames[fi].data,
-                                frames[fi].len);
+                sniffer_process(port_index, frames[fi].data, frames[fi].len);
             }
             return; /* original merged buffer fully handled */
         }
