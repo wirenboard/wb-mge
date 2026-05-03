@@ -144,9 +144,9 @@ export const FIELD_LABELS: Record<string, string> = {
   reference_type: 'Reference type',
   file_number: 'File number', record_number: 'Record number',
   record_length: 'Record length', file_resp_length: 'File resp len',
-  min_server_id: 'Min server ID', max_data_len: 'Max data len',
-  prev_server_id: 'Prev server ID', prev_flag: 'Prev flag',
-  flag: 'Packet flag', unacked_count: 'Unacked events', data_len: 'Data len',
+  min_server_id: 'Minimum Server ID', max_data_len: 'Maximum Data Length',
+  prev_server_id: 'Previous Server ID', prev_flag: 'Previous Flag',
+  flag: 'Packet flag', unacked_count: 'Unacked events', data_len: 'Data length',
 }
 
 /** Context-aware labels for the `register` field depending on PDU type */
