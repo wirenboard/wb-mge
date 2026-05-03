@@ -441,6 +441,13 @@ export function fieldRanges(obj: Record<string, unknown>, nodeByteStart: number)
     const dataLen = typeof obj.data_len === 'string' && obj.data_len.length > 0 ? (parseInt(obj.data_len, 16) || 0) : 0
     r.data_len = { start: s + 1, end: s + 2 }
     r.data     = { start: s + 2, end: s + 2 + dataLen }
+  } else if (t === 'fast_modbus') {
+    // fast_modbus wire layout: [ext_byte(1), subcommand(1), ...payload]
+    r.ext_byte    = { start: s,     end: s + 1 }
+    r.subcommand  = { start: s + 1, end: s + 2 }
+  } else if (t === 'modbus_rtu') {
+    // modbus_rtu wire layout: [fc(1), ...pdu_data]
+    r.fc = { start: s, end: s + 1 }
   } else if (t === 'rtu_frame') {
     r.address = { start: s, end: s + 1 }
     const rawLen = (obj.raw as string ?? '').length / 2
