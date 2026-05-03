@@ -149,6 +149,28 @@ export const FIELD_LABELS: Record<string, string> = {
   flag: 'Packet flag', unacked_count: 'Unacked events', data_len: 'Data len',
 }
 
+/** Context-aware labels for the `register` field depending on PDU type */
+export const REGISTER_LABELS: Record<string, string> = {
+  // Read commands (FC 01–04) and write-multiple (FC 0F, 10): starting address
+  read_coils: 'Starting Address',
+  read_discrete_inputs: 'Starting Address',
+  read_holding_registers: 'Starting Address',
+  read_input_registers: 'Starting Address',
+  write_multiple_coils: 'Starting Address',
+  write_multiple_registers: 'Starting Address',
+  write_multiple_coils_response: 'Starting Address',
+  write_multiple_registers_response: 'Starting Address',
+  // Write single coil (FC 05): output address
+  write_single_coil: 'Output Address',
+  write_single_coil_response: 'Output Address',
+  // Write single register (FC 06): register address
+  write_single_register: 'Register Address',
+  write_single_register_response: 'Register Address',
+  // Mask write register (FC 16): reference address
+  mask_write_register: 'Reference Address',
+  mask_write_register_response: 'Reference Address',
+}
+
 // 'reserved_address' is rendered separately with a warning message.
 export const SKIP_FIELDS = new Set(['type', 'raw', 'payload', 'objects', 'sub_requests', 'sub_responses', 'reserved_address'])
 
@@ -313,7 +335,8 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
     const bStart = fr ? fr.start : range.start
     const bEnd = fr ? fr.end : range.end
     const isDataField = k === 'data' || k === 'write_data'
-    rows.push({ depth: depth + 1, label: FIELD_LABELS[k] ?? k, key: k, value: fmtVal(k, String(v)), byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
+    const label = (k === 'register' && REGISTER_LABELS[t]) ? REGISTER_LABELS[t] : (FIELD_LABELS[k] ?? k)
+    rows.push({ depth: depth + 1, label, key: k, value: fmtVal(k, String(v)), byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
   }
 
   if ((obj as Record<string, unknown>).reserved_address) {

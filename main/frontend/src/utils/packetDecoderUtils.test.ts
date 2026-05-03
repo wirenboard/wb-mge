@@ -208,7 +208,7 @@ describe('flattenNode', () => {
     expect(rows).toContainEqual({ depth: 2, label: 'Read Holding Registers' });
 
     // PDU fields — fc must NOT appear here (depth 3)
-    expect(rows).toContainEqual({ depth: 3, label: 'Register', value: '0x0061 (97)' });
+    expect(rows).toContainEqual({ depth: 3, label: 'Starting Address', value: '0x0061 (97)' });
     expect(rows).toContainEqual({ depth: 3, label: 'Count', value: '2' });
 
     // Assert exactly ONE row with label 'Function code'
@@ -282,7 +282,7 @@ describe('flattenNode', () => {
     expect(rows).toContainEqual({ depth: 3, label: 'Read Holding Registers' });
 
     // PDU fields at depth 4
-    expect(rows).toContainEqual({ depth: 4, label: 'Register', value: '0x0061 (97)' });
+    expect(rows).toContainEqual({ depth: 4, label: 'Starting Address', value: '0x0061 (97)' });
     expect(rows).toContainEqual({ depth: 4, label: 'Count', value: '2' });
 
     // The 'fc' field inside the PDU must be suppressed — no row with label 'Function code'
