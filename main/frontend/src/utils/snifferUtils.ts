@@ -57,7 +57,7 @@ export const FAST_MODBUS_SUBCMDS: Record<number, string> = {
   0x09: 'FM Cmd',
   0x10: 'FM Event Request',
   0x11: 'FM Event Transfer',
-  0x12: 'FM Event Confirm',
+  0x12: 'FM No Events',
   0x18: 'FM Event Config',
 }
 
@@ -70,7 +70,7 @@ export const FAST_MODBUS_TOOLTIPS: Record<number, string> = {
   0x09: 'Fast Modbus Cmd Response: device responds to a Fast Modbus standard command.',
   0x10: 'Fast Modbus Event Request: master polls all devices for pending events. Devices with events participate in arbitration.',
   0x11: 'Fast Modbus Event Transfer: winning device sends its pending event data to master.',
-  0x12: 'Fast Modbus Event Confirm: master acknowledges receipt of event. Ends the event polling round.',
+  0x12: 'Fast Modbus No Events: device that wins arbitration reports that no devices on the bus have pending events. Prevents master from waiting for timeout.',
   0x18: 'Fast Modbus Event Config: master configures event reporting settings on device.',
 }
 

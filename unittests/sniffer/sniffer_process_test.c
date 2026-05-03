@@ -171,7 +171,7 @@ void test_tc2_fast_modbus_event_poll_no_events(void)
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt2.function, "pkt2 function must be 0xFF");
 
     /*
-     * Packet 3: FD 46 12 52 5D (Event Confirm, subcmd=0x12)
+     * Packet 3: FD 46 12 52 5D (No events, subcmd=0x12)
      * fm_is_slave_subcmd(0x12) = true → is_master=false, valid CRC.
      */
     uint8_t p3[] = {0xFD, 0x46, 0x12, 0x52, 0x5D};
