@@ -416,3 +416,50 @@ describe('flattenNode — register Modicon notation', () => {
     expect(regRow?.value).toContain('0x00C4');
   });
 });
+
+// ============================================================
+// flattenNode — CRC status annotation
+// ============================================================
+describe('flattenNode — CRC status annotation', () => {
+  it('crcStatus "OK" appends "(OK)" to the CRC field value', () => {
+    // addr=0x83, FC=0x03, reg=0x0061, count=2, CRC=0x8BF7
+    const hex = '8303006100028BF7';
+    const decoded = decodePacket(hex, 'request');
+    const rows = flattenNode(decoded as Record<string, unknown>, 0, hex.toUpperCase(), 0, undefined, 'OK');
+    const crcRow = rows.find(r => r.key === 'crc');
+    expect(crcRow?.value).toMatch(/\(OK\)$/);
+  });
+
+  it('crcStatus "ERR" appends "(ERR)" to the CRC field value', () => {
+    // addr=0x83, FC=0x03, reg=0x0061, count=2, CRC=0x8BF7
+    const hex = '8303006100028BF7';
+    const decoded = decodePacket(hex, 'request');
+    const rows = flattenNode(decoded as Record<string, unknown>, 0, hex.toUpperCase(), 0, undefined, 'ERR');
+    const crcRow = rows.find(r => r.key === 'crc');
+    expect(crcRow?.value).toMatch(/\(ERR\)$/);
+  });
+
+  it('without crcStatus the CRC field value has no annotation', () => {
+    // addr=0x83, FC=0x03, reg=0x0061, count=2, CRC=0x8BF7
+    const hex = '8303006100028BF7';
+    const decoded = decodePacket(hex, 'request');
+    const rows = flattenNode(decoded as Record<string, unknown>, 0, hex.toUpperCase(), 0);
+    const crcRow = rows.find(r => r.key === 'crc');
+    // Exact value: fmtVal('crc', '8BF7') → '0x8BF7' (HEX_FIELDS, no DEC_ALSO, no annotation)
+    expect(crcRow?.value).toBe('0x8BF7');
+  });
+
+  it('Fast Modbus packet with crcStatus="OK" — exactly one crc-row, annotated (OK)', () => {
+    // FD 60 03 00 06 24 66 83 C4 61 — Fast Modbus scan_start broadcast
+    // CRC bytes (last two): C4 61 → raw string 'C461' → fmtVal → '0xC461'
+    const hex = 'FD600300062466 83C461';
+    const normalized = hex.replace(/\s/g, '').toUpperCase();
+    const decoded = decodePacket(normalized, 'request');
+    const rows = flattenNode(decoded as Record<string, unknown>, 0, normalized, 0, undefined, 'OK');
+    const crcRows = rows.filter(r => r.key === 'crc');
+    // There must be exactly one CRC row (on the rtu_frame level)
+    expect(crcRows).toHaveLength(1);
+    // The value must be the hex CRC annotated with (OK)
+    expect(crcRows[0].value).toBe('0xC461 (OK)');
+  });
+});

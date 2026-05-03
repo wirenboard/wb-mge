@@ -418,7 +418,7 @@ export function fieldRanges(obj: Record<string, unknown>, nodeByteStart: number)
 }
 
 /** Flatten a decoded packet node into a list of tree rows for display */
-export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: string, parentStart: number, parentType?: string): TreeRow[] {
+export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: string, parentStart: number, parentType?: string, crcStatus?: 'OK' | 'ERR'): TreeRow[] {
   const rows: TreeRow[] = []
   const t = (obj.type as string) ?? '?'
   const nodeRaw = (obj.raw as string) ?? ''
@@ -462,6 +462,10 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
     } else {
       value = fmtVal(k, String(v))
     }
+    // If this is the CRC field and crcStatus is provided, append the status to the value
+    if (k === 'crc' && crcStatus) {
+      value = `${value} (${crcStatus})`
+    }
     rows.push({ depth: depth + 1, label, key: k, value, tooltip: FIELD_TOOLTIPS[k], byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
   }
 
@@ -476,7 +480,7 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
   }
 
   if (obj.payload && typeof obj.payload === 'object') {
-    rows.push(...flattenNode(obj.payload as Record<string, unknown>, depth + 1, fhex, range.start, t))
+    rows.push(...flattenNode(obj.payload as Record<string, unknown>, depth + 1, fhex, range.start, t, crcStatus))
   }
 
   return rows

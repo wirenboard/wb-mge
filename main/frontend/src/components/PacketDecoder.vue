@@ -48,7 +48,13 @@ const fullHex = computed<string>(() =>
 // ============================================================
 
 const treeRows = computed<TreeRow[]>(() =>
-  flattenNode(decoded.value as unknown as Record<string, unknown>, 0, fullHex.value, 0)
+  flattenNode(
+    decoded.value as unknown as Record<string, unknown>,
+    0, fullHex.value, 0, undefined,
+    // Arbitration packets carry crc === 'N/A' (a truthy string that is not a valid status);
+    // pass undefined so flattenNode does not append a spurious "(N/A)" annotation.
+    props.packet.crc !== 'N/A' ? props.packet.crc as 'OK' | 'ERR' : undefined
+  )
 )
 
 // ============================================================
