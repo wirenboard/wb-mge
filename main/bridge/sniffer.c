@@ -68,6 +68,9 @@ typedef struct {
     TimerHandle_t  resp_timer;
     unsigned       port_index;
     serial_desc_t *serial_desc;
+    /* Direction tracking for CRC-error recovery */
+    bool           synchronized;    /* true after first packet with known direction */
+    bool           last_was_master; /* direction of the most recently emitted packet */
 } sniff_ctx_t;
 
 static sniff_ctx_t sniff_ctx[BRIDGES_COUNT];
@@ -169,6 +172,8 @@ static void resp_timer_cb(TimerHandle_t timer)
         pkt.is_timeout   = true;
         pkt.slave_id     = ctx->req_buf[0];
         pkt.function     = ctx->req_buf[1];
+        ctx->synchronized    = true;
+        ctx->last_was_master = true;
         do_enqueue = true;
     }
     ctx->state = SNIFF_IDLE;
@@ -371,18 +376,27 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             size_t cpy           = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
             memcpy(req_pkt.data, effective, cpy);
             req_pkt.data_len     = (uint16_t)cpy;
+            ctx->synchronized    = true;
+            ctx->last_was_master = req_pkt.is_master;
             enqueue_req = true;
         } else if (!valid_crc) {
-            req_pkt.port         = (uint8_t)port_index;
-            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-            req_pkt.is_master    = true;
-            req_pkt.crc_valid    = false;
-            req_pkt.slave_id     = effective[0];
-            req_pkt.function     = effective[1];
-            size_t cpy           = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-            memcpy(req_pkt.data, effective, cpy);
-            req_pkt.data_len     = (uint16_t)cpy;
-            enqueue_req = true;
+            if (!ctx->synchronized) {
+                /* No known packet seen yet — cannot determine direction, drop silently. */
+            } else {
+                /* Alternate direction based on last known packet. */
+                req_pkt.port         = (uint8_t)port_index;
+                req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
+                req_pkt.is_master    = !ctx->last_was_master;
+                req_pkt.crc_valid    = false;
+                req_pkt.slave_id     = effective[0];
+                req_pkt.function     = effective[1];
+                size_t cpy = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
+                memcpy(req_pkt.data, effective, cpy);
+                req_pkt.data_len     = (uint16_t)cpy;
+                ctx->synchronized    = true;
+                ctx->last_was_master = req_pkt.is_master;
+                enqueue_req = true;
+            }
         } else if (effective[0] == 0x00) {
             /* Broadcast: no response expected */
             req_pkt.port         = (uint8_t)port_index;
@@ -394,6 +408,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             size_t cpy           = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
             memcpy(req_pkt.data, effective, cpy);
             req_pkt.data_len     = (uint16_t)cpy;
+            ctx->synchronized    = true;
+            ctx->last_was_master = true;
             enqueue_req = true;
         } else {
             pdu_direction_t dir = classify_direction(effective, effective_len);
@@ -409,6 +425,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
                 size_t copy_len = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
                 memcpy(req_pkt.data, effective, copy_len);
                 req_pkt.data_len     = (uint16_t)copy_len;
+                ctx->synchronized    = true;
+                ctx->last_was_master = false;
                 enqueue_req = true;
                 /* State stays SNIFF_IDLE */
             } else if (dir == DIRECTION_REQUEST) {
@@ -436,6 +454,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             req_pkt.function     = ctx->req_buf[1];
             memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
             req_pkt.data_len     = ctx->req_len;
+            ctx->synchronized    = true;
+            ctx->last_was_master = true;
             enqueue_req = true;
 
             res_pkt.port         = (uint8_t)port_index;
@@ -447,6 +467,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             size_t arb_cpy       = len < SNIFFER_MAX_PACKET_LEN ? len : SNIFFER_MAX_PACKET_LEN;
             memcpy(res_pkt.data, data, arb_cpy);
             res_pkt.data_len     = (uint16_t)arb_cpy;
+            ctx->synchronized    = true;
+            ctx->last_was_master = false;
             enqueue_res = true;
 
             ctx->state = SNIFF_IDLE;
@@ -470,6 +492,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             size_t fm_cpy        = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
             memcpy(req_pkt.data, effective, fm_cpy);
             req_pkt.data_len     = (uint16_t)fm_cpy;
+            ctx->synchronized    = true;
+            ctx->last_was_master = req_pkt.is_master;
             enqueue_req = true;
             ctx->state = SNIFF_IDLE;
             goto exit_critical;
@@ -483,6 +507,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
         req_pkt.function     = ctx->req_buf[1];
         memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
         req_pkt.data_len     = ctx->req_len;
+        ctx->synchronized    = true;
+        ctx->last_was_master = true;
         enqueue_req = true;
 
         res_pkt.port         = (uint8_t)port_index;
@@ -494,6 +520,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
         size_t copy_len      = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
         memcpy(res_pkt.data, effective, copy_len);
         res_pkt.data_len     = (uint16_t)copy_len;
+        ctx->synchronized    = true;
+        ctx->last_was_master = false;
         enqueue_res = true;
 
         ctx->state = SNIFF_IDLE;
@@ -663,8 +691,10 @@ esp_err_t sniffer_init(void)
     }
 
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        sniff_ctx[i].state      = SNIFF_IDLE;
-        sniff_ctx[i].enabled    = false;
+        sniff_ctx[i].state           = SNIFF_IDLE;
+        sniff_ctx[i].enabled         = false;
+        sniff_ctx[i].synchronized    = false;
+        sniff_ctx[i].last_was_master = false;
         sniff_ctx[i].port_index = i;
         sniff_ctx[i].resp_timer = xTimerCreate(
             "sniff_resp",
