@@ -235,18 +235,16 @@ SNIFFER_STATIC pdu_direction_t classify_direction(const uint8_t *data, size_t le
         /*
          * Request: fixed 8 bytes.
          * Response: 5 + data[2] bytes (bytecount field).
-         * Ambiguous only when len==8 AND data[2]==3 (both formulas match).
-         * Resolve ambiguity in favour of REQUEST.
+         * Ambiguous when len==8 AND data[2]==3: both formulas match simultaneously
+         * (request len==8, response 5+3==8). Cannot determine direction — drop.
          */
-        if (len == 8) {
-            /* If data[2]==3 it could also be a response with 3 data bytes,
-             * but we treat len==8 as request (priority rule). */
+        if (len == 8 && data[2] != 3) {
             return DIRECTION_REQUEST;
         }
-        if (len >= 5 && len == (size_t)(5 + data[2])) {
+        if (len >= 5 && len == (size_t)(5 + data[2]) && len != 8) {
             return DIRECTION_RESPONSE;
         }
-        return DIRECTION_UNKNOWN;
+        return DIRECTION_UNKNOWN; /* includes ambiguous len==8, data[2]==3 case */
 
     case 0x03: /* Read Holding Registers */
     case 0x04: /* Read Input Registers */
@@ -413,14 +411,17 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
                 req_pkt.data_len     = (uint16_t)copy_len;
                 enqueue_req = true;
                 /* State stays SNIFF_IDLE */
-            } else {
-                /* DIRECTION_REQUEST or DIRECTION_UNKNOWN: assume request, wait for response */
+            } else if (dir == DIRECTION_REQUEST) {
+                /* Unambiguously a master request — buffer it and wait for the response */
                 size_t copy_len = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
                 memcpy(ctx->req_buf, effective, copy_len);
                 ctx->req_len          = (uint16_t)copy_len;
                 ctx->req_timestamp_us = (uint64_t)esp_timer_get_time();
                 ctx->state            = SNIFF_RES_WAIT;
                 should_start_timer    = true;
+            } else {
+                /* DIRECTION_UNKNOWN: cannot determine direction — drop and stay in SNIFF_IDLE.
+                 * Better to skip an ambiguous packet than to guess wrong and invert the stream. */
             }
         }
     } else { /* SNIFF_RES_WAIT */

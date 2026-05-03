@@ -13,7 +13,8 @@
  * TC-10 Orphan response FC04 at startup (first packet is a slave response)
  * TC-11 Orphan response FC01 with bytecount=1 (unambiguous: len=6, not 8)
  * TC-12 FC01 with len=8 treated as request even if data[2]=3 (not the ambiguous case)
- * TC-13 FC01 len=8 data[2]=3 — truly ambiguous case — priority rule picks REQUEST
+ * TC-13 FC01 len=8 data[2]=3 — truly ambiguous case — DIRECTION_UNKNOWN → dropped
+ * TC-14 FC05 in SNIFF_IDLE → DIRECTION_UNKNOWN → packet dropped, state stays IDLE
  */
 
 #include "unity.h"
@@ -732,14 +733,14 @@ void test_tc12_fc01_len8_treated_as_request(void)
 }
 
 /* ============================================================
- * TC-13 — FC01 len=8 AND data[2]=3: truly ambiguous case, priority rule → REQUEST
+ * TC-13 — FC01 len=8 AND data[2]=3: truly ambiguous case → DIRECTION_UNKNOWN → dropped
  * ============================================================ */
 
-void test_tc13_fc01_len8_data2_3_ambiguous_treated_as_request(void)
+void test_tc13_fc01_len8_data2_3_ambiguous_dropped(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "TC-13: FC01 len=8 data[2]=3 — truly ambiguous case, len==8 priority → REQUEST");
+        "TC-13: FC01 len=8 data[2]=3 — truly ambiguous case, DIRECTION_UNKNOWN → dropped");
     LOG_MESSAGE();
 
     /*
@@ -748,13 +749,75 @@ void test_tc13_fc01_len8_data2_3_ambiguous_treated_as_request(void)
      * len=8 AND data[2]=0x03 — this is the ONLY case where both formulas match:
      *   request formula: fixed 8 bytes ✓
      *   response formula: 5 + data[2] = 5 + 3 = 8 ✓
-     * The priority rule "len==8 → DIRECTION_REQUEST" must win.
-     * Expected: packet is buffered in SNIFF_RES_WAIT, nothing enqueued yet.
-     * NOT emitted as an orphan response (which would happen if DIRECTION_RESPONSE won).
+     * New logic: len==8 AND data[2]==3 → DIRECTION_UNKNOWN → dropped in SNIFF_IDLE.
+     * Expected: queue is empty AND timer was NOT started (packet was never buffered).
      */
+    int timer_start_before = mock_xTimerStart_called;
     uint8_t pkt_req[] = {0x83, 0x01, 0x03, 0x00, 0x00, 0x03, 0x62, 0x6D};
     SEND0(pkt_req);
-    /* Must be buffered in RES_WAIT — queue must be empty */
+    /* Must be dropped — queue must be empty and state stays IDLE */
+    assert_queue_empty();
+    /* Timer must NOT have been started (packet was dropped, not buffered) */
+    TEST_ASSERT_EQUAL_MESSAGE(timer_start_before, mock_xTimerStart_called,
+        "xTimerStart must NOT be called after dropped packet (DIRECTION_UNKNOWN in IDLE)");
+}
+
+/* ============================================================
+ * TC-14 — FC05 (Write Single Coil) in SNIFF_IDLE → DIRECTION_UNKNOWN → drop
+ * ============================================================ */
+
+void test_tc14_fc05_direction_unknown_dropped(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14: FC05 in SNIFF_IDLE → DIRECTION_UNKNOWN → packet dropped, state stays IDLE");
+    LOG_MESSAGE();
+
+    /*
+     * FC05 Write Single Coil ON: addr=0x83, fc=0x05, addr_hi=0x00, addr_lo=0xAC,
+     * value_hi=0xFF, value_lo=0x00, CRC lo=0x52, hi=0x39.
+     * classify_direction: FC05 → DIRECTION_UNKNOWN (request and echo-response are
+     * both 8 bytes, indistinguishable).
+     * With the new logic, DIRECTION_UNKNOWN in SNIFF_IDLE → drop, stay in SNIFF_IDLE.
+     * Expected: nothing enqueued, state stays IDLE.
+     */
+    uint8_t pkt_fc05[] = {0x83, 0x05, 0x00, 0xAC, 0xFF, 0x00, 0x52, 0x39};
+    SEND0(pkt_fc05);
+    /* Must be dropped — queue must be empty and state stays IDLE */
+    assert_queue_empty();
+
+    /*
+     * Verify state is still SNIFF_IDLE: send a FC03 request (DIRECTION_REQUEST).
+     * It must be buffered (queue still empty), then after response both packets
+     * are emitted in the correct master/slave order.
+     */
+    uint8_t pkt_req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
+    SEND0(pkt_req);
+    assert_queue_empty();
+
+    uint8_t pkt_res[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
+    SEND0(pkt_res);
+
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p1.is_master,
+        "TC-14: FC03 request after dropped FC05 must be MASTER");
+    TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,
+        "TC-14: FC03 request crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id,
+        "TC-14: FC03 request slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function,
+        "TC-14: FC03 request function must be 0x03");
+
+    sniff_packet_t p2 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p2.is_master,
+        "TC-14: FC03 response must be SLAVE");
+    TEST_ASSERT_TRUE_MESSAGE(p2.crc_valid,
+        "TC-14: FC03 response crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p2.slave_id,
+        "TC-14: FC03 response slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p2.function,
+        "TC-14: FC03 response function must be 0x03");
+
     assert_queue_empty();
 }
 
@@ -778,7 +841,8 @@ int main(void)
     RUN_TEST(test_tc10_orphan_fc04_response_at_startup);
     RUN_TEST(test_tc11_orphan_fc01_response_len6);
     RUN_TEST(test_tc12_fc01_len8_treated_as_request);
-    RUN_TEST(test_tc13_fc01_len8_data2_3_ambiguous_treated_as_request);
+    RUN_TEST(test_tc13_fc01_len8_data2_3_ambiguous_dropped);
+    RUN_TEST(test_tc14_fc05_direction_unknown_dropped);
     RUN_TEST(test_rx_timeout_enable_sets_sniffer_value);
     RUN_TEST(test_rx_timeout_disable_sets_proxy_value);
     RUN_TEST(test_rx_timeout_not_called_after_detach);
