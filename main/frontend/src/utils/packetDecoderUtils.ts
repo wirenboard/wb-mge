@@ -286,7 +286,7 @@ export function fieldRanges(obj: Record<string, unknown>, nodeByteStart: number)
 }
 
 /** Flatten a decoded packet node into a list of tree rows for display */
-export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: string, parentStart: number): TreeRow[] {
+export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: string, parentStart: number, parentType?: string): TreeRow[] {
   const rows: TreeRow[] = []
   const t = (obj.type as string) ?? '?'
   const nodeRaw = (obj.raw as string) ?? ''
@@ -304,6 +304,10 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
 
   for (const [k, v] of Object.entries(obj)) {
     if (SKIP_FIELDS.has(k)) continue
+    // Skip fc in PDU nodes when the parent already exposes the function code at its own level:
+    // modbus_rtu has fc, command_by_serial/response_by_serial have function_code — no need to repeat.
+    // parse_error nodes are also covered: modbus_rtu.fc already shows the bad FC value above.
+    if (k === 'fc' && (parentType === 'modbus_rtu' || parentType === 'command_by_serial' || parentType === 'response_by_serial')) continue
     if (typeof v === 'object') continue
     const fr = fRanges[k]
     const bStart = fr ? fr.start : range.start
@@ -323,7 +327,7 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
   }
 
   if (obj.payload && typeof obj.payload === 'object') {
-    rows.push(...flattenNode(obj.payload as Record<string, unknown>, depth + 1, fhex, range.start))
+    rows.push(...flattenNode(obj.payload as Record<string, unknown>, depth + 1, fhex, range.start, t))
   }
 
   return rows

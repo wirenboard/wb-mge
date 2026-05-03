@@ -5,7 +5,9 @@ import {
   rawToRange,
   fmtVal,
   fieldRanges,
+  flattenNode,
 } from './packetDecoderUtils';
+import { decodePacket } from '../common/modbusDecoder';
 
 // ============================================================
 // isPrintable
@@ -166,5 +168,147 @@ describe('fieldRanges', () => {
     const r = fieldRanges(obj, 1);
     expect(r.serial_number).toEqual({ start: 2, end: 6 });
     expect(r.modbus_address).toEqual({ start: 6, end: 7 });
+  });
+});
+
+// ============================================================
+// flattenNode
+// ============================================================
+
+/**
+ * Helper: decode a hex packet and flatten it into a compact row array.
+ * Rows with a value are returned as { depth, label, value };
+ * rows without a value (section headers) as { depth, label }.
+ */
+function treeLabels(hex: string, dir: 'request' | 'response' = 'request'): { depth: number; label: string; value?: string }[] {
+  const decoded = decodePacket(hex, dir);
+  return flattenNode(decoded as Record<string, unknown>, 0, hex.toUpperCase(), 0)
+    .map(r => r.value !== undefined ? { depth: r.depth, label: r.label, value: r.value } : { depth: r.depth, label: r.label });
+}
+
+describe('flattenNode', () => {
+  // ── Test 1 ──────────────────────────────────────────────────
+  // Standard Modbus RTU read-holding-registers request.
+  // The fc field must appear exactly once, at the Modbus RTU level (depth 2).
+  // It must NOT be repeated inside the PDU section.
+  it('RTU request: Function code appears exactly once (at modbus_rtu level, not duplicated in PDU)', () => {
+    // addr=0x83, FC=0x03, reg=0x0061, count=2, CRC=0x8BF7
+    const rows = treeLabels('8303006100028BF7', 'request');
+
+    // Top-level structure checks
+    expect(rows).toContainEqual({ depth: 0, label: 'RTU Frame' });
+    expect(rows).toContainEqual({ depth: 1, label: 'Slave address', value: '0x83 (131)' });
+    expect(rows).toContainEqual({ depth: 1, label: 'CRC', value: '0x8BF7' });
+    expect(rows).toContainEqual({ depth: 1, label: 'Modbus RTU' });
+
+    // Function code must be present at depth 2 under Modbus RTU
+    expect(rows).toContainEqual({ depth: 2, label: 'Function code', value: '0x03 (Read Holding Registers)' });
+
+    // PDU section header
+    expect(rows).toContainEqual({ depth: 2, label: 'Read Holding Registers' });
+
+    // PDU fields — fc must NOT appear here (depth 3)
+    expect(rows).toContainEqual({ depth: 3, label: 'Register', value: '0x0061 (97)' });
+    expect(rows).toContainEqual({ depth: 3, label: 'Count', value: '2' });
+
+    // Assert exactly ONE row with label 'Function code'
+    const fcRows = rows.filter(r => r.label === 'Function code');
+    expect(fcRows).toHaveLength(1);
+  });
+
+  // ── Test 2 ──────────────────────────────────────────────────
+  // Standard Modbus RTU read-holding-registers response.
+  // fc must appear once at the modbus_rtu level, not inside the PDU.
+  it('RTU response: Function code appears exactly once (at modbus_rtu level, not duplicated in PDU)', () => {
+    // addr=0x83, FC=0x03, byte_count=4, data=00000000, CRC=0x39A3
+    const rows = treeLabels('8303040000000039A3', 'response');
+
+    // Function code at Modbus RTU level (depth 2)
+    expect(rows).toContainEqual({ depth: 2, label: 'Function code', value: '0x03 (Read Holding Registers)' });
+
+    // PDU response section at depth 2
+    expect(rows).toContainEqual({ depth: 2, label: 'Read Holding Registers Response' });
+
+    // PDU fields at depth 3 — fc suppressed here
+    expect(rows).toContainEqual({ depth: 3, label: 'Byte count', value: '4' });
+    expect(rows).toContainEqual({ depth: 3, label: 'Data', value: '0x00000000' });
+
+    // Exactly one 'Function code' row in the whole tree
+    const fcRows = rows.filter(r => r.label === 'Function code');
+    expect(fcRows).toHaveLength(1);
+  });
+
+  // ── Test 3 ──────────────────────────────────────────────────
+  // Invalid function code (FC=0x00) causes a parse_error PDU.
+  // The fc=0x00 shown at modbus_rtu level must not be repeated inside the parse_error node.
+  it('parse_error (invalid FC=0x00): Function code shown at modbus_rtu level only, not inside Parse Error', () => {
+    // addr=0x01, FC=0x00 (invalid), CRC=0x66F0 (may fail CRC check but decodes)
+    const rows = treeLabels('010066F0', 'request');
+
+    // Function code at modbus_rtu level (depth 2)
+    expect(rows).toContainEqual({ depth: 2, label: 'Function code', value: '0x00 (Unknown)' });
+
+    // Parse Error section at depth 2
+    expect(rows).toContainEqual({ depth: 2, label: 'Parse Error' });
+
+    // Reason field inside Parse Error at depth 3
+    expect(rows).toContainEqual({ depth: 3, label: 'Reason', value: 'invalid_fc' });
+
+    // Exactly one 'Function code' row — not duplicated inside parse_error
+    const fcRows = rows.filter(r => r.label === 'Function code');
+    expect(fcRows).toHaveLength(1);
+  });
+
+  // ── Test 4 ──────────────────────────────────────────────────
+  // Fast Modbus command_by_serial wrapping a read_holding_registers PDU.
+  // The parent command_by_serial already exposes 'function_code' (label: 'Function'),
+  // so the PDU's own fc field must be suppressed.
+  it('Fast Modbus command_by_serial: function_code shown at command level, fc suppressed in nested PDU', () => {
+    // FD=Fast Modbus broadcast, 46=ext, 08=command_by_serial,
+    // serial=0x12345678, FC=0x03, reg=0x0061, count=2
+    const rows = treeLabels('FD4608123456780300610002D9C3', 'request');
+
+    // Fast Modbus wrapper fields at depth 2
+    expect(rows).toContainEqual({ depth: 2, label: 'FM Command', value: '0x46 (Extended function command)' });
+    expect(rows).toContainEqual({ depth: 2, label: 'FM Subcommand', value: '0x08 (Command by Serial)' });
+
+    // command_by_serial fields at depth 3
+    expect(rows).toContainEqual({ depth: 3, label: 'Serial number', value: '0x12345678 (305419896)' });
+
+    // function_code field (keyed 'function_code', label 'Function') at depth 3
+    expect(rows).toContainEqual({ depth: 3, label: 'Function', value: '0x03 (Read Holding Registers)' });
+
+    // Nested PDU section at depth 3 (no value)
+    expect(rows).toContainEqual({ depth: 3, label: 'Read Holding Registers' });
+
+    // PDU fields at depth 4
+    expect(rows).toContainEqual({ depth: 4, label: 'Register', value: '0x0061 (97)' });
+    expect(rows).toContainEqual({ depth: 4, label: 'Count', value: '2' });
+
+    // The 'fc' field inside the PDU must be suppressed — no row with label 'Function code'
+    const fcRows = rows.filter(r => r.label === 'Function code');
+    expect(fcRows).toHaveLength(0);
+  });
+
+  // ── Test 5 ──────────────────────────────────────────────────
+  // Fast Modbus event_request has no nested PDU at all,
+  // so there is no fc field anywhere in the tree.
+  it('Fast Modbus event_request: no Function code row present anywhere', () => {
+    // FD=FM broadcast, 46=ext, 10=event_request, addr=0x00, flag=0x4F, unacked=0x0000
+    const rows = treeLabels('FD4610004F00007DC9', 'request');
+
+    // Fast Modbus section present
+    expect(rows.some(r => r.label === 'Fast Modbus')).toBe(true);
+
+    // FM command and subcommand present
+    expect(rows).toContainEqual({ depth: 2, label: 'FM Command', value: '0x46 (Extended function command)' });
+    expect(rows).toContainEqual({ depth: 2, label: 'FM Subcommand', value: '0x10 (Event Request)' });
+
+    // Event Request section present
+    expect(rows.some(r => r.label === 'Event Request')).toBe(true);
+
+    // No 'Function code' row anywhere in the tree
+    const fcRows = rows.filter(r => r.label === 'Function code');
+    expect(fcRows).toHaveLength(0);
   });
 });
