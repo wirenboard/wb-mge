@@ -4,6 +4,7 @@ import {
   f32str,
   rawToRange,
   fmtVal,
+  fmtCoilData,
   fieldRanges,
   flattenNode,
 } from './packetDecoderUtils';
@@ -310,5 +311,39 @@ describe('flattenNode', () => {
     // No 'Function code' row anywhere in the tree
     const fcRows = rows.filter(r => r.label === 'Function code');
     expect(fcRows).toHaveLength(0);
+  });
+
+  // ── Test 6 ──────────────────────────────────────────────────
+  // read_coils_response: the Data field must use binary coil formatting.
+  // Packet: 11 01 03 CD 6B 05 40 12
+  //   addr=0x11, FC=0x01, byte_count=3, data=CD6B05, CRC=0x1240 (stored LE: 40 12)
+  it('read_coils_response: Data field shows binary coil representation', () => {
+    const rows = treeLabels('110103CD6B054012', 'response');
+
+    // Data row value must include hex and binary bytes
+    const dataRow = rows.find(r => r.label === 'Data');
+    expect(dataRow).toBeDefined();
+    expect(dataRow?.value).toBe('0xCD6B05  (11001101 01101011 00000101)');
+  });
+});
+
+// ============================================================
+// fmtCoilData
+// ============================================================
+describe('fmtCoilData', () => {
+  it('single byte 08 → "0x08  (00001000)"', () => {
+    expect(fmtCoilData('08')).toBe('0x08  (00001000)');
+  });
+
+  it('two bytes 0800 → "0x0800  (00001000 00000000)"', () => {
+    expect(fmtCoilData('0800')).toBe('0x0800  (00001000 00000000)');
+  });
+
+  it('three bytes CD6B05 → "0xCD6B05  (11001101 01101011 00000101)"', () => {
+    expect(fmtCoilData('CD6B05')).toBe('0xCD6B05  (11001101 01101011 00000101)');
+  });
+
+  it('empty string → "0x" (edge case: no binary suffix)', () => {
+    expect(fmtCoilData('')).toBe('0x');
   });
 });
