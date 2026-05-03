@@ -128,12 +128,14 @@ const leafBytes = computed<number[]>(() => {
   return out
 })
 
-const regs16 = computed<{ index: number; dec: number; hex: string; }[]>(() => {
+const regs16 = computed<{ index: number; dec: number; int16: number; hex: string; }[]>(() => {
   const b = leafBytes.value
   const out = []
   for (let i = 0; i + 1 < b.length; i += 2) {
     const v = ((b[i] << 8) | b[i + 1]) >>> 0
-    out.push({ index: i / 2, dec: v, hex: v.toString(16).toUpperCase().padStart(4, '0') })
+    // Interpret as signed Int16: if MSB is set, subtract 2^16
+    const s = v >= 0x8000 ? v - 0x10000 : v
+    out.push({ index: i / 2, dec: v, int16: s, hex: v.toString(16).toUpperCase().padStart(4, '0') })
   }
   return out
 })
@@ -244,15 +246,19 @@ const chunks32 = computed<Chunk32[]>(() => {
         <button class="popup-close" @click="showDataPopup = false">✕</button>
       </div>
 
-      <!-- 16-bit registers view -->
+      <!-- 16-bit registers view — table layout matching the 32-bit view -->
       <div v-if="activeBitMode === '16'" class="regs16-view">
-        <div class="regs16-grid">
-          <div v-for="r in regs16" :key="r.index" class="reg16-chip">
-            <span class="muted reg-idx">R{{ r.index }}</span>
-            <b class="reg-dec">{{ r.dec }}</b>
-            <span class="muted">0x{{ r.hex }}</span>
-          </div>
-        </div>
+        <table class="chunks32-table">
+          <thead><tr><th>Reg</th><th>Hex</th><th>UInt16</th><th>Int16</th></tr></thead>
+          <tbody>
+            <tr v-for="r in regs16" :key="r.index">
+              <td class="muted">R{{ r.index }}</td>
+              <td class="mono c-hex">0x{{ r.hex }}</td>
+              <td class="mono c-u32">{{ r.dec }}</td>
+              <td class="mono c-i32">{{ r.int16 }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <!-- 32-bit endianness view -->
@@ -459,7 +465,7 @@ const chunks32 = computed<Chunk32[]>(() => {
   position: absolute;
   bottom: 100%;
   right: 0;
-  width: 480px;
+  width: 680px;
   max-width: 90vw;
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
@@ -508,20 +514,6 @@ const chunks32 = computed<Chunk32[]>(() => {
 
 /* 16-bit view */
 .regs16-view { padding: 2px 0; }
-.regs16-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.reg16-chip {
-  background: var(--bg-surface-subtle);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  padding: 3px 8px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  display: flex;
-  gap: 5px;
-  align-items: baseline;
-}
-.reg-idx { font-size: 10px; }
-.reg-dec { color: var(--mb-ok); }
 
 /* Endianness tabs */
 .endian-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
