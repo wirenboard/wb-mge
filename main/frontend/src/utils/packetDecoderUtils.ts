@@ -119,7 +119,7 @@ export const FM_SUBCOMMAND_NAMES: Record<string, string> = {
   '09': 'Response by Serial',
   '10': 'Event Request',
   '11': 'Event Transfer',
-  '12': 'Event Confirm',
+  '12': 'No Events',
   '18': 'Event Config',
 }
 
