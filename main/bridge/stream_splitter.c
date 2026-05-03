@@ -145,12 +145,17 @@ int stream_split(const uint8_t *buf, size_t len,
                  uint8_t context_slave, uint8_t context_fc,
                  stream_frame_t *out_frames)
 {
-    (void)context_slave; /* kept for API symmetry; context uses context_fc only */
+    /* context_slave is reserved for future use; currently the length-table approach
+     * does not require knowing the expected slave_id — only the FC matters.
+     * Kept in the API signature for forward compatibility. */
+    (void)context_slave;
 
     size_t pos   = 0;
     int    count = 0;
     bool   first_frame = true;
 
+    /* STREAM_SPLITTER_MAX_FRAMES - 1: leave one slot for the defensive
+     * tail frame that may be appended after the loop exits */
     while (pos < len && count < STREAM_SPLITTER_MAX_FRAMES - 1) {
         const uint8_t *rem     = buf + pos;
         size_t         rem_len = len - pos;

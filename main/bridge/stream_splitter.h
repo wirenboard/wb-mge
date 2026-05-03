@@ -19,7 +19,8 @@ typedef struct {
  *
  * buf          — input buffer (may contain multiple back-to-back frames)
  * len          — total byte count in buf
- * context_slave — slave_id from the last known master request; 0 means no context
+ * context_slave — slave_id from the last known master request; 0 means no context.
+ *                 Currently unused by the implementation; reserved for future use.
  * context_fc    — function code from the last known master request; 0 means no context
  * out_frames    — caller-allocated array of at least STREAM_SPLITTER_MAX_FRAMES entries
  *
