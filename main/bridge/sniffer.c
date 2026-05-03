@@ -210,6 +210,99 @@ SNIFFER_STATIC bool fm_is_slave_subcmd(uint8_t subcmd)
             subcmd == 0x09 || subcmd == 0x11 || subcmd == 0x12);
 }
 
+/* Direction classification result for standard Modbus RTU PDUs */
+typedef enum {
+    DIRECTION_REQUEST  = 0, /* Packet is unambiguously a master request */
+    DIRECTION_RESPONSE = 1, /* Packet is unambiguously a slave response  */
+    DIRECTION_UNKNOWN  = 2, /* Cannot determine direction from length/FC alone */
+} pdu_direction_t;
+
+/*
+ * classify_direction — heuristic to decide whether a Modbus RTU packet is a
+ * master request, a slave response, or ambiguous.
+ *
+ * Precondition: len >= 4 (guaranteed by the caller).
+ * data[0] = slave address, data[1] = function code,
+ * data[len-2..len-1] = CRC (already verified by caller when this is invoked).
+ */
+SNIFFER_STATIC pdu_direction_t classify_direction(const uint8_t *data, size_t len)
+{
+    uint8_t fc = data[1];
+
+    switch (fc) {
+    case 0x01: /* Read Coils */
+    case 0x02: /* Read Discrete Inputs */
+        /*
+         * Request: fixed 8 bytes.
+         * Response: 5 + data[2] bytes (bytecount field).
+         * Ambiguous only when len==8 AND data[2]==3 (both formulas match).
+         * Resolve ambiguity in favour of REQUEST.
+         */
+        if (len == 8) {
+            /* If data[2]==3 it could also be a response with 3 data bytes,
+             * but we treat len==8 as request (priority rule). */
+            return DIRECTION_REQUEST;
+        }
+        if (len >= 5 && len == (size_t)(5 + data[2])) {
+            return DIRECTION_RESPONSE;
+        }
+        return DIRECTION_UNKNOWN;
+
+    case 0x03: /* Read Holding Registers */
+    case 0x04: /* Read Input Registers */
+        /*
+         * Request: fixed 8 bytes.
+         * Response: 5 + data[2] bytes, data[2] must be even and > 0.
+         * When len==8, a response would require data[2]==3 (odd) — impossible,
+         * so len==8 is always a request.
+         */
+        if (len == 8) {
+            return DIRECTION_REQUEST;
+        }
+        if (len >= 5 && len == (size_t)(5 + data[2]) &&
+            (data[2] % 2 == 0) && (data[2] > 0)) {
+            return DIRECTION_RESPONSE;
+        }
+        return DIRECTION_UNKNOWN;
+
+    case 0x05: /* Write Single Coil  */
+    case 0x06: /* Write Single Register */
+    case 0x08: /* Diagnostics */
+        /* Request and echo-response are both 8 bytes — indistinguishable. */
+        return DIRECTION_UNKNOWN;
+
+    case 0x07: /* Read Exception Status */
+        /* Request: addr(1)+FC(1)+CRC(2) = 4 bytes.
+         * Response: addr(1)+FC(1)+output_data(1)+CRC(2) = 5 bytes (Modbus spec §6.7). */
+        if (len == 4) return DIRECTION_REQUEST;
+        if (len == 5) return DIRECTION_RESPONSE;
+        return DIRECTION_UNKNOWN;
+
+    case 0x0B: /* Get Comm Event Counter */
+        if (len == 4) return DIRECTION_REQUEST;
+        if (len == 8) return DIRECTION_RESPONSE;
+        return DIRECTION_UNKNOWN;
+
+    case 0x0F: /* Write Multiple Coils  */
+    case 0x10: /* Write Multiple Registers */
+        /*
+         * Response: fixed 8 bytes.
+         * Request: 9 + data[6] bytes (bytecount at offset 6).
+         */
+        if (len == 8) return DIRECTION_RESPONSE;
+        if (len >= 9 && len == (size_t)(9 + data[6])) return DIRECTION_REQUEST;
+        return DIRECTION_UNKNOWN;
+
+    case 0x11: /* Report Server ID */
+        if (len == 4) return DIRECTION_REQUEST;
+        if (len >= 5 && len == (size_t)(5 + data[2])) return DIRECTION_RESPONSE;
+        return DIRECTION_UNKNOWN;
+
+    default:
+        return DIRECTION_UNKNOWN;
+    }
+}
+
 static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len)
 {
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
@@ -305,13 +398,30 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             req_pkt.data_len     = (uint16_t)cpy;
             enqueue_req = true;
         } else {
-            /* Normal unicast request: save and wait for response */
-            size_t copy_len = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-            memcpy(ctx->req_buf, effective, copy_len);
-            ctx->req_len          = (uint16_t)copy_len;
-            ctx->req_timestamp_us = (uint64_t)esp_timer_get_time();
-            ctx->state            = SNIFF_RES_WAIT;
-            should_start_timer    = true;
+            pdu_direction_t dir = classify_direction(effective, effective_len);
+            if (dir == DIRECTION_RESPONSE) {
+                /* Orphan response: sniffer started mid-exchange, the request was missed.
+                 * Emit as a slave packet without buffering; stay in SNIFF_IDLE. */
+                req_pkt.port         = (uint8_t)port_index;
+                req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
+                req_pkt.is_master    = false;
+                req_pkt.crc_valid    = true;
+                req_pkt.slave_id     = effective[0];
+                req_pkt.function     = effective[1];
+                size_t copy_len = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
+                memcpy(req_pkt.data, effective, copy_len);
+                req_pkt.data_len     = (uint16_t)copy_len;
+                enqueue_req = true;
+                /* State stays SNIFF_IDLE */
+            } else {
+                /* DIRECTION_REQUEST or DIRECTION_UNKNOWN: assume request, wait for response */
+                size_t copy_len = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
+                memcpy(ctx->req_buf, effective, copy_len);
+                ctx->req_len          = (uint16_t)copy_len;
+                ctx->req_timestamp_us = (uint64_t)esp_timer_get_time();
+                ctx->state            = SNIFF_RES_WAIT;
+                should_start_timer    = true;
+            }
         }
     } else { /* SNIFF_RES_WAIT */
         if (effective_len < 4) {
