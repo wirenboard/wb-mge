@@ -15,6 +15,8 @@
  * TC-12 FC01 with len=8 treated as request even if data[2]=3 (not the ambiguous case)
  * TC-13 FC01 len=8 data[2]=3 — truly ambiguous case — DIRECTION_UNKNOWN → dropped
  * TC-14 FC05 in SNIFF_IDLE → DIRECTION_UNKNOWN → packet dropped, state stays IDLE
+ * TC-15 CRC ERR in SNIFF_IDLE, no prior sync — packet dropped
+ * TC-16 CRC ERR in SNIFF_IDLE after sync — alternates master/slave
  */
 
 #include "unity.h"
@@ -165,12 +167,13 @@ void test_tc2_fast_modbus_event_poll_no_events(void)
      * strip_arbitration: data[0]=0xFF, fast_modbus_truncate_ff → tlen=0 < 4 → NOT stripped.
      * effective == data, effective_len=5.
      * In IDLE: effective[0]=0xFF ≠ 0xFD, crc_check(effective,5)=false → !valid_crc branch.
-     * Emitted as is_master=true, crc_valid=false.
+     * synchronized=true (set by pkt1, subcmd=0x10, is_master=true), last_was_master=true.
+     * CRC ERR with sync → is_master = !last_was_master = false.
      */
     uint8_t p2[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     SEND0(p2);
     sniff_packet_t pkt2 = dequeue_packet();
-    TEST_ASSERT_TRUE_MESSAGE(pkt2.is_master, "pkt2 must be MASTER (invalid CRC → master)");
+    TEST_ASSERT_FALSE_MESSAGE(pkt2.is_master, "pkt2 must be SLAVE (CRC ERR after master FM → alternates to slave)");
     TEST_ASSERT_FALSE_MESSAGE(pkt2.crc_valid, "pkt2 must have invalid CRC");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt2.slave_id, "pkt2 slave_id must be 0xFF");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt2.function, "pkt2 function must be 0xFF");
@@ -271,13 +274,14 @@ void test_tc4_fd46_in_res_wait_phase_slip(void)
 
     /*
      * Packet 3: FF FF FF FF FF
-     * In IDLE: invalid CRC → MASTER, crc_valid=false (same logic as TC-2 pkt2).
+     * In IDLE: invalid CRC → synchronized=true (set by pkt2, is_master=true),
+     * last_was_master=true → CRC ERR alternates → is_master=false, crc_valid=false.
      */
     uint8_t p3[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     SEND0(p3);
     sniff_packet_t pkt3 = dequeue_packet();
-    TEST_ASSERT_TRUE_MESSAGE(pkt3.is_master,
-        "pkt3 must be MASTER (all-FF in IDLE → invalid CRC branch)");
+    TEST_ASSERT_FALSE_MESSAGE(pkt3.is_master,
+        "pkt3 must be SLAVE (CRC ERR after master FM in RES_WAIT → alternates to slave)");
     TEST_ASSERT_FALSE_MESSAGE(pkt3.crc_valid, "pkt3 must have invalid CRC");
     assert_queue_empty();
 
@@ -822,6 +826,83 @@ void test_tc14_fc05_direction_unknown_dropped(void)
 }
 
 /* ============================================================
+ * TC-15 — CRC ERR in SNIFF_IDLE without prior sync → drop
+ * ============================================================ */
+
+void test_tc15_crc_err_no_sync_dropped(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-15: CRC ERR in SNIFF_IDLE, no prior sync — packet dropped");
+    LOG_MESSAGE();
+
+    /*
+     * Send a packet with an invalid CRC before any packet with known direction
+     * has been seen (sniffer is not yet synchronized).
+     * New logic: !ctx->synchronized → drop silently, do not enqueue.
+     */
+    uint8_t pkt[] = {0x83, 0x03, 0x00, 0x00, 0xDE, 0xAD};
+    SEND0(pkt);
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-16 — CRC ERR in SNIFF_IDLE after sync → alternates master/slave
+ * ============================================================ */
+
+void test_tc16_crc_err_after_sync_alternates_direction(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-16: CRC ERR in SNIFF_IDLE after sync — alternates master/slave direction");
+    LOG_MESSAGE();
+
+    /*
+     * Step 1: send a normal FC03 request + response to synchronize the sniffer.
+     * After the response, last_was_master=false (last emitted packet was the SLAVE response).
+     */
+    uint8_t req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
+    uint8_t res[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
+    SEND0(req);
+    assert_queue_empty(); /* buffered in RES_WAIT */
+    SEND0(res);
+    /* Dequeue and discard both packets (synchronization complete) */
+    sniff_packet_t p_req = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p_req.is_master, "TC-16: setup req must be MASTER");
+    sniff_packet_t p_res = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p_res.is_master, "TC-16: setup res must be SLAVE");
+    assert_queue_empty();
+
+    /*
+     * Step 2: send first CRC ERR packet.
+     * synchronized=true, last_was_master=false (last was SLAVE response).
+     * Expected: is_master = !false = true.
+     */
+    uint8_t crc_err1[] = {0x83, 0x03, 0x00, 0x00, 0xDE, 0xAD};
+    SEND0(crc_err1);
+    sniff_packet_t pkt1 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt1.is_master,
+        "TC-16: first CRC ERR after SLAVE → must be MASTER (is_master=true)");
+    TEST_ASSERT_FALSE_MESSAGE(pkt1.crc_valid,
+        "TC-16: first CRC ERR packet must have crc_valid=false");
+
+    /*
+     * Step 3: send second CRC ERR packet.
+     * After step 2, last_was_master=true.
+     * Expected: is_master = !true = false.
+     */
+    uint8_t crc_err2[] = {0x83, 0x03, 0x00, 0x00, 0xDE, 0xAD};
+    SEND0(crc_err2);
+    sniff_packet_t pkt2 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(pkt2.is_master,
+        "TC-16: second CRC ERR after MASTER → must be SLAVE (is_master=false)");
+    TEST_ASSERT_FALSE_MESSAGE(pkt2.crc_valid,
+        "TC-16: second CRC ERR packet must have crc_valid=false");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
  * main
  * ============================================================ */
 
@@ -843,6 +924,8 @@ int main(void)
     RUN_TEST(test_tc12_fc01_len8_treated_as_request);
     RUN_TEST(test_tc13_fc01_len8_data2_3_ambiguous_dropped);
     RUN_TEST(test_tc14_fc05_direction_unknown_dropped);
+    RUN_TEST(test_tc15_crc_err_no_sync_dropped);
+    RUN_TEST(test_tc16_crc_err_after_sync_alternates_direction);
     RUN_TEST(test_rx_timeout_enable_sets_sniffer_value);
     RUN_TEST(test_rx_timeout_disable_sets_proxy_value);
     RUN_TEST(test_rx_timeout_not_called_after_detach);
