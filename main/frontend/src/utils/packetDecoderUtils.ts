@@ -123,6 +123,19 @@ export const FM_SUBCOMMAND_NAMES: Record<string, string> = {
   '18': 'Event Config',
 }
 
+export const FM_SUBCOMMAND_TOOLTIPS: Record<string, string> = {
+  '01': 'Fast Modbus Scan Start: master resets scan status on all unscanned devices. Devices participate in arbitration; lowest serial number wins.',
+  '02': 'Fast Modbus Scan Continue: master continues scanning. Devices not yet scanned participate in arbitration.',
+  '03': 'Fast Modbus Scan Response: device responds with its serial number and data during scan arbitration.',
+  '04': 'Fast Modbus Scan End: no new devices remain. The device with the lowest serial number that already responded wins arbitration to signal completion.',
+  '08': 'Fast Modbus Cmd Send: master sends a standard Modbus command via Fast Modbus addressing (by serial number).',
+  '09': 'Fast Modbus Cmd Response: device responds to a Fast Modbus standard command addressed by serial number.',
+  '10': 'Fast Modbus Event Request: master polls all devices for pending events. Devices with events participate in arbitration.',
+  '11': 'Fast Modbus Event Transfer: winning device sends its pending event data to master.',
+  '12': 'Fast Modbus No Events: device that wins arbitration reports that no devices on the bus have pending events. Prevents master from waiting for timeout.',
+  '18': 'Fast Modbus Event Config: master configures event reporting settings on a specific device.',
+}
+
 export const FIELD_LABELS: Record<string, string> = {
   address: 'Slave address', crc: 'CRC',  ext_byte: 'FM Command',
   subcommand: 'FM Subcommand',
@@ -242,7 +255,8 @@ export interface TreeRow {
   label: string;
   key?: string;
   value?: string;
-  tooltip?: string;   // native tooltip text shown on hover over the field label
+  tooltip?: string;        // tooltip shown on hover over the field label
+  valueTooltip?: string;   // tooltip shown on hover over the field value
   byteStart: number;
   byteEnd: number;
   isSection: boolean;
@@ -409,6 +423,24 @@ export function fieldRanges(obj: Record<string, unknown>, nodeByteStart: number)
     r.modbus_address = { start: s + 5, end: s + 6 }
   } else if (['command_by_serial','response_by_serial'].includes(t)) {
     r.serial_number = { start: s + 1, end: s + 5 }
+  } else if (t === 'event_request') {
+    // event_request wire layout: [subcommand(1), min_server_id(1), max_data_len(1), prev_server_id(1), prev_flag(1)]
+    r.min_server_id  = { start: s + 1, end: s + 2 }
+    r.max_data_len   = { start: s + 2, end: s + 3 }
+    r.prev_server_id = { start: s + 3, end: s + 4 }
+    r.prev_flag      = { start: s + 4, end: s + 5 }
+  } else if (t === 'event_transfer') {
+    // event_transfer wire layout: [subcommand(1), flag(1), unacked_count(1), data_len(1), data(N)]
+    const dataLen = typeof obj.data_len === 'string' && obj.data_len.length > 0 ? (parseInt(obj.data_len, 16) || 0) : 0
+    r.flag          = { start: s + 1, end: s + 2 }
+    r.unacked_count = { start: s + 2, end: s + 3 }
+    r.data_len      = { start: s + 3, end: s + 4 }
+    r.data          = { start: s + 4, end: s + 4 + dataLen }
+  } else if (t === 'event_config') {
+    // event_config wire layout: [subcommand(1), data_len(1), data(N)]
+    const dataLen = typeof obj.data_len === 'string' && obj.data_len.length > 0 ? (parseInt(obj.data_len, 16) || 0) : 0
+    r.data_len = { start: s + 1, end: s + 2 }
+    r.data     = { start: s + 2, end: s + 2 + dataLen }
   } else if (t === 'rtu_frame') {
     r.address = { start: s, end: s + 1 }
     const rawLen = (obj.raw as string ?? '').length / 2
@@ -466,7 +498,30 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
     if (k === 'crc' && crcStatus) {
       value = `${value} (${crcStatus})`
     }
-    rows.push({ depth: depth + 1, label, key: k, value, tooltip: FIELD_TOOLTIPS[k], byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
+    let valueTooltip: string | undefined = undefined
+    if (k === 'subcommand' && typeof v === 'string') {
+      valueTooltip = FM_SUBCOMMAND_TOOLTIPS[v.toUpperCase()] ?? undefined
+    }
+    if ((k === 'address' || k === 'modbus_address') && typeof v === 'string') {
+      const dec = parseInt(v, 16)
+      const note = ADDR_NOTES[dec]
+      if (note) valueTooltip = `0x${v.toUpperCase()} — ${note}`
+    }
+    if (k === 'ext_byte' && typeof v === 'string') {
+      valueTooltip = EXT_BYTE_NAMES[v.toUpperCase()] ?? undefined
+    }
+    if ((k === 'fc' || k === 'function_code') && typeof v === 'string') {
+      const upper = v.toUpperCase()
+      const num = parseInt(upper, 16)
+      if (num & 0x80) {
+        const origHex = (num & 0x7f).toString(16).toUpperCase().padStart(2, '0')
+        valueTooltip = `Exception response for FC 0x${origHex} (${FC_DISPLAY_NAMES[origHex] ?? 'Unknown'})`
+      } else {
+        const name = FC_DISPLAY_NAMES[upper]
+        if (name) valueTooltip = name
+      }
+    }
+    rows.push({ depth: depth + 1, label, key: k, value, tooltip: FIELD_TOOLTIPS[k], valueTooltip, byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
   }
 
   if ((obj as Record<string, unknown>).reserved_address) {
