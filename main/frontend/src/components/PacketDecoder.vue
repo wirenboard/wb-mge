@@ -185,7 +185,7 @@ const chunks32 = computed<Chunk32[]>(() => {
             </template>
 
             <template v-else-if="row.isField">
-              <span class="tree-key">{{ row.label }}</span>
+              <span class="tree-key" :title="row.tooltip">{{ row.label }}</span>
               <span :class="['tree-val', { 'tree-val-error': row.isError }]">{{ row.value }}</span>
               <!-- Magnifier icon for data fields — opens interpretation popup -->
               <span v-if="row.isDataField && leafBytes.length >= 2" class="data-icon-btn" title="Interpret data" @click.stop="showDataPopup = !showDataPopup">

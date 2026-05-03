@@ -149,6 +149,65 @@ export const FIELD_LABELS: Record<string, string> = {
   flag: 'Packet flag', unacked_count: 'Unacked events', data_len: 'Data length',
 }
 
+export const FIELD_TOOLTIPS: Record<string, string> = {
+  address: 'Slave address (1 byte). Identifies the target device on the RS-485 bus. 0x00 = broadcast; 0xFD = Fast Modbus broadcast.',
+  crc: 'Cyclic Redundancy Check (2 bytes, little-endian). Used to detect transmission errors in the RTU frame.',
+  ext_byte: 'Fast Modbus extension marker byte (0x46 or 0x60). Signals that this is a Fast Modbus command rather than standard Modbus RTU.',
+  subcommand: 'Fast Modbus subcommand byte. Specifies the exact operation within the Fast Modbus protocol (scan, event, etc.).',
+  serial_number: 'Unique 4-byte factory serial number of the device. Used in Fast Modbus to address a specific device before it has a Modbus address assigned.',
+  modbus_address: 'Modbus slave address assigned to the device during scan. This is the address the device will use for standard Modbus communication.',
+  fc: 'Function code (1 byte). Specifies the Modbus operation to perform (read registers, write coils, etc.).',
+  function_code: 'Function code of the nested Modbus PDU carried inside this Fast Modbus command.',
+  register: 'Register address in the device address space.',
+  count: 'Number of registers or coils to read/write.',
+  value: 'Value to write to the register or coil.',
+  byte_count: 'Number of data bytes that follow in this PDU.',
+  data: 'Raw payload bytes. The meaning depends on the function code and direction.',
+  sub_function: 'Sub-function code for the Diagnostics command (FC 08). Specifies the exact diagnostic operation.',
+  status: 'Communication status word returned by the device.',
+  event_count: 'Number of Modbus events (messages) that the device has processed since last reset.',
+  message_count: 'Total number of messages the device has detected on the bus since last reset.',
+  events: 'Event log bytes. Each byte encodes one bus event as defined by the Modbus specification.',
+  read_register: 'Starting address of the registers to read in a Read/Write Multiple Registers request.',
+  read_count: 'Number of registers to read in a Read/Write Multiple Registers request.',
+  write_register: 'Starting address of the registers to write in a Read/Write Multiple Registers request.',
+  write_count: 'Number of registers to write in a Read/Write Multiple Registers request.',
+  write_byte_count: 'Number of bytes of write data that follow.',
+  write_data: 'Data to write into the registers.',
+  fifo_pointer: 'Pointer to the FIFO queue register to read from.',
+  fifo_count: 'Number of data words currently in the FIFO queue.',
+  mei_type: 'MEI (Modbus Encapsulated Interface) type byte. 0x0E = Read Device Identification; 0x0D = CANopen.',
+  read_device_id_code: 'Specifies which set of device identification objects to read: 0x01 = Basic, 0x02 = Regular, 0x03 = Extended, 0x04 = specific object.',
+  object_id: 'Object identifier for the specific device identification object being requested.',
+  conformity_level: 'Device identification conformity level. Indicates which identification objects the device supports.',
+  more_follows: 'Indicates whether more identification objects follow: 0x00 = no more, 0xFF = more available.',
+  next_object_id: 'Object ID to use in the next request when more_follows = 0xFF.',
+  number_of_objects: 'Number of identification objects contained in this response.',
+  original_fc: 'The original function code that caused the exception (FC with bit 7 cleared).',
+  error_code: 'Modbus exception code. 0x01=Illegal Function, 0x02=Illegal Data Address, 0x03=Illegal Data Value, 0x04=Server Failure.',
+  reason: 'Internal parse error reason. Indicates why the packet could not be decoded.',
+  output_data: 'Output data byte returned in the Read Exception Status response.',
+  server_id: 'Device server ID returned in the Report Server ID response.',
+  run_indicator: 'Run indicator status: 0xFF = device is running, 0x00 = device is stopped.',
+  additional_data: 'Additional device-specific data appended to the Report Server ID response.',
+  and_mask: 'AND mask for the Mask Write Register operation. Applied first: result = (current AND and_mask) OR or_mask.',
+  or_mask: 'OR mask for the Mask Write Register operation. Applied after AND mask.',
+  request_data_length: 'Total byte length of all sub-request records in a Write File Record request.',
+  resp_data_length: 'Total byte length of all sub-response records in a Read File Record response.',
+  reference_type: 'Reference type field in file record operations. Must be 0x06 per Modbus specification.',
+  file_number: 'File number to access in file record operations.',
+  record_number: 'Record number within the file to read or write.',
+  record_length: 'Length of the record in 16-bit words.',
+  file_resp_length: 'Length of this sub-response in bytes, including the reference type byte.',
+  min_server_id: 'Minimum slave address the master is interested in for event polling. Devices with lower IDs skip responding.',
+  max_data_len: 'Maximum number of event data bytes the master can accept in the Event Transfer response.',
+  prev_server_id: 'Slave address of the device that responded in the previous event poll cycle. Used to continue round-robin polling.',
+  prev_flag: 'Packet flag from the previous Event Transfer response. Echoed back so the device knows its previous response was received.',
+  flag: 'Packet flag byte in the Event Transfer response. Encodes event type and sequence information.',
+  unacked_count: 'Number of unacknowledged events still pending in the device event queue.',
+  data_len: 'Length of the event data payload in bytes.',
+}
+
 /** Context-aware labels for the `register` field depending on PDU type */
 export const REGISTER_LABELS: Record<string, string> = {
   // Read commands (FC 01–04) and write-multiple (FC 0F, 10): starting address
@@ -183,6 +242,7 @@ export interface TreeRow {
   label: string;
   key?: string;
   value?: string;
+  tooltip?: string;   // native tooltip text shown on hover over the field label
   byteStart: number;
   byteEnd: number;
   isSection: boolean;
@@ -336,7 +396,7 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
     const bEnd = fr ? fr.end : range.end
     const isDataField = k === 'data' || k === 'write_data'
     const label = (k === 'register' && REGISTER_LABELS[t]) ? REGISTER_LABELS[t] : (FIELD_LABELS[k] ?? k)
-    rows.push({ depth: depth + 1, label, key: k, value: fmtVal(k, String(v)), byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
+    rows.push({ depth: depth + 1, label, key: k, value: fmtVal(k, String(v)), tooltip: FIELD_TOOLTIPS[k], byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
   }
 
   if ((obj as Record<string, unknown>).reserved_address) {
