@@ -515,17 +515,18 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
       if (note) valueTooltip = `0x${v.toUpperCase()} — ${note}`
     }
     if (k === 'ext_byte' && typeof v === 'string') {
-      valueTooltip = EXT_BYTE_NAMES[v.toUpperCase()] ?? undefined
+      const upper = v.toUpperCase()
+      // Provide a meaningful description distinguishing the two extension markers
+      if (upper === '46') valueTooltip = 'Fast Modbus extension marker (FC 0x46). Current standard variant used in all modern devices.'
+      else if (upper === '60') valueTooltip = 'Fast Modbus extension marker (FC 0x60). Legacy variant used in older firmware; deprecated but still accepted.'
     }
     if ((k === 'fc' || k === 'function_code') && typeof v === 'string') {
       const upper = v.toUpperCase()
       const num = parseInt(upper, 16)
+      // Only set a tooltip for error FC responses — the plain name is already visible inline via fmtVal()
       if (num & 0x80) {
         const origHex = (num & 0x7f).toString(16).toUpperCase().padStart(2, '0')
         valueTooltip = `Exception response for FC 0x${origHex} (${FC_DISPLAY_NAMES[origHex] ?? 'Unknown'})`
-      } else {
-        const name = FC_DISPLAY_NAMES[upper]
-        if (name) valueTooltip = name
       }
     }
     rows.push({ depth: depth + 1, label, key: k, value, tooltip: FIELD_TOOLTIPS[k], valueTooltip, byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField })
