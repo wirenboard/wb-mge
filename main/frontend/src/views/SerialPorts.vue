@@ -78,8 +78,8 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "save": "Сохранить",
     "io_bus_sub": "Чип WB-MIO, подключённый к RS-485 Port 2. Адрес по умолчанию 247.",
     "io_bus_enable": "Включить I/O Bus",
-    "port1_sub": "Клеммник · левый",
-    "port2_sub": "Клеммник · правый + I/O bus"
+    "port1_sub": "Левый клеммник",
+    "port2_sub": "Правый клеммник + I/O bus"
   },
   "kk": {
     "title": "Сериялық порттар",

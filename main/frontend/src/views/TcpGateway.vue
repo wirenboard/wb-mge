@@ -135,8 +135,8 @@ const portSubs = ['port1_sub', 'port2_sub'];
   "ru": {
     "title": "TCP-шлюз",
     "crumbs": "Настройки TCP-шлюза",
-    "port1_sub": "Клеммник · левый",
-    "port2_sub": "Клеммник · правый + I/O bus",
+    "port1_sub": "Левый клеммник",
+    "port2_sub": "Правый клеммник + I/O bus",
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",

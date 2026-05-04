@@ -27,7 +27,7 @@ export const messages = {
     save: 'Сохранить',
     dashboard: 'Обзор',
     network: 'Сеть',
-    serial_ports: 'Послед. порты',
+    serial_ports: 'Последовательные порты',
     tcp_gateway: 'TCP-шлюз',
     system: 'Система',
     login: 'Имя пользователя',
