@@ -22,7 +22,9 @@ const uploadTemplate = async () => {
   templateUploadResult.value = null;
   try {
     const prefix = import.meta.env.DEV ? 'api/' : '';
-    const text = await templateFile.value[0].text();
+    const rawText = await templateFile.value[0].text();
+    /* Minify JSON before upload to reduce heap pressure on the device */
+    const text = JSON.stringify(JSON.parse(rawText));
     const resp = await fetch(`${prefix}device-template`, {
       method: 'POST',
       body: text,
@@ -98,7 +100,8 @@ const installSelectedTemplate = async () => {
     try {
       const rawResp = await fetch(selectedTemplate.value, { signal: controller.signal });
       if (!rawResp.ok) throw new Error(`HTTP ${rawResp.status}`);
-      text = await rawResp.text();
+      /* Minify JSON before upload to reduce heap pressure on the device */
+      text = JSON.stringify(JSON.parse(await rawResp.text()));
     } finally {
       clearTimeout(timeoutId);
     }
