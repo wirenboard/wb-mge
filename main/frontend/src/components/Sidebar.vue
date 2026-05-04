@@ -5,6 +5,10 @@ import { useRoute, useRouter } from 'vue-router';
 import type { RouteRecordRaw } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
 import MenuIcon from '@/assets/menu.svg?component';
+import DocsIcon from '@/assets/docs.svg?component';
+import SupportIcon from '@/assets/support.svg?component';
+import ShopIcon from '@/assets/shop.svg?component';
+import LogoutIcon from '@/assets/logout.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
@@ -117,22 +121,20 @@ watch(
 
       <div class="sb-links">
         <a :href="documentation" target="_blank" class="sb-link">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l2 2v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM5 6h5M5 9h5M5 12h3"/></svg>
+          <DocsIcon />
           {{ t('link_docs') }}
         </a>
         <a :href="locale === 'ru' ? support : `mailto:${email}`" target="_blank" class="sb-link">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 4 6-4"/></svg>
+          <SupportIcon />
           {{ t('link_support') }}
         </a>
         <a :href="website" target="_blank" class="sb-link">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2h2l1.5 8.5a1 1 0 0 0 1 .8h6.3a1 1 0 0 0 1-.78L14 5H4"/><circle cx="6" cy="13.5" r="0.7"/><circle cx="12" cy="13.5" r="0.7"/></svg>
+          <ShopIcon />
           {{ t('link_buy') }}
         </a>
       </div>
       <RouterLink to="/logout" class="sidebar-logout">
-        <svg class="sidebar-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M10 11v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1M7 8h7m0 0l-2-2m2 2l-2 2" />
-        </svg>
+        <LogoutIcon class="sidebar-icon" />
         {{ t('logout') }}
       </RouterLink>
     </nav>
