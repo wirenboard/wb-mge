@@ -47,7 +47,7 @@ watch(
       <RouterLink to="/" class="sidebar-logo">
         <Logo alt="Wiren Board" />
       </RouterLink>
-      <div v-if="hostname" class="sidebar-hostname">{{ hostname }}</div>
+      <a v-if="hostname" :href="`http://${hostname}.local`" target="_blank" rel="noopener noreferrer" class="sidebar-hostname">{{ hostname }}</a>
     </div>
 
     <MenuIcon class="sidebar-burger" @click="isShowMenu = !isShowMenu" />
@@ -194,6 +194,7 @@ watch(
   color: var(--text-on-dark-muted);
   margin-top: 6px;
   word-break: break-all;
+  text-decoration: none;
 
   @media (max-width: 680px) {
     margin-top: 0;
