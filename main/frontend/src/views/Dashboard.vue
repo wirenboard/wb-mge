@@ -172,7 +172,7 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="kv">
               <div class="k">{{ t('firmware_version') }}</div>
               <div class="v firmware-row">
-                <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted" style="font-size:11.5px">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted" style="font-size:11.5px">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
+                <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
               </div>
             </div>

@@ -81,11 +81,11 @@ const isSaveDisabled = computed(() => {
         </div>
         <div class="field">
           <label :for="`${field}-fail_safe`">{{ t('failsafe') }}</label>
-          <div style="justify-self: end"><Switch :id="`${field}-fail_safe`" v-model="settings!.fail_safe" /></div>
+          <div class="switch-end"><Switch :id="`${field}-fail_safe`" v-model="settings!.fail_safe" /></div>
         </div>
         <div class="field">
           <label :for="`${field}-term`">{{ t('terminator') }}</label>
-          <div style="justify-self: end"><Switch :id="`${field}-term`" v-model="settings!.term" /></div>
+          <div class="switch-end"><Switch :id="`${field}-term`" v-model="settings!.term" /></div>
         </div>
       </div>
     </form>

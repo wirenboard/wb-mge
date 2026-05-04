@@ -117,7 +117,7 @@ const addNetwork = () => {
             <div class="card-body">
               <div class="field">
                 <label for="eth_dhcpc">{{ t('dhcp_client') }}</label>
-                <div style="justify-self: end"><Switch id="eth_dhcpc" v-model="data.ethernet.dhcpc" /></div>
+                <div class="switch-end"><Switch id="eth_dhcpc" v-model="data.ethernet.dhcpc" /></div>
               </div>
 
               <template v-if="!data.ethernet.dhcpc">
@@ -277,7 +277,7 @@ const addNetwork = () => {
 
                 <div class="field">
                   <label for="sta_dhcpc">{{ t('dhcp_client') }}</label>
-                  <div style="justify-self: end"><Switch id="sta_dhcpc" v-model="data.wifi.sta_dhcpc" /></div>
+                  <div class="switch-end"><Switch id="sta_dhcpc" v-model="data.wifi.sta_dhcpc" /></div>
                 </div>
 
                 <template v-if="!data.wifi.sta_dhcpc">
