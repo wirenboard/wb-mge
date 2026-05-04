@@ -1,0 +1,59 @@
+{
+    "title": "WB-MSW v.4 (minimal test)",
+    "device_type": "WB-MSW v.4",
+    "group": "g-wb",
+    "device": {
+        "name": "WB-MSW v.4",
+        "id": "wb-msw-v4",
+        "max_read_registers": 10,
+        "response_timeout_ms": 1,
+        "frame_timeout_ms": 15,
+        "channels": [
+            {
+                "name": "Temperature",
+                "reg_type": "input",
+                "address": 4,
+                "type": "temperature",
+                "format": "s16",
+                "scale": 0.1,
+                "round_to": 0.1,
+                "error_value": "0x7FFF"
+            },
+            {
+                "name": "Humidity",
+                "reg_type": "input",
+                "address": 5,
+                "type": "value",
+                "format": "s16",
+                "scale": 0.1,
+                "round_to": 0.1,
+                "error_value": "0x7FFF"
+            },
+            {
+                "name": "CO2",
+                "reg_type": "input",
+                "address": 8,
+                "type": "concentration",
+                "format": "u16",
+                "error_value": "0xFFFF"
+            },
+            {
+                "name": "Illuminance",
+                "reg_type": "input",
+                "address": 9,
+                "type": "lux",
+                "format": "u32",
+                "scale": 1e-3,
+                "round_to": 0.001,
+                "error_value": "0xFFFFFFFF"
+            },
+            {
+                "name": "Motion",
+                "reg_type": "input",
+                "address": 6,
+                "type": "switch",
+                "format": "u16"
+            }
+        ]
+    }
+}
