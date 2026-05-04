@@ -156,20 +156,24 @@ const getDisplayValue = (val: string | boolean | number) => {
               <div class="kv-row-key">{{ t('power') }}</div>
               <div class="kv-row-value mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
             </div>
-            <template v-if="uptime">
-              <div class="kv-row">
-                <div class="kv-row-key">{{ t('uptime') }}</div>
-                <div class="kv-row-value muted uptime-value">
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('uptime') }}</div>
+              <div class="kv-row-value muted uptime-value">
+                <template v-if="uptime">
                   <template v-if="uptime.days">
                     <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
                   </template>
                   <template v-if="uptime.hours">
                     <span>{{ t('uptime_hours', { n: uptime.hours }) }}</span>
                   </template>
-                  <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
-                </div>
+                  <span v-if="uptime.minutes > 0 || (!uptime.days && !uptime.hours && !uptime.seconds)">{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+                  <span v-if="uptime.seconds > 0 || (!uptime.days && !uptime.hours && !uptime.minutes)">{{ t('uptime_seconds', { n: uptime.seconds }) }}</span>
+                </template>
+                <template v-else>
+                  <span>—</span>
+                </template>
               </div>
-            </template>
+            </div>
             <div class="kv-row">
               <div class="kv-row-key">{{ t('firmware_version') }}</div>
               <div class="kv-row-value firmware-row">
@@ -275,8 +279,9 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Settings",
     "uptime": "Uptime",
     "uptime_days": "- | {n} day | {n} days | {n} days",
-    "uptime_hours": "less than an hour | {n} h | {n} h | {n} h",
-    "uptime_minutes": "{n} min",
+    "uptime_hours": "less than an hour | {n} hour | {n} hours | {n} hours",
+    "uptime_minutes": "minute | {n} minute | {n} minutes | {n} minutes",
+    "uptime_seconds": "second | {n} second | {n} seconds | {n} seconds",
     "firmware_version": "Firmware",
     "firmware_latest": "up to date",
     "firmware_latest_label": "latest",
@@ -314,8 +319,9 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Настройки",
     "uptime": "Время работы",
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
-    "uptime_hours": "- | {n} ч | {n} ч | {n} ч",
-    "uptime_minutes": "{n} мин",
+    "uptime_hours": "- | {n} час | {n} часа | {n} часов",
+    "uptime_minutes": "минута | {n} минута | {n} минуты | {n} минут",
+    "uptime_seconds": "секунда | {n} секунда | {n} секунды | {n} секунд",
     "firmware_version": "Прошивка",
     "firmware_latest": "актуальная",
     "firmware_latest_label": "последняя",
@@ -353,8 +359,9 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Баптаулар",
     "uptime": "Жұмыс уақыты",
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
-    "uptime_hours": "- | {n} сағ | {n} сағ | {n} сағ",
-    "uptime_minutes": "{n} мин",
+    "uptime_hours": "бір сағаттан аз | {n} сағат | {n} сағат | {n} сағат",
+    "uptime_minutes": "минут | {n} минут | {n} минут | {n} минут",
+    "uptime_seconds": "секунд | {n} секунд | {n} секунд | {n} секунд",
     "firmware_version": "Бағдарлама",
     "firmware_latest": "өзекті",
     "firmware_latest_label": "соңғы",
@@ -392,8 +399,9 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Impostazioni",
     "uptime": "Tempo di attività",
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
-    "uptime_hours": "- | {n} h | {n} h | {n} h",
-    "uptime_minutes": "{n} min",
+    "uptime_hours": "meno di un'ora | {n} ora | {n} ore | {n} ore",
+    "uptime_minutes": "minuto | {n} minuto | {n} minuti | {n} minuti",
+    "uptime_seconds": "secondo | {n} secondo | {n} secondi | {n} secondi",
     "firmware_version": "Firmware",
     "firmware_latest": "aggiornato",
     "firmware_latest_label": "ultima",
@@ -431,8 +439,9 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Einstellungen",
     "uptime": "Betriebszeit",
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
-    "uptime_hours": "- | {n} h | {n} h | {n} h",
-    "uptime_minutes": "{n} min",
+    "uptime_hours": "weniger als eine Stunde | {n} Stunde | {n} Stunden | {n} Stunden",
+    "uptime_minutes": "Minute | {n} Minute | {n} Minuten | {n} Minuten",
+    "uptime_seconds": "Sekunde | {n} Sekunde | {n} Sekunden | {n} Sekunden",
     "firmware_version": "Firmware",
     "firmware_latest": "aktuell",
     "firmware_latest_label": "neueste",
