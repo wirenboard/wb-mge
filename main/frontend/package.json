@@ -9,7 +9,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource-variable/inter": "^5.2.8",
     "@unhead/vue": "2.0.12",
     "ky": "1.8.1",
     "vue": "3.5.17",
@@ -18,6 +17,7 @@
     "vue-router": "4.5.1"
   },
   "devDependencies": {
+    "@fontsource-variable/roboto": "^5.2.10",
     "@intlify/unplugin-vue-i18n": "4.0.0",
     "@types/node": "24.0.10",
     "@typescript-eslint/eslint-plugin": "6.21.0",
