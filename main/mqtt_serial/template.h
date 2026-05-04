@@ -63,7 +63,8 @@ typedef enum {
 /* A single channel extracted from the template                        */
 /* ------------------------------------------------------------------ */
 typedef struct {
-    char             *name;             /* channel name, heap-allocated           */
+    char             name[64];          /* channel name (null-terminated)         */
+    char             type[32];          /* WB type string, empty string if absent */
     reg_type_t        reg_type;         /* holding / input / coil / discrete      */
     uint32_t          address;          /* register address                       */
     reg_format_t      format;           /* data format for multi-word registers   */
@@ -83,7 +84,7 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 typedef struct {
     char         device_name[64];   /* device.name from template           */
-    char         device_id[64];     /* device.id  from template            */
+    char         device_id[32];     /* device.id  from template (short slug like "wb-map3e") */
     wb_channel_t *channels;         /* heap-allocated array                */
     int           num_channels;     /* length of the array                 */
 } wb_template_t;

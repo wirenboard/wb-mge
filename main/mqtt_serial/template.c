@@ -5,8 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <math.h>  /* NAN */
+#include "esp_system.h"  /* esp_get_free_heap_size */
+#include "esp_log.h"
+
+static const char *TAG_TMPL = "template";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -179,7 +184,17 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
         }
 
         wb_channel_t *c = &out->channels[count];
-        c->name     = strdup(name);
+        /* Copy channel name into fixed-size array; truncate if needed */
+        strncpy(c->name, name, sizeof(c->name) - 1);
+        c->name[sizeof(c->name) - 1] = '\0';
+        /* Parse WB type for Home Assistant device class mapping */
+        const char *type_str = json_str(ch, "type", NULL);
+        if (type_str) {
+            strncpy(c->type, type_str, sizeof(c->type) - 1);
+            c->type[sizeof(c->type) - 1] = '\0';
+        } else {
+            c->type[0] = '\0';
+        }
         c->reg_type = parse_reg_type(rt_str);
         c->format   = parse_format(fmt_str);
         c->address  = address;
@@ -256,7 +271,14 @@ int wb_template_parse(const char *path, wb_template_t *out)
     cJSON *root = cJSON_Parse(text);
     free(text);
     if (!root) {
-        fprintf(stderr, "template: JSON parse error\n");
+        /* Distinguish JSON syntax error from OOM */
+        const char *err = cJSON_GetErrorPtr();
+        uint32_t free_heap = esp_get_free_heap_size();
+        if (err) {
+            ESP_LOGE(TAG_TMPL, "JSON parse error near: '%.32s' (free heap: %"PRIu32" bytes)", err, free_heap);
+        } else {
+            ESP_LOGE(TAG_TMPL, "JSON parse failed — likely out of memory (free heap: %"PRIu32" bytes)", free_heap);
+        }
         return -1;
     }
 
@@ -269,7 +291,14 @@ int wb_template_parse_str(const char *json, wb_template_t *out)
 
     cJSON *root = cJSON_Parse(json);
     if (!root) {
-        fprintf(stderr, "template: JSON parse error\n");
+        /* Distinguish JSON syntax error from OOM */
+        const char *err = cJSON_GetErrorPtr();
+        uint32_t free_heap = esp_get_free_heap_size();
+        if (err) {
+            ESP_LOGE(TAG_TMPL, "JSON parse error near: '%.32s' (free heap: %"PRIu32" bytes)", err, free_heap);
+        } else {
+            ESP_LOGE(TAG_TMPL, "JSON parse failed — likely out of memory (free heap: %"PRIu32" bytes)", free_heap);
+        }
         return -1;
     }
 
@@ -279,9 +308,7 @@ int wb_template_parse_str(const char *json, wb_template_t *out)
 void wb_template_free(wb_template_t *t)
 {
     if (!t) return;
-    for (int i = 0; i < t->num_channels; i++) {
-        free(t->channels[i].name);
-    }
+    /* name and type are fixed-size arrays — no individual free needed */
     free(t->channels);
     memset(t, 0, sizeof(*t));
 }
