@@ -63,10 +63,40 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
 
 <i18n>
 {
-  "en": { "title": "Serial ports", "crumbs": "RS-485 interfaces", "save": "Save", "io_bus_sub": "WB-MIO chip connected to RS-485 Port 2. Default address 247.", "io_bus_enable": "Enable I/O Bus" },
-  "ru": { "title": "Последовательные порты", "crumbs": "Интерфейсы RS-485", "save": "Сохранить", "io_bus_sub": "Чип WB-MIO, подключённый к RS-485 Port 2. Адрес по умолчанию 247.", "io_bus_enable": "Включить I/O Bus" },
-  "kk": { "title": "Сериялық порттар", "crumbs": "RS-485 интерфейстері", "save": "Сақтау", "io_bus_sub": "RS-485 Port 2-ге қосылған WB-MIO чипі. Әдепкі адресі 247.", "io_bus_enable": "I/O Bus қосу" },
-  "it": { "title": "Porte seriali", "crumbs": "Interfacce RS-485", "save": "Salva", "io_bus_sub": "Chip WB-MIO collegato alla RS-485 Port 2. Indirizzo predefinito 247.", "io_bus_enable": "Abilita I/O Bus" },
-  "de": { "title": "Serielle Schnittstellen", "crumbs": "RS-485-Schnittstellen", "save": "Speichern", "io_bus_sub": "WB-MIO-Chip an RS-485 Port 2 angeschlossen. Standardadresse 247.", "io_bus_enable": "I/O Bus aktivieren" }
+  "en": {
+    "title": "Serial ports",
+    "crumbs": "RS-485 interfaces",
+    "save": "Save",
+    "io_bus_sub": "WB-MIO chip connected to RS-485 Port 2. Default address 247.",
+    "io_bus_enable": "Enable I/O Bus"
+  },
+  "ru": {
+    "title": "Последовательные порты",
+    "crumbs": "Интерфейсы RS-485",
+    "save": "Сохранить",
+    "io_bus_sub": "Чип WB-MIO, подключённый к RS-485 Port 2. Адрес по умолчанию 247.",
+    "io_bus_enable": "Включить I/O Bus"
+  },
+  "kk": {
+    "title": "Сериялық порттар",
+    "crumbs": "RS-485 интерфейстері",
+    "save": "Сақтау",
+    "io_bus_sub": "RS-485 Port 2-ге қосылған WB-MIO чипі. Әдепкі адресі 247.",
+    "io_bus_enable": "I/O Bus қосу"
+  },
+  "it": {
+    "title": "Porte seriali",
+    "crumbs": "Interfacce RS-485",
+    "save": "Salva",
+    "io_bus_sub": "Chip WB-MIO collegato alla RS-485 Port 2. Indirizzo predefinito 247.",
+    "io_bus_enable": "Abilita I/O Bus"
+  },
+  "de": {
+    "title": "Serielle Schnittstellen",
+    "crumbs": "RS-485-Schnittstellen",
+    "save": "Speichern",
+    "io_bus_sub": "WB-MIO-Chip an RS-485 Port 2 angeschlossen. Standardadresse 247.",
+    "io_bus_enable": "I/O Bus aktivieren"
+  }
 }
 </i18n>
