@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
@@ -38,6 +38,87 @@ const uploadTemplate = async () => {
     templateUploadResult.value = t('template_upload_error');
   } finally {
     isUploadingTemplate.value = false;
+  }
+};
+
+// GitHub template browser state
+const githubTemplates = ref<Array<{ name: string; download_url: string }>>([]);
+const isLoadingTemplates = ref(false);
+const templatesLoadError = ref<string | null>(null);
+const selectedTemplate = ref<string>('');         // stores download_url of selected template
+const templateFilter = ref<string>('');           // search filter text
+const isInstallingTemplate = ref(false);
+const installResult = ref<string | null>(null);
+
+// Computed filtered list
+const filteredTemplates = computed(() => {
+  if (!templateFilter.value) return githubTemplates.value;
+  const q = templateFilter.value.toLowerCase();
+  return githubTemplates.value.filter(tmpl => tmpl.name.toLowerCase().includes(q));
+});
+
+// Fetch list from GitHub API
+const loadTemplates = async () => {
+  isLoadingTemplates.value = true;
+  templatesLoadError.value = null;
+  githubTemplates.value = [];
+  selectedTemplate.value = '';
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const resp = await fetch(
+      'https://api.github.com/repos/wirenboard/wb-mqtt-serial/contents/templates',
+      { headers: { Accept: 'application/vnd.github.v3+json' }, signal: controller.signal }
+    );
+    if (resp.status === 403) throw new Error(t('github_rate_limit_error'));
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data: Array<{ name: string; download_url: string; type: string }> = await resp.json();
+    githubTemplates.value = data
+      .filter(f => f.type === 'file' && f.name.endsWith('.json'))
+      .map(f => ({ name: f.name.replace(/\.json$/, ''), download_url: f.download_url }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (e) {
+    templatesLoadError.value = t('github_load_error');
+  } finally {
+    clearTimeout(timeoutId);
+    isLoadingTemplates.value = false;
+  }
+};
+
+// Install selected template
+const installSelectedTemplate = async () => {
+  if (!selectedTemplate.value) return;
+  isInstallingTemplate.value = true;
+  installResult.value = null;
+  try {
+    // Fetch the raw template JSON from GitHub with a 15-second timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    let text: string;
+    try {
+      const rawResp = await fetch(selectedTemplate.value, { signal: controller.signal });
+      if (!rawResp.ok) throw new Error(`HTTP ${rawResp.status}`);
+      text = await rawResp.text();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    // Upload to device via existing endpoint
+    const prefix = import.meta.env.DEV ? 'api/' : '';
+    const uploadResp = await fetch(`${prefix}device-template`, {
+      method: 'POST',
+      body: text,
+    });
+    const json = await uploadResp.json();
+    if (json.success) {
+      installResult.value = t('template_uploaded_reboot');
+    } else {
+      installResult.value = json.error || t('template_upload_error');
+    }
+  } catch {
+    installResult.value = t('github_install_error');
+  } finally {
+    isInstallingTemplate.value = false;
   }
 };
 
@@ -177,6 +258,48 @@ const uploadTemplate = async () => {
             </div>
           </div>
         </section>
+
+        <section class="card">
+          <div class="card-header">
+            <div class="title">{{ t('github_template_title') }}</div>
+            <Button type="button" :is-loading="isLoadingTemplates" @click="loadTemplates">
+              {{ githubTemplates.length ? t('reload') : t('load_from_github') }}
+            </Button>
+          </div>
+          <div class="card-body">
+            <div v-if="templatesLoadError" class="field">
+              <span style="color: var(--color-danger, red); font-size: 0.875rem">{{ templatesLoadError }}</span>
+            </div>
+            <template v-if="githubTemplates.length">
+              <div class="field">
+                <label for="template_filter">{{ t('filter') }}</label>
+                <input id="template_filter" v-model="templateFilter" type="text" :placeholder="t('filter_placeholder')" />
+              </div>
+              <div class="field">
+                <label for="github_template_select">{{ t('select_template') }}</label>
+                <select id="github_template_select" v-model="selectedTemplate">
+                  <option value="" disabled>{{ t('choose_template') }}</option>
+                  <option v-for="tmpl in filteredTemplates" :key="tmpl.download_url" :value="tmpl.download_url">
+                    {{ tmpl.name }}
+                  </option>
+                </select>
+              </div>
+              <div class="field" style="justify-content: flex-end">
+                <Button
+                  type="button"
+                  :is-loading="isInstallingTemplate"
+                  :disabled="!selectedTemplate || isInstallingTemplate"
+                  @click="installSelectedTemplate"
+                >
+                  {{ t('install_template') }}
+                </Button>
+              </div>
+              <div v-if="installResult" class="field">
+                <span style="color: var(--color-text-secondary); font-size: 0.875rem">{{ installResult }}</span>
+              </div>
+            </template>
+          </div>
+        </section>
       </div>
     </div>
   </Layout>
@@ -208,7 +331,18 @@ const uploadTemplate = async () => {
     "template_upload": "Upload",
     "template_uploading": "Uploading...",
     "template_uploaded_reboot": "Template uploaded. Bridge restarting...",
-    "template_upload_error": "Upload failed"
+    "template_upload_error": "Upload failed",
+    "github_template_title": "Install from GitHub",
+    "load_from_github": "Load list",
+    "reload": "Reload",
+    "filter": "Filter",
+    "filter_placeholder": "Type to filter...",
+    "select_template": "Template",
+    "choose_template": "Select a template...",
+    "install_template": "Install",
+    "github_load_error": "Failed to load template list from GitHub",
+    "github_rate_limit_error": "Failed to load templates: GitHub API rate limit exceeded. Try again in an hour.",
+    "github_install_error": "Failed to install template"
   },
   "ru": {
     "title": "Serial-MQTT Bridge",
@@ -234,7 +368,18 @@ const uploadTemplate = async () => {
     "template_upload": "Загрузить",
     "template_uploading": "Загрузка...",
     "template_uploaded_reboot": "Шаблон загружен. Мост перезапускается...",
-    "template_upload_error": "Ошибка загрузки"
+    "template_upload_error": "Ошибка загрузки",
+    "github_template_title": "Установить с GitHub",
+    "load_from_github": "Загрузить список",
+    "reload": "Обновить",
+    "filter": "Фильтр",
+    "filter_placeholder": "Введите для фильтрации...",
+    "select_template": "Шаблон",
+    "choose_template": "Выберите шаблон...",
+    "install_template": "Установить",
+    "github_load_error": "Не удалось загрузить список шаблонов с GitHub",
+    "github_rate_limit_error": "Не удалось загрузить шаблоны: превышен лимит GitHub API. Повторите через час.",
+    "github_install_error": "Не удалось установить шаблон"
   },
   "kk": {
     "title": "Serial-MQTT Bridge",
@@ -260,7 +405,18 @@ const uploadTemplate = async () => {
     "template_upload": "Жүктеу",
     "template_uploading": "Жүктелуде...",
     "template_uploaded_reboot": "Шаблон жүктелді. Көпір қайта іске қосылуда...",
-    "template_upload_error": "Жүктеу қатесі"
+    "template_upload_error": "Жүктеу қатесі",
+    "github_template_title": "GitHub-тан орнату",
+    "load_from_github": "Тізімді жүктеу",
+    "reload": "Жаңарту",
+    "filter": "Сүзгі",
+    "filter_placeholder": "Іздеу...",
+    "select_template": "Үлгі",
+    "choose_template": "Үлгіні таңдаңыз...",
+    "install_template": "Орнату",
+    "github_load_error": "GitHub-тан үлгі тізімін жүктеу мүмкін болмады",
+    "github_rate_limit_error": "Үлгілерді жүктеу мүмкін болмады: GitHub API сұраулар шегі асты. Бір сағаттан кейін қайталаңыз.",
+    "github_install_error": "Үлгіні орнату мүмкін болмады"
   },
   "it": {
     "title": "Serial-MQTT Bridge",
@@ -286,7 +442,18 @@ const uploadTemplate = async () => {
     "template_upload": "Carica",
     "template_uploading": "Caricamento...",
     "template_uploaded_reboot": "Template caricato. Bridge in riavvio...",
-    "template_upload_error": "Errore di caricamento"
+    "template_upload_error": "Errore di caricamento",
+    "github_template_title": "Installa da GitHub",
+    "load_from_github": "Carica lista",
+    "reload": "Ricarica",
+    "filter": "Filtra",
+    "filter_placeholder": "Digita per filtrare...",
+    "select_template": "Template",
+    "choose_template": "Seleziona un template...",
+    "install_template": "Installa",
+    "github_load_error": "Impossibile caricare la lista dei template da GitHub",
+    "github_rate_limit_error": "Impossibile caricare i template: limite GitHub API raggiunto. Riprova tra un'ora.",
+    "github_install_error": "Impossibile installare il template"
   },
   "de": {
     "title": "Serial-MQTT Bridge",
@@ -312,7 +479,18 @@ const uploadTemplate = async () => {
     "template_upload": "Hochladen",
     "template_uploading": "Hochladen...",
     "template_uploaded_reboot": "Vorlage hochgeladen. Bridge wird neu gestartet...",
-    "template_upload_error": "Upload fehlgeschlagen"
+    "template_upload_error": "Upload fehlgeschlagen",
+    "github_template_title": "Von GitHub installieren",
+    "load_from_github": "Liste laden",
+    "reload": "Neu laden",
+    "filter": "Filter",
+    "filter_placeholder": "Zum Filtern eingeben...",
+    "select_template": "Vorlage",
+    "choose_template": "Vorlage auswählen...",
+    "install_template": "Installieren",
+    "github_load_error": "Vorlagenliste von GitHub konnte nicht geladen werden",
+    "github_rate_limit_error": "Vorlagen konnten nicht geladen werden: GitHub API-Limit überschritten. Versuche es in einer Stunde erneut.",
+    "github_install_error": "Vorlage konnte nicht installiert werden"
   }
 }
 </i18n>
