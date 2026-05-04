@@ -8,6 +8,8 @@
 #include "port_manager.h"   /* port_manager_set_mode / port_manager_get_mode */
 #include "mqtt_client.h"
 #include "template_handler.h"
+#include "sys_info.h"
+#include "cJSON.h"
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
@@ -42,7 +44,7 @@ static const char *TAG = "mqtt_serial_bridge";
 #define MB_SERIAL_OUTPUT_PIN_2  GPIO_NUM_14
 #define MB_SERIAL_IO_PIN_2      GPIO_NUM_15
 
-#define TOPIC_MAX   256
+#define TOPIC_MAX   512
 #define WRITE_QUEUE_DEPTH  8
 
 /* ------------------------------------------------------------------
@@ -66,6 +68,8 @@ typedef struct {
     int                      bridge_port_index; /* 0-based index for the port_manager port */
     pm_mode_t                saved_port_mode;   /* port mode to restore when the bridge stops */
     volatile bool            mqtt_connected;
+    volatile bool            needs_discovery_publish; /* set by MQTT event, consumed by bridge_task */
+    char                     avail_topic[TOPIC_MAX];  /* /devices/<id>/status */
 } bridge_ctx_t;
 
 static bridge_ctx_t    g_ctx;
@@ -78,6 +82,11 @@ static EventGroupHandle_t g_stop_eg   = NULL;
 /* ------------------------------------------------------------------
  * Topic helpers
  * ------------------------------------------------------------------ */
+/* Suppress format-truncation: inputs are always well-bounded
+ * (device_id<=31, ch_name<=63, buf==TOPIC_MAX=512) */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+
 static void make_value_topic(const char *dev_id, const char *ch_name, char *buf, int sz)
 {
     snprintf(buf, (size_t)sz, "/devices/%s/controls/%s", dev_id, ch_name);
@@ -86,6 +95,158 @@ static void make_value_topic(const char *dev_id, const char *ch_name, char *buf,
 static void make_set_topic(const char *dev_id, const char *ch_name, char *buf, int sz)
 {
     snprintf(buf, (size_t)sz, "/devices/%s/controls/%s/on", dev_id, ch_name);
+}
+
+static void make_availability_topic(const char *dev_id, char *buf, int sz)
+{
+    snprintf(buf, (size_t)sz, "/devices/%s/status", dev_id);
+}
+
+#pragma GCC diagnostic pop
+
+/* Replace any character not in [a-zA-Z0-9_-] with '_' */
+static void sanitize_for_unique_id(const char *src, char *dst, int dsz)
+{
+    int i = 0;
+    for (; src[i] && i < dsz - 1; i++) {
+        char c = src[i];
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '_' || c == '-') {
+            dst[i] = c;
+        } else {
+            dst[i] = '_';
+        }
+    }
+    dst[i] = '\0';
+}
+
+/* ------------------------------------------------------------------
+ * Build and publish HA MQTT discovery payload for all enabled channels.
+ * Uses the modern device-based discovery format:
+ *   homeassistant/device/<device_id>/config
+ * Called from bridge_task (not from MQTT event handler) to avoid
+ * overflowing the MQTT client task stack with large cJSON objects.
+ * ------------------------------------------------------------------ */
+static void ha_discovery_publish(bridge_ctx_t *b)
+{
+    if (b->tmpl.num_channels == 0) {
+        ESP_LOGI(TAG, "HA discovery: no channels, skipping");
+        return;
+    }
+
+    const char *dev_id   = b->tmpl.device_id;
+    const char *dev_name = b->tmpl.device_name;
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { ESP_LOGE(TAG, "HA discovery: cJSON alloc failed"); return; }
+
+    /* --- "dev" object ---- */
+    cJSON *dev = cJSON_CreateObject();
+    cJSON *ids = cJSON_CreateArray();
+    cJSON_AddItemToArray(ids, cJSON_CreateString(dev_id));
+    cJSON_AddItemToObject(dev, "ids",  ids);
+    cJSON_AddStringToObject(dev, "name", dev_name);
+    cJSON_AddStringToObject(dev, "mf",   "Wirenboard");
+    cJSON_AddStringToObject(dev, "sw",   sys_info.firmware_ver);
+    cJSON_AddItemToObject(root, "dev", dev);
+
+    /* --- "o" (origin) object ---- */
+    cJSON *origin = cJSON_CreateObject();
+    cJSON_AddStringToObject(origin, "name", "wb-mge");
+    cJSON_AddStringToObject(origin, "sw",   sys_info.firmware_ver);
+    cJSON_AddItemToObject(root, "o", origin);
+
+    /* --- "availability" array ---- */
+    cJSON *avail_arr = cJSON_CreateArray();
+    cJSON *avail_obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(avail_obj, "topic",               b->avail_topic);
+    cJSON_AddStringToObject(avail_obj, "payload_available",   "online");
+    cJSON_AddStringToObject(avail_obj, "payload_not_available", "offline");
+    cJSON_AddItemToArray(avail_arr, avail_obj);
+    cJSON_AddItemToObject(root, "availability", avail_arr);
+
+    /* --- "cmps" (components) object — one key per enabled channel ---- */
+    cJSON *cmps = cJSON_CreateObject();
+
+    char san_name[64];                    /* matches ch->name[64] */
+    char state_topic[TOPIC_MAX];
+
+    for (int i = 0; i < b->tmpl.num_channels; i++) {
+        wb_channel_t *ch = &b->tmpl.channels[i];
+        if (!ch->enabled) continue;
+
+        sanitize_for_unique_id(ch->name, san_name, sizeof(san_name));
+
+        /* Build unique_id: <dev_id>_<sanitized_channel_name> */
+        char unique_id[32 + 1 + 64];     /* device_id(31) + '_' + san_name(63) + '\0' */
+        snprintf(unique_id, sizeof(unique_id), "%s_%s", dev_id, san_name);
+
+        /* Build state_topic */
+        make_value_topic(dev_id, ch->name, state_topic, sizeof(state_topic));
+
+        cJSON *cmp = cJSON_CreateObject();
+        cJSON_AddStringToObject(cmp, "p",           "sensor");
+        cJSON_AddStringToObject(cmp, "name",        ch->name);
+        cJSON_AddStringToObject(cmp, "state_topic", state_topic);
+        cJSON_AddStringToObject(cmp, "unique_id",   unique_id);
+
+        /* Map WB type -> HA device_class / unit_of_measurement / state_class */
+        if (ch->type[0]) {
+            if (strcmp(ch->type, "voltage") == 0) {
+                cJSON_AddStringToObject(cmp, "device_class",        "voltage");
+                cJSON_AddStringToObject(cmp, "unit_of_measurement", "V");
+                cJSON_AddStringToObject(cmp, "state_class",         "measurement");
+            } else if (strcmp(ch->type, "current") == 0) {
+                cJSON_AddStringToObject(cmp, "device_class",        "current");
+                cJSON_AddStringToObject(cmp, "unit_of_measurement", "A");
+                cJSON_AddStringToObject(cmp, "state_class",         "measurement");
+            } else if (strcmp(ch->type, "power") == 0) {
+                cJSON_AddStringToObject(cmp, "device_class",        "power");
+                cJSON_AddStringToObject(cmp, "unit_of_measurement", "W");
+                cJSON_AddStringToObject(cmp, "state_class",         "measurement");
+            } else if (strcmp(ch->type, "power_consumption") == 0) {
+                cJSON_AddStringToObject(cmp, "device_class",        "energy");
+                cJSON_AddStringToObject(cmp, "unit_of_measurement", "kWh");
+                cJSON_AddStringToObject(cmp, "state_class",         "total_increasing");
+            } else if (strcmp(ch->type, "temperature") == 0) {
+                cJSON_AddStringToObject(cmp, "device_class",        "temperature");
+                cJSON_AddStringToObject(cmp, "unit_of_measurement", "°C");
+                cJSON_AddStringToObject(cmp, "state_class",         "measurement");
+            } else if (strcmp(ch->type, "frequency") == 0) {
+                cJSON_AddStringToObject(cmp, "device_class",        "frequency");
+                cJSON_AddStringToObject(cmp, "unit_of_measurement", "Hz");
+                cJSON_AddStringToObject(cmp, "state_class",         "measurement");
+            }
+            /* "value", "text", or unknown: no device_class / unit added */
+        }
+
+        cJSON_AddItemToObject(cmps, san_name, cmp);
+    }
+
+    cJSON_AddItemToObject(root, "cmps", cmps);
+
+    /* Serialize and publish */
+    char *payload = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+
+    if (!payload) {
+        ESP_LOGE(TAG, "HA discovery: cJSON_PrintUnformatted failed");
+        return;
+    }
+
+    char disc_topic[TOPIC_MAX];
+    snprintf(disc_topic, sizeof(disc_topic), "homeassistant/device/%s/config", dev_id);
+
+    int rc = esp_mqtt_client_publish(b->mqtt, disc_topic, payload, 0, 0, 1);
+    if (rc < 0) {
+        ESP_LOGE(TAG, "HA discovery publish failed");
+    } else {
+        ESP_LOGI(TAG, "HA discovery published to %s (%zu bytes)", disc_topic, strlen(payload));
+    }
+
+    free(payload);
 }
 
 /* ------------------------------------------------------------------
@@ -164,9 +325,16 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
         }
         {
             char topic[TOPIC_MAX];
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
             snprintf(topic, sizeof(topic), "/devices/%s/meta/name", b->tmpl.device_id);
+#pragma GCC diagnostic pop
             esp_mqtt_client_publish(b->mqtt, topic, b->tmpl.device_name, 0, 0, 1);
         }
+        /* Publish availability "online" with retain=1 */
+        esp_mqtt_client_publish(b->mqtt, b->avail_topic, "online", 0, 0, 1);
+        /* Subscribe to HA status topic to re-publish discovery when HA restarts */
+        esp_mqtt_client_subscribe(b->mqtt, "homeassistant/status", 0);
         for (int i = 0; i < b->tmpl.num_channels; i++) {
             wb_channel_t *ch = &b->tmpl.channels[i];
             if (ch->readonly) continue;
@@ -174,6 +342,8 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
             make_set_topic(b->tmpl.device_id, ch->name, set_topic, sizeof(set_topic));
             esp_mqtt_client_subscribe(b->mqtt, set_topic, 0);
         }
+        /* Signal bridge_task to publish HA discovery (keep heavy work out of MQTT task) */
+        b->needs_discovery_publish = true;
         break;
 
     case MQTT_EVENT_DATA: {
@@ -184,9 +354,26 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
         memcpy(topic, event->topic, (size_t)tlen);
         topic[tlen] = '\0';
 
-        /* Check prefix */
+        /* Re-publish HA discovery if Home Assistant has (re)started */
+        if (strcmp(topic, "homeassistant/status") == 0) {
+            char data_buf[16];
+            int copy_len = event->data_len < (int)sizeof(data_buf) - 1
+                           ? event->data_len : (int)sizeof(data_buf) - 1;
+            memcpy(data_buf, event->data, (size_t)copy_len);
+            data_buf[copy_len] = '\0';
+            if (strcmp(data_buf, "online") == 0) {
+                ESP_LOGI(TAG, "homeassistant/status=online, scheduling HA discovery republish");
+                b->needs_discovery_publish = true;
+            }
+            break;
+        }
+
+        /* Check prefix for writable channel commands */
         char prefix[TOPIC_MAX];
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
         snprintf(prefix, sizeof(prefix), "/devices/%s/controls/", b->tmpl.device_id);
+#pragma GCC diagnostic pop
         if (strncmp(topic, prefix, strlen(prefix)) != 0) break;
 
         const char *rest   = topic + strlen(prefix);
@@ -196,7 +383,7 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
         if (rest_len <= on_len) break;
         if (strcmp(rest + rest_len - on_len, on_suf) != 0) break;
 
-        char ch_name[256];
+        char ch_name[64];
         size_t name_len = rest_len - on_len;
         if (name_len >= sizeof(ch_name)) break;
         memcpy(ch_name, rest, name_len);
@@ -309,6 +496,15 @@ static void bridge_task(void *pvParameters)
         /* Check stop request */
         EventBits_t bits = xEventGroupGetBits(g_stop_eg);
         if (bits & EV_STOP_REQ) break;
+
+        /* Publish HA discovery if requested by MQTT event handler.
+         * Clear the flag BEFORE calling ha_discovery_publish so that
+         * a concurrent set from the MQTT task during the publish is
+         * not silently lost. */
+        if (b->needs_discovery_publish && b->mqtt_connected) {
+            b->needs_discovery_publish = false;
+            ha_discovery_publish(b);
+        }
 
         /* Drain pending write commands first */
         write_cmd_t cmd;
@@ -502,6 +698,9 @@ esp_err_t mqtt_serial_bridge_start(void)
     setting_items_read(KEY_MQTT_PASS, mqtt_pass);
     int mqtt_port = setting_items_read_int(KEY_MQTT_PORT);
 
+    /* Build the availability topic and store it in the context for later use */
+    make_availability_topic(g_ctx.tmpl.device_id, g_ctx.avail_topic, sizeof(g_ctx.avail_topic));
+
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.hostname  = mqtt_host,
         .broker.address.port      = (uint32_t)mqtt_port,
@@ -509,6 +708,14 @@ esp_err_t mqtt_serial_bridge_start(void)
         .credentials.client_id    = g_ctx.tmpl.device_id,
         .credentials.username     = mqtt_user[0] ? mqtt_user : NULL,
         .credentials.authentication.password = mqtt_pass[0] ? mqtt_pass : NULL,
+        /* LWT: broker publishes "offline" to availability topic if connection drops */
+        .session.last_will = {
+            .topic   = g_ctx.avail_topic,
+            .msg     = "offline",
+            .msg_len = 7,
+            .qos     = 0,
+            .retain  = 1,
+        },
     };
 
     g_ctx.mqtt = esp_mqtt_client_init(&mqtt_cfg);
