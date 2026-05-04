@@ -78,7 +78,7 @@ const login = async () => {
         </form>
       </div>
 
-      <div class="login-colophon">wirenboard.com</div>
+      <div class="login-colophon"><a href="https://wirenboard.com" target="_blank" rel="noopener noreferrer">wirenboard.com</a></div>
     </div>
 
     <div class="login-right"></div>
