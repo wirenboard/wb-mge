@@ -118,9 +118,9 @@ const updateInterface = () => {
                 <label for="hostname">{{ t('hostname_label') }}</label>
                 <input id="hostname" v-model="settings!.hostname" type="text" class="mono" name="hostname">
               </div>
-              <div class="kv">
-                <div class="k">{{ t('access_url_label') }}</div>
-                <a class="v mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('access_url_label') }}</div>
+                <a class="kv-row-value mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
               </div>
             </div>
           </form>
@@ -131,14 +131,14 @@ const updateInterface = () => {
             <div class="title">{{ t('device_info') }}</div>
           </div>
           <div class="card-body">
-            <div class="kv">
-              <div class="k">{{ t('serial_num') }}</div>
-              <div class="v mono">{{ info!.serial_num }}</div>
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('serial_num') }}</div>
+              <div class="kv-row-value mono">{{ info!.serial_num }}</div>
             </div>
             <template v-if="uptime">
-              <div class="kv">
-                <div class="k">{{ t('uptime') }}</div>
-                <div class="v muted uptime-value">
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('uptime') }}</div>
+                <div class="kv-row-value muted uptime-value">
                   <template v-if="uptime.days">
                     <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
                   </template>
@@ -168,9 +168,9 @@ const updateInterface = () => {
             </div>
           </div>
           <div class="card-body">
-            <div class="kv">
-              <div class="k">{{ t('power') }}</div>
-              <div class="v mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('power') }}</div>
+              <div class="kv-row-value mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
             </div>
           </div>
         </section>
@@ -237,9 +237,9 @@ const updateInterface = () => {
             <div class="title">{{ t('firmware') }}</div>
           </div>
           <div class="card-body">
-            <div class="kv">
-              <div class="k">{{ t('firmware_current') }}</div>
-              <div class="v firmware-version-row">
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('firmware_current') }}</div>
+              <div class="kv-row-value firmware-version-row">
                 <span>
                   <span class="mono">{{ info?.firmware }}</span>
                   <template v-if="latestVersion && !latestVersionError">
@@ -252,9 +252,9 @@ const updateInterface = () => {
                 </a>
               </div>
             </div>
-            <div class="kv">
-              <div class="k">{{ t('firmware_install') }}</div>
-              <div class="v">
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('firmware_install') }}</div>
+              <div class="kv-row-value">
                 <FileUpload
                   v-model="firmwareFile"
                   :placeholder="t('choose_firmware')"
@@ -267,9 +267,9 @@ const updateInterface = () => {
               </div>
               <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
             </div>
-            <div class="kv">
-              <div class="k">{{ t('reboot') }}</div>
-              <div class="v">
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('reboot') }}</div>
+              <div class="kv-row-value">
                 <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
               </div>
             </div>

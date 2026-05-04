@@ -10,32 +10,32 @@ const { t } = useI18n();
 
 <template>
   <div>
-    <div class="kv">
-      <div class="k">{{ t('modbus_mode') }}</div>
-      <div class="v">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
+    <div class="kv-row">
+      <div class="kv-row-key">{{ t('modbus_mode') }}</div>
+      <div class="kv-row-value">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
     </div>
-    <div class="kv">
-      <div class="k">{{ t('bridge_mode') }}</div>
-      <div class="v">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
+    <div class="kv-row">
+      <div class="kv-row-key">{{ t('bridge_mode') }}</div>
+      <div class="kv-row-value">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
     </div>
-    <div class="kv">
-      <div class="k">{{ t('tcp_port') }}</div>
-      <div class="v mono">{{ settings.bridge.port }}</div>
+    <div class="kv-row">
+      <div class="kv-row-key">{{ t('tcp_port') }}</div>
+      <div class="kv-row-value mono">{{ settings.bridge.port }}</div>
     </div>
-    <div class="kv">
-      <div class="k">{{ t('tcp_count') }}</div>
-      <div class="v">{{ info.server_connections_count }}</div>
+    <div class="kv-row">
+      <div class="kv-row-key">{{ t('tcp_count') }}</div>
+      <div class="kv-row-value">{{ info.server_connections_count }}</div>
     </div>
-    <div class="kv">
-      <div class="k">{{ t('status') }}</div>
-      <div class="v">{{ info.is_busy ? t('active') : t('not_active') }}</div>
-      <div class="hint">{{ t('status_info') }}</div>
+    <div class="kv-row">
+      <div class="kv-row-key">{{ t('status') }}</div>
+      <div class="kv-row-value">{{ info.is_busy ? t('active') : t('not_active') }}</div>
+      <div class="kv-row-hint">{{ t('status_info') }}</div>
     </div>
     <template v-if="settings.bridge.modbus">
-      <div class="kv">
-        <div class="k">{{ t('error_rate') }}</div>
-        <div class="v">{{ info.error_percentage }}%</div>
-        <div class="hint">{{ t('error_rate_description') }}</div>
+      <div class="kv-row">
+        <div class="kv-row-key">{{ t('error_rate') }}</div>
+        <div class="kv-row-value">{{ info.error_percentage }}%</div>
+        <div class="kv-row-hint">{{ t('error_rate_description') }}</div>
       </div>
     </template>
   </div>

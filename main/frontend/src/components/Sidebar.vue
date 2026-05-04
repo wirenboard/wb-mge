@@ -100,8 +100,8 @@ watch(
               <span class="dot" />{{ info.rs485_1.is_busy ? 'ACTIVE' : 'IDLE' }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-k">Mode</span><span class="sb-port-v">{{ savedSettings.rs485_1.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-row-key">Mode</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-row-key">Line</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
         </div>
         <div class="sb-port">
           <div class="sb-port-head">
@@ -110,8 +110,8 @@ watch(
               <span class="dot" />{{ info.rs485_2.is_busy ? 'ACTIVE' : 'IDLE' }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-k">Mode</span><span class="sb-port-v">{{ savedSettings.rs485_2.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-row-key">Mode</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-row-key">Line</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
         </div>
       </div>
 
@@ -368,11 +368,11 @@ watch(
   letter-spacing: 0.02em;
 }
 
-.sb-port-k {
+.sb-port-row-key {
   color: #6e7580;
 }
 
-.sb-port-v {
+.sb-port-row-value {
   color: var(--text-on-dark);
 }
 

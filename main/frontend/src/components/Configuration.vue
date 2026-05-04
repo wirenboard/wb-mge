@@ -38,22 +38,22 @@ const handleFileChange = () => {
       <div class="title">{{ t('configuration') }}</div>
     </div>
     <div class="card-body">
-      <div class="kv">
-        <div class="k">{{ t('export') }}</div>
-        <div class="v">
+      <div class="kv-row">
+        <div class="kv-row-key">{{ t('export') }}</div>
+        <div class="kv-row-value">
           <Button @click="downloadSettings">{{ t('downloadSettings') }}</Button>
         </div>
       </div>
-      <div class="kv">
-        <div class="k">{{ t('import') }}</div>
-        <div class="v">
+      <div class="kv-row">
+        <div class="kv-row-key">{{ t('import') }}</div>
+        <div class="kv-row-value">
           <Button @click="fileInput.click()">{{ t('uploadSettings') }}</Button>
           <input ref="fileInput" class="configuration-input" type="file" required accept=".json" @change="handleFileChange" />
         </div>
       </div>
-      <div class="kv">
-        <div class="k">{{ t('reset') }}</div>
-        <div class="v">
+      <div class="kv-row">
+        <div class="kv-row-key">{{ t('reset') }}</div>
+        <div class="kv-row-value">
           <Button type="button" variant="danger" :disabled="loadedMethod === 'set_default_settings'" @click="cmd('set_default_settings', t('factory_reset_confirm'))">
             {{ t('set_default_settings') }}
           </Button>

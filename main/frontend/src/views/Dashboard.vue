@@ -71,13 +71,13 @@ const getDisplayValue = (val: string | boolean | number) => {
             <span class="pill muted" v-else>{{ t('not_connected') }}</span>
           </div>
           <div class="card-body">
-            <div class="kv">
-              <div class="k">{{ t('ip') }}</div>
-              <div class="v mono">{{ getDisplayValue(info!.ethernet.ip) }}</div>
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('ip') }}</div>
+              <div class="kv-row-value mono">{{ getDisplayValue(info!.ethernet.ip) }}</div>
             </div>
-            <div class="kv">
-              <div class="k">{{ t('mac') }}</div>
-              <div class="v mono">{{ getDisplayValue(info!.ethernet.mac) }}</div>
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('mac') }}</div>
+              <div class="kv-row-value mono">{{ getDisplayValue(info!.ethernet.mac) }}</div>
             </div>
           </div>
         </section>
@@ -94,53 +94,53 @@ const getDisplayValue = (val: string | boolean | number) => {
             <span class="pill muted" v-else>{{ t('disabled') }}</span>
           </div>
           <div class="card-body">
-            <div class="kv">
-              <div class="k">{{ t('status') }}</div>
-              <div class="v">{{ getDisplayValue(info!.wifi.enabled) }}</div>
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('status') }}</div>
+              <div class="kv-row-value">{{ getDisplayValue(info!.wifi.enabled) }}</div>
             </div>
-            <div class="kv">
-              <div class="k">{{ t('wifi_mode') }}</div>
-              <div class="v">{{ t(info!.wifi.mode) }}</div>
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('wifi_mode') }}</div>
+              <div class="kv-row-value">{{ t(info!.wifi.mode) }}</div>
             </div>
 
             <template v-if="info!.wifi.mode === 'ap'">
-              <div class="kv">
-                <div class="k">{{ t('connections_count') }}</div>
-                <div class="v">{{ info!.wifi.con_ap }}</div>
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('connections_count') }}</div>
+                <div class="kv-row-value">{{ info!.wifi.con_ap }}</div>
               </div>
-              <div class="kv">
-                <div class="k">{{ t('ip') }}</div>
-                <div class="v mono">{{ info!.wifi.ap_ip }}</div>
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('ip') }}</div>
+                <div class="kv-row-value mono">{{ info!.wifi.ap_ip }}</div>
               </div>
-              <div class="kv">
-                <div class="k">{{ t('mac') }}</div>
-                <div class="v mono">{{ info!.wifi.ap_mac }}</div>
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('mac') }}</div>
+                <div class="kv-row-value mono">{{ info!.wifi.ap_mac }}</div>
               </div>
             </template>
 
             <template v-else-if="info!.wifi.mode === 'sta'">
-              <div class="kv">
-                <div class="k">{{ t('connection') }}</div>
-                <div class="v">{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</div>
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('connection') }}</div>
+                <div class="kv-row-value">{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</div>
               </div>
               <template v-if="info!.wifi.con_sta">
-                <div class="kv">
-                  <div class="k">{{ t('ssid') }}</div>
-                  <div class="v mono">{{ info!.wifi.con_sta_ssid }}</div>
+                <div class="kv-row">
+                  <div class="kv-row-key">{{ t('ssid') }}</div>
+                  <div class="kv-row-value mono">{{ info!.wifi.con_sta_ssid }}</div>
                 </div>
               </template>
-              <div class="kv">
-                <div class="k">{{ t('ip') }}</div>
-                <div class="v mono">{{ info!.wifi.sta_ip }}</div>
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('ip') }}</div>
+                <div class="kv-row-value mono">{{ info!.wifi.sta_ip }}</div>
               </div>
-              <div class="kv">
-                <div class="k">{{ t('mac') }}</div>
-                <div class="v mono">{{ info!.wifi.sta_mac }}</div>
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('mac') }}</div>
+                <div class="kv-row-value mono">{{ info!.wifi.sta_mac }}</div>
               </div>
               <template v-if="info!.wifi.enabled && info!.wifi.con_sta">
-                <div class="kv">
-                  <div class="k">{{ t('rssi') }}</div>
-                  <div class="v">{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</div>
+                <div class="kv-row">
+                  <div class="kv-row-key">{{ t('rssi') }}</div>
+                  <div class="kv-row-value">{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</div>
                 </div>
               </template>
             </template>
@@ -152,14 +152,14 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="title">{{ t('gateway') }}</div>
           </div>
           <div class="card-body">
-            <div class="kv">
-              <div class="k">{{ t('power') }}</div>
-              <div class="v mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('power') }}</div>
+              <div class="kv-row-value mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
             </div>
             <template v-if="uptime">
-              <div class="kv">
-                <div class="k">{{ t('uptime') }}</div>
-                <div class="v muted uptime-value">
+              <div class="kv-row">
+                <div class="kv-row-key">{{ t('uptime') }}</div>
+                <div class="kv-row-value muted uptime-value">
                   <template v-if="uptime.days">
                     <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
                   </template>
@@ -170,9 +170,9 @@ const getDisplayValue = (val: string | boolean | number) => {
                 </div>
               </div>
             </template>
-            <div class="kv">
-              <div class="k">{{ t('firmware_version') }}</div>
-              <div class="v firmware-row">
+            <div class="kv-row">
+              <div class="kv-row-key">{{ t('firmware_version') }}</div>
+              <div class="kv-row-value firmware-row">
                 <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
               </div>

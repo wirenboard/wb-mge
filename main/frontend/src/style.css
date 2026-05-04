@@ -176,7 +176,7 @@ legend {
 }
 
 /* Key/Value rows */
-.kv {
+.kv-row {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) auto;
   gap: 8px 16px;
@@ -185,14 +185,14 @@ legend {
   border-bottom: 1px dashed var(--border-color);
   font-size: 13px;
 }
-.kv:last-child { border-bottom: 0; }
-.kv .k { color: var(--text-secondary); }
-.kv .v { color: var(--text-color); text-align: right; }
+.kv-row:last-child { border-bottom: 0; }
+.kv-row-key { color: var(--text-secondary); }
+.kv-row-value { color: var(--text-color); text-align: right; }
 .mono { font-family: var(--font-mono); }
 .muted { color: var(--text-muted); }
-.kv .v.mono { font-size: 12.5px; }
-.kv .v.muted { color: var(--text-muted); }
-.kv .hint {
+.kv-row-value.mono { font-size: 12.5px; }
+.kv-row-value.muted { color: var(--text-muted); }
+.kv-row-hint {
   grid-column: 1 / -1;
   font-size: 11px;
   color: var(--text-muted);
