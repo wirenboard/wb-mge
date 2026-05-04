@@ -16,6 +16,45 @@ const templateFile = ref<FileList | null>(null);
 const isUploadingTemplate = ref(false);
 const templateUploadResult = ref<string | null>(null);
 
+/* Prepare a template for upload:
+   1. parse the raw JSON string into an object
+   2. strip channels with enabled === false to reduce heap pressure on the device
+   3. minify back to a JSON string to reduce transfer size */
+
+// Step 1: parse raw JSON text into a template object
+function parseTemplate(rawText: string): Record<string, unknown> {
+  return JSON.parse(rawText) as Record<string, unknown>;
+}
+
+// Step 2: remove channels explicitly disabled in the template
+function stripDisabledChannels(template: Record<string, unknown>): Record<string, unknown> {
+  if (template.device && Array.isArray((template.device as Record<string, unknown>).channels)) {
+    const device = template.device as Record<string, unknown>;
+    return {
+      ...template,
+      device: {
+        ...device,
+        channels: (device.channels as Array<Record<string, unknown>>).filter(
+          ch => ch.enabled !== false
+        ),
+      },
+    };
+  }
+  return template;
+}
+
+// Step 3: serialize template object back to a minified JSON string
+function minifyTemplate(template: Record<string, unknown>): string {
+  return JSON.stringify(template);
+}
+
+// Run all three steps in sequence
+function prepareTemplate(rawText: string): string {
+  const parsed = parseTemplate(rawText);
+  const stripped = stripDisabledChannels(parsed);
+  return minifyTemplate(stripped);
+}
+
 const uploadTemplate = async () => {
   if (!templateFile.value?.length) return;
   isUploadingTemplate.value = true;
@@ -23,8 +62,7 @@ const uploadTemplate = async () => {
   try {
     const prefix = import.meta.env.DEV ? 'api/' : '';
     const rawText = await templateFile.value[0].text();
-    /* Minify JSON before upload to reduce heap pressure on the device */
-    const text = JSON.stringify(JSON.parse(rawText));
+    const text = prepareTemplate(rawText);
     const resp = await fetch(`${prefix}device-template`, {
       method: 'POST',
       body: text,
@@ -100,8 +138,7 @@ const installSelectedTemplate = async () => {
     try {
       const rawResp = await fetch(selectedTemplate.value, { signal: controller.signal });
       if (!rawResp.ok) throw new Error(`HTTP ${rawResp.status}`);
-      /* Minify JSON before upload to reduce heap pressure on the device */
-      text = JSON.stringify(JSON.parse(await rawResp.text()));
+      text = prepareTemplate(await rawResp.text());
     } finally {
       clearTimeout(timeoutId);
     }
