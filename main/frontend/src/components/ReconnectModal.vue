@@ -69,7 +69,7 @@ onBeforeUnmount(() => clearInterval(timer.value));
   gap: 12px;
   margin: auto 24px;
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: 14.8px; /* +0.8px for Roboto */
   justify-self: center;
   box-shadow: 0 0 20px 4px rgba(0, 0, 0, 0.4);
   animation: appear 200ms forwards;

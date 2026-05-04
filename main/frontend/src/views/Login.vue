@@ -141,7 +141,7 @@ const login = async () => {
   border-radius: 999px;
   background: color-mix(in oklch, var(--bg-sidebar) 80%, black);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 11.8px; /* +0.8px for Roboto */
   letter-spacing: 0.02em;
   margin-bottom: 18px;
 }
@@ -171,7 +171,7 @@ const login = async () => {
 }
 
 .login-hero h1 {
-  font-size: 26px;
+  font-size: 26.8px; /* +0.8px for Roboto */
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.22;
@@ -185,7 +185,7 @@ const login = async () => {
 }
 
 .login-hero p {
-  font-size: 13px;
+  font-size: 13.8px; /* +0.8px for Roboto */
   line-height: 1.6;
   color: var(--text-on-dark-muted);
   margin: 0;
@@ -202,7 +202,7 @@ const login = async () => {
 }
 
 .login-field label {
-  font-size: 11px;
+  font-size: 11.8px; /* +0.8px for Roboto */
   color: var(--text-on-dark-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -218,7 +218,7 @@ const login = async () => {
   color: var(--text-on-dark);
   padding: 0 0 8px;
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 14.8px; /* +0.8px for Roboto */
   transition: border-color 0.12s;
   border-radius: 0;
 }
@@ -239,7 +239,7 @@ const login = async () => {
   border-radius: 6px;
   background: var(--brand-on-dark);
   color: #0e1114;
-  font-size: 13px;
+  font-size: 13.8px; /* +0.8px for Roboto */
   font-weight: 600;
   letter-spacing: 0.01em;
   cursor: pointer;
@@ -261,7 +261,7 @@ const login = async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 12px;
+  font-size: 12.8px; /* +0.8px for Roboto */
   color: var(--text-on-dark-muted);
 }
 
@@ -283,7 +283,7 @@ const login = async () => {
 .login-lang {
   border: 0;
   box-shadow: none;
-  font-size: 12px;
+  font-size: 12.8px; /* +0.8px for Roboto */
   background: none;
   color: var(--text-on-dark-muted);
   cursor: pointer;
@@ -296,7 +296,7 @@ const login = async () => {
 }
 
 .login-colophon {
-  font-size: 11px;
+  font-size: 11.8px; /* +0.8px for Roboto */
   color: var(--text-on-dark-dim);
   font-family: var(--font-mono);
 }

@@ -16,7 +16,7 @@ defineProps<{ text: string; severity?: 'info' | 'error' }>();
 <style>
 .info {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 11.8px; /* +0.8px for Roboto */
   margin-top: -6px;
   display: flex;
   align-items: center;

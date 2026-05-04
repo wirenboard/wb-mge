@@ -181,7 +181,7 @@ watch(
 }
 
 .sidebar-hostname {
-  font-size: 11px;
+  font-size: 11.8px; /* +0.8px for Roboto */
   color: var(--text-on-dark-muted);
   margin-top: 6px;
   word-break: break-all;
@@ -218,7 +218,7 @@ watch(
 }
 
 .group-label {
-  font-size: 10px;
+  font-size: 10.8px; /* +0.8px for Roboto */
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: #6e7580;
@@ -234,7 +234,7 @@ watch(
   align-items: center;
   gap: 10px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 13.8px; /* +0.8px for Roboto */
   line-height: 1.2;
   transition: background 0.1s;
 }
@@ -311,7 +311,7 @@ watch(
 }
 
 .sb-port-name {
-  font-size: 12px;
+  font-size: 12px; /* original size — data display block */
   font-weight: 600;
   color: #fff;
   letter-spacing: 0.01em;
@@ -321,7 +321,7 @@ watch(
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: 10px; /* original size — data display block */
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 500;
@@ -353,7 +353,7 @@ watch(
 .sb-port-row {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 11px; /* original size — data display block */
   color: var(--text-on-dark-muted);
 }
 
@@ -379,7 +379,7 @@ watch(
 .sidebar-navigation a.sb-link {
   padding: 6px 10px;
   color: var(--text-on-dark-muted);
-  font-size: 12px;
+  font-size: 12.8px; /* +0.8px for Roboto */
   gap: 9px;
 }
 
@@ -396,7 +396,7 @@ watch(
   border-radius: 0;
   color: var(--text-on-dark-muted);
   text-decoration: none;
-  font-size: 12px;
+  font-size: 12.8px; /* +0.8px for Roboto */
   display: flex;
   align-items: center;
   gap: 9px;

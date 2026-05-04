@@ -58,17 +58,17 @@ watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostnam
 }
 
 .heading-title {
-  font-size: 20px;
+  font-size: 20.8px; /* +0.8px for Roboto */
   font-weight: 600;
   letter-spacing: -0.01em;
 
   @media (max-width: 500px) {
-    font-size: 18px;
+    font-size: 18.8px; /* +0.8px for Roboto */
   }
 }
 
 .heading-crumbs {
-  font-size: 12px;
+  font-size: 12.8px; /* +0.8px for Roboto */
   color: var(--text-muted);
   margin-top: 4px;
   font-weight: 400;

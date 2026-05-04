@@ -33,7 +33,7 @@ const emit = defineEmits(['click']);
   padding: 0 12px;
   border-radius: var(--r-md);
   font-family: var(--font-ui);
-  font-size: 12.5px;
+  font-size: 13.3px; /* +0.8px for Roboto */
   font-weight: 500;
   line-height: 1;
   border: 1px solid var(--border-strong);
