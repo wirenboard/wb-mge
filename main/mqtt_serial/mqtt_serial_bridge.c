@@ -69,7 +69,9 @@ typedef struct {
     pm_mode_t                saved_port_mode;   /* port mode to restore when the bridge stops */
     volatile bool            mqtt_connected;
     volatile bool            needs_discovery_publish; /* set by MQTT event, consumed by bridge_task */
-    char                     avail_topic[TOPIC_MAX];  /* /devices/<id>/status */
+    char                     avail_topic[TOPIC_MAX];  /* modbusmqtt/<gw>/<dev>/status */
+    char                     gateway_id[64];           /* hostname of the gateway, e.g. "wb-mge-30d7cf" */
+    char                     full_device_id[64];       /* "<device_id>-<slave_id>", e.g. "wb-msw-v4-131" */
 } bridge_ctx_t;
 
 static bridge_ctx_t    g_ctx;
@@ -83,23 +85,28 @@ static EventGroupHandle_t g_stop_eg   = NULL;
  * Topic helpers
  * ------------------------------------------------------------------ */
 /* Suppress format-truncation: inputs are always well-bounded
- * (device_id<=31, ch_name<=63, buf==TOPIC_MAX=512) */
+ * (gw_id<=63, full_dev_id<=63, ch_name<=63, buf==TOPIC_MAX=512) */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 
-static void make_value_topic(const char *dev_id, const char *ch_name, char *buf, int sz)
+static void make_value_topic(const char *gw_id, const char *full_dev_id,
+                              const char *ch_name, char *buf, int sz)
 {
-    snprintf(buf, (size_t)sz, "/devices/%s/controls/%s", dev_id, ch_name);
+    snprintf(buf, (size_t)sz, "modbusmqtt/%s/%s/controls/%s",
+             gw_id, full_dev_id, ch_name);
 }
 
-static void make_set_topic(const char *dev_id, const char *ch_name, char *buf, int sz)
+static void make_set_topic(const char *gw_id, const char *full_dev_id,
+                            const char *ch_name, char *buf, int sz)
 {
-    snprintf(buf, (size_t)sz, "/devices/%s/controls/%s/on", dev_id, ch_name);
+    snprintf(buf, (size_t)sz, "modbusmqtt/%s/%s/controls/%s/on",
+             gw_id, full_dev_id, ch_name);
 }
 
-static void make_availability_topic(const char *dev_id, char *buf, int sz)
+static void make_availability_topic(const char *gw_id, const char *full_dev_id,
+                                     char *buf, int sz)
 {
-    snprintf(buf, (size_t)sz, "/devices/%s/status", dev_id);
+    snprintf(buf, (size_t)sz, "modbusmqtt/%s/%s/status", gw_id, full_dev_id);
 }
 
 #pragma GCC diagnostic pop
@@ -136,8 +143,8 @@ static void ha_discovery_publish(bridge_ctx_t *b)
         return;
     }
 
-    const char *dev_id   = b->tmpl.device_id;
-    const char *dev_name = b->tmpl.device_name;
+    const char *full_dev_id = b->full_device_id;  /* "<device_id>-<slave_id>", e.g. "wb-msw-v4-131" */
+    const char *dev_name    = b->tmpl.device_name;
 
     cJSON *root = cJSON_CreateObject();
     if (!root) { ESP_LOGE(TAG, "HA discovery: cJSON alloc failed"); return; }
@@ -145,7 +152,7 @@ static void ha_discovery_publish(bridge_ctx_t *b)
     /* --- "dev" object ---- */
     cJSON *dev = cJSON_CreateObject();
     cJSON *ids = cJSON_CreateArray();
-    cJSON_AddItemToArray(ids, cJSON_CreateString(dev_id));
+    cJSON_AddItemToArray(ids, cJSON_CreateString(full_dev_id));
     cJSON_AddItemToObject(dev, "ids",  ids);
     cJSON_AddStringToObject(dev, "name", dev_name);
     cJSON_AddStringToObject(dev, "mf",   "Wirenboard");
@@ -154,7 +161,7 @@ static void ha_discovery_publish(bridge_ctx_t *b)
 
     /* --- "o" (origin) object ---- */
     cJSON *origin = cJSON_CreateObject();
-    cJSON_AddStringToObject(origin, "name", "wb-mge");
+    cJSON_AddStringToObject(origin, "name", b->gateway_id);
     cJSON_AddStringToObject(origin, "sw",   sys_info.firmware_ver);
     cJSON_AddItemToObject(root, "o", origin);
 
@@ -179,12 +186,12 @@ static void ha_discovery_publish(bridge_ctx_t *b)
 
         sanitize_for_unique_id(ch->name, san_name, sizeof(san_name));
 
-        /* Build unique_id: <dev_id>_<sanitized_channel_name> */
-        char unique_id[32 + 1 + 64];     /* device_id(31) + '_' + san_name(63) + '\0' */
-        snprintf(unique_id, sizeof(unique_id), "%s_%s", dev_id, san_name);
+        /* Build unique_id: <full_device_id>_<sanitized_channel_name> */
+        char unique_id[64 + 1 + 64];  /* full_device_id(max ~35) + '_' + san_name(max 63) + '\0' */
+        snprintf(unique_id, sizeof(unique_id), "%s_%s", full_dev_id, san_name);
 
         /* Build state_topic */
-        make_value_topic(dev_id, ch->name, state_topic, sizeof(state_topic));
+        make_value_topic(b->gateway_id, full_dev_id, ch->name, state_topic, sizeof(state_topic));
 
         cJSON *cmp = cJSON_CreateObject();
         cJSON_AddStringToObject(cmp, "p",           "sensor");
@@ -237,7 +244,7 @@ static void ha_discovery_publish(bridge_ctx_t *b)
     }
 
     char disc_topic[TOPIC_MAX];
-    snprintf(disc_topic, sizeof(disc_topic), "homeassistant/device/%s/config", dev_id);
+    snprintf(disc_topic, sizeof(disc_topic), "homeassistant/device/%s/config", b->full_device_id);
 
     int rc = esp_mqtt_client_publish(b->mqtt, disc_topic, payload, 0, 0, 1);
     if (rc < 0) {
@@ -323,14 +330,6 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
             free(b->last_values[i]);
             b->last_values[i] = NULL;
         }
-        {
-            char topic[TOPIC_MAX];
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-truncation"
-            snprintf(topic, sizeof(topic), "/devices/%s/meta/name", b->tmpl.device_id);
-#pragma GCC diagnostic pop
-            esp_mqtt_client_publish(b->mqtt, topic, b->tmpl.device_name, 0, 0, 1);
-        }
         /* Publish availability "online" with retain=1 */
         esp_mqtt_client_publish(b->mqtt, b->avail_topic, "online", 0, 0, 1);
         /* Subscribe to HA status topic to re-publish discovery when HA restarts */
@@ -339,7 +338,7 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
             wb_channel_t *ch = &b->tmpl.channels[i];
             if (ch->readonly) continue;
             char set_topic[TOPIC_MAX];
-            make_set_topic(b->tmpl.device_id, ch->name, set_topic, sizeof(set_topic));
+            make_set_topic(b->gateway_id, b->full_device_id, ch->name, set_topic, sizeof(set_topic));
             esp_mqtt_client_subscribe(b->mqtt, set_topic, 0);
         }
         /* Signal bridge_task to publish HA discovery (keep heavy work out of MQTT task) */
@@ -372,7 +371,7 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
         char prefix[TOPIC_MAX];
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
-        snprintf(prefix, sizeof(prefix), "/devices/%s/controls/", b->tmpl.device_id);
+        snprintf(prefix, sizeof(prefix), "modbusmqtt/%s/%s/controls/", b->gateway_id, b->full_device_id);
 #pragma GCC diagnostic pop
         if (strncmp(topic, prefix, strlen(prefix)) != 0) break;
 
@@ -475,7 +474,7 @@ static int poll_channel(bridge_ctx_t *b, int idx)
     if (!b->mqtt_connected) return 0;
 
     char topic[TOPIC_MAX];
-    make_value_topic(b->tmpl.device_id, ch->name, topic, sizeof(topic));
+    make_value_topic(b->gateway_id, b->full_device_id, ch->name, topic, sizeof(topic));
     int r = esp_mqtt_client_publish(b->mqtt, topic, val_str, 0, 0, 1);
     if (r < 0)
         ESP_LOGE(TAG, "publish failed for %s", topic);
@@ -689,6 +688,23 @@ esp_err_t mqtt_serial_bridge_start(void)
     }
     g_ctx.slave_id = (uint8_t)slave_id;
 
+    /* Build gateway identifier from hostname setting */
+    char hostname_buf[SETTING_ITEM_MAX_STR_LEN] = {0};  /* same size as setting_items_read contract */
+    setting_items_read(KEY_HOSTNAME, hostname_buf);
+    if (hostname_buf[0] == '\0') {
+        strncpy(g_ctx.gateway_id, "wb-mge", sizeof(g_ctx.gateway_id) - 1);
+    } else {
+        strncpy(g_ctx.gateway_id, hostname_buf, sizeof(g_ctx.gateway_id) - 1);
+    }
+    g_ctx.gateway_id[sizeof(g_ctx.gateway_id) - 1] = '\0';
+
+    /* Build full device identifier: <device_id>-<slave_id> */
+    int written = snprintf(g_ctx.full_device_id, sizeof(g_ctx.full_device_id),
+                           "%s-%d", g_ctx.tmpl.device_id, (int)g_ctx.slave_id);
+    if (written >= (int)sizeof(g_ctx.full_device_id)) {
+        ESP_LOGW(TAG, "full_device_id truncated to '%s'", g_ctx.full_device_id);
+    }
+
     /* ---- Connect to MQTT ---- */
     char mqtt_host[SETTING_ITEM_MAX_STR_LEN] = {0};
     char mqtt_user[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -699,13 +715,13 @@ esp_err_t mqtt_serial_bridge_start(void)
     int mqtt_port = setting_items_read_int(KEY_MQTT_PORT);
 
     /* Build the availability topic and store it in the context for later use */
-    make_availability_topic(g_ctx.tmpl.device_id, g_ctx.avail_topic, sizeof(g_ctx.avail_topic));
+    make_availability_topic(g_ctx.gateway_id, g_ctx.full_device_id, g_ctx.avail_topic, sizeof(g_ctx.avail_topic));
 
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.hostname  = mqtt_host,
         .broker.address.port      = (uint32_t)mqtt_port,
         .broker.address.transport = MQTT_TRANSPORT_OVER_TCP,
-        .credentials.client_id    = g_ctx.tmpl.device_id,
+        .credentials.client_id    = g_ctx.full_device_id,
         .credentials.username     = mqtt_user[0] ? mqtt_user : NULL,
         .credentials.authentication.password = mqtt_pass[0] ? mqtt_pass : NULL,
         /* LWT: broker publishes "offline" to availability topic if connection drops */
