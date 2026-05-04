@@ -47,7 +47,7 @@ const login = async () => {
         <div v-if="hostname" class="login-chip">
           <span class="chip-kind">WB-MGE v3</span>
           <span class="chip-sep"></span>
-          <span class="chip-id">{{ hostname }}</span>
+          <a class="chip-id" :href="`http://${hostname}.local`" target="_blank" rel="noopener noreferrer">{{ hostname }}</a>
         </div>
 
         <div class="login-hero">
