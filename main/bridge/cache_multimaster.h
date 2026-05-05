@@ -87,11 +87,16 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
 /**
  * @brief Register the cache HTTP URI handlers with the given server instance.
  *
- * Registers four endpoints:
+ * Registers five endpoints:
  *  - POST /cache/enable   — enable caching
  *  - POST /cache/disable  — disable and clear caching
  *  - GET  /cache/status   — return enabled flag and entry count
  *  - GET  /cache/csv      — download cache as CSV
+ *  - GET  /cache/json     — stream cache as a compact JSON array (for UI polling)
+ *
+ * The JSON endpoint uses chunked transfer with no heap allocation and is
+ * optimised for frequent polling: short field names ("p","s","t","a","v","ts"),
+ * mutex released between chunks, no intermediate buffer allocation.
  *
  * @param server HTTP server handle.
  * @return ESP_OK on success.

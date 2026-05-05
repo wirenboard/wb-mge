@@ -415,6 +415,94 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/**
+ * GET /cache/json — stream all cached register values as a JSON array.
+ *
+ * Designed for frequent UI polling: no heap allocation, chunked transfer,
+ * mutex released between chunks to avoid stalling writers.
+ *
+ * Output format (compact, one object per entry):
+ *   [{"p":1,"s":3,"t":"h","a":100,"v":1234,"ts":1234567890},...]
+ *
+ * Field abbreviations (kept short for low-overhead JS parsing):
+ *   p  – port (1-based)
+ *   s  – slave_id
+ *   t  – type: "h"=holding, "i"=input, "c"=coil, "d"=discrete
+ *   a  – address (0-based)
+ *   v  – value
+ *   ts – timestamp_us
+ */
+static esp_err_t cache_json_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+
+    if (s_cache_mutex == NULL) {
+        const char *empty = "[]";
+        httpd_resp_send(req, empty, (ssize_t)strlen(empty));
+        return ESP_OK;
+    }
+
+    /* Opening bracket */
+    esp_err_t ret = httpd_resp_send_chunk(req, "[", 1);
+    if (ret != ESP_OK) return ret;
+
+    bool first = true;
+
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+
+    for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+        const cache_entry_t *e = &s_pool[i];
+        if (!e->used) continue;
+
+        /* Single-char type tag — shorter JSON, faster JS access */
+        char type_ch;
+        switch (e->type) {
+            case CACHE_TYPE_HOLDING:  type_ch = 'h'; break;
+            case CACHE_TYPE_INPUT:    type_ch = 'i'; break;
+            case CACHE_TYPE_COIL:     type_ch = 'c'; break;
+            case CACHE_TYPE_DISCRETE: type_ch = 'd'; break;
+            default:                  type_ch = '?'; break;
+        }
+
+        /* Stack-local buffer: max entry ~80 chars, prefix comma = 81 */
+        char buf[96];
+        int len = snprintf(buf, sizeof(buf),
+                           "%s{\"p\":%u,\"s\":%u,\"t\":\"%c\",\"a\":%u,\"v\":%u,\"ts\":%" PRIu64 "}",
+                           first ? "" : ",",
+                           (unsigned)(e->port + 1),
+                           (unsigned)e->slave_id,
+                           type_ch,
+                           (unsigned)e->address,
+                           (unsigned)e->value,
+                           e->timestamp_us);
+
+        if (len < 0 || len >= (int)sizeof(buf)) {
+            /* Should never happen with the chosen sizes; skip silently */
+            continue;
+        }
+
+        first = false;
+
+        /* Release mutex while sending to avoid blocking sniffer callbacks */
+        xSemaphoreGive(s_cache_mutex);
+        ret = httpd_resp_send_chunk(req, buf, (ssize_t)len);
+        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+
+        if (ret != ESP_OK) {
+            xSemaphoreGive(s_cache_mutex);
+            return ret;
+        }
+    }
+
+    xSemaphoreGive(s_cache_mutex);
+
+    /* Closing bracket + terminate chunked transfer */
+    ret = httpd_resp_send_chunk(req, "]", 1);
+    if (ret != ESP_OK) return ret;
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
 /* ---- URI descriptor tables ---------------------------------------------- */
 
 static const httpd_uri_t cache_enable_uri = {
@@ -441,6 +529,12 @@ static const httpd_uri_t cache_csv_uri = {
     .handler = cache_csv_handler,
 };
 
+static const httpd_uri_t cache_json_uri = {
+    .uri     = "/cache/json",
+    .method  = HTTP_GET,
+    .handler = cache_json_handler,
+};
+
 esp_err_t cache_multimaster_register_handlers(httpd_handle_t server)
 {
     esp_err_t ret;
@@ -454,5 +548,8 @@ esp_err_t cache_multimaster_register_handlers(httpd_handle_t server)
     ret = httpd_register_uri_handler(server, &cache_status_uri);
     if (ret != ESP_OK) return ret;
 
-    return httpd_register_uri_handler(server, &cache_csv_uri);
+    ret = httpd_register_uri_handler(server, &cache_csv_uri);
+    if (ret != ESP_OK) return ret;
+
+    return httpd_register_uri_handler(server, &cache_json_uri);
 }
