@@ -12,7 +12,7 @@
 #define TRANSPARENT_TCP_MAX_TASK_COUNT      BRIDGES_COUNT   // Maximum number of tasks (ports)
 
 
-typedef esp_err_t (*tcp_send_func_t)(tcp_desc_t *desc, uint8_t *data, size_t len);
+typedef esp_err_t (*tcp_send_func_t)(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len);
 typedef esp_err_t (*tcp_connected_func_t)(tcp_desc_t *desc);
 typedef esp_err_t (*tcp_deinit_func_t)(tcp_desc_t *desc);
 
@@ -83,7 +83,9 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    esp_err_t err = ctx->tcp_send_func(ctx->tcp_desc, data, len);
+    // Use last_client_sock: in transparent mode, reply goes to the last client that sent data.
+    // This is appropriate since transparent mode doesn't have strict request/response matching.
+    esp_err_t err = ctx->tcp_send_func(ctx->tcp_desc, ctx->tcp_desc->last_client_sock, data, len);
 
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Port[%u]: Failed to send data to TCP from serial", ctx->index + 1);
@@ -92,7 +94,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 
 
 // Callback function for receiving data from TCP socket
-static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
+static void process_data_from_tcp(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
 {
     ESP_LOGD(TAG, "Received data from TCP, length: %u", len);
 
@@ -106,7 +108,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
         return;
     }
 
-    if (desc->client_sock < 0) {
+    if (client_sock < 0) {
         ESP_LOGE(TAG, "Port[%u]: no client connected", ctx->index + 1);
         return;
     }

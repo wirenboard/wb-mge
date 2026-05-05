@@ -120,7 +120,7 @@ static void receive_data(tcp_desc_t *desc)
     int len = 0;
 
     while (1) {
-        len = recv(desc->client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+        len = recv(desc->last_client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
 
         if (len < 0) {
             esp_log_level_t log_level = ESP_LOG_ERROR;
@@ -135,7 +135,7 @@ static void receive_data(tcp_desc_t *desc)
         } else {
             ESP_LOGD(TAG, "Received %d bytes from %s, port %d", len, ip_str, desc->port);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
-            desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
+            desc->receive_handler(desc, desc->last_client_sock, (uint8_t *)rx_buffer, len);
         }
     }
 }
@@ -159,14 +159,14 @@ static void tcp_client_task(void *pvParameters)
             break;
         }
 
-        desc->client_sock = create_socket();
-        if (desc->client_sock < 0) {
+        desc->last_client_sock = create_socket();
+        if (desc->last_client_sock < 0) {
             continue;
         }
 
-        if (connect_socket(desc->client_sock, desc->remote_ip, desc->port) != 0) {
-            close_socket(desc->client_sock);
-            desc->client_sock = -1;
+        if (connect_socket(desc->last_client_sock, desc->remote_ip, desc->port) != 0) {
+            close_socket(desc->last_client_sock);
+            desc->last_client_sock = -1;
             delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_RECONN_DELAY_MS));
             continue;
         }
@@ -175,8 +175,8 @@ static void tcp_client_task(void *pvParameters)
 
         receive_data(desc);
         ESP_LOGW(TAG, "Disconnected from server: %s, port: %d", ip_str, desc->port);
-        close_socket(desc->client_sock);
-        desc->client_sock = -1;
+        close_socket(desc->last_client_sock);
+        desc->last_client_sock = -1;
         delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_RECONN_DELAY_MS));
         desc->active_connections = 0;
     }
@@ -214,8 +214,8 @@ esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
         return ESP_ERR_NO_MEM;
     }
 
-    desc->listen_sock = -1;     // not used for client
-    desc->client_sock = -1;
+    desc->listen_sock = -1;         // not used for client
+    desc->last_client_sock = -1;
     desc->remote_ip = host_ip;
     desc->port = host_port;
     desc->receive_handler = tcpc_receive_handler;
@@ -239,9 +239,11 @@ esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
 }
 
 
-esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len)
+esp_err_t tcp_client_send(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
 {
-    if (!desc || (desc->client_sock < 0)) {
+    // In client mode there is always exactly one outbound connection; use the stored socket.
+    (void)client_sock;
+    if (!desc || (desc->last_client_sock < 0)) {
         ESP_LOGE(TAG, "No client socket");
         return ESP_FAIL;
     }
@@ -249,7 +251,7 @@ esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len)
     // Using non-blocking function to avoid blocking uart_event_task()
     // Otherwise UART event queue overflows and packets start to merge and drop
     // TCP has its own transmit buffer and window under the hood, should not be a problem
-    int res = send(desc->client_sock, data, len, MSG_DONTWAIT);
+    int res = send(desc->last_client_sock, data, len, MSG_DONTWAIT);
 
     if (res < 0) {
         ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
@@ -266,10 +268,7 @@ esp_err_t tcp_client_send(tcp_desc_t *desc, uint8_t *data, size_t len)
 
 esp_err_t tcp_client_connected(tcp_desc_t *desc)
 {
-    if (!desc || (desc->client_sock < 0)) {
-        return ESP_FAIL;
-    }
-    if (!desc->active_connections) {
+    if (!desc || !desc->active_connections) {
         return ESP_FAIL;
     }
     return ESP_OK;
@@ -289,9 +288,9 @@ esp_err_t tcp_client_deinit(tcp_desc_t *desc)
     ESP_LOGD(TAG, "Deinitializing...");
 
     xEventGroupSetBits(desc->event_group, EVENT_TASK_EXIT_REQ);
-    if (desc->client_sock >= 0) {
+    if (desc->last_client_sock >= 0) {
         ESP_LOGD(TAG, "Closing TCP client socket");
-        close(desc->client_sock);
+        close(desc->last_client_sock);
     }
 
     ESP_LOGD(TAG, "Waiting for TCP client task finished...");

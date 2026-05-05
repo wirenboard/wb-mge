@@ -1,5 +1,7 @@
 #include "tcp_server.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,7 +15,6 @@
 #define TCP_SERVER_TASK_STACK_SIZE      4096
 #define TCP_SERVER_TASK_PRIORITY        5
 
-#define EVENT_TASK_STARTED              BIT0
 #define EVENT_TASK_FINISHED             BIT1
 #define EVENT_TASK_EXIT_REQ             BIT8
 
@@ -64,7 +65,7 @@ static int create_listen_socket(int port)
     }
     ESP_LOGD(TAG, "Socket bound, port %d", port);
 
-    err = listen(listen_sock, 1);
+    err = listen(listen_sock, 5);
     if (err != 0) {
         ESP_LOGE(TAG, "Error occurred during listen: errno %d", errno);
         close(listen_sock);
@@ -103,13 +104,27 @@ static int accept_connection(int listen_sock, struct sockaddr_in* source_addr)
 }
 
 
-static void receive_data(tcp_desc_t *desc)
+// Arguments passed to each receiver_task (heap-allocated, freed by receiver_task)
+typedef struct {
+    tcp_desc_t *desc;
+    int client_sock;
+} receiver_task_args_t;
+
+
+// Per-client receiver task: reads data from one client socket and invokes receive_handler.
+// Terminates when the client disconnects or an error occurs.
+static void receiver_task(void *pvParameters)
 {
+    receiver_task_args_t *args = (receiver_task_args_t *)pvParameters;
+    tcp_desc_t *desc = args->desc;
+    int client_sock = args->client_sock;
+    free(args);
+
     char rx_buffer[RX_BUFFER_SIZE];
     int len;
 
     do {
-        len = recv(desc->client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+        len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
 
         if (len < 0) {
             esp_log_level_t log_level = ESP_LOG_ERROR;
@@ -122,17 +137,29 @@ static void receive_data(tcp_desc_t *desc)
         } else {
             ESP_LOGD(TAG, "Port %d received %d bytes", desc->port, len);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
-            desc->receive_handler(desc, (uint8_t *)rx_buffer, len);
+            // Update last_client_sock before invoking callback so that
+            // consumers (e.g. transparent_tcp) can send a reply to the last sender.
+            desc->last_client_sock = client_sock;
+            desc->receive_handler(desc, client_sock, (uint8_t *)rx_buffer, len);
         }
     } while (len > 0);
+
+    shutdown(client_sock, SHUT_RDWR);
+    close(client_sock);
+
+    // Log before decrementing so desc->port is accessed while desc is still valid.
+    // deinit() waits for active_connections to reach 0 before freeing desc.
+    ESP_LOGD(TAG, "Port %d receiver task finished", desc->port);
+    desc->active_connections--;
+    vTaskDelete(NULL);
 }
 
 
+// Acceptor task: only accepts new connections and spawns a receiver_task for each.
 static void tcp_server_task(void *pvParameters)
 {
     tcp_desc_t *desc = (tcp_desc_t *)pvParameters;
-    xEventGroupSetBits(desc->event_group, EVENT_TASK_STARTED);
-    ESP_LOGD(TAG, "TCP server task started");
+    ESP_LOGD(TAG, "TCP server acceptor task started");
 
     while (1) {
         if (check_task_exit_req(desc)) {
@@ -140,8 +167,8 @@ static void tcp_server_task(void *pvParameters)
         }
 
         struct sockaddr_in source_addr;
-        desc->client_sock = accept_connection(desc->listen_sock, &source_addr);
-        if (desc->client_sock < 0) {
+        int client_sock = accept_connection(desc->listen_sock, &source_addr);
+        if (client_sock < 0) {
             if (check_task_exit_req(desc)) {
                 ESP_LOGD(TAG, "Socket on port %d returned error %d during connection accept", desc->port, errno);
                 break;
@@ -168,19 +195,34 @@ static void tcp_server_task(void *pvParameters)
         }
         ESP_LOGI(TAG, "Socket on port %d accepted connection from %s, port: %d", desc->port, addr_str, htons(source_addr.sin_port));
 
+        // Allocate args for receiver_task on the heap; freed by receiver_task itself
+        receiver_task_args_t *args = malloc(sizeof(receiver_task_args_t));
+        if (!args) {
+            ESP_LOGE(TAG, "Port %d: failed to allocate receiver_task args, closing connection", desc->port);
+            close(client_sock);
+            continue;
+        }
+        args->desc = desc;
+        args->client_sock = client_sock;
+
         desc->active_connections++;
 
-        receive_data(desc);
+        // Create a unique task name using the socket fd number
+        char task_name[32];
+        snprintf(task_name, sizeof(task_name), "tcp_recv_%d", client_sock);
 
-        shutdown(desc->client_sock, SHUT_RDWR);
-        close(desc->client_sock);
-        desc->client_sock = -1;
-        desc->active_connections--;
+        BaseType_t ret = xTaskCreate(receiver_task, task_name, TCP_SERVER_TASK_STACK_SIZE, args, TCP_SERVER_TASK_PRIORITY, NULL);
+        if (ret != pdPASS) {
+            ESP_LOGE(TAG, "Port %d: failed to create receiver_task, closing connection", desc->port);
+            free(args);
+            close(client_sock);
+            desc->active_connections--;
+        }
     }
 
     close(desc->listen_sock);
     desc->listen_sock = -1;
-    ESP_LOGI(TAG, "TCP server task finished");
+    ESP_LOGI(TAG, "TCP server acceptor task finished");
     xEventGroupSetBits(desc->event_group, EVENT_TASK_FINISHED);
     vTaskDelete(NULL);
 }
@@ -218,7 +260,7 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, 
     }
 
     desc->listen_sock = listen_sock;
-    desc->client_sock = -1;
+    desc->last_client_sock = -1;
     desc->remote_ip = 0;
     desc->port = port;
     desc->receive_handler = tcps_receive_handler;
@@ -229,7 +271,7 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, 
     TaskHandle_t task_handle = NULL;
     BaseType_t ret = xTaskCreate(tcp_server_task, "tcp_server", TCP_SERVER_TASK_STACK_SIZE, desc, TCP_SERVER_TASK_PRIORITY, &task_handle);
     if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Unable to create TCP client task");
+        ESP_LOGE(TAG, "Unable to create TCP acceptor task");
         vEventGroupDelete(event_group);
         free(desc);
         close(listen_sock);
@@ -237,16 +279,15 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, 
     }
 
     desc->task_handle = task_handle;
-    xEventGroupWaitBits(desc->event_group, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
 
     *out_desc = desc;
     return ESP_OK;
 }
 
 
-esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
+esp_err_t tcp_server_send(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
 {
-    if (!desc || (desc->client_sock < 0)) {
+    if (!desc || (client_sock < 0)) {
         ESP_LOGE(TAG, "No client connected");
         return ESP_FAIL;
     }
@@ -254,7 +295,7 @@ esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
     // Using non-blocking function to avoid blocking uart_event_task()
     // Otherwise UART event queue overflows and packets start to merge and drop
     // TCP has its own transmit buffer and window under the hood, should not be a problem
-    int res = send(desc->client_sock, data, len, MSG_DONTWAIT);
+    int res = send(client_sock, data, len, MSG_DONTWAIT);
 
     if (res < 0) {
         ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
@@ -271,10 +312,7 @@ esp_err_t tcp_server_send(tcp_desc_t *desc, uint8_t *data, size_t len)
 
 esp_err_t tcp_server_connected(tcp_desc_t *desc)
 {
-    if (!desc || (desc->client_sock < 0)) {
-        return ESP_FAIL;
-    }
-    if (!desc->active_connections) {
+    if (!desc || !desc->active_connections) {
         return ESP_FAIL;
     }
     return ESP_OK;
@@ -293,18 +331,26 @@ esp_err_t tcp_server_deinit(tcp_desc_t *desc)
 
     ESP_LOGD(TAG, "Deinitializing...");
 
+    // Signal acceptor task to stop and close listen socket to unblock accept()
     xEventGroupSetBits(desc->event_group, EVENT_TASK_EXIT_REQ);
     if (desc->listen_sock >= 0) {
         ESP_LOGD(TAG, "Closing TCP listen socket");
         close(desc->listen_sock);
     }
-    if (desc->client_sock >= 0) {
-        ESP_LOGD(TAG, "Shutting down TCP client socket");
-        shutdown(desc->client_sock, SHUT_RDWR);
-    }
 
-    ESP_LOGD(TAG, "Waiting for TCP server task finished...");
+    // Wait for acceptor task to finish.
+    ESP_LOGD(TAG, "Waiting for TCP server acceptor task finished...");
     xEventGroupWaitBits(desc->event_group, EVENT_TASK_FINISHED, pdFALSE, pdTRUE, portMAX_DELAY);
+
+    // Wait for all receiver tasks to finish.  Each receiver task decrements
+    // active_connections and calls vTaskDelete() immediately after, so polling
+    // here is safe.  The event_group and desc must remain valid until every
+    // receiver task has finished (receiver tasks access both via check_task_exit_req
+    // and desc->port logs).
+    ESP_LOGD(TAG, "Waiting for TCP server receiver tasks finished...");
+    while (desc->active_connections > 0) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 
     vEventGroupDelete(desc->event_group);
     free(desc);

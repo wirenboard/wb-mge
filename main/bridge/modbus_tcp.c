@@ -41,6 +41,7 @@ typedef struct {
     uint16_t pending_tid;
     uint8_t pending_slave_id;
     unsigned resp_timeout_ticks;
+    int pending_client_sock;    // client socket that sent the current pending RTU request
 } mb_tcp_task_ctx_t;
 
 static const char *TAG = "modbus_tcp";
@@ -80,37 +81,6 @@ static mb_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 }
 
 
-// Separate Modbus TCP requests in TCP data stream and push them to queue
-// Returns the number of requests pushed to queue
-static unsigned separate_and_push_requests_from_tcp(mb_tcp_task_ctx_t* ctx, const uint8_t* data, size_t len)
-{
-    unsigned count = 0;
-    size_t pos = 0;
-
-    while (pos < len) {
-        const uint8_t* req_data = &data[pos];
-        mb_tcp_header_t* header = (mb_tcp_header_t*)req_data;
-        size_t req_len = modbus_swap16(header->length) + offsetof(mb_tcp_header_t, unit_id);
-        if ((req_len + pos) > len) {
-            ESP_LOGW(TAG, "Port[%u]: TCP packet with incorrect length will be skipped", ctx->index + 1);
-            break;
-        }
-        if (modbus_tcp_check_request(req_data, req_len) != ESP_OK) {
-            ESP_LOGW(TAG, "Port[%d]: Incorrect TCP packet will be skipped", ctx->index + 1);
-            break;
-        }
-        esp_err_t queue_res = packet_queue_push(ctx->tcp_queue, req_data, req_len);
-        if (queue_res != ESP_OK) {
-            break;
-        }
-        pos += req_len;
-        count++;
-    }
-    if (pos < len) {
-        ESP_LOGW(TAG, "Port[%u]: Not all data in the TCP packet was processed", ctx->index + 1);
-    }
-    return count;
-}
 
 
 // Callback function for receiving data from serial port
@@ -162,16 +132,55 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 
     xEventGroupSetBits(ctx->event_group, EVENT_SERIAL_RESPONSE_RECEIVED);
 
-    ESP_LOGD(TAG, "Port[%u]: Sending TCP response, length: %u", ctx->index + 1, tcp_resp_len);
+    ESP_LOGD(TAG, "Port[%u]: Sending TCP response to client_sock=%d, length: %u", ctx->index + 1, ctx->pending_client_sock, tcp_resp_len);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, tcp_resp_buf, tcp_resp_len, ESP_LOG_DEBUG);
 
-    tcp_server_send(ctx->tcp_desc, tcp_resp_buf, tcp_resp_len);
+    // Send response to the specific client that originated the request.
+    // If the client disconnected while waiting for RTU response, tcp_server_send() will
+    // return an error - log it but do not treat it as fatal.
+    esp_err_t send_res = tcp_server_send(ctx->tcp_desc, ctx->pending_client_sock, tcp_resp_buf, tcp_resp_len);
+    if (send_res != ESP_OK) {
+        ESP_LOGW(TAG, "Port[%u]: Failed to send TCP response (client may have disconnected)", ctx->index + 1);
+    }
     free(tcp_resp_buf);
 }
 
 
+// Separate Modbus TCP requests in TCP data stream and push them to queue with client socket
+// Returns the number of requests pushed to queue
+static unsigned separate_and_push_requests_from_tcp_with_client(mb_tcp_task_ctx_t* ctx, int client_sock, const uint8_t* data, size_t len)
+{
+    unsigned count = 0;
+    size_t pos = 0;
+
+    while (pos < len) {
+        const uint8_t* req_data = &data[pos];
+        mb_tcp_header_t* header = (mb_tcp_header_t*)req_data;
+        size_t req_len = modbus_swap16(header->length) + offsetof(mb_tcp_header_t, unit_id);
+        if ((req_len + pos) > len) {
+            ESP_LOGW(TAG, "Port[%u]: TCP packet with incorrect length will be skipped", ctx->index + 1);
+            break;
+        }
+        if (modbus_tcp_check_request(req_data, req_len) != ESP_OK) {
+            ESP_LOGW(TAG, "Port[%d]: Incorrect TCP packet will be skipped", ctx->index + 1);
+            break;
+        }
+        esp_err_t queue_res = packet_queue_push_with_client(ctx->tcp_queue, req_data, req_len, client_sock);
+        if (queue_res != ESP_OK) {
+            break;
+        }
+        pos += req_len;
+        count++;
+    }
+    if (pos < len) {
+        ESP_LOGW(TAG, "Port[%u]: Not all data in the TCP packet was processed", ctx->index + 1);
+    }
+    return count;
+}
+
+
 // Callback function for receiving data from TCP socket
-static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
+static void process_data_from_tcp(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
 {
     ESP_LOGD(TAG, "Received data from TCP, length: %u", len);
 
@@ -185,7 +194,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, uint8_t *data, size_t len)
         return;
     }
 
-    unsigned count = separate_and_push_requests_from_tcp(ctx, data, len);
+    unsigned count = separate_and_push_requests_from_tcp_with_client(ctx, client_sock, data, len);
     if (!count) {
         rs485_stats_update(ctx->index, false);
     }
@@ -209,21 +218,21 @@ static void wait_tcp_connection(const mb_tcp_task_ctx_t* ctx)
 }
 
 
-// Get TCP request from packet queue
-// Returns received packet size and sets tcp_req_buf pointer to packet data
+// Get TCP request from packet queue together with the originating client socket
+// Returns received packet size, sets tcp_req_buf pointer to packet data, and writes client_sock
 // Returns 0 if no packet in queue
 // Buffer tcp_req_buf must be freed with free(tcp_req_buf) after use
-static size_t fetch_tcp_request(mb_tcp_task_ctx_t* ctx, uint8_t** tcp_req_buf)
+static size_t fetch_tcp_request(mb_tcp_task_ctx_t* ctx, uint8_t** tcp_req_buf, int* client_sock)
 {
     size_t len = 0;
     do {
         if (check_task_exit_req(ctx)) {
             return 0;
         }
-        len = packet_queue_pop(ctx->tcp_queue, tcp_req_buf, pdMS_TO_TICKS(WAIT_LOOP_DELAY_MS));
+        len = packet_queue_pop_with_client(ctx->tcp_queue, tcp_req_buf, pdMS_TO_TICKS(WAIT_LOOP_DELAY_MS), client_sock);
     } while (len == 0);
 
-    ESP_LOGD(TAG, "Port[%u]: Fetch TCP request from queue, length: %u", ctx->index + 1, len);
+    ESP_LOGD(TAG, "Port[%u]: Fetch TCP request from queue, length: %u, client_sock: %d", ctx->index + 1, len, *client_sock);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, *tcp_req_buf, len, ESP_LOG_DEBUG);
     return len;
 }
@@ -249,6 +258,7 @@ static size_t make_rtu_request_from_tcp(mb_tcp_task_ctx_t* ctx, uint8_t* tcp_req
     }
     ctx->pending_tid = modbus_swap16(((mb_tcp_header_t*)tcp_req_buf)->transaction_id);
     ctx->pending_slave_id = ((mb_tcp_header_t*)tcp_req_buf)->unit_id;
+    // pending_client_sock is set by the caller (modbus_tcp_server_task) before this function
     return rtu_req_len;
 }
 
@@ -306,15 +316,19 @@ static void modbus_tcp_server_task(void *arg)
         }
 
         uint8_t* tcp_req_buf = 0;
-        size_t tcp_req_len = fetch_tcp_request(ctx, &tcp_req_buf);
+        int client_sock = -1;
+        size_t tcp_req_len = fetch_tcp_request(ctx, &tcp_req_buf, &client_sock);
         if (!tcp_req_len) {
             continue;
         }
 
+        // Store the client socket so process_data_from_serial() can reply to the correct client
+        ctx->pending_client_sock = client_sock;
+
         // Received request packet is already validated in process_data_from_tcp() callback
         // Check if request is a Fast Modbus support probe
         enum fast_modbus_probe_result probe_result = fast_modbus_send_probe_response(
-            ctx->index + 1, ctx->tcp_desc, tcp_req_buf
+            ctx->index + 1, ctx->tcp_desc, client_sock, tcp_req_buf
         );
         if (probe_result != FAST_MODBUS_NOT_PROBE) {
             free(tcp_req_buf);
@@ -427,6 +441,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
     ctx->task_handle = NULL;
     ctx->pending_tid = 0;
     ctx->pending_slave_id = 0;
+    ctx->pending_client_sock = -1;
     ctx->resp_timeout_ticks = calc_response_timeout_ticks(config->baudrate);
 
     ESP_LOGD(TAG, "Port[%u] response timeout: %u ms", index + 1, (unsigned)pdTICKS_TO_MS(ctx->resp_timeout_ticks));

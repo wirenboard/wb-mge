@@ -5,9 +5,12 @@
 #include "freertos/queue.h"
 #include "malloc.h"
 
+// Must mirror the private packet_queue_elem_t in packet_queue.c so that the
+// sizeof() check in test_packet_queue_create_success stays in sync.
 typedef struct {
     size_t packet_len;
     uint8_t* data_buf;
+    int client_sock;
 } packet_queue_elem_t;
 
 static packet_queue_handle g_test_handle = NULL;
