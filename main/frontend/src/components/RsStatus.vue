@@ -33,10 +33,10 @@ const { t } = useI18n();
 <i18n>
 {
   "en": {
-    "modbus_mode": "Modbus mode",
+    "modbus_mode": "Mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Transparent",
+    "bridge_transparent": "Transparent bridge",
     "tcp_port": "TCP port",
     "tcp_count": "TCP count",
     "status": "Status",
@@ -50,7 +50,7 @@ const { t } = useI18n();
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Прозрачный",
+    "bridge_transparent": "Прозрачный мост",
     "tcp_port": "TCP-порт",
     "tcp_count": "TCP подключений",
     "status": "Статус",
@@ -64,7 +64,7 @@ const { t } = useI18n();
     "modbus_mode": "Режим",
     "bridge_mode": "Рөл",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Мөлдір",
+    "bridge_transparent": "Мөлдір көпір",
     "tcp_port": "TCP порты",
     "tcp_count": "TCP қосылымдары",
     "status": "Күйі",
@@ -75,10 +75,10 @@ const { t } = useI18n();
     "error_rate_description": "Соңғы 100 сұрауға қатысты қате пайызы"
   },
   "it": {
-    "modbus_mode": "Modalità Modbus",
+    "modbus_mode": "Modalità",
     "bridge_mode": "Modalità bridge",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Trasparente",
+    "bridge_transparent": "Bridge trasparente",
     "tcp_port": "Porta TCP",
     "tcp_count": "Connessioni TCP",
     "status": "Stato",
@@ -89,10 +89,10 @@ const { t } = useI18n();
     "error_rate_description": "Tasso di errore per le ultime 100 richieste"
   },
   "de": {
-    "modbus_mode": "Modbus-Modus",
+    "modbus_mode": "Modus",
     "bridge_mode": "Bridge-Modus",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Transparent",
+    "bridge_transparent": "Transparente Brücke",
     "tcp_port": "TCP-Port",
     "tcp_count": "TCP-Verbindungen",
     "status": "Status",
