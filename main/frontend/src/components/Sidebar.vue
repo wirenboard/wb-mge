@@ -104,7 +104,7 @@ watch(
               <span class="dot" />{{ info.rs485_1.is_busy ? 'ACTIVE' : 'IDLE' }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-row-key">Mode</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-row-key">Mode</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.bridge.modbus ? 'Modbus TCP' : 'Transparent' }}</span></div>
           <div class="sb-port-row mono"><span class="sb-port-row-key">Line</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
         </div>
         <div class="sb-port">
@@ -114,7 +114,7 @@ watch(
               <span class="dot" />{{ info.rs485_2.is_busy ? 'ACTIVE' : 'IDLE' }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-row-key">Mode</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.bridge.modbus ? 'Proxy' : 'Transparent' }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-row-key">Mode</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.bridge.modbus ? 'Modbus TCP' : 'Transparent' }}</span></div>
           <div class="sb-port-row mono"><span class="sb-port-row-key">Line</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
         </div>
       </div>
