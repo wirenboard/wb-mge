@@ -437,7 +437,8 @@ watch(
     "modbus_tcp": "Modbus TCP",
     "transparent": "Transparent bridge",
     "port_1": "Port 1",
-    "port_2": "Port 2"
+    "port_2": "Port 2",
+    "serial_ports": "Serial ports"
   },
   "ru": {
     "group_overview": "Обзор",
@@ -454,7 +455,8 @@ watch(
     "modbus_tcp": "Modbus TCP",
     "transparent": "Прозрачный мост",
     "port_1": "Порт 1",
-    "port_2": "Порт 2"
+    "port_2": "Порт 2",
+    "serial_ports": "Порты"
   },
   "kk": {
     "group_overview": "Шолу",
@@ -471,7 +473,8 @@ watch(
     "modbus_tcp": "Modbus TCP",
     "transparent": "Мөлдір көпір",
     "port_1": "Порт 1",
-    "port_2": "Порт 2"
+    "port_2": "Порт 2",
+    "serial_ports": "Сериялық порттар"
   },
   "it": {
     "group_overview": "Panoramica",
@@ -488,7 +491,8 @@ watch(
     "modbus_tcp": "Modbus TCP",
     "transparent": "Bridge trasparente",
     "port_1": "Porta 1",
-    "port_2": "Porta 2"
+    "port_2": "Porta 2",
+    "serial_ports": "Porte seriali"
   },
   "de": {
     "group_overview": "Übersicht",
@@ -505,7 +509,8 @@ watch(
     "modbus_tcp": "Modbus TCP",
     "transparent": "Transparente Brücke",
     "port_1": "Port 1",
-    "port_2": "Port 2"
+    "port_2": "Port 2",
+    "serial_ports": "Serielle Schnittst."
   }
 }
 </i18n>
