@@ -262,7 +262,7 @@ const updateInterface = () => {
                 @upload="updateFirmware"
               />
               <template #hint>
-                <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
+                <Info :text="t('wirmware_update_info')" />
               </template>
             </InfoRow>
           </div>
