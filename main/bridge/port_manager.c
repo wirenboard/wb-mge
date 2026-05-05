@@ -351,7 +351,7 @@ static esp_err_t ports_status_get_handler(httpd_req_t *req)
             cJSON_Delete(root);
             return json_utils_send_error(req, "Out of memory");
         }
-        cJSON_AddNumberToObject(port_obj, "index", i);
+        cJSON_AddNumberToObject(port_obj, "index", i + 1);
         cJSON_AddStringToObject(port_obj, "mode", port_manager_mode_to_str(pm_ctx[i].mode));
         cJSON_AddItemToArray(ports_arr, port_obj);
     }
@@ -401,12 +401,14 @@ static esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
     return ESP_OK;
 }
 
-static esp_err_t port0_set_mode_handler(httpd_req_t *req)
+// User-facing port numbers are 1-based (Port 1, Port 2).
+// Handlers convert to 0-based index before calling port_manager_set_mode().
+static esp_err_t port1_set_mode_handler(httpd_req_t *req)
 {
     return port_set_mode_handler(req, 0);
 }
 
-static esp_err_t port1_set_mode_handler(httpd_req_t *req)
+static esp_err_t port2_set_mode_handler(httpd_req_t *req)
 {
     return port_set_mode_handler(req, 1);
 }
@@ -417,26 +419,26 @@ static const httpd_uri_t uri_ports_status = {
     .handler = ports_status_get_handler,
 };
 
-static const httpd_uri_t uri_port0_mode = {
-    .uri     = "/ports/0/mode",
-    .method  = HTTP_POST,
-    .handler = port0_set_mode_handler,
-};
-
 static const httpd_uri_t uri_port1_mode = {
     .uri     = "/ports/1/mode",
     .method  = HTTP_POST,
     .handler = port1_set_mode_handler,
 };
 
+static const httpd_uri_t uri_port2_mode = {
+    .uri     = "/ports/2/mode",
+    .method  = HTTP_POST,
+    .handler = port2_set_mode_handler,
+};
+
 esp_err_t port_manager_register_handlers(httpd_handle_t server)
 {
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_ports_status),
                         TAG, "Failed to register GET /ports/status");
-    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port0_mode),
-                        TAG, "Failed to register POST /ports/0/mode");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port1_mode),
                         TAG, "Failed to register POST /ports/1/mode");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port2_mode),
+                        TAG, "Failed to register POST /ports/2/mode");
 
     ESP_LOGI(TAG, "HTTP handlers registered");
     return ESP_OK;

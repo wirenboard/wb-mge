@@ -23,9 +23,14 @@ async function fetchCacheStatus() {
    * does not fire toggleCache() when the initial value is applied. */
   cacheLoading.value = true;
   try {
-    const status = await api<{ enabled: boolean; entries: number }>('cache/status');
-    cacheEnabled.value = status.enabled;
-    cacheEntries.value = status.entries;
+    // Use GET /ports/status to determine whether all ports are in cache_bus mode.
+    // Response shape: {"ports":[{"index":1,"mode":"cache_bus"},{"index":2,"mode":"tcp_bridge"}]}
+    const portsStatus = await api<{ ports: { index: number; mode: string }[] }>('ports/status');
+    cacheEnabled.value = portsStatus.ports.every(p => p.mode === 'cache_bus');
+
+    // Use GET /cache/status only for the entries count (not for enabled state).
+    const cacheStatus = await api<{ enabled: boolean; entries: number }>('cache/status');
+    cacheEntries.value = cacheStatus.entries;
   } catch {
     // Silently ignore — backend may not support this yet
   } finally {
@@ -36,8 +41,15 @@ async function fetchCacheStatus() {
 async function toggleCache(enabled: boolean) {
   cacheLoading.value = true;
   try {
-    const endpoint = enabled ? 'cache/enable' : 'cache/disable';
-    await api<{ enabled: boolean }>(endpoint, { method: 'POST' });
+    if (enabled) {
+      // Enable: switch both ports to cache_bus mode
+      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+    } else {
+      // Disable: switch both ports back to tcp_bridge mode
+      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+    }
     cacheEnabled.value = enabled;
     if (!enabled) cacheEntries.value = 0;
   } catch {

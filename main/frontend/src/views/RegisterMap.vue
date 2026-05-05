@@ -40,8 +40,10 @@ async function fetchEntries(): Promise<void> {
 
 async function fetchStatus(): Promise<void> {
   try {
-    const data = await api<{ enabled: boolean; entries: number }>('cache/status');
-    cacheEnabled.value = data.enabled;
+    // Use GET /ports/status to determine whether all ports are in cache_bus mode.
+    // Response shape: {"ports":[{"index":1,"mode":"cache_bus"},{"index":2,"mode":"tcp_bridge"}]}
+    const data = await api<{ ports: { index: number; mode: string }[] }>('ports/status');
+    cacheEnabled.value = data.ports.every(p => p.mode === 'cache_bus');
   } catch {
     // Silently ignore status fetch errors
   }
@@ -50,11 +52,15 @@ async function fetchStatus(): Promise<void> {
 async function toggleCaching(): Promise<void> {
   try {
     if (cacheEnabled.value) {
-      await api<{ enabled: boolean }>('cache/disable', { method: 'POST' });
+      // Disable: switch both ports back to tcp_bridge
+      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
       cacheEnabled.value = false;
       rawEntries.value = [];
     } else {
-      await api<{ enabled: boolean }>('cache/enable', { method: 'POST' });
+      // Enable: switch both ports to cache_bus
+      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
       cacheEnabled.value = true;
     }
     await fetchEntries();
@@ -66,8 +72,11 @@ async function toggleCaching(): Promise<void> {
 
 async function resetMap(): Promise<void> {
   try {
-    await api<{ enabled: boolean }>('cache/disable', { method: 'POST' });
-    await api<{ enabled: boolean }>('cache/enable', { method: 'POST' });
+    // Disable both ports, then re-enable to clear the cache
+    await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+    await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+    await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+    await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
     cacheEnabled.value = true;
     rawEntries.value = [];
     await fetchEntries();

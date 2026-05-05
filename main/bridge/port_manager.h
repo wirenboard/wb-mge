@@ -102,8 +102,8 @@ bool port_manager_check_settings_changed(unsigned port_index);
  *
  * Registers:
  *   GET  /ports/status        — returns JSON with current mode for all ports
- *   POST /ports/0/mode        — set mode for port 0
- *   POST /ports/1/mode        — set mode for port 1
+ *   POST /ports/1/mode        — set mode for port 1 (RS-485 Port 1)
+ *   POST /ports/2/mode        — set mode for port 2 (RS-485 Port 2)
  *
  * All handlers require authentication via auth_middleware_check().
  *

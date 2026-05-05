@@ -1,7 +1,6 @@
 #include "cache_multimaster.h"
 #include "sniffer.h"
 #include "bridge.h"
-#include "port_manager.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -300,45 +299,9 @@ bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
 
 /* ---- HTTP handlers ------------------------------------------------------- */
 
-/**
- * POST /cache/enable — switch every non-disabled port to CACHE_BUS mode.
- *
- * Iterates all ports; ports already in PM_MODE_DISABLED are skipped so that
- * unconfigured ports are not inadvertently opened.  port_manager_set_mode()
- * handles the full init/deinit cycle including cache_multimaster_enable().
- */
-static esp_err_t cache_enable_handler(httpd_req_t *req)
-{
-    for (int i = 0; i < BRIDGES_COUNT; i++) {
-        if (port_manager_get_mode(i) != PM_MODE_DISABLED) {
-            port_manager_set_mode(i, PM_MODE_CACHE_BUS);
-        }
-    }
-    const char *resp = "{\"enabled\":true}";
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, (ssize_t)strlen(resp));
-    return ESP_OK;
-}
-
-/**
- * POST /cache/disable — switch every CACHE_BUS port back to TCP_BRIDGE mode.
- *
- * Only ports currently in PM_MODE_CACHE_BUS are affected.
- * port_manager_set_mode() handles the full deinit/init cycle including
- * cache_multimaster_disable() when the last CACHE_BUS port is torn down.
- */
-static esp_err_t cache_disable_handler(httpd_req_t *req)
-{
-    for (int i = 0; i < BRIDGES_COUNT; i++) {
-        if (port_manager_get_mode(i) == PM_MODE_CACHE_BUS) {
-            port_manager_set_mode(i, PM_MODE_TCP_BRIDGE);
-        }
-    }
-    const char *resp = "{\"enabled\":false}";
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, (ssize_t)strlen(resp));
-    return ESP_OK;
-}
+/* TODO: /cache/status still reflects cache_multimaster internal state.
+ * Consider replacing it with a port_manager status endpoint that covers
+ * all modes uniformly. */
 
 /**
  * GET /cache/status — return enabled flag and total entry count
@@ -522,18 +485,6 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
 
 /* ---- URI descriptor tables ---------------------------------------------- */
 
-static const httpd_uri_t cache_enable_uri = {
-    .uri     = "/cache/enable",
-    .method  = HTTP_POST,
-    .handler = cache_enable_handler,
-};
-
-static const httpd_uri_t cache_disable_uri = {
-    .uri     = "/cache/disable",
-    .method  = HTTP_POST,
-    .handler = cache_disable_handler,
-};
-
 static const httpd_uri_t cache_status_uri = {
     .uri     = "/cache/status",
     .method  = HTTP_GET,
@@ -555,12 +506,6 @@ static const httpd_uri_t cache_json_uri = {
 esp_err_t cache_multimaster_register_handlers(httpd_handle_t server)
 {
     esp_err_t ret;
-
-    ret = httpd_register_uri_handler(server, &cache_enable_uri);
-    if (ret != ESP_OK) return ret;
-
-    ret = httpd_register_uri_handler(server, &cache_disable_uri);
-    if (ret != ESP_OK) return ret;
 
     ret = httpd_register_uri_handler(server, &cache_status_uri);
     if (ret != ESP_OK) return ret;
