@@ -11,7 +11,7 @@ const { t } = useI18n();
 <template>
   <div>
     <InfoRow :label="t('modbus_mode')">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</InfoRow>
-    <InfoRow :label="t('bridge_mode')">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</InfoRow>
+    <InfoRow v-if="!settings.bridge.modbus" :label="t('bridge_mode')">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</InfoRow>
     <InfoRow :label="t('tcp_port')"><span class="mono">{{ settings.bridge.port }}</span></InfoRow>
     <InfoRow :label="t('tcp_count')">{{ info.server_connections_count }}</InfoRow>
     <InfoRow :label="t('status')">

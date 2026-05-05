@@ -77,9 +77,9 @@ const portSubs = ['port1_sub', 'port2_sub'];
                   <option v-for="item in bridgeModbus" :key="`bridge_mb_${portKey}_${item.value}`" :value="item.value">{{ item.label }}</option>
                 </select>
               </div>
-              <div class="field">
+              <div v-if="!data[portKey].bridge.modbus" class="field">
                 <label :for="`${portKey}-bridge_mode`">{{ t('bridge_mode') }}</label>
-                <select :id="`${portKey}-bridge_mode`" v-model="data[portKey].bridge.mode" :disabled="data[portKey].bridge.modbus" name="bridge_mode">
+                <select :id="`${portKey}-bridge_mode`" v-model="data[portKey].bridge.mode" name="bridge_mode">
                   <option v-for="item in getBridgeMode(data[portKey])" :key="`bridge_mode_${portKey}_${item}`" :value="item">{{ t(item) }}</option>
                 </select>
               </div>
