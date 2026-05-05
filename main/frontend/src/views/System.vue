@@ -300,17 +300,6 @@ const updateInterface = () => {
   text-decoration: none;
 }
 
-.system-saveWrapper {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.system-save {
-  width: 12px;
-  height: 12px;
-}
-
 .uptime-value {
   display: flex;
   gap: 4px;

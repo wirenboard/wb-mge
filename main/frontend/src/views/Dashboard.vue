@@ -234,15 +234,6 @@ const getDisplayValue = (val: string | boolean | number) => {
   gap: 8px;
   justify-content: flex-end;
 }
-.firmware-update-link {
-  font-size: 11.5px;
-  color: var(--color-primary, #2563eb);
-  text-decoration: none;
-  white-space: nowrap;
-}
-.firmware-update-link:hover {
-  text-decoration: underline;
-}
 </style>
 
 <i18n>
