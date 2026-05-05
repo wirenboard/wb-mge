@@ -149,6 +149,9 @@ const updateInterface = () => {
                 </template>
               </span>
             </InfoRow>
+            <InfoRow :label="t('reboot')">
+              <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
+            </InfoRow>
           </div>
         </section>
 
@@ -261,9 +264,6 @@ const updateInterface = () => {
               <template #hint>
                 <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
               </template>
-            </InfoRow>
-            <InfoRow :label="t('reboot')">
-              <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
             </InfoRow>
           </div>
         </section>
