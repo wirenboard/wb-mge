@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import type { RsSettings, RsStatus } from '@/common/types';
-import Info from '@/components/Info.vue';
+import InfoRow from '@/components/InfoRow.vue';
 
 defineProps<{ title: string; info: RsStatus; settings: RsSettings }>();
 
@@ -10,33 +10,19 @@ const { t } = useI18n();
 
 <template>
   <div>
-    <div class="kv-row">
-      <div class="kv-row-key">{{ t('modbus_mode') }}</div>
-      <div class="kv-row-value">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
-    </div>
-    <div class="kv-row">
-      <div class="kv-row-key">{{ t('bridge_mode') }}</div>
-      <div class="kv-row-value">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
-    </div>
-    <div class="kv-row">
-      <div class="kv-row-key">{{ t('tcp_port') }}</div>
-      <div class="kv-row-value mono">{{ settings.bridge.port }}</div>
-    </div>
-    <div class="kv-row">
-      <div class="kv-row-key">{{ t('tcp_count') }}</div>
-      <div class="kv-row-value">{{ info.server_connections_count }}</div>
-    </div>
-    <div class="kv-row">
-      <div class="kv-row-key">{{ t('status') }}</div>
-      <div class="kv-row-value">{{ info.is_busy ? t('active') : t('not_active') }}</div>
-      <div class="kv-row-hint">{{ t('status_info') }}</div>
-    </div>
+    <InfoRow :label="t('modbus_mode')">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</InfoRow>
+    <InfoRow :label="t('bridge_mode')">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</InfoRow>
+    <InfoRow :label="t('tcp_port')"><span class="mono">{{ settings.bridge.port }}</span></InfoRow>
+    <InfoRow :label="t('tcp_count')">{{ info.server_connections_count }}</InfoRow>
+    <InfoRow :label="t('status')">
+      {{ info.is_busy ? t('active') : t('not_active') }}
+      <template #hint>{{ t('status_info') }}</template>
+    </InfoRow>
     <template v-if="settings.bridge.modbus">
-      <div class="kv-row">
-        <div class="kv-row-key">{{ t('error_rate') }}</div>
-        <div class="kv-row-value">{{ info.error_percentage }}%</div>
-        <div class="kv-row-hint">{{ t('error_rate_description') }}</div>
-      </div>
+      <InfoRow :label="t('error_rate')">
+        {{ info.error_percentage }}%
+        <template #hint>{{ t('error_rate_description') }}</template>
+      </InfoRow>
     </template>
   </div>
 </template>

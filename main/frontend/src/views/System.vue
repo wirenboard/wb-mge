@@ -15,6 +15,7 @@ import Button from '@/components/Button.vue';
 import Configuration from '@/components/Configuration.vue';
 import Heading from '@/components/Heading.vue';
 import Info from '@/components/Info.vue';
+import InfoRow from '@/components/InfoRow.vue';
 import InputNumber from '@/components/InputNumber.vue';
 import FileUpload from '@/components/FileUpload.vue';
 import Layout from '@/components/Layout.vue';
@@ -118,10 +119,9 @@ const updateInterface = () => {
                 <label for="hostname">{{ t('hostname_label') }}</label>
                 <input id="hostname" v-model="settings!.hostname" type="text" class="mono" name="hostname">
               </div>
-              <div class="kv-row">
-                <div class="kv-row-key">{{ t('access_url_label') }}</div>
-                <a class="kv-row-value mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
-              </div>
+              <InfoRow :label="t('access_url_label')">
+                <a class="mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
+              </InfoRow>
             </div>
           </form>
         </section>
@@ -131,13 +131,9 @@ const updateInterface = () => {
             <div class="title">{{ t('device_info') }}</div>
           </div>
           <div class="card-body">
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('serial_num') }}</div>
-              <div class="kv-row-value mono">{{ info!.serial_num }}</div>
-            </div>
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('uptime') }}</div>
-              <div class="kv-row-value muted uptime-value">
+            <InfoRow :label="t('serial_num')"><span class="mono">{{ info!.serial_num }}</span></InfoRow>
+            <InfoRow :label="t('uptime')">
+              <span class="muted uptime-value">
                 <template v-if="uptime">
                   <template v-if="uptime.days">
                     <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
@@ -151,8 +147,8 @@ const updateInterface = () => {
                 <template v-else>
                   <span>—</span>
                 </template>
-              </div>
-            </div>
+              </span>
+            </InfoRow>
           </div>
         </section>
 
@@ -172,10 +168,7 @@ const updateInterface = () => {
             </div>
           </div>
           <div class="card-body">
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('power') }}</div>
-              <div class="kv-row-value mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
-            </div>
+            <InfoRow :label="t('power')"><span class="mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</span></InfoRow>
           </div>
         </section>
 
@@ -241,9 +234,8 @@ const updateInterface = () => {
             <div class="title">{{ t('firmware') }}</div>
           </div>
           <div class="card-body">
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('firmware_current') }}</div>
-              <div class="kv-row-value firmware-version-row">
+            <InfoRow :label="t('firmware_current')">
+              <span class="firmware-version-row">
                 <span>
                   <span class="mono">{{ info?.firmware }}</span>
                   <template v-if="latestVersion && !latestVersionError">
@@ -254,29 +246,25 @@ const updateInterface = () => {
                 <a v-if="hasUpdate" :href="firmwareLatest" class="firmware-download-btn">
                   <Button type="button" variant="primary">{{ t('firmware_download', { v: latestVersion }) }}</Button>
                 </a>
-              </div>
-            </div>
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('firmware_install') }}</div>
-              <div class="kv-row-value">
-                <FileUpload
-                  v-model="firmwareFile"
-                  :placeholder="t('choose_firmware')"
-                  accept=".bin"
-                  :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
-                  :is-loading="isUpdating"
-                  :disabled="loadedMethod === 'firmware'"
-                  @upload="updateFirmware"
-                />
-              </div>
-              <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
-            </div>
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('reboot') }}</div>
-              <div class="kv-row-value">
-                <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
-              </div>
-            </div>
+              </span>
+            </InfoRow>
+            <InfoRow :label="t('firmware_install')">
+              <FileUpload
+                v-model="firmwareFile"
+                :placeholder="t('choose_firmware')"
+                accept=".bin"
+                :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
+                :is-loading="isUpdating"
+                :disabled="loadedMethod === 'firmware'"
+                @upload="updateFirmware"
+              />
+              <template #hint>
+                <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
+              </template>
+            </InfoRow>
+            <InfoRow :label="t('reboot')">
+              <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
+            </InfoRow>
           </div>
         </section>
 

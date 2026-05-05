@@ -15,12 +15,9 @@ defineProps<{ text: string; severity?: 'info' | 'error' }>();
 
 <style>
 .info {
-  grid-column: span 2 !important;
   color: var(--text-muted);
   font-size: 11px;
   margin-top: -6px;
-  height: fit-content !important;
-  justify-content: start !important;
   display: flex;
   align-items: center;
   gap: 4px;

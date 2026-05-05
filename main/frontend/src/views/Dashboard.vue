@@ -9,6 +9,7 @@ import { useRouter } from 'vue-router';
 import SettingsIcon from '@/assets/settings.svg?component';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
+import InfoRow from '@/components/InfoRow.vue';
 import Layout from '@/components/Layout.vue';
 import RsStatus from '@/components/RsStatus.vue';
 
@@ -71,14 +72,8 @@ const getDisplayValue = (val: string | boolean | number) => {
             <span class="pill muted" v-else>{{ t('not_connected') }}</span>
           </div>
           <div class="card-body">
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('ip') }}</div>
-              <div class="kv-row-value mono">{{ getDisplayValue(info!.ethernet.ip) }}</div>
-            </div>
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('mac') }}</div>
-              <div class="kv-row-value mono">{{ getDisplayValue(info!.ethernet.mac) }}</div>
-            </div>
+            <InfoRow :label="t('ip')"><span class="mono">{{ getDisplayValue(info!.ethernet.ip) }}</span></InfoRow>
+            <InfoRow :label="t('mac')"><span class="mono">{{ getDisplayValue(info!.ethernet.mac) }}</span></InfoRow>
           </div>
         </section>
 
@@ -94,54 +89,24 @@ const getDisplayValue = (val: string | boolean | number) => {
             <span class="pill muted" v-else>{{ t('disabled') }}</span>
           </div>
           <div class="card-body">
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('status') }}</div>
-              <div class="kv-row-value">{{ getDisplayValue(info!.wifi.enabled) }}</div>
-            </div>
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('wifi_mode') }}</div>
-              <div class="kv-row-value">{{ t(info!.wifi.mode) }}</div>
-            </div>
+            <InfoRow :label="t('status')">{{ getDisplayValue(info!.wifi.enabled) }}</InfoRow>
+            <InfoRow :label="t('wifi_mode')">{{ t(info!.wifi.mode) }}</InfoRow>
 
             <template v-if="info!.wifi.mode === 'ap'">
-              <div class="kv-row">
-                <div class="kv-row-key">{{ t('connections_count') }}</div>
-                <div class="kv-row-value">{{ info!.wifi.con_ap }}</div>
-              </div>
-              <div class="kv-row">
-                <div class="kv-row-key">{{ t('ip') }}</div>
-                <div class="kv-row-value mono">{{ info!.wifi.ap_ip }}</div>
-              </div>
-              <div class="kv-row">
-                <div class="kv-row-key">{{ t('mac') }}</div>
-                <div class="kv-row-value mono">{{ info!.wifi.ap_mac }}</div>
-              </div>
+              <InfoRow :label="t('connections_count')">{{ info!.wifi.con_ap }}</InfoRow>
+              <InfoRow :label="t('ip')"><span class="mono">{{ info!.wifi.ap_ip }}</span></InfoRow>
+              <InfoRow :label="t('mac')"><span class="mono">{{ info!.wifi.ap_mac }}</span></InfoRow>
             </template>
 
             <template v-else-if="info!.wifi.mode === 'sta'">
-              <div class="kv-row">
-                <div class="kv-row-key">{{ t('connection') }}</div>
-                <div class="kv-row-value">{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</div>
-              </div>
+              <InfoRow :label="t('connection')">{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</InfoRow>
               <template v-if="info!.wifi.con_sta">
-                <div class="kv-row">
-                  <div class="kv-row-key">{{ t('ssid') }}</div>
-                  <div class="kv-row-value mono">{{ info!.wifi.con_sta_ssid }}</div>
-                </div>
+                <InfoRow :label="t('ssid')"><span class="mono">{{ info!.wifi.con_sta_ssid }}</span></InfoRow>
               </template>
-              <div class="kv-row">
-                <div class="kv-row-key">{{ t('ip') }}</div>
-                <div class="kv-row-value mono">{{ info!.wifi.sta_ip }}</div>
-              </div>
-              <div class="kv-row">
-                <div class="kv-row-key">{{ t('mac') }}</div>
-                <div class="kv-row-value mono">{{ info!.wifi.sta_mac }}</div>
-              </div>
+              <InfoRow :label="t('ip')"><span class="mono">{{ info!.wifi.sta_ip }}</span></InfoRow>
+              <InfoRow :label="t('mac')"><span class="mono">{{ info!.wifi.sta_mac }}</span></InfoRow>
               <template v-if="info!.wifi.enabled && info!.wifi.con_sta">
-                <div class="kv-row">
-                  <div class="kv-row-key">{{ t('rssi') }}</div>
-                  <div class="kv-row-value">{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</div>
-                </div>
+                <InfoRow :label="t('rssi')">{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</InfoRow>
               </template>
             </template>
           </div>
@@ -152,13 +117,9 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="title">{{ t('gateway') }}</div>
           </div>
           <div class="card-body">
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('power') }}</div>
-              <div class="kv-row-value mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
-            </div>
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('uptime') }}</div>
-              <div class="kv-row-value muted uptime-value">
+            <InfoRow :label="t('power')"><span class="mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</span></InfoRow>
+            <InfoRow :label="t('uptime')">
+              <span class="muted uptime-value">
                 <template v-if="uptime">
                   <template v-if="uptime.days">
                     <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
@@ -172,15 +133,14 @@ const getDisplayValue = (val: string | boolean | number) => {
                 <template v-else>
                   <span>—</span>
                 </template>
-              </div>
-            </div>
-            <div class="kv-row">
-              <div class="kv-row-key">{{ t('firmware_version') }}</div>
-              <div class="kv-row-value firmware-row">
+              </span>
+            </InfoRow>
+            <InfoRow :label="t('firmware_version')">
+              <span class="firmware-row">
                 <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
-              </div>
-            </div>
+              </span>
+            </InfoRow>
           </div>
         </section>
       </div>

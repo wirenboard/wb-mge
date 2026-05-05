@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
 import type { Settings } from '@/common/types';
 import Button from '@/components/Button.vue';
+import InfoRow from '@/components/InfoRow.vue';
 import { downloadFile } from '@/utils/downloadFile';
 
 const { t } = useI18n();
@@ -38,27 +39,18 @@ const handleFileChange = () => {
       <div class="title">{{ t('configuration') }}</div>
     </div>
     <div class="card-body">
-      <div class="kv-row">
-        <div class="kv-row-key">{{ t('export') }}</div>
-        <div class="kv-row-value">
-          <Button @click="downloadSettings">{{ t('downloadSettings') }}</Button>
-        </div>
-      </div>
-      <div class="kv-row">
-        <div class="kv-row-key">{{ t('import') }}</div>
-        <div class="kv-row-value">
-          <Button @click="fileInput.click()">{{ t('uploadSettings') }}</Button>
-          <input ref="fileInput" class="configuration-input" type="file" required accept=".json" @change="handleFileChange" />
-        </div>
-      </div>
-      <div class="kv-row">
-        <div class="kv-row-key">{{ t('reset') }}</div>
-        <div class="kv-row-value">
-          <Button type="button" variant="danger" :disabled="loadedMethod === 'set_default_settings'" @click="cmd('set_default_settings', t('factory_reset_confirm'))">
-            {{ t('set_default_settings') }}
-          </Button>
-        </div>
-      </div>
+      <InfoRow :label="t('export')">
+        <Button @click="downloadSettings">{{ t('downloadSettings') }}</Button>
+      </InfoRow>
+      <InfoRow :label="t('import')">
+        <Button @click="fileInput.click()">{{ t('uploadSettings') }}</Button>
+        <input ref="fileInput" class="configuration-input" type="file" required accept=".json" @change="handleFileChange" />
+      </InfoRow>
+      <InfoRow :label="t('reset')">
+        <Button type="button" variant="danger" :disabled="loadedMethod === 'set_default_settings'" @click="cmd('set_default_settings', t('factory_reset_confirm'))">
+          {{ t('set_default_settings') }}
+        </Button>
+      </InfoRow>
     </div>
   </section>
 </template>

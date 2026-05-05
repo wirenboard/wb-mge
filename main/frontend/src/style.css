@@ -175,32 +175,8 @@ legend {
   padding: 6px 18px 14px;
 }
 
-/* Key/Value rows */
-.kv-row {
-  display: grid;
-  grid-template-columns: minmax(140px, 1fr) auto;
-  gap: 8px 16px;
-  align-items: center;
-  padding: 9px 0;
-  border-bottom: 1px dashed var(--border-color);
-  font-size: 13px;
-}
-.kv-row:last-child { border-bottom: 0; }
-.kv-row-key { color: var(--text-secondary); }
-.kv-row-value { color: var(--text-color); text-align: right; }
 .mono { font-family: var(--font-mono); }
 .muted { color: var(--text-muted); }
-.kv-row-value.mono { font-size: 12.5px; }
-.kv-row-value.muted { color: var(--text-muted); }
-.kv-row-hint {
-  grid-column: 1 / -1;
-  font-size: 11px;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: -4px;
-}
 
 /* Form field rows */
 .field {
