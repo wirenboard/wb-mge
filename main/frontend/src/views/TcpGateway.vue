@@ -42,6 +42,7 @@ const onModeChange = (ev: Event, portKey: 'rs485_1' | 'rs485_2') => {
 };
 
 const portSubs = ['port1_sub', 'port2_sub'];
+const portTitles = ['port_1', 'port_2'] as const;
 </script>
 
 <template>
@@ -54,7 +55,7 @@ const portSubs = ['port1_sub', 'port2_sub'];
           <form @submit.prevent="save(portKey)">
             <div class="card-header">
               <div class="card-title-wrap">
-                <div class="title">RS-485 · Port {{ idx + 1 }}</div>
+                <div class="title">{{ t(portTitles[idx]) }}</div>
                 <div class="sub">{{ t(portSubs[idx]) }}</div>
               </div>
               <Button
@@ -125,6 +126,8 @@ const portSubs = ['port1_sub', 'port2_sub'];
     "crumbs": "TCP gateway settings",
     "port1_sub": "Wired terminal · left",
     "port2_sub": "Wired terminal · right + I/O bus",
+    "port_1": "RS-485 · Port 1",
+    "port_2": "RS-485 · Port 2",
     "modbus_mode": "Mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
@@ -138,6 +141,8 @@ const portSubs = ['port1_sub', 'port2_sub'];
     "crumbs": "Настройки TCP-шлюза",
     "port1_sub": "Левый клеммник",
     "port2_sub": "Правый клеммник + I/O bus",
+    "port_1": "RS-485 · Порт 1",
+    "port_2": "RS-485 · Порт 2",
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",
@@ -151,6 +156,8 @@ const portSubs = ['port1_sub', 'port2_sub'];
     "crumbs": "TCP шлюзінің баптаулары",
     "port1_sub": "Сымды клемма · сол",
     "port2_sub": "Сымды клемма · оң + I/O bus",
+    "port_1": "RS-485 · Порт 1",
+    "port_2": "RS-485 · Порт 2",
     "modbus_mode": "Режим",
     "bridge_mode": "Рөл",
     "bridge_modbus": "Modbus TCP",
@@ -164,6 +171,8 @@ const portSubs = ['port1_sub', 'port2_sub'];
     "crumbs": "Impostazioni gateway TCP",
     "port1_sub": "Morsettiera · sinistra",
     "port2_sub": "Morsettiera · destra + I/O bus",
+    "port_1": "RS-485 · Porta 1",
+    "port_2": "RS-485 · Porta 2",
     "modbus_mode": "Modalità",
     "bridge_mode": "Modalità bridge",
     "bridge_modbus": "Modbus TCP",
@@ -177,6 +186,8 @@ const portSubs = ['port1_sub', 'port2_sub'];
     "crumbs": "TCP-Gateway Einstellungen",
     "port1_sub": "Klemmenleiste · links",
     "port2_sub": "Klemmenleiste · rechts + I/O bus",
+    "port_1": "RS-485 · Port 1",
+    "port_2": "RS-485 · Port 2",
     "modbus_mode": "Modus",
     "bridge_mode": "Bridge-Modus",
     "bridge_modbus": "Modbus TCP",

@@ -99,7 +99,7 @@ watch(
       <div v-if="info && savedSettings" class="sb-ports">
         <div class="sb-port">
           <div class="sb-port-head">
-            <span class="sb-port-name">Port 1</span>
+            <span class="sb-port-name">{{ t('port_1') }}</span>
             <span :class="['sb-port-state', info.rs485_1.is_busy ? 'on' : 'off']">
               <span class="dot" />{{ info.rs485_1.is_busy ? t('active') : t('idle') }}
             </span>
@@ -109,7 +109,7 @@ watch(
         </div>
         <div class="sb-port">
           <div class="sb-port-head">
-            <span class="sb-port-name">Port 2</span>
+            <span class="sb-port-name">{{ t('port_2') }}</span>
             <span :class="['sb-port-state', info.rs485_2.is_busy ? 'on' : 'off']">
               <span class="dot" />{{ info.rs485_2.is_busy ? t('active') : t('idle') }}
             </span>
@@ -435,7 +435,9 @@ watch(
     "mode": "Mode",
     "line": "Line",
     "modbus_tcp": "Modbus TCP",
-    "transparent": "Transparent bridge"
+    "transparent": "Transparent bridge",
+    "port_1": "Port 1",
+    "port_2": "Port 2"
   },
   "ru": {
     "group_overview": "Обзор",
@@ -450,7 +452,9 @@ watch(
     "mode": "Режим",
     "line": "Параметры",
     "modbus_tcp": "Modbus TCP",
-    "transparent": "Прозрачный мост"
+    "transparent": "Прозрачный мост",
+    "port_1": "Порт 1",
+    "port_2": "Порт 2"
   },
   "kk": {
     "group_overview": "Шолу",
@@ -465,7 +469,9 @@ watch(
     "mode": "Режим",
     "line": "Желі",
     "modbus_tcp": "Modbus TCP",
-    "transparent": "Мөлдір көпір"
+    "transparent": "Мөлдір көпір",
+    "port_1": "Порт 1",
+    "port_2": "Порт 2"
   },
   "it": {
     "group_overview": "Panoramica",
@@ -480,7 +486,9 @@ watch(
     "mode": "Modalità",
     "line": "Linea",
     "modbus_tcp": "Modbus TCP",
-    "transparent": "Bridge trasparente"
+    "transparent": "Bridge trasparente",
+    "port_1": "Porta 1",
+    "port_2": "Porta 2"
   },
   "de": {
     "group_overview": "Übersicht",
@@ -495,7 +503,9 @@ watch(
     "mode": "Modus",
     "line": "Leitung",
     "modbus_tcp": "Modbus TCP",
-    "transparent": "Transparente Brücke"
+    "transparent": "Transparente Brücke",
+    "port_1": "Port 1",
+    "port_2": "Port 2"
   }
 }
 </i18n>

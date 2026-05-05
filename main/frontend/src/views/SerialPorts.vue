@@ -20,7 +20,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
         <RsSettings
           v-model:settings="data.rs485_1"
           field="rs485_1"
-          title="RS-485 · Port 1"
+          :title="t('port_1')"
           :sub="t('port1_sub')"
         />
 
@@ -28,7 +28,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
           <RsSettings
             v-model:settings="data.rs485_2"
             field="rs485_2"
-            title="RS-485 · Port 2"
+            :title="t('port_2')"
             :sub="t('port2_sub')"
           />
 
@@ -70,25 +70,31 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "io_bus_sub": "WB-MIO chip connected to RS-485 Port 2. Default address 247.",
     "io_bus_enable": "Enable I/O Bus",
     "port1_sub": "Wired terminal · left",
-    "port2_sub": "Wired terminal · right + I/O bus"
+    "port2_sub": "Wired terminal · right + I/O bus",
+    "port_1": "RS-485 · Port 1",
+    "port_2": "RS-485 · Port 2"
   },
   "ru": {
     "title": "Последовательные порты",
     "crumbs": "Интерфейсы RS-485",
     "save": "Сохранить",
-    "io_bus_sub": "Чип WB-MIO, подключённый к RS-485 Port 2. Адрес по умолчанию 247.",
+    "io_bus_sub": "Чип WB-MIO, подключённый ко второму порту RS-485. Адрес по умолчанию 247.",
     "io_bus_enable": "Включить I/O Bus",
     "port1_sub": "Левый клеммник",
-    "port2_sub": "Правый клеммник + I/O bus"
+    "port2_sub": "Правый клеммник + I/O bus",
+    "port_1": "RS-485 · Порт 1",
+    "port_2": "RS-485 · Порт 2"
   },
   "kk": {
     "title": "Сериялық порттар",
     "crumbs": "RS-485 интерфейстері",
     "save": "Сақтау",
-    "io_bus_sub": "RS-485 Port 2-ге қосылған WB-MIO чипі. Әдепкі адресі 247.",
+    "io_bus_sub": "RS-485 Порт 2-ге қосылған WB-MIO чипі. Әдепкі адресі 247.",
     "io_bus_enable": "I/O Bus қосу",
     "port1_sub": "Сымды клемма · сол",
-    "port2_sub": "Сымды клемма · оң + I/O bus"
+    "port2_sub": "Сымды клемма · оң + I/O bus",
+    "port_1": "RS-485 · Порт 1",
+    "port_2": "RS-485 · Порт 2"
   },
   "it": {
     "title": "Porte seriali",
@@ -97,7 +103,9 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "io_bus_sub": "Chip WB-MIO collegato alla RS-485 Port 2. Indirizzo predefinito 247.",
     "io_bus_enable": "Abilita I/O Bus",
     "port1_sub": "Morsettiera · sinistra",
-    "port2_sub": "Morsettiera · destra + I/O bus"
+    "port2_sub": "Morsettiera · destra + I/O bus",
+    "port_1": "RS-485 · Porta 1",
+    "port_2": "RS-485 · Porta 2"
   },
   "de": {
     "title": "Serielle Schnittstellen",
@@ -106,7 +114,9 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "io_bus_sub": "WB-MIO-Chip an RS-485 Port 2 angeschlossen. Standardadresse 247.",
     "io_bus_enable": "I/O Bus aktivieren",
     "port1_sub": "Klemmenleiste · links",
-    "port2_sub": "Klemmenleiste · rechts + I/O bus"
+    "port2_sub": "Klemmenleiste · rechts + I/O bus",
+    "port_1": "RS-485 · Port 1",
+    "port_2": "RS-485 · Port 2"
   }
 }
 </i18n>
