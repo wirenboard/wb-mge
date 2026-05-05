@@ -114,6 +114,7 @@ const portSubs = ['port1_sub', 'port2_sub'];
 <style>
 .tcpGateway-port {
   max-width: 85px;
+  justify-self: end; /* align input to the right edge of the field grid column */
 }
 </style>
 
