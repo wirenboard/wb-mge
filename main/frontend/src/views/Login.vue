@@ -179,7 +179,7 @@ const login = async () => {
   color: #fff;
 }
 
-.login-hero h1 em {
+.login-hero :deep(h1 em) {
   font-style: normal;
   color: var(--brand-on-dark);
 }
