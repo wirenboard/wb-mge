@@ -101,32 +101,6 @@ const updateInterface = () => {
       <div class="grid-2">
       <div class="stack">
         <section class="card">
-          <form autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
-            <div class="card-header">
-              <div class="card-title-wrap">
-                <div class="title">{{ t('device_name') }}</div>
-                <div class="sub">{{ t('device_name_sub') }}</div>
-              </div>
-              <Button
-                type="submit"
-                :disabled="!settings!.hostname || !isChanged(['hostname'])"
-              >
-                {{ t('save') }}
-              </Button>
-            </div>
-            <div class="card-body">
-              <div class="field">
-                <label for="hostname">{{ t('hostname_label') }}</label>
-                <input id="hostname" v-model="settings!.hostname" type="text" class="mono" name="hostname">
-              </div>
-              <InfoRow :label="t('access_url_label')">
-                <a class="mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
-              </InfoRow>
-            </div>
-          </form>
-        </section>
-
-        <section class="card">
           <div class="card-header">
             <div class="title">{{ t('device_info') }}</div>
           </div>
@@ -232,6 +206,32 @@ const updateInterface = () => {
       </div>
 
       <div class="stack">
+        <section class="card">
+          <form autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
+            <div class="card-header">
+              <div class="card-title-wrap">
+                <div class="title">{{ t('device_name') }}</div>
+                <div class="sub">{{ t('device_name_sub') }}</div>
+              </div>
+              <Button
+                type="submit"
+                :disabled="!settings!.hostname || !isChanged(['hostname'])"
+              >
+                {{ t('save') }}
+              </Button>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="hostname">{{ t('hostname_label') }}</label>
+                <input id="hostname" v-model="settings!.hostname" type="text" class="mono" name="hostname">
+              </div>
+              <InfoRow :label="t('access_url_label')">
+                <a class="mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
+              </InfoRow>
+            </div>
+          </form>
+        </section>
+
         <section class="card">
           <div class="card-header">
             <div class="title">{{ t('firmware') }}</div>
