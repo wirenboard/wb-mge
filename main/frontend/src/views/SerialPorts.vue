@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
+import { useInfo } from '@/common/info';
 import { api } from '@/utils/api';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -11,32 +12,19 @@ import Switch from '@/components/Switch.vue';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
+const { info } = useInfo();
 
-// Cache multimaster state
-const cacheEnabled = ref(false);
+// Cache is considered enabled when ALL ports are in cache_bus mode.
+// Derived reactively from the info ref polled globally every 5 s by App.vue.
+const cacheEnabled = computed(() => {
+  if (!info.value) return false;
+  return info.value.rs485_1.port_mode === 'cache_bus' &&
+         info.value.rs485_2.port_mode === 'cache_bus';
+});
+
 const cacheEntries = ref(0);
 const cachePort = ref<'1' | '2'>('1');
 const cacheLoading = ref(false);
-
-async function fetchCacheStatus() {
-  /* Set cacheLoading=true before fetching so that the cacheEnabled watcher
-   * does not fire toggleCache() when the initial value is applied. */
-  cacheLoading.value = true;
-  try {
-    // Use GET /ports/status to determine whether all ports are in cache_bus mode.
-    // Response shape: {"ports":[{"index":1,"mode":"cache_bus"},{"index":2,"mode":"tcp_bridge"}]}
-    const portsStatus = await api<{ ports: { index: number; mode: string }[] }>('ports/status');
-    cacheEnabled.value = portsStatus.ports.every(p => p.mode === 'cache_bus');
-
-    // Use GET /cache/status only for the entries count (not for enabled state).
-    const cacheStatus = await api<{ enabled: boolean; entries: number }>('cache/status');
-    cacheEntries.value = cacheStatus.entries;
-  } catch {
-    // Silently ignore — backend may not support this yet
-  } finally {
-    cacheLoading.value = false;
-  }
-}
 
 async function toggleCache(enabled: boolean) {
   cacheLoading.value = true;
@@ -45,13 +33,15 @@ async function toggleCache(enabled: boolean) {
       // Enable: switch both ports to cache_bus mode
       await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
       await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+      // Fetch entries count now that cache is active
+      const cacheStatus = await api<{ enabled: boolean; entries: number }>('cache/status');
+      cacheEntries.value = cacheStatus.entries;
     } else {
       // Disable: switch both ports back to tcp_bridge mode
       await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
       await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+      cacheEntries.value = 0;
     }
-    cacheEnabled.value = enabled;
-    if (!enabled) cacheEntries.value = 0;
   } catch {
     // Ignore errors silently
   } finally {
@@ -67,16 +57,6 @@ function downloadCacheCsv() {
   const prefix = import.meta.env.DEV ? '/api/' : '/';
   window.open(`${prefix}cache/csv?port=${cachePort.value}`);
 }
-
-// Watch for toggle changes but skip during initial fetch
-watch(cacheEnabled, async (val) => {
-  if (cacheLoading.value) return;
-  await toggleCache(val);
-});
-
-onMounted(() => {
-  fetchCacheStatus();
-});
 </script>
 
 <template>
@@ -132,7 +112,7 @@ onMounted(() => {
               </div>
               <div style="display:flex;align-items:center;gap:10px">
                 <span v-if="cacheEnabled" class="muted" style="font-size:12px">{{ cacheEntries }} {{ t('cache_entries') }}</span>
-                <Switch id="cache_mm" v-model="cacheEnabled" :disabled="cacheLoading" />
+                <Switch id="cache_mm" :model-value="cacheEnabled" :disabled="cacheLoading" @update:model-value="toggleCache" />
               </div>
             </div>
             <div class="card-body">

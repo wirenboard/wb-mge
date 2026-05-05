@@ -328,38 +328,6 @@ bool port_manager_check_settings_changed(unsigned port_index)
 // HTTP handlers
 // ────────────────────────────────────────────────────────────────
 
-static esp_err_t ports_status_get_handler(httpd_req_t *req)
-{
-    if (!auth_middleware_check(req)) {
-        return ESP_OK;
-    }
-
-    cJSON *root = cJSON_CreateObject();
-    if (!root) {
-        return json_utils_send_error(req, "Out of memory");
-    }
-
-    cJSON *ports_arr = cJSON_AddArrayToObject(root, "ports");
-    if (!ports_arr) {
-        cJSON_Delete(root);
-        return json_utils_send_error(req, "Out of memory");
-    }
-
-    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        cJSON *port_obj = cJSON_CreateObject();
-        if (!port_obj) {
-            cJSON_Delete(root);
-            return json_utils_send_error(req, "Out of memory");
-        }
-        cJSON_AddNumberToObject(port_obj, "index", i + 1);
-        cJSON_AddStringToObject(port_obj, "mode", port_manager_mode_to_str(pm_ctx[i].mode));
-        cJSON_AddItemToArray(ports_arr, port_obj);
-    }
-
-    json_utils_send_response(req, NULL, root);
-    return ESP_OK;
-}
-
 static esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
 {
     if (!auth_middleware_check(req)) {
@@ -413,12 +381,6 @@ static esp_err_t port2_set_mode_handler(httpd_req_t *req)
     return port_set_mode_handler(req, 1);
 }
 
-static const httpd_uri_t uri_ports_status = {
-    .uri     = "/ports/status",
-    .method  = HTTP_GET,
-    .handler = ports_status_get_handler,
-};
-
 static const httpd_uri_t uri_port1_mode = {
     .uri     = "/ports/1/mode",
     .method  = HTTP_POST,
@@ -433,8 +395,6 @@ static const httpd_uri_t uri_port2_mode = {
 
 esp_err_t port_manager_register_handlers(httpd_handle_t server)
 {
-    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_ports_status),
-                        TAG, "Failed to register GET /ports/status");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port1_mode),
                         TAG, "Failed to register POST /ports/1/mode");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port2_mode),

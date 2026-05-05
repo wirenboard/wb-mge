@@ -14,7 +14,7 @@ import Layout from '@/components/Layout.vue';
 import RsStatus from '@/components/RsStatus.vue';
 
 const { t } = useI18n();
-const { info, startPolling, stopPolling } = useInfo();
+const { info } = useInfo();
 const { data: settings, updateSettings } = useSettings();
 const { uptime } = useUptime();
 const router = useRouter();
@@ -35,14 +35,6 @@ onMounted(async () => {
 const hasUpdate = computed(() =>
   latestVersion.value && info.value?.firmware && latestVersion.value !== info.value.firmware
 );
-
-onMounted(() => {
-  startPolling();
-});
-
-onUnmounted(() => {
-  stopPolling();
-});
 
 const getDisplayValue = (val: string | boolean | number) => {
   if (typeof val === 'boolean') {

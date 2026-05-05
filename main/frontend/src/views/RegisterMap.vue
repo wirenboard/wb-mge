@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useInfo } from '@/common/info';
 import { api } from '@/utils/api';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 
 const { t } = useI18n();
+const { info } = useInfo();
 
 // One entry from /cache/json
 interface CacheEntry { p: number; s: number; t: 'h' | 'i' | 'c' | 'd'; a: number; v: number; ts: number; }
@@ -16,7 +18,15 @@ interface RegRow { addr: number; val: string; updatedAge: number; stale: boolean
 interface DeviceNode { id: number; groups: string[]; lastSeenAge: number; }
 
 const rawEntries = ref<CacheEntry[]>([]);
-const cacheEnabled = ref(true);
+
+// Cache is considered enabled when ALL ports are in cache_bus mode.
+// Derived reactively from the info ref polled globally every 5 s by App.vue.
+const cacheEnabled = computed(() => {
+  if (!info.value) return false;
+  return info.value.rs485_1.port_mode === 'cache_bus' &&
+         info.value.rs485_2.port_mode === 'cache_bus';
+});
+
 const loading = ref(true);
 const error = ref<string | null>(null);
 const valueTimeout = ref(60);
@@ -27,6 +37,8 @@ const searchFilter = ref('');
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 
 async function fetchEntries(): Promise<void> {
+  // Skip the fetch when cache is not active to avoid pointless requests.
+  if (!cacheEnabled.value) return;
   try {
     const data = await api<CacheEntry[]>('cache/json');
     rawEntries.value = data;
@@ -38,35 +50,24 @@ async function fetchEntries(): Promise<void> {
   }
 }
 
-async function fetchStatus(): Promise<void> {
-  try {
-    // Use GET /ports/status to determine whether all ports are in cache_bus mode.
-    // Response shape: {"ports":[{"index":1,"mode":"cache_bus"},{"index":2,"mode":"tcp_bridge"}]}
-    const data = await api<{ ports: { index: number; mode: string }[] }>('ports/status');
-    cacheEnabled.value = data.ports.every(p => p.mode === 'cache_bus');
-  } catch {
-    // Silently ignore status fetch errors
-  }
-}
-
 async function toggleCaching(): Promise<void> {
   try {
     if (cacheEnabled.value) {
       // Disable: switch both ports back to tcp_bridge
       await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
       await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
-      cacheEnabled.value = false;
       rawEntries.value = [];
+      // cacheEnabled will update automatically on the next info poll
     } else {
       // Enable: switch both ports to cache_bus
       await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
       await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
-      cacheEnabled.value = true;
+      // Fetch entries immediately so the UI shows data without waiting for the next poll
+      await fetchEntries();
     }
-    await fetchEntries();
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Action failed';
-    await fetchStatus(); // resync actual enabled state
+    // cacheEnabled is derived from info — no manual resync needed
   }
 }
 
@@ -77,12 +78,13 @@ async function resetMap(): Promise<void> {
     await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
     await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
     await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
-    cacheEnabled.value = true;
     rawEntries.value = [];
+    // Fetch entries immediately so the UI reflects the cleared state
     await fetchEntries();
+    // cacheEnabled will update automatically on the next info poll
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Reset failed';
-    await fetchStatus(); // resync actual enabled state
+    // cacheEnabled is derived from info — no manual resync needed
   }
 }
 
@@ -209,10 +211,8 @@ const filteredDevices = computed((): DeviceNode[] => {
 
 onMounted(() => {
   fetchEntries();
-  fetchStatus();
   pollInterval = setInterval(() => {
     fetchEntries();
-    fetchStatus();
   }, 2000);
 });
 
