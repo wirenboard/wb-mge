@@ -118,6 +118,7 @@ const login = async () => {
   width: auto;
   display: block;
   opacity: 0.92;
+  align-self: flex-start; /* pin logo to the left edge of the flex column */
 }
 
 .login-logo :deep(svg) {
@@ -300,6 +301,11 @@ const login = async () => {
   font-family: var(--font-mono);
 }
 
+.login-colophon a {
+  color: var(--text-on-dark-dim); /* inherit the dim grey from the parent instead of browser blue */
+  text-decoration: none;
+}
+
 .login-right {
   background: var(--bg-sidebar);
 
@@ -323,7 +329,7 @@ const login = async () => {
     "documentation": "Documentation",
     "wrong_credentials": "Please enter correct login and password",
     "description": "Sign in to configure serial ports, inspect live traffic, and manage the register map that the gateway auto-discovers from the bus.",
-    "heading": "Modbus&nbsp;<em>interface gateway</em>."
+    "heading": "MGE: Your&nbsp;<em>Swiss Army Knife</em>&nbsp;for Modbus"
   },
   "ru": {
     "title": "Интерфейс WB-MGE v3",
@@ -331,7 +337,7 @@ const login = async () => {
     "documentation": "Документация",
     "wrong_credentials": "Введены неверные логин или пароль",
     "description": "Войдите, чтобы настроить последовательные порты, просматривать трафик и управлять картой регистров, автоматически обнаруживаемых шлюзом.",
-    "heading": "Modbus&nbsp;<em>шлюз интерфейсов</em>."
+    "heading": "MGE: Ваш&nbsp;<em>швейцарский нож</em>&nbsp;для Modbus"
   },
   "kk": {
     "title": "WB-MGE интерфейсі",
@@ -339,7 +345,7 @@ const login = async () => {
     "documentation": "Құжаттама",
     "wrong_credentials": "Логин немесе құпиясөз қате енгізілді",
     "description": "Сериялық порттарды конфигурациялау, тікелей трафикті тексеру және шлюз автоматты түрде анықтайтын регистрлер картасын басқару үшін кіріңіз.",
-    "heading": "Modbus&nbsp;<em>интерфейс шлюзі</em>."
+    "heading": "MGE: Modbus үшін сіздің&nbsp;<em>швейцариялық пышағыңыз</em>"
   },
   "it": {
     "title": "Interfaccia WB-MGE v3",
@@ -347,7 +353,7 @@ const login = async () => {
     "documentation": "Documentazione",
     "wrong_credentials": "Inserisci login e password corretti",
     "description": "Accedi per configurare le porte seriali, ispezionare il traffico in tempo reale e gestire la mappa dei registri rilevati automaticamente dal gateway.",
-    "heading": "Modbus&nbsp;<em>gateway di interfaccia</em>."
+    "heading": "MGE: Il vostro&nbsp;<em>coltellino svizzero</em>&nbsp;per Modbus"
   },
   "de": {
     "title": "WB-MGEv3-Oberfläche",
@@ -355,7 +361,7 @@ const login = async () => {
     "documentation": "Dokumentation",
     "wrong_credentials": "Bitte korrekten Benutzernamen und Passwort eingeben",
     "description": "Melden Sie sich an, um serielle Ports zu konfigurieren, den Live-Datenverkehr zu überwachen und die vom Gateway automatisch erkannte Registerkarte zu verwalten.",
-    "heading": "Modbus&nbsp;<em>Schnittstellengateway</em>."
+    "heading": "MGE: Ihr&nbsp;<em>Schweizer Taschenmesser</em>&nbsp;für Modbus"
   }
 }
 </i18n>
