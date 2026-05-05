@@ -311,7 +311,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
 {
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
-    if (!ctx->enabled) return;
+    /* Allow processing when sniffer display is enabled OR cache needs data */
+    if (!ctx->enabled && !cache_multimaster_is_enabled()) return;
     if (len < 4) return;
 
     /* Strip leading 0xFF arbitration bytes unconditionally.
@@ -774,14 +775,31 @@ void sniffer_disable(unsigned port_index)
     if (port_index >= BRIDGES_COUNT) return;
     sniff_ctx[port_index].enabled = false;
     if (sniff_ctx[port_index].serial_desc) {
-        esp_err_t err = serial_set_rx_timeout(sniff_ctx[port_index].serial_desc, SERIAL_RX_TOUT_PROXY);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Port %u: failed to set RX timeout to proxy value: %s", port_index, esp_err_to_name(err));
+        /* Restore RX timeout only if cache is not active (cache also needs the short timeout) */
+        if (!cache_multimaster_is_enabled()) {
+            esp_err_t err = serial_set_rx_timeout(sniff_ctx[port_index].serial_desc, SERIAL_RX_TOUT_PROXY);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Port %u: failed to set RX timeout to proxy value: %s", port_index, esp_err_to_name(err));
+            }
         }
+        /* else: leave timeout at SNIFFER value — cache still needs short inter-frame gaps */
     }
     xTimerStop(sniff_ctx[port_index].resp_timer, 0);
     sniff_ctx[port_index].state = SNIFF_IDLE;
     ESP_LOGI(TAG, "Sniffer disabled on port %u", port_index);
+}
+
+void sniffer_set_cache_active(bool active)
+{
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        if (sniff_ctx[i].enabled) continue; /* sniffer already controls timeout */
+        if (sniff_ctx[i].serial_desc == NULL) continue;
+        uint8_t tout = active ? SERIAL_RX_TOUT_SNIFFER : SERIAL_RX_TOUT_PROXY;
+        esp_err_t err = serial_set_rx_timeout(sniff_ctx[i].serial_desc, tout);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Port %u: failed to set RX timeout for cache: %s", i, esp_err_to_name(err));
+        }
+    }
 }
 
 esp_err_t sniffer_register_handlers(httpd_handle_t server)

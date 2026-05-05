@@ -1,4 +1,5 @@
 #include "cache_multimaster.h"
+#include "sniffer.h"
 #include "bridge.h"
 
 #include "esp_log.h"
@@ -128,12 +129,14 @@ esp_err_t cache_multimaster_init(void)
 void cache_multimaster_enable(void)
 {
     s_cache_enabled = true;
+    sniffer_set_cache_active(true);
     ESP_LOGI(TAG, "Cache multimaster enabled");
 }
 
 void cache_multimaster_disable(void)
 {
     s_cache_enabled = false;
+    sniffer_set_cache_active(false);
     cache_multimaster_clear();
     ESP_LOGI(TAG, "Cache multimaster disabled");
 }
