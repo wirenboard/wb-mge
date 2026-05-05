@@ -743,7 +743,7 @@ esp_err_t sniffer_init(void)
 
 void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
 {
-    if (port_index >= BRIDGES_COUNT) return;
+    if (port_index >= BRIDGES_COUNT || serial_desc == NULL) return;
     serial_desc->sniff_handler = s_port_callbacks[port_index];
     sniff_ctx[port_index].serial_desc = serial_desc;
 }
@@ -751,9 +751,12 @@ void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
 void sniffer_detach(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) return;
-    // Disable sniffer and clear the serial_desc pointer to avoid use-after-free
-    // when serial port is reinitialized
     sniffer_disable(port_index);
+    // Clear the callback pointer in the serial descriptor before releasing our reference,
+    // to prevent the UART event task from calling a stale handler after detach.
+    if (sniff_ctx[port_index].serial_desc) {
+        sniff_ctx[port_index].serial_desc->sniff_handler = NULL;
+    }
     sniff_ctx[port_index].serial_desc = NULL;
 }
 

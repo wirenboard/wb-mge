@@ -3,7 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "http_server.h"
-#include "bridge.h"
+#include "port_manager.h"
 #include "network.h"
 #include "update_rs485_mio_gpio_states.h"
 
@@ -32,9 +32,8 @@ static void settings_update_task(void *arg)
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         if (flags & (BRIDGE_FLAGS_BASE << index)) {
-            ESP_LOGD(TAG, "Applying new settings to bridge port %u", index + 1);
-            bridge_port_deinit(index);
-            bridge_port_init(index);
+            ESP_LOGD(TAG, "Applying new settings to port %u via port_manager", index + 1);
+            port_manager_apply_settings(index);
         }
     }
 
@@ -85,8 +84,8 @@ esp_err_t settings_update(void)
     uint32_t flags = 0;
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        if (bridge_port_check_settings_changed(index)) {
-            ESP_LOGD(TAG, "Bridge port %u settings were changed", index + 1);
+        if (port_manager_check_settings_changed(index)) {
+            ESP_LOGD(TAG, "Port %u settings were changed", index + 1);
             flags |= BRIDGE_FLAGS_BASE << index;
         }
     }

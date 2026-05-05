@@ -10,20 +10,45 @@ const { t } = useI18n();
 
 <template>
   <div>
-    <InfoRow :label="t('modbus_mode')">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</InfoRow>
-    <InfoRow v-if="!settings.bridge.modbus" :label="t('bridge_mode')">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</InfoRow>
-    <InfoRow :label="t('tcp_port')"><span class="mono">{{ settings.bridge.port }}</span></InfoRow>
-    <InfoRow :label="t('tcp_count')">{{ info.server_connections_count }}</InfoRow>
-    <InfoRow :label="t('status')">
-      {{ info.is_busy ? t('active') : t('not_active') }}
-      <template #hint>{{ t('status_info') }}</template>
-    </InfoRow>
-    <template v-if="settings.bridge.modbus">
-      <InfoRow :label="t('error_rate')">
-        {{ info.error_percentage }}%
-        <template #hint>{{ t('error_rate_description') }}</template>
-      </InfoRow>
+    <!-- always visible: operating mode -->
+    <div class="kv">
+      <div class="k">{{ t('port_mode_label') }}</div>
+      <div class="v">{{ t(`port_mode_${info.port_mode}`, info.port_mode) }}</div>
+    </div>
+
+    <!-- TCP bridge specific rows -->
+    <template v-if="info.port_mode === 'tcp_bridge'">
+      <div class="kv">
+        <div class="k">{{ t('modbus_mode') }}</div>
+        <div class="v">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
+      </div>
+      <div class="kv">
+        <div class="k">{{ t('bridge_mode') }}</div>
+        <div class="v">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
+      </div>
+      <div class="kv">
+        <div class="k">{{ t('tcp_port') }}</div>
+        <div class="v mono">{{ settings.bridge.port }}</div>
+      </div>
+      <div class="kv">
+        <div class="k">{{ t('tcp_count') }}</div>
+        <div class="v">{{ info.server_connections_count }}</div>
+      </div>
+      <template v-if="settings.bridge.modbus">
+        <div class="kv">
+          <div class="k">{{ t('error_rate') }}</div>
+          <div class="v">{{ info.error_percentage }}%</div>
+          <div class="hint">{{ t('error_rate_description') }}</div>
+        </div>
+      </template>
     </template>
+
+    <!-- always visible: bus activity status -->
+    <div class="kv">
+      <div class="k">{{ t('status') }}</div>
+      <div class="v">{{ info.is_busy ? t('active') : t('not_active') }}</div>
+      <div class="hint">{{ t('status_info') }}</div>
+    </div>
   </div>
 </template>
 
@@ -33,7 +58,8 @@ const { t } = useI18n();
 <i18n>
 {
   "en": {
-    "modbus_mode": "Mode",
+    "port_mode_label": "Operating mode",
+    "modbus_mode": "Modbus mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Transparent bridge",
@@ -47,6 +73,7 @@ const { t } = useI18n();
     "error_rate_description": "Error rate for the last 100 requests"
   },
   "ru": {
+    "port_mode_label": "Режим работы",
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",
@@ -61,6 +88,7 @@ const { t } = useI18n();
     "error_rate_description": "Процент ошибок по последним 100 запросам"
   },
   "kk": {
+    "port_mode_label": "Жұмыс режимі",
     "modbus_mode": "Режим",
     "bridge_mode": "Рөл",
     "bridge_modbus": "Modbus TCP",
@@ -75,7 +103,8 @@ const { t } = useI18n();
     "error_rate_description": "Соңғы 100 сұрауға қатысты қате пайызы"
   },
   "it": {
-    "modbus_mode": "Modalità",
+    "port_mode_label": "Modalità operativa",
+    "modbus_mode": "Modalità Modbus",
     "bridge_mode": "Modalità bridge",
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Bridge trasparente",
@@ -89,7 +118,8 @@ const { t } = useI18n();
     "error_rate_description": "Tasso di errore per le ultime 100 richieste"
   },
   "de": {
-    "modbus_mode": "Modus",
+    "port_mode_label": "Betriebsmodus",
+    "modbus_mode": "Modbus-Modus",
     "bridge_mode": "Bridge-Modus",
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Transparente Brücke",

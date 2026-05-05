@@ -1,32 +1,14 @@
 <script setup lang="ts">
-import { ref, watch, computed, type Component } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { RouteRecordRaw } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
 import MenuIcon from '@/assets/menu.svg?component';
-import DocsIcon from '@/assets/docs.svg?component';
-import SupportIcon from '@/assets/support.svg?component';
-import ShopIcon from '@/assets/shop.svg?component';
-import LogoutIcon from '@/assets/logout.svg?component';
-import GaugeIcon from '@/assets/gauge.svg?component';
-import SlidersIcon from '@/assets/sliders.svg?component';
-import NetworkIcon from '@/assets/network.svg?component';
-import CpuIcon from '@/assets/cpu.svg?component';
-import PlugIcon from '@/assets/plug.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { documentation, support, email, website } from '@/common/links';
-
-// Map from route meta.menuIcon string to the corresponding SVG component
-const menuIconMap: Record<string, Component> = {
-  gauge: GaugeIcon,
-  sliders: SlidersIcon,
-  network: NetworkIcon,
-  cpu: CpuIcon,
-  plug: PlugIcon,
-};
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -61,7 +43,7 @@ watch(
       <RouterLink to="/" class="sidebar-logo">
         <Logo alt="Wiren Board" />
       </RouterLink>
-      <a v-if="hostname" :href="`http://${hostname}.local`" target="_blank" rel="noopener noreferrer" class="sidebar-hostname">{{ hostname }}</a>
+      <div v-if="hostname" class="sidebar-hostname">{{ hostname }}</div>
     </div>
 
     <MenuIcon class="sidebar-burger" @click="isShowMenu = !isShowMenu" />
@@ -78,11 +60,40 @@ watch(
             v-for="link in routes"
             :key="link.path"
             :to="link.path">
-            <component
-              v-if="menuIconMap[link.meta?.menuIcon as string]"
-              :is="menuIconMap[link.meta?.menuIcon as string]"
-              class="sidebar-icon"
-            />
+            <svg class="sidebar-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <template v-if="link.meta?.menuIcon === 'gauge'">
+                <path d="M2 11a6 6 0 0 1 12 0" />
+                <path d="M8 11l3-3" />
+                <circle cx="8" cy="11" r="0.6" fill="currentColor" stroke="none" />
+              </template>
+              <template v-else-if="link.meta?.menuIcon === 'sliders'">
+                <path d="M3 4h10M3 8h6M3 12h10" />
+                <circle cx="11" cy="4" r="1.2" />
+                <circle cx="7" cy="8" r="1.2" />
+                <circle cx="11" cy="12" r="1.2" />
+              </template>
+              <template v-else-if="link.meta?.menuIcon === 'network'">
+                <rect x="2" y="10" width="12" height="4" rx="1" />
+                <path d="M8 10V6M4 6h8M4 6V3M12 6V3" />
+              </template>
+              <template v-else-if="link.meta?.menuIcon === 'cpu'">
+                <rect x="4" y="4" width="8" height="8" rx="1" />
+                <rect x="6" y="6" width="4" height="4" />
+                <path d="M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2" />
+              </template>
+              <template v-else-if="link.meta?.menuIcon === 'activity'">
+                <path d="M1 8h3l2-5 4 10 2-5h3" />
+              </template>
+              <template v-else-if="link.meta?.menuIcon === 'plug'">
+                <path d="M6 2v4M10 2v4M5 6h6l-1 4H6zM7 10v4M9 10v4" />
+              </template>
+              <template v-else-if="link.meta?.menuIcon === 'grid'">
+                <rect x="2" y="2" width="5" height="5" />
+                <rect x="9" y="2" width="5" height="5" />
+                <rect x="2" y="9" width="5" height="5" />
+                <rect x="9" y="9" width="5" height="5" />
+              </template>
+            </svg>
             {{ t(link.meta?.menuName as string) }}
           </RouterLink>
         </template>
@@ -90,42 +101,44 @@ watch(
       <div v-if="info && savedSettings" class="sb-ports">
         <div class="sb-port">
           <div class="sb-port-head">
-            <span class="sb-port-name">{{ t('port_1') }}</span>
+            <span class="sb-port-name">Port 1</span>
             <span :class="['sb-port-state', info.rs485_1.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_1.is_busy ? t('active') : t('idle') }}
+              <span class="dot" />{{ info.rs485_1.is_busy ? 'ACTIVE' : 'IDLE' }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-row-key">{{ t('mode') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.bridge.modbus ? t('modbus_tcp') : t('transparent') }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-row-key">{{ t('line') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_1.port_mode}`, info.rs485_1.port_mode) }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
         </div>
         <div class="sb-port">
           <div class="sb-port-head">
-            <span class="sb-port-name">{{ t('port_2') }}</span>
+            <span class="sb-port-name">Port 2</span>
             <span :class="['sb-port-state', info.rs485_2.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_2.is_busy ? t('active') : t('idle') }}
+              <span class="dot" />{{ info.rs485_2.is_busy ? 'ACTIVE' : 'IDLE' }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-row-key">{{ t('mode') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.bridge.modbus ? t('modbus_tcp') : t('transparent') }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-row-key">{{ t('line') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_2.port_mode}`, info.rs485_2.port_mode) }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
         </div>
       </div>
 
       <div class="sb-links">
         <a :href="documentation" target="_blank" class="sb-link">
-          <DocsIcon />
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l2 2v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM5 6h5M5 9h5M5 12h3"/></svg>
           {{ t('link_docs') }}
         </a>
         <a :href="locale === 'ru' ? support : `mailto:${email}`" target="_blank" class="sb-link">
-          <SupportIcon />
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 4 6-4"/></svg>
           {{ t('link_support') }}
         </a>
         <a :href="website" target="_blank" class="sb-link">
-          <ShopIcon />
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2h2l1.5 8.5a1 1 0 0 0 1 .8h6.3a1 1 0 0 0 1-.78L14 5H4"/><circle cx="6" cy="13.5" r="0.7"/><circle cx="12" cy="13.5" r="0.7"/></svg>
           {{ t('link_buy') }}
         </a>
       </div>
       <RouterLink to="/logout" class="sidebar-logout">
-        <LogoutIcon class="sidebar-icon" />
+        <svg class="sidebar-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 11v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1M7 8h7m0 0l-2-2m2 2l-2 2" />
+        </svg>
         {{ t('logout') }}
       </RouterLink>
     </nav>
@@ -181,11 +194,10 @@ watch(
 }
 
 .sidebar-hostname {
-  font-size: 11.8px; /* +0.8px for Roboto */
+  font-size: 11px;
   color: var(--text-on-dark-muted);
   margin-top: 6px;
   word-break: break-all;
-  text-decoration: none;
 
   @media (max-width: 680px) {
     margin-top: 0;
@@ -218,7 +230,7 @@ watch(
 }
 
 .group-label {
-  font-size: 10.8px; /* +0.8px for Roboto */
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: #6e7580;
@@ -234,7 +246,7 @@ watch(
   align-items: center;
   gap: 10px;
   cursor: pointer;
-  font-size: 13.8px; /* +0.8px for Roboto */
+  font-size: 13px;
   line-height: 1.2;
   transition: background 0.1s;
 }
@@ -311,7 +323,7 @@ watch(
 }
 
 .sb-port-name {
-  font-size: 12px; /* original size — data display block */
+  font-size: 12px;
   font-weight: 600;
   color: #fff;
   letter-spacing: 0.01em;
@@ -321,7 +333,7 @@ watch(
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px; /* original size — data display block */
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 500;
@@ -353,7 +365,7 @@ watch(
 .sb-port-row {
   display: flex;
   justify-content: space-between;
-  font-size: 11px; /* original size — data display block */
+  font-size: 11px;
   color: var(--text-on-dark-muted);
 }
 
@@ -362,11 +374,11 @@ watch(
   letter-spacing: 0.02em;
 }
 
-.sb-port-row-key {
+.sb-port-k {
   color: #6e7580;
 }
 
-.sb-port-row-value {
+.sb-port-v {
   color: var(--text-on-dark);
 }
 
@@ -379,7 +391,7 @@ watch(
 .sidebar-navigation a.sb-link {
   padding: 6px 10px;
   color: var(--text-on-dark-muted);
-  font-size: 12.8px; /* +0.8px for Roboto */
+  font-size: 12px;
   gap: 9px;
 }
 
@@ -396,7 +408,7 @@ watch(
   border-radius: 0;
   color: var(--text-on-dark-muted);
   text-decoration: none;
-  font-size: 12.8px; /* +0.8px for Roboto */
+  font-size: 12px;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -421,15 +433,11 @@ watch(
     "link_support": "Support",
     "link_buy": "Buy devices",
     "logout": "Logout",
-    "active": "ACTIVE",
-    "idle": "IDLE",
     "mode": "Mode",
-    "line": "Line",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Transparent bridge",
-    "port_1": "Port 1",
-    "port_2": "Port 2",
-    "serial_ports": "Serial ports"
+    "port_mode_disabled": "Disabled",
+    "port_mode_tcp_bridge": "TCP bridge",
+    "port_mode_sniffer": "Sniffer",
+    "port_mode_cache_bus": "Cache bus"
   },
   "ru": {
     "group_overview": "Обзор",
@@ -439,15 +447,11 @@ watch(
     "link_support": "Техподдержка",
     "link_buy": "Купить устройства",
     "logout": "Выйти",
-    "active": "ACTIVE",
-    "idle": "IDLE",
     "mode": "Режим",
-    "line": "Параметры",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Прозрачный мост",
-    "port_1": "Порт 1",
-    "port_2": "Порт 2",
-    "serial_ports": "Порты"
+    "port_mode_disabled": "Отключён",
+    "port_mode_tcp_bridge": "TCP-мост",
+    "port_mode_sniffer": "Сниффер",
+    "port_mode_cache_bus": "Кэш шины"
   },
   "kk": {
     "group_overview": "Шолу",
@@ -457,15 +461,11 @@ watch(
     "link_support": "Қолдау",
     "link_buy": "Құрылғыларды сатып алу",
     "logout": "Шығу",
-    "active": "ACTIVE",
-    "idle": "IDLE",
     "mode": "Режим",
-    "line": "Желі",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Мөлдір көпір",
-    "port_1": "Порт 1",
-    "port_2": "Порт 2",
-    "serial_ports": "Сериялық порттар"
+    "port_mode_disabled": "Өшірілген",
+    "port_mode_tcp_bridge": "TCP көпір",
+    "port_mode_sniffer": "Sniffer",
+    "port_mode_cache_bus": "Кэш шина"
   },
   "it": {
     "group_overview": "Panoramica",
@@ -475,15 +475,11 @@ watch(
     "link_support": "Supporto",
     "link_buy": "Acquista dispositivi",
     "logout": "Esci",
-    "active": "ACTIVE",
-    "idle": "IDLE",
     "mode": "Modalità",
-    "line": "Linea",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Bridge trasparente",
-    "port_1": "Porta 1",
-    "port_2": "Porta 2",
-    "serial_ports": "Porte seriali"
+    "port_mode_disabled": "Disabilitato",
+    "port_mode_tcp_bridge": "Bridge TCP",
+    "port_mode_sniffer": "Sniffer",
+    "port_mode_cache_bus": "Cache bus"
   },
   "de": {
     "group_overview": "Übersicht",
@@ -493,15 +489,11 @@ watch(
     "link_support": "Support",
     "link_buy": "Geräte kaufen",
     "logout": "Abmelden",
-    "active": "ACTIVE",
-    "idle": "IDLE",
     "mode": "Modus",
-    "line": "Leitung",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Transparente Brücke",
-    "port_1": "Port 1",
-    "port_2": "Port 2",
-    "serial_ports": "Serielle Schnittst."
+    "port_mode_disabled": "Deaktiviert",
+    "port_mode_tcp_bridge": "TCP-Bridge",
+    "port_mode_sniffer": "Sniffer",
+    "port_mode_cache_bus": "Cache-Bus"
   }
 }
 </i18n>

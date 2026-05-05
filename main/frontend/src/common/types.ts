@@ -18,10 +18,13 @@ export interface Uptime {
   seconds: number;
 }
 
+export type PortMode = 'disabled' | 'tcp_bridge' | 'sniffer' | 'cache_bus';
+
 export interface RsStatus {
   is_busy: boolean;
   error_percentage: number;
   server_connections_count: number;
+  port_mode: PortMode;
 }
 
 export interface Info {

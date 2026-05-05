@@ -91,6 +91,16 @@
 #define BRIDGE_MODE_SERVER_STR      "server"
 #define BRIDGE_MODE_CLIENT_STR      "client"
 
+// Port manager mode keys (per-port NVS keys)
+#define KEY_PORT_MODE1              "port_mode_1"
+#define KEY_PORT_MODE2              "port_mode_2"
+
+// Port manager mode string values
+#define PORT_MODE_DISABLED_STR      "disabled"
+#define PORT_MODE_TCP_BRIDGE_STR    "tcp_bridge"
+#define PORT_MODE_SNIFFER_STR       "sniffer"
+#define PORT_MODE_CACHE_BUS_STR     "cache_bus"
+
 // Setting types - used for type checking and JSON mapping
 typedef enum {
     SETTING_ITEM_TYPE_STRING,

@@ -1,6 +1,7 @@
 #include "cache_multimaster.h"
 #include "sniffer.h"
 #include "bridge.h"
+#include "port_manager.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -300,11 +301,19 @@ bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
 /* ---- HTTP handlers ------------------------------------------------------- */
 
 /**
- * POST /cache/enable — enable caching
+ * POST /cache/enable — switch every non-disabled port to CACHE_BUS mode.
+ *
+ * Iterates all ports; ports already in PM_MODE_DISABLED are skipped so that
+ * unconfigured ports are not inadvertently opened.  port_manager_set_mode()
+ * handles the full init/deinit cycle including cache_multimaster_enable().
  */
 static esp_err_t cache_enable_handler(httpd_req_t *req)
 {
-    cache_multimaster_enable();
+    for (int i = 0; i < BRIDGES_COUNT; i++) {
+        if (port_manager_get_mode(i) != PM_MODE_DISABLED) {
+            port_manager_set_mode(i, PM_MODE_CACHE_BUS);
+        }
+    }
     const char *resp = "{\"enabled\":true}";
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, (ssize_t)strlen(resp));
@@ -312,11 +321,19 @@ static esp_err_t cache_enable_handler(httpd_req_t *req)
 }
 
 /**
- * POST /cache/disable — disable and clear caching
+ * POST /cache/disable — switch every CACHE_BUS port back to TCP_BRIDGE mode.
+ *
+ * Only ports currently in PM_MODE_CACHE_BUS are affected.
+ * port_manager_set_mode() handles the full deinit/init cycle including
+ * cache_multimaster_disable() when the last CACHE_BUS port is torn down.
  */
 static esp_err_t cache_disable_handler(httpd_req_t *req)
 {
-    cache_multimaster_disable();
+    for (int i = 0; i < BRIDGES_COUNT; i++) {
+        if (port_manager_get_mode(i) == PM_MODE_CACHE_BUS) {
+            port_manager_set_mode(i, PM_MODE_TCP_BRIDGE);
+        }
+    }
     const char *resp = "{\"enabled\":false}";
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, (ssize_t)strlen(resp));

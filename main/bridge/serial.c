@@ -62,7 +62,9 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, &buffer_ctx->data[buffer_ctx->data_len], event.size, ESP_LOG_DEBUG);
             buffer_ctx->data_len += event.size;
             if (event.timeout_flag) {
-                desc->receive_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
+                if (desc->receive_handler) {
+                    desc->receive_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
+                }
                 if (desc->sniff_handler) {
                     desc->sniff_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
                 }
@@ -182,11 +184,6 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
         ESP_LOGE(TAG, "Serial config pointer is NULL");
         return NULL;
     }
-    if (serial_receive_handler == NULL) {
-        ESP_LOGE(TAG, "Serial receive handler is NULL");
-        return NULL;
-    }
-
     ESP_LOGD(TAG, "UART[%d] initializing...", serial_config->port_num);
 
     serial_desc_t *desc = malloc(sizeof(serial_desc_t));

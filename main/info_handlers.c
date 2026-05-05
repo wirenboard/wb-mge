@@ -3,6 +3,7 @@
 #include "auth.h"
 #include "setting_items.h"
 #include "bridge.h"
+#include "bridge/port_manager.h"
 #include "wifi_apsta.h"
 #include "config.h"
 #include "sys_info.h"
@@ -103,6 +104,11 @@ static cJSON *create_rs485_port_json(int port_num)
         cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_error_percentage[1]);
         cJSON_AddNumberToObject(rs485_port, "server_connections_count", tcp_server_active_connections(TCP_SERVER_2));
     }
+
+    // Add the active port_manager mode so the UI can display the real operating mode.
+    unsigned port_index = (unsigned)(port_num - 1);  // convert 1-based port_num to 0-based index
+    cJSON_AddStringToObject(rs485_port, "port_mode",
+                            port_manager_mode_to_str(port_manager_get_mode(port_index)));
 
     return rs485_port;
 }

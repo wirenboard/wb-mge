@@ -219,6 +219,10 @@ static const setting_item_t setting_items[] = {
     {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
+
+    // Port manager mode (per-port, mutually exclusive operating mode)
+    {KEY_PORT_MODE1, PORT_MODE_TCP_BRIDGE_STR, NULL, SETTING_ITEM_TYPE_STRING},
+    {KEY_PORT_MODE2, PORT_MODE_TCP_BRIDGE_STR, NULL, SETTING_ITEM_TYPE_STRING},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

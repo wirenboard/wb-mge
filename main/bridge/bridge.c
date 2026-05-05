@@ -14,7 +14,6 @@
 #include "transparent_tcp.h"
 #include "modbus_tcp.h"
 #include "rs485_stats.h"
-#include "sniffer.h"
 
 #include "freertos/FreeRTOS.h"
 #include <string.h>
@@ -213,10 +212,8 @@ static esp_err_t read_tcp_bridge_config(const int index, bridge_mode_t* mode, ui
 
 esp_err_t bridge_init(void)
 {
-    // Start RS485 busy monitor task and init error percentage statistics
-    rs485_busy_monitor_init();
-    rs485_stats_init();
-
+    // Note: rs485_busy_monitor_init() and rs485_stats_init() have been moved to
+    // port_manager_init() so they are called even when bridge_init() is not used directly.
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         bridge_port_init(index);
     }
@@ -268,7 +265,8 @@ esp_err_t bridge_port_init(unsigned index)
         ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", bridge_current_cfg[index].serial_config.port_num);
     }
 
-    sniffer_attach(index, bridge_ctx[index].serial_desc);
+    // Note: sniffer_attach() is now called by port_manager after bridge_port_init(),
+    // so it is not called here to avoid double-attach.
 #if (QEMU_BUILD)
     if (index == 0) {
         modbus_mock_qemu_start(bridge_ctx[index].serial_desc);
@@ -295,8 +293,8 @@ esp_err_t bridge_port_deinit(unsigned index)
     bridge_config_t* cfg = &bridge_current_cfg[index];
 
     ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
-    // Detach sniffer before serial port is freed to prevent use-after-free
-    sniffer_detach(index);
+    // Note: sniffer_detach() is now called by port_manager before bridge_port_deinit(),
+    // so it is not called here to avoid double-detach.
     if (cfg->bridge_mb) {
         modbus_tcp_deinit_port(index);
     } else {
@@ -304,9 +302,7 @@ esp_err_t bridge_port_deinit(unsigned index)
     }
 
     bridge_ctx[index].initialized = false;
-
-    rs485_busy_monitor_reset(index);
-    rs485_stats_reset(index);
+    bridge_ctx[index].serial_desc = NULL;
 
     ESP_LOGD(TAG, "Port[%u]: Deinitialized", index + 1);
     return ESP_OK;
@@ -342,6 +338,44 @@ bool bridge_port_check_settings_changed(unsigned index)
     } else {
         return true;
     }
+}
+
+esp_err_t bridge_port_init_serial_only(unsigned index, serial_desc_t **serial_desc_out)
+{
+    if (index >= BRIDGES_COUNT || !serial_desc_out) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    serial_config_t serial_config = {0};
+    ESP_RETURN_ON_ERROR(read_serial_port_config(index, &serial_config),
+                        TAG, "Port[%u]: Failed to read serial config", index + 1);
+
+    // Pass NULL as receive_handler; sniffer uses only sniff_handler set by sniffer_attach().
+    serial_desc_t *desc = serial_init(&serial_config, NULL);
+    if (!desc) {
+        ESP_LOGE(TAG, "Port[%u]: Failed to initialize serial port", index + 1);
+        return ESP_FAIL;
+    }
+
+    *serial_desc_out = desc;
+    ESP_LOGI(TAG, "Port[%u]: Serial-only initialized", index + 1);
+    return ESP_OK;
+}
+
+serial_desc_t *bridge_get_serial_desc(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        return NULL;
+    }
+    return bridge_ctx[index].serial_desc;
+}
+
+esp_err_t bridge_read_serial_config(unsigned index, serial_config_t *config)
+{
+    if (index >= BRIDGES_COUNT || !config) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return read_serial_port_config(index, config);
 }
 
 #ifdef __unittest_env__
