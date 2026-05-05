@@ -101,21 +101,21 @@ watch(
           <div class="sb-port-head">
             <span class="sb-port-name">Port 1</span>
             <span :class="['sb-port-state', info.rs485_1.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_1.is_busy ? 'ACTIVE' : 'IDLE' }}
+              <span class="dot" />{{ info.rs485_1.is_busy ? t('active') : t('idle') }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-row-key">Mode</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.bridge.modbus ? 'Modbus TCP' : 'Transparent' }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-row-key">Line</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-row-key">{{ t('mode') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.bridge.modbus ? t('modbus_tcp') : t('transparent') }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-row-key">{{ t('line') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
         </div>
         <div class="sb-port">
           <div class="sb-port-head">
             <span class="sb-port-name">Port 2</span>
             <span :class="['sb-port-state', info.rs485_2.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_2.is_busy ? 'ACTIVE' : 'IDLE' }}
+              <span class="dot" />{{ info.rs485_2.is_busy ? t('active') : t('idle') }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-row-key">Mode</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.bridge.modbus ? 'Modbus TCP' : 'Transparent' }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-row-key">Line</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-row-key">{{ t('mode') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.bridge.modbus ? t('modbus_tcp') : t('transparent') }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-row-key">{{ t('line') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
         </div>
       </div>
 
@@ -429,7 +429,13 @@ watch(
     "link_docs": "Documentation",
     "link_support": "Support",
     "link_buy": "Buy devices",
-    "logout": "Logout"
+    "logout": "Logout",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "mode": "Mode",
+    "line": "Line",
+    "modbus_tcp": "Modbus TCP",
+    "transparent": "Transparent bridge"
   },
   "ru": {
     "group_overview": "Обзор",
@@ -438,7 +444,13 @@ watch(
     "link_docs": "Документация",
     "link_support": "Техподдержка",
     "link_buy": "Купить устройства",
-    "logout": "Выйти"
+    "logout": "Выйти",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "mode": "Режим",
+    "line": "Параметры",
+    "modbus_tcp": "Modbus TCP",
+    "transparent": "Прозрачный мост"
   },
   "kk": {
     "group_overview": "Шолу",
@@ -447,7 +459,13 @@ watch(
     "link_docs": "Құжаттама",
     "link_support": "Қолдау",
     "link_buy": "Құрылғыларды сатып алу",
-    "logout": "Шығу"
+    "logout": "Шығу",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "mode": "Режим",
+    "line": "Желі",
+    "modbus_tcp": "Modbus TCP",
+    "transparent": "Мөлдір көпір"
   },
   "it": {
     "group_overview": "Panoramica",
@@ -456,7 +474,13 @@ watch(
     "link_docs": "Documentazione",
     "link_support": "Supporto",
     "link_buy": "Acquista dispositivi",
-    "logout": "Esci"
+    "logout": "Esci",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "mode": "Modalità",
+    "line": "Linea",
+    "modbus_tcp": "Modbus TCP",
+    "transparent": "Bridge trasparente"
   },
   "de": {
     "group_overview": "Übersicht",
@@ -465,7 +489,13 @@ watch(
     "link_docs": "Dokumentation",
     "link_support": "Support",
     "link_buy": "Geräte kaufen",
-    "logout": "Abmelden"
+    "logout": "Abmelden",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "mode": "Modus",
+    "line": "Leitung",
+    "modbus_tcp": "Modbus TCP",
+    "transparent": "Transparente Brücke"
   }
 }
 </i18n>
