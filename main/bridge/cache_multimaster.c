@@ -258,6 +258,42 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
     }
 }
 
+/* ---- Lookup API ---------------------------------------------------------- */
+
+bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
+                               uint16_t address, uint16_t *value_out)
+{
+    if (s_cache_mutex == NULL || value_out == NULL) return false;
+
+    /* Map Modbus function code to cache type */
+    cache_type_t type;
+    switch (function_code) {
+        case 0x01: type = CACHE_TYPE_COIL;      break;
+        case 0x02: type = CACHE_TYPE_DISCRETE;  break;
+        case 0x03: type = CACHE_TYPE_HOLDING;   break;
+        case 0x04: type = CACHE_TYPE_INPUT;     break;
+        default:   return false;
+    }
+
+    bool found = false;
+
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+        const cache_entry_t *e = &s_pool[i];
+        if (e->used &&
+            e->slave_id == slave_id &&
+            e->type     == type     &&
+            e->address  == address) {
+            *value_out = e->value;
+            found = true;
+            break;
+        }
+    }
+    xSemaphoreGive(s_cache_mutex);
+
+    return found;
+}
+
 /* ---- HTTP handlers ------------------------------------------------------- */
 
 /**

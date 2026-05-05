@@ -97,3 +97,20 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
  * @return ESP_OK on success.
  */
 esp_err_t cache_multimaster_register_handlers(httpd_handle_t server);
+
+/**
+ * @brief Look up a single register or coil value in the cache.
+ *
+ * Searches the flat pool for an entry matching the given slave_id,
+ * function_code, and address. The port field is ignored — the first
+ * matching entry across all RS-485 ports is returned.
+ *
+ * @param slave_id      Modbus slave address.
+ * @param function_code Modbus function code: 0x01 (coil), 0x02 (discrete),
+ *                      0x03 (holding register), 0x04 (input register).
+ * @param address       Register or coil address (0-based).
+ * @param value_out     Output parameter — set to the cached value if found.
+ * @return true if a matching entry was found, false otherwise.
+ */
+bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
+                               uint16_t address, uint16_t *value_out);

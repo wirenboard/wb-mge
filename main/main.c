@@ -1,4 +1,5 @@
 #include "bridge.h"
+#include "cache_modbus_server.h"
 #include "config.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -150,6 +151,7 @@ void app_main(void)
             sys_info.wifi_sta_is_connected)
         {
             ESP_ERROR_CHECK(bridge_init());
+            ESP_ERROR_CHECK(cache_modbus_server_init(CACHE_MODBUS_SERVER_PORT));
             break;
         } else {
             vTaskDelay(pdMS_TO_TICKS(1000));
