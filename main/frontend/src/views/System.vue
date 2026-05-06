@@ -149,9 +149,15 @@ const updateInterface = () => {
                 </div>
               </div>
             </template>
+            <!-- Current free heap -->
             <div class="kv">
               <div class="k">{{ t('heap_free') }}</div>
-              <div class="v mono">{{ Math.round((info!.heap_free / 1024)) }} / {{ Math.round((info!.heap_total / 1024)) }} {{ t('kb') }}</div>
+              <div class="v mono">{{ Math.round(info!.heap_free / 1024) }} / {{ Math.round(info!.heap_total / 1024) }} {{ t('kb') }}</div>
+            </div>
+            <!-- Minimum free heap since boot (high water mark) -->
+            <div class="kv">
+              <div class="k">{{ t('heap_min_free') }}</div>
+              <div class="v mono">{{ Math.round(info!.heap_min_free / 1024) }} {{ t('kb') }}</div>
             </div>
           </div>
         </section>
@@ -360,6 +366,7 @@ const updateInterface = () => {
     "wrong_username_pattern": "Use only Latin letters, numbers, hyphens, and underscores",
     "wrong_password_pattern": "Use only Latin letters, numbers, spaces, and special characters",
     "heap_free": "Free heap",
+    "heap_min_free": "Min free heap",
     "kb": "KB"
   },
   "ru": {
@@ -403,6 +410,7 @@ const updateInterface = () => {
     "wrong_username_pattern": "Используйте только латиницу, цифры, дефисы и нижние подчеркивания",
     "wrong_password_pattern": "Используйте только латиницу, цифры, пробелы и спецсимволы",
     "heap_free": "Свободная память",
+    "heap_min_free": "Мин. своб. память",
     "kb": "КБ"
   },
   "kk": {
@@ -446,6 +454,7 @@ const updateInterface = () => {
     "wrong_username_pattern": "Тек латын әріптері, сандар, дефис және астыңғы сызықша қолданыңыз",
     "wrong_password_pattern": "Тек латын әріптері, сандар, бос орындар және арнайы таңбалар қолданыңыз",
     "heap_free": "Бос жад",
+    "heap_min_free": "Ең аз бос жад",
     "kb": "КБ"
   },
   "it": {
@@ -489,6 +498,7 @@ const updateInterface = () => {
     "wrong_username_pattern": "Usa solo lettere latine, numeri, trattini e underscore",
     "wrong_password_pattern": "Usa solo lettere latine, numeri, spazi e caratteri speciali",
     "heap_free": "Memoria libera",
+    "heap_min_free": "Memoria libera min",
     "kb": "KB"
   },
   "de": {
@@ -532,6 +542,7 @@ const updateInterface = () => {
     "wrong_username_pattern": "Nur lateinische Buchstaben, Zahlen, Bindestriche und Unterstriche verwenden",
     "wrong_password_pattern": "Nur lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen verwenden",
     "heap_free": "Freier Speicher",
+    "heap_min_free": "Min. freier Speicher",
     "kb": "KB"
   }
 }

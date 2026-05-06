@@ -264,11 +264,15 @@ esp_err_t info_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(response_json, "git_info", sys_info.firmware_git_info);
     cJSON_AddNumberToObject(response_json, "serial_num", sys_info.device_serial_num);
 
-    // Heap statistics: total internal DRAM heap size and current free bytes.
-    size_t heap_total = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
-    size_t heap_free  = esp_get_free_heap_size();
+    // Heap statistics: both values use MALLOC_CAP_INTERNAL (internal DRAM only,
+    // excludes external PSRAM) to ensure heap_free <= heap_total always holds.
+    size_t heap_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
+    size_t heap_free  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     cJSON_AddNumberToObject(response_json, "heap_total", (double)heap_total);
     cJSON_AddNumberToObject(response_json, "heap_free",  (double)heap_free);
+    // Minimum free heap since boot — useful diagnostic for worst-case memory pressure
+    size_t heap_min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    cJSON_AddNumberToObject(response_json, "heap_min_free", (double)heap_min_free);
 
     // Add system voltage measurement
     float system_voltage = voltage_monitor_get_sys_voltage();
