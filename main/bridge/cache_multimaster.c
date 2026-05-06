@@ -53,6 +53,11 @@ static volatile bool     s_cache_enabled = false;
 static SemaphoreHandle_t s_cache_mutex   = NULL;
 static pending_req_t     s_pending[BRIDGES_COUNT];
 
+/* Statistics counters — reset on cache_multimaster_clear() */
+static volatile uint32_t s_packets_processed = 0; /* total response packets stored since last clear */
+static volatile uint64_t s_last_packet_us    = 0; /* esp_timer_get_time() of last stored response  */
+static volatile uint64_t s_reset_us          = 0; /* esp_timer_get_time() at last enable/clear      */
+
 /* ---- Internal helpers ---------------------------------------------------- */
 
 /**
@@ -96,19 +101,6 @@ static cache_entry_t *find_or_alloc_entry(uint8_t port, uint8_t slave_id,
     return free_slot;  /* NULL when pool is full */
 }
 
-/**
- * @brief Count the total number of used entries in the flat pool.
- *
- * Caller must hold s_cache_mutex.
- */
-static int count_entries_locked(void)
-{
-    int n = 0;
-    for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-        if (s_pool[i].used) n++;
-    }
-    return n;
-}
 
 /* ---- Public API ---------------------------------------------------------- */
 
@@ -128,6 +120,9 @@ esp_err_t cache_multimaster_init(void)
 
 void cache_multimaster_enable(void)
 {
+    s_reset_us          = esp_timer_get_time();
+    s_packets_processed = 0;
+    s_last_packet_us    = 0;
     s_cache_enabled = true;
     sniffer_set_cache_active(true);
     ESP_LOGI(TAG, "Cache multimaster enabled");
@@ -151,6 +146,12 @@ void cache_multimaster_clear(void)
     if (s_cache_mutex == NULL) return;
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
     memset(s_pool, 0, sizeof(s_pool));
+    /* Reset all stats atomically with pool clear while the mutex is held,
+     * so cache_status_handler() never observes a zeroed pool with a stale
+     * s_reset_us timestamp (TOCTOU window eliminated). */
+    s_packets_processed = 0;
+    s_last_packet_us    = 0;
+    s_reset_us          = esp_timer_get_time();
     xSemaphoreGive(s_cache_mutex);
     /* s_pending is only written from sniffer_ws_task; clear outside the mutex */
     memset(s_pending, 0, sizeof(s_pending));
@@ -221,6 +222,12 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             e->value        = value;
             e->timestamp_us = timestamp_us;
         }
+        /* Update stats inside the mutex: s_last_packet_us is uint64_t and is
+         * NOT atomically writable on Xtensa without a lock; s_packets_processed
+         * (uint32_t) would be safe alone, but keeping both updates here
+         * ensures they are always consistent with each other. */
+        s_packets_processed++;
+        s_last_packet_us = timestamp_us;
         xSemaphoreGive(s_cache_mutex);
 
     } else if (function == 0x01 || function == 0x02) {
@@ -257,6 +264,9 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             e->value        = value;
             e->timestamp_us = timestamp_us;
         }
+        /* Same rationale as the register branch above. */
+        s_packets_processed++;
+        s_last_packet_us = timestamp_us;
         xSemaphoreGive(s_cache_mutex);
     }
 }
@@ -308,16 +318,63 @@ bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
  */
 static esp_err_t cache_status_handler(httpd_req_t *req)
 {
-    int entries = 0;
+    int      entries      = 0;
+    int      slaves       = 0;
+    uint32_t packets      = 0;
+    uint64_t last_pkt_us  = 0;
+    uint64_t reset_us     = 0;
+
     if (s_cache_mutex != NULL) {
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-        entries = count_entries_locked();
+
+        /* Single pass: count entries and unique slave IDs simultaneously.
+         * Reading the stats counters under the same lock prevents torn
+         * 64-bit reads of s_last_packet_us / s_reset_us on Xtensa
+         * (64-bit volatile is NOT atomically readable without a mutex). */
+        uint8_t seen[32] = {0};
+        for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+            if (!s_pool[i].used) continue;
+            entries++;
+            uint8_t sid = s_pool[i].slave_id;
+            if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
+                seen[sid >> 3] |= (1u << (sid & 7));
+                slaves++;
+            }
+        }
+        packets     = s_packets_processed;
+        last_pkt_us = s_last_packet_us;
+        reset_us    = s_reset_us;
+
         xSemaphoreGive(s_cache_mutex);
     }
 
-    char resp[96];
-    snprintf(resp, sizeof(resp), "{\"enabled\":%s,\"entries\":%d,\"max_entries\":%d}",
-             s_cache_enabled ? "true" : "false", entries, CACHE_MAX_ENTRIES);
+    uint64_t now_us          = esp_timer_get_time();
+    uint64_t last_pkt_age_us = (last_pkt_us > 0 && now_us >= last_pkt_us)
+                               ? (now_us - last_pkt_us) : 0;
+    uint64_t map_age_us      = (reset_us > 0 && now_us >= reset_us)
+                               ? (now_us - reset_us) : 0;
+    uint32_t memory_bytes    = (uint32_t)entries * (uint32_t)sizeof(cache_entry_t);
+
+    /* Build response — use a heap buffer because the JSON can be up to ~150 bytes */
+    char resp[200];
+    snprintf(resp, sizeof(resp),
+             "{\"enabled\":%s"
+             ",\"entries\":%d"
+             ",\"max_entries\":%d"
+             ",\"slaves\":%d"
+             ",\"packets_processed\":%" PRIu32
+             ",\"last_packet_age_us\":%" PRIu64
+             ",\"map_age_us\":%" PRIu64
+             ",\"memory_bytes\":%" PRIu32 "}",
+             s_cache_enabled ? "true" : "false",
+             entries,
+             CACHE_MAX_ENTRIES,
+             slaves,
+             packets,
+             last_pkt_age_us,
+             map_age_us,
+             memory_bytes);
+
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, (ssize_t)strlen(resp));
     return ESP_OK;
