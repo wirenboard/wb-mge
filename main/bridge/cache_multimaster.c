@@ -315,9 +315,9 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
         xSemaphoreGive(s_cache_mutex);
     }
 
-    char resp[64];
-    snprintf(resp, sizeof(resp), "{\"enabled\":%s,\"entries\":%d}",
-             s_cache_enabled ? "true" : "false", entries);
+    char resp[96];
+    snprintf(resp, sizeof(resp), "{\"enabled\":%s,\"entries\":%d,\"max_entries\":%d}",
+             s_cache_enabled ? "true" : "false", entries, CACHE_MAX_ENTRIES);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, (ssize_t)strlen(resp));
     return ESP_OK;

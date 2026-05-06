@@ -23,6 +23,7 @@ const cacheEnabled = computed(() => {
 });
 
 const cacheEntries = ref(0);
+const cacheMaxEntries = ref(1024); // Default fallback; overwritten from cache/status response
 const cachePort = ref<'1' | '2'>('1');
 const cacheLoading = ref(false);
 
@@ -33,9 +34,10 @@ async function toggleCache(enabled: boolean) {
       // Enable: switch both ports to cache_bus mode
       await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
       await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
-      // Fetch entries count now that cache is active
-      const cacheStatus = await api<{ enabled: boolean; entries: number }>('cache/status');
+      // Fetch entries count and capacity now that cache is active
+      const cacheStatus = await api<{ enabled: boolean; entries: number; max_entries: number }>('cache/status');
       cacheEntries.value = cacheStatus.entries;
+      cacheMaxEntries.value = cacheStatus.max_entries ?? 1024;
     } else {
       // Disable: switch both ports back to tcp_bridge mode
       await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
@@ -111,8 +113,8 @@ function downloadCacheCsv() {
                 <div class="sub">{{ t('cache_mm_sub') }}</div>
               </div>
               <div style="display:flex;align-items:center;gap:10px">
-                <span v-if="cacheEnabled" class="muted" style="font-size:12px">{{ cacheEntries }} {{ t('cache_entries') }}</span>
-                <Switch id="cache_mm" :model-value="cacheEnabled" :disabled="cacheLoading" @update:model-value="toggleCache" />
+                <span v-if="cacheEnabled" class="muted" style="font-size:12px">{{ cacheEntries }} / {{ cacheMaxEntries }} {{ t('cache_entries') }}</span>
+                <Switch id="cache_mm" :model-value="cacheEnabled" :disabled="cacheLoading" @update:model-value="(v) => toggleCache(v ?? false)" />
               </div>
             </div>
             <div class="card-body">
