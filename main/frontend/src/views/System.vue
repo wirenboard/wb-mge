@@ -15,7 +15,6 @@ import Button from '@/components/Button.vue';
 import Configuration from '@/components/Configuration.vue';
 import Heading from '@/components/Heading.vue';
 import Info from '@/components/Info.vue';
-import InfoRow from '@/components/InfoRow.vue';
 import InputNumber from '@/components/InputNumber.vue';
 import FileUpload from '@/components/FileUpload.vue';
 import Layout from '@/components/Layout.vue';
@@ -101,31 +100,59 @@ const updateInterface = () => {
       <div class="grid-2">
       <div class="stack">
         <section class="card">
+          <form autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
+            <div class="card-header">
+              <div class="card-title-wrap">
+                <div class="title">{{ t('device_name') }}</div>
+                <div class="sub">{{ t('device_name_sub') }}</div>
+              </div>
+              <Button
+                type="submit"
+                :disabled="!settings!.hostname || !isChanged(['hostname'])"
+              >
+                {{ t('save') }}
+              </Button>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="hostname">{{ t('hostname_label') }}</label>
+                <input id="hostname" v-model="settings!.hostname" type="text" class="mono" name="hostname">
+              </div>
+              <div class="kv">
+                <div class="k">{{ t('access_url_label') }}</div>
+                <a class="v mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <section class="card">
           <div class="card-header">
             <div class="title">{{ t('device_info') }}</div>
           </div>
           <div class="card-body">
-            <InfoRow :label="t('serial_num')"><span class="mono">{{ info!.serial_num }}</span></InfoRow>
-            <InfoRow :label="t('uptime')">
-              <span class="muted uptime-value">
-                <template v-if="uptime">
+            <div class="kv">
+              <div class="k">{{ t('serial_num') }}</div>
+              <div class="v mono">{{ info!.serial_num }}</div>
+            </div>
+            <template v-if="uptime">
+              <div class="kv">
+                <div class="k">{{ t('uptime') }}</div>
+                <div class="v muted uptime-value">
                   <template v-if="uptime.days">
                     <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
                   </template>
                   <template v-if="uptime.hours">
                     <span>{{ t('uptime_hours', { n: uptime.hours }) }}</span>
                   </template>
-                  <span v-if="uptime.minutes > 0 || (!uptime.days && !uptime.hours && !uptime.seconds)">{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
-                  <span v-if="uptime.seconds > 0 || (!uptime.days && !uptime.hours && !uptime.minutes)">{{ t('uptime_seconds', { n: uptime.seconds }) }}</span>
-                </template>
-                <template v-else>
-                  <span>—</span>
-                </template>
-              </span>
-            </InfoRow>
-            <InfoRow :label="t('reboot')">
-              <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
-            </InfoRow>
+                  <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+                </div>
+              </div>
+            </template>
+            <div class="kv">
+              <div class="k">{{ t('heap_free') }}</div>
+              <div class="v mono">{{ Math.round((info!.heap_free / 1024)) }} / {{ Math.round((info!.heap_total / 1024)) }} {{ t('kb') }}</div>
+            </div>
           </div>
         </section>
 
@@ -135,8 +162,8 @@ const updateInterface = () => {
               <div class="title">{{ t('power_title') }}</div>
               <div class="sub">{{ t('power_sub') }}</div>
             </div>
-            <div class="power-switch-row">
-              <span class="power-label">V<sub>out</sub></span>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px;color:var(--text-secondary)">V<sub>out</sub></span>
               <Switch
                 id="system_vout"
                 v-model="settings!.vout"
@@ -145,7 +172,10 @@ const updateInterface = () => {
             </div>
           </div>
           <div class="card-body">
-            <InfoRow :label="t('power')"><span class="mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</span></InfoRow>
+            <div class="kv">
+              <div class="k">{{ t('power') }}</div>
+              <div class="v mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
+            </div>
           </div>
         </section>
 
@@ -207,64 +237,46 @@ const updateInterface = () => {
 
       <div class="stack">
         <section class="card">
-          <form autocomplete="off" @submit.prevent="updateSettings({ hostname: settings!.hostname })">
-            <div class="card-header">
-              <div class="card-title-wrap">
-                <div class="title">{{ t('device_name') }}</div>
-                <div class="sub">{{ t('device_name_sub') }}</div>
-              </div>
-              <Button
-                type="submit"
-                :disabled="!settings!.hostname || !isChanged(['hostname'])"
-              >
-                {{ t('save') }}
-              </Button>
-            </div>
-            <div class="card-body">
-              <div class="field">
-                <label for="hostname">{{ t('hostname_label') }}</label>
-                <input id="hostname" v-model="settings!.hostname" type="text" class="mono" name="hostname">
-              </div>
-              <InfoRow :label="t('access_url_label')">
-                <a class="mono muted" :href="`http://${settings!.hostname}.local`" target="_blank">http://{{ settings!.hostname }}.local</a>
-              </InfoRow>
-            </div>
-          </form>
-        </section>
-
-        <section class="card">
           <div class="card-header">
             <div class="title">{{ t('firmware') }}</div>
           </div>
           <div class="card-body">
-            <InfoRow :label="t('firmware_current')">
-              <span class="firmware-version-row">
+            <div class="kv">
+              <div class="k">{{ t('firmware_current') }}</div>
+              <div class="v firmware-version-row">
                 <span>
                   <span class="mono">{{ info?.firmware }}</span>
                   <template v-if="latestVersion && !latestVersionError">
-                    <span class="muted firmware-hint">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span>
+                    <span class="muted" style="margin-left:8px;font-size:11.5px">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span>
                   </template>
-                  <span v-else-if="latestVersionError" class="muted firmware-hint">({{ t('firmware_check_failed') }})</span>
+                  <span v-else-if="latestVersionError" class="muted" style="margin-left:8px;font-size:11.5px">({{ t('firmware_check_failed') }})</span>
                 </span>
                 <a v-if="hasUpdate" :href="firmwareLatest" class="firmware-download-btn">
                   <Button type="button" variant="primary">{{ t('firmware_download', { v: latestVersion }) }}</Button>
                 </a>
-              </span>
-            </InfoRow>
-            <InfoRow :label="t('firmware_install')">
-              <FileUpload
-                v-model="firmwareFile"
-                :placeholder="t('choose_firmware')"
-                accept=".bin"
-                :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
-                :is-loading="isUpdating"
-                :disabled="loadedMethod === 'firmware'"
-                @upload="updateFirmware"
-              />
-              <template #hint>
-                <Info :text="t('wirmware_update_info')" />
-              </template>
-            </InfoRow>
+              </div>
+            </div>
+            <div class="kv">
+              <div class="k">{{ t('firmware_install') }}</div>
+              <div class="v">
+                <FileUpload
+                  v-model="firmwareFile"
+                  :placeholder="t('choose_firmware')"
+                  accept=".bin"
+                  :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
+                  :is-loading="isUpdating"
+                  :disabled="loadedMethod === 'firmware'"
+                  @upload="updateFirmware"
+                />
+              </div>
+              <Info v-if="firmwareFile" :text="t('wirmware_update_info')" />
+            </div>
+            <div class="kv">
+              <div class="k">{{ t('reboot') }}</div>
+              <div class="v">
+                <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -288,24 +300,21 @@ const updateInterface = () => {
   text-decoration: none;
 }
 
+.system-saveWrapper {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.system-save {
+  width: 12px;
+  height: 12px;
+}
+
 .uptime-value {
   display: flex;
   gap: 4px;
 }
-
-/* Vout switch row in power card header */
-.power-switch-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-/* Vout label in power card header */
-.power-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
 </style>
 
 <i18n>
@@ -315,7 +324,7 @@ const updateInterface = () => {
     "crumbs": "Device & maintenance",
     "device_name": "Device name",
     "device_name_sub": "Used as hostname and mDNS name on the local network",
-    "device_info": "Device",
+    "device_info": "Device information",
     "firmware": "Firmware",
     "hostname_label": "Name",
     "access_url_label": "Access URL",
@@ -328,7 +337,6 @@ const updateInterface = () => {
     "uptime_days": "- | {n} day | {n} days | {n} days",
     "uptime_hours": "less than an hour | {n} hour | {n} hours | {n} hours",
     "uptime_minutes": "minute | {n} minute | {n} minutes | {n} minutes",
-    "uptime_seconds": "second | {n} second | {n} seconds | {n} seconds",
     "interface": "Web interface",
     "language": "Language",
     "firmware_current": "Current version",
@@ -350,14 +358,16 @@ const updateInterface = () => {
     "website": "Buy devices",
     "firmware_link": "Download latest firmware",
     "wrong_username_pattern": "Use only Latin letters, numbers, hyphens, and underscores",
-    "wrong_password_pattern": "Use only Latin letters, numbers, spaces, and special characters"
+    "wrong_password_pattern": "Use only Latin letters, numbers, spaces, and special characters",
+    "heap_free": "Free heap",
+    "kb": "KB"
   },
   "ru": {
     "title": "Система",
     "crumbs": "Устройство и обслуживание",
     "device_name": "Имя устройства",
     "device_name_sub": "Используется как hostname и mDNS-имя в локальной сети",
-    "device_info": "Устройство",
+    "device_info": "Информация об устройстве",
     "firmware": "Прошивка",
     "hostname_label": "Имя",
     "access_url_label": "mDNS адрес",
@@ -370,7 +380,6 @@ const updateInterface = () => {
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
     "uptime_hours": "- | {n} час | {n} часа | {n} часов",
     "uptime_minutes": "минута | {n} минута | {n} минуты | {n} минут",
-    "uptime_seconds": "секунда | {n} секунда | {n} секунды | {n} секунд",
     "interface": "Веб-интерфейс",
     "language": "Язык",
     "firmware_current": "Текущая версия",
@@ -392,14 +401,16 @@ const updateInterface = () => {
     "website": "Купить устройства",
     "firmware_link": "Скачать последнюю прошивку",
     "wrong_username_pattern": "Используйте только латиницу, цифры, дефисы и нижние подчеркивания",
-    "wrong_password_pattern": "Используйте только латиницу, цифры, пробелы и спецсимволы"
+    "wrong_password_pattern": "Используйте только латиницу, цифры, пробелы и спецсимволы",
+    "heap_free": "Свободная память",
+    "kb": "КБ"
   },
   "kk": {
     "title": "Жүйе",
     "crumbs": "Құрылғы және қызмет көрсету",
     "device_name": "Құрылғы атауы",
     "device_name_sub": "Жергілікті желіде hostname және mDNS атауы ретінде қолданылады",
-    "device_info": "Құрылғы",
+    "device_info": "Құрылғы туралы ақпарат",
     "firmware": "Микробағдарлама",
     "hostname_label": "Атауы",
     "access_url_label": "Қол жеткізу URL",
@@ -412,7 +423,6 @@ const updateInterface = () => {
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
     "uptime_hours": "бір сағаттан аз | {n} сағат | {n} сағат | {n} сағат",
     "uptime_minutes": "минут | {n} минут | {n} минут | {n} минут",
-    "uptime_seconds": "секунд | {n} секунд | {n} секунд | {n} секунд",
     "interface": "Веб-интерфейс",
     "language": "Тіл",
     "firmware_current": "Ағымдағы нұсқа",
@@ -434,14 +444,16 @@ const updateInterface = () => {
     "website": "Құрылғыларды сатып алу",
     "firmware_link": "Соңғы микробағдарламаны жүктеу",
     "wrong_username_pattern": "Тек латын әріптері, сандар, дефис және астыңғы сызықша қолданыңыз",
-    "wrong_password_pattern": "Тек латын әріптері, сандар, бос орындар және арнайы таңбалар қолданыңыз"
+    "wrong_password_pattern": "Тек латын әріптері, сандар, бос орындар және арнайы таңбалар қолданыңыз",
+    "heap_free": "Бос жад",
+    "kb": "КБ"
   },
   "it": {
     "title": "Sistema",
     "crumbs": "Dispositivo e manutenzione",
     "device_name": "Nome dispositivo",
     "device_name_sub": "Usato come hostname e nome mDNS nella rete locale",
-    "device_info": "Dispositivo",
+    "device_info": "Informazioni dispositivo",
     "firmware": "Firmware",
     "hostname_label": "Nome",
     "access_url_label": "URL di accesso",
@@ -454,7 +466,6 @@ const updateInterface = () => {
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
     "uptime_hours": "meno di un'ora | {n} ora | {n} ore | {n} ore",
     "uptime_minutes": "minuto | {n} minuto | {n} minuti | {n} minuti",
-    "uptime_seconds": "secondo | {n} secondo | {n} secondi | {n} secondi",
     "interface": "Interfaccia web",
     "language": "Lingua",
     "firmware_current": "Versione attuale",
@@ -476,14 +487,16 @@ const updateInterface = () => {
     "website": "Acquista dispositivi",
     "firmware_link": "Scarica l'ultimo firmware",
     "wrong_username_pattern": "Usa solo lettere latine, numeri, trattini e underscore",
-    "wrong_password_pattern": "Usa solo lettere latine, numeri, spazi e caratteri speciali"
+    "wrong_password_pattern": "Usa solo lettere latine, numeri, spazi e caratteri speciali",
+    "heap_free": "Memoria libera",
+    "kb": "KB"
   },
   "de": {
     "title": "System",
     "crumbs": "Gerät und Wartung",
     "device_name": "Gerätename",
     "device_name_sub": "Wird als Hostname und mDNS-Name im lokalen Netzwerk verwendet",
-    "device_info": "Gerät",
+    "device_info": "Geräteinformationen",
     "firmware": "Firmware",
     "hostname_label": "Name",
     "access_url_label": "Zugriffs-URL",
@@ -496,7 +509,6 @@ const updateInterface = () => {
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
     "uptime_hours": "weniger als eine Stunde | {n} Stunde | {n} Stunden | {n} Stunden",
     "uptime_minutes": "Minute | {n} Minute | {n} Minuten | {n} Minuten",
-    "uptime_seconds": "Sekunde | {n} Sekunde | {n} Sekunden | {n} Sekunden",
     "interface": "Weboberfläche",
     "language": "Sprache",
     "firmware_current": "Aktuelle Version",
@@ -518,7 +530,9 @@ const updateInterface = () => {
     "website": "Geräte kaufen",
     "firmware_link": "Neueste Firmware herunterladen",
     "wrong_username_pattern": "Nur lateinische Buchstaben, Zahlen, Bindestriche und Unterstriche verwenden",
-    "wrong_password_pattern": "Nur lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen verwenden"
+    "wrong_password_pattern": "Nur lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen verwenden",
+    "heap_free": "Freier Speicher",
+    "kb": "KB"
   }
 }
 </i18n>

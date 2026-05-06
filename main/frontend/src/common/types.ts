@@ -33,6 +33,8 @@ export interface Info {
   firmware: string;
   hardware: string;
   system_voltage: number;
+  heap_total: number;  // total heap size in bytes
+  heap_free: number;   // currently free heap bytes
   ethernet: {
     con_eth: boolean;
     ip: string;
