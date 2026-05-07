@@ -69,6 +69,8 @@ CONFIG_ADC_CALI_EFUSE_TP_ENABLE=n
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_TYPE_ESPPSRAM64=y
 CONFIG_PICO_PSRAM_CS_IO=9
+# Allow boot without PSRAM chip; esp_psram_is_initialized() will return false
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
 
 #
 # UART driver allocations (mutexes, ring buffers) must stay in internal RAM.
