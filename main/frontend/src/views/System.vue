@@ -159,6 +159,14 @@ const updateInterface = () => {
               <div class="k">{{ t('heap_min_free') }}</div>
               <div class="v mono">{{ Math.round(info!.heap_min_free / 1024) }} {{ t('kb') }}</div>
             </div>
+            <!-- PSRAM availability and size detected at boot -->
+            <div class="kv">
+              <div class="k">PSRAM</div>
+              <div class="v">
+                <span v-if="info!.psram_available" class="pill ok" style="font-size:11px;padding:2px 7px"><span class="dot"/>{{ t('psram_available', { kb: info!.psram_size_kb }) }}</span>
+                <span v-else class="pill muted" style="font-size:11px;padding:2px 7px">{{ t('psram_not_available') }}</span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -367,7 +375,9 @@ const updateInterface = () => {
     "wrong_password_pattern": "Use only Latin letters, numbers, spaces, and special characters",
     "heap_free": "Free heap",
     "heap_min_free": "Min free heap",
-    "kb": "KB"
+    "kb": "KB",
+    "psram_available": "{kb} KB",
+    "psram_not_available": "Not available"
   },
   "ru": {
     "title": "Система",
@@ -411,7 +421,9 @@ const updateInterface = () => {
     "wrong_password_pattern": "Используйте только латиницу, цифры, пробелы и спецсимволы",
     "heap_free": "Свободная память",
     "heap_min_free": "Мин. своб. память",
-    "kb": "КБ"
+    "kb": "КБ",
+    "psram_available": "{kb} KB",
+    "psram_not_available": "Недоступна"
   },
   "kk": {
     "title": "Жүйе",
@@ -455,7 +467,9 @@ const updateInterface = () => {
     "wrong_password_pattern": "Тек латын әріптері, сандар, бос орындар және арнайы таңбалар қолданыңыз",
     "heap_free": "Бос жад",
     "heap_min_free": "Ең аз бос жад",
-    "kb": "КБ"
+    "kb": "КБ",
+    "psram_available": "{kb} KB",
+    "psram_not_available": "Қол жетімсіз"
   },
   "it": {
     "title": "Sistema",
@@ -499,7 +513,9 @@ const updateInterface = () => {
     "wrong_password_pattern": "Usa solo lettere latine, numeri, spazi e caratteri speciali",
     "heap_free": "Memoria libera",
     "heap_min_free": "Memoria libera min",
-    "kb": "KB"
+    "kb": "KB",
+    "psram_available": "{kb} KB",
+    "psram_not_available": "Non disponibile"
   },
   "de": {
     "title": "System",
@@ -543,7 +559,9 @@ const updateInterface = () => {
     "wrong_password_pattern": "Nur lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen verwenden",
     "heap_free": "Freier Speicher",
     "heap_min_free": "Min. freier Speicher",
-    "kb": "KB"
+    "kb": "KB",
+    "psram_available": "{kb} KB",
+    "psram_not_available": "Nicht verfügbar"
   }
 }
 </i18n>

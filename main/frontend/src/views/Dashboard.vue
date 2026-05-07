@@ -168,13 +168,6 @@ const getDisplayValue = (val: string | boolean | number) => {
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
               </div>
             </div>
-            <div class="kv">
-              <div class="k">PSRAM</div>
-              <div class="v">
-                <span v-if="info!.psram_available" class="pill ok" style="font-size:11px;padding:2px 7px"><span class="dot"/>{{ t('psram_available', { kb: info!.psram_size_kb }) }}</span>
-                <span v-else class="pill muted" style="font-size:11px;padding:2px 7px">{{ t('psram_not_available') }}</span>
-              </div>
-            </div>
           </div>
         </section>
       </div>
@@ -278,9 +271,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_latest": "up to date",
     "firmware_latest_label": "latest",
-    "firmware_update_btn": "Update",
-    "psram_available": "{kb} KB",
-    "psram_not_available": "Not available"
+    "firmware_update_btn": "Update"
   },
   "ru": {
     "title": "Обзор",
@@ -319,9 +310,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Прошивка",
     "firmware_latest": "актуальная",
     "firmware_latest_label": "последняя",
-    "firmware_update_btn": "Обновить",
-    "psram_available": "{kb} KB",
-    "psram_not_available": "Недоступна"
+    "firmware_update_btn": "Обновить"
   },
   "kk": {
     "title": "Шолу",
@@ -360,9 +349,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Бағдарлама",
     "firmware_latest": "өзекті",
     "firmware_latest_label": "соңғы",
-    "firmware_update_btn": "Жаңарту",
-    "psram_available": "{kb} KB",
-    "psram_not_available": "Қол жетімсіз"
+    "firmware_update_btn": "Жаңарту"
   },
   "it": {
     "title": "Dashboard",
@@ -401,9 +388,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_latest": "aggiornato",
     "firmware_latest_label": "ultima",
-    "firmware_update_btn": "Aggiorna",
-    "psram_available": "{kb} KB",
-    "psram_not_available": "Non disponibile"
+    "firmware_update_btn": "Aggiorna"
   },
   "de": {
     "title": "Übersicht",
@@ -442,9 +427,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_latest": "aktuell",
     "firmware_latest_label": "neueste",
-    "firmware_update_btn": "Aktualisieren",
-    "psram_available": "{kb} KB",
-    "psram_not_available": "Nicht verfügbar"
+    "firmware_update_btn": "Aktualisieren"
   }
 }
 </i18n>
