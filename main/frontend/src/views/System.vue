@@ -163,7 +163,7 @@ const updateInterface = () => {
             <div class="kv">
               <div class="k">PSRAM</div>
               <div class="v">
-                <span v-if="info!.psram_available" class="pill ok" style="font-size:11px;padding:2px 7px"><span class="dot"/>{{ t('psram_available', { kb: info!.psram_size_kb }) }}</span>
+                <span v-if="info!.psram_available" class="pill ok" style="font-size:11px;padding:2px 7px"><span class="dot"/>{{ t('psram_available', { kb: info!.psram_size_kb }) }} {{ t('kb') }}</span>
                 <span v-else class="pill muted" style="font-size:11px;padding:2px 7px">{{ t('psram_not_available') }}</span>
               </div>
             </div>
@@ -378,7 +378,7 @@ const updateInterface = () => {
     "heap_free": "Free heap",
     "heap_min_free": "Min free heap",
     "kb": "KB",
-    "psram_available": "{kb} KB",
+    "psram_available": "{kb}",
     "psram_not_available": "Not available"
   },
   "ru": {
@@ -424,7 +424,7 @@ const updateInterface = () => {
     "heap_free": "Свободная память",
     "heap_min_free": "Мин. своб. память",
     "kb": "КБ",
-    "psram_available": "{kb} KB",
+    "psram_available": "{kb}",
     "psram_not_available": "Недоступна"
   },
   "kk": {
@@ -470,7 +470,7 @@ const updateInterface = () => {
     "heap_free": "Бос жад",
     "heap_min_free": "Ең аз бос жад",
     "kb": "КБ",
-    "psram_available": "{kb} KB",
+    "psram_available": "{kb}",
     "psram_not_available": "Қол жетімсіз"
   },
   "it": {
@@ -516,7 +516,7 @@ const updateInterface = () => {
     "heap_free": "Memoria libera",
     "heap_min_free": "Memoria libera min",
     "kb": "KB",
-    "psram_available": "{kb} KB",
+    "psram_available": "{kb}",
     "psram_not_available": "Non disponibile"
   },
   "de": {
@@ -562,7 +562,7 @@ const updateInterface = () => {
     "heap_free": "Freier Speicher",
     "heap_min_free": "Min. freier Speicher",
     "kb": "KB",
-    "psram_available": "{kb} KB",
+    "psram_available": "{kb}",
     "psram_not_available": "Nicht verfügbar"
   }
 }
