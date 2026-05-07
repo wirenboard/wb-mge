@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { RouteRecordRaw } from 'vue-router';
@@ -9,10 +9,24 @@ import DocsIcon from '@/assets/docs.svg?component';
 import SupportIcon from '@/assets/support.svg?component';
 import ShopIcon from '@/assets/shop.svg?component';
 import LogoutIcon from '@/assets/logout.svg?component';
+import GaugeIcon from '@/assets/gauge.svg?component';
+import SlidersIcon from '@/assets/sliders.svg?component';
+import NetworkIcon from '@/assets/network.svg?component';
+import CpuIcon from '@/assets/cpu.svg?component';
+import PlugIcon from '@/assets/plug.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { documentation, support, email, website } from '@/common/links';
+
+// Map from route meta.menuIcon string to the corresponding SVG component
+const menuIconMap: Record<string, Component> = {
+  gauge: GaugeIcon,
+  sliders: SlidersIcon,
+  network: NetworkIcon,
+  cpu: CpuIcon,
+  plug: PlugIcon,
+};
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -64,34 +78,11 @@ watch(
             v-for="link in routes"
             :key="link.path"
             :to="link.path">
-            <svg class="sidebar-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <template v-if="link.meta?.menuIcon === 'gauge'">
-                <path d="M2 11a6 6 0 0 1 12 0" />
-                <path d="M8 11l3-3" />
-                <circle cx="8" cy="11" r="0.6" fill="currentColor" stroke="none" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'sliders'">
-                <path d="M3 4h10M3 8h6M3 12h10" />
-                <circle cx="11" cy="4" r="1.2" />
-                <circle cx="7" cy="8" r="1.2" />
-                <circle cx="11" cy="12" r="1.2" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'network'">
-                <rect x="2" y="10" width="12" height="4" rx="1" />
-                <path d="M8 10V6M4 6h8M4 6V3M12 6V3" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'cpu'">
-                <rect x="4" y="4" width="8" height="8" rx="1" />
-                <rect x="6" y="6" width="4" height="4" />
-                <path d="M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'activity'">
-                <path d="M1 8h3l2-5 4 10 2-5h3" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'plug'">
-                <path d="M6 2v4M10 2v4M5 6h6l-1 4H6zM7 10v4M9 10v4" />
-              </template>
-            </svg>
+            <component
+              v-if="menuIconMap[link.meta?.menuIcon as string]"
+              :is="menuIconMap[link.meta?.menuIcon as string]"
+              class="sidebar-icon"
+            />
             {{ t(link.meta?.menuName as string) }}
           </RouterLink>
         </template>
