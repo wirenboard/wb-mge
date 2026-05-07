@@ -4,6 +4,7 @@
 #include "esp_mac.h"
 #include "nv_storage.h"
 #include "esp_efuse.h"
+#include "esp_psram.h"
 
 #include <inttypes.h>
 
@@ -119,6 +120,16 @@ esp_err_t sys_info_init(void)
     ESP_LOGI(TAG, "Serial number: %" PRIu64, sys_info.device_serial_num);
     ESP_LOGI(TAG, "Firmware version: %s", sys_info.firmware_ver);
     ESP_LOGI(TAG, "Firmware GIT info: %s", sys_info.firmware_git_info);
+
+    // Detect PSRAM availability
+    sys_info.psram_available = esp_psram_is_initialized();
+    if (sys_info.psram_available) {
+        sys_info.psram_size_kb = (uint32_t)(esp_psram_get_size() / 1024);
+        ESP_LOGI(TAG, "PSRAM available: %" PRIu32 " KB", sys_info.psram_size_kb);
+    } else {
+        sys_info.psram_size_kb = 0;
+        ESP_LOGI(TAG, "PSRAM not available");
+    }
 
     return ESP_OK;
 }

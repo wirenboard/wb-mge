@@ -44,6 +44,9 @@ typedef struct {
 
     // only for Modbus TCP
     uint8_t rs485_error_percentage[BRIDGES_COUNT];
+
+    bool psram_available;     // true if PSRAM was successfully initialized at boot
+    uint32_t psram_size_kb;   // PSRAM size in kilobytes (0 if not available)
 } sys_info_t;
 
 extern sys_info_t sys_info;

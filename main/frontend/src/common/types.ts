@@ -60,6 +60,8 @@ export interface Info {
   };
   rs485_1: RsStatus;
   rs485_2: RsStatus;
+  psram_available: boolean;
+  psram_size_kb: number;
 }
 
 export type WiFiSecuityProtocol = 'open' | 'wpa2_psk' | 'wpa3_psk';

@@ -282,6 +282,10 @@ esp_err_t info_get_handler(httpd_req_t *req)
     uint32_t button_presses = config_button_get_press_count();
     cJSON_AddNumberToObject(response_json, "config_button_presses", button_presses);
 
+    // Add PSRAM info
+    cJSON_AddBoolToObject(response_json, "psram_available", sys_info.psram_available);
+    cJSON_AddNumberToObject(response_json, "psram_size_kb", sys_info.psram_size_kb);
+
     // Build network info
     cJSON *network_json = NULL;
     if (info_build_network_json(&network_json) == ESP_OK && network_json != NULL) {
