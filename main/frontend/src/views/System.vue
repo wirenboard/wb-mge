@@ -193,6 +193,10 @@ const updateInterface = () => {
           </div>
         </section>
 
+      </div>
+
+      <div class="stack">
+        <!-- Web interface card moved to the top of the right column -->
         <section class="card">
           <form
             :autocomplete="isChanged(['login', 'pass']) ? 'on' : 'off'"
@@ -247,9 +251,7 @@ const updateInterface = () => {
             </div>
           </form>
         </section>
-      </div>
 
-      <div class="stack">
         <section class="card">
           <div class="card-header">
             <div class="title">{{ t('firmware') }}</div>
