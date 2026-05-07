@@ -119,7 +119,7 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-body">
             <InfoRow :label="t('power')"><span class="mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</span></InfoRow>
             <InfoRow :label="t('uptime')">
-              <span class="muted uptime-value">
+              <span class="muted dashboard-uptimeValue">
                 <template v-if="uptime">
                   <template v-if="uptime.days">
                     <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
@@ -136,7 +136,7 @@ const getDisplayValue = (val: string | boolean | number) => {
               </span>
             </InfoRow>
             <InfoRow :label="t('firmware_version')">
-              <span class="firmware-row">
+              <span class="dashboard-firmwareRow">
                 <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
               </span>
@@ -184,11 +184,11 @@ const getDisplayValue = (val: string | boolean | number) => {
 </template>
 
 <style>
-.uptime-value {
+.dashboard-uptimeValue {
   display: flex;
   gap: 4px;
 }
-.firmware-row {
+.dashboard-firmwareRow {
   display: flex;
   align-items: center;
   gap: 8px;
