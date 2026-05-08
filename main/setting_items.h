@@ -95,8 +95,8 @@
 #define KEY_PORT_MODE1              "port_mode_1"
 #define KEY_PORT_MODE2              "port_mode_2"
 
-// Cache Modbus TCP server port NVS key
-#define KEY_CACHE_MODBUS_PORT       "cache_modbus_port"
+// Cache Modbus TCP server port NVS key (max 15 chars for ESP32 NVS)
+#define KEY_CACHE_MODBUS_PORT       "cache_mb_port"
 
 // Port manager mode string values
 #define PORT_MODE_DISABLED_STR      "disabled"
