@@ -264,6 +264,83 @@ function openUrl(url: string): void {
   window.open(url, '_blank', 'noopener');
 }
 
+// Build a nested human-readable JSON from rawEntries and trigger a browser file download
+function downloadJsonExport(): void {
+  // Map single-char type code to section key name
+  const typeKeyMap: Record<string, string> = {
+    h: 'holding_registers',
+    i: 'input_registers',
+    c: 'coils',
+    d: 'discrete_inputs',
+  };
+
+  // Intermediate structure: slaveId -> sectionKey -> address -> { v, ts }
+  const dedup: Record<number, Record<string, Record<number, { v: number; ts: number }>>> = {};
+
+  for (const e of rawEntries.value) {
+    if (!dedup[e.s]) dedup[e.s] = {};
+    const slave = dedup[e.s];
+    const section = typeKeyMap[e.t];
+    if (!section) continue;
+    if (!slave[section]) slave[section] = {};
+    const existing = slave[section][e.a];
+    if (existing === undefined) {
+      slave[section][e.a] = { v: e.v, ts: e.ts };
+    } else {
+      // Keep entry with newer ts using modular uint16_t arithmetic (wrap = 65536)
+      const isNewer = ((e.ts - existing.ts + 65536) % 65536) < 32768;
+      if (isNewer) slave[section][e.a] = { v: e.v, ts: e.ts };
+    }
+  }
+
+  // Build the output object
+  const slaves: Record<string, object> = {};
+  for (const [slaveIdStr, sections] of Object.entries(dedup)) {
+    const slaveId = Number(slaveIdStr);
+    const slaveOut: Record<string, object | number> = {
+      slave_id: slaveId,
+      holding_registers: {},
+      input_registers: {},
+      coils: {},
+      discrete_inputs: {},
+    };
+    for (const [section, regs] of Object.entries(sections)) {
+      const regOut: Record<string, number> = {};
+      for (const [addrStr, entry] of Object.entries(regs)) {
+        regOut[addrStr] = entry.v;
+      }
+      slaveOut[section] = regOut;
+    }
+    slaves[slaveIdStr] = slaveOut;
+  }
+
+  const payload = {
+    exported_at: new Date().toISOString(),
+    slaves,
+  };
+
+  // Generate filename suffix from local time: YYYY-MM-DDTHH-mm-ss
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const suffix =
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+    `T${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const filename = `register-map-${suffix}.json`;
+
+  // Trigger browser download via a temporary anchor element
+  // The element must be appended to the DOM before .click() for Firefox compatibility
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // Toggle a device node open/closed
 function toggleDevice(id: number): void {
   const s = new Set(openDevices.value);
@@ -696,7 +773,7 @@ onUnmounted(() => {
             <div class="rsp-row">
               <div class="rsp-control rsp-control--btns">
                 <button class="rsp-btn-export" @click="openUrl('/cache/csv')">↓ CSV</button>
-                <button class="rsp-btn-export" @click="openUrl('/cache/json')">↓ JSON</button>
+                <button class="rsp-btn-export" @click="downloadJsonExport()">↓ JSON</button>
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">Download current map</div>
