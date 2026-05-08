@@ -49,7 +49,7 @@ const searchFilter = ref('');
 // Local copies of which serial ports are listened to (editable in Settings panel before Save)
 const listenPort1 = ref(false);
 const listenPort2 = ref(false);
-// TCP Modbus server is always running on port 504 — display-only
+// TCP Modbus server port (editable, loaded from device on first info poll)
 const cacheTcpPort = ref(504);
 // Save-button status for the Settings panel
 const settingsSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -181,6 +181,7 @@ watch(() => info.value, (newInfo) => {
   if (listenPort1.value && listenPort2.value) {
     listenPort2.value = false;
   }
+  cacheTcpPort.value = newInfo.cache_modbus_port ?? 504;
   portsInitialized = true;
 }, { immediate: true });
 
@@ -209,6 +210,9 @@ async function saveSettings(): Promise<void> {
     }
     if (info.value?.rs485_2.port_mode !== port2TargetMode) {
       await api<void>('ports/2/mode', { method: 'POST', json: { mode: port2TargetMode } });
+    }
+    if (info.value && cacheTcpPort.value !== info.value.cache_modbus_port) {
+      await api<void>('cache/port', { method: 'POST', json: { port: cacheTcpPort.value } });
     }
     settingsSaveStatus.value = 'saved';
   } catch {
@@ -716,10 +720,10 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- TCP port row (display-only) -->
+            <!-- TCP port row -->
             <div class="rsp-row">
               <div class="rsp-control">
-                <input type="number" class="rsp-input" :value="cacheTcpPort" readonly />
+                <input type="number" class="rsp-input" v-model.number="cacheTcpPort" min="1" max="65535" />
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">TCP port</div>

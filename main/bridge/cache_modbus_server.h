@@ -26,3 +26,9 @@ esp_err_t cache_modbus_server_init(int port);
  * @return ESP_OK on success.
  */
 esp_err_t cache_modbus_server_deinit(void);
+
+/**
+ * @brief Return the TCP port the cache Modbus server is currently listening on.
+ *        Returns 0 if the server has not been initialized.
+ */
+int cache_modbus_server_get_port(void);

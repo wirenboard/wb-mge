@@ -225,7 +225,10 @@ esp_err_t port_manager_init(void)
     ESP_RETURN_ON_ERROR(sniffer_init(), TAG, "sniffer_init failed");
     ESP_RETURN_ON_ERROR(cache_multimaster_init(), TAG, "cache_multimaster_init failed");
     // cache_modbus_server is harmless without an active cache — start it unconditionally.
-    ESP_RETURN_ON_ERROR(cache_modbus_server_init(CACHE_MODBUS_SERVER_PORT),
+    // Read TCP port from NVS; fall back to compile-time default if unset.
+    int cache_port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
+    if (cache_port <= 0) cache_port = CACHE_MODBUS_SERVER_PORT;
+    ESP_RETURN_ON_ERROR(cache_modbus_server_init(cache_port),
                         TAG, "cache_modbus_server_init failed");
 
     // Bring up each port in the mode stored in NVS.
@@ -328,6 +331,56 @@ bool port_manager_check_settings_changed(unsigned port_index)
 // HTTP handlers
 // ────────────────────────────────────────────────────────────────
 
+static esp_err_t cache_port_set_handler(httpd_req_t *req)
+{
+    if (!auth_middleware_check(req)) return ESP_OK;
+
+    cJSON *req_json = json_utils_receive_json(req);
+    if (!req_json) return json_utils_send_error(req, "Invalid JSON");
+
+    cJSON *port_item = cJSON_GetObjectItem(req_json, "port");
+    if (!port_item || !cJSON_IsNumber(port_item)) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "Missing or invalid 'port' field");
+    }
+
+    int port = (int)port_item->valuedouble;
+    if (port < 1 || port > 65535) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "Port out of range (1-65535)");
+    }
+
+    // Restart the server on the new port before persisting to NVS.
+    // This way, if deinit or init fails, NVS retains the previous working port.
+    esp_err_t ret = cache_modbus_server_deinit();
+    if (ret != ESP_OK) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, esp_err_to_name(ret));
+    }
+
+    ret = cache_modbus_server_init(port);
+    if (ret != ESP_OK) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, esp_err_to_name(ret));
+    }
+
+    // Server successfully restarted — now persist the new port to NVS.
+    ret = setting_items_save_int(KEY_CACHE_MODBUS_PORT, port);
+    if (ret != ESP_OK) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, esp_err_to_name(ret));
+    }
+
+    cJSON *resp = cJSON_CreateObject();
+    if (!resp) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "OOM");
+    }
+    cJSON_AddNumberToObject(resp, "port", port);
+    json_utils_send_response(req, req_json, resp);
+    return ESP_OK;
+}
+
 static esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
 {
     if (!auth_middleware_check(req)) {
@@ -393,12 +446,20 @@ static const httpd_uri_t uri_port2_mode = {
     .handler = port2_set_mode_handler,
 };
 
+static const httpd_uri_t uri_cache_port = {
+    .uri     = "/cache/port",
+    .method  = HTTP_POST,
+    .handler = cache_port_set_handler,
+};
+
 esp_err_t port_manager_register_handlers(httpd_handle_t server)
 {
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port1_mode),
                         TAG, "Failed to register POST /ports/1/mode");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port2_mode),
                         TAG, "Failed to register POST /ports/2/mode");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_cache_port),
+                        TAG, "Failed to register POST /cache/port");
 
     ESP_LOGI(TAG, "HTTP handlers registered");
     return ESP_OK;

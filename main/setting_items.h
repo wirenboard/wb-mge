@@ -95,6 +95,9 @@
 #define KEY_PORT_MODE1              "port_mode_1"
 #define KEY_PORT_MODE2              "port_mode_2"
 
+// Cache Modbus TCP server port NVS key
+#define KEY_CACHE_MODBUS_PORT       "cache_modbus_port"
+
 // Port manager mode string values
 #define PORT_MODE_DISABLED_STR      "disabled"
 #define PORT_MODE_TCP_BRIDGE_STR    "tcp_bridge"

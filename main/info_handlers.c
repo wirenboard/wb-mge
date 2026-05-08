@@ -4,6 +4,7 @@
 #include "setting_items.h"
 #include "bridge.h"
 #include "bridge/port_manager.h"
+#include "bridge/cache_modbus_server.h"
 #include "wifi_apsta.h"
 #include "config.h"
 #include "sys_info.h"
@@ -317,6 +318,9 @@ esp_err_t info_get_handler(httpd_req_t *req)
 
         cJSON_Delete(rs485_json);
     }
+
+    // Add cache Modbus server port from the running server instance
+    cJSON_AddNumberToObject(response_json, "cache_modbus_port", cache_modbus_server_get_port());
 
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;

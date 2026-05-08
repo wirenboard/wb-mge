@@ -60,6 +60,7 @@ export interface Info {
   };
   rs485_1: RsStatus;
   rs485_2: RsStatus;
+  cache_modbus_port: number;
   psram_available: boolean;
   psram_size_kb: number;
 }

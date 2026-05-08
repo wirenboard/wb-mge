@@ -14,6 +14,9 @@ static const char *TAG = "cache_mb_srv";
 /* Single tcp_desc handle for the listener */
 static tcp_desc_t *s_tcp_desc = NULL;
 
+/* TCP port the server is currently listening on; 0 if not initialized */
+static int s_port = 0;
+
 /* ---- Modbus exception codes ---------------------------------------------- */
 
 #define MB_EX_ILLEGAL_FUNCTION   0x01
@@ -233,13 +236,25 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
 esp_err_t cache_modbus_server_init(int port)
 {
     ESP_LOGI(TAG, "Starting cache Modbus TCP server on port %d", port);
-    return tcp_server_init(port, process_data_from_tcp, &s_tcp_desc);
+    esp_err_t ret = tcp_server_init(port, process_data_from_tcp, &s_tcp_desc);
+    if (ret == ESP_OK) {
+        s_port = port;
+    }
+    return ret;
 }
 
 esp_err_t cache_modbus_server_deinit(void)
 {
     if (s_tcp_desc == NULL) return ESP_OK;
     esp_err_t ret = tcp_server_deinit(s_tcp_desc);
-    s_tcp_desc = NULL;
+    if (ret == ESP_OK) {
+        s_tcp_desc = NULL;
+        s_port = 0;
+    }
     return ret;
+}
+
+int cache_modbus_server_get_port(void)
+{
+    return s_port;
 }
