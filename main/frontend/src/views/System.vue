@@ -157,9 +157,9 @@ const updateInterface = () => {
             <!-- PSRAM availability and size detected at boot -->
             <div class="kv">
               <div class="k">PSRAM</div>
-              <div class="v">
-                <span v-if="info!.psram_available" class="pill ok" style="font-size:11px"><span class="dot"/>{{ t('psram_available', { kb: info!.psram_size_kb }) }} {{ t('kb') }}</span>
-                <span v-else class="pill muted" style="font-size:11px">{{ t('psram_not_available') }}</span>
+              <div class="v mono">
+                <span v-if="info!.psram_available">{{ t('psram_available', { kb: info!.psram_size_kb }) }} {{ t('kb') }}</span>
+                <span v-else>{{ t('psram_not_available') }}</span>
               </div>
             </div>
           </div>
