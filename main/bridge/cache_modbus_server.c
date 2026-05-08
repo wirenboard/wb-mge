@@ -115,7 +115,8 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
         return;
     }
 
-    /* Read the configured value timeout once per request (1..65535 seconds). */
+    /* Read the configured value timeout once per request.
+     * 0 means no timeout (always return cached value). */
     uint16_t value_timeout_s = (uint16_t)setting_items_read_int(KEY_CACHE_VALUE_TIMEOUT_S);
 
     /* ---- 5. Filter supported function codes -------------------------------- */

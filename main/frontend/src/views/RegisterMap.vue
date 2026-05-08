@@ -432,7 +432,8 @@ const regsByKey = computed((): Record<string, RegRow[]> => {
     // modular subtraction still yields the correct positive age in seconds.
     const diff = (cacheNowS.value - e.ts + TS_WRAP) % TS_WRAP;
     const updatedAge = cacheNowS.value > 0 ? diff : 0;
-    const stale = updatedAge > valueTimeout.value;
+    // When valueTimeout is 0, the timeout is disabled — never mark entries as stale.
+    const stale = valueTimeout.value > 0 && updatedAge > valueTimeout.value;
     // Deduplicate: keep only the newer entry for each address.
     // Uses modular comparison to handle uint16_t wrap-around:
     // a signed difference < TS_WRAP/2 means e.ts is strictly newer.
@@ -729,12 +730,12 @@ onUnmounted(() => {
             <!-- Value timeout row -->
             <div class="rsp-row">
               <div class="rsp-control rsp-control--stacked">
-                <input type="number" class="rsp-input" v-model.number="valueTimeout" min="1" max="86400" />
+                <input type="number" class="rsp-input" v-model.number="valueTimeout" min="0" max="86400" />
                 <span class="rsp-unit">seconds</span>
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">Value timeout</div>
-                <div class="rsp-row-desc">If a register's last update is older than this, the gateway returns Modbus error 0x0B instead of the cached value.</div>
+                <div class="rsp-row-desc">If a register's last update is older than this, the gateway returns Modbus error 0x0B instead of the cached value. Set to 0 to disable the timeout (always serve cached values).</div>
               </div>
             </div>
 

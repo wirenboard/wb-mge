@@ -358,13 +358,14 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
                 *value_out = e->value;
                 result = CACHE_LOOKUP_FOUND;
 
-                /* Age check: uint16_t modular subtraction handles wrap-around
-                 * correctly because unsigned subtraction naturally does modular
-                 * arithmetic when both operands are uint16_t.                  */
-                uint16_t now_s = (uint16_t)(esp_timer_get_time() / 1000000u);
-                uint16_t age_s = (uint16_t)(now_s - e->timestamp_s);
-                if (age_s > value_timeout_s) {
-                    result = CACHE_LOOKUP_STALE;
+                /* Age check: uint16_t modular subtraction handles wrap-around correctly.
+                 * value_timeout_s == 0 disables the check — always return FOUND.          */
+                if (value_timeout_s > 0) {
+                    uint16_t now_s = (uint16_t)(esp_timer_get_time() / 1000000u);
+                    uint16_t age_s = (uint16_t)(now_s - e->timestamp_s);
+                    if (age_s > value_timeout_s) {
+                        result = CACHE_LOOKUP_STALE;
+                    }
                 }
                 break;
             }

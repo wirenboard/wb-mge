@@ -227,8 +227,8 @@ static const setting_item_t setting_items[] = {
     // Cache Modbus TCP server port and enable/disable flag
     {KEY_CACHE_MODBUS_PORT,           DEFAULT_CACHE_MODBUS_PORT,           validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_CACHE_MODBUS_SERVER_ENABLED, DEFAULT_CACHE_MODBUS_SERVER_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
-    // Cache value timeout: age after which entries are considered stale (1–65535 seconds)
-    {KEY_CACHE_VALUE_TIMEOUT_S,       DEFAULT_CACHE_VALUE_TIMEOUT_S,       validate_port, SETTING_ITEM_TYPE_INT},
+    // Cache value timeout: 0 = disabled (always return cached value), 1..65535 = age threshold in seconds
+    {KEY_CACHE_VALUE_TIMEOUT_S,       DEFAULT_CACHE_VALUE_TIMEOUT_S,       validate_timeout, SETTING_ITEM_TYPE_INT},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

@@ -132,8 +132,10 @@ typedef enum {
  *                        0x03 (holding register), 0x04 (input register).
  * @param address         Register or coil address (0-based).
  * @param value_out       Output parameter — set to the cached value if found.
- * @param value_timeout_s Age threshold in seconds (1..65535). Entries whose
- *                        age exceeds this value return CACHE_LOOKUP_STALE.
+ * @param value_timeout_s Age threshold in seconds. 0 disables the timeout
+ *                        check and always returns CACHE_LOOKUP_FOUND for an
+ *                        existing entry. 1..65535 enables the check: entries
+ *                        older than this value return CACHE_LOOKUP_STALE.
  * @return CACHE_LOOKUP_NOT_FOUND if no entry exists,
  *         CACHE_LOOKUP_STALE if the entry is older than value_timeout_s,
  *         CACHE_LOOKUP_FOUND if the entry is fresh.

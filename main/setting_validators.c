@@ -94,6 +94,21 @@ bool validate_port(const char *value)
     }
 }
 
+bool validate_timeout(const char *value)
+{
+    if (!value || *value == '\0') {
+        return false;
+    }
+    char *endptr;
+    long v = strtol(value, &endptr, 10);
+    /* 0 = disable timeout; 1..65535 = timeout in seconds */
+    if ((*endptr == '\0') && (v >= 0) && (v <= 65535)) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 bool validate_baudrate(const char *value)
 {
     if (!value) {
