@@ -1140,6 +1140,11 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+.rsp-btn-reset:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--danger-color) 30%, white);
+  border-color: var(--danger-color);
+}
+
 /* Stack input and unit label vertically (e.g. for the "seconds" unit below input) */
 .rsp-control--stacked {
   flex-direction: column;
