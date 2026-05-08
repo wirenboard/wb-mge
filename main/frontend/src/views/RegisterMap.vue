@@ -11,7 +11,7 @@ const { t } = useI18n();
 const { info } = useInfo();
 
 // One entry from /cache/json
-interface CacheEntry { p: number; s: number; t: 'h' | 'i' | 'c' | 'd'; a: number; v: number; ts: number; }
+interface CacheEntry { s: number; t: 'h' | 'i' | 'c' | 'd'; a: number; v: number; ts: number; }
 // One register row displayed in the table
 interface RegRow { addr: number; val: string; updatedAge: number; stale: boolean; ts: number; }
 // One device node in the tree
@@ -25,6 +25,9 @@ const cacheLastPacketAgeUs = ref(0);
 const cacheMapAgeUs = ref(0);
 const cacheMemoryBytes = ref(0);
 const cacheMaxEntries = ref(0);
+// Server-side "now" anchor in the same uint16_t-truncated seconds domain as entry timestamps.
+// Used to compute ages correctly across wrap-around.
+const cacheNowS = ref(0);
 
 // Cache is considered enabled when ALL ports are in cache_bus mode.
 // Derived reactively from the info ref polled globally every 5 s by App.vue.
@@ -57,12 +60,14 @@ async function fetchCacheStats(): Promise<void> {
       map_age_us: number;
       memory_bytes: number;
       max_entries: number;
+      now_s: number;
     }>('cache/status');
-    cachePackets.value        = s.packets_processed;
+    cachePackets.value         = s.packets_processed;
     cacheLastPacketAgeUs.value = s.last_packet_age_us;
-    cacheMapAgeUs.value       = s.map_age_us;
-    cacheMemoryBytes.value    = s.memory_bytes;
-    cacheMaxEntries.value     = s.max_entries;
+    cacheMapAgeUs.value        = s.map_age_us;
+    cacheMemoryBytes.value     = s.memory_bytes;
+    cacheMaxEntries.value      = s.max_entries;
+    cacheNowS.value            = s.now_s;
   } catch {
     // Silently ignore fetch errors
   }
@@ -199,11 +204,6 @@ function collapseAll(): void {
   openGroups.value = new Set();
 }
 
-// Reference timestamp: the maximum ts among all entries
-const maxTs = computed((): number =>
-  rawEntries.value.reduce((max, e) => (e.ts > max ? e.ts : max), 0)
-);
-
 // Build the list of device nodes from raw entries
 const devices = computed((): DeviceNode[] => {
   const TYPE_ORDER = ['Holding', 'Input', 'Coil', 'Discrete'];
@@ -218,7 +218,13 @@ const devices = computed((): DeviceNode[] => {
       const typeSet = new Set(entries.map(e => typeName(e.t)));
       const groups = TYPE_ORDER.filter(name => typeSet.has(name));
       const slaveMaxTs = Math.max(0, ...entries.map(e => e.ts));
-      const lastSeenAge = maxTs.value > 0 ? (maxTs.value - slaveMaxTs) / 1e6 : 0;
+      // Modular difference using the server-provided now_s anchor (same uint16_t domain).
+      // Correctly handles wrap-around: if now_s has wrapped past slaveMaxTs, the
+      // modular subtraction still yields the correct positive age in seconds.
+      const TS_WRAP = 65536;
+      const lastSeenAge = cacheNowS.value > 0
+        ? ((cacheNowS.value - slaveMaxTs + TS_WRAP) % TS_WRAP)
+        : 0;
       return { id, groups, lastSeenAge };
     })
     .sort((a, b) => a.id - b.id);
@@ -227,21 +233,30 @@ const devices = computed((): DeviceNode[] => {
 // Build register rows keyed by "slaveId|TypeName"
 const regsByKey = computed((): Record<string, RegRow[]> => {
   const result: Record<string, RegRow[]> = {};
+  const TS_WRAP = 65536;
   for (const e of rawEntries.value) {
     const key = `${e.s}|${typeName(e.t)}`;
     if (!result[key]) result[key] = [];
     const val = (e.t === 'h' || e.t === 'i')
       ? '0x' + e.v.toString(16).toUpperCase().padStart(4, '0')
       : String(e.v);
-    const updatedAge = maxTs.value > 0 ? (maxTs.value - e.ts) / 1e6 : 0;
+    // Modular age using the server-provided now_s anchor (same uint16_t domain).
+    // Correctly handles wrap-around: if now_s has wrapped past e.ts, the
+    // modular subtraction still yields the correct positive age in seconds.
+    const diff = (cacheNowS.value - e.ts + TS_WRAP) % TS_WRAP;
+    const updatedAge = cacheNowS.value > 0 ? diff : 0;
     const stale = updatedAge > valueTimeout.value;
-    // Deduplicate: keep only the entry with the highest ts for each address
-    // (handles multimaster scenario where same register appears on multiple ports)
+    // Deduplicate: keep only the newer entry for each address.
+    // Uses modular comparison to handle uint16_t wrap-around:
+    // a signed difference < TS_WRAP/2 means e.ts is strictly newer.
     const existingIndex = result[key].findIndex(r => r.addr === e.a);
     if (existingIndex === -1) {
       result[key].push({ addr: e.a, val, updatedAge, stale, ts: e.ts });
-    } else if (e.ts > result[key][existingIndex].ts) {
-      result[key][existingIndex] = { addr: e.a, val, updatedAge, stale, ts: e.ts };
+    } else {
+      const tsNewer = ((e.ts - result[key][existingIndex].ts + TS_WRAP) % TS_WRAP) < (TS_WRAP / 2);
+      if (tsNewer) {
+        result[key][existingIndex] = { addr: e.a, val, updatedAge, stale, ts: e.ts };
+      }
     }
   }
   // Sort each group by address ascending
@@ -279,6 +294,7 @@ watch(cacheEnabled, (val, oldVal) => {
       cacheMapAgeUs.value        = 0;
       cacheMemoryBytes.value     = 0;
       cacheMaxEntries.value      = 0;
+      cacheNowS.value            = 0;
     }
   }
 }, { immediate: true });
@@ -399,7 +415,7 @@ onUnmounted(() => {
             <div class="stat-block">
               <div class="stat-label">Memory</div>
               <div class="stat-sub">used / pool size</div>
-              <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}<span class="stat-dim"> / {{ formatMemory(cacheMaxEntries * 16) }}</span></div>
+              <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}<span class="stat-dim"> / {{ formatMemory(cacheMaxEntries * 8) }}</span></div>
             </div>
           </div>
           <div class="rm-actions">

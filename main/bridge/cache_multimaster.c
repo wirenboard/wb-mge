@@ -15,26 +15,29 @@ static const char *TAG = "cache_mm";
 
 /* ---- Data model --------------------------------------------------------- */
 
-/* Flat pool: 1024 entries × 16 bytes ≈ 16 KB — fits comfortably in ESP32 DRAM. */
+/* Flat pool: 1024 entries × 8 bytes = 8 KB — fits comfortably in ESP32 DRAM. */
 #define CACHE_MAX_ENTRIES  1024
 
-/** Data type tag for a cache entry */
-typedef enum {
-    CACHE_TYPE_HOLDING  = 0,  /* FC03 - holding registers */
-    CACHE_TYPE_INPUT    = 1,  /* FC04 - input registers   */
-    CACHE_TYPE_COIL     = 2,  /* FC01 - output coils      */
-    CACHE_TYPE_DISCRETE = 3,  /* FC02 - discrete inputs   */
-} cache_type_t;
+/* Type field bit layout:
+ *   bit 7  (0x80) = used flag: 1 = slot occupied, 0 = free
+ *   bits 1:0      = register type: 0=holding(FC03), 1=input(FC04),
+ *                                  2=coil(FC01),    3=discrete(FC02)
+ *   bits 6:2      = reserved, must be 0
+ * A zero byte means "free slot".
+ */
+#define CACHE_TYPE_HOLDING   0u
+#define CACHE_TYPE_INPUT     1u
+#define CACHE_TYPE_COIL      2u
+#define CACHE_TYPE_DISCRETE  3u
+#define CACHE_USED_BIT       0x80u
 
-/** One flat pool entry representing a single register or coil value */
+/* One flat pool entry — 8 bytes, no padding, naturally aligned. */
 typedef struct {
-    bool         used;          /* Entry is populated                        */
-    uint8_t      port;          /* 0-based RS-485 port index                 */
-    uint8_t      slave_id;      /* Modbus slave address                      */
-    cache_type_t type;          /* Data type (holding/input/coil/discrete)   */
-    uint16_t     address;       /* Register or coil address (0-based)        */
-    uint16_t     value;         /* Last known value (0 or 1 for coils)       */
-    uint64_t     timestamp_us;  /* esp_timer_get_time() at capture           */
+    uint8_t  slave_id;      /* Modbus slave address (0x00..0xFE)              */
+    uint8_t  type;          /* bit7=used, bits1:0=register type (see above)   */
+    uint16_t address;       /* register or coil address (0-based)             */
+    uint16_t value;         /* last known value (0 or 1 for coils)            */
+    uint16_t timestamp_s;   /* capture time in seconds (wraps ~18 h)          */
 } cache_entry_t;
 
 /** Saved context from a master request, per port */
@@ -61,41 +64,47 @@ static volatile uint64_t s_reset_us          = 0; /* esp_timer_get_time() at las
 /* ---- Internal helpers ---------------------------------------------------- */
 
 /**
- * @brief Find an existing pool entry matching (port, slave_id, type, address),
+ * @brief Find an existing pool entry matching (slave_id, type, address),
  *        or allocate the first unused slot for a new entry.
  *
  * Performs a single linear scan: if an exact match is found it is returned
  * immediately; otherwise the first unused slot is initialised and returned.
  * Returns NULL when the pool is full.
  *
+ * Note: the port is intentionally NOT part of the lookup key.  The cache is
+ * designed as a merged view of all RS-485 ports: when the same slave address
+ * is seen on multiple ports, the most recently received value wins.  This
+ * matches the behaviour of cache_multimaster_lookup(), which also ignores the
+ * originating port.
+ *
+ * @p type_value must be one of CACHE_TYPE_HOLDING / INPUT / COIL / DISCRETE
+ * (bits 1:0 only, without CACHE_USED_BIT).
+ *
  * Caller must hold s_cache_mutex.
  */
-static cache_entry_t *find_or_alloc_entry(uint8_t port, uint8_t slave_id,
-                                           cache_type_t type, uint16_t address)
+static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
+                                           uint8_t type_value, uint16_t address)
 {
     cache_entry_t *free_slot = NULL;
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-        if (s_pool[i].used &&
-            s_pool[i].port     == port     &&
-            s_pool[i].slave_id == slave_id &&
-            s_pool[i].type     == type     &&
-            s_pool[i].address  == address) {
+        if ((s_pool[i].type & CACHE_USED_BIT) &&
+            s_pool[i].slave_id              == slave_id &&
+            (s_pool[i].type & 0x03u)        == type_value &&
+            s_pool[i].address               == address) {
             return &s_pool[i];  /* existing entry found */
         }
-        if (!s_pool[i].used && free_slot == NULL) {
+        if (!(s_pool[i].type & CACHE_USED_BIT) && free_slot == NULL) {
             free_slot = &s_pool[i];
         }
     }
 
     if (free_slot != NULL) {
-        free_slot->used         = true;
-        free_slot->port         = port;
-        free_slot->slave_id     = slave_id;
-        free_slot->type         = type;
-        free_slot->address      = address;
-        free_slot->value        = 0;
-        free_slot->timestamp_us = 0;
+        free_slot->type        = (uint8_t)(CACHE_USED_BIT | type_value);
+        free_slot->slave_id    = slave_id;
+        free_slot->address     = address;
+        free_slot->value       = 0;
+        free_slot->timestamp_s = 0;
     }
 
     return free_slot;  /* NULL when pool is full */
@@ -120,9 +129,15 @@ esp_err_t cache_multimaster_init(void)
 
 void cache_multimaster_enable(void)
 {
+    if (s_cache_mutex == NULL) return;
+    /* Update stats under the mutex: s_reset_us / s_last_packet_us are uint64_t
+     * and NOT atomically writable on Xtensa without a lock.
+     * cache_status_handler() reads them under the same mutex. */
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
     s_reset_us          = esp_timer_get_time();
     s_packets_processed = 0;
     s_last_packet_us    = 0;
+    xSemaphoreGive(s_cache_mutex);
     s_cache_enabled = true;
     sniffer_set_cache_active(true);
     ESP_LOGI(TAG, "Cache multimaster enabled");
@@ -198,8 +213,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
 
     if (function == 0x03 || function == 0x04) {
         /* Holding / input registers: 2 bytes per value, big-endian */
-        cache_type_t type     = (function == 0x03) ? CACHE_TYPE_HOLDING : CACHE_TYPE_INPUT;
-        uint16_t     max_regs = byte_count / 2;
+        uint8_t  type_value = (function == 0x03) ? CACHE_TYPE_HOLDING : CACHE_TYPE_INPUT;
+        uint16_t max_regs   = byte_count / 2;
 
         if (max_regs < count) count = max_regs;
 
@@ -214,13 +229,13 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         for (uint16_t i = 0; i < count; i++) {
             uint16_t addr  = start_addr + i;
             uint16_t value = ((uint16_t)data[3 + i * 2] << 8) | data[3 + i * 2 + 1];
-            cache_entry_t *e = find_or_alloc_entry(port, slave_id, type, addr);
+            cache_entry_t *e = find_or_alloc_entry(slave_id, type_value, addr);
             if (e == NULL) {
                 ESP_LOGW(TAG, "Pool full, dropping entry");
                 break;
             }
-            e->value        = value;
-            e->timestamp_us = timestamp_us;
+            e->value       = value;
+            e->timestamp_s = (uint16_t)(timestamp_us / 1000000u);
         }
         /* Update stats inside the mutex: s_last_packet_us is uint64_t and is
          * NOT atomically writable on Xtensa without a lock; s_packets_processed
@@ -232,7 +247,7 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
 
     } else if (function == 0x01 || function == 0x02) {
         /* Coils / discrete inputs: bit-packed, LSB first (bit 0 of data[3] = coil[start_addr]) */
-        cache_type_t type = (function == 0x01) ? CACHE_TYPE_COIL : CACHE_TYPE_DISCRETE;
+        uint8_t type_value = (function == 0x01) ? CACHE_TYPE_COIL : CACHE_TYPE_DISCRETE;
 
         /* Clamp count to Modbus spec maximum (2000 coils per request) to prevent
          * uint overflow in byte arithmetic when a malformed response is received. */
@@ -256,13 +271,13 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         for (uint16_t i = 0; i < count; i++) {
             uint16_t addr  = start_addr + i;
             uint16_t value = (data[3 + i / 8] >> (i % 8)) & 1u;
-            cache_entry_t *e = find_or_alloc_entry(port, slave_id, type, addr);
+            cache_entry_t *e = find_or_alloc_entry(slave_id, type_value, addr);
             if (e == NULL) {
                 ESP_LOGW(TAG, "Pool full, dropping coil entry");
                 break;
             }
-            e->value        = value;
-            e->timestamp_us = timestamp_us;
+            e->value       = value;
+            e->timestamp_s = (uint16_t)(timestamp_us / 1000000u);
         }
         /* Same rationale as the register branch above. */
         s_packets_processed++;
@@ -278,13 +293,13 @@ bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
 {
     if (s_cache_mutex == NULL || value_out == NULL) return false;
 
-    /* Map Modbus function code to cache type */
-    cache_type_t type;
+    /* Map Modbus function code to cache type value (bits 1:0) */
+    uint8_t type_value;
     switch (function_code) {
-        case 0x01: type = CACHE_TYPE_COIL;      break;
-        case 0x02: type = CACHE_TYPE_DISCRETE;  break;
-        case 0x03: type = CACHE_TYPE_HOLDING;   break;
-        case 0x04: type = CACHE_TYPE_INPUT;     break;
+        case 0x01: type_value = CACHE_TYPE_COIL;      break;
+        case 0x02: type_value = CACHE_TYPE_DISCRETE;  break;
+        case 0x03: type_value = CACHE_TYPE_HOLDING;   break;
+        case 0x04: type_value = CACHE_TYPE_INPUT;     break;
         default:   return false;
     }
 
@@ -293,10 +308,10 @@ bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         const cache_entry_t *e = &s_pool[i];
-        if (e->used &&
-            e->slave_id == slave_id &&
-            e->type     == type     &&
-            e->address  == address) {
+        if ((e->type & CACHE_USED_BIT) &&
+            e->slave_id              == slave_id &&
+            (e->type & 0x03u)        == type_value &&
+            e->address               == address) {
             *value_out = e->value;
             found = true;
             break;
@@ -333,7 +348,7 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
          * (64-bit volatile is NOT atomically readable without a mutex). */
         uint8_t seen[32] = {0};
         for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-            if (!s_pool[i].used) continue;
+            if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
             entries++;
             uint8_t sid = s_pool[i].slave_id;
             if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
@@ -355,8 +370,12 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
                                ? (now_us - reset_us) : 0;
     uint32_t memory_bytes    = (uint32_t)entries * (uint32_t)sizeof(cache_entry_t);
 
-    /* Build response — use a heap buffer because the JSON can be up to ~150 bytes */
-    char resp[200];
+    /* Derive now_s in the same uint16_t-truncated domain as cache_entry_t.timestamp_s,
+     * so the frontend can use it as a wrap-around-safe "now" anchor. */
+    uint16_t now_s = (uint16_t)(now_us / 1000000u);
+
+    /* Build response — buffer sized for ~220 bytes worst case (added now_s field) */
+    char resp[220];
     snprintf(resp, sizeof(resp),
              "{\"enabled\":%s"
              ",\"entries\":%d"
@@ -365,7 +384,8 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
              ",\"packets_processed\":%" PRIu32
              ",\"last_packet_age_us\":%" PRIu64
              ",\"map_age_us\":%" PRIu64
-             ",\"memory_bytes\":%" PRIu32 "}",
+             ",\"memory_bytes\":%" PRIu32
+             ",\"now_s\":%u}",
              s_cache_enabled ? "true" : "false",
              entries,
              CACHE_MAX_ENTRIES,
@@ -373,7 +393,8 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
              packets,
              last_pkt_age_us,
              map_age_us,
-             memory_bytes);
+             memory_bytes,
+             (unsigned)now_s);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, (ssize_t)strlen(resp));
@@ -393,7 +414,7 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
                        "attachment; filename=\"modbus_cache.csv\"");
 
     /* Send CSV header line — includes a type column for holding/input/coil/discrete */
-    const char *header = "port,slave_id,type,address,value,timestamp_us\r\n";
+    const char *header = "slave_id,type,address,value,timestamp_s\r\n";
     esp_err_t ret = httpd_resp_send_chunk(req, header, (ssize_t)strlen(header));
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "CSV: failed to send header chunk: %d", ret);
@@ -410,10 +431,10 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         const cache_entry_t *e = &s_pool[i];
-        if (!e->used) continue;
+        if (!(e->type & CACHE_USED_BIT)) continue;
 
         const char *type_str;
-        switch (e->type) {
+        switch (e->type & 0x03u) {
             case CACHE_TYPE_HOLDING:  type_str = "holding";  break;
             case CACHE_TYPE_INPUT:    type_str = "input";    break;
             case CACHE_TYPE_COIL:     type_str = "coil";     break;
@@ -424,13 +445,12 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
         /* Format one CSV row into a stack-local 128-byte buffer */
         char line[128];
         int len = snprintf(line, sizeof(line),
-                           "%u,%u,%s,%u,%u,%" PRIu64 "\r\n",
-                           (unsigned)(e->port + 1),   /* 1-based port */
+                           "%u,%s,%u,%u,%u\r\n",
                            (unsigned)e->slave_id,
                            type_str,
                            (unsigned)e->address,
                            (unsigned)e->value,
-                           e->timestamp_us);
+                           (unsigned)e->timestamp_s);
 
         if (len < 0 || len >= (int)sizeof(line)) continue;
 
@@ -459,15 +479,14 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
  * mutex released between chunks to avoid stalling writers.
  *
  * Output format (compact, one object per entry):
- *   [{"p":1,"s":3,"t":"h","a":100,"v":1234,"ts":1234567890},...]
+ *   [{"s":3,"t":"h","a":100,"v":1234,"ts":1800},...]
  *
  * Field abbreviations (kept short for low-overhead JS parsing):
- *   p  – port (1-based)
  *   s  – slave_id
  *   t  – type: "h"=holding, "i"=input, "c"=coil, "d"=discrete
  *   a  – address (0-based)
  *   v  – value
- *   ts – timestamp_us
+ *   ts – timestamp_s (seconds, wraps ~18 h)
  */
 static esp_err_t cache_json_handler(httpd_req_t *req)
 {
@@ -489,11 +508,11 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         const cache_entry_t *e = &s_pool[i];
-        if (!e->used) continue;
+        if (!(e->type & CACHE_USED_BIT)) continue;
 
         /* Single-char type tag — shorter JSON, faster JS access */
         char type_ch;
-        switch (e->type) {
+        switch (e->type & 0x03u) {
             case CACHE_TYPE_HOLDING:  type_ch = 'h'; break;
             case CACHE_TYPE_INPUT:    type_ch = 'i'; break;
             case CACHE_TYPE_COIL:     type_ch = 'c'; break;
@@ -501,17 +520,16 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
             default:                  type_ch = '?'; break;
         }
 
-        /* Stack-local buffer: max entry ~80 chars, prefix comma = 81 */
+        /* Stack-local buffer: max entry ~70 chars, prefix comma = 71 */
         char buf[96];
         int len = snprintf(buf, sizeof(buf),
-                           "%s{\"p\":%u,\"s\":%u,\"t\":\"%c\",\"a\":%u,\"v\":%u,\"ts\":%" PRIu64 "}",
+                           "%s{\"s\":%u,\"t\":\"%c\",\"a\":%u,\"v\":%u,\"ts\":%u}",
                            first ? "" : ",",
-                           (unsigned)(e->port + 1),
                            (unsigned)e->slave_id,
                            type_ch,
                            (unsigned)e->address,
                            (unsigned)e->value,
-                           e->timestamp_us);
+                           (unsigned)e->timestamp_s);
 
         if (len < 0 || len >= (int)sizeof(buf)) {
             /* Should never happen with the chosen sizes; skip silently */

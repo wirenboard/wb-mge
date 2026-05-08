@@ -101,7 +101,7 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
  * POST /ports/N/mode through port_manager — not through cache endpoints.
  *
  * The JSON endpoint uses chunked transfer with no heap allocation and is
- * optimised for frequent polling: short field names ("p","s","t","a","v","ts"),
+ * optimised for frequent polling: short field names ("s","t","a","v","ts"),
  * mutex released between chunks, no intermediate buffer allocation.
  *
  * @param server HTTP server handle.
