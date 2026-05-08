@@ -309,7 +309,11 @@ const devices = computed((): DeviceNode[] => {
       const id = Number(sid);
       const typeSet = new Set(entries.map(e => typeName(e.t)));
       const groups = TYPE_ORDER.filter(name => typeSet.has(name));
-      const slaveMaxTs = Math.max(0, ...entries.map(e => e.ts));
+      // Do NOT use Math.max(0, ...) — entries is always non-empty here (slave is only
+      // created when at least one entry exists), and 0 is a valid uint16_t timestamp
+      // (first second of uptime). Passing 0 as a floor would make ts=0 entries look
+      // as old as the device uptime instead of showing their real age.
+      const slaveMaxTs = Math.max(...entries.map(e => e.ts));
       // Modular difference using the server-provided now_s anchor (same uint16_t domain).
       // Correctly handles wrap-around: if now_s has wrapped past slaveMaxTs, the
       // modular subtraction still yields the correct positive age in seconds.
