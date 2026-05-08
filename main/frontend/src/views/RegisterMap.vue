@@ -24,6 +24,7 @@ const cachePackets = ref(0);
 const cacheLastPacketAgeUs = ref(0);
 const cacheMapAgeUs = ref(0);
 const cacheMemoryBytes = ref(0);
+const cacheMaxEntries = ref(0);
 
 // Cache is considered enabled when ALL ports are in cache_bus mode.
 // Derived reactively from the info ref polled globally every 5 s by App.vue.
@@ -55,11 +56,13 @@ async function fetchCacheStats(): Promise<void> {
       last_packet_age_us: number;
       map_age_us: number;
       memory_bytes: number;
+      max_entries: number;
     }>('cache/status');
     cachePackets.value        = s.packets_processed;
     cacheLastPacketAgeUs.value = s.last_packet_age_us;
     cacheMapAgeUs.value       = s.map_age_us;
     cacheMemoryBytes.value    = s.memory_bytes;
+    cacheMaxEntries.value     = s.max_entries;
   } catch {
     // Silently ignore fetch errors
   }
@@ -275,6 +278,7 @@ watch(cacheEnabled, (val, oldVal) => {
       cacheLastPacketAgeUs.value = 0;
       cacheMapAgeUs.value        = 0;
       cacheMemoryBytes.value     = 0;
+      cacheMaxEntries.value      = 0;
     }
   }
 }, { immediate: true });
@@ -394,8 +398,8 @@ onUnmounted(() => {
             </div>
             <div class="stat-block">
               <div class="stat-label">Memory</div>
-              <div class="stat-sub">—</div>
-              <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}</div>
+              <div class="stat-sub">used / pool size</div>
+              <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}<span class="stat-dim"> / {{ formatMemory(cacheMaxEntries * 16) }}</span></div>
             </div>
           </div>
           <div class="rm-actions">
