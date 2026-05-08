@@ -248,6 +248,11 @@ legend {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--text-muted);
 }
+/* Normalize pill height inside kv value cells to match text row height */
+.kv .v .pill { padding-top: 0; padding-bottom: 0; }
+/* Normalize button height inside kv value cells to match text row height */
+.kv .v button,
+.kv .v .button { height: auto; padding-top: 3px; padding-bottom: 3px; line-height: 1.5; }
 
 /* Card edit button */
 .card-edit-btn {
