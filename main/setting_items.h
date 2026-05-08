@@ -99,6 +99,8 @@
 #define KEY_CACHE_MODBUS_PORT               "cache_mb_port"
 // Cache Modbus TCP server enable/disable NVS key (max 15 chars for ESP32 NVS)
 #define KEY_CACHE_MODBUS_SERVER_ENABLED     "cache_mb_srv_en"
+// Cache value timeout in seconds NVS key (max 15 chars for ESP32 NVS)
+#define KEY_CACHE_VALUE_TIMEOUT_S           "cache_val_tout"
 
 // Port manager mode string values
 #define PORT_MODE_DISABLED_STR      "disabled"

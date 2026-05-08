@@ -3,6 +3,7 @@
 #include "modbus_helpers.h"
 #include "tcp_server.h"
 #include "tcp_desc.h"
+#include "setting_items.h"
 
 #include "esp_log.h"
 
@@ -22,6 +23,7 @@ static int s_port = 0;
 #define MB_EX_ILLEGAL_FUNCTION   0x01
 #define MB_EX_ILLEGAL_ADDRESS    0x02
 #define MB_EX_ILLEGAL_DATA_VALUE 0x03
+#define MB_EX_GW_TARGET_FAILED   0x0B  /* Gateway target device failed to respond */
 
 /* ---- Modbus function codes supported ------------------------------------- */
 
@@ -113,6 +115,9 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
         return;
     }
 
+    /* Read the configured value timeout once per request (1..65535 seconds). */
+    uint16_t value_timeout_s = (uint16_t)setting_items_read_int(KEY_CACHE_VALUE_TIMEOUT_S);
+
     /* ---- 5. Filter supported function codes -------------------------------- */
     if (fc != MB_FC_READ_COILS        &&
         fc != MB_FC_READ_DISCRETE_INPUTS &&
@@ -180,12 +185,21 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
 
         for (uint16_t i = 0; i < count; i++) {
             uint16_t value = 0;
-            if (!cache_multimaster_lookup(unit_id, fc, (uint16_t)(start_addr + i), &value)) {
-                /* At least one register not in cache — return exception 0x02 */
+            cache_lookup_result_t res = cache_multimaster_lookup(
+                unit_id, fc, (uint16_t)(start_addr + i), &value, value_timeout_s);
+            if (res == CACHE_LOOKUP_NOT_FOUND) {
+                /* Register not in cache — return exception 0x02 (ILLEGAL DATA ADDRESS) */
                 send_exception(desc, client_sock, transaction_id, unit_id, fc,
                                MB_EX_ILLEGAL_ADDRESS);
                 return;
             }
+            if (res == CACHE_LOOKUP_STALE) {
+                /* Entry exists but is stale — return exception 0x0B (GW TARGET FAILED) */
+                send_exception(desc, client_sock, transaction_id, unit_id, fc,
+                               MB_EX_GW_TARGET_FAILED);
+                return;
+            }
+            /* res == CACHE_LOOKUP_FOUND: use the value */
             payload[1 + i * 2]     = (uint8_t)(value >> 8);
             payload[1 + i * 2 + 1] = (uint8_t)(value & 0xFFu);
         }
@@ -211,11 +225,21 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
 
         for (uint16_t i = 0; i < count; i++) {
             uint16_t value = 0;
-            if (!cache_multimaster_lookup(unit_id, fc, (uint16_t)(start_addr + i), &value)) {
+            cache_lookup_result_t res = cache_multimaster_lookup(
+                unit_id, fc, (uint16_t)(start_addr + i), &value, value_timeout_s);
+            if (res == CACHE_LOOKUP_NOT_FOUND) {
+                /* Coil not in cache — return exception 0x02 (ILLEGAL DATA ADDRESS) */
                 send_exception(desc, client_sock, transaction_id, unit_id, fc,
                                MB_EX_ILLEGAL_ADDRESS);
                 return;
             }
+            if (res == CACHE_LOOKUP_STALE) {
+                /* Entry exists but is stale — return exception 0x0B (GW TARGET FAILED) */
+                send_exception(desc, client_sock, transaction_id, unit_id, fc,
+                               MB_EX_GW_TARGET_FAILED);
+                return;
+            }
+            /* res == CACHE_LOOKUP_FOUND: use the value */
             if (value) {
                 /* Set bit i in the coil byte array (LSB first) */
                 payload[1 + i / 8] |= (uint8_t)(1u << (i % 8));

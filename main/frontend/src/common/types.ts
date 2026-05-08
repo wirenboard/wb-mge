@@ -62,6 +62,7 @@ export interface Info {
   rs485_2: RsStatus;
   cache_modbus_port: number;
   cache_modbus_server_enabled: boolean;
+  cache_value_timeout_s: number;
   psram_available: boolean;
   psram_size_kb: number;
 }
@@ -104,6 +105,7 @@ export interface Settings {
   vout: boolean;
   cache_modbus_port: number;
   cache_modbus_server_enabled: boolean;
+  cache_value_timeout_s: number;
   wifi: {
     mode: WiFiMode;
     ap_ip_static: string;

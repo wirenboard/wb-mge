@@ -185,6 +185,7 @@ watch(() => info.value, (newInfo) => {
   }
   cacheTcpPort.value = newInfo.cache_modbus_port ?? 504;
   tcpServeEnabled.value = newInfo.cache_modbus_server_enabled ?? true;
+  valueTimeout.value = newInfo.cache_value_timeout_s ?? 60;
   portsInitialized = true;
 }, { immediate: true });
 
@@ -219,6 +220,9 @@ async function saveSettings(): Promise<void> {
     }
     if (info.value && tcpServeEnabled.value !== info.value.cache_modbus_server_enabled) {
       await api<void>('settings', { method: 'POST', json: { cache_modbus_server_enabled: tcpServeEnabled.value } });
+    }
+    if (info.value && valueTimeout.value !== info.value.cache_value_timeout_s) {
+      await api<void>('settings', { method: 'POST', json: { cache_value_timeout_s: valueTimeout.value } });
     }
     settingsSaveStatus.value = 'saved';
   } catch {

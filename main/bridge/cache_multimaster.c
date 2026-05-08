@@ -329,10 +329,11 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
 
 /* ---- Lookup API ---------------------------------------------------------- */
 
-bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
-                               uint16_t address, uint16_t *value_out)
+cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
+                                               uint16_t address, uint16_t *value_out,
+                                               uint16_t value_timeout_s)
 {
-    if (s_cache_mutex == NULL || value_out == NULL) return false;
+    if (s_cache_mutex == NULL || value_out == NULL) return CACHE_LOOKUP_NOT_FOUND;
 
     /* Map Modbus function code to cache type value (bits 1:0) */
     uint8_t type_value;
@@ -341,10 +342,10 @@ bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
         case 0x02: type_value = CACHE_TYPE_DISCRETE;  break;
         case 0x03: type_value = CACHE_TYPE_HOLDING;   break;
         case 0x04: type_value = CACHE_TYPE_INPUT;     break;
-        default:   return false;
+        default:   return CACHE_LOOKUP_NOT_FOUND;
     }
 
-    bool found = false;
+    cache_lookup_result_t result = CACHE_LOOKUP_NOT_FOUND;
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
     if (s_pool != NULL) {
@@ -355,14 +356,23 @@ bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
                 (e->type & 0x03u)        == type_value &&
                 e->address               == address) {
                 *value_out = e->value;
-                found = true;
+                result = CACHE_LOOKUP_FOUND;
+
+                /* Age check: uint16_t modular subtraction handles wrap-around
+                 * correctly because unsigned subtraction naturally does modular
+                 * arithmetic when both operands are uint16_t.                  */
+                uint16_t now_s = (uint16_t)(esp_timer_get_time() / 1000000u);
+                uint16_t age_s = (uint16_t)(now_s - e->timestamp_s);
+                if (age_s > value_timeout_s) {
+                    result = CACHE_LOOKUP_STALE;
+                }
                 break;
             }
         }
     }
     xSemaphoreGive(s_cache_mutex);
 
-    return found;
+    return result;
 }
 
 /* ---- HTTP handlers ------------------------------------------------------- */

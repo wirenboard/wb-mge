@@ -328,6 +328,9 @@ esp_err_t info_get_handler(httpd_req_t *req)
     // GET /info consistent with GET /settings for this field.
     cJSON_AddBoolToObject(response_json, "cache_modbus_server_enabled",
                           setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED));
+    // Report the configured value timeout from NVS.
+    cJSON_AddNumberToObject(response_json, "cache_value_timeout_s",
+                            setting_items_read_int(KEY_CACHE_VALUE_TIMEOUT_S));
 
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;

@@ -46,6 +46,7 @@
 #define DEFAULT_BRIDGE_MB           "false"
 #define DEFAULT_CACHE_MODBUS_PORT           "504"
 #define DEFAULT_CACHE_MODBUS_SERVER_ENABLED "true"
+#define DEFAULT_CACHE_VALUE_TIMEOUT_S       "60"
 
 
 #ifdef MODEL_mge_v3
