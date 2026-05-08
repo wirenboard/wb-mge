@@ -637,10 +637,10 @@ onUnmounted(() => {
 
             <!-- Value timeout row -->
             <div class="rsp-row">
-              <div class="rsp-control">
-                  <input type="number" class="rsp-input" v-model.number="valueTimeout" min="1" max="86400" />
-                  <span class="rsp-unit">seconds</span>
-                </div>
+              <div class="rsp-control rsp-control--stacked">
+                <input type="number" class="rsp-input" v-model.number="valueTimeout" min="1" max="86400" />
+                <span class="rsp-unit">seconds</span>
+              </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">Value timeout</div>
                 <div class="rsp-row-desc">If a register's last update is older than this, the gateway returns Modbus error 0x0B instead of the cached value.</div>
@@ -978,26 +978,23 @@ onUnmounted(() => {
 
 .rsp-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center; /* controls are vertically centered vs description */
   gap: 12px;
   padding: 10px 18px;
-  border-bottom: 1px solid color-mix(in oklch, var(--border-color) 50%, transparent);
-}
-
-.rsp-row:last-of-type {
-  border-bottom: none;
 }
 
 .rsp-control {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  justify-content: center; /* center compact controls (switch, inputs) horizontally */
   gap: 6px;
-  width: 120px; /* fixed width so all row titles align */
+  width: 70px; /* fixed width so all row titles align */
 }
 
 .rsp-input {
-  width: 60px;
+  width: 100%; /* fill the full 70px control column */
+  box-sizing: border-box; /* prevent padding from overflowing */
   padding: 4px 6px;
   border: 1px solid var(--border-color);
   border-radius: 4px;
@@ -1041,7 +1038,10 @@ onUnmounted(() => {
 .rsp-btn-reset {
   display: inline-flex;
   align-items: center;
+  justify-content: center; /* center text within full-width button */
   gap: 4px;
+  width: 100%; /* fill the full 70px control column */
+  box-sizing: border-box;
   height: 30px;
   padding: 0 10px;
   font-size: 12px;
@@ -1051,6 +1051,13 @@ onUnmounted(() => {
   color: var(--danger-color);
   border-radius: var(--r-sm);
   cursor: pointer;
+}
+
+/* Stack input and unit label vertically (e.g. for the "seconds" unit below input) */
+.rsp-control--stacked {
+  flex-direction: column;
+  align-items: center; /* center the "seconds" label under the input */
+  gap: 2px;
 }
 
 .rsp-control--btns {
@@ -1086,7 +1093,6 @@ onUnmounted(() => {
   flex-direction: row;
   gap: 6px;
   align-items: center;
-  width: auto; /* override fixed width from .rsp-control */
 }
 
 .rsp-port-tag {
