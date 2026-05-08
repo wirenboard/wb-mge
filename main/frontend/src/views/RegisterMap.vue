@@ -25,6 +25,7 @@ const cacheLastPacketAgeUs = ref(0);
 const cacheMapAgeUs = ref(0);
 const cacheMemoryBytes = ref(0);
 const cacheMaxEntries = ref(0);
+const cacheEntries = ref(0);
 // Server-side "now" anchor in the same uint16_t-truncated seconds domain as entry timestamps.
 // Used to compute ages correctly across wrap-around.
 const cacheNowS = ref(0);
@@ -66,6 +67,7 @@ async function fetchCacheStats(): Promise<void> {
     cacheMapAgeUs.value        = s.map_age_us;
     cacheMemoryBytes.value     = s.memory_bytes;
     cacheMaxEntries.value      = s.max_entries;
+    cacheEntries.value         = s.entries;
     // cacheNowS is now sourced from /cache/json to guarantee it is consistent
     // with the entry timestamps (both captured in the same HTTP response).
   } catch {
@@ -299,6 +301,7 @@ watch(cacheEnabled, (val, oldVal) => {
       cacheMapAgeUs.value        = 0;
       cacheMemoryBytes.value     = 0;
       cacheMaxEntries.value      = 0;
+      cacheEntries.value         = 0;
       cacheNowS.value            = 0;
     }
   }
@@ -417,10 +420,14 @@ onUnmounted(() => {
               <div class="stat-sub">since last reset</div>
               <div class="stat-value">{{ formatAgeUs(cacheMapAgeUs) }}</div>
             </div>
-            <div class="stat-block">
+            <div class="stat-block stat-block--with-entries">
               <div class="stat-label">Memory</div>
               <div class="stat-sub">used / pool size</div>
               <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}<span class="stat-dim"> / {{ formatMemory(cacheMaxEntries * 8) }}</span></div>
+              <div class="stat-entries">
+                <span class="stat-entries-val">{{ cacheEntries }}</span>
+                <span class="stat-entries-dim"> / {{ cacheMaxEntries > 0 ? cacheMaxEntries : '—' }} entries</span>
+              </div>
             </div>
           </div>
           <div class="rm-actions">
@@ -755,6 +762,11 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+/* Extended grid for the stat block that has a 4th entries line */
+.stat-block--with-entries {
+  grid-template-rows: auto 1fr auto auto;
+}
+
 .stat-block + .stat-block {
   border-left: 1px solid var(--border-color);
 }
@@ -793,6 +805,23 @@ onUnmounted(() => {
   font-size: 10.5px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* Secondary entries count line in stat block */
+.stat-entries {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.stat-entries-val {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.stat-entries-dim {
+  color: var(--text-muted);
 }
 
 .rm-actions {
