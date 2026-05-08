@@ -518,8 +518,8 @@ onUnmounted(() => {
         <div class="rm-header-controls">
           <!-- CACHING ON/OFF block -->
           <label class="rm-caching-toggle" @click.prevent="toggleCaching()">
-            <span class="rm-caching-k">Caching</span>
-            <span :class="['rm-caching-state', cacheEnabled ? 'on' : 'off']">{{ cacheEnabled ? 'On' : 'Off' }}</span>
+            <span class="rm-caching-k">{{ t('caching') }}</span>
+            <span :class="['rm-caching-state', cacheEnabled ? 'on' : 'off']">{{ cacheEnabled ? t('on') : t('off') }}</span>
             <span class="toggle">
               <input type="checkbox" :checked="cacheEnabled" />
               <span class="track" />
@@ -540,9 +540,9 @@ onUnmounted(() => {
             <rect x="3" y="14" width="7" height="7" rx="1" />
             <rect x="14" y="14" width="7" height="7" rx="1" />
           </svg>
-          <div class="rm-off-title">Register map caching is disabled</div>
-          <div class="rm-off-sub">Enable caching to start recording Modbus register traffic from the bus.</div>
-          <Button variant="primary" @click="toggleCaching()">Enable caching</Button>
+          <div class="rm-off-title">{{ t('caching_disabled_title') }}</div>
+          <div class="rm-off-sub">{{ t('caching_disabled_sub') }}</div>
+          <Button variant="primary" @click="toggleCaching()">{{ t('enable_caching') }}</Button>
         </div>
       </div>
 
@@ -552,7 +552,7 @@ onUnmounted(() => {
           <circle cx="12" cy="12" r="10" stroke-opacity="0.2" />
           <path d="M12 2a10 10 0 0 1 10 10" />
         </svg>
-        Loading…
+        {{ t('loading') }}
       </div>
 
       <!-- Error state -->
@@ -569,34 +569,34 @@ onUnmounted(() => {
         <!-- Stats strip (full-width, no actions column) -->
         <div class="rm-stats">
           <div class="stat-block">
-            <div class="stat-label">Slaves / Registers</div>
-            <div class="stat-sub">seen on bus</div>
+            <div class="stat-label">{{ t('stat_slaves_registers') }}</div>
+            <div class="stat-sub">{{ t('stat_seen_on_bus') }}</div>
             <div class="stat-value">
               <b>{{ devices.length }}</b><span class="stat-dim"> / {{ rawEntries.length }}</span>
             </div>
           </div>
           <div class="stat-block">
-            <div class="stat-label">Packets processed</div>
-            <div class="stat-sub">since last reset</div>
+            <div class="stat-label">{{ t('stat_packets') }}</div>
+            <div class="stat-sub">{{ t('stat_since_reset') }}</div>
             <div class="stat-value">{{ cachePackets }}</div>
           </div>
           <div class="stat-block">
-            <div class="stat-label">Last packet</div>
-            <div class="stat-sub">ago</div>
+            <div class="stat-label">{{ t('stat_last_packet') }}</div>
+            <div class="stat-sub">{{ t('stat_ago') }}</div>
             <div class="stat-value">{{ formatAgeUs(cacheLastPacketAgeUs) }}</div>
           </div>
           <div class="stat-block">
-            <div class="stat-label">Map age</div>
-            <div class="stat-sub">since last reset</div>
+            <div class="stat-label">{{ t('stat_map_age') }}</div>
+            <div class="stat-sub">{{ t('stat_since_reset') }}</div>
             <div class="stat-value">{{ formatAgeUs(cacheMapAgeUs) }}</div>
           </div>
           <div class="stat-block stat-block--with-entries">
-            <div class="stat-label">Memory</div>
-            <div class="stat-sub">used / pool size</div>
+            <div class="stat-label">{{ t('stat_memory') }}</div>
+            <div class="stat-sub">{{ t('stat_pool_size') }}</div>
             <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}<span class="stat-dim"> / {{ formatMemory(cacheMaxEntries * 8) }}</span></div>
             <div class="stat-entries">
               <span class="stat-entries-val">{{ cacheEntries }}</span>
-              <span class="stat-entries-dim"> / {{ cacheMaxEntries > 0 ? cacheMaxEntries : '—' }} entries</span>
+              <span class="stat-entries-dim"> / {{ cacheMaxEntries > 0 ? cacheMaxEntries : '—' }} {{ t('entries') }}</span>
             </div>
           </div>
         </div>
@@ -614,8 +614,8 @@ onUnmounted(() => {
                   <rect x="3" y="14" width="7" height="7" rx="1" />
                   <rect x="14" y="14" width="7" height="7" rx="1" />
                 </svg>
-                <div class="rm-off-title">No devices seen yet</div>
-                <div class="rm-off-sub">Waiting for Modbus traffic on the bus…</div>
+                <div class="rm-off-title">{{ t('no_devices_title') }}</div>
+                <div class="rm-off-sub">{{ t('no_devices_sub') }}</div>
               </div>
             </div>
 
@@ -623,16 +623,16 @@ onUnmounted(() => {
             <div v-else class="rm-map-card">
               <div class="rm-map-header">
                 <div class="rm-map-title-wrap">
-                  <div class="rm-map-title">Map</div>
-                  <div class="rm-map-sub">Device → register type → register</div>
+                  <div class="rm-map-title">{{ t('map_title') }}</div>
+                  <div class="rm-map-sub">{{ t('map_sub') }}</div>
                 </div>
                 <div class="rm-map-actions">
                   <div class="rm-search">
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></svg>
-                    <input v-model="searchFilter" placeholder="Filter by slave ID…" />
+                    <input v-model="searchFilter" :placeholder="t('filter_placeholder')" />
                   </div>
-                  <button class="rm-tb-btn" @click="expandAll()">Expand all</button>
-                  <button class="rm-tb-btn" @click="collapseAll()">Collapse</button>
+                  <button class="rm-tb-btn" @click="expandAll()">{{ t('expand_all') }}</button>
+                  <button class="rm-tb-btn" @click="collapseAll()">{{ t('collapse') }}</button>
                 </div>
               </div>
 
@@ -658,8 +658,8 @@ onUnmounted(() => {
                     <span class="rm-slave mono">Slave 0x{{ dev.id.toString(16).padStart(2, '0').toUpperCase() }}</span>
                     <span class="rm-meta">
                       <span class="rm-meta-item">
-                        <span class="dim">last</span>
-                        <span class="mono">{{ formatAge(dev.lastSeenAge) }} ago</span>
+                          <span class="dim">{{ t('last') }}</span>
+                          <span class="mono">{{ formatAge(dev.lastSeenAge) }} {{ t('ago') }}</span>
                       </span>
                     </span>
                   </div>
@@ -684,7 +684,7 @@ onUnmounted(() => {
                           <path d="M2 3 L5 7 L8 3"/>
                         </svg>
                         <span :class="['rm-grp-tag', 'tag-' + group.toLowerCase()]">{{ group }}</span>
-                        <span class="rm-name">{{ group }} registers</span>
+                        <span class="rm-name">{{ group }} {{ t('registers') }}</span>
                         <span class="rm-meta"><span class="mono">{{ (regsByKey[`${dev.id}|${group}`] || []).length }}</span></span>
                       </div>
 
@@ -692,10 +692,10 @@ onUnmounted(() => {
                       <div v-if="openGroups.has(`${dev.id}|${group}`)" class="rm-regs">
                         <!-- Column headers -->
                         <div class="rm-reg-head">
-                          <span>Addr</span>
-                          <span style="text-align:right">Raw value</span>
-                          <span>Last update</span>
-                          <span style="text-align:right">Responses</span>
+                          <span>{{ t('col_addr') }}</span>
+                          <span style="text-align:right">{{ t('col_value') }}</span>
+                          <span>{{ t('col_last_update') }}</span>
+                          <span style="text-align:right">{{ t('col_responses') }}</span>
                         </div>
                         <!-- One row per register -->
                         <div
@@ -707,8 +707,8 @@ onUnmounted(() => {
                           <span class="mono rm-reg-addr">{{ reg.addr }}</span>
                           <span class="mono rm-reg-val">{{ reg.val }}</span>
                           <span class="mono rm-reg-upd">
-                            <span v-if="reg.stale" class="stale-dot" title="Older than value timeout" />
-                            {{ formatAge(reg.updatedAge) }} ago
+                            <span v-if="reg.stale" class="stale-dot" :title="t('stale_dot_title')" />
+                            {{ formatAge(reg.updatedAge) }} {{ t('ago') }}
                           </span>
                           <span class="mono rm-reg-hits">—</span>
                         </div>
@@ -722,38 +722,38 @@ onUnmounted(() => {
 
           <!-- Right column: Settings panel -->
           <div class="rm-settings-panel">
-            <div class="rsp-title">Settings</div>
+            <div class="rsp-title">{{ t('settings_title') }}</div>
 
             <!-- CACHING section -->
-            <div class="rsp-section-label">CACHING</div>
+            <div class="rsp-section-label">{{ t('section_caching') }}</div>
 
             <!-- Value timeout row -->
             <div class="rsp-row">
               <div class="rsp-control rsp-control--stacked">
                 <input type="number" class="rsp-input" v-model.number="valueTimeout" min="0" max="86400" />
-                <span class="rsp-unit">seconds</span>
+                <span class="rsp-unit">{{ t('seconds') }}</span>
               </div>
               <div class="rsp-row-info">
-                <div class="rsp-row-title">Value timeout</div>
-                <div class="rsp-row-desc">If a register's last update is older than this, the gateway returns Modbus error 0x0B instead of the cached value. Set to 0 to disable the timeout (always serve cached values).</div>
+                <div class="rsp-row-title">{{ t('value_timeout_title') }}</div>
+                <div class="rsp-row-desc">{{ t('value_timeout_desc') }}</div>
               </div>
             </div>
 
             <!-- Reset map row -->
             <div class="rsp-row">
               <div class="rsp-control">
-                <button class="rsp-btn-reset" @click="resetMap()">↺ Reset</button>
+                <button class="rsp-btn-reset" @click="resetMap()">{{ t('reset_btn') }}</button>
               </div>
               <div class="rsp-row-info">
-                <div class="rsp-row-title">Reset map</div>
-                <div class="rsp-row-desc">Drops every observed register from RAM. Map will rebuild from new traffic.</div>
+                <div class="rsp-row-title">{{ t('reset_map_title') }}</div>
+                <div class="rsp-row-desc">{{ t('reset_map_desc') }}</div>
               </div>
             </div>
 
             <div class="rsp-divider" />
 
             <!-- SOURCE section -->
-            <div class="rsp-section-label">SOURCE</div>
+            <div class="rsp-section-label">{{ t('section_source') }}</div>
 
             <!-- Listen port row -->
             <div class="rsp-row">
@@ -770,41 +770,41 @@ onUnmounted(() => {
                   >2</button>
               </div>
               <div class="rsp-row-info">
-                <div class="rsp-row-title">Listen port</div>
-                <div class="rsp-row-desc">Which serial port the cache observes for register traffic.</div>
+                <div class="rsp-row-title">{{ t('listen_port_title') }}</div>
+                <div class="rsp-row-desc">{{ t('listen_port_desc') }}</div>
               </div>
             </div>
 
             <div class="rsp-divider" />
 
             <!-- EXPORT section -->
-            <div class="rsp-section-label">EXPORT</div>
+            <div class="rsp-section-label">{{ t('section_export') }}</div>
 
             <!-- Export row -->
             <div class="rsp-row">
               <div class="rsp-control rsp-control--btns">
-                <button class="rsp-btn-export" @click="openUrl('/cache/csv')">↓ CSV</button>
-                <button class="rsp-btn-export" @click="downloadJsonExport()">↓ JSON</button>
+                <button class="rsp-btn-export" @click="openUrl('/cache/csv')">{{ t('export_csv') }}</button>
+                <button class="rsp-btn-export" @click="downloadJsonExport()">{{ t('export_json') }}</button>
               </div>
               <div class="rsp-row-info">
-                <div class="rsp-row-title">Download current map</div>
-                <div class="rsp-row-desc">Snapshot of every observed register and its last cached value.</div>
+                <div class="rsp-row-title">{{ t('export_title') }}</div>
+                <div class="rsp-row-desc">{{ t('export_desc') }}</div>
               </div>
             </div>
 
             <div class="rsp-divider" />
 
             <!-- TCP MODBUS section -->
-            <div class="rsp-section-label">TCP MODBUS</div>
+            <div class="rsp-section-label">{{ t('section_tcp') }}</div>
 
             <!-- TCP serve toggle row -->
             <div class="rsp-row">
               <div class="rsp-control">
-                <Switch id="rsp-tcp-serve" v-model="tcpServeEnabled" :ariaLabel="'Serve cached values over TCP'" />
+                <Switch id="rsp-tcp-serve" v-model="tcpServeEnabled" :ariaLabel="t('tcp_serve_title')" />
               </div>
               <div class="rsp-row-info">
-                <div class="rsp-row-title">Serve cached values over TCP</div>
-                <div class="rsp-row-desc">Reply to TCP Modbus reads from cache without round-tripping the bus.</div>
+                <div class="rsp-row-title">{{ t('tcp_serve_title') }}</div>
+                <div class="rsp-row-desc">{{ t('tcp_serve_desc') }}</div>
               </div>
             </div>
 
@@ -814,19 +814,19 @@ onUnmounted(() => {
                 <input type="number" class="rsp-input" v-model.number="cacheTcpPort" min="1" max="65535" />
               </div>
               <div class="rsp-row-info">
-                <div class="rsp-row-title">TCP port</div>
-                <div class="rsp-row-desc">Port the gateway listens on for TCP Modbus clients.</div>
+                <div class="rsp-row-title">{{ t('tcp_port_title') }}</div>
+                <div class="rsp-row-desc">{{ t('tcp_port_desc') }}</div>
               </div>
             </div>
 
             <!-- Save footer -->
             <div class="rsp-footer">
               <span class="rsp-status">
-                <template v-if="settingsSaveStatus === 'saved'">Saved</template>
-                <template v-else-if="settingsSaveStatus === 'error'">Error saving</template>
+                <template v-if="settingsSaveStatus === 'saved'">{{ t('saved') }}</template>
+                <template v-else-if="settingsSaveStatus === 'error'">{{ t('save_error') }}</template>
               </span>
               <button class="rsp-btn-save" @click="saveSettings()" :disabled="settingsSaveStatus === 'saving'">
-                Save changes
+                {{ t('save_changes') }}
               </button>
             </div>
           </div>
@@ -1619,11 +1619,303 @@ onUnmounted(() => {
 {
   "en": {
     "title": "Register map",
-    "crumbs": "Auto-built from bus traffic · lives in RAM, cleared on reset"
+    "crumbs": "Auto-built from bus traffic · lives in RAM, cleared on reset",
+    "caching_disabled_title": "Register map caching is disabled",
+    "caching_disabled_sub": "Enable caching to start recording Modbus register traffic from the bus.",
+    "enable_caching": "Enable caching",
+    "loading": "Loading…",
+    "caching": "Caching",
+    "on": "On",
+    "off": "Off",
+    "stat_slaves_registers": "Slaves / Registers",
+    "stat_seen_on_bus": "seen on bus",
+    "stat_packets": "Packets processed",
+    "stat_since_reset": "since last reset",
+    "stat_last_packet": "Last packet",
+    "stat_ago": "ago",
+    "stat_map_age": "Map age",
+    "stat_memory": "Memory",
+    "stat_pool_size": "used / pool size",
+    "no_devices_title": "No devices seen yet",
+    "no_devices_sub": "Waiting for Modbus traffic on the bus…",
+    "map_title": "Map",
+    "map_sub": "Device → register type → register",
+    "filter_placeholder": "Filter by slave ID…",
+    "expand_all": "Expand all",
+    "collapse": "Collapse",
+    "col_addr": "Addr",
+    "col_value": "Raw value",
+    "col_last_update": "Last update",
+    "col_responses": "Responses",
+    "stale_dot_title": "Older than value timeout",
+    "ago": "ago",
+    "last": "last",
+    "registers": "registers",
+    "entries": "entries",
+    "settings_title": "Settings",
+    "section_caching": "CACHING",
+    "value_timeout_title": "Value timeout",
+    "seconds": "seconds",
+    "value_timeout_desc": "If a register's last update is older than this, the gateway returns Modbus error 0x0B instead of the cached value. Set to 0 to disable the timeout (always serve cached values).",
+    "reset_map_title": "Reset map",
+    "reset_btn": "↺ Reset",
+    "reset_map_desc": "Drops every observed register from RAM. Map will rebuild from new traffic.",
+    "section_source": "SOURCE",
+    "listen_port_title": "Listen port",
+    "listen_port_desc": "Which serial port the cache observes for register traffic.",
+    "section_export": "EXPORT",
+    "export_csv": "↓ CSV",
+    "export_json": "↓ JSON",
+    "export_title": "Download current map",
+    "export_desc": "Snapshot of every observed register and its last cached value.",
+    "section_tcp": "TCP MODBUS",
+    "tcp_serve_title": "Serve cached values over TCP",
+    "tcp_serve_desc": "Reply to TCP Modbus reads from cache without round-tripping the bus.",
+    "tcp_port_title": "TCP port",
+    "tcp_port_desc": "Port the gateway listens on for TCP Modbus clients.",
+    "saved": "Saved",
+    "save_error": "Error saving",
+    "save_changes": "Save changes"
   },
   "ru": {
     "title": "Карта регистров",
-    "crumbs": "Строится автоматически из трафика шины · хранится в ОЗУ, сбрасывается при перезагрузке"
+    "crumbs": "Строится автоматически из трафика шины · хранится в ОЗУ, сбрасывается при перезагрузке",
+    "caching_disabled_title": "Кэширование карты регистров отключено",
+    "caching_disabled_sub": "Включите кэширование, чтобы начать запись трафика Modbus-регистров с шины.",
+    "enable_caching": "Включить кэширование",
+    "loading": "Загрузка…",
+    "caching": "Кэширование",
+    "on": "Вкл",
+    "off": "Выкл",
+    "stat_slaves_registers": "Устройства / Регистры",
+    "stat_seen_on_bus": "замечено на шине",
+    "stat_packets": "Пакетов обработано",
+    "stat_since_reset": "с последнего сброса",
+    "stat_last_packet": "Последний пакет",
+    "stat_ago": "назад",
+    "stat_map_age": "Возраст карты",
+    "stat_memory": "Память",
+    "stat_pool_size": "занято / размер пула",
+    "no_devices_title": "Устройства ещё не найдены",
+    "no_devices_sub": "Ожидание трафика Modbus на шине…",
+    "map_title": "Карта",
+    "map_sub": "Устройство → тип регистра → регистр",
+    "filter_placeholder": "Фильтр по адресу slave…",
+    "expand_all": "Развернуть всё",
+    "collapse": "Свернуть",
+    "col_addr": "Адрес",
+    "col_value": "Значение",
+    "col_last_update": "Последнее обновление",
+    "col_responses": "Ответы",
+    "stale_dot_title": "Старше таймаута значения",
+    "ago": "назад",
+    "last": "последний",
+    "registers": "регистры",
+    "entries": "записей",
+    "settings_title": "Настройки",
+    "section_caching": "КЭШИРОВАНИЕ",
+    "value_timeout_title": "Таймаут значения",
+    "seconds": "секунд",
+    "value_timeout_desc": "Если последнее обновление регистра старше этого значения, шлюз вернёт ошибку Modbus 0x0B вместо кэшированного значения. Установите 0, чтобы отключить таймаут (всегда отдавать кэшированные значения).",
+    "reset_map_title": "Сбросить карту",
+    "reset_btn": "↺ Сбросить",
+    "reset_map_desc": "Удаляет все наблюдавшиеся регистры из ОЗУ. Карта будет перестроена из нового трафика.",
+    "section_source": "ИСТОЧНИК",
+    "listen_port_title": "Порт прослушивания",
+    "listen_port_desc": "Серийный порт, который кэш отслеживает для трафика регистров.",
+    "section_export": "ЭКСПОРТ",
+    "export_csv": "↓ CSV",
+    "export_json": "↓ JSON",
+    "export_title": "Скачать текущую карту",
+    "export_desc": "Снимок всех наблюдавшихся регистров и их последних кэшированных значений.",
+    "section_tcp": "TCP MODBUS",
+    "tcp_serve_title": "Отдавать кэшированные значения по TCP",
+    "tcp_serve_desc": "Отвечать на запросы TCP Modbus из кэша без обращения к шине.",
+    "tcp_port_title": "TCP-порт",
+    "tcp_port_desc": "Порт, на котором шлюз принимает подключения TCP Modbus клиентов.",
+    "saved": "Сохранено",
+    "save_error": "Ошибка сохранения",
+    "save_changes": "Сохранить изменения"
+  },
+  "kk": {
+    "title": "Тіркеу картасы",
+    "crumbs": "Шина трафигінен автоматты түрде жасалады · ЖЖҚ-да сақталады, қалпына келтіру кезінде тазаланады",
+    "caching_disabled_title": "Тіркеу картасын кэштеу өшірілген",
+    "caching_disabled_sub": "Шинадан Modbus тіркеу трафигін жазуды бастау үшін кэштеуді қосыңыз.",
+    "enable_caching": "Кэштеуді қосу",
+    "loading": "Жүктелуде…",
+    "caching": "Кэштеу",
+    "on": "Қосулы",
+    "off": "Өшірулі",
+    "stat_slaves_registers": "Құрылғылар / Тіркеулер",
+    "stat_seen_on_bus": "шинада байқалды",
+    "stat_packets": "Өңделген пакеттер",
+    "stat_since_reset": "соңғы қалпына келтіруден бері",
+    "stat_last_packet": "Соңғы пакет",
+    "stat_ago": "бұрын",
+    "stat_map_age": "Картаның жасы",
+    "stat_memory": "Жады",
+    "stat_pool_size": "пайдаланылған / пул өлшемі",
+    "no_devices_title": "Құрылғылар әлі табылмады",
+    "no_devices_sub": "Шинадан Modbus трафигін күтуде…",
+    "map_title": "Карта",
+    "map_sub": "Құрылғы → тіркеу түрі → тіркеу",
+    "filter_placeholder": "Slave ID бойынша сүзу…",
+    "expand_all": "Барлығын жайу",
+    "collapse": "Жию",
+    "col_addr": "Мекенжай",
+    "col_value": "Мән",
+    "col_last_update": "Соңғы жаңарту",
+    "col_responses": "Жауаптар",
+    "stale_dot_title": "Мән таймаутынан ескі",
+    "ago": "бұрын",
+    "last": "соңғы",
+    "registers": "тіркеулер",
+    "entries": "жазбалар",
+    "settings_title": "Параметрлер",
+    "section_caching": "КЭШТЕУ",
+    "value_timeout_title": "Мән таймауты",
+    "seconds": "секунд",
+    "value_timeout_desc": "Тіркеудің соңғы жаңартуы осы мәннен ескі болса, шлюз кэштелген мән орнына Modbus 0x0B қатесін қайтарады. Таймаутты өшіру үшін 0 орнатыңыз.",
+    "reset_map_title": "Картаны қалпына келтіру",
+    "reset_btn": "↺ Қалпына келтіру",
+    "reset_map_desc": "Барлық байқалған тіркеулерді ЖЖҚ-дан жояды. Карта жаңа трафиктен қалпына келтіріледі.",
+    "section_source": "ДЕРЕККӨЗ",
+    "listen_port_title": "Тыңдау порты",
+    "listen_port_desc": "Кэш тіркеу трафигін бақылайтын сериялық порт.",
+    "section_export": "ЭКСПОРТ",
+    "export_csv": "↓ CSV",
+    "export_json": "↓ JSON",
+    "export_title": "Ағымдағы картаны жүктеу",
+    "export_desc": "Барлық байқалған тіркеулер мен олардың соңғы кэштелген мәндерінің суреті.",
+    "section_tcp": "TCP MODBUS",
+    "tcp_serve_title": "Кэштелген мәндерді TCP арқылы беру",
+    "tcp_serve_desc": "TCP Modbus сұрауларына шинаға бармай кэштен жауап беру.",
+    "tcp_port_title": "TCP порты",
+    "tcp_port_desc": "Шлюздің TCP Modbus клиенттерін қабылдайтын порты.",
+    "saved": "Сақталды",
+    "save_error": "Сақтау қатесі",
+    "save_changes": "Өзгерістерді сақтау"
+  },
+  "it": {
+    "title": "Mappa registri",
+    "crumbs": "Costruita automaticamente dal traffico bus · vive in RAM, cancellata al reset",
+    "caching_disabled_title": "La cache della mappa registri è disabilitata",
+    "caching_disabled_sub": "Abilita la cache per iniziare a registrare il traffico dei registri Modbus dal bus.",
+    "enable_caching": "Abilita cache",
+    "loading": "Caricamento…",
+    "caching": "Cache",
+    "on": "On",
+    "off": "Off",
+    "stat_slaves_registers": "Slave / Registri",
+    "stat_seen_on_bus": "visti sul bus",
+    "stat_packets": "Pacchetti elaborati",
+    "stat_since_reset": "dall'ultimo reset",
+    "stat_last_packet": "Ultimo pacchetto",
+    "stat_ago": "fa",
+    "stat_map_age": "Età mappa",
+    "stat_memory": "Memoria",
+    "stat_pool_size": "usata / dim. pool",
+    "no_devices_title": "Nessun dispositivo ancora rilevato",
+    "no_devices_sub": "In attesa di traffico Modbus sul bus…",
+    "map_title": "Mappa",
+    "map_sub": "Dispositivo → tipo registro → registro",
+    "filter_placeholder": "Filtra per slave ID…",
+    "expand_all": "Espandi tutto",
+    "collapse": "Comprimi",
+    "col_addr": "Indirizzo",
+    "col_value": "Valore raw",
+    "col_last_update": "Ultimo agg.",
+    "col_responses": "Risposte",
+    "stale_dot_title": "Più vecchio del timeout valore",
+    "ago": "fa",
+    "last": "ultimo",
+    "registers": "registri",
+    "entries": "voci",
+    "settings_title": "Impostazioni",
+    "section_caching": "CACHE",
+    "value_timeout_title": "Timeout valore",
+    "seconds": "secondi",
+    "value_timeout_desc": "Se l'ultimo aggiornamento di un registro è più vecchio di questo valore, il gateway restituisce l'errore Modbus 0x0B invece del valore in cache. Imposta 0 per disabilitare il timeout.",
+    "reset_map_title": "Azzera mappa",
+    "reset_btn": "↺ Azzera",
+    "reset_map_desc": "Rimuove tutti i registri osservati dalla RAM. La mappa verrà ricostruita dal nuovo traffico.",
+    "section_source": "SORGENTE",
+    "listen_port_title": "Porta di ascolto",
+    "listen_port_desc": "Quale porta seriale la cache monitora per il traffico dei registri.",
+    "section_export": "ESPORTA",
+    "export_csv": "↓ CSV",
+    "export_json": "↓ JSON",
+    "export_title": "Scarica mappa corrente",
+    "export_desc": "Snapshot di tutti i registri osservati e del loro ultimo valore in cache.",
+    "section_tcp": "TCP MODBUS",
+    "tcp_serve_title": "Servi valori in cache via TCP",
+    "tcp_serve_desc": "Rispondi alle letture TCP Modbus dalla cache senza accedere al bus.",
+    "tcp_port_title": "Porta TCP",
+    "tcp_port_desc": "Porta su cui il gateway ascolta i client TCP Modbus.",
+    "saved": "Salvato",
+    "save_error": "Errore salvataggio",
+    "save_changes": "Salva modifiche"
+  },
+  "de": {
+    "title": "Register-Karte",
+    "crumbs": "Automatisch aus Bus-Verkehr aufgebaut · lebt im RAM, wird beim Reset gelöscht",
+    "caching_disabled_title": "Register-Karten-Cache ist deaktiviert",
+    "caching_disabled_sub": "Cache aktivieren, um Modbus-Register-Verkehr vom Bus aufzuzeichnen.",
+    "enable_caching": "Cache aktivieren",
+    "loading": "Wird geladen…",
+    "caching": "Cache",
+    "on": "Ein",
+    "off": "Aus",
+    "stat_slaves_registers": "Slaves / Register",
+    "stat_seen_on_bus": "auf Bus gesehen",
+    "stat_packets": "Verarbeitete Pakete",
+    "stat_since_reset": "seit letztem Reset",
+    "stat_last_packet": "Letztes Paket",
+    "stat_ago": "vor",
+    "stat_map_age": "Kartenalter",
+    "stat_memory": "Speicher",
+    "stat_pool_size": "belegt / Pool-Größe",
+    "no_devices_title": "Noch keine Geräte gesehen",
+    "no_devices_sub": "Warte auf Modbus-Verkehr auf dem Bus…",
+    "map_title": "Karte",
+    "map_sub": "Gerät → Registertyp → Register",
+    "filter_placeholder": "Nach Slave-ID filtern…",
+    "expand_all": "Alle erweitern",
+    "collapse": "Einklappen",
+    "col_addr": "Adresse",
+    "col_value": "Rohwert",
+    "col_last_update": "Letztes Update",
+    "col_responses": "Antworten",
+    "stale_dot_title": "Älter als Wert-Timeout",
+    "ago": "her",
+    "last": "zuletzt",
+    "registers": "Register",
+    "entries": "Einträge",
+    "settings_title": "Einstellungen",
+    "section_caching": "CACHE",
+    "value_timeout_title": "Wert-Timeout",
+    "seconds": "Sekunden",
+    "value_timeout_desc": "Wenn das letzte Update eines Registers älter als dieser Wert ist, gibt das Gateway den Modbus-Fehler 0x0B zurück. 0 setzen, um das Timeout zu deaktivieren.",
+    "reset_map_title": "Karte zurücksetzen",
+    "reset_btn": "↺ Zurücksetzen",
+    "reset_map_desc": "Entfernt alle beobachteten Register aus dem RAM. Die Karte wird aus neuem Verkehr neu aufgebaut.",
+    "section_source": "QUELLE",
+    "listen_port_title": "Abhörport",
+    "listen_port_desc": "Welcher serielle Port vom Cache auf Register-Verkehr überwacht wird.",
+    "section_export": "EXPORT",
+    "export_csv": "↓ CSV",
+    "export_json": "↓ JSON",
+    "export_title": "Aktuelle Karte herunterladen",
+    "export_desc": "Snapshot aller beobachteten Register und ihres letzten gecachten Wertes.",
+    "section_tcp": "TCP MODBUS",
+    "tcp_serve_title": "Gecachte Werte über TCP bereitstellen",
+    "tcp_serve_desc": "TCP-Modbus-Leseanfragen aus dem Cache beantworten, ohne den Bus zu nutzen.",
+    "tcp_port_title": "TCP-Port",
+    "tcp_port_desc": "Port, auf dem das Gateway auf TCP-Modbus-Clients wartet.",
+    "saved": "Gespeichert",
+    "save_error": "Speicherfehler",
+    "save_changes": "Änderungen speichern"
   }
 }
 </i18n>
