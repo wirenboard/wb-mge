@@ -4,6 +4,7 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -15,8 +16,8 @@ static const char *TAG = "cache_mm";
 
 /* ---- Data model --------------------------------------------------------- */
 
-/* Flat pool: 1024 entries × 8 bytes = 8 KB — fits comfortably in ESP32 DRAM. */
-#define CACHE_MAX_ENTRIES  1024
+/* Flat pool: 4096 entries × 8 bytes = 32 KB — allocated from heap on enable. */
+#define CACHE_MAX_ENTRIES  4096
 
 /* Type field bit layout:
  *   bit 7  (0x80) = used flag: 1 = slot occupied, 0 = free
@@ -51,7 +52,8 @@ typedef struct {
 
 /* ---- Module-level state ------------------------------------------------- */
 
-static cache_entry_t     s_pool[CACHE_MAX_ENTRIES];
+/* Pool is heap-allocated on cache_multimaster_enable() and freed on disable(). */
+static cache_entry_t    *s_pool              = NULL;
 static volatile bool     s_cache_enabled = false;
 static SemaphoreHandle_t s_cache_mutex   = NULL;
 static pending_req_t     s_pending[BRIDGES_COUNT];
@@ -85,6 +87,9 @@ static volatile uint64_t s_reset_us          = 0; /* esp_timer_get_time() at las
 static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
                                            uint8_t type_value, uint16_t address)
 {
+    /* Pool not allocated yet — cache is disabled or enable() failed */
+    if (s_pool == NULL) return NULL;
+
     cache_entry_t *free_slot = NULL;
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
@@ -120,7 +125,7 @@ esp_err_t cache_multimaster_init(void)
         ESP_LOGE(TAG, "Failed to create cache mutex");
         return ESP_ERR_NO_MEM;
     }
-    memset(s_pool,    0, sizeof(s_pool));
+    /* s_pool is NULL here — memory is allocated lazily in cache_multimaster_enable() */
     memset(s_pending, 0, sizeof(s_pending));
     s_cache_enabled = false;
     ESP_LOGI(TAG, "Cache multimaster initialized");
@@ -130,14 +135,39 @@ esp_err_t cache_multimaster_init(void)
 void cache_multimaster_enable(void)
 {
     if (s_cache_mutex == NULL) return;
-    /* Update stats under the mutex: s_reset_us / s_last_packet_us are uint64_t
-     * and NOT atomically writable on Xtensa without a lock.
-     * cache_status_handler() reads them under the same mutex. */
+
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+
+    if (s_pool == NULL) {
+        /* First enable (or after a disable): allocate pool from heap.
+         * MALLOC_CAP_8BIT selects ordinary DRAM (or PSRAM if available). */
+        s_pool = heap_caps_malloc(CACHE_MAX_ENTRIES * sizeof(cache_entry_t),
+                                  MALLOC_CAP_8BIT);
+        if (s_pool == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate cache pool (%u bytes)",
+                     (unsigned)(CACHE_MAX_ENTRIES * sizeof(cache_entry_t)));
+            xSemaphoreGive(s_cache_mutex);
+            return;
+        }
+    }
+
+    /* Clear pool (whether freshly allocated or reused after a repeated enable) */
+    memset(s_pool, 0, CACHE_MAX_ENTRIES * sizeof(cache_entry_t));
+
+    /* Reset stats atomically with pool clear under the mutex.
+     * s_reset_us / s_last_packet_us are uint64_t and NOT atomically
+     * writable on Xtensa without a lock; cache_status_handler() reads
+     * them under the same mutex. */
     s_reset_us          = esp_timer_get_time();
     s_packets_processed = 0;
     s_last_packet_us    = 0;
+
     xSemaphoreGive(s_cache_mutex);
+
+    /* Reset pending request state for all ports — only written from sniffer_ws_task,
+     * so no mutex needed, but must be cleared before re-activating the sniffer. */
+    memset(s_pending, 0, sizeof(s_pending));
+
     s_cache_enabled = true;
     sniffer_set_cache_active(true);
     ESP_LOGI(TAG, "Cache multimaster enabled");
@@ -147,7 +177,15 @@ void cache_multimaster_disable(void)
 {
     s_cache_enabled = false;
     sniffer_set_cache_active(false);
+    /* clear() zeros the pool and resets stats under the mutex */
     cache_multimaster_clear();
+    /* Free heap pool under the mutex to prevent a race with HTTP handlers */
+    if (s_cache_mutex != NULL) {
+        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+        free(s_pool);
+        s_pool = NULL;
+        xSemaphoreGive(s_cache_mutex);
+    }
     ESP_LOGI(TAG, "Cache multimaster disabled");
 }
 
@@ -160,7 +198,10 @@ void cache_multimaster_clear(void)
 {
     if (s_cache_mutex == NULL) return;
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-    memset(s_pool, 0, sizeof(s_pool));
+    /* Only zero if the pool is allocated; do NOT free — that is done by disable(). */
+    if (s_pool != NULL) {
+        memset(s_pool, 0, CACHE_MAX_ENTRIES * sizeof(cache_entry_t));
+    }
     /* Reset all stats atomically with pool clear while the mutex is held,
      * so cache_status_handler() never observes a zeroed pool with a stale
      * s_reset_us timestamp (TOCTOU window eliminated). */
@@ -306,15 +347,17 @@ bool cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
     bool found = false;
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-    for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-        const cache_entry_t *e = &s_pool[i];
-        if ((e->type & CACHE_USED_BIT) &&
-            e->slave_id              == slave_id &&
-            (e->type & 0x03u)        == type_value &&
-            e->address               == address) {
-            *value_out = e->value;
-            found = true;
-            break;
+    if (s_pool != NULL) {
+        for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+            const cache_entry_t *e = &s_pool[i];
+            if ((e->type & CACHE_USED_BIT) &&
+                e->slave_id              == slave_id &&
+                (e->type & 0x03u)        == type_value &&
+                e->address               == address) {
+                *value_out = e->value;
+                found = true;
+                break;
+            }
         }
     }
     xSemaphoreGive(s_cache_mutex);
@@ -347,13 +390,15 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
          * 64-bit reads of s_last_packet_us / s_reset_us on Xtensa
          * (64-bit volatile is NOT atomically readable without a mutex). */
         uint8_t seen[32] = {0};
-        for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-            if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
-            entries++;
-            uint8_t sid = s_pool[i].slave_id;
-            if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
-                seen[sid >> 3] |= (1u << (sid & 7));
-                slaves++;
+        if (s_pool != NULL) {
+            for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+                if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
+                entries++;
+                uint8_t sid = s_pool[i].slave_id;
+                if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
+                    seen[sid >> 3] |= (1u << (sid & 7));
+                    slaves++;
+                }
             }
         }
         packets     = s_packets_processed;
@@ -429,6 +474,12 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
+    if (s_pool == NULL) {
+        xSemaphoreGive(s_cache_mutex);
+        httpd_resp_send_chunk(req, NULL, 0);
+        return ESP_OK;
+    }
+
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         const cache_entry_t *e = &s_pool[i];
         if (!(e->type & CACHE_USED_BIT)) continue;
@@ -459,8 +510,16 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
         ret = httpd_resp_send_chunk(req, line, (ssize_t)len);
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
+        if (s_pool == NULL) {
+            /* Pool was freed by disable() while we were sending — stop iteration */
+            xSemaphoreGive(s_cache_mutex);
+            httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_OK;
+        }
+
         if (ret != ESP_OK) {
             xSemaphoreGive(s_cache_mutex);
+            httpd_resp_send_chunk(req, NULL, 0); /* terminate chunked transfer before returning error */
             return ret;
         }
     }
@@ -506,6 +565,14 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
+    if (s_pool == NULL) {
+        xSemaphoreGive(s_cache_mutex);
+        ret = httpd_resp_send_chunk(req, "]", 1);
+        if (ret != ESP_OK) return ret;
+        httpd_resp_send_chunk(req, NULL, 0);
+        return ESP_OK;
+    }
+
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         const cache_entry_t *e = &s_pool[i];
         if (!(e->type & CACHE_USED_BIT)) continue;
@@ -543,8 +610,19 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
         ret = httpd_resp_send_chunk(req, buf, (ssize_t)len);
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
+        if (s_pool == NULL) {
+            /* Pool was freed by disable() while we were sending — close JSON array and stop */
+            xSemaphoreGive(s_cache_mutex);
+            httpd_resp_send_chunk(req, "]", 1);
+            httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_OK;
+        }
+
         if (ret != ESP_OK) {
             xSemaphoreGive(s_cache_mutex);
+            /* Close JSON array and terminate chunked transfer before returning error */
+            httpd_resp_send_chunk(req, "]", 1);
+            httpd_resp_send_chunk(req, NULL, 0);
             return ret;
         }
     }
