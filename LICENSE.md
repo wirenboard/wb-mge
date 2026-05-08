@@ -1,39 +1,36 @@
-# License and Confidentiality
+The WB License (MIT-WB)
 
-## Trade Secret
-**CONFIDENTIAL**
+Copyright (c) 2013-2026 Contactless Devices, LLC (Wiren Board)
 
-All contents of this repository or archive are marked as "Trade Secret".
-Trade Secret of Individual Entrepreneur Lesnichiy Yakov Vasilyevich.
-Address: 352380, Krasnodar Region, Kropotkin, st. Timiryazeva, 55
-TIN: 231302744108
-Validity: 15 years.
-Copy number: 1
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
 
-Copyright (c) 2014-2025 Contactless Devices, LLC. CONFIDENTIAL
-info@contactless.ru
-Unpublished Copyright (c) 2014-2025 Contactless Devices, LLC, All Rights Reserved.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-```
-NOTICE: All information contained herein is, and remains the property of
-Contactless Devices, LLC. The intellectual and technical concepts contained
-herein are proprietary to Contactless Devices, LLC and may be covered by U.S.
-and Foreign Patents, patents in process, and are protected by trade secret or
-copyright law. Dissemination of this information or reproduction of this material
-is strictly forbidden unless prior written permission is obtained from Contactless
-Devices, LLC. Access to the source code contained herein is hereby forbidden to
-anyone except current Contactless Devices, LLC employees, managers or contractors
-who have executed Confidentiality and Non-disclosure agreements explicitly covering
-such access.
+The Software shall only be used on Wiren Board controllers, that is, hardware
+manufactured by Contactless Devices, LLC or its affilates.
 
-The copyright notice above does not evidence any actual or intended publication or
-disclosure of this source code, which includes information that is confidential
-and/or proprietary, and is a trade secret, of Contactless Devices, LLC. ANY
-REPRODUCTION, MODIFICATION, DISTRIBUTION, PUBLIC PERFORMANCE, OR PUBLIC DISPLAY OF
-OR THROUGH USE OF THIS SOURCE CODE WITHOUT THE EXPRESS WRITTEN CONSENT OF
-Contactless Devices, LLC IS STRICTLY PROHIBITED, AND IN VIOLATION OF APPLICABLE
-LAWS AND INTERNATIONAL TREATIES. THE RECEIPT OR POSSESSION OF THIS SOURCE CODE
-AND/OR RELATED INFORMATION DOES NOT CONVEY OR IMPLY ANY RIGHTS TO REPRODUCE,
-DISCLOSE OR DISTRIBUTE ITS CONTENTS, OR TO MANUFACTURE, USE, OR SELL ANYTHING
-THAT IT MAY DESCRIBE, IN WHOLE OR IN PART.
-```
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+Copyright (c) 2013-2026 ООО Бесконтактные устройства
+
+Данная лицензия разрешает лицам, получившим копию данного программного обеспечения и сопутствующей документации (в дальнейшем именуемыми «Программное Обеспечение»), безвозмездно использовать Программное Обеспечение без ограничений, включая неограниченное право на использование, копирование, изменение, слияние, публикацию, распространение, сублицензирование и/или продажу копий Программного Обеспечения, а также лицам, которым предоставляется данное Программное Обеспечение, при соблюдении следующих условий:
+
+Указанное выше уведомление об авторском праве и данные условия должны быть включены во все копии или значимые части данного Программного Обеспечения.
+
+Программное Обеспечение должно использоваться только на контроллерах Wiren Board, т.е. 
+на оборудовании, произведённом компанией ООО Бесконтактные устройства или уполномоченными 
+компанией ООО Бесконтактные устройства лицами.
+
+ДАННОЕ ПРОГРАММНОЕ ОБЕСПЕЧЕНИЕ ПРЕДОСТАВЛЯЕТСЯ «КАК ЕСТЬ», БЕЗ КАКИХ-ЛИБО ГАРАНТИЙ, ЯВНО ВЫРАЖЕННЫХ ИЛИ ПОДРАЗУМЕВАЕМЫХ, ВКЛЮЧАЯ ГАРАНТИИ ТОВАРНОЙ ПРИГОДНОСТИ, СООТВЕТСТВИЯ ПО ЕГО КОНКРЕТНОМУ НАЗНАЧЕНИЮ И ОТСУТСТВИЯ НАРУШЕНИЙ, НО НЕ ОГРАНИЧИВАЯСЬ ИМИ. НИ В КАКОМ СЛУЧАЕ АВТОРЫ ИЛИ ПРАВООБЛАДАТЕЛИ НЕ НЕСУТ ОТВЕТСТВЕННОСТИ ПО КАКИМ-ЛИБО ИСКАМ, ЗА УЩЕРБ ИЛИ ПО ИНЫМ ТРЕБОВАНИЯМ, В ТОМ ЧИСЛЕ, ПРИ ДЕЙСТВИИ КОНТРАКТА, ДЕЛИКТЕ ИЛИ ИНОЙ СИТУАЦИИ, ВОЗНИКШИМ ИЗ-ЗА ИСПОЛЬЗОВАНИЯ ПРОГРАММНОГО ОБЕСПЕЧЕНИЯ ИЛИ ИНЫХ ДЕЙСТВИЙ С ПРОГРАММНЫМ ОБЕСПЕЧЕНИЕМ.
