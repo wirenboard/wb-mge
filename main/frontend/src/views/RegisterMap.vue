@@ -6,6 +6,7 @@ import { api } from '@/utils/api';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
+import Switch from '@/components/Switch.vue';
 
 const { t } = useI18n();
 const { info } = useInfo();
@@ -30,11 +31,11 @@ const cacheEntries = ref(0);
 // Used to compute ages correctly across wrap-around.
 const cacheNowS = ref(0);
 
-// Cache is considered enabled when ALL ports are in cache_bus mode.
+// Cache is considered enabled when AT LEAST ONE port is in cache_bus mode.
 // Derived reactively from the info ref polled globally every 5 s by App.vue.
 const cacheEnabled = computed(() => {
   if (!info.value) return false;
-  return info.value.rs485_1.port_mode === 'cache_bus' &&
+  return info.value.rs485_1.port_mode === 'cache_bus' ||
          info.value.rs485_2.port_mode === 'cache_bus';
 });
 
@@ -45,8 +46,18 @@ const openDevices = ref<Set<number>>(new Set());
 const openGroups = ref<Set<string>>(new Set());
 const searchFilter = ref('');
 
+// Local copies of which serial ports are listened to (editable in Settings panel before Save)
+const listenPort1 = ref(false);
+const listenPort2 = ref(false);
+// TCP Modbus server is always running on port 504 — display-only
+const cacheTcpPort = ref(504);
+// Save-button status for the Settings panel
+const settingsSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let statsInterval: ReturnType<typeof setInterval> | null = null;
+// Timer handle for auto-resetting the save status badge
+let saveStatusTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Fetch cache statistics from the device and populate stat refs
 async function fetchCacheStats(): Promise<void> {
@@ -97,15 +108,27 @@ async function fetchEntries(): Promise<void> {
 async function toggleCaching(): Promise<void> {
   try {
     if (cacheEnabled.value) {
-      // Disable: switch both ports back to tcp_bridge
-      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
-      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+      // Disable: switch all ports currently in cache_bus back to tcp_bridge
+      if (info.value?.rs485_1.port_mode === 'cache_bus') {
+        await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+      }
+      if (info.value?.rs485_2.port_mode === 'cache_bus') {
+        await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+      }
       rawEntries.value = [];
       // cacheEnabled will update automatically on the next info poll
     } else {
-      // Enable: switch both ports to cache_bus
-      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
-      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+      // Enable: switch only the port selected in Settings panel (radio selection).
+      // Use local variables to avoid mutating UI state as a side-effect.
+      // If neither port is selected (edge case before first info poll), default to port 1.
+      const enablePort1 = listenPort1.value || (!listenPort1.value && !listenPort2.value);
+      const enablePort2 = listenPort2.value;
+      if (enablePort1) {
+        await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+      }
+      if (enablePort2) {
+        await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+      }
       // Fetch entries immediately so the UI shows data without waiting for the next poll
       await fetchEntries();
     }
@@ -116,12 +139,25 @@ async function toggleCaching(): Promise<void> {
 }
 
 async function resetMap(): Promise<void> {
+  // Abort if info is unavailable — port states cannot be determined
+  const port1WasActive = info.value?.rs485_1.port_mode === 'cache_bus';
+  const port2WasActive = info.value?.rs485_2.port_mode === 'cache_bus';
+  if (!port1WasActive && !port2WasActive) return;
   try {
-    // Disable both ports, then re-enable to clear the cache
-    await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
-    await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
-    await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
-    await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+    // Disable active ports to clear the cache
+    if (port1WasActive) {
+      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+    }
+    if (port2WasActive) {
+      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+    }
+    // Re-enable only the ports that were active
+    if (port1WasActive) {
+      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+    }
+    if (port2WasActive) {
+      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+    }
     rawEntries.value = [];
     // Fetch entries immediately so the UI reflects the cleared state
     await fetchEntries();
@@ -130,6 +166,55 @@ async function resetMap(): Promise<void> {
     error.value = e instanceof Error ? e.message : 'Reset failed';
     // cacheEnabled is derived from info — no manual resync needed
   }
+}
+
+// Sync local port selection from info only on first load.
+// After initial sync, local state is the source of truth until Save is pressed.
+let portsInitialized = false;
+watch(() => info.value, (newInfo) => {
+  if (!newInfo) return;
+  if (portsInitialized) return; // skip subsequent polling updates
+  listenPort1.value = newInfo.rs485_1.port_mode === 'cache_bus';
+  listenPort2.value = newInfo.rs485_2.port_mode === 'cache_bus';
+  // Enforce radio invariant: only one port can be selected at a time.
+  // If both ports are in cache_bus mode, default selection to port 1.
+  if (listenPort1.value && listenPort2.value) {
+    listenPort2.value = false;
+  }
+  portsInitialized = true;
+}, { immediate: true });
+
+// Select a port for cache listening (radio semantics: only one port active at a time)
+function selectListenPort(port: 1 | 2): void {
+  listenPort1.value = port === 1;
+  listenPort2.value = port === 2;
+}
+
+// Apply per-port listen changes and update save status
+async function saveSettings(): Promise<void> {
+  if (settingsSaveStatus.value === 'saving') return; // prevent concurrent calls
+  if (saveStatusTimer !== null) { clearTimeout(saveStatusTimer); saveStatusTimer = null; }
+  // Defensive: re-apply radio invariant before saving (guards against edge-case state corruption)
+  if (listenPort1.value && listenPort2.value) {
+    listenPort2.value = false; // both true → keep port 1
+  } else if (!listenPort1.value && !listenPort2.value) {
+    listenPort1.value = true;  // both false → fallback to port 1
+  }
+  settingsSaveStatus.value = 'saving';
+  try {
+    const port1TargetMode = listenPort1.value ? 'cache_bus' : 'tcp_bridge';
+    const port2TargetMode = listenPort2.value ? 'cache_bus' : 'tcp_bridge';
+    if (info.value?.rs485_1.port_mode !== port1TargetMode) {
+      await api<void>('ports/1/mode', { method: 'POST', json: { mode: port1TargetMode } });
+    }
+    if (info.value?.rs485_2.port_mode !== port2TargetMode) {
+      await api<void>('ports/2/mode', { method: 'POST', json: { mode: port2TargetMode } });
+    }
+    settingsSaveStatus.value = 'saved';
+  } catch {
+    settingsSaveStatus.value = 'error';
+  }
+  saveStatusTimer = setTimeout(() => { settingsSaveStatus.value = 'idle'; }, 3000);
 }
 
 // Format a duration in microseconds as a human-readable string (for cache/status stats)
@@ -323,6 +408,10 @@ onUnmounted(() => {
     clearInterval(statsInterval);
     statsInterval = null;
   }
+  if (saveStatusTimer !== null) {
+    clearTimeout(saveStatusTimer);
+    saveStatusTimer = null;
+  }
 });
 </script>
 
@@ -331,20 +420,6 @@ onUnmounted(() => {
     <Heading :title="t('title')" :crumbs="t('crumbs')">
       <template #default>
         <div class="rm-header-controls">
-          <!-- VALUE TIMEOUT block -->
-          <label class="rm-timeout">
-            <span class="rm-timeout-k">Value timeout</span>
-            <input
-              class="rm-timeout-input"
-              type="number"
-              v-model.number="valueTimeout"
-              min="1"
-              max="86400"
-              :disabled="!cacheEnabled"
-            />
-            <span class="rm-timeout-unit">s</span>
-            <span class="rm-help" title="If a register's last update is older than this, the gateway returns Modbus error 0x0B instead of the cached value.">?</span>
-          </label>
           <!-- CACHING ON/OFF block -->
           <label class="rm-caching-toggle" @click.prevent="toggleCaching()">
             <span class="rm-caching-k">Caching</span>
@@ -393,169 +468,270 @@ onUnmounted(() => {
         {{ error }}
       </div>
 
-      <!-- Caching enabled: stats strip + tree -->
+      <!-- Caching enabled: stats strip + 2-column layout (map + settings panel) -->
       <template v-else>
-        <!-- Stats strip -->
-        <div class="rm-strip">
-          <div class="rm-stats">
-            <div class="stat-block">
-              <div class="stat-label">Slaves / Registers</div>
-              <div class="stat-sub">seen on bus</div>
-              <div class="stat-value">
-                <b>{{ devices.length }}</b><span class="stat-dim"> / {{ rawEntries.length }}</span>
-              </div>
-            </div>
-            <div class="stat-block">
-              <div class="stat-label">Packets processed</div>
-              <div class="stat-sub">since last reset</div>
-              <div class="stat-value">{{ cachePackets }}</div>
-            </div>
-            <div class="stat-block">
-              <div class="stat-label">Last packet</div>
-              <div class="stat-sub">ago</div>
-              <div class="stat-value">{{ formatAgeUs(cacheLastPacketAgeUs) }}</div>
-            </div>
-            <div class="stat-block">
-              <div class="stat-label">Map age</div>
-              <div class="stat-sub">since last reset</div>
-              <div class="stat-value">{{ formatAgeUs(cacheMapAgeUs) }}</div>
-            </div>
-            <div class="stat-block stat-block--with-entries">
-              <div class="stat-label">Memory</div>
-              <div class="stat-sub">used / pool size</div>
-              <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}<span class="stat-dim"> / {{ formatMemory(cacheMaxEntries * 8) }}</span></div>
-              <div class="stat-entries">
-                <span class="stat-entries-val">{{ cacheEntries }}</span>
-                <span class="stat-entries-dim"> / {{ cacheMaxEntries > 0 ? cacheMaxEntries : '—' }} entries</span>
-              </div>
+        <!-- Stats strip (full-width, no actions column) -->
+        <div class="rm-stats">
+          <div class="stat-block">
+            <div class="stat-label">Slaves / Registers</div>
+            <div class="stat-sub">seen on bus</div>
+            <div class="stat-value">
+              <b>{{ devices.length }}</b><span class="stat-dim"> / {{ rawEntries.length }}</span>
             </div>
           </div>
-          <div class="rm-actions">
-            <Button variant="outline" @click="openUrl('/cache/csv')">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8m0 0l-3-3m3 3l3-3M2 12v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1"/></svg>
-              Export CSV
-            </Button>
-            <Button variant="outline" @click="openUrl('/cache/json')">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8m0 0l-3-3m3 3l3-3M2 12v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1"/></svg>
-              Export JSON
-            </Button>
-            <Button variant="danger" @click="resetMap()">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 8a6 6 0 1 1-2-4.5M14 2v4h-4"/></svg>
-              Reset map
-            </Button>
+          <div class="stat-block">
+            <div class="stat-label">Packets processed</div>
+            <div class="stat-sub">since last reset</div>
+            <div class="stat-value">{{ cachePackets }}</div>
+          </div>
+          <div class="stat-block">
+            <div class="stat-label">Last packet</div>
+            <div class="stat-sub">ago</div>
+            <div class="stat-value">{{ formatAgeUs(cacheLastPacketAgeUs) }}</div>
+          </div>
+          <div class="stat-block">
+            <div class="stat-label">Map age</div>
+            <div class="stat-sub">since last reset</div>
+            <div class="stat-value">{{ formatAgeUs(cacheMapAgeUs) }}</div>
+          </div>
+          <div class="stat-block stat-block--with-entries">
+            <div class="stat-label">Memory</div>
+            <div class="stat-sub">used / pool size</div>
+            <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}<span class="stat-dim"> / {{ formatMemory(cacheMaxEntries * 8) }}</span></div>
+            <div class="stat-entries">
+              <span class="stat-entries-val">{{ cacheEntries }}</span>
+              <span class="stat-entries-dim"> / {{ cacheMaxEntries > 0 ? cacheMaxEntries : '—' }} entries</span>
+            </div>
           </div>
         </div>
 
-        <!-- Empty state -->
-        <div v-if="devices.length === 0" class="rm-map-card">
-          <div class="rm-off">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="7" height="7" rx="1" />
-              <rect x="14" y="3" width="7" height="7" rx="1" />
-              <rect x="3" y="14" width="7" height="7" rx="1" />
-              <rect x="14" y="14" width="7" height="7" rx="1" />
-            </svg>
-            <div class="rm-off-title">No devices seen yet</div>
-            <div class="rm-off-sub">Waiting for Modbus traffic on the bus…</div>
-          </div>
-        </div>
-
-        <!-- Map card with tree -->
-        <div v-else class="rm-map-card">
-          <div class="rm-map-header">
-            <div class="rm-map-title-wrap">
-              <div class="rm-map-title">Map</div>
-              <div class="rm-map-sub">Device → register type → register</div>
-            </div>
-            <div class="rm-map-actions">
-              <div class="rm-search">
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></svg>
-                <input v-model="searchFilter" placeholder="Filter by slave ID…" />
-              </div>
-              <button class="rm-tb-btn" @click="expandAll()">Expand all</button>
-              <button class="rm-tb-btn" @click="collapseAll()">Collapse</button>
-            </div>
-          </div>
-
-          <div class="rm-tree" role="tree">
-            <!-- Device rows, filtered by searchFilter -->
-            <div v-for="dev in filteredDevices" :key="dev.id" class="rm-tree-dev">
-              <!-- Device header row -->
-              <div
-                class="rm-row lvl-dev"
-                role="treeitem"
-                :aria-expanded="openDevices.has(dev.id)"
-                @click="toggleDevice(dev.id)"
-              >
-                <svg
-                  class="caret"
-                  :class="{ open: openDevices.has(dev.id) }"
-                  width="10" height="10" viewBox="0 0 10 10"
-                  fill="none" stroke="currentColor" stroke-width="1.5"
-                  stroke-linecap="round" stroke-linejoin="round"
-                >
-                  <path d="M2 3 L5 7 L8 3"/>
+        <!-- 2-column layout: map content on the left, settings panel on the right -->
+        <div class="rm-cache-layout">
+          <!-- Left column: map content (empty state or tree) -->
+          <div class="rm-cache-content">
+            <!-- Empty state -->
+            <div v-if="devices.length === 0" class="rm-map-card">
+              <div class="rm-off">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <rect x="14" y="14" width="7" height="7" rx="1" />
                 </svg>
-                <span class="rm-slave mono">Slave 0x{{ dev.id.toString(16).padStart(2, '0').toUpperCase() }}</span>
-                <span class="rm-meta">
-                  <span class="rm-meta-item">
-                    <span class="dim">last</span>
-                    <span class="mono">{{ formatAge(dev.lastSeenAge) }} ago</span>
-                  </span>
-                </span>
+                <div class="rm-off-title">No devices seen yet</div>
+                <div class="rm-off-sub">Waiting for Modbus traffic on the bus…</div>
+              </div>
+            </div>
+
+            <!-- Map card with tree -->
+            <div v-else class="rm-map-card">
+              <div class="rm-map-header">
+                <div class="rm-map-title-wrap">
+                  <div class="rm-map-title">Map</div>
+                  <div class="rm-map-sub">Device → register type → register</div>
+                </div>
+                <div class="rm-map-actions">
+                  <div class="rm-search">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></svg>
+                    <input v-model="searchFilter" placeholder="Filter by slave ID…" />
+                  </div>
+                  <button class="rm-tb-btn" @click="expandAll()">Expand all</button>
+                  <button class="rm-tb-btn" @click="collapseAll()">Collapse</button>
+                </div>
               </div>
 
-              <!-- Group rows — shown when device is expanded -->
-              <template v-if="openDevices.has(dev.id)">
-                <div v-for="group in dev.groups" :key="group" class="rm-tree-grp">
-                  <!-- Group header row -->
+              <div class="rm-tree" role="tree">
+                <!-- Device rows, filtered by searchFilter -->
+                <div v-for="dev in filteredDevices" :key="dev.id" class="rm-tree-dev">
+                  <!-- Device header row -->
                   <div
-                    class="rm-row lvl-grp"
+                    class="rm-row lvl-dev"
                     role="treeitem"
-                    :aria-expanded="openGroups.has(`${dev.id}|${group}`)"
-                    @click="toggleGroup(`${dev.id}|${group}`)"
+                    :aria-expanded="openDevices.has(dev.id)"
+                    @click="toggleDevice(dev.id)"
                   >
                     <svg
                       class="caret"
-                      :class="{ open: openGroups.has(`${dev.id}|${group}`) }"
+                      :class="{ open: openDevices.has(dev.id) }"
                       width="10" height="10" viewBox="0 0 10 10"
                       fill="none" stroke="currentColor" stroke-width="1.5"
                       stroke-linecap="round" stroke-linejoin="round"
                     >
                       <path d="M2 3 L5 7 L8 3"/>
                     </svg>
-                    <span :class="['rm-grp-tag', 'tag-' + group.toLowerCase()]">{{ group }}</span>
-                    <span class="rm-name">{{ group }} registers</span>
-                    <span class="rm-meta"><span class="mono">{{ (regsByKey[`${dev.id}|${group}`] || []).length }}</span></span>
+                    <span class="rm-slave mono">Slave 0x{{ dev.id.toString(16).padStart(2, '0').toUpperCase() }}</span>
+                    <span class="rm-meta">
+                      <span class="rm-meta-item">
+                        <span class="dim">last</span>
+                        <span class="mono">{{ formatAge(dev.lastSeenAge) }} ago</span>
+                      </span>
+                    </span>
                   </div>
 
-                  <!-- Register rows — shown when group is expanded -->
-                  <div v-if="openGroups.has(`${dev.id}|${group}`)" class="rm-regs">
-                    <!-- Column headers -->
-                    <div class="rm-reg-head">
-                      <span>Addr</span>
-                      <span style="text-align:right">Raw value</span>
-                      <span>Last update</span>
-                      <span style="text-align:right">Responses</span>
+                  <!-- Group rows — shown when device is expanded -->
+                  <template v-if="openDevices.has(dev.id)">
+                    <div v-for="group in dev.groups" :key="group" class="rm-tree-grp">
+                      <!-- Group header row -->
+                      <div
+                        class="rm-row lvl-grp"
+                        role="treeitem"
+                        :aria-expanded="openGroups.has(`${dev.id}|${group}`)"
+                        @click="toggleGroup(`${dev.id}|${group}`)"
+                      >
+                        <svg
+                          class="caret"
+                          :class="{ open: openGroups.has(`${dev.id}|${group}`) }"
+                          width="10" height="10" viewBox="0 0 10 10"
+                          fill="none" stroke="currentColor" stroke-width="1.5"
+                          stroke-linecap="round" stroke-linejoin="round"
+                        >
+                          <path d="M2 3 L5 7 L8 3"/>
+                        </svg>
+                        <span :class="['rm-grp-tag', 'tag-' + group.toLowerCase()]">{{ group }}</span>
+                        <span class="rm-name">{{ group }} registers</span>
+                        <span class="rm-meta"><span class="mono">{{ (regsByKey[`${dev.id}|${group}`] || []).length }}</span></span>
+                      </div>
+
+                      <!-- Register rows — shown when group is expanded -->
+                      <div v-if="openGroups.has(`${dev.id}|${group}`)" class="rm-regs">
+                        <!-- Column headers -->
+                        <div class="rm-reg-head">
+                          <span>Addr</span>
+                          <span style="text-align:right">Raw value</span>
+                          <span>Last update</span>
+                          <span style="text-align:right">Responses</span>
+                        </div>
+                        <!-- One row per register -->
+                        <div
+                          v-for="reg in regsByKey[`${dev.id}|${group}`] || []"
+                          :key="reg.addr"
+                          :class="['rm-row', 'lvl-reg', { stale: reg.stale }]"
+                          role="treeitem"
+                        >
+                          <span class="mono rm-reg-addr">{{ reg.addr }}</span>
+                          <span class="mono rm-reg-val">{{ reg.val }}</span>
+                          <span class="mono rm-reg-upd">
+                            <span v-if="reg.stale" class="stale-dot" title="Older than value timeout" />
+                            {{ formatAge(reg.updatedAge) }} ago
+                          </span>
+                          <span class="mono rm-reg-hits">—</span>
+                        </div>
+                      </div>
                     </div>
-                    <!-- One row per register -->
-                    <div
-                      v-for="reg in regsByKey[`${dev.id}|${group}`] || []"
-                      :key="reg.addr"
-                      :class="['rm-row', 'lvl-reg', { stale: reg.stale }]"
-                      role="treeitem"
-                    >
-                      <span class="mono rm-reg-addr">{{ reg.addr }}</span>
-                      <span class="mono rm-reg-val">{{ reg.val }}</span>
-                      <span class="mono rm-reg-upd">
-                        <span v-if="reg.stale" class="stale-dot" title="Older than value timeout" />
-                        {{ formatAge(reg.updatedAge) }} ago
-                      </span>
-                      <span class="mono rm-reg-hits">—</span>
-                    </div>
-                  </div>
+                  </template>
                 </div>
-              </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right column: Settings panel -->
+          <div class="rm-settings-panel">
+            <div class="rsp-title">Settings</div>
+
+            <!-- CACHING section -->
+            <div class="rsp-section-label">CACHING</div>
+
+            <!-- Value timeout row -->
+            <div class="rsp-row">
+              <div class="rsp-control">
+                  <input type="number" class="rsp-input" v-model.number="valueTimeout" min="1" max="86400" />
+                  <span class="rsp-unit">seconds</span>
+                </div>
+              <div class="rsp-row-info">
+                <div class="rsp-row-title">Value timeout</div>
+                <div class="rsp-row-desc">If a register's last update is older than this, the gateway returns Modbus error 0x0B instead of the cached value.</div>
+              </div>
+            </div>
+
+            <!-- Reset map row -->
+            <div class="rsp-row">
+              <div class="rsp-control">
+                <button class="rsp-btn-reset" @click="resetMap()">↺ Reset</button>
+              </div>
+              <div class="rsp-row-info">
+                <div class="rsp-row-title">Reset map</div>
+                <div class="rsp-row-desc">Drops every observed register from RAM. Map will rebuild from new traffic.</div>
+              </div>
+            </div>
+
+            <div class="rsp-divider" />
+
+            <!-- SOURCE section -->
+            <div class="rsp-section-label">SOURCE</div>
+
+            <!-- Listen port row -->
+            <div class="rsp-row">
+              <div class="rsp-control rsp-control--port-tags">
+                <button
+                    type="button"
+                    :class="['rsp-port-tag', { active: listenPort1 }]"
+                    @click="selectListenPort(1)"
+                  >1</button>
+                  <button
+                    type="button"
+                    :class="['rsp-port-tag', { active: listenPort2 }]"
+                    @click="selectListenPort(2)"
+                  >2</button>
+              </div>
+              <div class="rsp-row-info">
+                <div class="rsp-row-title">Listen port</div>
+                <div class="rsp-row-desc">Which serial port the cache observes for register traffic.</div>
+              </div>
+            </div>
+
+            <div class="rsp-divider" />
+
+            <!-- EXPORT section -->
+            <div class="rsp-section-label">EXPORT</div>
+
+            <!-- Export row -->
+            <div class="rsp-row">
+              <div class="rsp-control rsp-control--btns">
+                <button class="rsp-btn-export" @click="openUrl('/cache/csv')">↓ CSV</button>
+                <button class="rsp-btn-export" @click="openUrl('/cache/json')">↓ JSON</button>
+              </div>
+              <div class="rsp-row-info">
+                <div class="rsp-row-title">Download current map</div>
+                <div class="rsp-row-desc">Snapshot of every observed register and its last cached value.</div>
+              </div>
+            </div>
+
+            <div class="rsp-divider" />
+
+            <!-- TCP MODBUS section -->
+            <div class="rsp-section-label">TCP MODBUS</div>
+
+            <!-- TCP serve toggle row (always ON, display-only) -->
+            <div class="rsp-row">
+              <div class="rsp-control">
+                <Switch id="rsp-tcp-serve" :model-value="true" :disabled="true" :ariaLabel="'Serve cached values over TCP'" />
+              </div>
+              <div class="rsp-row-info">
+                <div class="rsp-row-title">Serve cached values over TCP</div>
+                <div class="rsp-row-desc">Reply to TCP Modbus reads from cache without round-tripping the bus.</div>
+              </div>
+            </div>
+
+            <!-- TCP port row (display-only) -->
+            <div class="rsp-row">
+              <div class="rsp-control">
+                <input type="number" class="rsp-input" :value="cacheTcpPort" readonly />
+              </div>
+              <div class="rsp-row-info">
+                <div class="rsp-row-title">TCP port</div>
+                <div class="rsp-row-desc">Port the gateway listens on for TCP Modbus clients.</div>
+              </div>
+            </div>
+
+            <!-- Save footer -->
+            <div class="rsp-footer">
+              <span class="rsp-status">
+                <template v-if="settingsSaveStatus === 'saved'">Saved</template>
+                <template v-else-if="settingsSaveStatus === 'error'">Error saving</template>
+              </span>
+              <button class="rsp-btn-save" @click="saveSettings()" :disabled="settingsSaveStatus === 'saving'">
+                Save changes
+              </button>
             </div>
           </div>
         </div>
@@ -570,67 +746,6 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-/* VALUE TIMEOUT block */
-.rm-timeout {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 6px 0 10px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--r-md);
-  background: var(--bg-surface-subtle);
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: default;
-}
-
-.rm-timeout-k {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.rm-timeout-input {
-  width: 48px;
-  padding: 3px 6px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: #fff;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-color);
-  text-align: right;
-}
-
-.rm-timeout-input:focus {
-  border-color: var(--primary-color);
-  outline: none;
-  box-shadow: var(--input-focus-shadow);
-}
-
-.rm-timeout-unit {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.rm-help {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 1px solid var(--border-color);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-muted);
-  cursor: help;
 }
 
 /* CACHING toggle block */
@@ -736,14 +851,7 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-/* ── Stats strip ────────────────────────────────────────────────── */
-.rm-strip {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  align-items: stretch;
-}
-
+/* ── Stats strip (full-width) ───────────────────────────────────── */
 .rm-stats {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -824,12 +932,220 @@ onUnmounted(() => {
   color: var(--text-muted);
 }
 
-.rm-actions {
+/* ── 2-column cache layout ──────────────────────────────────────── */
+.rm-cache-layout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 16px;
+  align-items: start;
+}
+
+.rm-cache-content {
+  min-width: 0;
+}
+
+/* ── Settings panel ─────────────────────────────────────────────── */
+.rm-settings-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--r-lg);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.rsp-title {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.rsp-section-label {
+  padding: 10px 18px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.rsp-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid color-mix(in oklch, var(--border-color) 50%, transparent);
+}
+
+.rsp-row:last-of-type {
+  border-bottom: none;
+}
+
+.rsp-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
   gap: 6px;
-  justify-content: flex-end;
-  align-self: stretch;
+  width: 120px; /* fixed width so all row titles align */
+}
+
+.rsp-input {
+  width: 60px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: right;
+  background: var(--bg-surface);
+  color: var(--text-color);
+}
+
+.rsp-unit {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rsp-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.rsp-row-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-color);
+  line-height: 1.3;
+}
+
+.rsp-row-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.rsp-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+.rsp-btn-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--danger-color);
+  background: color-mix(in oklch, var(--danger-color) 8%, white);
+  color: var(--danger-color);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.rsp-control--btns {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rsp-btn-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  width: 100%;
+  justify-content: center;
+}
+
+.rsp-btn-export:hover {
+  background: var(--bg-surface-subtle);
+  color: var(--text-color);
+}
+
+/* Port tag buttons for the Listen port selector */
+.rsp-control--port-tags {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  width: auto; /* override fixed width from .rsp-control */
+}
+
+.rsp-port-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--r-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+
+.rsp-port-tag.active {
+  background: color-mix(in oklch, var(--primary-color) 12%, var(--bg-surface));
+  border-color: color-mix(in oklch, var(--primary-color) 40%, transparent);
+  color: var(--primary-color);
+}
+
+.rsp-port-tag:hover:not(.active) {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-strong);
+}
+
+.rsp-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+  margin-top: auto;
+}
+
+.rsp-status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rsp-btn-save {
+  height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--primary-color);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.rsp-btn-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.rsp-btn-save:not(:disabled):hover {
+  background: color-mix(in oklch, var(--primary-color) 85%, black);
 }
 
 /* ── Map card ───────────────────────────────────────────────────── */
