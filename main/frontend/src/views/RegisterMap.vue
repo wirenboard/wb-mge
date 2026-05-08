@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useInfo } from '@/common/info';
 import { api } from '@/utils/api';
@@ -19,6 +19,12 @@ interface DeviceNode { id: number; groups: string[]; lastSeenAge: number; }
 
 const rawEntries = ref<CacheEntry[]>([]);
 
+// Stats from GET /cache/status
+const cachePackets = ref(0);
+const cacheLastPacketAgeUs = ref(0);
+const cacheMapAgeUs = ref(0);
+const cacheMemoryBytes = ref(0);
+
 // Cache is considered enabled when ALL ports are in cache_bus mode.
 // Derived reactively from the info ref polled globally every 5 s by App.vue.
 const cacheEnabled = computed(() => {
@@ -35,6 +41,29 @@ const openGroups = ref<Set<string>>(new Set());
 const searchFilter = ref('');
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
+let statsInterval: ReturnType<typeof setInterval> | null = null;
+
+// Fetch cache statistics from the device and populate stat refs
+async function fetchCacheStats(): Promise<void> {
+  if (!cacheEnabled.value) return;
+  try {
+    const s = await api<{
+      enabled: boolean;
+      entries: number;
+      slaves: number;
+      packets_processed: number;
+      last_packet_age_us: number;
+      map_age_us: number;
+      memory_bytes: number;
+    }>('cache/status');
+    cachePackets.value        = s.packets_processed;
+    cacheLastPacketAgeUs.value = s.last_packet_age_us;
+    cacheMapAgeUs.value       = s.map_age_us;
+    cacheMemoryBytes.value    = s.memory_bytes;
+  } catch {
+    // Silently ignore fetch errors
+  }
+}
 
 async function fetchEntries(): Promise<void> {
   // Skip the fetch when cache is not active to avoid pointless requests.
@@ -86,6 +115,26 @@ async function resetMap(): Promise<void> {
     error.value = e instanceof Error ? e.message : 'Reset failed';
     // cacheEnabled is derived from info — no manual resync needed
   }
+}
+
+// Format a duration in microseconds as a human-readable string (for cache/status stats)
+function formatAgeUs(us: number): string {
+  if (us === 0) return '—';
+  const seconds = Math.floor(us / 1_000_000);
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes < 60) return `${minutes} min ${secs} s`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours} h ${mins} min`;
+}
+
+// Format a memory size in bytes as a human-readable string
+function formatMemory(bytes: number): string {
+  if (bytes === 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 // Format a duration in seconds as a human-readable string
@@ -209,6 +258,27 @@ const filteredDevices = computed((): DeviceNode[] => {
   );
 });
 
+// { immediate: true } ensures stats are fetched on mount if cache is already enabled.
+// oldVal guard: only reset displayed stats when transitioning from a confirmed-enabled
+// state (oldVal === true) — prevents stats from flashing to "—" on every info-polling
+// reconnect where cacheEnabled briefly becomes false because info.value is temporarily
+// undefined, even though the cache is still running on the device.
+watch(cacheEnabled, (val, oldVal) => {
+  if (val) {
+    fetchCacheStats(); // immediate fetch on enable
+    statsInterval = setInterval(fetchCacheStats, 5000);
+  } else {
+    if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+    // Only reset stats when transitioning from a known-enabled state, not from undefined/initial
+    if (oldVal === true) {
+      cachePackets.value         = 0;
+      cacheLastPacketAgeUs.value = 0;
+      cacheMapAgeUs.value        = 0;
+      cacheMemoryBytes.value     = 0;
+    }
+  }
+}, { immediate: true });
+
 onMounted(() => {
   fetchEntries();
   pollInterval = setInterval(() => {
@@ -220,6 +290,10 @@ onUnmounted(() => {
   if (pollInterval !== null) {
     clearInterval(pollInterval);
     pollInterval = null;
+  }
+  if (statsInterval !== null) {
+    clearInterval(statsInterval);
+    statsInterval = null;
   }
 });
 </script>
@@ -306,22 +380,22 @@ onUnmounted(() => {
             <div class="stat-block">
               <div class="stat-label">Packets processed</div>
               <div class="stat-sub">since last reset</div>
-              <div class="stat-value">—</div>
+              <div class="stat-value">{{ cachePackets }}</div>
             </div>
             <div class="stat-block">
               <div class="stat-label">Last packet</div>
               <div class="stat-sub">ago</div>
-              <div class="stat-value">—</div>
+              <div class="stat-value">{{ formatAgeUs(cacheLastPacketAgeUs) }}</div>
             </div>
             <div class="stat-block">
               <div class="stat-label">Map age</div>
               <div class="stat-sub">since last reset</div>
-              <div class="stat-value">—</div>
+              <div class="stat-value">{{ formatAgeUs(cacheMapAgeUs) }}</div>
             </div>
             <div class="stat-block">
               <div class="stat-label">Memory</div>
               <div class="stat-sub">—</div>
-              <div class="stat-value">—</div>
+              <div class="stat-value">{{ formatMemory(cacheMemoryBytes) }}</div>
             </div>
           </div>
           <div class="rm-actions">
