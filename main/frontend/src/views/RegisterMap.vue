@@ -60,14 +60,14 @@ async function fetchCacheStats(): Promise<void> {
       map_age_us: number;
       memory_bytes: number;
       max_entries: number;
-      now_s: number;
     }>('cache/status');
     cachePackets.value         = s.packets_processed;
     cacheLastPacketAgeUs.value = s.last_packet_age_us;
     cacheMapAgeUs.value        = s.map_age_us;
     cacheMemoryBytes.value     = s.memory_bytes;
     cacheMaxEntries.value      = s.max_entries;
-    cacheNowS.value            = s.now_s;
+    // cacheNowS is now sourced from /cache/json to guarantee it is consistent
+    // with the entry timestamps (both captured in the same HTTP response).
   } catch {
     // Silently ignore fetch errors
   }
@@ -77,8 +77,13 @@ async function fetchEntries(): Promise<void> {
   // Skip the fetch when cache is not active to avoid pointless requests.
   if (!cacheEnabled.value) return;
   try {
-    const data = await api<CacheEntry[]>('cache/json');
-    rawEntries.value = data;
+    // /cache/json returns { now_s, d: CacheEntry[] } so that now_s and every
+    // e.ts are guaranteed to come from the same server-side moment, preventing
+    // modular subtraction from producing ~65534 when the bus is active and
+    // entries arrive between independent status polls.
+    const data = await api<{ now_s: number; d: CacheEntry[] }>('cache/json');
+    rawEntries.value = data.d;
+    cacheNowS.value  = data.now_s;
     error.value = null;
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Fetch failed';

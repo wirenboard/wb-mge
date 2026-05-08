@@ -415,12 +415,8 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
                                ? (now_us - reset_us) : 0;
     uint32_t memory_bytes    = (uint32_t)entries * (uint32_t)sizeof(cache_entry_t);
 
-    /* Derive now_s in the same uint16_t-truncated domain as cache_entry_t.timestamp_s,
-     * so the frontend can use it as a wrap-around-safe "now" anchor. */
-    uint16_t now_s = (uint16_t)(now_us / 1000000u);
-
-    /* Build response — buffer sized for ~220 bytes worst case (added now_s field) */
-    char resp[220];
+    /* Build response — 256 bytes: worst case ~196 bytes (two uint64_t fields at 20 digits each) */
+    char resp[256];
     snprintf(resp, sizeof(resp),
              "{\"enabled\":%s"
              ",\"entries\":%d"
@@ -430,7 +426,7 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
              ",\"last_packet_age_us\":%" PRIu64
              ",\"map_age_us\":%" PRIu64
              ",\"memory_bytes\":%" PRIu32
-             ",\"now_s\":%u}",
+             "}",
              s_cache_enabled ? "true" : "false",
              entries,
              CACHE_MAX_ENTRIES,
@@ -438,8 +434,7 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
              packets,
              last_pkt_age_us,
              map_age_us,
-             memory_bytes,
-             (unsigned)now_s);
+             memory_bytes);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, (ssize_t)strlen(resp));
@@ -510,17 +505,17 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
         ret = httpd_resp_send_chunk(req, line, (ssize_t)len);
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
+        if (ret != ESP_OK) {
+            /* Send error — connection broken; release mutex and return error */
+            xSemaphoreGive(s_cache_mutex);
+            return ret;
+        }
+
         if (s_pool == NULL) {
             /* Pool was freed by disable() while we were sending — stop iteration */
             xSemaphoreGive(s_cache_mutex);
             httpd_resp_send_chunk(req, NULL, 0);
             return ESP_OK;
-        }
-
-        if (ret != ESP_OK) {
-            xSemaphoreGive(s_cache_mutex);
-            httpd_resp_send_chunk(req, NULL, 0); /* terminate chunked transfer before returning error */
-            return ret;
         }
     }
 
@@ -532,42 +527,52 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
 }
 
 /**
- * GET /cache/json — stream all cached register values as a JSON array.
+ * GET /cache/json — stream all cached register values as a JSON object.
  *
  * Designed for frequent UI polling: no heap allocation, chunked transfer,
  * mutex released between chunks to avoid stalling writers.
  *
  * Output format (compact, one object per entry):
- *   [{"s":3,"t":"h","a":100,"v":1234,"ts":1800},...]
+ *   {"now_s":1800,"d":[{"s":3,"t":"h","a":100,"v":1234,"ts":1800},...]}
  *
  * Field abbreviations (kept short for low-overhead JS parsing):
- *   s  – slave_id
- *   t  – type: "h"=holding, "i"=input, "c"=coil, "d"=discrete
- *   a  – address (0-based)
- *   v  – value
- *   ts – timestamp_s (seconds, wraps ~18 h)
+ *   now_s – current server time in same uint16_t-truncated seconds domain as ts
+ *   s     – slave_id
+ *   t     – type: "h"=holding, "i"=input, "c"=coil, "d"=discrete
+ *   a     – address (0-based)
+ *   v     – value
+ *   ts    – timestamp_s (seconds, wraps ~18 h)
  */
 static esp_err_t cache_json_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
 
     if (s_cache_mutex == NULL) {
-        const char *empty = "[]";
+        const char *empty = "{\"now_s\":0,\"d\":[]}";
         httpd_resp_send(req, empty, (ssize_t)strlen(empty));
         return ESP_OK;
     }
 
-    /* Opening bracket */
-    esp_err_t ret = httpd_resp_send_chunk(req, "[", 1);
-    if (ret != ESP_OK) return ret;
-
     bool first = true;
+
+    /* now_s is a best-effort anchor: esp_timer_get_time() is reentrant and
+     * requires no mutex.  Sniffer entries written after this read will have
+     * timestamp_s >= now_s and will show age 0 on the frontend, which is the
+     * correct behaviour for freshly updated registers. */
+    uint16_t now_s = (uint16_t)(esp_timer_get_time() / 1000000u);
+
+    /* Build and send the JSON object header with now_s outside the mutex */
+    char hdr[32];
+    int hdr_len = snprintf(hdr, sizeof(hdr), "{\"now_s\":%u,\"d\":[", (unsigned)now_s);
+    if (hdr_len < 0 || hdr_len >= (int)sizeof(hdr)) return ESP_FAIL;
+    esp_err_t ret = httpd_resp_send_chunk(req, hdr, (ssize_t)hdr_len);
+    if (ret != ESP_OK) return ret;
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
     if (s_pool == NULL) {
         xSemaphoreGive(s_cache_mutex);
-        ret = httpd_resp_send_chunk(req, "]", 1);
+        ret = httpd_resp_send_chunk(req, "]}", 2);
         if (ret != ESP_OK) return ret;
         httpd_resp_send_chunk(req, NULL, 0);
         return ESP_OK;
@@ -610,27 +615,25 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
         ret = httpd_resp_send_chunk(req, buf, (ssize_t)len);
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
-        if (s_pool == NULL) {
-            /* Pool was freed by disable() while we were sending — close JSON array and stop */
+        if (ret != ESP_OK) {
+            /* Send error — connection broken; release mutex and return error */
             xSemaphoreGive(s_cache_mutex);
-            httpd_resp_send_chunk(req, "]", 1);
-            httpd_resp_send_chunk(req, NULL, 0);
-            return ESP_OK;
+            return ret;
         }
 
-        if (ret != ESP_OK) {
+        if (s_pool == NULL) {
+            /* Pool was freed by disable() while we were sending — close data array and object */
             xSemaphoreGive(s_cache_mutex);
-            /* Close JSON array and terminate chunked transfer before returning error */
-            httpd_resp_send_chunk(req, "]", 1);
+            httpd_resp_send_chunk(req, "]}", 2);
             httpd_resp_send_chunk(req, NULL, 0);
-            return ret;
+            return ESP_OK;
         }
     }
 
     xSemaphoreGive(s_cache_mutex);
 
-    /* Closing bracket + terminate chunked transfer */
-    ret = httpd_resp_send_chunk(req, "]", 1);
+    /* Closing data array + closing object + terminate chunked transfer */
+    ret = httpd_resp_send_chunk(req, "]}", 2);
     if (ret != ESP_OK) return ret;
     httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
