@@ -5,6 +5,7 @@
 #include "array_size.h"
 #include "settings_update.h"
 #include "settings_save_timer.h"
+#include "bridge/cache_modbus_server.h"
 
 #include <esp_log.h>
 #include <string.h>
@@ -26,6 +27,7 @@ static const setting_mapping_t top_level_mappings[] = {
     {"web_port", KEY_WEB_PORT},
     {"io_bus", KEY_IO_BUS_ENABLED},
     {"vout", KEY_485_VOUT},
+    {"cache_modbus_port", KEY_CACHE_MODBUS_PORT},
 };
 
 static const setting_mapping_t wifi_mappings[] = {
@@ -317,6 +319,10 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         return ESP_FAIL;
     }
 
+    // Save current cache server port before applying new settings.
+    // Used later to detect a real port change and to enable rollback on init failure.
+    int old_cache_port = cache_modbus_server_get_port();
+
     // Process top-level settings
     for (size_t i = 0; i < ARRAY_SIZE(top_level_mappings); i++) {
         const setting_mapping_t *mapping = &top_level_mappings[i];
@@ -343,6 +349,31 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     }
 
     process_rs485_settings(request_json);
+
+    // If cache_modbus_port was in the request, check whether the validated NVS value
+    // differs from the port active before this request and restart the server if needed.
+    if (cJSON_HasObjectItem(request_json, "cache_modbus_port")) {
+        int new_port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
+        if (new_port > 0 && new_port != old_cache_port) {
+            esp_err_t ret = cache_modbus_server_deinit();
+            if (ret != ESP_OK) {
+                // Log only — continue so that settings_update() still runs for other settings.
+                ESP_LOGE(TAG, "cache_modbus_server_deinit failed: %s", esp_err_to_name(ret));
+            } else {
+                ret = cache_modbus_server_init(new_port);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "cache_modbus_server_init(%d) failed: %s", new_port, esp_err_to_name(ret));
+                    // Attempt rollback to the previous port.
+                    if (old_cache_port > 0) {
+                        esp_err_t rb = cache_modbus_server_init(old_cache_port);
+                        if (rb != ESP_OK) {
+                            ESP_LOGE(TAG, "Rollback to port %d also failed: %s", old_cache_port, esp_err_to_name(rb));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     settings_update();
 

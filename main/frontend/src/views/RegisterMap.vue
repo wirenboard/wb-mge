@@ -108,12 +108,12 @@ async function fetchEntries(): Promise<void> {
 async function toggleCaching(): Promise<void> {
   try {
     if (cacheEnabled.value) {
-      // Disable: switch all ports currently in cache_bus back to tcp_bridge
+      // Disable: switch all ports currently in cache_bus back to disabled
       if (info.value?.rs485_1.port_mode === 'cache_bus') {
-        await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+        await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'disabled' } });
       }
       if (info.value?.rs485_2.port_mode === 'cache_bus') {
-        await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+        await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'disabled' } });
       }
       rawEntries.value = [];
       // cacheEnabled will update automatically on the next info poll
@@ -146,10 +146,10 @@ async function resetMap(): Promise<void> {
   try {
     // Disable active ports to clear the cache
     if (port1WasActive) {
-      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'disabled' } });
     }
     if (port2WasActive) {
-      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'tcp_bridge' } });
+      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'disabled' } });
     }
     // Re-enable only the ports that were active
     if (port1WasActive) {
@@ -203,8 +203,8 @@ async function saveSettings(): Promise<void> {
   }
   settingsSaveStatus.value = 'saving';
   try {
-    const port1TargetMode = listenPort1.value ? 'cache_bus' : 'tcp_bridge';
-    const port2TargetMode = listenPort2.value ? 'cache_bus' : 'tcp_bridge';
+    const port1TargetMode = listenPort1.value ? 'cache_bus' : 'disabled';
+    const port2TargetMode = listenPort2.value ? 'cache_bus' : 'disabled';
     if (info.value?.rs485_1.port_mode !== port1TargetMode) {
       await api<void>('ports/1/mode', { method: 'POST', json: { mode: port1TargetMode } });
     }
@@ -212,7 +212,7 @@ async function saveSettings(): Promise<void> {
       await api<void>('ports/2/mode', { method: 'POST', json: { mode: port2TargetMode } });
     }
     if (info.value && cacheTcpPort.value !== info.value.cache_modbus_port) {
-      await api<void>('cache/port', { method: 'POST', json: { port: cacheTcpPort.value } });
+      await api<void>('settings', { method: 'POST', json: { cache_modbus_port: cacheTcpPort.value } });
     }
     settingsSaveStatus.value = 'saved';
   } catch {

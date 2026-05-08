@@ -101,6 +101,7 @@ export interface Settings {
   web_port: number;
   io_bus: boolean;
   vout: boolean;
+  cache_modbus_port: number;
   wifi: {
     mode: WiFiMode;
     ap_ip_static: string;
