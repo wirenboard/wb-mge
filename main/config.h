@@ -44,7 +44,8 @@
 #define DEFAULT_BRIDGE_IP           "192.168.5.2"
 #define DEFAULT_BRIDGE_PORT2        "503"
 #define DEFAULT_BRIDGE_MB           "false"
-#define DEFAULT_CACHE_MODBUS_PORT   "504"
+#define DEFAULT_CACHE_MODBUS_PORT           "504"
+#define DEFAULT_CACHE_MODBUS_SERVER_ENABLED "true"
 
 
 #ifdef MODEL_mge_v3

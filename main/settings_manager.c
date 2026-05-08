@@ -28,6 +28,7 @@ static const setting_mapping_t top_level_mappings[] = {
     {"io_bus", KEY_IO_BUS_ENABLED},
     {"vout", KEY_485_VOUT},
     {"cache_modbus_port", KEY_CACHE_MODBUS_PORT},
+    {"cache_modbus_server_enabled", KEY_CACHE_MODBUS_SERVER_ENABLED},
 };
 
 static const setting_mapping_t wifi_mappings[] = {
@@ -352,12 +353,16 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
 
     // If cache_modbus_port was in the request, check whether the validated NVS value
     // differs from the port active before this request and restart the server if needed.
+    // Only restart when the server is enabled — if disabled, the port is saved to NVS
+    // but the server stays stopped.
     if (cJSON_HasObjectItem(request_json, "cache_modbus_port")) {
         int new_port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
-        if (new_port > 0 && new_port != old_cache_port) {
+        bool server_enabled = setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
+        // Only restart the server if it is enabled and the port actually changed.
+        // If the server is disabled, the port is saved to NVS but the server stays stopped.
+        if (server_enabled && new_port > 0 && new_port != old_cache_port) {
             esp_err_t ret = cache_modbus_server_deinit();
             if (ret != ESP_OK) {
-                // Log only — continue so that settings_update() still runs for other settings.
                 ESP_LOGE(TAG, "cache_modbus_server_deinit failed: %s", esp_err_to_name(ret));
             } else {
                 ret = cache_modbus_server_init(new_port);
@@ -371,6 +376,27 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // If cache_modbus_server_enabled was in the request, start or stop the server accordingly.
+    if (cJSON_HasObjectItem(request_json, "cache_modbus_server_enabled")) {
+        bool enabled = setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
+        bool running = (cache_modbus_server_get_port() > 0);
+        if (enabled && !running) {
+            // Server should be running but isn't — start it.
+            int port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
+            if (port <= 0) port = CACHE_MODBUS_SERVER_PORT;
+            esp_err_t ret = cache_modbus_server_init(port);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "cache_modbus_server_init failed: %s", esp_err_to_name(ret));
+            }
+        } else if (!enabled && running) {
+            // Server is running but should be stopped.
+            esp_err_t ret = cache_modbus_server_deinit();
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "cache_modbus_server_deinit failed: %s", esp_err_to_name(ret));
             }
         }
     }

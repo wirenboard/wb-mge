@@ -224,12 +224,16 @@ esp_err_t port_manager_init(void)
     // Initialise global subsystems once.
     ESP_RETURN_ON_ERROR(sniffer_init(), TAG, "sniffer_init failed");
     ESP_RETURN_ON_ERROR(cache_multimaster_init(), TAG, "cache_multimaster_init failed");
-    // cache_modbus_server is harmless without an active cache — start it unconditionally.
-    // Read TCP port from NVS; fall back to compile-time default if unset.
-    int cache_port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
-    if (cache_port <= 0) cache_port = CACHE_MODBUS_SERVER_PORT;
-    ESP_RETURN_ON_ERROR(cache_modbus_server_init(cache_port),
-                        TAG, "cache_modbus_server_init failed");
+    // Start cache Modbus TCP server only if enabled in NVS settings.
+    bool cache_server_enabled = setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
+    if (cache_server_enabled) {
+        int cache_port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
+        if (cache_port <= 0) cache_port = CACHE_MODBUS_SERVER_PORT;
+        ESP_RETURN_ON_ERROR(cache_modbus_server_init(cache_port),
+                            TAG, "cache_modbus_server_init failed");
+    } else {
+        ESP_LOGI(TAG, "Cache Modbus TCP server is disabled by settings");
+    }
 
     // Bring up each port in the mode stored in NVS.
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {

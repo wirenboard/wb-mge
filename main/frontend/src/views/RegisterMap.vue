@@ -51,6 +51,8 @@ const listenPort1 = ref(false);
 const listenPort2 = ref(false);
 // TCP Modbus server port (editable, loaded from device on first info poll)
 const cacheTcpPort = ref(504);
+// Whether the TCP Modbus server is enabled (editable, loaded from info on first poll)
+const tcpServeEnabled = ref(true);
 // Save-button status for the Settings panel
 const settingsSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
@@ -182,6 +184,7 @@ watch(() => info.value, (newInfo) => {
     listenPort2.value = false;
   }
   cacheTcpPort.value = newInfo.cache_modbus_port ?? 504;
+  tcpServeEnabled.value = newInfo.cache_modbus_server_enabled ?? true;
   portsInitialized = true;
 }, { immediate: true });
 
@@ -213,6 +216,9 @@ async function saveSettings(): Promise<void> {
     }
     if (info.value && cacheTcpPort.value !== info.value.cache_modbus_port) {
       await api<void>('settings', { method: 'POST', json: { cache_modbus_port: cacheTcpPort.value } });
+    }
+    if (info.value && tcpServeEnabled.value !== info.value.cache_modbus_server_enabled) {
+      await api<void>('settings', { method: 'POST', json: { cache_modbus_server_enabled: tcpServeEnabled.value } });
     }
     settingsSaveStatus.value = 'saved';
   } catch {
@@ -786,10 +792,10 @@ onUnmounted(() => {
             <!-- TCP MODBUS section -->
             <div class="rsp-section-label">TCP MODBUS</div>
 
-            <!-- TCP serve toggle row (always ON, display-only) -->
+            <!-- TCP serve toggle row -->
             <div class="rsp-row">
               <div class="rsp-control">
-                <Switch id="rsp-tcp-serve" :model-value="true" :disabled="true" :ariaLabel="'Serve cached values over TCP'" />
+                <Switch id="rsp-tcp-serve" v-model="tcpServeEnabled" :ariaLabel="'Serve cached values over TCP'" />
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">Serve cached values over TCP</div>

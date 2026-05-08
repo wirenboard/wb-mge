@@ -224,8 +224,9 @@ static const setting_item_t setting_items[] = {
     {KEY_PORT_MODE1, PORT_MODE_TCP_BRIDGE_STR, NULL, SETTING_ITEM_TYPE_STRING},
     {KEY_PORT_MODE2, PORT_MODE_TCP_BRIDGE_STR, NULL, SETTING_ITEM_TYPE_STRING},
 
-    // Cache Modbus TCP server port
-    {KEY_CACHE_MODBUS_PORT, DEFAULT_CACHE_MODBUS_PORT, validate_port, SETTING_ITEM_TYPE_INT},
+    // Cache Modbus TCP server port and enable/disable flag
+    {KEY_CACHE_MODBUS_PORT,           DEFAULT_CACHE_MODBUS_PORT,           validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_CACHE_MODBUS_SERVER_ENABLED, DEFAULT_CACHE_MODBUS_SERVER_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
 };
 
 static const setting_item_t *find_setting_item(const char *key)
