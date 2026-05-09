@@ -4,6 +4,7 @@
 bool mock_validate_hostname_called = false;
 bool mock_validate_ssid_called = false;
 bool mock_validate_port_called = false;
+bool mock_validate_timeout_called = false;
 bool mock_validate_baudrate_called = false;
 bool mock_validate_stopbits_called = false;
 bool mock_validate_parity_called = false;
@@ -21,6 +22,7 @@ void mock_reset_validator_flags(void)
     mock_validate_hostname_called = false;
     mock_validate_ssid_called = false;
     mock_validate_port_called = false;
+    mock_validate_timeout_called = false;
     mock_validate_baudrate_called = false;
     mock_validate_stopbits_called = false;
     mock_validate_parity_called = false;
@@ -58,6 +60,12 @@ bool validate_ssid(const char *value)
 bool validate_port(const char *value)
 {
     mock_validate_port_called = true;
+    return true;
+}
+
+bool validate_timeout(const char *value)
+{
+    mock_validate_timeout_called = true;
     return true;
 }
 

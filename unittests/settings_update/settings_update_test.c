@@ -3,6 +3,7 @@
 
 #include "settings_update.h"
 #include "bridge.h"
+#include "port_manager.h"
 #include "network.h"
 #include "http_server.h"
 #include "update_rs485_mio_gpio_states.h"
@@ -19,6 +20,7 @@ void settings_update_reset(void);
 void setUp(void)
 {
     mock_bridge_reset();
+    mock_port_manager_reset();
     mock_network_reset();
     mock_http_server_reset();
     mock_update_rs485_mio_gpio_states_reset();
@@ -42,7 +44,7 @@ static void verify_settings_update_checks(void)
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_update_io_bus_control_called, "update_io_bus_control should be called once");
 
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        TEST_ASSERT_EQUAL_MESSAGE(1, mock_bridge_port_check_settings_changed_called[i], "Bridge check should be called once");
+        TEST_ASSERT_EQUAL_MESSAGE(1, mock_port_manager_check_settings_changed_called[i], "Port manager check_settings_changed should be called once per port");
     }
 
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_network_check_mdns_settings_changed_called, "mDNS check should be called once");
@@ -87,14 +89,11 @@ static void verify_updates(
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         int expected = bridge_expected[i] ? 1 : 0;
 
-        TEST_ASSERT_EQUAL_MESSAGE(expected, mock_bridge_port_deinit_called[i],
-            bridge_expected[i] ? "Bridge deinit should be called once" : "Bridge deinit should not be called");
-        TEST_ASSERT_EQUAL_MESSAGE(expected, mock_bridge_port_init_called[i],
-            bridge_expected[i] ? "Bridge init should be called once" : "Bridge init should not be called");
+        TEST_ASSERT_EQUAL_MESSAGE(expected, mock_port_manager_apply_settings_called[i],
+            bridge_expected[i] ? "Port manager apply_settings should be called once" : "Port manager apply_settings should not be called");
 
         if (bridge_expected[i]) {
-            TEST_ASSERT_EQUAL_MESSAGE(i, mock_bridge_port_deinit_index[i], "Bridge deinit index should be correct");
-            TEST_ASSERT_EQUAL_MESSAGE(i, mock_bridge_port_init_index[i], "Bridge init index should be correct");
+            TEST_ASSERT_EQUAL_MESSAGE(i, mock_port_manager_apply_settings_index[i], "Port manager apply_settings index should be correct");
         }
     }
 
@@ -159,7 +158,7 @@ void test_settings_update_bridge_ports_changed(void)
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         setUp();
 
-        mock_bridge_port_check_settings_changed_return_value[i] = true;
+        mock_port_manager_check_settings_changed_return_value[i] = true;
 
         esp_err_t result = settings_update();
         TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
@@ -267,7 +266,7 @@ void test_settings_update_all_changed(void)
     LOG_MESSAGE();
 
     for (unsigned i = 0; i < BRIDGES_COUNT; ++i) {
-        mock_bridge_port_check_settings_changed_return_value[i] = true;
+        mock_port_manager_check_settings_changed_return_value[i] = true;
     }
 
     mock_network_check_mdns_settings_changed_return_value = true;
@@ -293,7 +292,7 @@ void test_settings_update_task_creation_failure(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - task creation failure");
     LOG_MESSAGE();
 
-    mock_bridge_port_check_settings_changed_return_value[0] = true;
+    mock_port_manager_check_settings_changed_return_value[0] = true;
     mock_xTaskCreate_data.should_fail = true;
 
     esp_err_t result = settings_update();

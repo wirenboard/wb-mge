@@ -1,0 +1,22 @@
+#pragma once
+
+#include "esp_err.h"
+#include <stdbool.h>
+
+// Number of bridges — must match the value in bridge.h mock
+#ifndef BRIDGES_COUNT
+#define BRIDGES_COUNT 2
+#endif
+
+// Mock control variables
+extern int mock_port_manager_check_settings_changed_called[BRIDGES_COUNT];
+extern bool mock_port_manager_check_settings_changed_return_value[BRIDGES_COUNT];
+
+extern int mock_port_manager_apply_settings_called[BRIDGES_COUNT];
+extern unsigned mock_port_manager_apply_settings_index[BRIDGES_COUNT];
+extern esp_err_t mock_port_manager_apply_settings_return_value[BRIDGES_COUNT];
+
+bool port_manager_check_settings_changed(unsigned port_index);
+esp_err_t port_manager_apply_settings(unsigned port_index);
+
+void mock_port_manager_reset(void);

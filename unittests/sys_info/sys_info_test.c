@@ -5,6 +5,7 @@
 #include "sys_info.h"
 #include "esp_mac.h"
 #include "esp_efuse.h"
+#include "esp_psram.h"
 
 #include <string.h>
 
@@ -14,6 +15,7 @@ void setUp(void)
 {
     mock_esp_mac_reset();
     mock_esp_efuse_reset();
+    mock_esp_psram_reset();
     memset(&sys_info, 0, sizeof(sys_info));
 }
 

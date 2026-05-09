@@ -75,6 +75,12 @@ const mock_setting_item_t expected_items[] = {
     {"bridge_port_2", "503", SETTING_ITEM_TYPE_INT},
     {"bridge_ip_2", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
     {"bridge_modbus_2", "false", SETTING_ITEM_TYPE_BOOL},
+
+    {"port_mode_1", "tcp_bridge", SETTING_ITEM_TYPE_STRING},
+    {"port_mode_2", "tcp_bridge", SETTING_ITEM_TYPE_STRING},
+    {"cache_mb_port", "504", SETTING_ITEM_TYPE_INT},
+    {"cache_mb_srv_en", "true", SETTING_ITEM_TYPE_BOOL},
+    {"cache_val_tout", "60", SETTING_ITEM_TYPE_INT},
 };
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))
@@ -251,6 +257,16 @@ void test_port_validators(void)
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_BRIDGE_PORT2, "80"));
     TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for bridge port 2");
+
+    // Test cache modbus port validator
+    mock_reset_validator_flags();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_CACHE_MODBUS_PORT, "502"));
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for cache modbus port");
+
+    // Test cache value timeout validator
+    mock_reset_validator_flags();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_CACHE_VALUE_TIMEOUT_S, "120"));
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_timeout_called, "validate_timeout should be called for cache_val_tout");
 }
 
 void test_ip_validators(void)

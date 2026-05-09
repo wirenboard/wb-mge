@@ -493,21 +493,23 @@ void test_serial_init_null_config(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем serial_init с NULL serial_receive_handler
+// Test serial_init with NULL serial_receive_handler - should succeed (cache_bus mode uses serial without a receive handler)
 void test_serial_init_null_handler(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with NULL receive handler");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with NULL receive handler - should succeed");
     LOG_MESSAGE();
 
     serial_config_t config;
     init_default_config(&config);
 
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
     serial_desc_t *desc = serial_init(&config, NULL);
 
-    TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when handler is NULL");
-    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0, 0);
-    verify_malloc_tracking(0, 0);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed when handler is NULL");
+    verify_serial_init_calls(1, 1, 1, 1, 1, 1, 0, 1, 1);
+    verify_malloc_tracking(1, 0);
+    serial_deinit(desc);
 }
 
 // Тестируем serial_init с ошибкой при выделении памяти для serial_desc_t

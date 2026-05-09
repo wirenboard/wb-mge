@@ -14,6 +14,7 @@ TESTED_SRC += $(PROJ_DIR)/main/sys_info.c
 AUX_SRC += $(PROJ_DIR)/main/wb_app_desc/wb_app_desc.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/esp_efuse.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/esp_mac.c
+AUX_SRC += $(UNITTEST_DIR)/mocks/esp_psram.c
 
 # Include directories
 INC += $(UNITTEST_DIR)
