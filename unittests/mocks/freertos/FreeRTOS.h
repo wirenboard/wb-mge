@@ -10,6 +10,9 @@
 
 #define portMAX_DELAY                            ( TickType_t ) 0xffffffffUL
 
+/* Idle task priority — used by modules that create helper tasks. */
+#define tskIDLE_PRIORITY                         ( ( UBaseType_t ) 0U )
+
 typedef uint32_t TickType_t;
 
 typedef int BaseType_t;

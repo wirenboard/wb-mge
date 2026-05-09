@@ -4,11 +4,7 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
-#ifndef __unittest_env__
 #include "esp_http_server.h"
-#else
-typedef void *httpd_handle_t;
-#endif
 
 /* TODO: The /cache/enable and /cache/disable HTTP endpoints have been removed.
  * Port mode control (including cache_bus activation) is now exclusively via

@@ -727,3 +727,26 @@ esp_err_t cache_multimaster_register_handlers(httpd_handle_t server)
 
     return httpd_register_uri_handler(server, &cache_json_uri);
 }
+
+#ifdef __unittest_env__
+#include "malloc.h"  /* for test_free() — tracks allocations from heap_caps_malloc mock */
+
+/* Reset all module-level state for unit tests.
+ * If s_pool was allocated by cache_multimaster_enable() (which redirects
+ * heap_caps_malloc to test_malloc), free it via test_free() so that the
+ * allocation tracker does not report a leak. */
+void cache_multimaster_test_reset(void)
+{
+    if (s_pool != NULL) {
+        test_free(s_pool);  /* balances the test_malloc from enable() */
+    }
+    s_pool              = NULL;
+    s_cache_enabled     = false;
+    s_cache_mutex       = NULL;
+    memset(s_pending, 0, sizeof(s_pending));
+    s_age_task          = NULL;
+    s_packets_processed = 0;
+    s_last_packet_us    = 0;
+    s_reset_us          = 0;
+}
+#endif
