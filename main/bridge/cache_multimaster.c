@@ -2,6 +2,10 @@
 #include "sniffer.h"
 #include "bridge.h"
 
+#ifdef __unittest_env__
+#include "malloc.h"  /* test_malloc / test_free for allocation tracking in unit tests */
+#endif
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
@@ -238,7 +242,11 @@ void cache_multimaster_disable(void)
     /* Free heap pool under the mutex to prevent a race with HTTP handlers */
     if (s_cache_mutex != NULL) {
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+#ifdef __unittest_env__
+        test_free(s_pool);  /* use tracked free so the allocation tracker stays consistent */
+#else
         free(s_pool);
+#endif
         s_pool = NULL;
         xSemaphoreGive(s_cache_mutex);
     }
@@ -729,17 +737,19 @@ esp_err_t cache_multimaster_register_handlers(httpd_handle_t server)
 }
 
 #ifdef __unittest_env__
-#include "malloc.h"  /* for test_free() — tracks allocations from heap_caps_malloc mock */
+
+/* Compile-time guard: if bridge.h changes BRIDGES_COUNT, this assertion fires,
+ * reminding developers to update the local BRIDGES_COUNT define in
+ * cache_multimaster_test.c to keep the OOB-port tests accurate. */
+_Static_assert(BRIDGES_COUNT == 2,
+               "Update BRIDGES_COUNT in cache_multimaster_test.c to match bridge.h");
 
 /* Reset all module-level state for unit tests.
- * If s_pool was allocated by cache_multimaster_enable() (which redirects
- * heap_caps_malloc to test_malloc), free it via test_free() so that the
- * allocation tracker does not report a leak. */
+ * Sets s_pool to NULL without freeing: reset_malloc_tracking() in setUp()
+ * handles cleanup of any leftover allocation via stdlib free, avoiding
+ * double-free UB when the allocator reuses the same address within a test. */
 void cache_multimaster_test_reset(void)
 {
-    if (s_pool != NULL) {
-        test_free(s_pool);  /* balances the test_malloc from enable() */
-    }
     s_pool              = NULL;
     s_cache_enabled     = false;
     s_cache_mutex       = NULL;
@@ -749,4 +759,15 @@ void cache_multimaster_test_reset(void)
     s_last_packet_us    = 0;
     s_reset_us          = 0;
 }
+
+/* Returns the value of s_pending[port].valid for assertion in unit tests.
+ * Only available under __unittest_env__. */
+bool cache_multimaster_test_get_pending_valid(uint8_t port)
+{
+    if (port >= BRIDGES_COUNT) {
+        return false;
+    }
+    return s_pending[port].valid;
+}
+
 #endif
