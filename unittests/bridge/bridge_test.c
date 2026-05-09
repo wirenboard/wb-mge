@@ -278,16 +278,18 @@ void test_bridge_init(void)
     esp_err_t result = bridge_init();
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_init should return ESP_OK");
 
+    // rs485_busy_monitor_init() and rs485_stats_init() have been moved to
+    // port_manager_init(), so they are NOT called from bridge_init() any more.
     TEST_ASSERT_EQUAL_MESSAGE(
-        1,
+        0,
         mock_rs485_stats.busy_monitor_init_called,
-        "rs485_busy_monitor_init should be called once"
+        "rs485_busy_monitor_init should not be called from bridge_init"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
-        1,
+        0,
         mock_rs485_stats.stats_init_called,
-        "rs485_stats_init should be called once"
+        "rs485_stats_init should not be called from bridge_init"
     );
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -751,7 +753,9 @@ void test_bridge_port_deinit_success(void)
         result = bridge_port_deinit(index);
         TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_deinit should return ESP_OK");
 
-        verify_rs485_reset_calls(index, 1, 1);
+        // rs485_busy_monitor_reset() and rs485_stats_reset() have been moved to
+        // port_manager, so they are NOT called from bridge_port_deinit() any more.
+        verify_rs485_reset_calls(index, 0, 0);
         verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
     }
 }
@@ -790,7 +794,9 @@ void test_bridge_disable_port_initialized(void)
         result = bridge_disable_port(index);
         TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK for initialized port");
 
-        verify_rs485_reset_calls(index, 1, 1);
+        // rs485_busy_monitor_reset() and rs485_stats_reset() have been moved to
+        // port_manager, so they are NOT called from bridge_port_deinit() any more.
+        verify_rs485_reset_calls(index, 0, 0);
         verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
     }
 }
@@ -861,7 +867,9 @@ void test_bridge_port_init_after_switching(void)
         result = bridge_disable_port(index);
         TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK");
         verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-        verify_rs485_reset_calls(index, 1, 1);
+        // rs485_busy_monitor_reset() and rs485_stats_reset() have been moved to
+        // port_manager, so they are NOT called from bridge_port_deinit() any more.
+        verify_rs485_reset_calls(index, 0, 0);
 
     }
 
