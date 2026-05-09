@@ -1,15 +1,12 @@
 // Pure utility functions for register map logic.
 // No Vue imports — no reactive state — fully unit-testable.
 
-// Modular wrap constant for uint16_t timestamp arithmetic
-const TS_WRAP = 65536;
-
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
 // One entry from /cache/json
-export interface CacheEntry { s: number; t: 'h' | 'i' | 'c' | 'd'; a: number; v: number; ts: number; }
+export interface CacheEntry { s: number; t: 'h' | 'i' | 'c' | 'd'; a: number; v: number; age: number; }
 // One register row displayed in the table
-export interface RegRow { addr: number; val: string; updatedAge: number; stale: boolean; ts: number; }
+export interface RegRow { addr: number; val: string; updatedAge: number; stale: boolean; }
 // One device node in the tree
 export interface DeviceNode { id: number; groups: string[]; lastSeenAge: number; }
 
@@ -37,6 +34,7 @@ export function formatMemory(bytes: number): string {
 
 // Format a duration in seconds as a human-readable string
 export function formatAge(seconds: number): string {
+  if (seconds >= 65535) return '>18h';  // saturated — value not updated for 18+ hours
   if (seconds < 1) return '< 1 s';
   const floored = Math.floor(seconds * 10) / 10; // one decimal, no rounding up to 60
   if (floored < 60) return `${floored.toFixed(1)} s`;
@@ -66,8 +64,9 @@ export function resolvePortSelection(p1: boolean, p2: boolean): { p1: boolean; p
 // ── Device list builder ───────────────────────────────────────────────────────
 
 // Build the list of device nodes from raw cache entries.
-// nowS is the server-provided now_s anchor in the same uint16_t-truncated seconds domain.
-export function buildDevices(entries: CacheEntry[], nowS: number): DeviceNode[] {
+// lastSeenAge is the minimum age among all entries for the slave
+// (smallest age = most recently updated register = last time we saw the device).
+export function buildDevices(entries: CacheEntry[]): DeviceNode[] {
   const TYPE_ORDER = ['Holding', 'Input', 'Coil', 'Discrete'];
   const bySlave: Record<number, CacheEntry[]> = {};
   for (const e of entries) {
@@ -79,17 +78,9 @@ export function buildDevices(entries: CacheEntry[], nowS: number): DeviceNode[] 
       const id = Number(sid);
       const typeSet = new Set(slaveEntries.map(e => typeName(e.t)));
       const groups = TYPE_ORDER.filter(name => typeSet.has(name));
-      // Do NOT use Math.max(0, ...) — entries is always non-empty here (slave is only
-      // created when at least one entry exists), and 0 is a valid uint16_t timestamp
-      // (first second of uptime). Passing 0 as a floor would make ts=0 entries look
-      // as old as the device uptime instead of showing their real age.
-      const slaveMaxTs = Math.max(...slaveEntries.map(e => e.ts));
-      // Modular difference using the server-provided now_s anchor (same uint16_t domain).
-      // Correctly handles wrap-around: if now_s has wrapped past slaveMaxTs, the
-      // modular subtraction still yields the correct positive age in seconds.
-      const lastSeenAge = nowS > 0
-        ? ((nowS - slaveMaxTs + TS_WRAP) % TS_WRAP)
-        : 0;
+      // Minimum age among slave entries = the most recently updated register = lastSeen.
+      // age_s is maintained server-side as a saturating counter; no modular arithmetic needed.
+      const lastSeenAge = Math.min(...slaveEntries.map(e => e.age));
       return { id, groups, lastSeenAge };
     })
     .sort((a, b) => a.id - b.id);
@@ -98,10 +89,9 @@ export function buildDevices(entries: CacheEntry[], nowS: number): DeviceNode[] 
 // ── Register rows builder ─────────────────────────────────────────────────────
 
 // Build register rows keyed by "slaveId|TypeName" from raw cache entries.
-// nowS is the server-provided now_s anchor; valueTimeout is the stale threshold in seconds.
+// valueTimeout is the stale threshold in seconds (0 = disabled).
 export function buildRegsByKey(
   entries: CacheEntry[],
-  nowS: number,
   valueTimeout: number,
 ): Record<string, RegRow[]> {
   const result: Record<string, RegRow[]> = {};
@@ -111,23 +101,19 @@ export function buildRegsByKey(
     const val = (e.t === 'h' || e.t === 'i')
       ? '0x' + e.v.toString(16).toUpperCase().padStart(4, '0')
       : String(e.v);
-    // Modular age using the server-provided now_s anchor (same uint16_t domain).
-    // Correctly handles wrap-around: if now_s has wrapped past e.ts, the
-    // modular subtraction still yields the correct positive age in seconds.
-    const diff = (nowS - e.ts + TS_WRAP) % TS_WRAP;
-    const updatedAge = nowS > 0 ? diff : 0;
+    // age_s is maintained server-side as a saturating counter — use directly.
+    const updatedAge = e.age;
     // When valueTimeout is 0, the timeout is disabled — never mark entries as stale.
     const stale = valueTimeout > 0 && updatedAge > valueTimeout;
-    // Deduplicate: keep only the newer entry for each address.
-    // Uses modular comparison to handle uint16_t wrap-around:
-    // a signed difference < TS_WRAP/2 means e.ts is strictly newer.
+    // Deduplicate: keep only the fresher entry for each address.
+    // Entry with smaller age_s is more recently updated (fresher).
     const existingIndex = result[key].findIndex(r => r.addr === e.a);
     if (existingIndex === -1) {
-      result[key].push({ addr: e.a, val, updatedAge, stale, ts: e.ts });
+      result[key].push({ addr: e.a, val, updatedAge, stale });
     } else {
-      const tsNewer = ((e.ts - result[key][existingIndex].ts + TS_WRAP) % TS_WRAP) < (TS_WRAP / 2);
-      if (tsNewer) {
-        result[key][existingIndex] = { addr: e.a, val, updatedAge, stale, ts: e.ts };
+      const isNewer = e.age < result[key][existingIndex].updatedAge;
+      if (isNewer) {
+        result[key][existingIndex] = { addr: e.a, val, updatedAge, stale };
       }
     }
   }
@@ -163,8 +149,8 @@ export function buildExportPayload(entries: CacheEntry[]): ExportPayload {
     d: 'discrete_inputs',
   };
 
-  // Intermediate structure: slaveId -> sectionKey -> address -> { v, ts }
-  const dedup: Record<number, Record<string, Record<number, { v: number; ts: number }>>> = {};
+  // Intermediate structure: slaveId -> sectionKey -> address -> { v, age }
+  const dedup: Record<number, Record<string, Record<number, { v: number; age: number }>>> = {};
 
   for (const e of entries) {
     if (!dedup[e.s]) dedup[e.s] = {};
@@ -174,11 +160,11 @@ export function buildExportPayload(entries: CacheEntry[]): ExportPayload {
     if (!slave[section]) slave[section] = {};
     const existing = slave[section][e.a];
     if (existing === undefined) {
-      slave[section][e.a] = { v: e.v, ts: e.ts };
+      slave[section][e.a] = { v: e.v, age: e.age };
     } else {
-      // Keep entry with newer ts using modular uint16_t arithmetic (wrap = TS_WRAP)
-      const isNewer = ((e.ts - existing.ts + TS_WRAP) % TS_WRAP) < 32768;
-      if (isNewer) slave[section][e.a] = { v: e.v, ts: e.ts };
+      // Entry with smaller age_s is more recently updated (fresher) — keep it.
+      const isNewer = e.age < existing.age;
+      if (isNewer) slave[section][e.a] = { v: e.v, age: e.age };
     }
   }
 

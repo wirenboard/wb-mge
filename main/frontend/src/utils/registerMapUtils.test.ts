@@ -112,6 +112,11 @@ describe('formatAge', () => {
   it('returns "1 h 1 min" for 3660 seconds (1 hour 1 minute)', () => {
     expect(formatAge(3660)).toBe('1 h 1 min');
   });
+
+  it('returns ">18h" for seconds >= 65535 (saturated age)', () => {
+    expect(formatAge(65535)).toBe('>18h');
+    expect(formatAge(65536)).toBe('>18h');
+  });
 });
 
 // ============================================================
@@ -165,12 +170,12 @@ describe('resolvePortSelection', () => {
 // ============================================================
 describe('buildDevices', () => {
   it('returns empty array for empty entries', () => {
-    expect(buildDevices([], 0)).toEqual([]);
+    expect(buildDevices([])).toEqual([]);
   });
 
-  it('single entry slave=1, t="h", ts=100, nowS=200 → lastSeenAge=100', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 100 }];
-    const result = buildDevices(entries, 200);
+  it('single entry slave=1, t="h", age=100 → lastSeenAge=100', () => {
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 100 }];
+    const result = buildDevices(entries);
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe(1);
     expect(result[0].groups).toEqual(['Holding']);
@@ -179,56 +184,56 @@ describe('buildDevices', () => {
 
   it('multiple types for one slave respect TYPE_ORDER: Holding before Coil', () => {
     const entries: CacheEntry[] = [
-      { s: 1, t: 'c', a: 0, v: 0, ts: 10 },
-      { s: 1, t: 'h', a: 0, v: 0, ts: 10 },
+      { s: 1, t: 'c', a: 0, v: 0, age: 10 },
+      { s: 1, t: 'h', a: 0, v: 0, age: 10 },
     ];
-    const result = buildDevices(entries, 100);
+    const result = buildDevices(entries);
     expect(result[0].groups).toEqual(['Holding', 'Coil']);
   });
 
   it('all four register types appear in TYPE_ORDER: Holding, Input, Coil, Discrete', () => {
     // Entries provided in reverse order to verify TYPE_ORDER is enforced, not insertion order
     const entries: CacheEntry[] = [
-      { s: 1, t: 'd', a: 0, v: 0, ts: 10 },
-      { s: 1, t: 'c', a: 0, v: 0, ts: 10 },
-      { s: 1, t: 'i', a: 0, v: 0, ts: 10 },
-      { s: 1, t: 'h', a: 0, v: 0, ts: 10 },
+      { s: 1, t: 'd', a: 0, v: 0, age: 10 },
+      { s: 1, t: 'c', a: 0, v: 0, age: 10 },
+      { s: 1, t: 'i', a: 0, v: 0, age: 10 },
+      { s: 1, t: 'h', a: 0, v: 0, age: 10 },
     ];
-    const result = buildDevices(entries, 100);
+    const result = buildDevices(entries);
     expect(result[0].groups).toEqual(['Holding', 'Input', 'Coil', 'Discrete']);
   });
 
   it('two slaves id=1 and id=3 are sorted ascending by id', () => {
     const entries: CacheEntry[] = [
-      { s: 3, t: 'h', a: 0, v: 0, ts: 10 },
-      { s: 1, t: 'h', a: 0, v: 0, ts: 10 },
+      { s: 3, t: 'h', a: 0, v: 0, age: 10 },
+      { s: 1, t: 'h', a: 0, v: 0, age: 10 },
     ];
-    const result = buildDevices(entries, 100);
+    const result = buildDevices(entries);
     expect(result[0].id).toBe(1);
     expect(result[1].id).toBe(3);
   });
 
-  it('nowS=0 → lastSeenAge=0 regardless of ts', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 12345 }];
-    const result = buildDevices(entries, 0);
+  it('age=0 entry → lastSeenAge=0 (freshly updated register)', () => {
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 0 }];
+    const result = buildDevices(entries);
     expect(result[0].lastSeenAge).toBe(0);
   });
 
-  it('wrap-around: nowS=3, slaveMaxTs=65534 → lastSeenAge=5', () => {
-    // (3 - 65534 + 65536) % 65536 = 5
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 65534 }];
-    const result = buildDevices(entries, 3);
-    expect(result[0].lastSeenAge).toBe(5);
+  it('saturated age: age=65535 → lastSeenAge=65535', () => {
+    // When age is saturated (not updated for 18+ h), lastSeenAge reflects that
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 65535 }];
+    const result = buildDevices(entries);
+    expect(result[0].lastSeenAge).toBe(65535);
   });
 
-  it('slaveMaxTs is max ts among entries of the slave: ts=10 and ts=50, nowS=100 → lastSeenAge=50', () => {
-    // max(10, 50) = 50; (100 - 50 + 65536) % 65536 = 50
+  it('lastSeenAge is min age among entries of the slave: age=10 and age=50 → lastSeenAge=10', () => {
+    // min(10, 50) = 10; most recently seen register has age=10
     const entries: CacheEntry[] = [
-      { s: 1, t: 'h', a: 0, v: 0, ts: 10 },
-      { s: 1, t: 'h', a: 1, v: 0, ts: 50 },
+      { s: 1, t: 'h', a: 0, v: 0, age: 10 },
+      { s: 1, t: 'h', a: 1, v: 0, age: 50 },
     ];
-    const result = buildDevices(entries, 100);
-    expect(result[0].lastSeenAge).toBe(50);
+    const result = buildDevices(entries);
+    expect(result[0].lastSeenAge).toBe(10);
   });
 });
 
@@ -237,12 +242,12 @@ describe('buildDevices', () => {
 // ============================================================
 describe('buildRegsByKey', () => {
   it('returns empty object for empty entries', () => {
-    expect(buildRegsByKey([], 0, 60)).toEqual({});
+    expect(buildRegsByKey([], 60)).toEqual({});
   });
 
   it('FC h: key is "1|Holding", val is 0x-prefixed uppercase padded, correct updatedAge', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 100, v: 255, ts: 190 }];
-    const result = buildRegsByKey(entries, 200, 60);
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 100, v: 255, age: 10 }];
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Holding']).toBeDefined();
     const row = result['1|Holding'][0];
     expect(row.val).toBe('0x00FF');
@@ -252,88 +257,89 @@ describe('buildRegsByKey', () => {
   });
 
   it('FC i: value 0x1234 → val is "0x1234" (uppercase, 4-digit padded)', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'i', a: 0, v: 0x1234, ts: 100 }];
-    const result = buildRegsByKey(entries, 200, 60);
+    const entries: CacheEntry[] = [{ s: 1, t: 'i', a: 0, v: 0x1234, age: 5 }];
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Input'][0].val).toBe('0x1234');
   });
 
   it('FC c (coil): value=1 → val is "1" (decimal string, not hex)', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'c', a: 0, v: 1, ts: 100 }];
-    const result = buildRegsByKey(entries, 200, 60);
+    const entries: CacheEntry[] = [{ s: 1, t: 'c', a: 0, v: 1, age: 5 }];
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Coil'][0].val).toBe('1');
   });
 
   it('FC d (discrete): value=0 → val is "0"', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'd', a: 0, v: 0, ts: 100 }];
-    const result = buildRegsByKey(entries, 200, 60);
+    const entries: CacheEntry[] = [{ s: 1, t: 'd', a: 0, v: 0, age: 5 }];
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Discrete'][0].val).toBe('0');
   });
 
   it('stale=true when updatedAge > valueTimeout > 0', () => {
-    // updatedAge = (200 - 100 + 65536) % 65536 = 100; valueTimeout=50; 100 > 50 → stale
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 100 }];
-    const result = buildRegsByKey(entries, 200, 50);
+    // age=100, valueTimeout=50; 100 > 50 → stale
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 100 }];
+    const result = buildRegsByKey(entries, 50);
     expect(result['1|Holding'][0].stale).toBe(true);
   });
 
   it('stale=false when valueTimeout=0 (timeout disabled)', () => {
-    // Same ages but valueTimeout=0 → stale should never be true
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 100 }];
-    const result = buildRegsByKey(entries, 200, 0);
+    // age=100 but valueTimeout=0 → stale should never be true
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 100 }];
+    const result = buildRegsByKey(entries, 0);
     expect(result['1|Holding'][0].stale).toBe(false);
   });
 
   it('stale=false when updatedAge <= valueTimeout', () => {
-    // updatedAge = 10; valueTimeout = 60; 10 <= 60 → not stale
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 190 }];
-    const result = buildRegsByKey(entries, 200, 60);
+    // age=10; valueTimeout=60; 10 <= 60 → not stale
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 10 }];
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Holding'][0].stale).toBe(false);
   });
 
   it('stale=false when updatedAge exactly equals valueTimeout (strict greater-than condition)', () => {
     // stale condition is updatedAge > valueTimeout (strict), so equality must not trigger stale
-    // updatedAge = (160 - 100 + 65536) % 65536 = 60; valueTimeout=60; 60 > 60 is false → stale=false
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 100 }];
-    const result = buildRegsByKey(entries, 160, 60);
+    // age=60; valueTimeout=60; 60 > 60 is false → stale=false
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 60 }];
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Holding'][0].stale).toBe(false);
   });
 
-  it('nowS=0 → updatedAge=0, stale=false regardless of ts', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 100 }];
-    const result = buildRegsByKey(entries, 0, 50);
+  it('age=0 → updatedAge=0, stale=false (freshly updated register)', () => {
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 0 }];
+    const result = buildRegsByKey(entries, 50);
     expect(result['1|Holding'][0].updatedAge).toBe(0);
     expect(result['1|Holding'][0].stale).toBe(false);
   });
 
-  it('dedup normal: two entries same slave+type+addr, ts=50,v=111 and ts=100,v=222 → keep newer v=222', () => {
+  it('dedup normal: two entries same slave+type+addr, age=100,v=111 and age=50,v=222 → keep fresher (lower age) v=222', () => {
+    // age=50 < age=100 → age=50 entry is fresher → v=222 wins
     const entries: CacheEntry[] = [
-      { s: 1, t: 'h', a: 100, v: 111, ts: 50 },
-      { s: 1, t: 'h', a: 100, v: 222, ts: 100 },
+      { s: 1, t: 'h', a: 100, v: 111, age: 100 },
+      { s: 1, t: 'h', a: 100, v: 222, age: 50 },
     ];
-    const result = buildRegsByKey(entries, 200, 60);
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Holding']).toHaveLength(1);
-    expect(result['1|Holding'][0].ts).toBe(100);
+    expect(result['1|Holding'][0].updatedAge).toBe(50);
     expect(result['1|Holding'][0].val).toBe('0x00DE'); // 222 = 0xDE
   });
 
-  it('dedup wrap-around: ts=5 is newer than ts=65530 in uint16 space, ts=5 wins', () => {
-    // ((5 - 65530 + 65536) % 65536) = (11) < 32768 → ts=5 is newer → entry with ts=5 replaces ts=65530
+  it('dedup: entry with smaller age wins — age=5 wins over age=100 for same addr', () => {
+    // age=5 < age=100 → entry with age=5 (v=0xBBBB) is fresher → it wins
     const entries: CacheEntry[] = [
-      { s: 1, t: 'h', a: 100, v: 0xAAAA, ts: 65530 }, // older in uint16 space
-      { s: 1, t: 'h', a: 100, v: 0xBBBB, ts: 5 },     // newer in uint16 space (just wrapped)
+      { s: 1, t: 'h', a: 100, v: 0xAAAA, age: 100 }, // older
+      { s: 1, t: 'h', a: 100, v: 0xBBBB, age: 5 },   // fresher
     ];
-    const result = buildRegsByKey(entries, 10, 60);
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Holding']).toHaveLength(1);
-    expect(result['1|Holding'][0].ts).toBe(5);
+    expect(result['1|Holding'][0].updatedAge).toBe(5);
     expect(result['1|Holding'][0].val).toBe('0xBBBB');
   });
 
   it('sorts entries by addr ascending', () => {
     const entries: CacheEntry[] = [
-      { s: 1, t: 'h', a: 200, v: 1, ts: 100 },
-      { s: 1, t: 'h', a: 100, v: 2, ts: 100 },
+      { s: 1, t: 'h', a: 200, v: 1, age: 10 },
+      { s: 1, t: 'h', a: 100, v: 2, age: 10 },
     ];
-    const result = buildRegsByKey(entries, 200, 60);
+    const result = buildRegsByKey(entries, 60);
     expect(result['1|Holding'][0].addr).toBe(100);
     expect(result['1|Holding'][1].addr).toBe(200);
   });
@@ -348,7 +354,7 @@ describe('buildExportPayload', () => {
   });
 
   it('single entry slave=1, t="h", addr=100, v=255 → correct holding_registers value', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 100, v: 255, ts: 50 }];
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 100, v: 255, age: 50 }];
     const result = buildExportPayload(entries);
     expect(result.slaves['1']).toBeDefined();
     expect(result.slaves['1'].slave_id).toBe(1);
@@ -356,7 +362,7 @@ describe('buildExportPayload', () => {
   });
 
   it('all four section keys are always present even when empty', () => {
-    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, ts: 1 }];
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 1 }];
     const result = buildExportPayload(entries);
     const slave = result.slaves['1'];
     expect(slave).toHaveProperty('holding_registers');
@@ -369,20 +375,21 @@ describe('buildExportPayload', () => {
     expect(slave.discrete_inputs).toEqual({});
   });
 
-  it('dedup same slave+section+addr: keep entry with newer ts', () => {
+  it('dedup same slave+section+addr: keep entry with smaller age (fresher)', () => {
+    // age=50 is older than age=10; entry with age=10 (v=222) wins
     const entries: CacheEntry[] = [
-      { s: 1, t: 'h', a: 10, v: 111, ts: 50 },  // older
-      { s: 1, t: 'h', a: 10, v: 222, ts: 100 }, // newer
+      { s: 1, t: 'h', a: 10, v: 111, age: 50 },  // older
+      { s: 1, t: 'h', a: 10, v: 222, age: 10 },  // fresher
     ];
     const result = buildExportPayload(entries);
     expect(result.slaves['1'].holding_registers['10']).toBe(222);
   });
 
-  it('wrap-around dedup: ts=5 wins over ts=65530 for same addr', () => {
-    // ((5 - 65530 + 65536) % 65536) = 11 < 32768 → ts=5 is newer
+  it('dedup: age=5 wins over age=100 for same addr (smaller age = fresher)', () => {
+    // age=5 < age=100 → entry with age=5 (v=0xBBBB) is fresher → it wins
     const entries: CacheEntry[] = [
-      { s: 1, t: 'h', a: 10, v: 0xAAAA, ts: 65530 }, // older in uint16 space
-      { s: 1, t: 'h', a: 10, v: 0xBBBB, ts: 5 },     // newer in uint16 space (just wrapped)
+      { s: 1, t: 'h', a: 10, v: 0xAAAA, age: 100 }, // older
+      { s: 1, t: 'h', a: 10, v: 0xBBBB, age: 5 },   // fresher
     ];
     const result = buildExportPayload(entries);
     expect(result.slaves['1'].holding_registers['10']).toBe(0xBBBB);
@@ -390,8 +397,8 @@ describe('buildExportPayload', () => {
 
   it('two slaves are both present in slaves object', () => {
     const entries: CacheEntry[] = [
-      { s: 1, t: 'h', a: 0, v: 10, ts: 1 },
-      { s: 3, t: 'i', a: 5, v: 20, ts: 1 },
+      { s: 1, t: 'h', a: 0, v: 10, age: 1 },
+      { s: 3, t: 'i', a: 5, v: 20, age: 1 },
     ];
     const result = buildExportPayload(entries);
     expect(result.slaves['1']).toBeDefined();
@@ -399,7 +406,7 @@ describe('buildExportPayload', () => {
   });
 
   it('slave_id field matches the numeric slave ID', () => {
-    const entries: CacheEntry[] = [{ s: 42, t: 'c', a: 0, v: 1, ts: 1 }];
+    const entries: CacheEntry[] = [{ s: 42, t: 'c', a: 0, v: 1, age: 1 }];
     const result = buildExportPayload(entries);
     expect(result.slaves['42'].slave_id).toBe(42);
   });

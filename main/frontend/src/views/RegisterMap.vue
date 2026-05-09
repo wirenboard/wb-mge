@@ -26,10 +26,6 @@ const cacheMapAgeUs = ref(0);
 const cacheMemoryBytes = ref(0);
 const cacheMaxEntries = ref(0);
 const cacheEntries = ref(0);
-// Server-side "now" anchor in the same uint16_t-truncated seconds domain as entry timestamps.
-// Used to compute ages correctly across wrap-around.
-const cacheNowS = ref(0);
-
 // Cache is considered enabled when AT LEAST ONE port is in cache_bus mode.
 // Derived reactively from the info ref polled globally every 5 s by App.vue.
 const cacheEnabled = computed(() => {
@@ -80,8 +76,6 @@ async function fetchCacheStats(): Promise<void> {
     cacheMemoryBytes.value     = s.memory_bytes;
     cacheMaxEntries.value      = s.max_entries;
     cacheEntries.value         = s.entries;
-    // cacheNowS is now sourced from /cache/json to guarantee it is consistent
-    // with the entry timestamps (both captured in the same HTTP response).
   } catch {
     // Silently ignore fetch errors
   }
@@ -91,13 +85,8 @@ async function fetchEntries(): Promise<void> {
   // Skip the fetch when cache is not active to avoid pointless requests.
   if (!cacheEnabled.value) return;
   try {
-    // /cache/json returns { now_s, d: CacheEntry[] } so that now_s and every
-    // e.ts are guaranteed to come from the same server-side moment, preventing
-    // modular subtraction from producing ~65534 when the bus is active and
-    // entries arrive between independent status polls.
-    const data = await api<{ now_s: number; d: CacheEntry[] }>('cache/json');
+    const data = await api<{ d: CacheEntry[] }>('cache/json');
     rawEntries.value = data.d;
-    cacheNowS.value  = data.now_s;
     error.value = null;
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Fetch failed';
@@ -298,11 +287,11 @@ function collapseAll(): void {
 }
 
 // Build the list of device nodes from raw entries
-const devices = computed((): DeviceNode[] => buildDevices(rawEntries.value, cacheNowS.value));
+const devices = computed((): DeviceNode[] => buildDevices(rawEntries.value));
 
 // Build register rows keyed by "slaveId|TypeName"
 const regsByKey = computed((): Record<string, RegRow[]> =>
-  buildRegsByKey(rawEntries.value, cacheNowS.value, valueTimeout.value));
+  buildRegsByKey(rawEntries.value, valueTimeout.value));
 
 // Filter devices by search query (slave id decimal or hex)
 const filteredDevices = computed((): DeviceNode[] => {
@@ -333,7 +322,6 @@ watch(cacheEnabled, (val, oldVal) => {
       cacheMemoryBytes.value     = 0;
       cacheMaxEntries.value      = 0;
       cacheEntries.value         = 0;
-      cacheNowS.value            = 0;
     }
   }
 }, { immediate: true });

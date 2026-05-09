@@ -94,16 +94,16 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
  *
  * Registers three endpoints:
  *  - GET  /cache/status   — return enabled flag and entry count
- *  - GET  /cache/csv      — download cache as CSV
+ *  - GET  /cache/csv      — download cache as CSV (columns: slave_id,type,address,value,age_s)
  *  - GET  /cache/json     — stream cache as a JSON object (for UI polling):
- *                           {"now_s":1800,"d":[{"s":3,"t":"h","a":100,"v":1234,"ts":1800},...]}
- *                           now_s – current server time in same uint16_t-truncated seconds domain as ts
+ *                           {"d":[{"s":3,"t":"h","a":100,"v":1234,"age":42},...]}
+ *                           age – seconds since last update, saturates at 65535 (~18 h)
  *
  * Port mode control (enable/disable cache_bus) is handled exclusively via
  * POST /ports/N/mode through port_manager — not through cache endpoints.
  *
  * The JSON endpoint uses chunked transfer with no heap allocation and is
- * optimised for frequent polling: short field names ("s","t","a","v","ts"),
+ * optimised for frequent polling: short field names ("s","t","a","v","age"),
  * mutex released between chunks, no intermediate buffer allocation.
  *
  * @param server HTTP server handle.

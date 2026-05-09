@@ -7,6 +7,7 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -32,13 +33,16 @@ static const char *TAG = "cache_mm";
 #define CACHE_TYPE_DISCRETE  3u
 #define CACHE_USED_BIT       0x80u
 
+/* Saturating cap for age_s counter: ~18.2 hours in seconds */
+#define CACHE_AGE_MAX_S  65535u
+
 /* One flat pool entry — 8 bytes, no padding, naturally aligned. */
 typedef struct {
     uint8_t  slave_id;      /* Modbus slave address (0x00..0xFE)              */
     uint8_t  type;          /* bit7=used, bits1:0=register type (see above)   */
     uint16_t address;       /* register or coil address (0-based)             */
     uint16_t value;         /* last known value (0 or 1 for coils)            */
-    uint16_t timestamp_s;   /* capture time in seconds (wraps ~18 h)          */
+    uint16_t age_s;         /* seconds since last update; saturates at CACHE_AGE_MAX_S */
 } cache_entry_t;
 
 /** Saved context from a master request, per port */
@@ -57,6 +61,7 @@ static cache_entry_t    *s_pool              = NULL;
 static volatile bool     s_cache_enabled = false;
 static SemaphoreHandle_t s_cache_mutex   = NULL;
 static pending_req_t     s_pending[BRIDGES_COUNT];
+static TaskHandle_t      s_age_task      = NULL; /* handle for cache_age_task, NULL when stopped */
 
 /* Statistics counters — reset on cache_multimaster_clear() */
 static volatile uint32_t s_packets_processed = 0; /* total response packets stored since last clear */
@@ -105,16 +110,39 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
     }
 
     if (free_slot != NULL) {
-        free_slot->type        = (uint8_t)(CACHE_USED_BIT | type_value);
-        free_slot->slave_id    = slave_id;
-        free_slot->address     = address;
-        free_slot->value       = 0;
-        free_slot->timestamp_s = 0;
+        free_slot->type     = (uint8_t)(CACHE_USED_BIT | type_value);
+        free_slot->slave_id = slave_id;
+        free_slot->address  = address;
+        free_slot->value    = 0;
+        free_slot->age_s    = 0;
     }
 
     return free_slot;  /* NULL when pool is full */
 }
 
+
+/* ---- Background aging task ----------------------------------------------- */
+
+/* Background task: increment age_s for every used cache entry once per second.
+ * age_s saturates at CACHE_AGE_MAX_S and is never incremented beyond that. */
+static void cache_age_task(void *arg)
+{
+    (void)arg;
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (s_cache_mutex == NULL) continue;
+        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+        if (s_pool != NULL) {
+            for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+                if ((s_pool[i].type & CACHE_USED_BIT) &&
+                    s_pool[i].age_s < CACHE_AGE_MAX_S) {
+                    s_pool[i].age_s++;
+                }
+            }
+        }
+        xSemaphoreGive(s_cache_mutex);
+    }
+}
 
 /* ---- Public API ---------------------------------------------------------- */
 
@@ -162,6 +190,17 @@ void cache_multimaster_enable(void)
     s_packets_processed = 0;
     s_last_packet_us    = 0;
 
+    /* Start the aging task under the mutex to prevent concurrent enables from
+     * creating duplicate tasks (TOCTOU on s_age_task == NULL check). */
+    if (s_age_task == NULL) {
+        BaseType_t rc = xTaskCreate(cache_age_task, "cache_age", 2048,
+                                    NULL, tskIDLE_PRIORITY + 1, &s_age_task);
+        if (rc != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create cache_age_task (err %d) — age_s will not increment", rc);
+            s_age_task = NULL; /* xTaskCreate does not clear the handle on failure */
+        }
+    }
+
     xSemaphoreGive(s_cache_mutex);
 
     /* Reset pending request state for all ports — only written from sniffer_ws_task,
@@ -170,13 +209,30 @@ void cache_multimaster_enable(void)
 
     s_cache_enabled = true;
     sniffer_set_cache_active(true);
+
     ESP_LOGI(TAG, "Cache multimaster enabled");
 }
 
 void cache_multimaster_disable(void)
 {
+    /* Disable cache and sniffer first so no new data enters the pool while
+     * we are tearing down — s_cache_enabled is volatile, visible immediately. */
     s_cache_enabled = false;
     sniffer_set_cache_active(false);
+
+    /* Take the mutex before deleting the aging task to guarantee it is not
+     * inside its critical section when deleted — prevents a mutex leak that
+     * would cause cache_multimaster_clear() to deadlock. */
+    if (s_cache_mutex != NULL) {
+        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    }
+    if (s_age_task != NULL) {
+        vTaskDelete(s_age_task);
+        s_age_task = NULL;
+    }
+    if (s_cache_mutex != NULL) {
+        xSemaphoreGive(s_cache_mutex);
+    }
     /* clear() zeros the pool and resets stats under the mutex */
     cache_multimaster_clear();
     /* Free heap pool under the mutex to prevent a race with HTTP handlers */
@@ -275,8 +331,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
                 ESP_LOGW(TAG, "Pool full, dropping entry");
                 break;
             }
-            e->value       = value;
-            e->timestamp_s = (uint16_t)(timestamp_us / 1000000u);
+            e->value  = value;
+            e->age_s  = 0;  /* reset age on every new value received */
         }
         /* Update stats inside the mutex: s_last_packet_us is uint64_t and is
          * NOT atomically writable on Xtensa without a lock; s_packets_processed
@@ -317,8 +373,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
                 ESP_LOGW(TAG, "Pool full, dropping coil entry");
                 break;
             }
-            e->value       = value;
-            e->timestamp_s = (uint16_t)(timestamp_us / 1000000u);
+            e->value  = value;
+            e->age_s  = 0;  /* reset age on every new value received */
         }
         /* Same rationale as the register branch above. */
         s_packets_processed++;
@@ -358,12 +414,10 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
                 *value_out = e->value;
                 result = CACHE_LOOKUP_FOUND;
 
-                /* Age check: uint16_t modular subtraction handles wrap-around correctly.
+                /* Age check: age_s is maintained by cache_age_task (saturating counter).
                  * value_timeout_s == 0 disables the check — always return FOUND.          */
                 if (value_timeout_s > 0) {
-                    uint16_t now_s = (uint16_t)(esp_timer_get_time() / 1000000u);
-                    uint16_t age_s = (uint16_t)(now_s - e->timestamp_s);
-                    if (age_s > value_timeout_s) {
+                    if (e->age_s > value_timeout_s) {
                         result = CACHE_LOOKUP_STALE;
                     }
                 }
@@ -465,7 +519,7 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
                        "attachment; filename=\"modbus_cache.csv\"");
 
     /* Send CSV header line — includes a type column for holding/input/coil/discrete */
-    const char *header = "slave_id,type,address,value,timestamp_s\r\n";
+    const char *header = "slave_id,type,address,value,age_s\r\n";
     esp_err_t ret = httpd_resp_send_chunk(req, header, (ssize_t)strlen(header));
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "CSV: failed to send header chunk: %d", ret);
@@ -507,7 +561,7 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
                            type_str,
                            (unsigned)e->address,
                            (unsigned)e->value,
-                           (unsigned)e->timestamp_s);
+                           (unsigned)e->age_s);
 
         if (len < 0 || len >= (int)sizeof(line)) continue;
 
@@ -544,39 +598,30 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
  * mutex released between chunks to avoid stalling writers.
  *
  * Output format (compact, one object per entry):
- *   {"now_s":1800,"d":[{"s":3,"t":"h","a":100,"v":1234,"ts":1800},...]}
+ *   {"d":[{"s":3,"t":"h","a":100,"v":1234,"age":42},...]}
  *
  * Field abbreviations (kept short for low-overhead JS parsing):
- *   now_s – current server time in same uint16_t-truncated seconds domain as ts
- *   s     – slave_id
- *   t     – type: "h"=holding, "i"=input, "c"=coil, "d"=discrete
- *   a     – address (0-based)
- *   v     – value
- *   ts    – timestamp_s (seconds, wraps ~18 h)
+ *   s   – slave_id
+ *   t   – type: "h"=holding, "i"=input, "c"=coil, "d"=discrete
+ *   a   – address (0-based)
+ *   v   – value
+ *   age – seconds since last update (saturating at 65535 = ~18 h)
  */
 static esp_err_t cache_json_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
 
     if (s_cache_mutex == NULL) {
-        const char *empty = "{\"now_s\":0,\"d\":[]}";
+        const char *empty = "{\"d\":[]}";
         httpd_resp_send(req, empty, (ssize_t)strlen(empty));
         return ESP_OK;
     }
 
     bool first = true;
 
-    /* now_s is a best-effort anchor: esp_timer_get_time() is reentrant and
-     * requires no mutex.  Sniffer entries written after this read will have
-     * timestamp_s >= now_s and will show age 0 on the frontend, which is the
-     * correct behaviour for freshly updated registers. */
-    uint16_t now_s = (uint16_t)(esp_timer_get_time() / 1000000u);
-
-    /* Build and send the JSON object header with now_s outside the mutex */
-    char hdr[32];
-    int hdr_len = snprintf(hdr, sizeof(hdr), "{\"now_s\":%u,\"d\":[", (unsigned)now_s);
-    if (hdr_len < 0 || hdr_len >= (int)sizeof(hdr)) return ESP_FAIL;
-    esp_err_t ret = httpd_resp_send_chunk(req, hdr, (ssize_t)hdr_len);
+    /* Send the JSON object header outside the mutex */
+    const char *hdr = "{\"d\":[";
+    esp_err_t ret = httpd_resp_send_chunk(req, hdr, (ssize_t)strlen(hdr));
     if (ret != ESP_OK) return ret;
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
@@ -603,16 +648,16 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
             default:                  type_ch = '?'; break;
         }
 
-        /* Stack-local buffer: max entry ~70 chars, prefix comma = 71 */
+        /* Stack-local buffer: max entry ~72 chars, prefix comma = 73 */
         char buf[96];
         int len = snprintf(buf, sizeof(buf),
-                           "%s{\"s\":%u,\"t\":\"%c\",\"a\":%u,\"v\":%u,\"ts\":%u}",
+                           "%s{\"s\":%u,\"t\":\"%c\",\"a\":%u,\"v\":%u,\"age\":%u}",
                            first ? "" : ",",
                            (unsigned)e->slave_id,
                            type_ch,
                            (unsigned)e->address,
                            (unsigned)e->value,
-                           (unsigned)e->timestamp_s);
+                           (unsigned)e->age_s);
 
         if (len < 0 || len >= (int)sizeof(buf)) {
             /* Should never happen with the chosen sizes; skip silently */
