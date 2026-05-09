@@ -8,7 +8,9 @@ import {
   buildDevices,
   buildRegsByKey,
   buildExportPayload,
+  filterDevices,
   type CacheEntry,
+  type DeviceNode,
 } from './registerMapUtils';
 
 // ============================================================
@@ -409,5 +411,48 @@ describe('buildExportPayload', () => {
     const entries: CacheEntry[] = [{ s: 42, t: 'c', a: 0, v: 1, age: 1 }];
     const result = buildExportPayload(entries);
     expect(result.slaves['42'].slave_id).toBe(42);
+  });
+});
+
+// ============================================================
+// filterDevices — RM-U-010
+// ============================================================
+describe('filterDevices — RM-U-010', () => {
+  // Slave 10 (decimal 10, hex 0x0a) and slave 255 (hex 0xff)
+  const devices: DeviceNode[] = [
+    { id: 10, groups: ['Holding'], lastSeenAge: 1 },
+    { id: 255, groups: ['Input'], lastSeenAge: 2 },
+  ];
+
+  it('empty filter returns all devices', () => {
+    expect(filterDevices(devices, '')).toEqual(devices);
+  });
+
+  it('"10" matches slave 10 by decimal', () => {
+    expect(filterDevices(devices, '10')).toEqual([{ id: 10, groups: ['Holding'], lastSeenAge: 1 }]);
+  });
+
+  it('"1" matches slave 10 by decimal substring ("10".includes("1"))', () => {
+    expect(filterDevices(devices, '1')).toEqual([{ id: 10, groups: ['Holding'], lastSeenAge: 1 }]);
+  });
+
+  it('"a" matches slave 10 by hex (toString(16) = "a")', () => {
+    expect(filterDevices(devices, 'a')).toEqual([{ id: 10, groups: ['Holding'], lastSeenAge: 1 }]);
+  });
+
+  it('"ff" matches slave 255 by hex', () => {
+    expect(filterDevices(devices, 'ff')).toEqual([{ id: 255, groups: ['Input'], lastSeenAge: 2 }]);
+  });
+
+  it('"FF" (uppercase) matches slave 255 by hex case-insensitively', () => {
+    expect(filterDevices(devices, 'FF')).toEqual([{ id: 255, groups: ['Input'], lastSeenAge: 2 }]);
+  });
+
+  it('"  " (whitespace-only) returns all devices', () => {
+    expect(filterDevices(devices, '  ')).toEqual(devices);
+  });
+
+  it('non-matching query returns empty array', () => {
+    expect(filterDevices(devices, 'zzz')).toEqual([]);
   });
 });

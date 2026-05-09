@@ -11,7 +11,7 @@ import {
   type CacheEntry, type RegRow, type DeviceNode,
   formatAgeUs, formatMemory, formatAge, typeName,
   resolvePortSelection,
-  buildDevices, buildRegsByKey, buildExportPayload,
+  buildDevices, buildRegsByKey, buildExportPayload, filterDevices,
 } from '@/utils/registerMapUtils';
 
 const { t } = useI18n();
@@ -294,14 +294,7 @@ const regsByKey = computed((): Record<string, RegRow[]> =>
   buildRegsByKey(rawEntries.value, valueTimeout.value));
 
 // Filter devices by search query (slave id decimal or hex)
-const filteredDevices = computed((): DeviceNode[] => {
-  if (!searchFilter.value.trim()) return devices.value;
-  const q = searchFilter.value.trim().toLowerCase();
-  return devices.value.filter(d =>
-    d.id.toString().includes(q) ||
-    d.id.toString(16).toLowerCase().includes(q)
-  );
-});
+const filteredDevices = computed((): DeviceNode[] => filterDevices(devices.value, searchFilter.value));
 
 // { immediate: true } ensures stats are fetched on mount if cache is already enabled.
 // oldVal guard: only reset displayed stats when transitioning from a confirmed-enabled

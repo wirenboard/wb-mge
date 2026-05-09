@@ -86,6 +86,24 @@ export function buildDevices(entries: CacheEntry[]): DeviceNode[] {
     .sort((a, b) => a.id - b.id);
 }
 
+// ── Device filter ─────────────────────────────────────────────────────────────
+
+/**
+ * Filter a list of devices by a search query.
+ * The query is trimmed and lowercased before matching.
+ * A device matches if its slave ID appears as a decimal substring OR
+ * as a lowercase hex substring (e.g. query "a" matches slave 10 because toString(16) = "a").
+ * Returns all devices when the trimmed query is empty.
+ */
+export function filterDevices(devices: DeviceNode[], query: string): DeviceNode[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return devices;
+  return devices.filter(d =>
+    d.id.toString().includes(q) ||
+    d.id.toString(16).toLowerCase().includes(q)
+  );
+}
+
 // ── Register rows builder ─────────────────────────────────────────────────────
 
 // Build register rows keyed by "slaveId|TypeName" from raw cache entries.
