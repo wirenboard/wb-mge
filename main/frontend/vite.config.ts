@@ -42,8 +42,30 @@ export default defineConfig(({ mode }) => {
       },
     },
     test: {
-      environment: 'node',
-      include: ['src/**/*.test.ts'],
+      projects: [
+        {
+          // Unit tests: pure utility functions, no DOM required.
+          // Exclude *.integration.test.ts — those end in .test.ts too.
+          plugins: [vue(), svgLoader(), VueI18nPlugin({})],
+          resolve: { alias: { '@': '/src' } },
+          test: {
+            name: 'unit',
+            environment: 'node',
+            include: ['src/**/*.test.ts'],
+            exclude: ['src/**/*.integration.test.ts'],
+          },
+        },
+        {
+          // Integration tests: Vue component mounting with happy-dom.
+          plugins: [vue(), svgLoader(), VueI18nPlugin({})],
+          resolve: { alias: { '@': '/src' } },
+          test: {
+            name: 'integration',
+            environment: 'happy-dom',
+            include: ['src/**/*.integration.test.ts'],
+          },
+        },
+      ],
     },
   };
 });

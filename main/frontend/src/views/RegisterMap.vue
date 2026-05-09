@@ -561,7 +561,7 @@ onUnmounted(() => {
             <!-- Value timeout row -->
             <div class="rsp-row">
               <div class="rsp-control rsp-control--stacked">
-                <input type="number" class="rsp-input" v-model.number="valueTimeout" min="0" max="86400" />
+                <input type="number" class="rsp-input" data-testid="value-timeout" v-model.number="valueTimeout" min="0" max="86400" />
                 <span class="rsp-unit">{{ t('seconds') }}</span>
               </div>
               <div class="rsp-row-info">
@@ -642,7 +642,7 @@ onUnmounted(() => {
             <!-- TCP port row -->
             <div class="rsp-row">
               <div class="rsp-control">
-                <input type="number" class="rsp-input" v-model.number="cacheTcpPort" min="1" max="65535" />
+                <input type="number" class="rsp-input" data-testid="cache-tcp-port" v-model.number="cacheTcpPort" min="1" max="65535" />
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">{{ t('tcp_port_title') }}</div>

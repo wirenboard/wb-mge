@@ -27,13 +27,16 @@
     "@vitejs/plugin-vue": "6.0.0",
     "@vue/eslint-config-prettier": "9.0.0",
     "@vue/eslint-config-typescript": "12.0.0",
+    "@vue/test-utils": "^2.4.10",
     "eslint": "8.56.0",
     "eslint-plugin-import": "2.27.5",
     "eslint-plugin-vue": "9.21.1",
+    "happy-dom": "^20.9.0",
     "prettier": "3.2.4",
     "typescript": "5.8.3",
     "vite": "7.0.0",
     "vite-svg-loader": "5.1.0",
+    "vitest": "^3.0.0",
     "vue-tsc": "3.0.1"
   }
 }
