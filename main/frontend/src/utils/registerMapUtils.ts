@@ -106,6 +106,12 @@ export function filterDevices(devices: DeviceNode[], query: string): DeviceNode[
 
 // ── Register rows builder ─────────────────────────────────────────────────────
 
+// Returns true if newAge indicates a fresher (more recently updated) entry than existingAge.
+// Smaller age_s value means the entry was updated more recently.
+function isFresherEntry(newAge: number, existingAge: number): boolean {
+  return newAge < existingAge;
+}
+
 // Build register rows keyed by "slaveId|TypeName" from raw cache entries.
 // valueTimeout is the stale threshold in seconds (0 = disabled).
 export function buildRegsByKey(
@@ -129,7 +135,7 @@ export function buildRegsByKey(
     if (existingIndex === -1) {
       result[key].push({ addr: e.a, val, updatedAge, stale });
     } else {
-      const isNewer = e.age < result[key][existingIndex].updatedAge;
+      const isNewer = isFresherEntry(e.age, result[key][existingIndex].updatedAge);
       if (isNewer) {
         result[key][existingIndex] = { addr: e.a, val, updatedAge, stale };
       }
@@ -181,7 +187,7 @@ export function buildExportPayload(entries: CacheEntry[]): ExportPayload {
       slave[section][e.a] = { v: e.v, age: e.age };
     } else {
       // Entry with smaller age_s is more recently updated (fresher) — keep it.
-      const isNewer = e.age < existing.age;
+      const isNewer = isFresherEntry(e.age, existing.age);
       if (isNewer) slave[section][e.a] = { v: e.v, age: e.age };
     }
   }
