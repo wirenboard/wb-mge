@@ -1,24 +1,14 @@
 /**
- * Integration test RM-I-001: RegisterMap settings panel — port initialization guard.
+ * Integration tests for RegisterMap.vue.
  *
- * Verifies that the `portsInitialized` guard inside RegisterMap.vue prevents
- * subsequent info poll updates from overwriting user-editable fields after the
- * first load.
+ * RM-I-001 — port-initialization guard: verifies that the `portsInitialized` flag prevents
+ *             subsequent info-poll updates from overwriting user-editable fields.
  *
- * Three scenarios (split across two `it` blocks, each with a fresh module instance):
- *   1. First poll initialises cacheTcpPort, valueTimeout, listenPort1, listenPort2 from info.
- *   2. Second poll (different values) does NOT overwrite those fields.
- *   3. Double-true guard: if both rs485 ports report 'cache_bus' on first poll,
- *      listenPort2 is forced to false.
+ * RM-I-003 — toggleCaching enable path: verifies that clicking "Enable caching" calls
+ *             api('ports/N/mode') for the selected port only, then triggers fetchEntries.
  *
- * Rendering notes:
- *   The settings panel (which contains the inputs under test) is gated by:
- *     v-if="!cacheEnabled"    → caching-disabled placeholder
- *     v-else-if="loading"     → spinner (loading starts true)
- *     v-else                  → settings panel (shown when cacheEnabled && !loading)
- *   `loading` is set to false inside fetchEntries() after the api() promise resolves.
- *   Therefore we must flushPromises() after mount to let the async onMounted settle
- *   before inspecting the DOM.
+ * Rendering note: the settings panel is gated by `v-if="!cacheEnabled"` / `v-else-if="loading"`,
+ * so flushPromises() after mount is required to let onMounted settle before inspecting the DOM.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -27,6 +17,7 @@ import { ref } from 'vue';
 import { createI18n } from 'vue-i18n';
 import { createRouter, createMemoryHistory } from 'vue-router';
 import type { Info } from '@/common/types';
+import { api } from '@/utils/api';
 
 // ---------------------------------------------------------------------------
 // Shared reactive info ref — mutated per test scenario to simulate polls.
@@ -243,6 +234,170 @@ describe('RM-I-001: RegisterMap port-initialization guard', () => {
     expect(portActive(wrapper, 1)).toBe(true);
     // Must be false even though info reports 'cache_bus' for port 2.
     expect(portActive(wrapper, 2)).toBe(false);
+
+    wrapper.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RM-I-003: toggleCaching — enable path
+// ---------------------------------------------------------------------------
+/**
+ * Integration test RM-I-003: RegisterMap toggleCaching — enable path.
+ *
+ * Verifies that clicking the "Enable caching" button (visible when cacheEnabled=false)
+ * calls api('ports/N/mode', { method: 'POST', json: { mode: 'cache_bus' } }) for exactly
+ * the ports selected in the Settings panel, and then triggers fetchEntries (api('cache/json')).
+ *
+ * Three scenarios:
+ *   A. listenPort1=true,  listenPort2=false → only ports/1/mode + cache/json
+ *   B. listenPort1=false, listenPort2=true  → only ports/2/mode + cache/json
+ *   C. listenPort1=false, listenPort2=false → ports/1/mode (default) + cache/json
+ *
+ * Setup strategy:
+ *   - infoRef is set BEFORE mount so the immediate watch initialises listenPort1/listenPort2.
+ *   - After mount + flushPromises the portsInitialized guard is set, so subsequent
+ *     infoRef changes no longer touch the listen-port refs.
+ *   - infoRef is then mutated to have both ports 'disabled' so cacheEnabled becomes false,
+ *     which renders the "Enable caching" button and puts toggleCaching() on the enable path.
+ *   - The api mock is reconfigured so that the ports/N/mode POST call also updates infoRef
+ *     to reflect 'cache_bus', making cacheEnabled true before fetchEntries() runs, which
+ *     allows api('cache/json') to be invoked.
+ *   - api mock calls are cleared before the button click to isolate assertions.
+ */
+describe('RM-I-003: toggleCaching enable', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    vi.resetModules();
+    // Restore the default mock implementation for each test (resetModules clears module
+    // state but not mock implementations — reset to a known baseline).
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  it('scenario A: listenPort1=true, listenPort2=false — only ports/1/mode called', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // First poll: port1=cache_bus so listenPort1 is initialised to true.
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Mutate info so cacheEnabled becomes false (both ports disabled).
+    // portsInitialized guard ensures listenPort1 stays true, listenPort2 stays false.
+    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+    await flushPromises();
+
+    // Reconfigure the api mock: when ports/1/mode is POSTed, update infoRef to reflect
+    // the new mode so that cacheEnabled becomes true before fetchEntries() runs.
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'ports/1/mode') {
+        infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+      }
+      return { d: [] } as never;
+    });
+
+    // mockClear() clears call history only; the mockImplementation above is preserved.
+    // Clear recorded calls so only the toggle-click calls are asserted.
+    vi.mocked(api).mockClear();
+
+    // Click the "Enable caching" button — rendered in .rm-off when cacheEnabled=false.
+    await wrapper.find('.rm-off button').trigger('click');
+    await flushPromises();
+
+    const apiMock = vi.mocked(api);
+
+    // ports/1/mode must be called with mode: 'cache_bus'
+    expect(apiMock).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+
+    // ports/2/mode must NOT be called
+    expect(apiMock).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
+
+    // cache/json must be called (fetchEntries)
+    expect(apiMock).toHaveBeenCalledWith('cache/json');
+
+    wrapper.unmount();
+  });
+
+  it('scenario B: listenPort2=true, listenPort1=false — only ports/2/mode called', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // First poll: port2=cache_bus so listenPort2 is initialised to true.
+    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'cache_bus', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Mutate info so cacheEnabled becomes false; listenPort2 stays true via guard.
+    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+    await flushPromises();
+
+    // Reconfigure mock: ports/2/mode POST updates infoRef so cacheEnabled turns true.
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'ports/2/mode') {
+        infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'cache_bus', tcpPort: 504, timeout: 60 });
+      }
+      return { d: [] } as never;
+    });
+
+    // mockClear() clears call history only; the mockImplementation above is preserved.
+    vi.mocked(api).mockClear();
+
+    await wrapper.find('.rm-off button').trigger('click');
+    await flushPromises();
+
+    const apiMock = vi.mocked(api);
+
+    // ports/1/mode must NOT be called
+    expect(apiMock).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
+
+    // ports/2/mode must be called with mode: 'cache_bus'
+    expect(apiMock).toHaveBeenCalledWith('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+
+    // cache/json must be called (fetchEntries)
+    expect(apiMock).toHaveBeenCalledWith('cache/json');
+
+    wrapper.unmount();
+  });
+
+  it('scenario C: both false (edge case) — defaults to ports/1/mode, ports/2/mode not called', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // First poll: both ports disabled → listenPort1=false, listenPort2=false after watch.
+    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // cacheEnabled is already false; no need to mutate infoRef again.
+    // Reconfigure mock: ports/1/mode POST updates infoRef so cacheEnabled turns true
+    // (default-port-1 fallback branch inside toggleCaching).
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'ports/1/mode') {
+        infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+      }
+      return { d: [] } as never;
+    });
+
+    // mockClear() clears call history only; the mockImplementation above is preserved.
+    vi.mocked(api).mockClear();
+
+    await wrapper.find('.rm-off button').trigger('click');
+    await flushPromises();
+
+    const apiMock = vi.mocked(api);
+
+    // ports/1/mode must be called with mode: 'cache_bus' (default fallback)
+    expect(apiMock).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+
+    // ports/2/mode must NOT be called
+    expect(apiMock).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
+
+    // cache/json must be called (fetchEntries)
+    expect(apiMock).toHaveBeenCalledWith('cache/json');
 
     wrapper.unmount();
   });
