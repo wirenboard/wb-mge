@@ -7,16 +7,15 @@ import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import Switch from '@/components/Switch.vue';
+import {
+  type CacheEntry, type RegRow, type DeviceNode,
+  formatAgeUs, formatMemory, formatAge, typeName,
+  resolvePortSelection,
+  buildDevices, buildRegsByKey, buildExportPayload,
+} from '@/utils/registerMapUtils';
 
 const { t } = useI18n();
 const { info } = useInfo();
-
-// One entry from /cache/json
-interface CacheEntry { s: number; t: 'h' | 'i' | 'c' | 'd'; a: number; v: number; ts: number; }
-// One register row displayed in the table
-interface RegRow { addr: number; val: string; updatedAge: number; stale: boolean; ts: number; }
-// One device node in the tree
-interface DeviceNode { id: number; groups: string[]; lastSeenAge: number; }
 
 const rawEntries = ref<CacheEntry[]>([]);
 
@@ -178,8 +177,9 @@ watch(() => info.value, (newInfo) => {
   if (portsInitialized) return; // skip subsequent polling updates
   listenPort1.value = newInfo.rs485_1.port_mode === 'cache_bus';
   listenPort2.value = newInfo.rs485_2.port_mode === 'cache_bus';
-  // Enforce radio invariant: only one port can be selected at a time.
-  // If both ports are in cache_bus mode, default selection to port 1.
+  // Guard against double-true: if both ports read as cache_bus on first poll,
+  // default to port 1. The (F,F) case is intentionally left as-is — it reflects
+  // a genuine "neither port is in cache_bus mode" state from the device.
   if (listenPort1.value && listenPort2.value) {
     listenPort2.value = false;
   }
@@ -200,11 +200,9 @@ async function saveSettings(): Promise<void> {
   if (settingsSaveStatus.value === 'saving') return; // prevent concurrent calls
   if (saveStatusTimer !== null) { clearTimeout(saveStatusTimer); saveStatusTimer = null; }
   // Defensive: re-apply radio invariant before saving (guards against edge-case state corruption)
-  if (listenPort1.value && listenPort2.value) {
-    listenPort2.value = false; // both true → keep port 1
-  } else if (!listenPort1.value && !listenPort2.value) {
-    listenPort1.value = true;  // both false → fallback to port 1
-  }
+  const resolved = resolvePortSelection(listenPort1.value, listenPort2.value);
+  listenPort1.value = resolved.p1;
+  listenPort2.value = resolved.p2;
   settingsSaveStatus.value = 'saving';
   try {
     const port1TargetMode = listenPort1.value ? 'cache_bus' : 'disabled';
@@ -231,44 +229,6 @@ async function saveSettings(): Promise<void> {
   saveStatusTimer = setTimeout(() => { settingsSaveStatus.value = 'idle'; }, 3000);
 }
 
-// Format a duration in microseconds as a human-readable string (for cache/status stats)
-function formatAgeUs(us: number): string {
-  if (us === 0) return '—';
-  const seconds = Math.floor(us / 1_000_000);
-  if (seconds < 60) return `${seconds} s`;
-  const minutes = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  if (minutes < 60) return `${minutes} min ${secs} s`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return `${hours} h ${mins} min`;
-}
-
-// Format a memory size in bytes as a human-readable string
-function formatMemory(bytes: number): string {
-  if (bytes === 0) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-// Format a duration in seconds as a human-readable string
-function formatAge(seconds: number): string {
-  if (seconds < 1) return '< 1 s';
-  const floored = Math.floor(seconds * 10) / 10; // one decimal, no rounding up to 60
-  if (floored < 60) return `${floored.toFixed(1)} s`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  if (m < 60) return `${m} min ${s} s`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return `${h} h ${rm} min`;
-}
-
-// Map single-char type code to human-readable type name
-function typeName(t: string): string {
-  return ({ h: 'Holding', i: 'Input', c: 'Coil', d: 'Discrete' } as Record<string, string>)[t] ?? t;
-}
-
 // Open a URL in a new browser tab
 function openUrl(url: string): void {
   window.open(url, '_blank', 'noopener');
@@ -276,58 +236,8 @@ function openUrl(url: string): void {
 
 // Build a nested human-readable JSON from rawEntries and trigger a browser file download
 function downloadJsonExport(): void {
-  // Map single-char type code to section key name
-  const typeKeyMap: Record<string, string> = {
-    h: 'holding_registers',
-    i: 'input_registers',
-    c: 'coils',
-    d: 'discrete_inputs',
-  };
-
-  // Intermediate structure: slaveId -> sectionKey -> address -> { v, ts }
-  const dedup: Record<number, Record<string, Record<number, { v: number; ts: number }>>> = {};
-
-  for (const e of rawEntries.value) {
-    if (!dedup[e.s]) dedup[e.s] = {};
-    const slave = dedup[e.s];
-    const section = typeKeyMap[e.t];
-    if (!section) continue;
-    if (!slave[section]) slave[section] = {};
-    const existing = slave[section][e.a];
-    if (existing === undefined) {
-      slave[section][e.a] = { v: e.v, ts: e.ts };
-    } else {
-      // Keep entry with newer ts using modular uint16_t arithmetic (wrap = 65536)
-      const isNewer = ((e.ts - existing.ts + 65536) % 65536) < 32768;
-      if (isNewer) slave[section][e.a] = { v: e.v, ts: e.ts };
-    }
-  }
-
-  // Build the output object
-  const slaves: Record<string, object> = {};
-  for (const [slaveIdStr, sections] of Object.entries(dedup)) {
-    const slaveId = Number(slaveIdStr);
-    const slaveOut: Record<string, object | number> = {
-      slave_id: slaveId,
-      holding_registers: {},
-      input_registers: {},
-      coils: {},
-      discrete_inputs: {},
-    };
-    for (const [section, regs] of Object.entries(sections)) {
-      const regOut: Record<string, number> = {};
-      for (const [addrStr, entry] of Object.entries(regs)) {
-        regOut[addrStr] = entry.v;
-      }
-      slaveOut[section] = regOut;
-    }
-    slaves[slaveIdStr] = slaveOut;
-  }
-
-  const payload = {
-    exported_at: new Date().toISOString(),
-    slaves,
-  };
+  const payload = buildExportPayload(rawEntries.value);
+  const fullPayload = { exported_at: new Date().toISOString(), ...payload };
 
   // Generate filename suffix from local time: YYYY-MM-DDTHH-mm-ss
   const now = new Date();
@@ -339,7 +249,7 @@ function downloadJsonExport(): void {
 
   // Trigger browser download via a temporary anchor element
   // The element must be appended to the DOM before .click() for Firefox compatibility
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(fullPayload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -388,71 +298,11 @@ function collapseAll(): void {
 }
 
 // Build the list of device nodes from raw entries
-const devices = computed((): DeviceNode[] => {
-  const TYPE_ORDER = ['Holding', 'Input', 'Coil', 'Discrete'];
-  const bySlave: Record<number, CacheEntry[]> = {};
-  for (const e of rawEntries.value) {
-    if (!bySlave[e.s]) bySlave[e.s] = [];
-    bySlave[e.s].push(e);
-  }
-  return Object.entries(bySlave)
-    .map(([sid, entries]) => {
-      const id = Number(sid);
-      const typeSet = new Set(entries.map(e => typeName(e.t)));
-      const groups = TYPE_ORDER.filter(name => typeSet.has(name));
-      // Do NOT use Math.max(0, ...) — entries is always non-empty here (slave is only
-      // created when at least one entry exists), and 0 is a valid uint16_t timestamp
-      // (first second of uptime). Passing 0 as a floor would make ts=0 entries look
-      // as old as the device uptime instead of showing their real age.
-      const slaveMaxTs = Math.max(...entries.map(e => e.ts));
-      // Modular difference using the server-provided now_s anchor (same uint16_t domain).
-      // Correctly handles wrap-around: if now_s has wrapped past slaveMaxTs, the
-      // modular subtraction still yields the correct positive age in seconds.
-      const TS_WRAP = 65536;
-      const lastSeenAge = cacheNowS.value > 0
-        ? ((cacheNowS.value - slaveMaxTs + TS_WRAP) % TS_WRAP)
-        : 0;
-      return { id, groups, lastSeenAge };
-    })
-    .sort((a, b) => a.id - b.id);
-});
+const devices = computed((): DeviceNode[] => buildDevices(rawEntries.value, cacheNowS.value));
 
 // Build register rows keyed by "slaveId|TypeName"
-const regsByKey = computed((): Record<string, RegRow[]> => {
-  const result: Record<string, RegRow[]> = {};
-  const TS_WRAP = 65536;
-  for (const e of rawEntries.value) {
-    const key = `${e.s}|${typeName(e.t)}`;
-    if (!result[key]) result[key] = [];
-    const val = (e.t === 'h' || e.t === 'i')
-      ? '0x' + e.v.toString(16).toUpperCase().padStart(4, '0')
-      : String(e.v);
-    // Modular age using the server-provided now_s anchor (same uint16_t domain).
-    // Correctly handles wrap-around: if now_s has wrapped past e.ts, the
-    // modular subtraction still yields the correct positive age in seconds.
-    const diff = (cacheNowS.value - e.ts + TS_WRAP) % TS_WRAP;
-    const updatedAge = cacheNowS.value > 0 ? diff : 0;
-    // When valueTimeout is 0, the timeout is disabled — never mark entries as stale.
-    const stale = valueTimeout.value > 0 && updatedAge > valueTimeout.value;
-    // Deduplicate: keep only the newer entry for each address.
-    // Uses modular comparison to handle uint16_t wrap-around:
-    // a signed difference < TS_WRAP/2 means e.ts is strictly newer.
-    const existingIndex = result[key].findIndex(r => r.addr === e.a);
-    if (existingIndex === -1) {
-      result[key].push({ addr: e.a, val, updatedAge, stale, ts: e.ts });
-    } else {
-      const tsNewer = ((e.ts - result[key][existingIndex].ts + TS_WRAP) % TS_WRAP) < (TS_WRAP / 2);
-      if (tsNewer) {
-        result[key][existingIndex] = { addr: e.a, val, updatedAge, stale, ts: e.ts };
-      }
-    }
-  }
-  // Sort each group by address ascending
-  for (const key of Object.keys(result)) {
-    result[key].sort((a, b) => a.addr - b.addr);
-  }
-  return result;
-});
+const regsByKey = computed((): Record<string, RegRow[]> =>
+  buildRegsByKey(rawEntries.value, cacheNowS.value, valueTimeout.value));
 
 // Filter devices by search query (slave id decimal or hex)
 const filteredDevices = computed((): DeviceNode[] => {
