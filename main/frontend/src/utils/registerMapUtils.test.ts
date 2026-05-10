@@ -119,6 +119,13 @@ describe('formatAge', () => {
     expect(formatAge(65535)).toBe('>18h');
     expect(formatAge(65536)).toBe('>18h');
   });
+
+  it('RM-U-06: 64999 (just below saturation threshold 65535) returns "18 h 3 min", NOT ">18h"', () => {
+    // 64999 / 60 = 1083.316... → m = 1083; 64999 % 60 = 19; m >= 60 → h branch
+    // h = floor(1083 / 60) = 18; rm = 1083 % 60 = 3 → "18 h 3 min"
+    // Catches off-by-one if the saturation threshold ever shifts from 65535
+    expect(formatAge(64999)).toBe('18 h 3 min');
+  });
 });
 
 // ============================================================
@@ -237,6 +244,18 @@ describe('buildDevices', () => {
     const result = buildDevices(entries);
     expect(result[0].lastSeenAge).toBe(10);
   });
+
+  it('RM-U-05: unknown type code "x" produces device with empty groups array', () => {
+    // typeName('x') returns 'x', which is NOT in TYPE_ORDER = ['Holding', 'Input', 'Coil', 'Discrete']
+    // TYPE_ORDER.filter(t => typeSet.has(t)) drops 'x' → groups is []
+    // Catches: unknown type code produces an empty tree node (device with no groups)
+    const entries: CacheEntry[] = [{ s: 1, t: 'x' as any, a: 0, v: 0, age: 10 }];
+    const result = buildDevices(entries);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(1);
+    expect(result[0].groups).toEqual([]);
+    expect(result[0].lastSeenAge).toBe(10); // age from the single entry must propagate correctly
+  });
 });
 
 // ============================================================
@@ -345,6 +364,33 @@ describe('buildRegsByKey', () => {
     expect(result['1|Holding'][0].addr).toBe(100);
     expect(result['1|Holding'][1].addr).toBe(200);
   });
+
+  it('RM-U-01: unknown type code "x" does not corrupt the key — key is "1|x", val is decimal string', () => {
+    // typeName('x') returns 'x' (verified in typeName tests), so key becomes "1|x"
+    // 't' is not 'h' or 'i' → falls to else branch → val = String(0xABCD) = "43981" (decimal)
+    // Catches: silent key corruption when an unknown Modbus type code appears
+    const entries: CacheEntry[] = [{ s: 1, t: 'x' as any, a: 100, v: 0xABCD, age: 5 }];
+    const result = buildRegsByKey(entries, 60);
+    expect(result['1|x']).toBeDefined();
+    expect(result['1|x']).toHaveLength(1);
+    const row = result['1|x'][0];
+    expect(row.addr).toBe(100);
+    expect(row.val).toBe('43981'); // String(0xABCD) = "43981", decimal fallback
+    expect(row.stale).toBe(false);
+  });
+
+  it('RM-U-02: tie-break dedup when ages are equal — first entry wins (no overwrite)', () => {
+    // isFresherEntry(50, 50) returns false (strict '<') → second entry does NOT overwrite
+    // Catches: regression if '<' in isFresherEntry is changed to '<='
+    const entries: CacheEntry[] = [
+      { s: 1, t: 'h', a: 100, v: 0xAAAA, age: 50 },
+      { s: 1, t: 'h', a: 100, v: 0xBBBB, age: 50 },
+    ];
+    const result = buildRegsByKey(entries, 60);
+    expect(result['1|Holding']).toHaveLength(1);
+    expect(result['1|Holding'][0].val).toBe('0xAAAA'); // first entry wins
+    expect(result['1|Holding'][0].updatedAge).toBe(50);
+  });
 });
 
 // ============================================================
@@ -411,6 +457,31 @@ describe('buildExportPayload', () => {
     const entries: CacheEntry[] = [{ s: 42, t: 'c', a: 0, v: 1, age: 1 }];
     const result = buildExportPayload(entries);
     expect(result.slaves['42'].slave_id).toBe(42);
+  });
+
+  it('RM-U-03: unknown type code "x" triggers continue — slave slot is created but all four sections remain empty', () => {
+    // The !section guard fires → continue → slave slot in dedup is created but no section is populated
+    // The output slave object is built from dedup[1] which has no sections → all four section fields remain empty {}
+    // Catches: silent data loss on unknown type code without crashing
+    const entries: CacheEntry[] = [{ s: 1, t: 'x' as any, a: 0, v: 0, age: 1 }];
+    const result = buildExportPayload(entries);
+    expect(result.slaves['1']).toBeDefined();
+    expect(result.slaves['1'].slave_id).toBe(1);
+    expect(result.slaves['1'].holding_registers).toEqual({});
+    expect(result.slaves['1'].input_registers).toEqual({});
+    expect(result.slaves['1'].coils).toEqual({});
+    expect(result.slaves['1'].discrete_inputs).toEqual({});
+  });
+
+  it('RM-U-04: tie-break dedup with equal ages in buildExportPayload — first entry wins', () => {
+    // isFresherEntry(50, 50) returns false (strict '<') → second entry does NOT overwrite
+    // Catches: regression if '<' in isFresherEntry is changed to '<='
+    const entries: CacheEntry[] = [
+      { s: 1, t: 'h', a: 10, v: 0xAAAA, age: 50 },
+      { s: 1, t: 'h', a: 10, v: 0xBBBB, age: 50 },
+    ];
+    const result = buildExportPayload(entries);
+    expect(result.slaves['1'].holding_registers['10']).toBe(0xAAAA); // first entry wins
   });
 });
 
