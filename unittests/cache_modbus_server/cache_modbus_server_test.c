@@ -818,6 +818,30 @@ void test_cache_modbus_server_address_boundary(void)
     /* Last lookup must be for 0xFFFF (= 0xFFFE + 1), not 0x0000 (overflow) */
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, mock_lookup_last_address,
         "start_addr=0xFFFE, count=2: second lookup address must be 0xFFFF (no overflow)");
+
+    /* Sub-test C: start_addr=0xFFFF, count=2 → overflow detected → exception 0x02, no lookup */
+    mock_cache_multimaster_reset();
+    exception_code = 0xFF;
+    size_t len_c = cache_modbus_server_build_register_response(
+        1, MB_FC_READ_HOLDING_REGS, htons(3), 0xFFFF, 2, 0, resp_buf, &exception_code);
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, len_c,
+        "start_addr=0xFFFF, count=2: overflow detected, builder must return 0");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_ADDRESS, exception_code,
+        "start_addr=0xFFFF, count=2: exception_code_out must be set to MB_EX_ILLEGAL_ADDRESS (0x02)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_lookup_call_count,
+        "start_addr=0xFFFF, count=2: no lookup must be performed when overflow detected");
+
+    /* Sub-test D: build_coil_response start_addr=0xFFFF, count=2 → overflow → exception 0x02 */
+    mock_cache_multimaster_reset();
+    exception_code = 0xFF;
+    size_t len_d = cache_modbus_server_build_coil_response(
+        1, MB_FC_READ_COILS, htons(4), 0xFFFF, 2, 0, resp_buf, &exception_code);
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, len_d,
+        "coil: start_addr=0xFFFF, count=2: overflow detected, builder must return 0");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_ADDRESS, exception_code,
+        "coil: start_addr=0xFFFF, count=2: exception_code_out must be MB_EX_ILLEGAL_ADDRESS (0x02)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_lookup_call_count,
+        "coil: start_addr=0xFFFF, count=2: no lookup must be performed when overflow detected");
 }
 
 /* ---- Helper: build a standard 12-byte Modbus TCP request packet ---------- */

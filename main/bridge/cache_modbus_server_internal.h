@@ -17,9 +17,10 @@
  * @param count             Number of registers (1..125).
  * @param value_timeout_s   Passed to cache_multimaster_lookup().
  * @param resp_buf          Output buffer of at least (9 + count*2) bytes.
- * @param exception_code_out Set to 0x02 (NOT_FOUND) or 0x0B (STALE) on failure;
- *                           not modified on success.
- * @return Total response byte count on success; 0 on lookup failure.
+ * @param exception_code_out Set to 0x02 if the address range overflows 16-bit space
+ *                           (start_addr + count > 0x10000), 0x02 if not found in cache,
+ *                           or 0x0B if the cached entry is stale; not modified on success.
+ * @return Total response byte count on success; 0 on overflow or lookup failure.
  */
 size_t cache_modbus_server_build_register_response(
     uint8_t unit_id, uint8_t fc, uint16_t transaction_id,
@@ -36,9 +37,10 @@ size_t cache_modbus_server_build_register_response(
  * @param count             Number of coils (1..2000).
  * @param value_timeout_s   Passed to cache_multimaster_lookup().
  * @param resp_buf          Output buffer of at least (9 + ceil(count/8)) bytes.
- * @param exception_code_out Set to 0x02 (NOT_FOUND) or 0x0B (STALE) on failure;
- *                           not modified on success.
- * @return Total response byte count on success; 0 on lookup failure.
+ * @param exception_code_out Set to 0x02 if the address range overflows 16-bit space
+ *                           (start_addr + count > 0x10000), 0x02 if not found in cache,
+ *                           or 0x0B if the cached entry is stale; not modified on success.
+ * @return Total response byte count on success; 0 on overflow or lookup failure.
  */
 size_t cache_modbus_server_build_coil_response(
     uint8_t unit_id, uint8_t fc, uint16_t transaction_id,

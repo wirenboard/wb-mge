@@ -87,9 +87,11 @@ static void send_exception(tcp_desc_t *desc, int client_sock,
  * @param count             Number of registers to read (must be 1..125).
  * @param value_timeout_s   Age threshold in seconds passed to cache_multimaster_lookup().
  * @param resp_buf          Output buffer of at least (8 + 1 + count*2) bytes.
- * @param exception_code_out Output: set to the Modbus exception code on failure
- *                           (0x02=NOT_FOUND, 0x0B=STALE); not modified on success.
- * @return Total byte count to send on success; 0 on lookup failure.
+ * @param exception_code_out Output: set to 0x02 if the address range overflows the
+ *                           16-bit space (start_addr + count > 0x10000), 0x02 if the
+ *                           register is not found in cache, or 0x0B if the entry is
+ *                           stale; not modified on success.
+ * @return Total byte count to send on success; 0 on overflow or lookup failure.
  */
 size_t cache_modbus_server_build_register_response(
     uint8_t unit_id, uint8_t fc, uint16_t transaction_id,
@@ -103,6 +105,13 @@ size_t cache_modbus_server_build_register_response(
     resp_hdr->protocol_id    = 0x0000;
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
+
+    /* Reject requests where the address range overflows the 16-bit address space.
+     * Per Modbus spec: start_addr + count must not exceed 0x10000. */
+    if ((uint32_t)start_addr + (uint32_t)count > 0x10000u) {
+        *exception_code_out = MB_EX_ILLEGAL_ADDRESS;
+        return 0;
+    }
 
     /* Payload: [byte_count][val0_hi][val0_lo]...[valN_hi][valN_lo] */
     uint8_t *payload    = resp_buf + sizeof(mb_tcp_header_t);
@@ -149,9 +158,11 @@ size_t cache_modbus_server_build_register_response(
  * @param count             Number of coils to read (must be 1..2000).
  * @param value_timeout_s   Age threshold in seconds passed to cache_multimaster_lookup().
  * @param resp_buf          Output buffer of at least (8 + 1 + ceil(count/8)) bytes.
- * @param exception_code_out Output: set to the Modbus exception code on failure
- *                           (0x02=NOT_FOUND, 0x0B=STALE); not modified on success.
- * @return Total byte count to send on success; 0 on lookup failure.
+ * @param exception_code_out Output: set to 0x02 if the address range overflows the
+ *                           16-bit space (start_addr + count > 0x10000), 0x02 if the
+ *                           coil is not found in cache, or 0x0B if the entry is stale;
+ *                           not modified on success.
+ * @return Total byte count to send on success; 0 on overflow or lookup failure.
  */
 size_t cache_modbus_server_build_coil_response(
     uint8_t unit_id, uint8_t fc, uint16_t transaction_id,
@@ -165,6 +176,13 @@ size_t cache_modbus_server_build_coil_response(
     resp_hdr->protocol_id    = 0x0000;
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
+
+    /* Reject requests where the address range overflows the 16-bit address space.
+     * Per Modbus spec: start_addr + count must not exceed 0x10000. */
+    if ((uint32_t)start_addr + (uint32_t)count > 0x10000u) {
+        *exception_code_out = MB_EX_ILLEGAL_ADDRESS;
+        return 0;
+    }
 
     /* Payload: [coil_bytes][byte0]...[byteN] (bits packed LSB first) */
     uint8_t  coil_bytes = (uint8_t)((count + 7u) / 8u);
