@@ -4,6 +4,7 @@
 #include "tcp_server.h"
 #include "tcp_desc.h"
 #include "setting_items.h"
+#include "cache_modbus_server_internal.h"
 
 #include "esp_log.h"
 
@@ -69,6 +70,135 @@ static void send_exception(tcp_desc_t *desc, int client_sock,
     buf[sizeof(mb_tcp_header_t)] = exception;
 
     tcp_server_send(desc, client_sock, buf, sizeof(buf));
+}
+
+/* ---- Response builder functions ------------------------------------------ */
+
+/**
+ * @brief Build an FC03 or FC04 register response into resp_buf.
+ *
+ * Fills the MBAP header (transaction_id, protocol_id=0, unit_id, fc, length)
+ * and the payload [byte_count][val0_hi][val0_lo]...[valN_hi][valN_lo].
+ *
+ * @param unit_id           Modbus unit ID (slave address) from the request.
+ * @param fc                Function code: MB_FC_READ_HOLDING_REGS or MB_FC_READ_INPUT_REGS.
+ * @param transaction_id    Transaction ID in network byte order, echoed from the request.
+ * @param start_addr        Starting register address (0-based).
+ * @param count             Number of registers to read (must be 1..125).
+ * @param value_timeout_s   Age threshold in seconds passed to cache_multimaster_lookup().
+ * @param resp_buf          Output buffer of at least (8 + 1 + count*2) bytes.
+ * @param exception_code_out Output: set to the Modbus exception code on failure
+ *                           (0x02=NOT_FOUND, 0x0B=STALE); not modified on success.
+ * @return Total byte count to send on success; 0 on lookup failure.
+ */
+size_t cache_modbus_server_build_register_response(
+    uint8_t unit_id, uint8_t fc, uint16_t transaction_id,
+    uint16_t start_addr, uint16_t count, uint16_t value_timeout_s,
+    uint8_t *resp_buf, uint8_t *exception_code_out)
+{
+    mb_tcp_header_t *resp_hdr = (mb_tcp_header_t *)resp_buf;
+
+    /* Fill MBAP header fields */
+    resp_hdr->transaction_id = transaction_id;
+    resp_hdr->protocol_id    = 0x0000;
+    resp_hdr->unit_id        = unit_id;
+    resp_hdr->function       = fc;
+
+    /* Payload: [byte_count][val0_hi][val0_lo]...[valN_hi][valN_lo] */
+    uint8_t *payload    = resp_buf + sizeof(mb_tcp_header_t);
+    uint8_t  byte_count = (uint8_t)(count * 2u);
+    payload[0] = byte_count;
+
+    for (uint16_t i = 0; i < count; i++) {
+        uint16_t value = 0;
+        cache_lookup_result_t res = cache_multimaster_lookup(
+            unit_id, fc, (uint16_t)(start_addr + i), &value, value_timeout_s);
+        if (res == CACHE_LOOKUP_NOT_FOUND) {
+            /* Register not in cache — return exception 0x02 (ILLEGAL DATA ADDRESS) */
+            *exception_code_out = MB_EX_ILLEGAL_ADDRESS;
+            return 0;
+        }
+        if (res == CACHE_LOOKUP_STALE) {
+            /* Entry exists but is stale — return exception 0x0B (GW TARGET FAILED) */
+            *exception_code_out = MB_EX_GW_TARGET_FAILED;
+            return 0;
+        }
+        /* res == CACHE_LOOKUP_FOUND: pack value big-endian */
+        payload[1 + i * 2]     = (uint8_t)(value >> 8);
+        payload[1 + i * 2 + 1] = (uint8_t)(value & 0xFFu);
+    }
+
+    /* MBAP length = unit_id(1) + FC(1) + byte_count_field(1) + data(byte_count) */
+    uint16_t pdu_len = (uint16_t)(1u + 1u + 1u + byte_count);
+    resp_hdr->length = htons(pdu_len);
+
+    /* Total wire bytes = sizeof(mb_tcp_header_t) + 1 (byte_count field) + byte_count */
+    return sizeof(mb_tcp_header_t) + 1u + (size_t)byte_count;
+}
+
+/**
+ * @brief Build an FC01 or FC02 coil/discrete-input response into resp_buf.
+ *
+ * Fills the MBAP header and payload [coil_bytes][byte0]...[byteN]
+ * with LSB-first bit packing.
+ *
+ * @param unit_id           Modbus unit ID (slave address) from the request.
+ * @param fc                Function code: MB_FC_READ_COILS or MB_FC_READ_DISCRETE_INPUTS.
+ * @param transaction_id    Transaction ID in network byte order, echoed from the request.
+ * @param start_addr        Starting coil address (0-based).
+ * @param count             Number of coils to read (must be 1..2000).
+ * @param value_timeout_s   Age threshold in seconds passed to cache_multimaster_lookup().
+ * @param resp_buf          Output buffer of at least (8 + 1 + ceil(count/8)) bytes.
+ * @param exception_code_out Output: set to the Modbus exception code on failure
+ *                           (0x02=NOT_FOUND, 0x0B=STALE); not modified on success.
+ * @return Total byte count to send on success; 0 on lookup failure.
+ */
+size_t cache_modbus_server_build_coil_response(
+    uint8_t unit_id, uint8_t fc, uint16_t transaction_id,
+    uint16_t start_addr, uint16_t count, uint16_t value_timeout_s,
+    uint8_t *resp_buf, uint8_t *exception_code_out)
+{
+    mb_tcp_header_t *resp_hdr = (mb_tcp_header_t *)resp_buf;
+
+    /* Fill MBAP header fields */
+    resp_hdr->transaction_id = transaction_id;
+    resp_hdr->protocol_id    = 0x0000;
+    resp_hdr->unit_id        = unit_id;
+    resp_hdr->function       = fc;
+
+    /* Payload: [coil_bytes][byte0]...[byteN] (bits packed LSB first) */
+    uint8_t  coil_bytes = (uint8_t)((count + 7u) / 8u);
+    uint8_t *payload    = resp_buf + sizeof(mb_tcp_header_t);
+
+    payload[0] = coil_bytes;
+    memset(payload + 1, 0, coil_bytes); /* clear bit buffer */
+
+    for (uint16_t i = 0; i < count; i++) {
+        uint16_t value = 0;
+        cache_lookup_result_t res = cache_multimaster_lookup(
+            unit_id, fc, (uint16_t)(start_addr + i), &value, value_timeout_s);
+        if (res == CACHE_LOOKUP_NOT_FOUND) {
+            /* Coil not in cache — return exception 0x02 (ILLEGAL DATA ADDRESS) */
+            *exception_code_out = MB_EX_ILLEGAL_ADDRESS;
+            return 0;
+        }
+        if (res == CACHE_LOOKUP_STALE) {
+            /* Entry exists but is stale — return exception 0x0B (GW TARGET FAILED) */
+            *exception_code_out = MB_EX_GW_TARGET_FAILED;
+            return 0;
+        }
+        /* res == CACHE_LOOKUP_FOUND: set bit i in the coil byte array (LSB first) */
+        if (value) {
+            payload[1 + i / 8] |= (uint8_t)(1u << (i % 8));
+        }
+    }
+
+    /* MBAP length = unit_id(1) + FC(1) + byte_count_field(1) + coil_bytes */
+    uint16_t pdu_len = (uint16_t)(1u + 1u + 1u + coil_bytes);
+    resp_hdr->length = htons(pdu_len);
+
+    /* Total wire bytes = sizeof(mb_tcp_header_t) + 1 (coil_bytes field) + coil_bytes */
+    return sizeof(mb_tcp_header_t) + 1u + (size_t)coil_bytes;
 }
 
 /* ---- TCP receive callback ------------------------------------------------- */
@@ -169,89 +299,26 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
      *   data payload = max 250 bytes (125 regs × 2) or ceil(2000/8)=250 bytes
      * 512 bytes is more than enough.                                         */
     uint8_t resp_buf[512];
-    mb_tcp_header_t *resp_hdr = (mb_tcp_header_t *)resp_buf;
-
-    resp_hdr->transaction_id = transaction_id;
-    resp_hdr->protocol_id    = 0x0000;
-    resp_hdr->unit_id        = unit_id;
-    resp_hdr->function       = fc;
-    /* resp_hdr->length is filled in after payload is assembled */
 
     if (fc == MB_FC_READ_HOLDING_REGS || fc == MB_FC_READ_INPUT_REGS) {
-        /* ---- FC03 / FC04: holding or input registers --------------------- */
-        /* Payload: [byte_count][val0_hi][val0_lo]...[valN_hi][valN_lo]      */
-        uint8_t *payload     = resp_buf + sizeof(mb_tcp_header_t);
-        uint8_t  byte_count  = (uint8_t)(count * 2u);
-        payload[0] = byte_count;
-
-        for (uint16_t i = 0; i < count; i++) {
-            uint16_t value = 0;
-            cache_lookup_result_t res = cache_multimaster_lookup(
-                unit_id, fc, (uint16_t)(start_addr + i), &value, value_timeout_s);
-            if (res == CACHE_LOOKUP_NOT_FOUND) {
-                /* Register not in cache — return exception 0x02 (ILLEGAL DATA ADDRESS) */
-                send_exception(desc, client_sock, transaction_id, unit_id, fc,
-                               MB_EX_ILLEGAL_ADDRESS);
-                return;
-            }
-            if (res == CACHE_LOOKUP_STALE) {
-                /* Entry exists but is stale — return exception 0x0B (GW TARGET FAILED) */
-                send_exception(desc, client_sock, transaction_id, unit_id, fc,
-                               MB_EX_GW_TARGET_FAILED);
-                return;
-            }
-            /* res == CACHE_LOOKUP_FOUND: use the value */
-            payload[1 + i * 2]     = (uint8_t)(value >> 8);
-            payload[1 + i * 2 + 1] = (uint8_t)(value & 0xFFu);
+        uint8_t exception_code = MB_EX_ILLEGAL_ADDRESS; /* safe default if builder forgot to set */
+        size_t resp_len = cache_modbus_server_build_register_response(
+            unit_id, fc, transaction_id, start_addr, count, value_timeout_s,
+            resp_buf, &exception_code);
+        if (resp_len == 0) {
+            send_exception(desc, client_sock, transaction_id, unit_id, fc, exception_code);
+            return;
         }
-
-        /* MBAP length = unit_id(1) + FC(1) + byte_count_field(1) + data(byte_count)
-         * resp_buf layout: [transaction_id:2][protocol_id:2][length:2]
-         *                  [unit_id:1][function:1][byte_count:1][data:byte_count]
-         * Total wire bytes = 8 + 1 + byte_count                             */
-        uint16_t pdu_len = (uint16_t)(1u + 1u + 1u + byte_count);
-        resp_hdr->length = htons(pdu_len);
-
-        size_t resp_len = sizeof(mb_tcp_header_t) + 1u + (size_t)byte_count;
         tcp_server_send(desc, client_sock, resp_buf, resp_len);
-
     } else {
-        /* ---- FC01 / FC02: coils or discrete inputs ----------------------- */
-        /* Payload: [byte_count][byte0]...[byteN]  (bits packed LSB first)   */
-        uint8_t  coil_bytes = (uint8_t)((count + 7u) / 8u);
-        uint8_t *payload    = resp_buf + sizeof(mb_tcp_header_t);
-
-        payload[0] = coil_bytes;
-        memset(payload + 1, 0, coil_bytes); /* clear bit buffer */
-
-        for (uint16_t i = 0; i < count; i++) {
-            uint16_t value = 0;
-            cache_lookup_result_t res = cache_multimaster_lookup(
-                unit_id, fc, (uint16_t)(start_addr + i), &value, value_timeout_s);
-            if (res == CACHE_LOOKUP_NOT_FOUND) {
-                /* Coil not in cache — return exception 0x02 (ILLEGAL DATA ADDRESS) */
-                send_exception(desc, client_sock, transaction_id, unit_id, fc,
-                               MB_EX_ILLEGAL_ADDRESS);
-                return;
-            }
-            if (res == CACHE_LOOKUP_STALE) {
-                /* Entry exists but is stale — return exception 0x0B (GW TARGET FAILED) */
-                send_exception(desc, client_sock, transaction_id, unit_id, fc,
-                               MB_EX_GW_TARGET_FAILED);
-                return;
-            }
-            /* res == CACHE_LOOKUP_FOUND: use the value */
-            if (value) {
-                /* Set bit i in the coil byte array (LSB first) */
-                payload[1 + i / 8] |= (uint8_t)(1u << (i % 8));
-            }
+        uint8_t exception_code = MB_EX_ILLEGAL_ADDRESS; /* safe default if builder forgot to set */
+        size_t resp_len = cache_modbus_server_build_coil_response(
+            unit_id, fc, transaction_id, start_addr, count, value_timeout_s,
+            resp_buf, &exception_code);
+        if (resp_len == 0) {
+            send_exception(desc, client_sock, transaction_id, unit_id, fc, exception_code);
+            return;
         }
-
-        /* MBAP length = unit_id(1) + FC(1) + byte_count_field(1) + coil_bytes */
-        uint16_t pdu_len = (uint16_t)(1u + 1u + 1u + coil_bytes);
-        resp_hdr->length = htons(pdu_len);
-
-        size_t resp_len = sizeof(mb_tcp_header_t) + 1u + (size_t)coil_bytes;
         tcp_server_send(desc, client_sock, resp_buf, resp_len);
     }
 }
