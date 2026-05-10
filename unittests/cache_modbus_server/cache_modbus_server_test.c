@@ -1064,6 +1064,404 @@ void test_cache_modbus_server_exception_format(void)
         "exception code must be 0x02 (ILLEGAL_ADDRESS) for NOT_FOUND");
 }
 
+/* ---- CMS-U-027: build_register_response — count=125 (max registers) ----- */
+
+/* Verify that count=125 (MB_MAX_REGISTERS) produces resp_len=259 and exactly
+ * 125 lookup calls; catches off-by-one in the loop upper bound and uint8_t
+ * overflow for byte_count (125×2=250 still fits in uint8_t). */
+void test_build_register_response_max_count(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-027: build_register_response count=125 (max registers)");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0xABCD;
+
+    uint8_t  resp_buf[512];
+    uint8_t  exception_code = 0;
+
+    size_t len = cache_modbus_server_build_register_response(
+        /*unit_id=*/1, /*fc=*/MB_FC_READ_HOLDING_REGS, /*transaction_id=*/htons(1),
+        /*start_addr=*/0, /*count=*/125, /*timeout=*/0,
+        resp_buf, &exception_code);
+
+    /* Total: 8 (MBAP) + 1 (byte_count field) + 125×2 = 259 */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(259u, len,
+        "count=125: total response length must be 259");
+
+    uint8_t *payload = resp_buf + sizeof(mb_tcp_header_t);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(250u, payload[0],
+        "byte_count field must be 250 (125 registers × 2 bytes)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(125, mock_lookup_call_count,
+        "lookup must be called exactly 125 times for count=125");
+}
+
+/* ---- CMS-U-028: build_coil_response — 16 coils, first 8 ON / last 8 OFF - */
+
+/* Verify that coils 0..7=ON, 8..15=OFF produces two bytes: 0xFF, 0x00.
+ * Catches byte boundary error in bit-packing loop. */
+void test_build_coil_response_16_coils_first_on_second_off(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-028: build_coil_response 16 coils, first 8 ON / second 8 OFF");
+    LOG_MESSAGE();
+
+    /* Array mode: coils 0..7 ON, coils 8..15 OFF */
+    mock_lookup_arr_count = 16;
+    for (int i = 0; i < 8; i++) {
+        mock_lookup_results[i]    = CACHE_LOOKUP_FOUND;
+        mock_lookup_values_arr[i] = 1;
+    }
+    for (int i = 8; i < 16; i++) {
+        mock_lookup_results[i]    = CACHE_LOOKUP_FOUND;
+        mock_lookup_values_arr[i] = 0;
+    }
+
+    uint8_t resp_buf[512];
+    uint8_t exception_code = 0;
+
+    size_t len = cache_modbus_server_build_coil_response(
+        /*unit_id=*/1, /*fc=*/MB_FC_READ_COILS, /*transaction_id=*/htons(1),
+        /*start_addr=*/0, /*count=*/16, /*timeout=*/0,
+        resp_buf, &exception_code);
+
+    /* Total: 8 (MBAP) + 1 (coil_bytes field) + 2 (coil bytes for 16 coils) = 11 */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(11u, len,
+        "16 coils: total length must be 11");
+
+    uint8_t *payload = resp_buf + sizeof(mb_tcp_header_t);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(2u, payload[0],
+        "coil_bytes must be 2 for 16 coils");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xFFu, payload[1],
+        "coils 0..7 all ON: first coil byte must be 0xFF");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, payload[2],
+        "coils 8..15 all OFF: second coil byte must be 0x00");
+}
+
+/* ---- CMS-U-029: build_coil_response — 16 coils, first 8 OFF / last 8 ON - */
+
+/* Verify that coils 0..7=OFF, 8..15=ON produces bytes 0x00, 0xFF.
+ * Catches bit index error (i%8) placing bits in wrong byte position. */
+void test_build_coil_response_16_coils_first_off_second_on(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-029: build_coil_response 16 coils, first 8 OFF / second 8 ON");
+    LOG_MESSAGE();
+
+    /* Array mode: coils 0..7 OFF, coils 8..15 ON */
+    mock_lookup_arr_count = 16;
+    for (int i = 0; i < 8; i++) {
+        mock_lookup_results[i]    = CACHE_LOOKUP_FOUND;
+        mock_lookup_values_arr[i] = 0;
+    }
+    for (int i = 8; i < 16; i++) {
+        mock_lookup_results[i]    = CACHE_LOOKUP_FOUND;
+        mock_lookup_values_arr[i] = 1;
+    }
+
+    uint8_t resp_buf[512];
+    uint8_t exception_code = 0;
+
+    size_t len = cache_modbus_server_build_coil_response(
+        1, MB_FC_READ_COILS, htons(1), 0, 16, 0, resp_buf, &exception_code);
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(11u, len,
+        "16 coils: total length must be 11");
+
+    uint8_t *payload = resp_buf + sizeof(mb_tcp_header_t);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(2u, payload[0],
+        "coil_bytes must be 2 for 16 coils");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, payload[1],
+        "coils 0..7 all OFF: first coil byte must be 0x00");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xFFu, payload[2],
+        "coils 8..15 all ON: second coil byte must be 0xFF");
+}
+
+/* ---- CMS-U-030: build_coil_response — partial last byte (count=15 all ON) */
+
+/* Verify that count=15 all ON coils produce coil_bytes=2, byte[0]=0xFF,
+ * byte[1]=0x7F (7 low bits set; bit 7 of last byte must NOT be set).
+ * Catches surplus high bits set in partial last byte. */
+void test_build_coil_response_partial_last_byte(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-030: build_coil_response count=15 all ON, partial last byte");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 1; /* all coils ON */
+
+    uint8_t resp_buf[512];
+    uint8_t exception_code = 0;
+
+    size_t len = cache_modbus_server_build_coil_response(
+        1, MB_FC_READ_COILS, htons(1), 0, 15, 0, resp_buf, &exception_code);
+
+    /* Total: 8 + 1 (coil_bytes field) + 2 (ceil(15/8)=2 bytes) = 11 */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(11u, len,
+        "count=15: total length must be 11");
+
+    uint8_t *payload = resp_buf + sizeof(mb_tcp_header_t);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(2u, payload[0],
+        "coil_bytes must be 2 for count=15");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xFFu, payload[1],
+        "coils 0..7 all ON: first byte must be 0xFF");
+    /* Coils 8..14 set (7 bits) → 0x7F; bit 7 must NOT be set (coil 15 doesn't exist) */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x7Fu, payload[2],
+        "coils 8..14 ON (7 bits): second byte must be 0x7F, bit7 must NOT be set");
+}
+
+/* ---- CMS-U-031: build_coil_response — STALE on second coil → exception --- */
+
+/* Verify that a 2-coil request where coil[0]=FOUND and coil[1]=STALE returns 0
+ * with exception_code=0x0B (MB_EX_GW_TARGET_FAILED). */
+void test_build_coil_response_stale_on_second_coil(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-031: build_coil_response STALE on second coil → exception 0x0B");
+    LOG_MESSAGE();
+
+    /* Array mode: first coil FOUND, second coil STALE */
+    mock_lookup_arr_count     = 2;
+    mock_lookup_results[0]    = CACHE_LOOKUP_FOUND;
+    mock_lookup_values_arr[0] = 1;
+    mock_lookup_results[1]    = CACHE_LOOKUP_STALE;
+    mock_lookup_values_arr[1] = 0;
+
+    uint8_t resp_buf[512];
+    uint8_t exception_code = 0xFF; /* sentinel */
+
+    size_t len = cache_modbus_server_build_coil_response(
+        1, MB_FC_READ_COILS, htons(1), 0, 2, 0, resp_buf, &exception_code);
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, len,
+        "STALE on second coil: builder must return 0");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_GW_TARGET_FAILED, exception_code,
+        "STALE on second coil: exception_code must be 0x0B (GW_TARGET_FAILED)");
+}
+
+/* ---- CMS-U-032: build_register_response — zero value is NOT treated as failure */
+
+/* Verify that a successful lookup returning value=0x0000 produces a valid
+ * response (len > 0) with both data bytes set to 0x00.
+ * Catches misuse of value==0 as a sentinel for lookup failure. */
+void test_build_register_response_zero_value(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-032: build_register_response value=0x0000 is valid response");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x0000;
+
+    uint8_t resp_buf[512];
+    uint8_t exception_code = 0xFF; /* sentinel */
+
+    size_t len = cache_modbus_server_build_register_response(
+        1, MB_FC_READ_HOLDING_REGS, htons(1), 0, 1, 0, resp_buf, &exception_code);
+
+    TEST_ASSERT_MESSAGE(len > 0u, "value=0x0000: builder must return non-zero length");
+
+    uint8_t *payload = resp_buf + sizeof(mb_tcp_header_t);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, payload[1],
+        "value=0x0000: register high byte must be 0x00");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, payload[2],
+        "value=0x0000: register low byte must be 0x00");
+}
+
+/* ---- CMS-U-033: FC04 count validation (same limits as FC03) --------------- */
+
+/* Verify that FC04 applies the same count limits as FC03:
+ * count=0 and count=126 → exception 0x03; count=125 → success. */
+void test_cache_modbus_server_fc04_count_validation(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-033: FC04 count validation (count=0 and count=126 → 0x03; count=125 → success)");
+    LOG_MESSAGE();
+
+    uint8_t buf[12];
+
+    /* Sub-test A: FC04 count=0 → exception 0x03 */
+    build_request(buf, 0x0001, 1, MB_FC_READ_INPUT_REGS, 0, 0);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC04 count=0: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_INPUT_REGS | 0x80u),
+        mock_tcp_send_buf[7], "FC04 count=0: exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[8],
+        "FC04 count=0: exception code must be 0x03 (ILLEGAL_DATA_VALUE)");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test B: FC04 count=126 (> MB_MAX_REGISTERS=125) → exception 0x03 */
+    build_request(buf, 0x0002, 1, MB_FC_READ_INPUT_REGS, 0, 126);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC04 count=126: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_INPUT_REGS | 0x80u),
+        mock_tcp_send_buf[7], "FC04 count=126: exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[8],
+        "FC04 count=126: exception code must be 0x03 (ILLEGAL_DATA_VALUE)");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test C: FC04 count=125 (valid) → success response */
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x1234;
+    build_request(buf, 0x0003, 1, MB_FC_READ_INPUT_REGS, 0, 125);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC04 count=125: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_FC_READ_INPUT_REGS, mock_tcp_send_buf[7],
+        "FC04 count=125: no exception, FC must be 0x04 without 0x80");
+    /* Response length: 8 (MBAP) + 1 (byte_count field) + 125*2 = 259 bytes */
+    TEST_ASSERT_EQUAL_size_t(259u, mock_tcp_send_len);
+    /* byte_count field = 125*2 = 250 */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(250u, mock_tcp_send_buf[8],
+        "FC04 count=125: byte_count field must be 250");
+}
+
+/* ---- CMS-U-034: FC02 count validation (same limits as FC01) --------------- */
+
+/* Verify that FC02 applies the same count limits as FC01:
+ * count=0 and count=2001 → exception 0x03; count=2000 → success. */
+void test_cache_modbus_server_fc02_count_validation(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-034: FC02 count validation (count=0 and count=2001 → 0x03; count=2000 → success)");
+    LOG_MESSAGE();
+
+    uint8_t buf[12];
+
+    /* Sub-test A: FC02 count=0 → exception 0x03 */
+    build_request(buf, 0x0001, 1, MB_FC_READ_DISCRETE_INPUTS, 0, 0);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC02 count=0: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_DISCRETE_INPUTS | 0x80u),
+        mock_tcp_send_buf[7], "FC02 count=0: exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[8],
+        "FC02 count=0: exception code must be 0x03 (ILLEGAL_DATA_VALUE)");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test B: FC02 count=2001 (> MB_MAX_COILS=2000) → exception 0x03 */
+    build_request(buf, 0x0002, 1, MB_FC_READ_DISCRETE_INPUTS, 0, 2001);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC02 count=2001: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_DISCRETE_INPUTS | 0x80u),
+        mock_tcp_send_buf[7], "FC02 count=2001: exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[8],
+        "FC02 count=2001: exception code must be 0x03 (ILLEGAL_DATA_VALUE)");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test C: FC02 count=2000 (valid, == MB_MAX_COILS) → success response */
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0;
+    build_request(buf, 0x0003, 1, MB_FC_READ_DISCRETE_INPUTS, 0, 2000);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC02 count=2000: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_FC_READ_DISCRETE_INPUTS, mock_tcp_send_buf[7],
+        "FC02 count=2000: no exception, FC must be 0x02 without 0x80");
+    /* Response length = 8 (MBAP) + 1 (coil_bytes field) + ceil(2000/8)=250 = 259 */
+    TEST_ASSERT_EQUAL_size_t(259u, mock_tcp_send_len);
+}
+
+/* ---- CMS-U-035: process_data_from_tcp — value_timeout_s forwarded -------- */
+
+/* Verify that value_timeout_s read from setting_items is forwarded verbatim
+ * to cache_multimaster_lookup(). */
+void test_cache_modbus_server_timeout_forwarded(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-035: process_data_from_tcp value_timeout_s forwarded to lookup");
+    LOG_MESSAGE();
+
+    /* Set the timeout that setting_items_read_int() will return */
+    mock_setting_items_set_timeout(30);
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x1234;
+
+    uint8_t buf[12];
+    build_request(buf, 0x0001, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "timeout forwarded: send must be called once for success");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(30u, mock_lookup_last_timeout,
+        "timeout from setting_items must be forwarded verbatim to lookup");
+}
+
+/* ---- CMS-U-036: FC01 NOT_FOUND end-to-end sends exception 0x02 ----------- */
+
+/* Verify that a coil NOT_FOUND propagates through process_data_from_tcp to
+ * send_exception with code 0x02 (MB_EX_ILLEGAL_ADDRESS). */
+void test_cache_modbus_server_fc01_not_found_end_to_end(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-036: FC01 NOT_FOUND end-to-end sends exception 0x02");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_NOT_FOUND;
+
+    uint8_t buf[12];
+    build_request(buf, 0x0001, 1, MB_FC_READ_COILS, 0, 1);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC01 NOT_FOUND: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_COILS | 0x80u),
+        mock_tcp_send_buf[7],
+        "FC01 NOT_FOUND: exception FC must be 0x01|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_ADDRESS, mock_tcp_send_buf[8],
+        "FC01 NOT_FOUND: exception code must be 0x02 (ILLEGAL_ADDRESS)");
+}
+
+/* ---- CMS-U-037: FC02 STALE end-to-end sends exception 0x0B --------------- */
+
+/* Verify that a coil STALE propagates through process_data_from_tcp to
+ * send_exception with code 0x0B (MB_EX_GW_TARGET_FAILED). */
+void test_cache_modbus_server_fc02_stale_end_to_end(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-037: FC02 STALE end-to-end sends exception 0x0B");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_STALE;
+
+    uint8_t buf[12];
+    build_request(buf, 0x0001, 1, MB_FC_READ_DISCRETE_INPUTS, 0, 1);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC02 STALE: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_DISCRETE_INPUTS | 0x80u),
+        mock_tcp_send_buf[7],
+        "FC02 STALE: exception FC must be 0x02|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_GW_TARGET_FAILED, mock_tcp_send_buf[8],
+        "FC02 STALE: exception code must be 0x0B (GW_TARGET_FAILED)");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -1102,6 +1500,18 @@ int main(void)
     RUN_TEST(test_cache_modbus_server_mbap_echo_in_success_response);
     RUN_TEST(test_cache_modbus_server_address_boundary);
     RUN_TEST(test_cache_modbus_server_exception_format);
+
+    RUN_TEST(test_build_register_response_max_count);
+    RUN_TEST(test_build_coil_response_16_coils_first_on_second_off);
+    RUN_TEST(test_build_coil_response_16_coils_first_off_second_on);
+    RUN_TEST(test_build_coil_response_partial_last_byte);
+    RUN_TEST(test_build_coil_response_stale_on_second_coil);
+    RUN_TEST(test_build_register_response_zero_value);
+    RUN_TEST(test_cache_modbus_server_fc04_count_validation);
+    RUN_TEST(test_cache_modbus_server_fc02_count_validation);
+    RUN_TEST(test_cache_modbus_server_timeout_forwarded);
+    RUN_TEST(test_cache_modbus_server_fc01_not_found_end_to_end);
+    RUN_TEST(test_cache_modbus_server_fc02_stale_end_to_end);
 
     return UNITY_END();
 }
