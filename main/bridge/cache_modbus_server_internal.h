@@ -44,3 +44,21 @@ size_t cache_modbus_server_build_coil_response(
     uint8_t unit_id, uint8_t fc, uint16_t transaction_id,
     uint16_t start_addr, uint16_t count, uint16_t value_timeout_s,
     uint8_t *resp_buf, uint8_t *exception_code_out);
+
+#ifdef __unittest_env__
+#include "tcp_desc.h"
+
+/**
+ * @brief Test entry point for process_data_from_tcp().
+ *
+ * Allows unit tests to invoke the static callback directly without a running
+ * TCP server.  Available only when __unittest_env__ is defined.
+ *
+ * @param desc        tcp_desc handle (may be NULL in tests — mocked tcp_server_send ignores it).
+ * @param client_sock Client socket file descriptor (any value in tests).
+ * @param data        Raw request bytes.
+ * @param len         Number of bytes in data.
+ */
+void cache_modbus_server_test_process(tcp_desc_t *desc, int client_sock,
+                                       uint8_t *data, size_t len);
+#endif /* __unittest_env__ */

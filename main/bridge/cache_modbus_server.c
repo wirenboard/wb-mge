@@ -350,3 +350,12 @@ int cache_modbus_server_get_port(void)
 {
     return s_port;
 }
+
+#ifdef __unittest_env__
+/* Thin shim exposing the static callback for unit tests. */
+void cache_modbus_server_test_process(tcp_desc_t *desc, int client_sock,
+                                       uint8_t *data, size_t len)
+{
+    process_data_from_tcp(desc, client_sock, data, len);
+}
+#endif /* __unittest_env__ */

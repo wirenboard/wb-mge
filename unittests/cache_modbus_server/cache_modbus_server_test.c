@@ -11,6 +11,10 @@
 
 #include "cache_modbus_server_internal.h"
 
+/* Test shim: exposes the static process_data_from_tcp() for unit tests */
+void cache_modbus_server_test_process(tcp_desc_t *desc, int client_sock,
+                                       uint8_t *data, size_t len);
+
 /* ---- Mock state variables exposed by mocks/cache_multimaster.c ----------- */
 
 extern cache_lookup_result_t mock_lookup_result;
@@ -42,6 +46,11 @@ extern size_t  mock_tcp_send_len;
 extern int     mock_tcp_send_called;
 
 void mock_tcp_server_reset(void);
+
+/* ---- Forward declaration for build_request() helper ---------------------- */
+
+static void build_request(uint8_t *buf, uint16_t txid, uint8_t unit_id, uint8_t fc,
+                           uint16_t start, uint16_t count);
 
 /* ---- Modbus constants (duplicated from cache_modbus_server.c) ------------ */
 
@@ -438,12 +447,14 @@ void test_build_register_response_stale(void)
         "exception_code must be 0x0B (GW_TARGET_FAILED) for STALE");
 }
 
-/* ---- CMS-U-006b: coil lookup returns NOT_FOUND -------------------------- */
+/* ---- CMS-U-005c: coil lookup returns NOT_FOUND -------------------------- */
 
+/* Verify that a NOT_FOUND lookup on a coil causes the builder to return 0 with
+ * exception_code set to 0x02 (MB_EX_ILLEGAL_ADDRESS). */
 void test_build_coil_response_not_found(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-006b: coil NOT_FOUND → exception 0x02");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-005c: coil NOT_FOUND → exception 0x02");
     LOG_MESSAGE();
 
     mock_lookup_result = CACHE_LOOKUP_NOT_FOUND;
@@ -659,6 +670,376 @@ void test_register_response_lookup_address_increments(void)
         "last lookup address must be start_addr + count - 1");
 }
 
+/* ---- CMS-U-007b: cache disabled → exception 0x02 for any FC -------------- */
+
+/* Verify that when cache_multimaster_is_enabled() returns false, all supported
+ * function codes return exception 0x02 (ILLEGAL_ADDRESS). */
+void test_cache_modbus_server_cache_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-007b: cache disabled → exception 0x02 for any FC");
+    LOG_MESSAGE();
+
+    mock_cache_enabled = false;
+
+    uint8_t buf[12];
+    uint8_t fcs[] = { MB_FC_READ_HOLDING_REGS, MB_FC_READ_INPUT_REGS,
+                      MB_FC_READ_COILS, MB_FC_READ_DISCRETE_INPUTS };
+
+    for (size_t i = 0; i < sizeof(fcs) / sizeof(fcs[0]); i++) {
+        build_request(buf, 0x0001, 1, fcs[i], 0, 1);
+        cache_modbus_server_test_process(NULL, 1, buf, 12);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+            "cache disabled: send must be called once");
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(fcs[i] | 0x80u), mock_tcp_send_buf[7],
+            "cache disabled: exception FC must be FC|0x80");
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x02u, mock_tcp_send_buf[8],
+            "cache disabled: exception code must be 0x02 (ILLEGAL_ADDRESS)");
+
+        mock_tcp_server_reset();
+        /* keep mock_cache_enabled = false across iterations */
+    }
+}
+
+/* ---- CMS-U-008: invalid MBAP framing → no response sent ------------------ */
+
+/* Verify that invalid MBAP framing (wrong protocol_id or length mismatch)
+ * causes process_data_from_tcp() to silently drop the request without sending
+ * any response. */
+void test_cache_modbus_server_invalid_mbap_framing(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-008: invalid MBAP framing → no response");
+    LOG_MESSAGE();
+
+    uint8_t buf[12];
+
+    /* Sub-test A: protocol_id != 0 → no response */
+    build_request(buf, 0x0001, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    buf[2] = 0x00;
+    buf[3] = 0x01; /* protocol_id = 1 (invalid; must be 0) */
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_send_called,
+        "invalid protocol_id: no response must be sent");
+
+    mock_tcp_server_reset();
+
+    /* Sub-test B: MBAP length field mismatches actual packet length → no response.
+     * Build a 12-byte packet but set length=7 → req_packet_len = 7+6 = 13 ≠ 12. */
+    build_request(buf, 0x0002, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    buf[4] = 0x00;
+    buf[5] = 0x07; /* length = 7, but packet is 12 bytes → 7+6=13 ≠ 12 */
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_send_called,
+        "MBAP length mismatch: no response must be sent");
+}
+
+/* ---- CMS-U-009: MBAP echo in successful response ------------------------- */
+
+/* Verify that a successful FC03 response echoes transaction_id and unit_id,
+ * sets protocol_id = 0x0000, and leaves FC without the 0x80 exception flag. */
+void test_cache_modbus_server_mbap_echo_in_success_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-009: MBAP echo in success response");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x5678;
+
+    uint8_t buf[12];
+    /* Use non-trivial transaction_id 0xA1B2 and unit_id 0x12 */
+    build_request(buf, 0xA1B2, 0x12, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "MBAP echo: send must be called once for successful response");
+
+    /* transaction_id echoed (network byte order: 0xA1B2 → bytes 0xA1, 0xB2) */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xA1u, mock_tcp_send_buf[0],
+        "transaction_id hi must be echoed as 0xA1");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xB2u, mock_tcp_send_buf[1],
+        "transaction_id lo must be echoed as 0xB2");
+
+    /* protocol_id must be 0x0000 */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, mock_tcp_send_buf[2],
+        "protocol_id hi must be 0");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, mock_tcp_send_buf[3],
+        "protocol_id lo must be 0");
+
+    /* unit_id echoed */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x12u, mock_tcp_send_buf[6],
+        "unit_id must be echoed as 0x12");
+
+    /* FC in normal response must NOT have 0x80 set */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_FC_READ_HOLDING_REGS, mock_tcp_send_buf[7],
+        "FC in success response must be 0x03 without 0x80 exception flag");
+}
+
+/* ---- CMS-U-012: address overflow at uint16 boundary ---------------------- */
+
+/* Verify that start_addr=0xFFFF and start_addr=0xFFFE with count=2 do not
+ * cause uint16 overflow in the address passed to cache_multimaster_lookup(). */
+void test_cache_modbus_server_address_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-012: address boundary 0xFFFF no overflow");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0xDEAD;
+
+    uint8_t resp_buf[512];
+    uint8_t exception_code = 0;
+
+    /* Sub-test A: start_addr=0xFFFF, count=1 → lookup called with address 0xFFFF */
+    cache_modbus_server_build_register_response(
+        1, MB_FC_READ_HOLDING_REGS, htons(1), 0xFFFF, 1, 0, resp_buf, &exception_code);
+
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, mock_lookup_last_address,
+        "start_addr=0xFFFF, count=1: lookup address must be 0xFFFF");
+
+    /* Sub-test B: start_addr=0xFFFE, count=2 → lookups at 0xFFFE then 0xFFFF */
+    mock_lookup_arr_count     = 2;
+    mock_lookup_results[0]    = CACHE_LOOKUP_FOUND;
+    mock_lookup_values_arr[0] = 0x0001;
+    mock_lookup_results[1]    = CACHE_LOOKUP_FOUND;
+    mock_lookup_values_arr[1] = 0x0002;
+
+    exception_code = 0;
+    cache_modbus_server_build_register_response(
+        1, MB_FC_READ_HOLDING_REGS, htons(2), 0xFFFE, 2, 0, resp_buf, &exception_code);
+
+    /* Last lookup must be for 0xFFFF (= 0xFFFE + 1), not 0x0000 (overflow) */
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, mock_lookup_last_address,
+        "start_addr=0xFFFE, count=2: second lookup address must be 0xFFFF (no overflow)");
+}
+
+/* ---- Helper: build a standard 12-byte Modbus TCP request packet ---------- */
+
+static void build_request(uint8_t *buf, uint16_t txid, uint8_t unit_id, uint8_t fc,
+                           uint16_t start, uint16_t count)
+{
+    buf[0]  = (uint8_t)(txid >> 8);
+    buf[1]  = (uint8_t)(txid & 0xFF);
+    buf[2]  = 0x00;  /* protocol_id hi */
+    buf[3]  = 0x00;  /* protocol_id lo */
+    buf[4]  = 0x00;  /* length hi */
+    buf[5]  = 0x06;  /* length lo = 6 */
+    buf[6]  = unit_id;
+    buf[7]  = fc;
+    buf[8]  = (uint8_t)(start >> 8);
+    buf[9]  = (uint8_t)(start & 0xFF);
+    buf[10] = (uint8_t)(count >> 8);
+    buf[11] = (uint8_t)(count & 0xFF);
+}
+
+/* ---- CMS-U-003: count validation (FC03 and FC01) ------------------------- */
+
+/* Verify that count=0 and out-of-range counts trigger exception 0x03
+ * (ILLEGAL_DATA_VALUE), while boundary-valid counts are accepted. */
+void test_cache_modbus_server_count_validation(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-003: count validation for FC03 and FC01");
+    LOG_MESSAGE();
+
+    uint8_t buf[12];
+
+    /* Sub-test: FC03 count=0 → exception 0x03 */
+    build_request(buf, 0x0001, 1, MB_FC_READ_HOLDING_REGS, 0, 0);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC03 count=0: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_HOLDING_REGS | 0x80u),
+        mock_tcp_send_buf[7], "FC03 count=0: exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[8],
+        "FC03 count=0: exception code must be 0x03 (ILLEGAL_DATA_VALUE)");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test: FC03 count=126 (> MB_MAX_REGISTERS=125) → exception 0x03 */
+    build_request(buf, 0x0002, 1, MB_FC_READ_HOLDING_REGS, 0, 126);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC03 count=126: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_HOLDING_REGS | 0x80u),
+        mock_tcp_send_buf[7], "FC03 count=126: exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[8],
+        "FC03 count=126: exception code must be 0x03 (ILLEGAL_DATA_VALUE)");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test: FC03 count=125 (== MB_MAX_REGISTERS, valid) → success response */
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x1234;
+    build_request(buf, 0x0003, 1, MB_FC_READ_HOLDING_REGS, 0, 125);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC03 count=125: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_FC_READ_HOLDING_REGS, mock_tcp_send_buf[7],
+        "FC03 count=125: no exception, FC must be 0x03 without 0x80");
+    /* Response length = 8 (MBAP) + 1 (byte_count field) + 125*2 = 259 bytes */
+    TEST_ASSERT_EQUAL_size_t(259u, mock_tcp_send_len);
+    /* byte_count field = 125*2 = 250 */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(250u, mock_tcp_send_buf[8],
+        "FC03 count=125: byte_count field must be 250");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test: FC01 count=0 → exception 0x03 */
+    build_request(buf, 0x0004, 1, MB_FC_READ_COILS, 0, 0);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC01 count=0: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_COILS | 0x80u),
+        mock_tcp_send_buf[7], "FC01 count=0: exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[8],
+        "FC01 count=0: exception code must be 0x03 (ILLEGAL_DATA_VALUE)");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test: FC01 count=2001 (> MB_MAX_COILS=2000) → exception 0x03 */
+    build_request(buf, 0x0005, 1, MB_FC_READ_COILS, 0, 2001);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC01 count=2001: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_COILS | 0x80u),
+        mock_tcp_send_buf[7], "FC01 count=2001: exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[8],
+        "FC01 count=2001: exception code must be 0x03 (ILLEGAL_DATA_VALUE)");
+
+    mock_cache_multimaster_reset();
+    mock_tcp_server_reset();
+
+    /* Sub-test: FC01 count=2000 (== MB_MAX_COILS, valid) → success response */
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0;
+    build_request(buf, 0x0006, 1, MB_FC_READ_COILS, 0, 2000);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "FC01 count=2000: send must be called once");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_FC_READ_COILS, mock_tcp_send_buf[7],
+        "FC01 count=2000: no exception, FC must be 0x01 without 0x80");
+    /* Response length = 8 (MBAP) + 1 (coil_bytes field) + ceil(2000/8)=250 = 259 */
+    TEST_ASSERT_EQUAL_size_t(259u, mock_tcp_send_len);
+    /* coil_bytes field = ceil(2000/8) = 250 */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(250u, mock_tcp_send_buf[8],
+        "FC01 count=2000: coil_bytes field must be 250");
+}
+
+/* ---- CMS-U-004: unsupported FC codes → exception 0x01 ------------------- */
+
+/* Verify that unsupported function codes result in exception 0x01
+ * (ILLEGAL_FUNCTION). */
+void test_cache_modbus_server_unsupported_fc(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-004: unsupported FC codes → exception 0x01");
+    LOG_MESSAGE();
+
+    uint8_t buf[12];
+    uint8_t unsupported_fcs[] = { 0x05, 0x06, 0x00, 0xFF };
+
+    for (size_t i = 0; i < sizeof(unsupported_fcs) / sizeof(unsupported_fcs[0]); i++) {
+        uint8_t fc = unsupported_fcs[i];
+        build_request(buf, 0x0001, 1, fc, 0, 1);
+        cache_modbus_server_test_process(NULL, 1, buf, 12);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+            "unsupported FC: send must be called once");
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(fc | 0x80u), mock_tcp_send_buf[7],
+            "unsupported FC: exception FC must be FC|0x80");
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x01u, mock_tcp_send_buf[8],
+            "unsupported FC: exception code must be 0x01 (ILLEGAL_FUNCTION)");
+
+        mock_tcp_server_reset();
+    }
+}
+
+/* ---- CMS-U-007: short and truncated packets are handled without crash ----- */
+
+/* Verify that short/malformed packets are safely rejected. */
+void test_cache_modbus_server_short_null_packets(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-007: short/truncated packets handled safely");
+    LOG_MESSAGE();
+
+    /* Sub-test A: packet < sizeof(mb_tcp_header_t)=8 bytes — no response sent */
+    uint8_t short_buf[7] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x01 };
+    cache_modbus_server_test_process(NULL, 1, short_buf, 7);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_send_called,
+        "packet < 8 bytes: no response must be sent");
+
+    mock_tcp_server_reset();
+
+    /* Sub-test B: valid MBAP framing but PDU too short (only 1 byte after header).
+     * Packet: [0x00,0x01, 0x00,0x00, 0x00,0x03, 0x01, 0x03, 0x00] (9 bytes)
+     *   - length field = 3 → req_packet_len = 3+6 = 9 = len ✓ (framing OK)
+     *   - fc = 0x03 (supported)
+     *   - but len=9 < sizeof(mb_tcp_header_t)+4=12 → exception 0x01 */
+    uint8_t pdu_short_buf[9] = { 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x01, 0x03, 0x00 };
+    cache_modbus_server_test_process(NULL, 1, pdu_short_buf, 9);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "PDU-too-short packet: send must be called once with exception");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x01u, mock_tcp_send_buf[8],
+        "PDU-too-short packet: exception code must be 0x01 (ILLEGAL_FUNCTION)");
+}
+
+/* ---- CMS-U-011: exception response format ------------------------------- */
+
+/* Verify that the exception response format is correct:
+ * FC|0x80 set, MBAP length=htons(3), exception byte at position 8,
+ * transaction_id and unit_id echoed. */
+void test_cache_modbus_server_exception_format(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-011: exception response format");
+    LOG_MESSAGE();
+
+    /* NOT_FOUND → exception 0x02 (ILLEGAL_ADDRESS) */
+    mock_lookup_result = CACHE_LOOKUP_NOT_FOUND;
+
+    uint8_t buf[12];
+    build_request(buf, 0xABCD, 0x07, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 42, buf, 12);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "exception format: send must be called once");
+    /* Exception response: sizeof(mb_tcp_header_t)=8 + 1 exception byte = 9 */
+    TEST_ASSERT_EQUAL_size_t(9u, mock_tcp_send_len);
+
+    /* MBAP header fields */
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xABu, mock_tcp_send_buf[0],
+        "transaction_id hi must be echoed as 0xAB");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xCDu, mock_tcp_send_buf[1],
+        "transaction_id lo must be echoed as 0xCD");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, mock_tcp_send_buf[2],
+        "protocol_id hi must be 0");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, mock_tcp_send_buf[3],
+        "protocol_id lo must be 0");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x00u, mock_tcp_send_buf[4],
+        "MBAP length hi must be 0");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x03u, mock_tcp_send_buf[5],
+        "MBAP length lo must be 3");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x07u, mock_tcp_send_buf[6],
+        "unit_id must be echoed as 0x07");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE((uint8_t)(MB_FC_READ_HOLDING_REGS | 0x80u),
+        mock_tcp_send_buf[7], "exception FC must be FC|0x80");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_ADDRESS, mock_tcp_send_buf[8],
+        "exception code must be 0x02 (ILLEGAL_ADDRESS) for NOT_FOUND");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -688,6 +1069,15 @@ int main(void)
     RUN_TEST(test_coil_response_timeout_passed_to_lookup);
     RUN_TEST(test_register_response_lookup_args);
     RUN_TEST(test_register_response_lookup_address_increments);
+
+    RUN_TEST(test_cache_modbus_server_count_validation);
+    RUN_TEST(test_cache_modbus_server_unsupported_fc);
+    RUN_TEST(test_cache_modbus_server_short_null_packets);
+    RUN_TEST(test_cache_modbus_server_cache_disabled);
+    RUN_TEST(test_cache_modbus_server_invalid_mbap_framing);
+    RUN_TEST(test_cache_modbus_server_mbap_echo_in_success_response);
+    RUN_TEST(test_cache_modbus_server_address_boundary);
+    RUN_TEST(test_cache_modbus_server_exception_format);
 
     return UNITY_END();
 }
