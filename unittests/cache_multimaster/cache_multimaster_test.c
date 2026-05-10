@@ -239,6 +239,92 @@ void test_cache_multimaster_enable_oom(void)
     verify_malloc_tracking(0, 0);
 }
 
+/* ---- CM-U-005: cache_multimaster_enable() called twice -------------------- */
+
+/* Verify that calling cache_multimaster_enable() twice:
+ *   - allocates memory only once (pool already exists on second call)
+ *   - creates the aging task only once (task already exists on second call)
+ *   - clears the pool on each call (memset to 0), so a previously cached entry
+ *     becomes NOT_FOUND after the second enable
+ *   - resets stats on each call
+ *   - leaves cache_multimaster_is_enabled() == true */
+void test_cache_multimaster_enable_twice(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-005: cache_multimaster_enable called twice");
+    LOG_MESSAGE();
+
+    /* Pre-condition: successful init */
+    esp_err_t init_result = cache_multimaster_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        init_result,
+        "Pre-condition: cache_multimaster_init should succeed"
+    );
+
+    /* First enable: pool is allocated, task is created */
+    cache_multimaster_enable();
+    TEST_ASSERT_TRUE_MESSAGE(
+        cache_multimaster_is_enabled(),
+        "Cache must be enabled after first enable()"
+    );
+
+    /* Store a register: slave 10, FC03, address 0, value 0xABCD */
+    cache_multimaster_on_request(0, 10, 3, 0, 1);
+    uint8_t data[] = {
+        10,             /* [0] slave_id */
+        0x03,           /* [1] FC */
+        2,              /* [2] byte_count (1 reg × 2 bytes) */
+        0xAB, 0xCD      /* reg 0: 0xABCD */
+    };
+    cache_multimaster_on_response(0, 10, 3, data, sizeof(data), 0);
+
+    /* Verify entry is FOUND before second enable */
+    uint16_t val = 0;
+    cache_lookup_result_t r = cache_multimaster_lookup(10, 3, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_FOUND,
+        r,
+        "Entry must be FOUND after first enable and store"
+    );
+
+    /* Second enable: pool is NOT re-allocated (reuses existing), task is NOT re-created,
+     * but pool IS cleared via memset(s_pool, 0, ...) */
+    cache_multimaster_enable();
+
+    /* Cache must still be enabled after second enable */
+    TEST_ASSERT_TRUE_MESSAGE(
+        cache_multimaster_is_enabled(),
+        "Cache must be enabled after second enable()"
+    );
+
+    /* Assert: only 1 allocation total (pool was not freed and re-allocated) */
+    verify_malloc_tracking(1, 0);
+
+    /* Assert: mutex is balanced after both enable() calls — no mutex leak */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        mock_xSemaphoreGive_called,
+        mock_xSemaphoreTake_called,
+        "Mutex give count must equal take count after two enable() calls"
+    );
+
+    /* Assert: xTaskCreate called only once (task not re-created on second enable) */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        1,
+        mock_xTaskCreate_data.called,
+        "xTaskCreate should be called only once even after two enable() calls"
+    );
+
+    /* Assert: pool was cleared — the previously cached entry must now be NOT_FOUND */
+    val = 0xDEAD;
+    r = cache_multimaster_lookup(10, 3, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_NOT_FOUND,
+        r,
+        "Entry must be NOT_FOUND after second enable() clears the pool"
+    );
+}
+
 /* ---- CM-U-006: cache_multimaster_disable() -------------------------------- */
 
 /* Verify that cache_multimaster_disable() after enable():
@@ -304,6 +390,102 @@ void test_cache_multimaster_disable(void)
         "xTaskCreate should be called a second time after re-enable (pool was freed)"
     );
     verify_malloc_tracking(2, 1);
+}
+
+/* ---- CM-U-007: cache_multimaster_clear() with NULL mutex ------------------ */
+
+/* Verify that cache_multimaster_clear() does not crash when called before
+ * cache_multimaster_init() (so s_cache_mutex is NULL). The function must
+ * return silently without any observable side effects. */
+void test_cache_multimaster_clear_null_mutex(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-007: cache_multimaster_clear with NULL mutex");
+    LOG_MESSAGE();
+
+    /* Pre-condition: cache_multimaster_test_reset() was called in setUp(), so
+     * s_cache_mutex is NULL and s_pool is NULL. Do NOT call init() here. */
+
+    /* Act: must not crash even with NULL mutex */
+    cache_multimaster_clear();
+
+    /* Verify the early return fired: no mutex operations should have occurred */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called,
+        "clear() with NULL mutex must not take the semaphore");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreGive_called,
+        "clear() with NULL mutex must not give the semaphore");
+}
+
+/* ---- CM-U-008: cache_multimaster_clear() with pool ----------------------- */
+
+/* Verify that cache_multimaster_clear() after init + enable:
+ *   - removes all cached entries (lookup returns NOT_FOUND after clear)
+ *   - resets s_pending (both ports valid=false after clear)
+ *   - releases the mutex properly (give count == take count) */
+void test_cache_multimaster_clear_with_pool(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-008: cache_multimaster_clear with pool");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store an entry: slave 30, FC03, address 0, value 0x5678 */
+    cache_multimaster_on_request(0, 30, 3, 0, 1);
+    uint8_t data[] = {
+        30,             /* [0] slave_id */
+        0x03,           /* [1] FC */
+        2,              /* [2] byte_count (1 reg × 2 bytes) */
+        0x56, 0x78      /* reg 0: 0x5678 */
+    };
+    cache_multimaster_on_response(0, 30, 3, data, sizeof(data), 0);
+
+    /* Verify entry is FOUND before clear */
+    uint16_t val = 0;
+    cache_lookup_result_t r = cache_multimaster_lookup(30, 3, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_FOUND,
+        r,
+        "Entry must be FOUND before cache_multimaster_clear()"
+    );
+
+    /* Set a pending request on port 0 to verify clear() resets it */
+    cache_multimaster_on_request(0, 30, 3, 0, 1);
+    TEST_ASSERT_TRUE_MESSAGE(
+        cache_multimaster_test_get_pending_valid(0),
+        "Pending on port 0 must be valid before clear()"
+    );
+
+    /* Act: clear the cache */
+    cache_multimaster_clear();
+
+    /* Entry must be NOT_FOUND after clear (pool was memset'd to 0) */
+    val = 0xFFFF;
+    r = cache_multimaster_lookup(30, 3, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_NOT_FOUND,
+        r,
+        "Entry must be NOT_FOUND after cache_multimaster_clear()"
+    );
+
+    /* s_pending must be fully cleared (memset to 0) by clear() */
+    TEST_ASSERT_FALSE_MESSAGE(
+        cache_multimaster_test_get_pending_valid(0),
+        "Pending port 0 must be valid=false after cache_multimaster_clear()"
+    );
+    TEST_ASSERT_FALSE_MESSAGE(
+        cache_multimaster_test_get_pending_valid(1),
+        "Pending port 1 must be valid=false after cache_multimaster_clear()"
+    );
+
+    /* Mutex must be balanced: give count == take count */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        mock_xSemaphoreGive_called,
+        mock_xSemaphoreTake_called,
+        "Mutex must be balanced after cache_multimaster_clear()"
+    );
 }
 
 /* ---- CM-U-009: cache_multimaster_on_request() OOB port ------------------- */
@@ -951,6 +1133,164 @@ void test_cache_multimaster_lookup_age_saturation_boundary(void)
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x4321, val, "value must still be 0x4321 after re-store");
 }
 
+/* ---- CM-U-022: lookup() NOT_FOUND — value_out not modified ---------------- */
+
+/* Verify that cache_multimaster_lookup() does NOT modify *value_out when the
+ * lookup returns NOT_FOUND (cache miss). The sentinel value must be preserved. */
+void test_cache_multimaster_lookup_not_found_value_unchanged(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-022: lookup NOT_FOUND: value_out not modified");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable (pool allocated, mutex valid) */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Sentinel value — must remain unchanged after a cache miss */
+    uint16_t val = 0xDEAD;
+
+    /* Lookup a slave that was never stored: slave 99, FC03, address 0 */
+    cache_lookup_result_t r = cache_multimaster_lookup(99, 3, 0, &val, 0);
+
+    /* Must return NOT_FOUND */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_NOT_FOUND,
+        r,
+        "lookup(99, 3, 0) should return NOT_FOUND for a never-stored slave"
+    );
+
+    /* value_out must be unchanged on a cache miss */
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+        0xDEAD,
+        val,
+        "value_out must not be modified when lookup returns NOT_FOUND"
+    );
+}
+
+/* ---- CM-U-023: lookup() with NULL value_out ------------------------------- */
+
+/* Verify that cache_multimaster_lookup() returns CACHE_LOOKUP_NOT_FOUND and
+ * does not crash when value_out is NULL. */
+void test_cache_multimaster_lookup_null_value_out(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-023: lookup with NULL value_out");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init only (mutex created).
+     * The NULL check fires before pool check, so enable() is not required. */
+    cache_multimaster_init();
+
+    /* Act: pass NULL as value_out — must not crash */
+    cache_lookup_result_t r = cache_multimaster_lookup(1, 3, 0, NULL, 0);
+
+    /* Must return NOT_FOUND when value_out is NULL */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_NOT_FOUND,
+        r,
+        "lookup with NULL value_out must return CACHE_LOOKUP_NOT_FOUND"
+    );
+}
+
+/* ---- CM-U-024: lookup() with unknown function code ------------------------ */
+
+/* Verify that cache_multimaster_lookup() returns NOT_FOUND and does not crash
+ * when an unknown function code is passed (not 0x01, 0x02, 0x03, or 0x04). */
+void test_cache_multimaster_lookup_unknown_fc(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-024: lookup with unknown function code");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Act: FC 0x10 is not in the switch (cases are 0x01/02/03/04),
+     * so the switch default: return CACHE_LOOKUP_NOT_FOUND */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(1, 0x10, 0, &val, 0);
+
+    /* Must return NOT_FOUND without crash */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_NOT_FOUND,
+        r,
+        "lookup with unknown FC 0x10 must return CACHE_LOOKUP_NOT_FOUND"
+    );
+
+    /* value_out must not be modified — default switch branch returns before any pool scan */
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, val,
+        "value_out must not be modified when lookup hits unknown FC (default branch)");
+}
+
+/* ---- CM-U-025: pool full — on_response() does not crash ------------------- */
+
+/* Verify that cache_multimaster_on_response() does not crash when the pool
+ * is completely full, and that:
+ *   - an over-capacity entry is dropped (lookup returns NOT_FOUND)
+ *   - existing entries in the full pool are unaffected (lookup returns FOUND) */
+void test_cache_multimaster_pool_full_no_crash(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-025: pool full: on_response does not crash");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Fill all 4096 pool slots: slave_id=1, FC03, addresses 0..4095.
+     * Each address occupies one unique pool entry.
+     * Response payload: 1 register with value 0x0001. */
+    uint8_t fill_data[5];
+    fill_data[0] = 1;       /* slave_id — not read by on_response(); slave_id is matched via parameter */
+    fill_data[1] = 0x03;    /* FC03 */
+    fill_data[2] = 2;       /* byte_count (1 reg × 2 bytes) */
+    fill_data[3] = 0x00;    /* reg value high byte */
+    fill_data[4] = 0x01;    /* reg value low byte: value = 0x0001 */
+
+    for (uint16_t addr = 0; addr < 4096; addr++) {
+        cache_multimaster_on_request(0, 1, 3, addr, 1);
+        cache_multimaster_on_response(0, 1, 3, fill_data, sizeof(fill_data), 0);
+    }
+
+    /* Attempt to add one more entry (slave_id=2, FC03, addr=0 — not in pool).
+     * The pool is full, so this entry must be dropped gracefully (no crash). */
+    uint8_t extra_data[5];
+    extra_data[0] = 2;      /* slave_id=2: different from the fill slave_id */
+    extra_data[1] = 0x03;   /* FC03 */
+    extra_data[2] = 2;      /* byte_count */
+    extra_data[3] = 0x00;
+    extra_data[4] = 0x02;   /* value = 0x0002 */
+
+    cache_multimaster_on_request(0, 2, 3, 0, 1);
+    cache_multimaster_on_response(0, 2, 3, extra_data, sizeof(extra_data), 0);
+
+    /* Over-capacity entry must be dropped: slave 2 is NOT_FOUND */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(2, 3, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_NOT_FOUND,
+        r,
+        "Over-capacity entry (slave 2) must be NOT_FOUND when pool is full"
+    );
+
+    /* Existing entries must be unaffected: slave 1, addr 0 must still be FOUND */
+    val = 0;
+    r = cache_multimaster_lookup(1, 3, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        CACHE_LOOKUP_FOUND,
+        r,
+        "Existing entry (slave 1, addr 0) must still be FOUND after pool-full drop"
+    );
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+        0x0001,
+        val,
+        "Existing entry value must still be 0x0001"
+    );
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -961,7 +1301,10 @@ int main(void)
     RUN_TEST(test_cache_multimaster_init_oom);
     RUN_TEST(test_cache_multimaster_enable_happy_path);
     RUN_TEST(test_cache_multimaster_enable_oom);
+    RUN_TEST(test_cache_multimaster_enable_twice);
     RUN_TEST(test_cache_multimaster_disable);
+    RUN_TEST(test_cache_multimaster_clear_null_mutex);
+    RUN_TEST(test_cache_multimaster_clear_with_pool);
     RUN_TEST(test_cache_multimaster_on_request_oob_port);
     RUN_TEST(test_cache_multimaster_on_request_valid);
     RUN_TEST(test_cache_multimaster_on_response_no_pending);
@@ -975,6 +1318,10 @@ int main(void)
     RUN_TEST(test_cache_multimaster_lookup_timeout_zero);
     RUN_TEST(test_cache_multimaster_lookup_age_check);
     RUN_TEST(test_cache_multimaster_lookup_age_saturation_boundary);
+    RUN_TEST(test_cache_multimaster_lookup_not_found_value_unchanged);
+    RUN_TEST(test_cache_multimaster_lookup_null_value_out);
+    RUN_TEST(test_cache_multimaster_lookup_unknown_fc);
+    RUN_TEST(test_cache_multimaster_pool_full_no_crash);
 
     return UNITY_END();
 }
