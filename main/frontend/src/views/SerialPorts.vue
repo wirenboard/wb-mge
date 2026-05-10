@@ -50,7 +50,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
               <div class="card-body">
                 <div class="field">
                   <label for="io_bus">{{ t('io_bus_enable') }}</label>
-                  <div style="justify-self: end"><Switch id="io_bus" v-model="data.io_bus" /></div>
+                  <div class="field-switch"><Switch id="io_bus" v-model="data.io_bus" /></div>
                 </div>
               </div>
             </form>
@@ -63,6 +63,9 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
 </template>
 
 <style scoped>
+.field-switch {
+  justify-self: end;
+}
 </style>
 
 <i18n>

@@ -10,6 +10,7 @@ import {
   f32str,
 } from '@/utils/packetDecoderUtils'
 import { type SniffRow } from '@/utils/snifferUtils'
+import MagnifierIcon from '@/assets/magnifierIcon.svg?component'
 
 // ============================================================
 // Props
@@ -197,10 +198,7 @@ const chunks32 = computed<Chunk32[]>(() => {
               <span :class="['tree-val', { 'tree-val-error': row.isError }]" :title="row.valueTooltip || undefined">{{ row.value }}</span>
               <!-- Magnifier icon for data fields — opens interpretation popup -->
               <span v-if="row.isDataField && leafBytes.length >= 2" class="data-icon-btn" title="Interpret data" @click.stop="showDataPopup = !showDataPopup">
-                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" style="display:block">
-                  <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.5"/>
-                  <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                </svg>
+                <MagnifierIcon class="data-icon-svg" />
               </span>
             </template>
 
@@ -238,7 +236,7 @@ const chunks32 = computed<Chunk32[]>(() => {
     <!-- Data interpretation popup (absolute positioned) -->
     <div v-if="showDataPopup && leafBytes.length >= 2" class="data-popup">
       <div class="data-popup-header">
-        <span class="pkt-col-label" style="padding:0">DATA INTERPRETATION</span>
+        <span class="pkt-col-label pkt-col-labelNoPad">DATA INTERPRETATION</span>
         <div class="bit-mode-tabs">
           <button :class="['bit-tab', { active: activeBitMode === '16' }]" @click="activeBitMode = '16'">16-bit</button>
           <button :class="['bit-tab', { active: activeBitMode === '32' }]" @click="activeBitMode = '32'">32-bit</button>
@@ -263,7 +261,7 @@ const chunks32 = computed<Chunk32[]>(() => {
 
       <!-- 32-bit endianness view -->
       <div v-if="activeBitMode === '32'" class="view32">
-        <div v-if="leafBytes.length < 4" class="muted" style="font-size:12px;padding:8px 0">Need ≥ 4 bytes for 32-bit interpretation</div>
+        <div v-if="leafBytes.length < 4" class="muted view32-empty">Need ≥ 4 bytes for 32-bit interpretation</div>
         <template v-else>
           <div class="endian-tabs">
             <button
@@ -271,7 +269,7 @@ const chunks32 = computed<Chunk32[]>(() => {
               :key="key"
               :class="['endian-tab', { active: activeEndianness === key }]"
               @click="setEndianness(key)"
-            >{{ cfg.label }} <span class="muted" style="font-size:10px">{{ cfg.desc }}</span></button>
+            >{{ cfg.label }} <span class="muted endian-tab-desc">{{ cfg.desc }}</span></button>
           </div>
           <table class="chunks32-table">
             <thead><tr><th>Bytes</th><th>Hex</th><th>UInt32</th><th>Int32</th><th>Float32</th></tr></thead>
@@ -407,6 +405,23 @@ const chunks32 = computed<Chunk32[]>(() => {
 
 .data-icon-btn:hover {
   color: var(--primary-color);
+}
+
+.data-icon-svg {
+  display: block;
+}
+
+.pkt-col-labelNoPad {
+  padding: 0;
+}
+
+.view32-empty {
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.endian-tab-desc {
+  font-size: 10px;
 }
 
 /* Hex editor */

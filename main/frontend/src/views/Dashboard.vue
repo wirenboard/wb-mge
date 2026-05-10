@@ -10,6 +10,7 @@ import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import RsStatus from '@/components/RsStatus.vue';
+import GearIcon from '@/assets/gearIcon.svg?component';
 
 const { t } = useI18n();
 const { info } = useInfo();
@@ -55,7 +56,7 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="card-title-row">
               <div class="title">{{ t('ethernet') }}</div>
               <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 1.5h-2.2l-.3 1.7a5.3 5.3 0 0 0-1.2.5l-1.4-1-1.6 1.6 1 1.4a5.3 5.3 0 0 0-.5 1.2l-1.7.3v2.2l1.7.3a5.3 5.3 0 0 0 .5 1.2l-1 1.4 1.6 1.6 1.4-1a5.3 5.3 0 0 0 1.2.5l.3 1.7h2.2l.3-1.7a5.3 5.3 0 0 0 1.2-.5l1.4 1 1.6-1.6-1-1.4a5.3 5.3 0 0 0 .5-1.2l1.7-.3v-2.2l-1.7-.3a5.3 5.3 0 0 0-.5-1.2l1-1.4-1.6-1.6-1.4 1a5.3 5.3 0 0 0-1.2-.5z"/><circle cx="8" cy="8" r="2.2"/></svg>
+                <GearIcon />
               </button>
             </div>
             <span class="pill ok" v-if="info!.ethernet.con_eth"><span class="dot" />{{ t('connected') }}</span>
@@ -78,7 +79,7 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="card-title-row">
               <div class="title">{{ t('wifi') }}</div>
               <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 1.5h-2.2l-.3 1.7a5.3 5.3 0 0 0-1.2.5l-1.4-1-1.6 1.6 1 1.4a5.3 5.3 0 0 0-.5 1.2l-1.7.3v2.2l1.7.3a5.3 5.3 0 0 0 .5 1.2l-1 1.4 1.6 1.6 1.4-1a5.3 5.3 0 0 0 1.2.5l.3 1.7h2.2l.3-1.7a5.3 5.3 0 0 0 1.2-.5l1.4 1 1.6-1.6-1-1.4a5.3 5.3 0 0 0 .5-1.2l1.7-.3v-2.2l-1.7-.3a5.3 5.3 0 0 0-.5-1.2l1-1.4-1.6-1.6-1.4 1a5.3 5.3 0 0 0-1.2-.5z"/><circle cx="8" cy="8" r="2.2"/></svg>
+                <GearIcon />
               </button>
             </div>
             <span class="pill ok" v-if="info!.wifi.enabled"><span class="dot" />{{ t('enabled') }}</span>
@@ -164,7 +165,7 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="kv">
               <div class="k">{{ t('firmware_version') }}</div>
               <div class="v firmware-row">
-                <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted" style="font-size:11.5px">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted" style="font-size:11.5px">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
+                <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted firmware-note">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted firmware-note">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
               </div>
             </div>
@@ -178,7 +179,7 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="card-title-row">
               <div class="title">RS-485 · Port 1</div>
               <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 1.5h-2.2l-.3 1.7a5.3 5.3 0 0 0-1.2.5l-1.4-1-1.6 1.6 1 1.4a5.3 5.3 0 0 0-.5 1.2l-1.7.3v2.2l1.7.3a5.3 5.3 0 0 0 .5 1.2l-1 1.4 1.6 1.6 1.4-1a5.3 5.3 0 0 0 1.2.5l.3 1.7h2.2l.3-1.7a5.3 5.3 0 0 0 1.2-.5l1.4 1 1.6-1.6-1-1.4a5.3 5.3 0 0 0 .5-1.2l1.7-.3v-2.2l-1.7-.3a5.3 5.3 0 0 0-.5-1.2l1-1.4-1.6-1.6-1.4 1a5.3 5.3 0 0 0-1.2-.5z"/><circle cx="8" cy="8" r="2.2"/></svg>
+                <GearIcon />
               </button>
             </div>
             <span class="pill ok" v-if="info!.rs485_1.is_busy"><span class="dot" />{{ t('active') }}</span>
@@ -194,7 +195,7 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="card-title-row">
               <div class="title">RS-485 · Port 2</div>
               <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 1.5h-2.2l-.3 1.7a5.3 5.3 0 0 0-1.2.5l-1.4-1-1.6 1.6 1 1.4a5.3 5.3 0 0 0-.5 1.2l-1.7.3v2.2l1.7.3a5.3 5.3 0 0 0 .5 1.2l-1 1.4 1.6 1.6 1.4-1a5.3 5.3 0 0 0 1.2.5l.3 1.7h2.2l.3-1.7a5.3 5.3 0 0 0 1.2-.5l1.4 1 1.6-1.6-1-1.4a5.3 5.3 0 0 0 .5-1.2l1.7-.3v-2.2l-1.7-.3a5.3 5.3 0 0 0-.5-1.2l1-1.4-1.6-1.6-1.4 1a5.3 5.3 0 0 0-1.2-.5z"/><circle cx="8" cy="8" r="2.2"/></svg>
+                <GearIcon />
               </button>
             </div>
             <span class="pill ok" v-if="info!.rs485_2.is_busy"><span class="dot" />{{ t('active') }}</span>
@@ -229,6 +230,9 @@ const getDisplayValue = (val: string | boolean | number) => {
 }
 .firmware-update-link:hover {
   text-decoration: underline;
+}
+.firmware-note {
+  font-size: 11.5px;
 }
 </style>
 

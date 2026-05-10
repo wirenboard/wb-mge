@@ -1,14 +1,47 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
+import type { Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { RouteRecordRaw } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
 import MenuIcon from '@/assets/menu.svg?component';
+import LogoutIcon from '@/assets/logout.svg?component';
+import DocsIcon from '@/assets/docsIcon.svg?component';
+import EmailIcon from '@/assets/emailIcon.svg?component';
+import CartIcon from '@/assets/cartIcon.svg?component';
+import GaugeIcon from '@/assets/gaugeIcon.svg?component';
+import SlidersIcon from '@/assets/slidersIcon.svg?component';
+import NetworkIcon from '@/assets/networkIcon.svg?component';
+import CpuIcon from '@/assets/cpuIcon.svg?component';
+import ActivityIcon from '@/assets/activityIcon.svg?component';
+import PlugIcon from '@/assets/plugIcon.svg?component';
+import GridSidebarIcon from '@/assets/gridSidebarIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { documentation, support, email, website } from '@/common/links';
+
+// Map of menuIcon key → imported SVG component
+const MENU_ICONS: Record<string, Component> = {
+  gauge: GaugeIcon,
+  sliders: SlidersIcon,
+  network: NetworkIcon,
+  cpu: CpuIcon,
+  activity: ActivityIcon,
+  plug: PlugIcon,
+  grid: GridSidebarIcon,
+};
+
+// Helper: returns the icon component for a given menuIcon key
+function getMenuIcon(key: unknown): Component | undefined {
+  return typeof key === 'string' ? MENU_ICONS[key] : undefined;
+}
+
+// Helper: returns the i18n key as a string for menu link name
+function getMenuName(name: unknown): string {
+  return typeof name === 'string' ? name : '';
+}
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -60,41 +93,8 @@ watch(
             v-for="link in routes"
             :key="link.path"
             :to="link.path">
-            <svg class="sidebar-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <template v-if="link.meta?.menuIcon === 'gauge'">
-                <path d="M2 11a6 6 0 0 1 12 0" />
-                <path d="M8 11l3-3" />
-                <circle cx="8" cy="11" r="0.6" fill="currentColor" stroke="none" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'sliders'">
-                <path d="M3 4h10M3 8h6M3 12h10" />
-                <circle cx="11" cy="4" r="1.2" />
-                <circle cx="7" cy="8" r="1.2" />
-                <circle cx="11" cy="12" r="1.2" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'network'">
-                <rect x="2" y="10" width="12" height="4" rx="1" />
-                <path d="M8 10V6M4 6h8M4 6V3M12 6V3" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'cpu'">
-                <rect x="4" y="4" width="8" height="8" rx="1" />
-                <rect x="6" y="6" width="4" height="4" />
-                <path d="M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'activity'">
-                <path d="M1 8h3l2-5 4 10 2-5h3" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'plug'">
-                <path d="M6 2v4M10 2v4M5 6h6l-1 4H6zM7 10v4M9 10v4" />
-              </template>
-              <template v-else-if="link.meta?.menuIcon === 'grid'">
-                <rect x="2" y="2" width="5" height="5" />
-                <rect x="9" y="2" width="5" height="5" />
-                <rect x="2" y="9" width="5" height="5" />
-                <rect x="9" y="9" width="5" height="5" />
-              </template>
-            </svg>
-            {{ t(link.meta?.menuName as string) }}
+            <component :is="getMenuIcon(link.meta?.menuIcon)" class="sidebar-icon" />
+            {{ t(getMenuName(link.meta?.menuName)) }}
           </RouterLink>
         </template>
       </div>
@@ -123,22 +123,20 @@ watch(
 
       <div class="sb-links">
         <a :href="documentation" target="_blank" class="sb-link">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l2 2v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM5 6h5M5 9h5M5 12h3"/></svg>
+          <DocsIcon />
           {{ t('link_docs') }}
         </a>
         <a :href="locale === 'ru' ? support : `mailto:${email}`" target="_blank" class="sb-link">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="12" height="9" rx="1"/><path d="M2 5l6 4 6-4"/></svg>
+          <EmailIcon />
           {{ t('link_support') }}
         </a>
         <a :href="website" target="_blank" class="sb-link">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 2h2l1.5 8.5a1 1 0 0 0 1 .8h6.3a1 1 0 0 0 1-.78L14 5H4"/><circle cx="6" cy="13.5" r="0.7"/><circle cx="12" cy="13.5" r="0.7"/></svg>
+          <CartIcon />
           {{ t('link_buy') }}
         </a>
       </div>
       <RouterLink to="/logout" class="sidebar-logout">
-        <svg class="sidebar-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M10 11v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1M7 8h7m0 0l-2-2m2 2l-2 2" />
-        </svg>
+        <LogoutIcon class="sidebar-icon" />
         {{ t('logout') }}
       </RouterLink>
     </nav>

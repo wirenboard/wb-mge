@@ -7,6 +7,11 @@ import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import Switch from '@/components/Switch.vue';
+import GridIcon from '@/assets/gridIcon.svg?component';
+import SpinnerIcon from '@/assets/spinnerIcon.svg?component';
+import ErrorCircleIcon from '@/assets/errorCircleIcon.svg?component';
+import SearchIcon from '@/assets/searchIcon.svg?component';
+import CaretIcon from '@/assets/caretIcon.svg?component';
 import {
   type CacheEntry, type RegRow, type DeviceNode,
   formatAgeUs, formatMemory, formatAge, typeName,
@@ -365,12 +370,7 @@ onUnmounted(() => {
       <!-- Caching disabled state -->
       <div v-if="!cacheEnabled" class="rm-map-card">
         <div class="rm-off">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="7" height="7" rx="1" />
-            <rect x="14" y="3" width="7" height="7" rx="1" />
-            <rect x="3" y="14" width="7" height="7" rx="1" />
-            <rect x="14" y="14" width="7" height="7" rx="1" />
-          </svg>
+          <GridIcon />
           <div class="rm-off-title">{{ t('caching_disabled_title') }}</div>
           <div class="rm-off-sub">{{ t('caching_disabled_sub') }}</div>
           <Button variant="primary" @click="toggleCaching()">{{ t('enable_caching') }}</Button>
@@ -379,19 +379,13 @@ onUnmounted(() => {
 
       <!-- First-load spinner -->
       <div v-else-if="loading" class="rm-loading-wrap">
-        <svg class="rm-spinner" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10" stroke-opacity="0.2" />
-          <path d="M12 2a10 10 0 0 1 10 10" />
-        </svg>
+        <SpinnerIcon class="rm-spinner" />
         {{ t('loading') }}
       </div>
 
       <!-- Error state -->
       <div v-else-if="error" class="rm-error-wrap">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 8v4M12 16h.01" />
-        </svg>
+        <ErrorCircleIcon />
         {{ error }}
       </div>
 
@@ -439,12 +433,7 @@ onUnmounted(() => {
             <!-- Empty state -->
             <div v-if="devices.length === 0" class="rm-map-card">
               <div class="rm-off">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="3" width="7" height="7" rx="1" />
-                  <rect x="14" y="3" width="7" height="7" rx="1" />
-                  <rect x="3" y="14" width="7" height="7" rx="1" />
-                  <rect x="14" y="14" width="7" height="7" rx="1" />
-                </svg>
+                <GridIcon />
                 <div class="rm-off-title">{{ t('no_devices_title') }}</div>
                 <div class="rm-off-sub">{{ t('no_devices_sub') }}</div>
               </div>
@@ -459,7 +448,7 @@ onUnmounted(() => {
                 </div>
                 <div class="rm-map-actions">
                   <div class="rm-search">
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/></svg>
+                    <SearchIcon />
                     <input v-model="searchFilter" :placeholder="t('filter_placeholder')" />
                   </div>
                   <button class="rm-tb-btn" @click="expandAll()">{{ t('expand_all') }}</button>
@@ -477,15 +466,10 @@ onUnmounted(() => {
                     :aria-expanded="openDevices.has(dev.id)"
                     @click="toggleDevice(dev.id)"
                   >
-                    <svg
+                    <CaretIcon
                       class="caret"
                       :class="{ open: openDevices.has(dev.id) }"
-                      width="10" height="10" viewBox="0 0 10 10"
-                      fill="none" stroke="currentColor" stroke-width="1.5"
-                      stroke-linecap="round" stroke-linejoin="round"
-                    >
-                      <path d="M2 3 L5 7 L8 3"/>
-                    </svg>
+                    />
                     <span class="rm-slave mono">Slave 0x{{ dev.id.toString(16).padStart(2, '0').toUpperCase() }}</span>
                     <span class="rm-meta">
                       <span class="rm-meta-item">
@@ -505,15 +489,10 @@ onUnmounted(() => {
                         :aria-expanded="openGroups.has(`${dev.id}|${group}`)"
                         @click="toggleGroup(`${dev.id}|${group}`)"
                       >
-                        <svg
+                        <CaretIcon
                           class="caret"
                           :class="{ open: openGroups.has(`${dev.id}|${group}`) }"
-                          width="10" height="10" viewBox="0 0 10 10"
-                          fill="none" stroke="currentColor" stroke-width="1.5"
-                          stroke-linecap="round" stroke-linejoin="round"
-                        >
-                          <path d="M2 3 L5 7 L8 3"/>
-                        </svg>
+                        />
                         <span :class="['rm-grp-tag', 'tag-' + group.toLowerCase()]">{{ group }}</span>
                         <span class="rm-name">{{ group }} {{ t('registers') }}</span>
                         <span class="rm-meta"><span class="mono">{{ (regsByKey[`${dev.id}|${group}`] || []).length }}</span></span>
@@ -524,9 +503,9 @@ onUnmounted(() => {
                         <!-- Column headers -->
                         <div class="rm-reg-head">
                           <span>{{ t('col_addr') }}</span>
-                          <span style="text-align:right">{{ t('col_value') }}</span>
+                          <span>{{ t('col_value') }}</span>
                           <span>{{ t('col_last_update') }}</span>
-                          <span style="text-align:right">{{ t('col_responses') }}</span>
+                          <span>{{ t('col_responses') }}</span>
                         </div>
                         <!-- One row per register -->
                         <div
@@ -1385,6 +1364,12 @@ onUnmounted(() => {
   color: var(--text-muted);
   font-weight: 500;
   cursor: default;
+}
+
+/* Align the value and responses header columns to match data cells */
+.rm-reg-head span:nth-child(2),
+.rm-reg-head span:nth-child(4) {
+  text-align: right;
 }
 
 .rm-row.lvl-reg {

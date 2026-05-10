@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { onBeforeRouteLeave } from 'vue-router';
 import Select from 'vue-multiselect';
 import ReloadIcon from '@/assets/reload.svg?component';
 import { useWifi } from '@/common/network';
 import { useSettings } from '@/common/settings';
-import { useInfo } from '@/common/info';
 import type { Settings, WiFiNetwork, WiFiSecuityProtocol } from '@/common/types';
 import Button from '@/components/Button.vue';
-import InfoRow from '@/components/InfoRow.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import IpInput from '@/components/IpInput.vue';
@@ -18,11 +16,6 @@ import { onCustomValidation } from '@/utils/validation';
 
 const { t } = useI18n();
 const { data, initData, isChanged, isLoading, updateSettings } = useSettings();
-const { info, fetchInfo } = useInfo();
-onMounted(() => {
-  // Fetch current info once if not already loaded (e.g. user navigated directly to this page)
-  if (!info.value) fetchInfo();
-});
 const { wifi, isPolling, startPolling, stopPolling } = useWifi();
 const selectedWifi = ref();
 const wifiSelect = ref();
@@ -124,15 +117,8 @@ const addNetwork = () => {
             <div class="card-body">
               <div class="field">
                 <label for="eth_dhcpc">{{ t('dhcp_client') }}</label>
-                <div class="switch-end"><Switch id="eth_dhcpc" v-model="data.ethernet.dhcpc" /></div>
+                <div class="network-switchEnd"><Switch id="eth_dhcpc" v-model="data.ethernet.dhcpc" /></div>
               </div>
-
-              <!-- Show current DHCP-assigned IP as read-only info row when DHCP is enabled -->
-              <template v-if="data.ethernet.dhcpc">
-                <InfoRow :label="t('current_ip')">
-                  <span class="mono">{{ info?.ethernet?.ip || '-' }}</span>
-                </InfoRow>
-              </template>
 
               <template v-if="!data.ethernet.dhcpc">
                 <div class="field">
@@ -291,7 +277,7 @@ const addNetwork = () => {
 
                 <div class="field">
                   <label for="sta_dhcpc">{{ t('dhcp_client') }}</label>
-                  <div class="switch-end"><Switch id="sta_dhcpc" v-model="data.wifi.sta_dhcpc" /></div>
+                  <div class="network-switchEnd"><Switch id="sta_dhcpc" v-model="data.wifi.sta_dhcpc" /></div>
                 </div>
 
                 <template v-if="!data.wifi.sta_dhcpc">
@@ -318,6 +304,10 @@ const addNetwork = () => {
 </template>
 
 <style>
+.network-switchEnd {
+  justify-self: end;
+}
+
 .network-dropdown {
   width: 100%;
   max-width: 100%;
@@ -357,7 +347,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP client",
-    "current_ip": "Current IP address",
     "ip": "Static IP",
     "gateway": "Gateway",
     "mask": "Subnet mask",
@@ -378,7 +367,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "Клиент DHCP",
-    "current_ip": "Текущий IP-адрес",
     "ip": "IP",
     "gateway": "Шлюз",
     "mask": "Маска",
@@ -399,7 +387,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP клиенті",
-    "current_ip": "Ағымдағы IP мекенжайы",
     "ip": "Тұрақты IP",
     "gateway": "Шлюз",
     "mask": "Маска",
@@ -420,7 +407,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "Client DHCP",
-    "current_ip": "Indirizzo IP corrente",
     "ip": "IP statico",
     "gateway": "Gateway",
     "mask": "Maschera",
@@ -441,7 +427,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP-Client",
-    "current_ip": "Aktuelle IP-Adresse",
     "ip": "Statische IP",
     "gateway": "Gateway",
     "mask": "Maske",

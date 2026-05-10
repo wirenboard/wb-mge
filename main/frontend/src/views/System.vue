@@ -171,8 +171,8 @@ const updateInterface = () => {
               <div class="title">{{ t('power_title') }}</div>
               <div class="sub">{{ t('power_sub') }}</div>
             </div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="font-size:12px;color:var(--text-secondary)">V<sub>out</sub></span>
+            <div class="power-header-controls">
+              <span class="power-vout-label">V<sub>out</sub></span>
               <Switch
                 id="system_vout"
                 v-model="settings!.vout"
@@ -258,9 +258,9 @@ const updateInterface = () => {
                 <span>
                   <span class="mono">{{ info?.firmware }}</span>
                   <template v-if="latestVersion && !latestVersionError">
-                    <span class="muted" style="margin-left:8px;font-size:11.5px">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span>
+                    <span class="muted firmware-note">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span>
                   </template>
-                  <span v-else-if="latestVersionError" class="muted" style="margin-left:8px;font-size:11.5px">({{ t('firmware_check_failed') }})</span>
+                  <span v-else-if="latestVersionError" class="muted firmware-note">({{ t('firmware_check_failed') }})</span>
                 </span>
                 <a v-if="hasUpdate" :href="firmwareLatest" class="firmware-download-btn">
                   <Button type="button" variant="primary">{{ t('firmware_download', { v: latestVersion }) }}</Button>
@@ -325,6 +325,22 @@ const updateInterface = () => {
 .uptime-value {
   display: flex;
   gap: 4px;
+}
+
+.power-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.power-vout-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.firmware-note {
+  margin-left: 8px;
+  font-size: 11.5px;
 }
 </style>
 

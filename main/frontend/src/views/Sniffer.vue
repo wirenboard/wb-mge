@@ -5,6 +5,7 @@ import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import PacketDecoder from '@/components/PacketDecoder.vue';
+import CheckmarkIcon from '@/assets/checkmarkIcon.svg?component';
 import {
   type SniffRow,
   type ByteRole,
@@ -264,13 +265,11 @@ function exportCsv() {
             @click="selectedSlaves = toggleSet(selectedSlaves, slave)"
           >
             <span class="facet-check">
-              <svg v-if="selectedSlaves.has(slave)" width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M1.5 5l2.3 2.3L8.5 2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
+              <CheckmarkIcon v-if="selectedSlaves.has(slave)" />
             </span>
             <span class="facet-id-label">
-              <span class="mono" style="font-weight:600">{{ slave }}</span>
-              <span class="facet-label mono muted" style="font-size:11px">
+              <span class="mono facet-idMono">{{ slave }}</span>
+              <span class="facet-label facet-labelSmall mono muted">
                 {{ SLAVE_NAMES[parseInt(slave, 16)] ?? (isNaN(parseInt(slave, 16)) ? slave : `0x${slave} · ${parseInt(slave, 16)}`) }}
               </span>
             </span>
@@ -295,12 +294,10 @@ function exportCsv() {
             @click="selectedFcs = toggleSet(selectedFcs, code)"
           >
             <span class="facet-check">
-              <svg v-if="selectedFcs.has(code)" width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M1.5 5l2.3 2.3L8.5 2.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
+              <CheckmarkIcon v-if="selectedFcs.has(code)" />
             </span>
             <span class="facet-id-label">
-              <span class="mono" style="font-weight:600">{{ code }}</span>
+              <span class="mono facet-idMono">{{ code }}</span>
               <span class="facet-label">
                 {{ FC_NAMES[fcCodeNum(code)] || 'Unknown' }}
               </span>
@@ -338,7 +335,7 @@ function exportCsv() {
               <td class="mono">{{ r.t }}</td>
               <td class="mono muted">{{ r.dt }}</td>
               <td><span :class="senderPillClass(r.sender)">{{ r.sender }}</span></td>
-              <td class="mono" style="font-weight:500" :title="r.isArbitration ? undefined : (SLAVE_NAMES[parseInt(r.slave, 16)] ? `0x${r.slave} · ${SLAVE_NAMES[parseInt(r.slave, 16)]}` : `0x${r.slave} (${parseInt(r.slave, 16)})`)">
+              <td class="mono col-slave-cell" :title="r.isArbitration ? undefined : (SLAVE_NAMES[parseInt(r.slave, 16)] ? `0x${r.slave} · ${SLAVE_NAMES[parseInt(r.slave, 16)]}` : `0x${r.slave} (${parseInt(r.slave, 16)})`)">
                 <span v-if="r.isArbitration" class="muted">—</span>
                 <span v-else>0x{{ r.slave }}</span>
               </td>
@@ -565,6 +562,18 @@ function exportCsv() {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   font-size: 12px;
+}
+
+.facet-idMono {
+  font-weight: 600;
+}
+
+.facet-labelSmall {
+  font-size: 11px;
+}
+
+.col-slave-cell {
+  font-weight: 500;
 }
 
 .facet-count {
