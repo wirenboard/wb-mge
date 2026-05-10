@@ -1291,6 +1291,386 @@ void test_cache_multimaster_pool_full_no_crash(void)
     );
 }
 
+/* ---- CM-U-026: on_response FC03 address-zero boundary -------------------- */
+
+/* Verify that address 0 is stored correctly — no off-by-one treating address 0
+ * as an "unused slot" marker. */
+void test_cache_multimaster_on_response_fc03_address_zero(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-026: on_response FC03 address-zero boundary");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Request: slave 5, FC03, 1 register at address 0 */
+    cache_multimaster_on_request(0, 5, 3, 0, 1);
+
+    /* Response: byte_count=2, one register at address 0 with value 0x5A5A */
+    uint8_t data[] = {
+        5,              /* [0] slave_id */
+        0x03,           /* [1] FC */
+        2,              /* [2] byte_count (1 reg × 2 bytes) */
+        0x5A, 0x5A      /* reg 0: 0x5A5A */
+    };
+    cache_multimaster_on_response(0, 5, 3, data, sizeof(data), 0);
+
+    /* Lookup at address 0 must return FOUND with value 0x5A5A */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(5, 3, 0, &val, 0);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "lookup(5, 3, 0) should return FOUND: address 0 must be stored correctly");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x5A5A, val,
+        "value at address 0 should be 0x5A5A");
+}
+
+/* ---- CM-U-027: on_response FC03 odd byte_count (floor division) ----------- */
+
+/* Verify that max_regs = byte_count / 2 uses integer floor division, so an odd
+ * byte_count only yields the floor number of full registers and no partial read. */
+void test_cache_multimaster_on_response_fc03_odd_byte_count(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-027: on_response FC03 odd byte_count (floor division)");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Request: slave 6, FC03, 3 registers starting at address 10 */
+    cache_multimaster_on_request(0, 6, 3, 10, 3);
+
+    /* byte_count=5 (odd) → max_regs = 5/2 = 2 (floor division).
+     * Only reg10 and reg11 should be stored; reg12 must NOT be stored.
+     * data_len = 3 + 5 = 8 bytes total. */
+    uint8_t data[] = {
+        6,              /* [0] slave_id */
+        0x03,           /* [1] FC */
+        5,              /* [2] byte_count = 5 (odd) */
+        0x00, 0xAA,     /* reg10: 0x00AA */
+        0x00, 0xBB,     /* reg11: 0x00BB */
+        0xCC            /* partial byte — must be ignored due to floor division */
+    };
+    cache_multimaster_on_response(0, 6, 3, data, sizeof(data), 0);
+
+    uint16_t val = 0;
+
+    /* reg10 must be FOUND with value 0x00AA */
+    cache_lookup_result_t r = cache_multimaster_lookup(6, 3, 10, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "lookup(6, 3, 10) should return FOUND");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x00AA, val,
+        "register 10 value should be 0x00AA");
+
+    /* reg11 must be FOUND with value 0x00BB */
+    val = 0;
+    r = cache_multimaster_lookup(6, 3, 11, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "lookup(6, 3, 11) should return FOUND");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x00BB, val,
+        "register 11 value should be 0x00BB");
+
+    /* reg12 must NOT be found — floor division means the partial byte is dropped */
+    val = 0xFFFF;
+    r = cache_multimaster_lookup(6, 3, 12, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "lookup(6, 3, 12) should return NOT_FOUND: max_regs = byte_count/2 = 5/2 = 2");
+}
+
+/* ---- CM-U-028: on_response FC01 exactly 8 coils (single full byte) -------- */
+
+/* Verify bit-packing at the byte rollover point when count == 8 (exactly one
+ * full byte). Only data[3] must be accessed; no out-of-bounds read. */
+void test_cache_multimaster_on_response_fc01_exactly_8_coils(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-028: on_response FC01 exactly 8 coils (single full byte)");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Request: slave 7, FC01, 8 coils starting at address 0 */
+    cache_multimaster_on_request(0, 7, 1, 0, 8);
+
+    /* Response: byte_count=1, data=0xF0 (11110000b).
+     * Bit layout (LSB-first): coil0=0, coil1=0, coil2=0, coil3=0,
+     *                         coil4=1, coil5=1, coil6=1, coil7=1 */
+    uint8_t data[] = {
+        7,      /* [0] slave_id */
+        0x01,   /* [1] FC01 */
+        1,      /* [2] byte_count = 1 */
+        0xF0    /* coils 0-3 = 0, coils 4-7 = 1 */
+    };
+    cache_multimaster_on_response(0, 7, 1, data, sizeof(data), 0);
+
+    /* Coils 0-3 must be FOUND with value 0 */
+    for (int i = 0; i < 4; i++) {
+        uint16_t val = 0xFFFF;
+        cache_lookup_result_t r = cache_multimaster_lookup(7, 1, (uint16_t)i, &val, 0);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+            "coil 0-3 should be FOUND");
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, val,
+            "coil 0-3 value should be 0 (lower nibble of 0xF0 is 0)");
+    }
+
+    /* Coils 4-7 must be FOUND with value 1 */
+    for (int i = 4; i < 8; i++) {
+        uint16_t val = 0xFFFF;
+        cache_lookup_result_t r = cache_multimaster_lookup(7, 1, (uint16_t)i, &val, 0);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+            "coil 4-7 should be FOUND");
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val,
+            "coil 4-7 value should be 1 (upper nibble of 0xF0 is set)");
+    }
+}
+
+/* ---- CM-U-029: on_response FC02 where byte_count > available data_len ----- */
+
+/* Verify the FC01/FC02 bounds check: when data_len is too short to hold the
+ * claimed number of coil bytes, no data is stored and pending is consumed. */
+void test_cache_multimaster_on_response_fc02_bounds_check(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-029: on_response FC02 byte_count > available data_len");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Request: slave 8, FC02, 16 discrete inputs starting at address 0 */
+    cache_multimaster_on_request(0, 8, 2, 0, 16);
+
+    /* Response claims byte_count=10 but data_len=4 (only header, no coil bytes).
+     * With count=16 and byte_count=10: bytes_needed = (16+7)/8 = 2.
+     * byte_count(10) >= bytes_needed(2), so no clamping.
+     * Bounds check: (3 + 2) = 5 > 4 → early return, nothing stored. */
+    uint8_t data[] = {
+        8,      /* [0] slave_id */
+        0x02,   /* [1] FC02 */
+        10,     /* [2] byte_count = 10 (claims 10 bytes of coil data) */
+        0xFF    /* only 1 extra byte available — far fewer than claimed */
+    };
+    cache_multimaster_on_response(0, 8, 2, data, sizeof(data), 0);
+
+    /* Pending must be consumed (set to false) after the call */
+    TEST_ASSERT_FALSE_MESSAGE(
+        cache_multimaster_test_get_pending_valid(0),
+        "Pending must be consumed after on_response() even on bounds-check early return"
+    );
+
+    /* No coil data must have been stored */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(8, 2, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "lookup(8, 2, 0) should return NOT_FOUND after bounds-check early return");
+}
+
+/* ---- CM-U-030: on_response FC mismatch (request FC03, response FC04) ------- */
+
+/* Verify that the pending.function check in on_response causes a mismatch when
+ * the response FC differs from the pending FC, and nothing is stored. */
+void test_cache_multimaster_on_response_fc_mismatch(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-030: on_response FC mismatch (request FC03, response FC04)");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Request for FC03, pending is set for slave 9, FC03 */
+    cache_multimaster_on_request(0, 9, 3, 0, 1);
+
+    /* Respond with FC04 — function code mismatch triggers pending mismatch path */
+    uint8_t data[] = {
+        9,              /* [0] slave_id */
+        0x04,           /* [1] FC04 — mismatches pending FC03 */
+        2,              /* [2] byte_count */
+        0x00, 0x01      /* reg 0: 1 */
+    };
+    cache_multimaster_on_response(0, 9, 4, data, sizeof(data), 0);
+
+    /* Pending must be consumed (mismatch clears it) */
+    TEST_ASSERT_FALSE_MESSAGE(
+        cache_multimaster_test_get_pending_valid(0),
+        "Pending must be cleared on FC mismatch"
+    );
+
+    /* Nothing must be stored for either FC03 or FC04 */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(9, 3, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "lookup(9, 3, 0) should return NOT_FOUND after FC mismatch");
+
+    val = 0xFFFF;
+    r = cache_multimaster_lookup(9, 4, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "lookup(9, 4, 0) should return NOT_FOUND after FC mismatch");
+}
+
+/* ---- CM-U-031: lookup with slave_id=0 (broadcast address) ----------------- */
+
+/* Verify that slave_id == 0 is treated as a valid key in find_or_alloc_entry()
+ * and cache_multimaster_lookup() — no implicit guard against zero. */
+void test_cache_multimaster_lookup_slave_id_zero(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-031: lookup with slave_id=0 (broadcast address)");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store slave_id=0, FC03, address=10, value=0x1111 */
+    cache_multimaster_on_request(0, 0, 3, 10, 1);
+    uint8_t data[] = {
+        0,              /* [0] slave_id = 0 */
+        0x03,           /* [1] FC */
+        2,              /* [2] byte_count (1 reg × 2 bytes) */
+        0x11, 0x11      /* reg 10: 0x1111 */
+    };
+    cache_multimaster_on_response(0, 0, 3, data, sizeof(data), 0);
+
+    /* Lookup slave_id=0 must return FOUND with the correct value */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(0, 3, 10, &val, 0);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "lookup(0, 3, 10) should return FOUND: slave_id=0 must be a valid cache key");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x1111, val,
+        "value at slave_id=0, FC03, address=10 should be 0x1111");
+}
+
+/* ---- CM-U-032: lookup FC03 vs FC04 do not collide (same slave, same address) */
+
+/* Verify that CACHE_TYPE_HOLDING (FC03) and CACHE_TYPE_INPUT (FC04) produce
+ * separate cache entries even for the same slave_id and address. */
+void test_cache_multimaster_lookup_fc03_vs_fc04_no_collision(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-032: lookup FC03 vs FC04 do not collide (same slave, same address)");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store slave=20, FC03, addr=100, value=0xAAAA */
+    cache_multimaster_on_request(0, 20, 3, 100, 1);
+    uint8_t data_fc03[] = {
+        20,             /* [0] slave_id */
+        0x03,           /* [1] FC03 */
+        2,              /* [2] byte_count */
+        0xAA, 0xAA      /* reg 100: 0xAAAA */
+    };
+    cache_multimaster_on_response(0, 20, 3, data_fc03, sizeof(data_fc03), 0);
+
+    /* Store slave=20, FC04, addr=100, value=0xBBBB */
+    cache_multimaster_on_request(0, 20, 4, 100, 1);
+    uint8_t data_fc04[] = {
+        20,             /* [0] slave_id */
+        0x04,           /* [1] FC04 */
+        2,              /* [2] byte_count */
+        0xBB, 0xBB      /* reg 100: 0xBBBB */
+    };
+    cache_multimaster_on_response(0, 20, 4, data_fc04, sizeof(data_fc04), 0);
+
+    /* FC03 lookup must return 0xAAAA */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(20, 3, 100, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "lookup(20, 3, 100) should return FOUND for FC03 (HOLDING type)");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xAAAA, val,
+        "FC03 value at address 100 should be 0xAAAA");
+
+    /* FC04 lookup must return 0xBBBB — different cache type, no collision */
+    val = 0xFFFF;
+    r = cache_multimaster_lookup(20, 4, 100, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "lookup(20, 4, 100) should return FOUND for FC04 (INPUT type)");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xBBBB, val,
+        "FC04 value at address 100 should be 0xBBBB");
+}
+
+/* ---- CM-U-033: on_request pending overwrite (second request before response) */
+
+/* Verify that a second on_request() on the same port overwrites s_pending[port],
+ * preventing stale pending context from matching the wrong response. */
+void test_cache_multimaster_on_request_pending_overwrite(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-033: on_request pending overwrite (second request before response)");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* First request: slave 30, FC03, address 0, count 1 — pending set for slave 30 */
+    cache_multimaster_on_request(0, 30, 3, 0, 1);
+
+    /* Second request: slave 31, FC03, address 5, count 1 — overwrites pending */
+    cache_multimaster_on_request(0, 31, 3, 5, 1);
+
+    /* Deliver response for the second pending (slave 31, FC03, reg5 = 0xCCCC) */
+    uint8_t data[] = {
+        31,             /* [0] slave_id = 31 (matches current pending) */
+        0x03,           /* [1] FC03 */
+        2,              /* [2] byte_count (1 reg × 2 bytes) */
+        0xCC, 0xCC      /* reg 5: 0xCCCC */
+    };
+    cache_multimaster_on_response(0, 31, 3, data, sizeof(data), 0);
+
+    /* slave 31, reg5 must be FOUND with value 0xCCCC */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(31, 3, 5, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "lookup(31, 3, 5) should return FOUND: second request's response was stored");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xCCCC, val,
+        "value at slave 31, FC03, address 5 should be 0xCCCC");
+
+    /* slave 30, reg0 must NOT be found — its pending was overwritten before response */
+    val = 0xFFFF;
+    r = cache_multimaster_lookup(30, 3, 0, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "lookup(30, 3, 0) should return NOT_FOUND: pending was overwritten before response");
+}
+
+/* ---- CM-U-034: disable without prior enable does not crash ---------------- */
+
+/* Verify the NULL guards in disable() prevent a crash when called before any
+ * enable() — s_pool is NULL, s_age_task is NULL, nothing to free or delete. */
+void test_cache_multimaster_disable_without_enable(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-034: disable without prior enable does not crash");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init only (no enable) — s_pool and s_age_task remain NULL */
+    cache_multimaster_init();
+
+    /* Act: must not crash with NULL pool and NULL task handle */
+    cache_multimaster_disable();
+
+    /* Cache must report disabled */
+    TEST_ASSERT_FALSE_MESSAGE(
+        cache_multimaster_is_enabled(),
+        "cache_multimaster_is_enabled() should return false after disable() without enable()"
+    );
+
+    /* mock free must NOT have been called (no pool to free) */
+    verify_malloc_tracking(0, 0);
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -1322,6 +1702,15 @@ int main(void)
     RUN_TEST(test_cache_multimaster_lookup_null_value_out);
     RUN_TEST(test_cache_multimaster_lookup_unknown_fc);
     RUN_TEST(test_cache_multimaster_pool_full_no_crash);
+    RUN_TEST(test_cache_multimaster_on_response_fc03_address_zero);
+    RUN_TEST(test_cache_multimaster_on_response_fc03_odd_byte_count);
+    RUN_TEST(test_cache_multimaster_on_response_fc01_exactly_8_coils);
+    RUN_TEST(test_cache_multimaster_on_response_fc02_bounds_check);
+    RUN_TEST(test_cache_multimaster_on_response_fc_mismatch);
+    RUN_TEST(test_cache_multimaster_lookup_slave_id_zero);
+    RUN_TEST(test_cache_multimaster_lookup_fc03_vs_fc04_no_collision);
+    RUN_TEST(test_cache_multimaster_on_request_pending_overwrite);
+    RUN_TEST(test_cache_multimaster_disable_without_enable);
 
     return UNITY_END();
 }
