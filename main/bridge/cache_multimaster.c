@@ -770,4 +770,30 @@ bool cache_multimaster_test_get_pending_valid(uint8_t port)
     return s_pending[port].valid;
 }
 
+/* Sets age_s for the first pool entry matching (slave_id, function_code, address).
+ * Returns true if the entry was found and updated. Used in unit tests only. */
+bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_code,
+                                           uint16_t address, uint16_t age_s_val)
+{
+    uint8_t type_value;
+    switch (function_code) {
+        case 0x01: type_value = CACHE_TYPE_COIL;     break;
+        case 0x02: type_value = CACHE_TYPE_DISCRETE; break;
+        case 0x03: type_value = CACHE_TYPE_HOLDING;  break;
+        case 0x04: type_value = CACHE_TYPE_INPUT;    break;
+        default:   return false;
+    }
+    if (s_pool == NULL) return false;
+    for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+        if ((s_pool[i].type & CACHE_USED_BIT) &&
+            s_pool[i].slave_id == slave_id &&
+            (s_pool[i].type & 0x03u) == type_value &&
+            s_pool[i].address == address) {
+            s_pool[i].age_s = age_s_val;
+            return true;
+        }
+    }
+    return false;
+}
+
 #endif
