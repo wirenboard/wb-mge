@@ -54,8 +54,7 @@ def fetch_csv(host: str, http_port: int) -> str:
         with urllib.request.urlopen(url, timeout=10) as resp:
             data = resp.read().decode("utf-8")
     except Exception as exc:
-        print(f"[ERROR] Failed to fetch CSV: {exc}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Failed to fetch CSV: {exc}") from exc
     return data
 
 
@@ -63,7 +62,7 @@ def parse_csv(raw_csv: str) -> dict:
     """
     Parse the CSV register map.
 
-    CSV columns: port, slave_id, type, address, value, timestamp_us
+    CSV columns: slave_id, type, address, value, age_s
 
     Returns a dict keyed by (slave_id: int, reg_type: str, address: int)
     with integer register values.
@@ -256,8 +255,8 @@ def _run_register_pass(
                 f"[Thread {thread_id}] TID mismatch: sent {tid}, got {resp_tid} "
                 f"(slave={slave_id} type={reg_type} addr={address})"
             )
-        else:
-            result.add_pass()
+            tid += 1
+            continue
 
         # --- Modbus exception check ---
         if resp_fc & 0x80:
@@ -275,8 +274,34 @@ def _run_register_pass(
             tid += 1
             continue
 
-        # Register present in cache and returned successfully — count as pass
-        result.add_pass()
+        # Decode the response payload and compare against the expected value
+        try:
+            decoded_values = decode_response(fc, payload, count)
+        except ValueError as exc:
+            result.add_error(
+                f"[Thread {thread_id}] Decode error "
+                f"slave={slave_id} type={reg_type} addr={address}: {exc}"
+            )
+            tid += 1
+            continue
+
+        # Guard against malformed server response returning empty decoded list
+        if not decoded_values:
+            result.add_error(
+                f"[Thread {thread_id}] Decode returned empty list "
+                f"slave={slave_id} type={reg_type} addr={address}"
+            )
+            tid += 1
+            continue
+
+        if decoded_values[0] != expected_value:
+            result.add_error(
+                f"[Thread {thread_id}] Value mismatch "
+                f"slave={slave_id} type={reg_type} addr={address}: "
+                f"expected={expected_value} got={decoded_values[0]}"
+            )
+        else:
+            result.add_pass()
 
         tid += 1
 
@@ -391,7 +416,11 @@ def main():
     args = parse_args()
 
     # Step 1: Fetch and parse register map
-    raw_csv = fetch_csv(args.host, args.http_port)
+    try:
+        raw_csv = fetch_csv(args.host, args.http_port)
+    except RuntimeError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        sys.exit(1)
     register_map = parse_csv(raw_csv)
 
     if not register_map:
