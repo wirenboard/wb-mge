@@ -21,6 +21,7 @@ void cache_multimaster_test_reset(void);
 bool cache_multimaster_test_get_pending_valid(uint8_t port);
 bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_code,
                                            uint16_t address, uint16_t age_s_val);
+void cache_multimaster_test_tick_age(void);
 
 /* Exposed by mocks/sniffer.c */
 extern int  mock_sniffer_set_cache_active_called;
@@ -1671,6 +1672,72 @@ void test_cache_multimaster_disable_without_enable(void)
     verify_malloc_tracking(0, 0);
 }
 
+/* ---- CM-U-035: cache_age_task saturation — age_s must not exceed CACHE_AGE_MAX_S -- */
+
+/* Verify that calling cache_multimaster_test_tick_age() when age_s is already at
+ * CACHE_AGE_MAX_S (65535) does not increment further (no wrap to 0). */
+void test_cache_multimaster_age_saturation(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-035: age saturation — age_s must not exceed CACHE_AGE_MAX_S");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store an entry: slave 50, FC03, address 0, value 0xFFFF */
+    cache_multimaster_on_request(0, 50, 3, 0, 1);
+    uint8_t data[] = {
+        50,             /* [0] slave_id */
+        0x03,           /* [1] FC */
+        2,              /* [2] byte_count (1 reg x 2 bytes) */
+        0xFF, 0xFF      /* reg 0: 0xFFFF */
+    };
+    cache_multimaster_on_response(0, 50, 3, data, sizeof(data), 0);
+
+    /* Force age_s to CACHE_AGE_MAX_S (65535) — the saturation limit */
+    bool set_ok = cache_multimaster_test_set_entry_age(50, 3, 0, 65535);
+    TEST_ASSERT_TRUE_MESSAGE(set_ok,
+        "cache_multimaster_test_set_entry_age must find the entry");
+
+    /* Verify the entry is stale with timeout=65534 (age 65535 > 65534) */
+    uint16_t val = 0;
+    cache_lookup_result_t r = cache_multimaster_lookup(50, 3, 0, &val, 65534);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
+        "Entry with age_s=65535 and timeout=65534 must be STALE");
+
+    /* Perform one aging tick — age_s is already at CACHE_AGE_MAX_S, must not increment.
+     * Use timeout=65534: if saturation works (age_s stayed 65535): 65535>65534 → STALE.
+     * If wrap-around occurred (age_s became 0): 0>65534 → FOUND. Only STALE is correct. */
+    cache_multimaster_test_tick_age();
+
+    val = 0;
+    r = cache_multimaster_lookup(50, 3, 0, &val, 65534);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
+        "After tick at saturation, age_s must still be 65535 → STALE with timeout=65534 (not wrapped to 0)");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, val,
+        "Value must be intact after saturation tick");
+
+    /* Definitive saturation check: perform another tick, age_s must remain 65535.
+     * Verify by checking that with timeout=65534 result is still STALE (age > timeout),
+     * not FOUND (which would mean age was reset to 0 by wrap-around). */
+    cache_multimaster_test_tick_age();
+    val = 0;
+    r = cache_multimaster_lookup(50, 3, 0, &val, 65534);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
+        "After second tick at saturation, age_s must still be 65535 — NOT wrapped to 0");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, val,
+        "Value must remain 0xFFFF — saturation did not corrupt the entry");
+
+    /* Verify no extra allocations were made and mutex is balanced */
+    verify_malloc_tracking(1, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        mock_xSemaphoreGive_called,
+        mock_xSemaphoreTake_called,
+        "Mutex must be balanced after CM-U-035 — tick_age and lookup calls are symmetric");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -1711,6 +1778,7 @@ int main(void)
     RUN_TEST(test_cache_multimaster_lookup_fc03_vs_fc04_no_collision);
     RUN_TEST(test_cache_multimaster_on_request_pending_overwrite);
     RUN_TEST(test_cache_multimaster_disable_without_enable);
+    RUN_TEST(test_cache_multimaster_age_saturation);
 
     return UNITY_END();
 }

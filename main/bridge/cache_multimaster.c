@@ -127,6 +127,22 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
 
 /* ---- Background aging task ----------------------------------------------- */
 
+/* Increment age_s for every used pool entry by one second.
+ * age_s saturates at CACHE_AGE_MAX_S and is never incremented beyond that.
+ * Caller must hold s_cache_mutex. */
+static void cache_age_tick_pool(void)
+{
+    if (s_pool == NULL) {
+        return;
+    }
+    for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+        if ((s_pool[i].type & CACHE_USED_BIT) &&
+            s_pool[i].age_s < CACHE_AGE_MAX_S) {
+            s_pool[i].age_s++;
+        }
+    }
+}
+
 /* Background task: increment age_s for every used cache entry once per second.
  * age_s saturates at CACHE_AGE_MAX_S and is never incremented beyond that. */
 static void cache_age_task(void *arg)
@@ -136,14 +152,7 @@ static void cache_age_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(1000));
         if (s_cache_mutex == NULL) continue;
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-        if (s_pool != NULL) {
-            for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-                if ((s_pool[i].type & CACHE_USED_BIT) &&
-                    s_pool[i].age_s < CACHE_AGE_MAX_S) {
-                    s_pool[i].age_s++;
-                }
-            }
-        }
+        cache_age_tick_pool();
         xSemaphoreGive(s_cache_mutex);
     }
 }
@@ -794,6 +803,16 @@ bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_cod
         }
     }
     return false;
+}
+
+/* Performs one aging tick by calling the same cache_age_tick_pool() that
+ * cache_age_task() uses — tests the real production code, not a copy. */
+void cache_multimaster_test_tick_age(void)
+{
+    if (s_cache_mutex == NULL) return;
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    cache_age_tick_pool();
+    xSemaphoreGive(s_cache_mutex);
 }
 
 #endif
