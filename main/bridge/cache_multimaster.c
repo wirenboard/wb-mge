@@ -815,4 +815,20 @@ void cache_multimaster_test_tick_age(void)
     xSemaphoreGive(s_cache_mutex);
 }
 
+/* Expose static HTTP handlers for unit tests. */
+esp_err_t cache_multimaster_test_status_handler(httpd_req_t *req)
+{
+    return cache_status_handler(req);
+}
+
+esp_err_t cache_multimaster_test_csv_handler(httpd_req_t *req)
+{
+    return cache_csv_handler(req);
+}
+
+esp_err_t cache_multimaster_test_json_handler(httpd_req_t *req)
+{
+    return cache_json_handler(req);
+}
+
 #endif

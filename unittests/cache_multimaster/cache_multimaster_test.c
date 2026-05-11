@@ -6,6 +6,7 @@
 #include "task.h"
 #include "malloc.h"
 #include "esp_timer.h"
+#include "esp_http_server.h"
 
 #include <stdbool.h>
 #include <string.h>
@@ -23,6 +24,11 @@ bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_cod
                                            uint16_t address, uint16_t age_s_val);
 void cache_multimaster_test_tick_age(void);
 
+/* HTTP handler shims — test-only wrappers around the static handlers */
+esp_err_t cache_multimaster_test_status_handler(httpd_req_t *req);
+esp_err_t cache_multimaster_test_csv_handler(httpd_req_t *req);
+esp_err_t cache_multimaster_test_json_handler(httpd_req_t *req);
+
 /* Exposed by mocks/sniffer.c */
 extern int  mock_sniffer_set_cache_active_called;
 extern bool mock_sniffer_set_cache_active_last_value;
@@ -38,6 +44,7 @@ void setUp(void)
     reset_malloc_tracking();
     mock_esp_timer_reset();
     mock_sniffer_reset();
+    mock_http_reset();
 }
 
 void tearDown(void)
@@ -1738,6 +1745,422 @@ void test_cache_multimaster_age_saturation(void)
         "Mutex must be balanced after CM-U-035 — tick_age and lookup calls are symmetric");
 }
 
+/* ---- CM-U-036: cache_status_handler — disabled, empty pool --------------- */
+
+/* Verify that the status handler with an uninitialised cache (s_pool=NULL,
+ * s_cache_enabled=false) returns a valid JSON with "enabled":false and
+ * all counters set to zero. */
+void test_cache_status_handler_disabled_empty(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-036: cache_status_handler disabled empty pool");
+    LOG_MESSAGE();
+
+    /* setUp already called cache_multimaster_test_reset() — no init, no enable */
+    httpd_req_t req = {0};
+
+    /* Act */
+    esp_err_t ret = cache_multimaster_test_status_handler(&req);
+
+    /* Must succeed */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, ret,
+        "cache_status_handler must return ESP_OK");
+
+    /* Handler must call httpd_resp_send exactly once (non-chunked response) */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_http_resp_send_called,
+        "httpd_resp_send must be called exactly once");
+
+    /* JSON must contain the expected fields */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"enabled\":false"),
+        "Response must contain \"enabled\":false");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"entries\":0"),
+        "Response must contain \"entries\":0");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"max_entries\":4096"),
+        "Response must contain \"max_entries\":4096");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"slaves\":0"),
+        "Response must contain \"slaves\":0");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"packets_processed\":0"),
+        "Response must contain \"packets_processed\":0");
+}
+
+/* ---- CM-U-037: cache_status_handler — enabled, 2 entries, 2 slaves, 2 packets */
+
+/* Verify that the status handler correctly reflects 2 entries belonging to
+ * 2 distinct slaves after 2 packets are stored. */
+void test_cache_status_handler_enabled_two_entries(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-037: cache_status_handler enabled 2 entries 2 slaves");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store: slave=1, FC03, addr=0, val=0x1111 */
+    cache_multimaster_on_request(0, 1, 3, 0, 1);
+    uint8_t data1[] = { 1, 0x03, 2, 0x11, 0x11 };
+    cache_multimaster_on_response(0, 1, 3, data1, sizeof(data1), 1000000);
+
+    /* Store: slave=2, FC03, addr=0, val=0x2222 */
+    cache_multimaster_on_request(0, 2, 3, 0, 1);
+    uint8_t data2[] = { 2, 0x03, 2, 0x22, 0x22 };
+    cache_multimaster_on_response(0, 2, 3, data2, sizeof(data2), 2000000);
+
+    httpd_req_t req = {0};
+    esp_err_t ret = cache_multimaster_test_status_handler(&req);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, ret,
+        "cache_status_handler must return ESP_OK");
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"enabled\":true"),
+        "Response must contain \"enabled\":true");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"entries\":2"),
+        "Response must contain \"entries\":2");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"slaves\":2"),
+        "Response must contain \"slaves\":2");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"packets_processed\":2"),
+        "Response must contain \"packets_processed\":2");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"max_entries\":4096"),
+        "Response must contain \"max_entries\":4096");
+    /* 2 entries × 8 bytes per cache_entry_t */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"memory_bytes\":16"),
+        "Response must contain \"memory_bytes\":16");
+}
+
+/* ---- CM-U-038: cache_status_handler — 2 entries same slave (slaves == 1) -- */
+
+/* Verify that two entries belonging to the same slave are counted as one
+ * unique slave in the status response. */
+void test_cache_status_handler_same_slave(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-038: cache_status_handler 2 entries same slave");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store: slave=5, FC03, addr=0, val=0xAAAA */
+    cache_multimaster_on_request(0, 5, 3, 0, 1);
+    uint8_t data1[] = { 5, 0x03, 2, 0xAA, 0xAA };
+    cache_multimaster_on_response(0, 5, 3, data1, sizeof(data1), 0);
+
+    /* Store: slave=5, FC03, addr=1, val=0xBBBB (same slave, different address) */
+    cache_multimaster_on_request(0, 5, 3, 1, 1);
+    uint8_t data2[] = { 5, 0x03, 2, 0xBB, 0xBB };
+    cache_multimaster_on_response(0, 5, 3, data2, sizeof(data2), 0);
+
+    httpd_req_t req = {0};
+    cache_multimaster_test_status_handler(&req);
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"entries\":2"),
+        "Response must contain \"entries\":2");
+    /* Both entries belong to slave 5 — unique slave count must be 1 */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"slaves\":1"),
+        "Response must contain \"slaves\":1 (unique slave count uses bitmask)");
+}
+
+/* ---- CM-U-039: cache_csv_handler — empty pool (init only, no enable) ------ */
+
+/* Verify that the CSV handler sends only the header line when the pool is
+ * NULL (cache initialised but not enabled). */
+void test_cache_csv_handler_empty_pool(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-039: cache_csv_handler empty pool (init only)");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init only — mutex is valid but pool remains NULL */
+    cache_multimaster_init();
+
+    httpd_req_t req = {0};
+    esp_err_t ret = cache_multimaster_test_csv_handler(&req);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, ret,
+        "cache_csv_handler must return ESP_OK when pool is NULL");
+
+    /* The CSV header must be present */
+    TEST_ASSERT_NOT_NULL_MESSAGE(
+        strstr(mock_http_resp_buf, "slave_id,type,address,value,age_s\r\n"),
+        "CSV response must start with the header line");
+
+    /* Accumulated buffer must not contain any data rows (no comma-separated numeric lines) */
+    const char *after_header = strstr(mock_http_resp_buf, "\r\n");
+    if (after_header != NULL) {
+        after_header += 2; /* skip the \r\n of the header line */
+    }
+    /* after the header there should be nothing (empty pool) */
+    TEST_ASSERT_TRUE_MESSAGE(
+        (after_header == NULL || *after_header == '\0'),
+        "CSV response must contain only the header — no data rows for empty pool");
+}
+
+/* ---- CM-U-040: cache_csv_handler — 2 entries, correct CSV format ---------- */
+
+/* Verify that the CSV handler emits one correct data row per cached entry. */
+void test_cache_csv_handler_two_entries(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-040: cache_csv_handler 2 entries correct format");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store: slave=10, FC03 (holding), addr=100, val=0x0042 (decimal 66) */
+    cache_multimaster_on_request(0, 10, 3, 100, 1);
+    uint8_t data1[] = { 10, 0x03, 2, 0x00, 0x42 };
+    cache_multimaster_on_response(0, 10, 3, data1, sizeof(data1), 0);
+
+    /* Store: slave=20, FC01 (coil), addr=0, val=1 */
+    cache_multimaster_on_request(0, 20, 1, 0, 1);
+    uint8_t data2[] = { 20, 0x01, 1, 0x01 }; /* 1 coil byte: bit0=1 */
+    cache_multimaster_on_response(0, 20, 1, data2, sizeof(data2), 0);
+
+    httpd_req_t req = {0};
+    esp_err_t ret = cache_multimaster_test_csv_handler(&req);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, ret,
+        "cache_csv_handler must return ESP_OK");
+
+    /* Header must be present */
+    TEST_ASSERT_NOT_NULL_MESSAGE(
+        strstr(mock_http_resp_buf, "slave_id,type,address,value,age_s\r\n"),
+        "CSV response must contain the header line");
+
+    /* Holding register row: slave=10, type=holding, addr=100, val=66, age=0 */
+    TEST_ASSERT_NOT_NULL_MESSAGE(
+        strstr(mock_http_resp_buf, "10,holding,100,66,"),
+        "CSV must contain holding register row '10,holding,100,66,'");
+
+    /* Coil row: slave=20, type=coil, addr=0, val=1, age=0 */
+    TEST_ASSERT_NOT_NULL_MESSAGE(
+        strstr(mock_http_resp_buf, "20,coil,0,1,"),
+        "CSV must contain coil row '20,coil,0,1,'");
+}
+
+/* ---- CM-U-041: cache_csv_handler — type string mapping -------------------- */
+
+/* Verify that each Modbus function code maps to the correct type string
+ * in the CSV output. */
+void test_cache_csv_handler_type_mapping(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-041: cache_csv_handler type string mapping");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* FC03 → "holding" */
+    cache_multimaster_on_request(0, 1, 3, 0, 1);
+    uint8_t d03[] = { 1, 0x03, 2, 0x00, 0x01 };
+    cache_multimaster_on_response(0, 1, 3, d03, sizeof(d03), 0);
+
+    /* FC04 → "input" */
+    cache_multimaster_on_request(0, 2, 4, 0, 1);
+    uint8_t d04[] = { 2, 0x04, 2, 0x00, 0x02 };
+    cache_multimaster_on_response(0, 2, 4, d04, sizeof(d04), 0);
+
+    /* FC01 → "coil" */
+    cache_multimaster_on_request(0, 3, 1, 0, 1);
+    uint8_t d01[] = { 3, 0x01, 1, 0x01 };
+    cache_multimaster_on_response(0, 3, 1, d01, sizeof(d01), 0);
+
+    /* FC02 → "discrete" */
+    cache_multimaster_on_request(0, 4, 2, 0, 1);
+    uint8_t d02[] = { 4, 0x02, 1, 0x01 };
+    cache_multimaster_on_response(0, 4, 2, d02, sizeof(d02), 0);
+
+    httpd_req_t req = {0};
+    cache_multimaster_test_csv_handler(&req);
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "holding"),
+        "CSV must contain type string 'holding' for FC03");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "input"),
+        "CSV must contain type string 'input' for FC04");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "coil"),
+        "CSV must contain type string 'coil' for FC01");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "discrete"),
+        "CSV must contain type string 'discrete' for FC02");
+}
+
+/* ---- CM-U-042: cache_json_handler — null mutex returns `{"d":[]}` --------- */
+
+/* Verify that the JSON handler returns a minimal empty-array JSON object when
+ * the cache has never been initialised (s_cache_mutex == NULL). */
+void test_cache_json_handler_null_mutex(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-042: cache_json_handler null mutex returns {\"d\":[]}");
+    LOG_MESSAGE();
+
+    /* setUp already called cache_multimaster_test_reset() — mutex is NULL, no init */
+    httpd_req_t req = {0};
+
+    esp_err_t ret = cache_multimaster_test_json_handler(&req);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, ret,
+        "cache_json_handler must return ESP_OK even with NULL mutex");
+
+    /* Non-chunked send must be used when the mutex is NULL (single httpd_resp_send call) */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_http_resp_send_called,
+        "httpd_resp_send must be called exactly once for the null-mutex path");
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("{\"d\":[]}",
+        mock_http_resp_buf,
+        "Response must be exactly {\"d\":[]} when mutex is NULL");
+}
+
+/* ---- CM-U-043: cache_json_handler — empty pool returns `{"d":[]}` --------- */
+
+/* Verify that the JSON handler produces an empty data array when the cache
+ * is initialised but the pool is NULL (not enabled). */
+void test_cache_json_handler_empty_pool(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-043: cache_json_handler empty pool returns {\"d\":[]}");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init only — mutex valid, pool == NULL */
+    cache_multimaster_init();
+
+    httpd_req_t req = {0};
+    cache_multimaster_test_json_handler(&req);
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("{\"d\":[]}",
+        mock_http_resp_buf,
+        "Response must be exactly {\"d\":[]} when pool is NULL");
+}
+
+/* ---- CM-U-044: cache_json_handler — 1 entry, correct JSON format ---------- */
+
+/* Verify that a single cached entry is serialised to the correct JSON object
+ * with the expected field names and values. */
+void test_cache_json_handler_one_entry(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-044: cache_json_handler 1 entry correct JSON");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store: slave=7, FC03, addr=50, val=0x1234 (decimal 4660) */
+    cache_multimaster_on_request(0, 7, 3, 50, 1);
+    uint8_t data[] = { 7, 0x03, 2, 0x12, 0x34 };
+    /* on_response() resets age_s to 0 for new entries — no timer manipulation needed */
+    cache_multimaster_on_response(0, 7, 3, data, sizeof(data), 0);
+
+    httpd_req_t req = {0};
+    cache_multimaster_test_json_handler(&req);
+
+    /* The data array must be opened */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "{\"d\":["),
+        "Response must start with {\"d\":[");
+
+    /* The entry must be serialised with the correct field values */
+    TEST_ASSERT_NOT_NULL_MESSAGE(
+        strstr(mock_http_resp_buf, "{\"s\":7,\"t\":\"h\",\"a\":50,\"v\":4660,\"age\":0}"),
+        "Response must contain {\"s\":7,\"t\":\"h\",\"a\":50,\"v\":4660,\"age\":0}");
+
+    /* The data array must be closed */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "]}"),
+        "Response must end with ]}");
+}
+
+/* ---- CM-U-045: cache_json_handler — type chars (h/i/c/d) ------------------ */
+
+/* Verify that each Modbus function code maps to the correct single-char type
+ * tag in the JSON output ("h", "i", "c", "d"). */
+void test_cache_json_handler_type_chars(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-045: cache_json_handler type chars h/i/c/d");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* FC03 → "h" */
+    cache_multimaster_on_request(0, 1, 3, 0, 1);
+    uint8_t d03[] = { 1, 0x03, 2, 0x00, 0x01 };
+    cache_multimaster_on_response(0, 1, 3, d03, sizeof(d03), 0);
+
+    /* FC04 → "i" */
+    cache_multimaster_on_request(0, 2, 4, 0, 1);
+    uint8_t d04[] = { 2, 0x04, 2, 0x00, 0x02 };
+    cache_multimaster_on_response(0, 2, 4, d04, sizeof(d04), 0);
+
+    /* FC01 → "c" */
+    cache_multimaster_on_request(0, 3, 1, 0, 1);
+    uint8_t d01[] = { 3, 0x01, 1, 0x01 };
+    cache_multimaster_on_response(0, 3, 1, d01, sizeof(d01), 0);
+
+    /* FC02 → "d" */
+    cache_multimaster_on_request(0, 4, 2, 0, 1);
+    uint8_t d02[] = { 4, 0x02, 1, 0x01 };
+    cache_multimaster_on_response(0, 4, 2, d02, sizeof(d02), 0);
+
+    httpd_req_t req = {0};
+    cache_multimaster_test_json_handler(&req);
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"t\":\"h\""),
+        "JSON must contain \"t\":\"h\" for FC03 (holding)");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"t\":\"i\""),
+        "JSON must contain \"t\":\"i\" for FC04 (input)");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"t\":\"c\""),
+        "JSON must contain \"t\":\"c\" for FC01 (coil)");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"t\":\"d\""),
+        "JSON must contain \"t\":\"d\" for FC02 (discrete)");
+}
+
+/* ---- CM-U-046: cache_json_handler — 2 entries, comma separator ------------ */
+
+/* Verify that two entries in the JSON response are separated by a comma and
+ * that the first entry is not preceded by a comma. */
+void test_cache_json_handler_two_entries_comma(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-046: cache_json_handler 2 entries comma separator");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store 2 entries for different slaves */
+    cache_multimaster_on_request(0, 10, 3, 0, 1);
+    uint8_t data1[] = { 10, 0x03, 2, 0x00, 0x0A };
+    cache_multimaster_on_response(0, 10, 3, data1, sizeof(data1), 0);
+
+    cache_multimaster_on_request(0, 20, 3, 0, 1);
+    uint8_t data2[] = { 20, 0x03, 2, 0x00, 0x14 };
+    cache_multimaster_on_response(0, 20, 3, data2, sizeof(data2), 0);
+
+    httpd_req_t req = {0};
+    cache_multimaster_test_json_handler(&req);
+
+    /* There must be a comma between the two JSON objects */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "},{"),
+        "JSON must contain '},{' as separator between 2 objects");
+
+    /* The response must NOT start with a leading comma before the first object
+     * (i.e., the first object must not be preceded by a comma). */
+    const char *d_array_start = strstr(mock_http_resp_buf, "[");
+    if (d_array_start != NULL) {
+        /* The character right after '[' must be '{' not ',' */
+        TEST_ASSERT_EQUAL_CHAR_MESSAGE('{', *(d_array_start + 1),
+            "First element must not be preceded by a leading comma");
+    }
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -1779,6 +2202,17 @@ int main(void)
     RUN_TEST(test_cache_multimaster_on_request_pending_overwrite);
     RUN_TEST(test_cache_multimaster_disable_without_enable);
     RUN_TEST(test_cache_multimaster_age_saturation);
+    RUN_TEST(test_cache_status_handler_disabled_empty);
+    RUN_TEST(test_cache_status_handler_enabled_two_entries);
+    RUN_TEST(test_cache_status_handler_same_slave);
+    RUN_TEST(test_cache_csv_handler_empty_pool);
+    RUN_TEST(test_cache_csv_handler_two_entries);
+    RUN_TEST(test_cache_csv_handler_type_mapping);
+    RUN_TEST(test_cache_json_handler_null_mutex);
+    RUN_TEST(test_cache_json_handler_empty_pool);
+    RUN_TEST(test_cache_json_handler_one_entry);
+    RUN_TEST(test_cache_json_handler_type_chars);
+    RUN_TEST(test_cache_json_handler_two_entries_comma);
 
     return UNITY_END();
 }

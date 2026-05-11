@@ -1,7 +1,9 @@
 #pragma once
 
 /* Minimal stub for esp_http_server.h used in the cache_multimaster unit test.
- * Only the types and functions referenced by cache_multimaster.c are defined. */
+ * Only the types and functions referenced by cache_multimaster.c are defined.
+ * Non-inline implementations live in mocks/esp_http_server.c so that the mock
+ * can maintain mutable state (accumulated response buffer, call counters, etc.) */
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -38,42 +40,40 @@ typedef struct httpd_uri {
     void            *user_ctx;
 } httpd_uri_t;
 
-/* Stub implementations — the HTTP layer is not exercised by CM-U-001. */
-static inline esp_err_t httpd_register_uri_handler(httpd_handle_t handle,
-                                                    const httpd_uri_t *uri_handler)
-{
-    (void)handle;
-    (void)uri_handler;
-    return ESP_OK;
-}
+/* ---- Mock state (defined in esp_http_server.c) ---- */
 
-static inline esp_err_t httpd_resp_set_type(httpd_req_t *r, const char *type)
-{
-    (void)r;
-    (void)type;
-    return ESP_OK;
-}
+/* Accumulated response body from httpd_resp_send / httpd_resp_send_chunk calls */
+extern char         mock_http_resp_buf[4096];
 
-static inline esp_err_t httpd_resp_set_hdr(httpd_req_t *r, const char *field, const char *value)
-{
-    (void)r;
-    (void)field;
-    (void)value;
-    return ESP_OK;
-}
+/* Count of httpd_resp_send() calls */
+extern int          mock_http_resp_send_called;
 
-static inline esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t buf_len)
-{
-    (void)r;
-    (void)buf;
-    (void)buf_len;
-    return ESP_OK;
-}
+/* Count of httpd_resp_send_chunk() calls */
+extern int          mock_http_resp_send_chunk_called;
 
-static inline esp_err_t httpd_resp_send_chunk(httpd_req_t *r, const char *buf, ssize_t buf_len)
-{
-    (void)r;
-    (void)buf;
-    (void)buf_len;
-    return ESP_OK;
-}
+/* Last content-type string set via httpd_resp_set_type() */
+extern const char  *mock_http_resp_set_type_last;
+
+/* Last header field name set via httpd_resp_set_hdr() */
+extern const char  *mock_http_resp_set_hdr_last_field;
+
+/* Last header field value set via httpd_resp_set_hdr() */
+extern const char  *mock_http_resp_set_hdr_last_value;
+
+/* Reset all mock state — call in setUp() before each test */
+void mock_http_reset(void);
+
+/* ---- Mock function prototypes ---- */
+
+esp_err_t httpd_register_uri_handler(httpd_handle_t handle,
+                                     const httpd_uri_t *uri_handler);
+
+esp_err_t httpd_resp_set_type(httpd_req_t *r, const char *type);
+
+esp_err_t httpd_resp_set_hdr(httpd_req_t *r, const char *field,
+                              const char *value);
+
+esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t buf_len);
+
+esp_err_t httpd_resp_send_chunk(httpd_req_t *r, const char *buf,
+                                ssize_t buf_len);
