@@ -18,6 +18,7 @@ import {
   resolvePortSelection,
   buildDevices, buildRegsByKey, buildExportPayload, filterDevices,
 } from '@/utils/registerMapUtils';
+import { downloadFile } from '@/utils/downloadFile';
 
 const { t } = useI18n();
 const { info } = useInfo();
@@ -241,18 +242,8 @@ function downloadJsonExport(): void {
     `T${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
   const filename = `register-map-${suffix}.json`;
 
-  // Trigger browser download via a temporary anchor element
-  // The element must be appended to the DOM before .click() for Firefox compatibility
   const blob = new Blob([JSON.stringify(fullPayload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  downloadFile(filename, blob);
 }
 
 // Toggle a device node open/closed
