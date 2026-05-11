@@ -227,9 +227,10 @@ def _run_register_pass(
     """
     Perform a single full pass over all registers in register_map.
 
-    Sends one Modbus TCP request per register, validates TID integrity and
-    absence of Modbus exception 0x02, updates *result* in-place, and returns
-    the next TID.
+    Sends one Modbus TCP request per register, validates TID integrity,
+    absence of Modbus exceptions, decodes the response payload, and
+    compares the returned value against the expected value from register_map.
+    Updates *result* in-place and returns the next TID.
     """
     for (slave_id, reg_type, address), expected_value in register_map.items():
         fc = TYPE_TO_FC[reg_type]
@@ -300,8 +301,9 @@ def _run_register_pass(
                 f"slave={slave_id} type={reg_type} addr={address}: "
                 f"expected={expected_value} got={decoded_values[0]}"
             )
-        else:
-            result.add_pass()
+            tid += 1
+            continue
+        result.add_pass()
 
         tid += 1
 
@@ -323,7 +325,7 @@ def worker(
     1. Waits at the barrier so all threads connect simultaneously.
     2. Opens a TCP connection to the Modbus server.
     3. Iterates over all registers in the map, issuing one request per register.
-    4. Validates TID integrity and absence of Modbus exception 0x02.
+    4. Validates TID integrity, Modbus exceptions, decodes payload and compares values against register_map.
 
     If duration > 0, repeats the register pass in a loop until the deadline
     (time.monotonic() >= start_time + duration), counting full iterations.
@@ -420,12 +422,12 @@ def main():
         raw_csv = fetch_csv(args.host, args.http_port)
     except RuntimeError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(1)
     register_map = parse_csv(raw_csv)
 
     if not register_map:
         print("[ERROR] Register map is empty — nothing to test.", file=sys.stderr)
-        sys.exit(1)
+        raise SystemExit(1)
 
     print(f"[*] Register map loaded: {len(register_map)} entries")
 
@@ -474,7 +476,7 @@ def main():
             f"[FAIL] {len(still_alive)} thread(s) did not finish within "
             f"{join_timeout:.0f} seconds (deadlock?)"
         )
-        sys.exit(1)
+        raise SystemExit(1)
 
     # Step 3: Collect and report results
     print()
@@ -535,10 +537,10 @@ def main():
 
     if all_passed:
         print("\n✅  OVERALL RESULT: PASS")
-        sys.exit(0)
+        raise SystemExit(0)
     else:
         print("\n❌  OVERALL RESULT: FAIL")
-        sys.exit(1)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
