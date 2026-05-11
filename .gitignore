@@ -22,3 +22,6 @@ managed_components/
 
 # Coverage reports
 **/covr_report/
+
+
+__pycache__
