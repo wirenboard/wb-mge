@@ -3,11 +3,8 @@
 #include "driver/ledc.h"
 #include "auth.h"
 #include "json_utils.h"
-#include "bridge.h"
 #include "esp_log.h"
 
-
-#define BRIDGE_PORT_INDEX       0
 
 #define CLK_OUT_PIN             GPIO_NUM_10
 #define CLK_OUT_FREQ_HZ         100000
@@ -110,14 +107,12 @@ static esp_err_t process_request_json(cJSON *request_json)
     if (cmd_item->valueint) {
         if (!clock_out_en) {
             clock_out_en = true;
-            bridge_disable_port(BRIDGE_PORT_INDEX);
             start_clock_out();
         }
     } else {
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
-            bridge_enable_port(BRIDGE_PORT_INDEX);
         }
     }
 

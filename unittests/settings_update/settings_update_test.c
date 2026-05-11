@@ -2,7 +2,6 @@
 #include "console_log.h"
 
 #include "settings_update.h"
-#include "bridge.h"
 #include "network.h"
 #include "http_server.h"
 #include "update_rs485_mio_gpio_states.h"
@@ -18,7 +17,6 @@ void settings_update_reset(void);
 
 void setUp(void)
 {
-    mock_bridge_reset();
     mock_network_reset();
     mock_http_server_reset();
     mock_update_rs485_mio_gpio_states_reset();
@@ -40,10 +38,6 @@ static void verify_settings_update_checks(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_update_rs485_control_called, "update_rs485_control should be called once");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_update_io_bus_control_called, "update_io_bus_control should be called once");
-
-    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        TEST_ASSERT_EQUAL_MESSAGE(1, mock_bridge_port_check_settings_changed_called[i], "Bridge check should be called once");
-    }
 
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_network_check_mdns_settings_changed_called, "mDNS check should be called once");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_http_server_check_settings_changed_called, "HTTP server check should be called once");
@@ -74,30 +68,12 @@ static void verify_task_created(void)
 }
 
 static void verify_updates(
-    bool expect_bridge0,
-    bool expect_bridge1,
     bool expect_mdns,
     bool expect_http,
     bool expect_eth,
     bool expect_wifi
 )
 {
-    bool bridge_expected[BRIDGES_COUNT] = {expect_bridge0, expect_bridge1};
-
-    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        int expected = bridge_expected[i] ? 1 : 0;
-
-        TEST_ASSERT_EQUAL_MESSAGE(expected, mock_bridge_port_deinit_called[i],
-            bridge_expected[i] ? "Bridge deinit should be called once" : "Bridge deinit should not be called");
-        TEST_ASSERT_EQUAL_MESSAGE(expected, mock_bridge_port_init_called[i],
-            bridge_expected[i] ? "Bridge init should be called once" : "Bridge init should not be called");
-
-        if (bridge_expected[i]) {
-            TEST_ASSERT_EQUAL_MESSAGE(i, mock_bridge_port_deinit_index[i], "Bridge deinit index should be correct");
-            TEST_ASSERT_EQUAL_MESSAGE(i, mock_bridge_port_init_index[i], "Bridge init index should be correct");
-        }
-    }
-
     int expected_mdns = expect_mdns ? 1 : 0;
     int expected_http = expect_http ? 1 : 0;
     int expected_eth = expect_eth ? 1 : 0;
@@ -146,37 +122,7 @@ void test_settings_update_no_changes(void)
 
     verify_settings_update_checks();
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTaskCreate_data.called, "xTaskCreate should not be called when no changes");
-    verify_updates(false, false, false, false, false, false);
-}
-
-// Тестируем обновление настроек мостов
-void test_settings_update_bridge_ports_changed(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - bridge ports changed");
-    LOG_MESSAGE();
-
-    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        setUp();
-
-        mock_bridge_port_check_settings_changed_return_value[i] = true;
-
-        esp_err_t result = settings_update();
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
-
-        verify_settings_update_checks();
-        verify_task_created();
-        execute_task_function();
-        TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called, "vTaskDelay should not be called");
-
-        if (i == 0) {
-            verify_updates(true, false, false, false, false, false);
-        } else if (i == 1) {
-            verify_updates(false, true, false, false, false, false);
-        }
-
-        verify_task_deleted();
-    }
+    verify_updates(false, false, false, false);
 }
 
 // Тестируем обновление настроек mDNS
@@ -195,7 +141,7 @@ void test_settings_update_mdns_changed(void)
     verify_task_created();
     execute_task_function();
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called, "vTaskDelay should not be called");
-    verify_updates(false, false, true, false, false, false);
+    verify_updates(true, false, false, false);
     verify_task_deleted();
 }
 
@@ -215,7 +161,7 @@ void test_settings_update_http_server_changed(void)
     verify_task_created();
     execute_task_function();
     verify_delay_before_network_updates();
-    verify_updates(false, false, false, true, false, false);
+    verify_updates(false, true, false, false);
     verify_task_deleted();
 }
 
@@ -235,7 +181,7 @@ void test_settings_update_ethernet_changed(void)
     verify_task_created();
     execute_task_function();
     verify_delay_before_network_updates();
-    verify_updates(false, false, false, false, true, false);
+    verify_updates(false, false, true, false);
     verify_task_deleted();
 }
 
@@ -255,7 +201,7 @@ void test_settings_update_wifi_changed(void)
     verify_task_created();
     execute_task_function();
     verify_delay_before_network_updates();
-    verify_updates(false, false, false, false, false, true);
+    verify_updates(false, false, false, true);
     verify_task_deleted();
 }
 
@@ -265,10 +211,6 @@ void test_settings_update_all_changed(void)
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - all settings changed");
     LOG_MESSAGE();
-
-    for (unsigned i = 0; i < BRIDGES_COUNT; ++i) {
-        mock_bridge_port_check_settings_changed_return_value[i] = true;
-    }
 
     mock_network_check_mdns_settings_changed_return_value = true;
     mock_http_server_check_settings_changed_return_value = true;
@@ -282,7 +224,7 @@ void test_settings_update_all_changed(void)
     verify_task_created();
     execute_task_function();
     verify_delay_before_network_updates();
-    verify_updates(true, true, true, true, true, true);
+    verify_updates(true, true, true, true);
     verify_task_deleted();
 }
 
@@ -293,7 +235,7 @@ void test_settings_update_task_creation_failure(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - task creation failure");
     LOG_MESSAGE();
 
-    mock_bridge_port_check_settings_changed_return_value[0] = true;
+    mock_network_check_mdns_settings_changed_return_value = true;
     mock_xTaskCreate_data.should_fail = true;
 
     esp_err_t result = settings_update();
@@ -302,7 +244,7 @@ void test_settings_update_task_creation_failure(void)
     verify_settings_update_checks();
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_data.called, "xTaskCreate should be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called, "vTaskDelay should not be called");
-    verify_updates(false, false, false, false, false, false);
+    verify_updates(false, false, false, false);
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelete_data.called, "vTaskDelete should not be called when task creation fails");
 }
 
@@ -337,7 +279,6 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_settings_update_no_changes);
-    RUN_TEST(test_settings_update_bridge_ports_changed);
     RUN_TEST(test_settings_update_mdns_changed);
     RUN_TEST(test_settings_update_http_server_changed);
     RUN_TEST(test_settings_update_ethernet_changed);

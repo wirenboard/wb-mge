@@ -238,25 +238,6 @@ void test_validate_wifi_auth(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_wifi_auth("OPEN"), "Uppercase WiFi auth should be invalid");
 }
 
-// Test validate_bridge_mode function
-void test_validate_bridge_mode(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_bridge_mode function");
-    LOG_MESSAGE();
-
-    // Valid bridge modes
-    TEST_ASSERT_TRUE_MESSAGE(validate_bridge_mode("server"), "Bridge mode 'server' should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_bridge_mode("client"), "Bridge mode 'client' should be valid");
-
-    // Invalid bridge modes
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode(NULL), "NULL bridge mode should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode(""), "Empty bridge mode should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode("tcp_server"), "Bridge mode 'tcp_server' should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode("tcp_client"), "Bridge mode 'tcp_client' should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode("SERVER"), "Uppercase bridge mode should be invalid");
-}
-
 // Test validate_bool function
 void test_validate_bool(void)
 {
@@ -351,7 +332,6 @@ int main(void)
     RUN_TEST(test_validate_ip);
     RUN_TEST(test_validate_wifi_mode);
     RUN_TEST(test_validate_wifi_auth);
-    RUN_TEST(test_validate_bridge_mode);
     RUN_TEST(test_validate_bool);
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);

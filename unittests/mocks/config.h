@@ -14,6 +14,3 @@
 #endif
 
 #define MOCK_DEFAULT_BAUDRATE                        9600
-#define MOCK_DEFAULT_BRIDGE_PORT                     502
-#define MOCK_DEFAULT_BRIDGE_PORT2                    503
-#define MOCK_DEFAULT_BRIDGE_IP                       "192.168.5.2"

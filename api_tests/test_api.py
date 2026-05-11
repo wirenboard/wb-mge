@@ -183,12 +183,8 @@ def test_info(api):
         rs485 = data[port]
 
         assert "is_busy" in rs485, "Field is_busy is missing"
-        assert "error_percentage" in rs485, "Field error_percentage is missing"
-        assert "server_connections_count" in rs485, "Field server_connections_count is missing"
 
         assert isinstance(rs485["is_busy"], bool), "Field is_busy has incorrect type"
-        assert isinstance(rs485["error_percentage"], int), "Field error_percentage has incorrect type"
-        assert isinstance(rs485["server_connections_count"], int), "Field server_connections_count has incorrect type"
 
     print("✓ Information structure is correct")
 
@@ -250,7 +246,7 @@ def test_settings(api):
         rs485 = original_settings[port]
         rs485_fields = [
             "term", "fail_safe", "baudrate", "stopbits",
-            "parity", "databits", "bridge"
+            "parity", "databits"
         ]
         for field in rs485_fields:
             assert field in rs485, f"Field {field} is missing"
@@ -266,21 +262,6 @@ def test_settings(api):
             f"Field parity has incorrect value: {rs485['parity']}"
         assert rs485["databits"] in ["5", "6", "7", "8"], \
             f"Field databits has incorrect value: {rs485['databits']}"
-
-        # Check bridge settings
-        bridge = rs485["bridge"]
-        bridge_fields = [
-            "mode", "port", "ip", "modbus"
-        ]
-        for field in bridge_fields:
-            assert field in bridge, f"Field {field} is missing"
-
-        assert bridge["mode"] in ["server", "client"], f"Field mode has incorrect value: {bridge['mode']}"
-        assert isinstance(bridge["port"], int), "Field port has incorrect type"
-        assert 1 <= bridge["port"] <= 65535, f"Field port has incorrect value: {bridge['port']}"
-        assert isinstance(bridge["modbus"], bool), "Field modbus has incorrect type"
-
-        # Modbus TCP specific parameters removed from test
 
     print("✓ Settings structure is correct")
 
@@ -319,13 +300,7 @@ def test_settings(api):
             "baudrate": 115200,
             "stopbits": "1.5",
             "parity": "even",
-            "databits": "7",
-            "bridge": {
-                "mode": "server",
-                "port": 5020,
-                "ip": "192.168.1.49",
-                "modbus": True
-            }
+            "databits": "7"
         },
         "rs485_2": {
             "term": not original_settings["rs485_2"]["term"],
@@ -333,13 +308,7 @@ def test_settings(api):
             "baudrate": 38400,
             "stopbits": "1",
             "parity": "odd",
-            "databits": "6",
-            "bridge": {
-                "mode": "client",
-                "port": 5021,
-                "ip": "192.168.1.50",
-                "modbus": False
-            }
+            "databits": "6"
         }
     }
 
@@ -381,24 +350,11 @@ def test_settings(api):
         assert rs485_1[field] == test_settings["rs485_1"][field], \
             f"Incorrect value for field {field}: {rs485_1[field]}"
 
-    bridge_1 = new_settings["rs485_1"]["bridge"]
-    bridge_fields = [
-        "mode", "port", "ip", "modbus"
-    ]
-    for field in bridge_fields:
-        assert bridge_1[field] == test_settings["rs485_1"]["bridge"][field], \
-            f"Incorrect value for field {field}: {bridge_1[field]}"
-
     # Check RS485_2 settings
     rs485_2 = new_settings["rs485_2"]
     for field in rs485_main_fields:
         assert rs485_2[field] == test_settings["rs485_2"][field], \
             f"Incorrect value for field {field}: {rs485_2[field]}"
-
-    bridge_2 = new_settings["rs485_2"]["bridge"]
-    for field in bridge_fields:
-        assert bridge_2[field] == test_settings["rs485_2"]["bridge"][field], \
-            f"Incorrect value for field {field}: {bridge_2[field]}"
 
     print("✓ All settings are saved correctly")
 
@@ -432,25 +388,13 @@ def test_settings(api):
             "stopbits": "2.5",                      # Invalid value
             "parity": "all",                        # Invalid value
             "databits": "2",                        # Invalid value
-            "bridge": {
-                "mode": "station",                  # Invalid value
-                "port": 0,                          # Invalid value
-                "ip": "201.250.252.256",            # Invalid byte values
-                "modbus": "enabled"                 # Invalid type
-            },
         "rs485_2": {
             "term": "true",                         # Invalid type
             "fail_safe": "true",                    # Invalid type
             "baudrate": 0,                          # Invalid value
             "stopbits": "0.5",                      # Invalid value
             "parity": "disabled",                   # Invalid value
-            "databits": "4",                        # Invalid value
-            "bridge": {
-                "mode": "server",                   # Invalid value
-                "port": 65536,                      # Invalid value
-                "ip": "102.abc.126.18",             # Invalid characters
-                "modbus": "disabled"                # Invalid type
-            }
+            "databits": "4"                         # Invalid value
         },
         "vout": "true",                             # Invalid type
         "io_bus": "true"                            # Invalid type
@@ -563,103 +507,6 @@ def test_commands(api):
         print(f"❌ Unexpected error in commands test: {e}")
         print(f"Error type: {type(e).__name__}")
         raise
-
-
-def test_modbus_tcp_parameters(api):
-    """Modbus TCP specific parameters test"""
-    print("\n=== Modbus TCP parameters test ===")
-
-    # Get current settings
-    response = api.get_settings()
-    assert response.status_code == 200
-    original_settings = response.json()
-
-    # Test Modbus TCP settings for first port
-    modbus_settings = {
-        "rs485_1": {
-            "bridge": {
-                "mode": "server",
-                "port": 502,
-                "modbus": True
-            }
-        },
-        "rs485_2": {
-            "bridge": {
-                "mode": "client",
-                "port": 503,
-                "ip": "192.168.1.10",
-                "modbus": True
-            }
-        }
-    }
-
-    response = api.update_settings(modbus_settings)
-    assert response.status_code == 200
-    result = response.json()
-    assert result["success"] == True
-    print("✓ Modbus TCP settings saved")
-
-    # Check that settings were applied
-    response = api.get_settings()
-    assert response.status_code == 200
-    new_settings = response.json()
-
-    # Check first port
-    rs485_1 = new_settings["rs485_1"]["bridge"]
-    assert rs485_1["modbus"] == True
-
-    # Check second port
-    rs485_2 = new_settings["rs485_2"]["bridge"]
-    assert rs485_2["modbus"] == True
-
-    print("✓ Modbus TCP parameters applied correctly")
-
-    # Test with Modbus disabled
-    transparent_settings = {
-        "rs485_1": {
-            "bridge": {
-                "modbus": False         # Transparent mode
-            }
-        }
-    }
-
-    response = api.update_settings(transparent_settings)
-    assert response.status_code == 200
-    print("✓ Transparent mode settings accepted")
-
-
-def test_modbus_validation_limits(api):
-    """Validation limits test for Modbus parameters"""
-    print("\n=== Modbus limits validation test ===")
-
-    # Test with invalid ports
-    invalid_settings = {
-        "rs485_1": {
-            "bridge": {
-                "modbus": True,
-                "port": 0          # Invalid port
-            }
-        }
-    }
-
-    response = api.update_settings(invalid_settings)
-    # API should either reject or correct values
-    assert response.status_code in [200, 400]
-    print("✓ Invalid ports are handled")
-
-    # Test with port exceeding limit
-    invalid_settings = {
-        "rs485_2": {
-            "bridge": {
-                "modbus": True,
-                "port": 70000      # Exceeds maximum (65535)
-            }
-        }
-    }
-
-    response = api.update_settings(invalid_settings)
-    assert response.status_code in [200, 400]
-    print("✓ Port limit exceeding is handled")
 
 
 def test_validation_patterns(api):
@@ -919,8 +766,6 @@ def main():
         ("settings", test_settings),
         ("session management", test_session_management),
         ("uptime", test_uptime),
-        ("Modbus TCP parameters", test_modbus_tcp_parameters),
-        ("Modbus validation limits", test_modbus_validation_limits),
         ("validation patterns", test_validation_patterns),
         ("WiFi scanner", test_wifi_scanner),
         ("AP clients list", test_ap_clients),

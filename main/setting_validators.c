@@ -248,20 +248,6 @@ bool validate_wifi_auth(const char *value)
     return false;
 }
 
-bool validate_bridge_mode(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    if (strncmp(value, BRIDGE_MODE_SERVER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return true;
-    }
-    if (strncmp(value, BRIDGE_MODE_CLIENT_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return true;
-    }
-    return false;
-}
-
 bool validate_bool(const char *value)
 {
     if (!value) {

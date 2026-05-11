@@ -61,13 +61,6 @@ static const setting_mapping_t rs485_base_mappings[] = {
     {"fail_safe", "485_fail_safe"},
 };
 
-static const setting_mapping_t rs485_bridge_mappings[] = {
-    {"mode", "bridge_mode"},
-    {"port", "bridge_port"},
-    {"ip", "bridge_ip"},
-    {"modbus", "bridge_modbus"},
-};
-
 static esp_err_t add_rs485_settings_to_json(cJSON *parent);
 
 // Helper function to add setting to JSON using automatic type detection
@@ -228,21 +221,6 @@ static esp_err_t add_rs485_settings_to_json(cJSON *parent)
             add_setting_to_json(rs485_port, key_buf, mapping->json_key);
         }
 
-        // Add bridge subgroup
-        cJSON *bridge = cJSON_CreateObject();
-        if (bridge == NULL) {
-            ESP_LOGE(TAG, "Failed to create bridge JSON object for RS485_%d", port);
-            cJSON_Delete(rs485_port);
-            return ESP_FAIL;
-        }
-
-        for (size_t i = 0; i < ARRAY_SIZE(rs485_bridge_mappings); i++) {
-            const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
-            snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
-            add_setting_to_json(bridge, key_buf, mapping->json_key);
-        }
-        cJSON_AddItemToObject(rs485_port, "bridge", bridge);
-
         // Add to main response
         snprintf(key_buf, sizeof(key_buf), "rs485_%d", port);
         cJSON_AddItemToObject(parent, key_buf, rs485_port);
@@ -279,25 +257,6 @@ static esp_err_t process_rs485_settings(cJSON *request_json)
                 snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
 
                 save_setting_from_json(item, key_buf);
-            }
-        }
-
-        // Handle bridge subgroup
-        if (cJSON_HasObjectItem(rs485, "bridge")) {
-            cJSON *bridge = cJSON_GetObjectItem(rs485, "bridge");
-            if (cJSON_IsObject(bridge)) {
-                for (size_t i = 0; i < ARRAY_SIZE(rs485_bridge_mappings); i++) {
-                    const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
-
-                    if (cJSON_HasObjectItem(bridge, mapping->json_key)) {
-                        cJSON *item = cJSON_GetObjectItem(bridge, mapping->json_key);
-
-                        // Create setting key with port suffix
-                        snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
-
-                        save_setting_from_json(item, key_buf);
-                    }
-                }
             }
         }
     }

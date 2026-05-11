@@ -5,7 +5,6 @@
 #include <string.h>
 
 #include "esp_err.h"
-#include "bridge.h"
 #include "config.h"
 #include "wb_app_desc.h"
 
@@ -38,12 +37,6 @@ typedef struct {
     char wifi_ap_gw[SYS_INFO_MAX_STR_LEN];
     char wifi_ap_mac[SYS_INFO_MAX_STR_LEN];
     int wifi_ap_connections_count;
-
-    // true if there was activity in the last RS485_BUSY_TIMEOUT_MS milliseconds
-    bool rs485_is_busy[BRIDGES_COUNT];
-
-    // only for Modbus TCP
-    uint8_t rs485_error_percentage[BRIDGES_COUNT];
 } sys_info_t;
 
 extern sys_info_t sys_info;

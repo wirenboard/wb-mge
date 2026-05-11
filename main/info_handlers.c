@@ -2,7 +2,6 @@
 #include "json_utils.h"
 #include "auth.h"
 #include "setting_items.h"
-#include "bridge.h"
 #include "wifi_apsta.h"
 #include "config.h"
 #include "sys_info.h"
@@ -82,55 +81,6 @@ static esp_err_t info_build_network_json(cJSON **network_json)
     cJSON_AddStringToObject(wifi, "sta_mac", sys_info.wifi_sta_mac);
     cJSON_AddStringToObject(wifi, "ap_mac", sys_info.wifi_ap_mac);
     cJSON_AddItemToObject(*network_json, "wifi", wifi);
-
-    return ESP_OK;
-}
-
-static cJSON *create_rs485_port_json(int port_num)
-{
-    cJSON *rs485_port = cJSON_CreateObject();
-    if (rs485_port == NULL) {
-        ESP_LOGE(TAG, "Failed to create RS485_%d JSON object", port_num);
-        return NULL;
-    }
-
-    if (port_num == 1) {
-        cJSON_AddBoolToObject(rs485_port, "is_busy", sys_info.rs485_is_busy[0]);
-        cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_error_percentage[0]);
-        cJSON_AddNumberToObject(rs485_port, "server_connections_count", tcp_server_active_connections(TCP_SERVER_1));
-    } else if (port_num == 2) {
-        cJSON_AddBoolToObject(rs485_port, "is_busy", sys_info.rs485_is_busy[1]);
-        cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_error_percentage[1]);
-        cJSON_AddNumberToObject(rs485_port, "server_connections_count", tcp_server_active_connections(TCP_SERVER_2));
-    }
-
-    return rs485_port;
-}
-
-static esp_err_t info_build_rs485_json(cJSON **rs485_json)
-{
-    if (rs485_json == NULL) {
-        return ESP_FAIL;
-    }
-
-    *rs485_json = cJSON_CreateObject();
-    if (*rs485_json == NULL) {
-        ESP_LOGE(TAG, "Failed to create RS485 JSON object");
-        return ESP_FAIL;
-    }
-
-    // Create RS485_1 and RS485_2 objects
-    for (int port = 1; port <= 2; port++) {
-        cJSON *rs485_port = create_rs485_port_json(port);
-        if (rs485_port == NULL) {
-            cJSON_Delete(*rs485_json);
-            return ESP_FAIL;
-        }
-
-        char port_name[16];
-        snprintf(port_name, sizeof(port_name), "rs485_%d", port);
-        cJSON_AddItemToObject(*rs485_json, port_name, rs485_port);
-    }
 
     return ESP_OK;
 }
@@ -279,22 +229,6 @@ esp_err_t info_get_handler(httpd_req_t *req)
         }
 
         cJSON_Delete(network_json);
-    }
-
-    // Build RS485 info
-    cJSON *rs485_json = NULL;
-    if (info_build_rs485_json(&rs485_json) == ESP_OK && rs485_json != NULL) {
-        cJSON *rs485_1 = cJSON_DetachItemFromObject(rs485_json, "rs485_1");
-        cJSON *rs485_2 = cJSON_DetachItemFromObject(rs485_json, "rs485_2");
-
-        if (rs485_1) {
-            cJSON_AddItemToObject(response_json, "rs485_1", rs485_1);
-        }
-        if (rs485_2) {
-            cJSON_AddItemToObject(response_json, "rs485_2", rs485_2);
-        }
-
-        cJSON_Delete(rs485_json);
     }
 
     json_utils_send_response(req, NULL, response_json);

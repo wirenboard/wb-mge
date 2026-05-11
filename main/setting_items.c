@@ -203,10 +203,6 @@ static const setting_item_t setting_items[] = {
     {KEY_DATABITS1, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
     {KEY_485_TERM_1, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_FAIL_SAFE_1, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_BRIDGE_MODE1, DEFAULT_BRIDGE_MODE, validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
-    {KEY_BRIDGE_PORT1, DEFAULT_BRIDGE_PORT, validate_port, SETTING_ITEM_TYPE_INT},
-    {KEY_BRIDGE_IP1, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
-    {KEY_BRIDGE_MB1, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // RS485 port 2 settings
     {KEY_BAUDRATE2, DEFAULT_BAUDRATE, validate_baudrate, SETTING_ITEM_TYPE_INT},
@@ -215,10 +211,6 @@ static const setting_item_t setting_items[] = {
     {KEY_DATABITS2, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
     {KEY_485_TERM_2, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_FAIL_SAFE_2, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_BRIDGE_MODE2, DEFAULT_BRIDGE_MODE, validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
-    {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, validate_port, SETTING_ITEM_TYPE_INT},
-    {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
-    {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

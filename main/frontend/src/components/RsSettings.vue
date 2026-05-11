@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { computed, type ComputedRef } from 'vue';
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
-import type { Baudrate, BridgeMode, Databits, Parity, RsSettings, Settings, Stopbits } from '@/common/types';
+import type { Baudrate, Databits, Parity, RsSettings, Settings, Stopbits } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Info from '@/components/Info.vue';
-import InputNumber from '@/components/InputNumber.vue';
-import IpInput from '@/components/IpInput.vue';
 import Switch from '@/components/Switch.vue';
 
-const props = defineProps<{ title: string; field: string; hasPortsConflict: boolean }>();
+const props = defineProps<{ title: string; field: string }>();
 
 const { t } = useI18n();
 const { isChanged, isLoading, updateSettings } = useSettings();
@@ -24,10 +22,6 @@ const stopBits: Stopbits[] = ['1', '1.5', '2'];
 
 const dataBits: Databits[] = ['5', '6', '7', '8'];
 
-const bridgeModbus = [{ value: true, label: t('bridge_modbus') }, { value: false, label:  t('bridge_transparent') }];
-
-const bridgeMode: ComputedRef<BridgeMode[]> = computed(() => !settings.value!.bridge.modbus ? ['client', 'server'] : ['server']);
-
 const save = () => {
   const data: Partial<Settings> = {
     [props.field]: settings.value,
@@ -41,7 +35,7 @@ const save = () => {
 
 const isSaveDisabled = computed(() => {
   const fields = props.field === 'rs485_2' ? [props.field, 'io_bus'] : [props.field];
-  return isLoading.value || props.hasPortsConflict || !isChanged(fields);
+  return isLoading.value || !isChanged(fields);
 });
 </script>
 
@@ -106,54 +100,6 @@ const isSaveDisabled = computed(() => {
         <Info :text="t('io_bus_info')" />
       </template>
 
-      <b>TCP</b>
-      <div></div>
-
-      <label :for="`${field}-bridge_mb`">{{ t('modbus_mode') }}</label>
-      <div class="settings-data">
-        <select
-          :id="`${field}-bridge_mb`"
-          v-model="settings!.bridge.modbus"
-          name="bridge_mb"
-          @change="(ev: Event) => {
-            const target = ev.target as HTMLSelectElement;
-            if (target.value === 'true') {
-              settings!.bridge.mode = 'server';
-            }
-          }">
-          <option v-for="item in bridgeModbus" :key="`bridge_mb_1${item}`" :value="item.value">{{ item.label }}</option>
-        </select>
-      </div>
-
-      <label :for="`${field}-bridge_mode`">{{ t('bridge_mode') }}</label>
-      <div class="settings-data">
-        <select :id="`${field}-bridge_mode`" v-model="settings!.bridge.mode" :disabled="settings!.bridge.modbus" name="bridge_mode">
-          <option v-for="item in bridgeMode" :key="`bridge_mode_1${item}`" :value="item">{{ t(item) }}</option>
-        </select>
-      </div>
-
-      <template v-if="settings!.bridge.mode !== 'server'">
-        <label :for="`${field}-bridge_ip`">{{ t('bridge_ip') }}</label>
-        <div class="settings-data">
-          <IpInput :id="`${field}-bridge_ip`" v-model="settings!.bridge.ip" name="bridge_ip" />
-        </div>
-      </template>
-
-      <label :for="`${field}-bridge_port`">{{ t('port') }}</label>
-      <div class="settings-data">
-        <InputNumber
-          :id="`${field}-bridge_port`"
-          v-model="settings!.bridge.port"
-          name="bridge_port"
-          min="1"
-          max="65535"
-          class="rsSettings-port"
-          :invalid="hasPortsConflict"
-          required
-        />
-      </div>
-      <Info v-if="isChanged([field, 'io_bus']) && hasPortsConflict" :text="t('ports_conflict')" severity="error" />
-
       <Button
         class="settings-submit"
         type="submit"
@@ -183,14 +129,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Data bits",
     "failsafe": "Failsafe bias",
     "terminator": "120Ω termination resistor",
-    "modbus_mode": "Modbus mode",
-    "bridge_mode": "Bridge mode",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Transparent",
-    "bridge_ip": "IP address",
     "io_bus": "I/O Bus",
-    "io_bus_info": "Enables WB-MIO chip connected to RS485-2.\nDefault address 247",
-    "ports_conflict": "Port values must be unique"
+    "io_bus_info": "Enables WB-MIO chip connected to RS485-2.\nDefault address 247"
   },
   "ru": {
     "baudrate": "Скорость",
@@ -201,14 +141,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Биты данных",
     "failsafe": "Failsafe bias",
     "terminator": "120Ω резистор-терминатор",
-    "modbus_mode": "Режим",
-    "bridge_mode": "Роль",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Прозрачный",
-    "bridge_ip": "IP-адрес сервера",
     "io_bus": "I/O Bus",
-    "io_bus_info": "Включает чип WB-MIO, подключенный к RS485-2.\nАдрес по умолчанию 247",
-    "ports_conflict": "Значение порта должно быть уникальным"
+    "io_bus_info": "Включает чип WB-MIO, подключенный к RS485-2.\nАдрес по умолчанию 247"
   },
   "kk": {
     "baudrate": "Жылдамдық",
@@ -219,14 +153,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Дерек биттері",
     "failsafe": "Failsafe bias",
     "terminator": "120Ω терминатор резисторы",
-    "modbus_mode": "Режим",
-    "bridge_mode": "Рөл",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Мөлдір",
-    "bridge_ip": "IP мекенжайы",
     "io_bus": "I/O Bus",
-    "io_bus_info": "RS485-2-ге қосылған WB-MIO чипін қосады.\nӘдепкі адресі 247",
-    "ports_conflict": "Порт мәндері бірегей болуы керек"
+    "io_bus_info": "RS485-2-ге қосылған WB-MIO чипін қосады.\nӘдепкі адресі 247"
   },
   "it": {
     "baudrate": "Velocità in baud",
@@ -237,14 +165,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Bit di dati",
     "failsafe": "Failsafe bias",
     "terminator": "Resistenza di terminazione 120Ω",
-    "modbus_mode": "Modalità Modbus",
-    "bridge_mode": "Modalità bridge",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Trasparente",
-    "bridge_ip": "Indirizzo IP",
     "io_bus": "I/O Bus",
-    "io_bus_info": "Abilita il chip WB-MIO collegato a RS485-2.\nIndirizzo predefinito 247",
-    "ports_conflict": "I valori delle porte devono essere unici"
+    "io_bus_info": "Abilita il chip WB-MIO collegato a RS485-2.\nIndirizzo predefinito 247"
   },
   "de": {
     "baudrate": "Baudrate",
@@ -255,14 +177,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Datenbits",
     "failsafe": "Failsafe bias",
     "terminator": "120Ω Abschlusswiderstand",
-    "modbus_mode": "Modbus-Modus",
-    "bridge_mode": "Bridge-Modus",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Transparent",
-    "bridge_ip": "IP-Adresse",
     "io_bus": "I/O Bus",
-    "io_bus_info": "Aktiviert den an RS485-2 angeschlossenen WB-MIO-Chip.\nStandardadresse 247",
-    "ports_conflict": "Portwerte müssen eindeutig sein"
+    "io_bus_info": "Aktiviert den an RS485-2 angeschlossenen WB-MIO-Chip.\nStandardadresse 247"
   }
 }
 </i18n>

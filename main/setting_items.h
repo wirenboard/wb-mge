@@ -42,15 +42,6 @@
 #define KEY_STA_MASK_STATIC         "sta_mask_static"
 #define KEY_STA_GW_STATIC           "sta_gw_static"
 
-#define KEY_BRIDGE_MODE1            "bridge_mode_1"
-#define KEY_BRIDGE_PORT1            "bridge_port_1"
-#define KEY_BRIDGE_IP1              "bridge_ip_1"
-#define KEY_BRIDGE_MB1              "bridge_modbus_1"
-#define KEY_BRIDGE_MODE2            "bridge_mode_2"
-#define KEY_BRIDGE_PORT2            "bridge_port_2"
-#define KEY_BRIDGE_IP2              "bridge_ip_2"
-#define KEY_BRIDGE_MB2              "bridge_modbus_2"
-
 #define KEY_485_VOUT                "vout"
 #define KEY_485_TERM_1              "485_term_1"
 #define KEY_485_TERM_2              "485_term_2"
@@ -86,10 +77,6 @@
 #define UART_PARITY_DISABLE_STR     "none"
 #define UART_PARITY_EVEN_STR        "even"
 #define UART_PARITY_ODD_STR         "odd"
-
-// Bridge modes
-#define BRIDGE_MODE_SERVER_STR      "server"
-#define BRIDGE_MODE_CLIENT_STR      "client"
 
 // Setting types - used for type checking and JSON mapping
 typedef enum {

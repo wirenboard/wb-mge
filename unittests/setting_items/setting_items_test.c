@@ -60,10 +60,6 @@ const mock_setting_item_t expected_items[] = {
     {"databits_1", "8", SETTING_ITEM_TYPE_STRING},
     {"485_term_1", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_fail_safe_1", "true", SETTING_ITEM_TYPE_BOOL},
-    {"bridge_mode_1", "server", SETTING_ITEM_TYPE_STRING},
-    {"bridge_port_1", "502", SETTING_ITEM_TYPE_INT},
-    {"bridge_ip_1", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
-    {"bridge_modbus_1", "false", SETTING_ITEM_TYPE_BOOL},
 
     {"baudrate_2", "9600", SETTING_ITEM_TYPE_INT},
     {"stopbits_2", "2", SETTING_ITEM_TYPE_STRING},
@@ -71,10 +67,6 @@ const mock_setting_item_t expected_items[] = {
     {"databits_2", "8", SETTING_ITEM_TYPE_STRING},
     {"485_term_2", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_fail_safe_2", "true", SETTING_ITEM_TYPE_BOOL},
-    {"bridge_mode_2", "server", SETTING_ITEM_TYPE_STRING},
-    {"bridge_port_2", "503", SETTING_ITEM_TYPE_INT},
-    {"bridge_ip_2", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
-    {"bridge_modbus_2", "false", SETTING_ITEM_TYPE_BOOL},
 };
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))
@@ -241,16 +233,6 @@ void test_port_validators(void)
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_WEB_PORT, "80"));
     TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for web port");
-
-    // Test bridge port 1 validator
-    mock_reset_validator_flags();
-    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_BRIDGE_PORT1, "80"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for bridge port 1");
-
-    // Test bridge port 2 validator
-    mock_reset_validator_flags();
-    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_BRIDGE_PORT2, "80"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for bridge port 2");
 }
 
 void test_ip_validators(void)
@@ -263,7 +245,6 @@ void test_ip_validators(void)
         KEY_ETH_IP_STATIC, KEY_ETH_MASK_STATIC, KEY_ETH_GW_STATIC,
         KEY_AP_IP_STATIC, KEY_AP_MASK_STATIC, KEY_AP_GW_STATIC,
         KEY_STA_IP_STATIC, KEY_STA_MASK_STATIC, KEY_STA_GW_STATIC,
-        KEY_BRIDGE_IP1, KEY_BRIDGE_IP2
     };
 
     for (size_t i = 0; i < ARRAY_SIZE(ip_keys); i++) {
@@ -351,25 +332,17 @@ void test_serial_validators(void)
     }
 }
 
-void test_bridge_and_bool_validators(void)
+void test_bool_validators(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge and boolean validators");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test boolean validators");
     LOG_MESSAGE();
-
-    // Test bridge mode validators
-    const char* bridge_mode_keys[] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
-    for (size_t i = 0; i < ARRAY_SIZE(bridge_mode_keys); i++) {
-        mock_reset_validator_flags();
-        TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(bridge_mode_keys[i], "client"));
-        TEST_ASSERT_TRUE_MESSAGE(mock_validate_bridge_mode_called, "validate_bridge_mode should be called for bridge mode");
-    }
 
     // Test boolean validators
     const char* bool_keys[] = {
         KEY_ETH_DHCPC, KEY_STA_DHCPC, KEY_IO_BUS_ENABLED, KEY_485_VOUT,
-        KEY_485_TERM_1, KEY_485_FAIL_SAFE_1, KEY_BRIDGE_MB1,
-        KEY_485_TERM_2, KEY_485_FAIL_SAFE_2, KEY_BRIDGE_MB2
+        KEY_485_TERM_1, KEY_485_FAIL_SAFE_1,
+        KEY_485_TERM_2, KEY_485_FAIL_SAFE_2
     };
 
     for (size_t i = 0; i < ARRAY_SIZE(bool_keys); i++) {
@@ -662,8 +635,8 @@ void test_setting_items_read_bool(void)
     TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return false for non-boolean setting");
 
     // Test 4: Test boolean key that defaults to false
-    read_value = setting_items_read_bool(KEY_BRIDGE_MB1);
-    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return default bridge_modbus_1 value (false) from default_value");
+    read_value = setting_items_read_bool(KEY_485_VOUT);
+    TEST_ASSERT_TRUE_MESSAGE(read_value, "Should return default vout value (true) from default_value");
 
     // Test 5: Test boolean key that defaults to true
     read_value = setting_items_read_bool(KEY_485_TERM_1);
@@ -715,10 +688,10 @@ void test_setting_items_save_bool(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_ERR_NOT_FOUND, result, "Should return ESP_ERR_NOT_FOUND for unknown key");
 
     // Test 3: Save true value to boolean setting
-    result = setting_items_save_bool(KEY_BRIDGE_MB1, false);
+    result = setting_items_save_bool(KEY_485_TERM_1, false);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should successfully save false value");
 
-    read_value = setting_items_read_bool(KEY_BRIDGE_MB1);
+    read_value = setting_items_read_bool(KEY_485_TERM_1);
     TEST_ASSERT_FALSE_MESSAGE(read_value, "Should read back false value");
 
     // Test 4: Save false value to boolean setting
@@ -984,7 +957,7 @@ int main(void)
     RUN_TEST(test_ip_validators);
     RUN_TEST(test_wifi_validators);
     RUN_TEST(test_serial_validators);
-    RUN_TEST(test_bridge_and_bool_validators);
+    RUN_TEST(test_bool_validators);
 
     RUN_TEST(test_setting_items_save_error_conditions);
     RUN_TEST(test_setting_items_read_success);

@@ -1,11 +1,9 @@
-#include "bridge.h"
 #include "config.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "http_server.h"
 #include "nv_storage.h"
-#include "serial.h"
 #include "setting_items.h"
 #include "sys_info.h"
 #include "config_button.h"
@@ -142,18 +140,4 @@ void app_main(void)
     #endif // QEMU_BUILD
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
-
-    while (1)
-    {
-        if ((sys_info.wifi_ap_connections_count > 0) ||
-            sys_info.eth_is_connected ||
-            sys_info.wifi_sta_is_connected)
-        {
-            ESP_ERROR_CHECK(bridge_init());
-            break;
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            ESP_LOGW(TAG, "Waiting for network connection");
-        }
-    }
 }

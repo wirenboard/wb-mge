@@ -20,8 +20,6 @@ export interface Uptime {
 
 export interface RsStatus {
   is_busy: boolean;
-  error_percentage: number;
-  server_connections_count: number;
 }
 
 export interface Info {
@@ -66,8 +64,6 @@ export type Databits = '5' | '6' | '7' | '8';
 
 export type Parity = 'none' | 'even' | 'odd';
 
-export type BridgeMode = 'client' | 'server';
-
 export type WiFiMode = 'none' | 'ap' | 'sta';
 
 export interface RsSettings {
@@ -77,12 +73,6 @@ export interface RsSettings {
   stopbits: Stopbits;
   parity: Parity;
   databits: Databits;
-  bridge: {
-    mode: BridgeMode;
-    ip: string;
-    port: number;
-    modbus: boolean;
-  };
 }
 
 export interface Settings {

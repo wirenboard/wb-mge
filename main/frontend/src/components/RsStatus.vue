@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import type { RsSettings, RsStatus } from '@/common/types';
+import type { RsStatus } from '@/common/types';
 import Info from '@/components/Info.vue';
 
-defineProps<{ title: string; info: RsStatus; settings: RsSettings }>();
+defineProps<{ title: string; info: RsStatus }>();
 
 const { t } = useI18n();
 </script>
@@ -12,27 +12,9 @@ const { t } = useI18n();
   <div class="rsStatus-label"><b>{{ title }}</b></div>
   <div></div>
 
-  <div class="rsStatus-label">{{ t('modbus_mode') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
-
-  <div class="rsStatus-label">{{ t('bridge_mode') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
-
-  <div class="rsStatus-label">{{ t('tcp_port') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.port }}</div>
-
-  <div class="rsStatus-label">{{ t('tcp_count') }}</div>
-  <div class="rsStatus-value">{{ info.server_connections_count }}</div>
-
   <div class="rsStatus-label">{{ t('status') }}</div>
   <div class="rsStatus-value">{{ info.is_busy ? t('active') : t('not_active') }}</div>
   <Info class="rsStatus-info" :text="t('status_info')" />
-
-  <template v-if="settings.bridge.modbus ">
-    <div class="rsStatus-label">{{ t('error_rate') }}</div>
-    <div class="rsStatus-value">{{ info.error_percentage }}%</div>
-    <Info class="rsStatus-info" :text="t('error_rate_description')" />
-  </template>
 </template>
 
 <style>
@@ -51,74 +33,34 @@ const { t } = useI18n();
 <i18n>
 {
   "en": {
-    "modbus_mode": "Modbus mode",
-    "bridge_mode": "Bridge mode",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Transparent",
-    "tcp_port": "TCP port",
-    "tcp_count": "TCP count",
     "status": "Status",
     "status_info": "Active if data has been transferred within the last 5 seconds",
     "active": "Active",
-    "not_active": "Inactive",
-    "error_rate": "Error rate",
-    "error_rate_description": "Error rate for the last 100 requests"
+    "not_active": "Inactive"
   },
   "ru": {
-    "modbus_mode": "Режим",
-    "bridge_mode": "Роль",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Прозрачный",
-    "tcp_port": "TCP-порт",
-    "tcp_count": "TCP подключений",
     "status": "Статус",
     "status_info": "Активен, если была передача данных в течение последних 5 секунд",
     "active": "Активен",
-    "not_active": "Не активен",
-    "error_rate": "Процент ошибок",
-    "error_rate_description": "Процент ошибок по последним 100 запросам"
+    "not_active": "Не активен"
   },
   "kk": {
-    "modbus_mode": "Режим",
-    "bridge_mode": "Рөл",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Мөлдір",
-    "tcp_port": "TCP порты",
-    "tcp_count": "TCP қосылымдары",
     "status": "Күйі",
     "status_info": "Соңғы 5 секундта дерек берілсе — белсенді",
     "active": "Белсенді",
-    "not_active": "Белсенді емес",
-    "error_rate": "Қате пайызы",
-    "error_rate_description": "Соңғы 100 сұрауға қатысты қате пайызы"
+    "not_active": "Белсенді емес"
   },
   "it": {
-    "modbus_mode": "Modalità Modbus",
-    "bridge_mode": "Modalità bridge",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Trasparente",
-    "tcp_port": "Porta TCP",
-    "tcp_count": "Connessioni TCP",
     "status": "Stato",
     "status_info": "Attivo se sono stati trasferiti dati negli ultimi 5 secondi",
     "active": "Attivo",
-    "not_active": "Inattivo",
-    "error_rate": "Tasso di errore",
-    "error_rate_description": "Tasso di errore per le ultime 100 richieste"
+    "not_active": "Inattivo"
   },
   "de": {
-    "modbus_mode": "Modbus-Modus",
-    "bridge_mode": "Bridge-Modus",
-    "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Transparent",
-    "tcp_port": "TCP-Port",
-    "tcp_count": "TCP-Verbindungen",
     "status": "Status",
     "status_info": "Aktiv, wenn in den letzten 5 Sekunden Daten übertragen wurden",
     "active": "Aktiv",
-    "not_active": "Inaktiv",
-    "error_rate": "Fehlerquote",
-    "error_rate_description": "Fehlerquote der letzten 100 Anfragen"
+    "not_active": "Inaktiv"
   }
 }
 </i18n>

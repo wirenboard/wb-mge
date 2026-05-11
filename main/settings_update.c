@@ -3,7 +3,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "http_server.h"
-#include "bridge.h"
 #include "network.h"
 #include "update_rs485_mio_gpio_states.h"
 
@@ -11,7 +10,6 @@
 #define SETTINGS_UPDATE_TASK_STACK_SIZE     (6 * 1024)
 #define SETTINGS_UPDATE_TASK_PRIORITY       5
 
-#define BRIDGE_FLAGS_BASE                   BIT0
 #define MDNS_FLAG                           BIT8
 #define HTTP_SERVER_FLAG                    BIT9
 #define ETHERNET_FLAG                       BIT10
@@ -29,14 +27,6 @@ static void settings_update_task(void *arg)
 {
     uint32_t flags = (uint32_t)(uintptr_t)arg;
     ESP_LOGI(TAG, "Updating settings...");
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        if (flags & (BRIDGE_FLAGS_BASE << index)) {
-            ESP_LOGD(TAG, "Applying new settings to bridge port %u", index + 1);
-            bridge_port_deinit(index);
-            bridge_port_init(index);
-        }
-    }
 
     if (flags & MDNS_FLAG) {
         ESP_LOGD(TAG, "Applying new settings to mDNS");
@@ -83,13 +73,6 @@ esp_err_t settings_update(void)
     }
 
     uint32_t flags = 0;
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        if (bridge_port_check_settings_changed(index)) {
-            ESP_LOGD(TAG, "Bridge port %u settings were changed", index + 1);
-            flags |= BRIDGE_FLAGS_BASE << index;
-        }
-    }
 
     if (network_check_mdns_settings_changed()) {
         ESP_LOGD(TAG, "mDNS settings were changed");

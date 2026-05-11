@@ -39,13 +39,6 @@
 #define DEFAULT_STA_MASK_STATIC     "255.255.255.0"
 #define DEFAULT_STA_GW_STATIC       "192.168.1.1"
 
-#define DEFAULT_BRIDGE_MODE         BRIDGE_MODE_SERVER_STR
-#define DEFAULT_BRIDGE_PORT         "502"
-#define DEFAULT_BRIDGE_IP           "192.168.5.2"
-#define DEFAULT_BRIDGE_PORT2        "503"
-#define DEFAULT_BRIDGE_MB           "false"
-
-
 #ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"
 

@@ -103,9 +103,9 @@ const getDisplayValue = (val: string | boolean | number) => {
         <div>{{ t('power') }}</div>
         <div>{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
 
-        <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
+        <RsStatus title="RS-485 1" :info="info!.rs485_1" />
 
-        <RsStatus title="RS-485 2" :info="info!.rs485_2" :settings="settings!.rs485_2" />
+        <RsStatus title="RS-485 2" :info="info!.rs485_2" />
       </fieldset>
     </div>
   </Layout>
