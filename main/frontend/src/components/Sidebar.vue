@@ -1,17 +1,49 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, computed, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
+import type { RouteRecordRaw } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
-import LogoutIcon from '@/assets/logout.svg?component';
 import MenuIcon from '@/assets/menu.svg?component';
+import DocsIcon from '@/assets/docs.svg?component';
+import SupportIcon from '@/assets/support.svg?component';
+import ShopIcon from '@/assets/shop.svg?component';
+import LogoutIcon from '@/assets/logout.svg?component';
+import GaugeIcon from '@/assets/gauge.svg?component';
+import SlidersIcon from '@/assets/sliders.svg?component';
+import NetworkIcon from '@/assets/network.svg?component';
+import CpuIcon from '@/assets/cpu.svg?component';
 import { useHostname } from '@/common/hostname';
+import { useInfo } from '@/common/info';
+import { useSettings } from '@/common/settings';
+import { documentation, support, email, website } from '@/common/links';
 
-const { t } = useI18n();
+// Map from route meta.menuIcon string to the corresponding SVG component
+const menuIconMap: Record<string, Component> = {
+  gauge: GaugeIcon,
+  sliders: SlidersIcon,
+  network: NetworkIcon,
+  cpu: CpuIcon,
+};
+
+const { t, locale } = useI18n();
 const route = useRoute();
 const isShowMenu = ref(false);
 const router = useRouter();
 const { hostname } = useHostname();
+const { info } = useInfo();
+const { initData: savedSettings } = useSettings();
+
+const menuGroups = computed(() => {
+  const routes = router.options.routes.filter(r => r.meta?.menuName) as RouteRecordRaw[];
+  const groups: Record<string, RouteRecordRaw[]> = {};
+  for (const r of routes) {
+    const group = (r.meta?.menuGroup as string) || 'default';
+    if (!groups[group]) groups[group] = [];
+    groups[group].push(r);
+  }
+  return groups;
+});
 
 watch(
   () => route.fullPath,
@@ -23,10 +55,12 @@ watch(
 
 <template>
   <aside class="sidebar">
-    <RouterLink to="/" class="sidebar-logo">
-      <Logo alt="Wiren Board" />
-      <div v-if="hostname" class="sidebar-hostname">{{ hostname }}</div>
-    </RouterLink>
+    <div class="sb-brand">
+      <RouterLink to="/" class="sidebar-logo">
+        <Logo alt="Wiren Board" />
+      </RouterLink>
+      <a v-if="hostname" :href="`http://${hostname}.local`" target="_blank" rel="noopener noreferrer" class="sidebar-hostname">{{ hostname }}</a>
+    </div>
 
     <MenuIcon class="sidebar-burger" @click="isShowMenu = !isShowMenu" />
 
@@ -36,15 +70,60 @@ watch(
       'sidebar-navigationHide': !isShowMenu,
     }">
       <div class="sidebar-links">
-        <RouterLink
-          v-for="link in router.options.routes.filter(route => route.meta?.menuName)"
-          :key="link.path"
-          :to="link.path">
-          {{ t(link.meta?.menuName as string) }}
-        </RouterLink>
+        <template v-for="(routes, group) in menuGroups" :key="group">
+          <div class="group-label">{{ t(`group_${group}`) }}</div>
+          <RouterLink
+            v-for="link in routes"
+            :key="link.path"
+            :to="link.path">
+            <component
+              v-if="menuIconMap[link.meta?.menuIcon as string]"
+              :is="menuIconMap[link.meta?.menuIcon as string]"
+              class="sidebar-icon"
+            />
+            {{ t(link.meta?.menuName as string) }}
+          </RouterLink>
+        </template>
       </div>
-      <RouterLink to="/logout">
-        <LogoutIcon class="sidebar-logoutIcon" />
+      <div v-if="info && savedSettings" class="sb-ports">
+        <div class="sb-port">
+          <div class="sb-port-head">
+            <span class="sb-port-name">{{ t('port_1') }}</span>
+            <span :class="['sb-port-state', info.rs485_1.is_busy ? 'on' : 'off']">
+              <span class="dot" />{{ info.rs485_1.is_busy ? t('active') : t('idle') }}
+            </span>
+          </div>
+          <div class="sb-port-row"><span class="sb-port-row-key">{{ t('baudrate') }}</span><span class="sb-port-row-value mono">{{ savedSettings.rs485_1.baudrate }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-row-key">{{ t('line') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
+        </div>
+        <div class="sb-port">
+          <div class="sb-port-head">
+            <span class="sb-port-name">{{ t('port_2') }}</span>
+            <span :class="['sb-port-state', info.rs485_2.is_busy ? 'on' : 'off']">
+              <span class="dot" />{{ info.rs485_2.is_busy ? t('active') : t('idle') }}
+            </span>
+          </div>
+          <div class="sb-port-row"><span class="sb-port-row-key">{{ t('baudrate') }}</span><span class="sb-port-row-value mono">{{ savedSettings.rs485_2.baudrate }}</span></div>
+          <div class="sb-port-row mono"><span class="sb-port-row-key">{{ t('line') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
+        </div>
+      </div>
+
+      <div class="sb-links">
+        <a :href="documentation" target="_blank" class="sb-link">
+          <DocsIcon />
+          {{ t('link_docs') }}
+        </a>
+        <a :href="locale === 'ru' ? support : `mailto:${email}`" target="_blank" class="sb-link">
+          <SupportIcon />
+          {{ t('link_support') }}
+        </a>
+        <a :href="website" target="_blank" class="sb-link">
+          <ShopIcon />
+          {{ t('link_buy') }}
+        </a>
+      </div>
+      <RouterLink to="/logout" class="sidebar-logout">
+        <LogoutIcon class="sidebar-icon" />
         {{ t('logout') }}
       </RouterLink>
     </nav>
@@ -53,76 +132,138 @@ watch(
 
 <style scoped>
 .sidebar {
-  background: var(--sidebar-background);
+  background: var(--bg-sidebar);
+  color: var(--text-on-dark);
   min-width: var(--sidebar-width);
   height: 100dvh;
   display: flex;
   flex-direction: column;
+  border-right: 1px solid var(--border-sidebar);
 
   @media (max-width: 680px) {
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
     height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border-sidebar);
+  }
+}
+
+.sb-brand {
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid var(--border-sidebar);
+
+  @media (max-width: 680px) {
+    padding: 8px 12px;
+    border-bottom: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 }
 
 .sidebar-logo {
-  max-width: fit-content;
-  margin: 24px auto;
+  display: block;
 
   @media (max-width: 680px) {
-    margin: 12px 12px 8px;
-    flex-direction: row;
+    display: flex;
+    align-items: center;
+  }
+}
+
+.sidebar-logo :deep(svg) {
+  height: 22px;
+  width: auto;
+  display: block;
+}
+
+.sidebar-hostname {
+  font-size: 11.8px; /* +0.8px for Roboto */
+  color: var(--text-on-dark-muted);
+  margin-top: 6px;
+  word-break: break-all;
+  text-decoration: none;
+
+  @media (max-width: 680px) {
+    margin-top: 0;
   }
 }
 
 .sidebar-navigation {
-  padding-top: 24px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  overflow-y: auto;
   z-index: 1;
 
   @media (max-width: 680px) {
     position: fixed;
-    height: calc(100dvh - 84px);
+    height: calc(100dvh - 60px);
     top: 60px;
-    width: 200px;
+    width: 220px;
     right: 0;
-    background: var(--sidebar-background-mobile);
+    background: var(--bg-sidebar);
+    padding: 12px 10px;
   }
 }
+
 .sidebar-navigation.sidebar-navigationHide {
   @media (max-width: 680px) {
     display: none;
   }
 }
 
+.group-label {
+  font-size: 10.8px; /* +0.8px for Roboto */
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #6e7580;
+  padding: 12px 10px 6px;
+}
+
 .sidebar-navigation a {
-  color: var(--text-color);
+  color: var(--text-on-dark);
   text-decoration: none;
-  padding: 12px 24px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
   display: flex;
   align-items: center;
+  gap: 10px;
   cursor: pointer;
+  font-size: 13.8px; /* +0.8px for Roboto */
+  line-height: 1.2;
+  transition: background 0.1s;
 }
 
 .sidebar-navigation a:hover,
 .sidebar-navigation a:focus {
-  background: var(--primary-color-hover);
+  background: var(--bg-sidebar-hover);
   color: #fff;
+  text-decoration: none;
 }
 
 .sidebar-navigation a.router-link-active {
-  background: var(--primary-color) !important;
+  background: var(--bg-sidebar-hover) !important;
   color: #fff !important;
+  box-shadow: inset 2px 0 0 var(--brand-on-dark);
+}
+
+.sidebar-navigation a.router-link-active .sidebar-icon {
+  color: var(--brand-on-dark);
+  opacity: 1;
+}
+
+.sidebar-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 .sidebar-burger {
   width: 36px;
   margin-right: 6px;
-  fill: var(--text-color);
+  fill: var(--text-on-dark);
   cursor: pointer;
 
   @media (min-width: 680px) {
@@ -131,7 +272,7 @@ watch(
 }
 
 .sidebar-burger:hover {
-  fill: var(--primary-color);
+  fill: var(--brand-on-dark);
 }
 
 .sidebar-links {
@@ -140,38 +281,210 @@ watch(
   flex-grow: 1;
 }
 
-.sidebar-logoutIcon {
-  transform: scale(-1, 1);
-  width: 20px;
-  height: 20px;
-  margin-right: 6px;
+.sb-ports {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 10px;
+  border-bottom: 1px solid var(--border-sidebar);
 }
 
-.sidebar-hostname {
-  font-size: 11px;
-  color: var(--text-color-secondary, #888);
-  text-align: center;
+.sb-port {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sb-port + .sb-port {
+  border-top: 1px solid var(--border-sidebar);
   margin-top: 4px;
-  word-break: break-all;
+  padding-top: 10px;
+}
+
+.sb-port-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.sb-port-name {
+  font-size: 12px; /* original size — data display block */
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.01em;
+}
+
+.sb-port-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px; /* original size — data display block */
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+
+.sb-port-state .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.sb-port-state.on {
+  color: var(--brand-on-dark);
+}
+
+.sb-port-state.on .dot {
+  background: var(--brand-on-dark);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-on-dark) 20%, transparent);
+}
+
+.sb-port-state.off {
+  color: var(--text-on-dark-dim);
+}
+
+.sb-port-state.off .dot {
+  background: var(--text-on-dark-dim);
+}
+
+.sb-port-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px; /* original size — data display block */
+  color: var(--text-on-dark-muted);
+}
+
+.sb-port-row.mono {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.sb-port-row-key {
+  color: #6e7580;
+}
+
+.sb-port-row-value {
+  color: var(--text-on-dark);
+}
+
+.sb-links {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 2px;
+}
+
+.sidebar-navigation a.sb-link {
+  padding: 6px 10px;
+  color: var(--text-on-dark-muted);
+  font-size: 12.8px; /* +0.8px for Roboto */
+  gap: 9px;
+}
+
+.sidebar-navigation a.sb-link:hover,
+.sidebar-navigation a.sb-link:focus {
+  color: #fff;
+  background: var(--bg-sidebar-hover);
+}
+
+.sidebar-navigation a.sidebar-logout {
+  padding: 8px 10px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border-sidebar);
+  border-radius: 0;
+  color: var(--text-on-dark-muted);
+  text-decoration: none;
+  font-size: 12.8px; /* +0.8px for Roboto */
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.sidebar-navigation a.sidebar-logout:hover,
+.sidebar-navigation a.sidebar-logout:focus {
+  color: #fff;
+  background: none;
+  text-decoration: none;
 }
 </style>
 
 <i18n>
 {
   "en": {
-    "logout": "Logout"
+    "group_overview": "Overview",
+    "group_configuration": "Configuration",
+    "link_docs": "Documentation",
+    "link_support": "Support",
+    "link_buy": "Buy devices",
+    "logout": "Logout",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "baudrate": "Baudrate",
+    "line": "Line",
+    "port_1": "Port 1",
+    "port_2": "Port 2",
+    "serial_ports": "Serial ports"
   },
   "ru": {
-    "logout": "Выйти"
+    "group_overview": "Обзор",
+    "group_configuration": "Конфигурация",
+    "link_docs": "Документация",
+    "link_support": "Техподдержка",
+    "link_buy": "Купить устройства",
+    "logout": "Выйти",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "baudrate": "Скорость",
+    "line": "Параметры",
+    "port_1": "Порт 1",
+    "port_2": "Порт 2",
+    "serial_ports": "Порты"
   },
   "kk": {
-    "logout": "Шығу"
+    "group_overview": "Шолу",
+    "group_configuration": "Конфигурация",
+    "link_docs": "Құжаттама",
+    "link_support": "Қолдау",
+    "link_buy": "Құрылғыларды сатып алу",
+    "logout": "Шығу",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "baudrate": "Жылдамдық",
+    "line": "Желі",
+    "port_1": "Порт 1",
+    "port_2": "Порт 2",
+    "serial_ports": "Сериялық порттар"
   },
   "it": {
-    "logout": "Esci"
+    "group_overview": "Panoramica",
+    "group_configuration": "Configurazione",
+    "link_docs": "Documentazione",
+    "link_support": "Supporto",
+    "link_buy": "Acquista dispositivi",
+    "logout": "Esci",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "baudrate": "Velocità",
+    "line": "Linea",
+    "port_1": "Porta 1",
+    "port_2": "Porta 2",
+    "serial_ports": "Porte seriali"
   },
   "de": {
-    "logout": "Abmelden"
+    "group_overview": "Übersicht",
+    "group_configuration": "Konfiguration",
+    "link_docs": "Dokumentation",
+    "link_support": "Support",
+    "link_buy": "Geräte kaufen",
+    "logout": "Abmelden",
+    "active": "ACTIVE",
+    "idle": "IDLE",
+    "baudrate": "Baudrate",
+    "line": "Leitung",
+    "port_1": "Port 1",
+    "port_2": "Port 2",
+    "serial_ports": "Serielle Schnittst."
   }
 }
 </i18n>

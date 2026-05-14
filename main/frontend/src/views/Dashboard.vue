@@ -1,16 +1,38 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useInfo } from '@/common/info';
-import { useSettings } from '@/common/settings';
+import { useUptime } from '@/common/uptime';
+import { firmwareLatest, firmwareLatestVersion } from '@/common/links';
+import { useRouter } from 'vue-router';
+import SettingsIcon from '@/assets/settings.svg?component';
+import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
+import InfoRow from '@/components/InfoRow.vue';
 import Layout from '@/components/Layout.vue';
-import Switch from '@/components/Switch.vue';
 import RsStatus from '@/components/RsStatus.vue';
 
 const { t } = useI18n();
 const { info, startPolling, stopPolling } = useInfo();
-const { data: settings, updateSettings } = useSettings();
+const { uptime } = useUptime();
+const router = useRouter();
+
+const latestVersion = ref<string | null>(null);
+const latestVersionError = ref(false);
+
+onMounted(async () => {
+  try {
+    const res = await fetch(firmwareLatestVersion);
+    if (!res.ok) throw new Error();
+    latestVersion.value = (await res.text()).trim();
+  } catch {
+    latestVersionError.value = true;
+  }
+});
+
+const hasUpdate = computed(() =>
+  latestVersion.value && info.value?.firmware && latestVersion.value !== info.value.firmware
+);
 
 onMounted(() => {
   startPolling();
@@ -31,125 +53,144 @@ const getDisplayValue = (val: string | boolean | number) => {
 
 <template>
   <Layout>
-    <Heading :title="t('title')" />
+    <Heading :title="t('title')" :crumbs="t('crumbs')" />
 
-    <div class="dashboard">
-      <fieldset class="dashboard-container">
-        <legend>{{ t('ethernet') }}</legend>
+    <div class="main-body">
+      <div class="grid-2">
+      <div class="stack">
+        <section class="card">
+          <div class="card-header">
+            <div class="card-title-row">
+              <div class="title">{{ t('ethernet') }}</div>
+              <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
+                <SettingsIcon />
+              </button>
+            </div>
+            <span class="pill ok" v-if="info!.ethernet.con_eth"><span class="dot" />{{ t('connected') }}</span>
+            <span class="pill muted" v-else>{{ t('not_connected') }}</span>
+          </div>
+          <div class="card-body">
+            <InfoRow :label="t('ip')"><span class="mono">{{ getDisplayValue(info!.ethernet.ip) }}</span></InfoRow>
+            <InfoRow :label="t('mac')"><span class="mono">{{ getDisplayValue(info!.ethernet.mac) }}</span></InfoRow>
+          </div>
+        </section>
 
-        <div>{{ t('status') }}</div>
-        <div>{{ info!.ethernet.con_eth ? t('connected') : t('not_connected') }}</div>
+        <section class="card">
+          <div class="card-header">
+            <div class="card-title-row">
+              <div class="title">{{ t('wifi') }}</div>
+              <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
+                <SettingsIcon />
+              </button>
+            </div>
+            <span class="pill ok" v-if="info!.wifi.enabled"><span class="dot" />{{ t('enabled') }}</span>
+            <span class="pill muted" v-else>{{ t('disabled') }}</span>
+          </div>
+          <div class="card-body">
+            <InfoRow :label="t('status')">{{ getDisplayValue(info!.wifi.enabled) }}</InfoRow>
+            <InfoRow :label="t('wifi_mode')">{{ t(info!.wifi.mode) }}</InfoRow>
 
-        <div>{{ t('ip') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.ip) }}</div>
+            <template v-if="info!.wifi.mode === 'ap'">
+              <InfoRow :label="t('connections_count')">{{ info!.wifi.con_ap }}</InfoRow>
+              <InfoRow :label="t('ip')"><span class="mono">{{ info!.wifi.ap_ip }}</span></InfoRow>
+              <InfoRow :label="t('mac')"><span class="mono">{{ info!.wifi.ap_mac }}</span></InfoRow>
+            </template>
 
-        <div>{{ t('mac') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.mac) }}</div>
-      </fieldset>
+            <template v-else-if="info!.wifi.mode === 'sta'">
+              <InfoRow :label="t('connection')">{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</InfoRow>
+              <template v-if="info!.wifi.con_sta">
+                <InfoRow :label="t('ssid')"><span class="mono">{{ info!.wifi.con_sta_ssid }}</span></InfoRow>
+              </template>
+              <InfoRow :label="t('ip')"><span class="mono">{{ info!.wifi.sta_ip }}</span></InfoRow>
+              <InfoRow :label="t('mac')"><span class="mono">{{ info!.wifi.sta_mac }}</span></InfoRow>
+              <template v-if="info!.wifi.enabled && info!.wifi.con_sta">
+                <InfoRow :label="t('rssi')">{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</InfoRow>
+              </template>
+            </template>
+          </div>
+        </section>
 
-      <fieldset class="dashboard-container">
-        <legend>{{ t('wifi') }}</legend>
+        <section class="card">
+          <div class="card-header">
+            <div class="title">{{ t('gateway') }}</div>
+          </div>
+          <div class="card-body">
+            <InfoRow :label="t('power')"><span class="mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</span></InfoRow>
+            <InfoRow :label="t('uptime')">
+              <span class="muted dashboard-uptimeValue">
+                <template v-if="uptime">
+                  <template v-if="uptime.days">
+                    <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
+                  </template>
+                  <template v-if="uptime.hours">
+                    <span>{{ t('uptime_hours', { n: uptime.hours }) }}</span>
+                  </template>
+                  <span v-if="uptime.minutes > 0 || (!uptime.days && !uptime.hours && !uptime.seconds)">{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
+                  <span v-if="uptime.seconds > 0 || (!uptime.days && !uptime.hours && !uptime.minutes)">{{ t('uptime_seconds', { n: uptime.seconds }) }}</span>
+                </template>
+                <template v-else>
+                  <span>—</span>
+                </template>
+              </span>
+            </InfoRow>
+            <InfoRow :label="t('firmware_version')">
+              <span class="dashboard-firmwareRow">
+                <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
+                <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
+              </span>
+            </InfoRow>
+          </div>
+        </section>
+      </div>
 
-        <div>{{ t('status') }}</div>
-        <div>{{ getDisplayValue(info!.wifi.enabled) }}</div>
+      <div class="stack">
+        <section class="card">
+          <div class="card-header">
+            <div class="card-title-row">
+              <div class="title">{{ t('port_1') }}</div>
+              <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
+                <SettingsIcon />
+              </button>
+            </div>
+            <span class="pill ok" v-if="info!.rs485_1.is_busy"><span class="dot" />{{ t('active') }}</span>
+            <span class="pill muted" v-else>{{ t('inactive') }}</span>
+          </div>
+          <div class="card-body">
+            <RsStatus :info="info!.rs485_1" />
+          </div>
+        </section>
 
-        <div>{{ t('wifi_mode') }}</div>
-        <div>{{ t(info!.wifi.mode) }}</div>
-
-        <template v-if="info!.wifi.mode === 'ap'">
-          <div>{{ t('connections_count') }}</div>
-          <div>{{ info!.wifi.con_ap }}</div>
-
-          <div>{{ t('ip') }}</div>
-          <div>{{ info!.wifi.ap_ip }}</div>
-
-          <div>{{ t('mac') }}</div>
-          <div>{{ info!.wifi.ap_mac }}</div>
-        </template>
-
-        <template v-else-if="info!.wifi.mode === 'sta'">
-          <div>{{ t('connection') }}</div>
-          <div>{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</div>
-
-          <template v-if="info!.wifi.con_sta">
-            <div>{{ t('ssid') }}</div>
-            <div>{{ info!.wifi.con_sta_ssid }}</div>
-          </template>
-
-          <div>{{ t('ip') }}</div>
-          <div>{{ info!.wifi.sta_ip }}</div>
-
-          <div>{{ t('mac') }}</div>
-          <div>{{ info!.wifi.sta_mac }}</div>
-
-          <template v-if="info!.wifi.enabled && info!.wifi.con_sta">
-            <div>{{ t('rssi') }}</div>
-            <div>{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</div>
-          </template>
-        </template>
-      </fieldset>
-
-      <fieldset class="dashboard-container">
-        <legend>{{ t('gateway') }}</legend>
-
-        <div>{{ t('power_vout') }}</div>
-        <div>
-          <Switch
-            id="power_vout"
-            v-model="settings!.vout"
-            @change="() => updateSettings({ vout: settings!.vout })"
-          />
-        </div>
-        <div>{{ t('power') }}</div>
-        <div>{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
-
-        <RsStatus title="RS-485 1" :info="info!.rs485_1" />
-
-        <RsStatus title="RS-485 2" :info="info!.rs485_2" />
-      </fieldset>
+        <section class="card">
+          <div class="card-header">
+            <div class="card-title-row">
+              <div class="title">{{ t('port_2') }}</div>
+              <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
+                <SettingsIcon />
+              </button>
+            </div>
+            <span class="pill ok" v-if="info!.rs485_2.is_busy"><span class="dot" />{{ t('active') }}</span>
+            <span class="pill muted" v-else>{{ t('inactive') }}</span>
+          </div>
+          <div class="card-body">
+            <RsStatus :info="info!.rs485_2" />
+          </div>
+        </section>
+      </div>
+      </div>
     </div>
   </Layout>
 </template>
 
 <style>
-.dashboard {
-  columns: 2;
-  column-gap: 12px;
-
-  @media (max-width: 1320px) {
-    columns: 2;
-  }
-
-  @media (max-width: 1024px) {
-    columns: 1;
-    max-width: 470px;
-  }
-
-  @media (max-width: 500px) {
-    width: 100%;
-  }
+.dashboard-uptimeValue {
+  display: flex;
+  gap: 4px;
 }
-
-.dashboard-container {
-  display: grid;
-  gap: 6px 24px;
-  grid-template-columns: 1fr auto;
+.dashboard-firmwareRow {
+  display: flex;
   align-items: center;
-  justify-items: end;
-  page-break-inside: avoid;
-  break-inside: avoid;
-}
-
-.dashboard-container div {
-  height: 33px;
-}
-
-.dashboard-container div:nth-child(even) {
-  justify-self: start;
-}
-
-.dashboard-container div:nth-child(odd) {
-  justify-self: end;
+  gap: 8px;
+  justify-content: flex-end;
 }
 </style>
 
@@ -157,6 +198,7 @@ const getDisplayValue = (val: string | boolean | number) => {
 {
   "en": {
     "title": "Dashboard",
+    "crumbs": "Gateway overview",
 
     "status": "Status",
     "connection": "Connection",
@@ -178,12 +220,27 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Power Vout",
-    "power": "Power",
-    "v": "V"
+    "gateway_sub": "Power & auxiliary output",
+    "power": "Supply voltage",
+    "v": "V",
+    "active": "Active",
+    "inactive": "Inactive",
+    "edit_settings": "Settings",
+    "uptime": "Uptime",
+    "uptime_days": "- | {n} day | {n} days | {n} days",
+    "uptime_hours": "less than an hour | {n} hour | {n} hours | {n} hours",
+    "uptime_minutes": "minute | {n} minute | {n} minutes | {n} minutes",
+    "uptime_seconds": "second | {n} second | {n} seconds | {n} seconds",
+    "firmware_version": "Firmware",
+    "firmware_latest": "up to date",
+    "firmware_latest_label": "latest",
+    "firmware_update_btn": "Update",
+    "port_1": "RS-485 · Port 1",
+    "port_2": "RS-485 · Port 2"
   },
   "ru": {
     "title": "Обзор",
+    "crumbs": "Обзор шлюза",
 
     "status": "Состояние",
     "connection": "Подключение",
@@ -205,12 +262,27 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "дБ",
 
     "gateway": "Шлюз",
-    "power_vout": "Питание Vout",
+    "gateway_sub": "Питание и вспомогательный выход",
     "power": "Напряжение питания",
-    "v": "В"
+    "v": "В",
+    "active": "Активен",
+    "inactive": "Неактивен",
+    "edit_settings": "Настройки",
+    "uptime": "Время работы",
+    "uptime_days": "- | {n} день | {n} дня | {n} дней",
+    "uptime_hours": "- | {n} час | {n} часа | {n} часов",
+    "uptime_minutes": "минута | {n} минута | {n} минуты | {n} минут",
+    "uptime_seconds": "секунда | {n} секунда | {n} секунды | {n} секунд",
+    "firmware_version": "Прошивка",
+    "firmware_latest": "актуальная",
+    "firmware_latest_label": "последняя",
+    "firmware_update_btn": "Обновить",
+    "port_1": "RS-485 · Порт 1",
+    "port_2": "RS-485 · Порт 2"
   },
   "kk": {
     "title": "Шолу",
+    "crumbs": "Шлюзге шолу",
 
     "status": "Күйі",
     "connection": "Қосылым",
@@ -232,12 +304,27 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Vout кернеуі",
+    "gateway_sub": "Қуат және көмекші шығыс",
     "power": "Қорек кернеуі",
-    "v": "В"
+    "v": "В",
+    "active": "Белсенді",
+    "inactive": "Белсенді емес",
+    "edit_settings": "Баптаулар",
+    "uptime": "Жұмыс уақыты",
+    "uptime_days": "- | {n} күн | {n} күн | {n} күн",
+    "uptime_hours": "бір сағаттан аз | {n} сағат | {n} сағат | {n} сағат",
+    "uptime_minutes": "минут | {n} минут | {n} минут | {n} минут",
+    "uptime_seconds": "секунд | {n} секунд | {n} секунд | {n} секунд",
+    "firmware_version": "Бағдарлама",
+    "firmware_latest": "өзекті",
+    "firmware_latest_label": "соңғы",
+    "firmware_update_btn": "Жаңарту",
+    "port_1": "RS-485 · Порт 1",
+    "port_2": "RS-485 · Порт 2"
   },
   "it": {
     "title": "Dashboard",
+    "crumbs": "Panoramica gateway",
 
     "status": "Stato",
     "connection": "Connessione",
@@ -259,12 +346,27 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Tensione Vout",
+    "gateway_sub": "Alimentazione e uscita ausiliaria",
     "power": "Tensione di alimentazione",
-    "v": "V"
+    "v": "V",
+    "active": "Attivo",
+    "inactive": "Inattivo",
+    "edit_settings": "Impostazioni",
+    "uptime": "Tempo di attività",
+    "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
+    "uptime_hours": "meno di un'ora | {n} ora | {n} ore | {n} ore",
+    "uptime_minutes": "minuto | {n} minuto | {n} minuti | {n} minuti",
+    "uptime_seconds": "secondo | {n} secondo | {n} secondi | {n} secondi",
+    "firmware_version": "Firmware",
+    "firmware_latest": "aggiornato",
+    "firmware_latest_label": "ultima",
+    "firmware_update_btn": "Aggiorna",
+    "port_1": "RS-485 · Porta 1",
+    "port_2": "RS-485 · Porta 2"
   },
   "de": {
     "title": "Übersicht",
+    "crumbs": "Gateway-Übersicht",
 
     "status": "Status",
     "connection": "Verbindung",
@@ -286,9 +388,23 @@ const getDisplayValue = (val: string | boolean | number) => {
     "dbm": "dBm",
 
     "gateway": "Gateway",
-    "power_vout": "Vout-Versorgung",
+    "gateway_sub": "Stromversorgung und Hilfsausgang",
     "power": "Versorgungsspannung",
-    "v": "V"
+    "v": "V",
+    "active": "Aktiv",
+    "inactive": "Inaktiv",
+    "edit_settings": "Einstellungen",
+    "uptime": "Betriebszeit",
+    "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
+    "uptime_hours": "weniger als eine Stunde | {n} Stunde | {n} Stunden | {n} Stunden",
+    "uptime_minutes": "Minute | {n} Minute | {n} Minuten | {n} Minuten",
+    "uptime_seconds": "Sekunde | {n} Sekunde | {n} Sekunden | {n} Sekunden",
+    "firmware_version": "Firmware",
+    "firmware_latest": "aktuell",
+    "firmware_latest_label": "neueste",
+    "firmware_update_btn": "Aktualisieren",
+    "port_1": "RS-485 · Port 1",
+    "port_2": "RS-485 · Port 2"
   }
 }
 </i18n>

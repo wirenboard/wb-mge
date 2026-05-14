@@ -1,34 +1,22 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import type { RsStatus } from '@/common/types';
+import InfoRow from '@/components/InfoRow.vue';
 import Info from '@/components/Info.vue';
 
-defineProps<{ title: string; info: RsStatus }>();
+defineProps<{ info: RsStatus }>();
 
 const { t } = useI18n();
 </script>
 
 <template>
-  <div class="rsStatus-label"><b>{{ title }}</b></div>
-  <div></div>
-
-  <div class="rsStatus-label">{{ t('status') }}</div>
-  <div class="rsStatus-value">{{ info.is_busy ? t('active') : t('not_active') }}</div>
-  <Info class="rsStatus-info" :text="t('status_info')" />
+  <InfoRow :label="t('status')">
+    {{ info.is_busy ? t('active') : t('not_active') }}
+    <template #hint>
+      <Info :text="t('status_info')" />
+    </template>
+  </InfoRow>
 </template>
-
-<style>
-.rsStatus-label {
-  justify-self: start !important;
-}
-.rsStatus-value {
-  justify-self: end !important;
-}
-
-.rsStatus-info {
-  margin-top: -14px;
-}
-</style>
 
 <i18n>
 {

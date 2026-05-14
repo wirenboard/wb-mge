@@ -5,7 +5,7 @@ import type { Uptime } from '@/common/types';
 import { api } from '@/utils/api';
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
-const uptime = ref<Uptime>({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+const uptime = ref<Uptime | null>(null);
 const isReconnecting = ref(false);
 
 export const useUptime = () => {
