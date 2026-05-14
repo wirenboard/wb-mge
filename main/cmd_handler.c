@@ -14,6 +14,10 @@
 #include <freertos/task.h>
 #include <string.h>
 
+#if (QEMU_BUILD)
+    #include <soc/timer_group_reg.h>
+#endif
+
 static const char *TAG = "cmd_handler";
 
 #define CMD_NAME_MAX_LEN        32
@@ -50,6 +54,23 @@ static void reboot_task(void *pvParameters)
     #endif
 
     vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
+
+    #if (QEMU_BUILD)
+        // In QEMU, SW_CPU_RESET does not reinitialize the .data section from flash,
+        // but clears BSS. The LACT timer (used by esp_timer) keeps running after reset
+        // and fires an ISR immediately on the next boot. _xt_interrupt_table (.data)
+        // still contains the old timer_alarm_isr handler, but s_alarm_handler (BSS)
+        // is NULL after BSS clear, causing a null-pointer call: PC=0x00000000.
+        //
+        // Fix: stop the LACT timer hardware and disable its interrupt before reset,
+        // so no ISR fires during the next boot's initialization phase.
+        // LACT is Timer Group 0, LACT unit (LACT_MODULE=0 in esp_timer_impl_lac.c).
+        // Mirror of what esp_timer_impl_deinit() does with CONFIG_REG and INT registers.
+        REG_WRITE(TIMG_LACTCONFIG_REG(0), 0);                              // disable LACT timer
+        REG_CLR_BIT(TIMG_INT_ENA_TIMERS_REG(0), TIMG_LACT_INT_ENA);      // disable LACT interrupt enable
+        REG_WRITE(TIMG_INT_CLR_TIMERS_REG(0), TIMG_LACT_INT_CLR);        // clear any pending LACT interrupt
+    #endif
+
     esp_restart();
 }
 
