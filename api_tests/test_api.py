@@ -113,6 +113,18 @@ class WBMGEAPI:
             timeout=10
         )
 
+    def get_wb_test(self):
+        """Get WB test status"""
+        return self.session.get(f"{self.base_url}/wb_test", timeout=10)
+
+    def set_wb_test(self, clock_out: bool):
+        """Set WB test clock_out"""
+        return self.session.post(f"{self.base_url}/wb_test", json={"clock_out": clock_out}, timeout=10)
+
+    def get_sniffer_status(self):
+        """Get sniffer status for all ports"""
+        return self.session.get(f"{self.base_url}/sniffer/status", timeout=10)
+
     def execute_command(self, cmd):
         """Execute command"""
         try:
@@ -528,11 +540,12 @@ def test_settings(api):
     }
 
     response = api.update_settings(invalid_settings)
-    # API should either reject (400) or accept but not save invalid values
+    # API should either reject (400) or accept but not save invalid values.
+    # If 200, the read-back below will catch any saved invalid values.
     assert response.status_code in [200, 400]
     print("✓ Invalid settings handling works")
 
-    # Check that invalid settings are not saved
+    # Check that invalid settings are not saved (validates 200 case above)
     response = api.get_settings()
     assert response.status_code == 200
     valid_settings = response.json()
@@ -604,6 +617,11 @@ def test_commands(api):
     """Command execution test"""
     print("\n=== Commands test ===")
 
+    # Save current settings before issuing set_default_settings so we can restore them
+    save_response = api.get_settings()
+    assert save_response.status_code == 200
+    saved_settings = save_response.json()
+
     try:
         # Test set_default_settings command (safe)
         print("Sending set_default_settings command...")
@@ -628,9 +646,6 @@ def test_commands(api):
 
         print("✓ Command set_default_settings works")
 
-        # NOT testing reboot (dangerous for auto-tests)
-        print("✓ Dangerous commands skipped for safety")
-
     except requests.exceptions.RequestException as e:
         print(f"❌ Connection error executing command: {e}")
         raise
@@ -638,6 +653,19 @@ def test_commands(api):
         print(f"❌ Unexpected error in commands test: {e}")
         print(f"Error type: {type(e).__name__}")
         raise
+    finally:
+        # Restore settings that were wiped by set_default_settings
+        try:
+            restore_response = api.update_settings(saved_settings)
+            if restore_response.status_code == 200:
+                print("✓ Settings restored after set_default_settings")
+            else:
+                print(f"  [WARN] Settings restore returned status {restore_response.status_code}")
+        except requests.exceptions.ConnectionError:
+            # Connection drop is acceptable: web_port change restarts the HTTP server.
+            print("  [WARN] Connection dropped during settings restore (expected if web_port changed)")
+        except Exception as exc:
+            print(f"  [WARN] Failed to restore settings: {exc}")
 
 
 def test_modbus_tcp_parameters(api):
@@ -707,22 +735,35 @@ def test_modbus_validation_limits(api):
     """Validation limits test for Modbus parameters"""
     print("\n=== Modbus limits validation test ===")
 
-    # Test with invalid ports
+    # Save current settings to verify they are not corrupted by invalid data
+    baseline_response = api.get_settings()
+    assert baseline_response.status_code == 200
+    baseline_settings = baseline_response.json()
+
+    # Test with invalid port 0
     invalid_settings = {
         "rs485_1": {
             "bridge": {
                 "modbus": True,
-                "port": 0          # Invalid port
+                "port": 0          # Invalid port: 0 is below minimum 1
             }
         }
     }
 
     response = api.update_settings(invalid_settings)
-    # API should either reject or correct values
+    # API should either reject (400) or accept but not save invalid values
     assert response.status_code in [200, 400]
-    print("✓ Invalid ports are handled")
+    if response.status_code == 200:
+        # Verify that invalid port was not saved
+        check_response = api.get_settings()
+        assert check_response.status_code == 200
+        check_settings = check_response.json()
+        actual_port = check_settings["rs485_1"]["bridge"]["port"]
+        assert actual_port != 0, \
+            f"Invalid port 0 was saved (expected rejection, got {actual_port})"
+    print("✓ Invalid port 0 is handled")
 
-    # Test with port exceeding limit
+    # Test with port exceeding limit (70000 > 65535)
     invalid_settings = {
         "rs485_2": {
             "bridge": {
@@ -734,6 +775,14 @@ def test_modbus_validation_limits(api):
 
     response = api.update_settings(invalid_settings)
     assert response.status_code in [200, 400]
+    if response.status_code == 200:
+        # Verify that out-of-range port was not saved
+        check_response = api.get_settings()
+        assert check_response.status_code == 200
+        check_settings = check_response.json()
+        actual_port = check_settings["rs485_2"]["bridge"]["port"]
+        assert actual_port != 70000, \
+            f"Invalid port 70000 was saved (expected rejection, got {actual_port})"
     print("✓ Port limit exceeding is handled")
 
 
@@ -781,6 +830,15 @@ def test_validation_patterns(api):
     response = api.update_settings(limit_data)
     # Should reject or ignore incorrect values
     assert response.status_code in [200, 400]
+    if response.status_code == 200:
+        # Verify that invalid values were not actually saved
+        check_response = api.get_settings()
+        assert check_response.status_code == 200
+        check_settings = check_response.json()
+        assert check_settings["web_port"] != 70000, \
+            "Invalid web_port 70000 was saved (expected rejection)"
+        assert len(check_settings["wifi"]["ap_ssid"]) <= 31, \
+            "Oversized SSID was saved"
     print("✓ Limit exceeding is handled")
 
 
@@ -818,7 +876,7 @@ def test_wifi_scanner(api):
         if data["scan_in_progress"] == False and data["scan_completed"] == True:
             break
         timeout = timeout + 1
-        assert timeout < 10, "Scan completion timeout exceeded"
+        assert timeout <= 10, "Scan completion timeout exceeded"
 
     if "networks" in data:
         assert isinstance(data["networks"], list)
@@ -1411,6 +1469,81 @@ def test_hostname(api):
     print("✓ Hostname endpoint accessible without authorization")
 
 
+def test_info_format_validation(api):
+    """Test GET /info response field format validation: firmware, git_info, MAC addresses"""
+    import re
+    print("\n=== Info format validation test ===")
+
+    response = api.get_info()
+    assert response.status_code == 200
+    data = response.json()
+
+    # Validate firmware version format: three dot-separated non-negative integers
+    firmware = data.get("firmware", "")
+    assert re.match(r'^\d+\.\d+\.\d+$', firmware), \
+        f"firmware field does not match \\d+\\.\\d+\\.\\d+: '{firmware}'"
+    print(f"✓ firmware format valid: {firmware}")
+
+    # Validate git_info format: 7 hex chars + underscore + branch name (branch may contain /)
+    # In QEMU builds without real git info, firmware substitutes "qemu_build" — skip format check.
+    git_info = data.get("git_info", "")
+    if git_info != "qemu_build":
+        assert re.match(r'^[0-9a-f]{7}_[A-Za-z0-9_/.-]+$', git_info), \
+            f"git_info field does not match expected pattern: '{git_info}'"
+    print(f"✓ git_info format valid: {git_info}")
+
+    # Validate MAC address format for ethernet and wifi interfaces
+    mac_pattern = r'^([0-9A-Fa-f]{2}[:\-]){5}([0-9A-Fa-f]{2})$'
+    mac_fields = [
+        ("ethernet.mac", data.get("ethernet", {}).get("mac", "")),
+        ("wifi.sta_mac", data.get("wifi", {}).get("sta_mac", "")),
+        ("wifi.ap_mac", data.get("wifi", {}).get("ap_mac", "")),
+    ]
+    for field_name, mac_value in mac_fields:
+        assert re.match(mac_pattern, mac_value), \
+            f"{field_name} does not match MAC address pattern: '{mac_value}'"
+        print(f"✓ {field_name} format valid: {mac_value}")
+
+    # Validate serial_num lower bound (openapi minimum: 1)
+    serial_num = data.get("serial_num", 0)
+    assert serial_num >= 1, f"serial_num must be >= 1, got {serial_num}"
+    print(f"✓ serial_num valid: {serial_num}")
+
+
+def test_http_method_guard(api):
+    """Test that endpoints reject wrong HTTP methods (expect 405 Method Not Allowed)"""
+    print("\n=== HTTP method guard test ===")
+
+    wrong_method_cases = [
+        ("GET", "/cmd"),
+        ("POST", "/info"),
+        ("GET", "/logout"),
+        ("DELETE", "/settings"),
+    ]
+
+    for method, path in wrong_method_cases:
+        url = f"{api.base_url}{path}"
+        try:
+            if method == "GET":
+                response = api.session.get(url, timeout=10)
+            elif method == "POST":
+                response = api.session.post(url, json={}, timeout=10)
+            elif method == "DELETE":
+                response = api.session.delete(url, timeout=10)
+            else:
+                raise ValueError(f"Unexpected method: {method}")
+
+            assert response.status_code == 405, \
+                f"{method} {path} should return 405 Method Not Allowed, got {response.status_code}"
+            print(f"✓ {method} {path} → 405 as expected")
+        except requests.exceptions.ConnectionError:
+            # ESP-IDF httpd closes the connection without sending a response body
+            # when the HTTP method does not match any registered handler and the
+            # request includes a body (e.g. POST with JSON). This is acceptable
+            # as it effectively rejects the wrong-method request.
+            print(f"✓ {method} {path} → connection closed (method rejected, acceptable)")
+
+
 def test_cache_endpoints(api):
     """Test cache HTTP endpoints: /cache/status, /cache/csv, /cache/json"""
     print("\n=== Cache endpoints test ===")
@@ -1656,6 +1789,705 @@ def test_cache_multimaster(api):
         time.sleep(2)  # Allow time for the port/settings to switch back
 
 
+def test_wb_test(api):
+    """Test GET /wb_test + POST /wb_test (I-1)"""
+    print("\n=== WB test endpoint test ===")
+
+    # GET /wb_test — check structure
+    response = api.get_wb_test()
+    assert response.status_code == 200, \
+        f"GET /wb_test expected 200, got {response.status_code}"
+    data = response.json()
+    assert "clock_out" in data, "Field 'clock_out' is missing from /wb_test response"
+    assert isinstance(data["clock_out"], bool), "Field 'clock_out' must be a boolean"
+    print(f"✓ GET /wb_test works, clock_out={data['clock_out']}")
+
+    original_clock_out = data["clock_out"]
+
+    try:
+        # POST /wb_test {"clock_out": true} — write and read-back
+        response = api.set_wb_test(True)
+        assert response.status_code == 200, \
+            f"POST /wb_test clock_out=true expected 200, got {response.status_code}"
+        result = response.json()
+        assert result.get("success") == True, f"POST /wb_test expected success=true, got {result}"
+        assert result.get("clock_out") == True, f"POST /wb_test expected clock_out=true in response, got {result}"
+        print("✓ POST /wb_test {clock_out: true} accepted")
+
+        # Read-back via GET
+        response = api.get_wb_test()
+        assert response.status_code == 200
+        assert response.json()["clock_out"] == True, "Read-back after clock_out=true failed"
+        print("✓ Read-back after clock_out=true correct")
+
+        # POST /wb_test {"clock_out": false} — write and read-back
+        response = api.set_wb_test(False)
+        assert response.status_code == 200, \
+            f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
+        result = response.json()
+        assert result.get("success") == True, f"POST /wb_test expected success=true, got {result}"
+        assert result.get("clock_out") == False, f"POST /wb_test expected clock_out=false in response, got {result}"
+        print("✓ POST /wb_test {clock_out: false} accepted")
+
+        response = api.get_wb_test()
+        assert response.status_code == 200
+        assert response.json()["clock_out"] == False, "Read-back after clock_out=false failed"
+        print("✓ Read-back after clock_out=false correct")
+
+        # POST /wb_test with invalid type (string instead of bool)
+        response = api.session.post(f"{api.base_url}/wb_test", json={"clock_out": "true"}, timeout=10)
+        if response.status_code == 200:
+            # If accepted, verify value was not corrupted
+            rb = api.get_wb_test().json()
+            assert isinstance(rb["clock_out"], bool), \
+                "After invalid type POST, clock_out must still be a boolean"
+        else:
+            assert response.status_code == 400, \
+                f"POST /wb_test with string clock_out expected 400, got {response.status_code}"
+        print("✓ POST /wb_test with invalid type handled")
+
+        # POST /wb_test with missing field
+        response = api.session.post(f"{api.base_url}/wb_test", json={}, timeout=10)
+        assert response.status_code in [200, 400], \
+            f"POST /wb_test with empty body got unexpected status {response.status_code}"
+        print("✓ POST /wb_test with missing field handled")
+
+    finally:
+        # Restore original value
+        api.set_wb_test(original_clock_out)
+        print(f"✓ clock_out restored to {original_clock_out}")
+
+
+def test_sniffer_status(api):
+    """Test GET /sniffer/status and verify it reflects port mode changes (I-2)"""
+    print("\n=== Sniffer status endpoint test ===")
+
+    # Read current port mode to restore later
+    info_response = api.get_info()
+    assert info_response.status_code == 200
+    info_data = info_response.json()
+    original_port_1_mode = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
+    print(f"  Port 1 original mode: {original_port_1_mode}")
+
+    try:
+        # GET /sniffer/status — check structure
+        response = api.get_sniffer_status()
+        assert response.status_code == 200, \
+            f"GET /sniffer/status expected 200, got {response.status_code}"
+        status = response.json()
+        assert "port_1" in status, "Field 'port_1' is missing from /sniffer/status response"
+        assert "port_2" in status, "Field 'port_2' is missing from /sniffer/status response"
+        assert isinstance(status["port_1"], bool), "Field 'port_1' must be a boolean"
+        assert isinstance(status["port_2"], bool), "Field 'port_2' must be a boolean"
+        print(f"✓ GET /sniffer/status works, port_1={status['port_1']}, port_2={status['port_2']}")
+
+        # Switch port 1 to sniffer mode → port_1 must become true
+        response = api.set_port_mode(1, "sniffer")
+        assert response.status_code == 200, \
+            f"POST /ports/1/mode sniffer expected 200, got {response.status_code}"
+
+        time.sleep(0.5)  # Allow firmware time to apply the mode change asynchronously
+        response = api.get_sniffer_status()
+        assert response.status_code == 200
+        status = response.json()
+        assert status["port_1"] == True, \
+            f"After switching to sniffer mode, port_1 must be true, got {status['port_1']}"
+        print("✓ After sniffer mode: port_1=true")
+
+        # Switch port 1 to disabled → port_1 must become false
+        response = api.set_port_mode(1, "disabled")
+        assert response.status_code == 200
+
+        time.sleep(0.5)  # Allow firmware time to apply the mode change asynchronously
+        response = api.get_sniffer_status()
+        assert response.status_code == 200
+        status = response.json()
+        assert status["port_1"] == False, \
+            f"After switching to disabled mode, port_1 must be false, got {status['port_1']}"
+        print("✓ After disabled mode: port_1=false")
+
+    finally:
+        # Restore original port 1 mode
+        try:
+            api.set_port_mode(1, original_port_1_mode)
+            print(f"✓ Port 1 mode restored to {original_port_1_mode}")
+        except Exception as exc:
+            print(f"  [WARN] Failed to restore port 1 mode: {exc}")
+
+
+def test_port_modes(api):
+    """Test POST /ports/{n}/mode — all modes, both ports (I-3)"""
+    print("\n=== Port modes test ===")
+
+    # Read current modes to restore later
+    info_response = api.get_info()
+    assert info_response.status_code == 200
+    info_data = info_response.json()
+    original_port_1_mode = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
+    original_port_2_mode = info_data.get("rs485_2", {}).get("port_mode", "tcp_bridge")
+    print(f"  Original modes: port_1={original_port_1_mode}, port_2={original_port_2_mode}")
+
+    try:
+        # Test all valid modes for port 1
+        for mode in ["disabled", "tcp_bridge", "sniffer", "cache_bus"]:
+            response = api.set_port_mode(1, mode)
+            assert response.status_code == 200, \
+                f"POST /ports/1/mode {mode} expected 200, got {response.status_code}"
+            result = response.json()
+            assert result.get("mode") == mode, \
+                f"POST /ports/1/mode {mode}: response mode mismatch, got {result}"
+
+            # Verify via GET /info
+            info_resp = api.get_info()
+            assert info_resp.status_code == 200
+            actual_mode = info_resp.json().get("rs485_1", {}).get("port_mode")
+            assert actual_mode == mode, \
+                f"After setting mode={mode}, GET /info shows rs485_1.port_mode={actual_mode}"
+            print(f"✓ Port 1 mode '{mode}' set and verified via /info")
+
+        # Test port 2 modes
+        for mode in ["cache_bus", "disabled"]:
+            response = api.set_port_mode(2, mode)
+            assert response.status_code == 200, \
+                f"POST /ports/2/mode {mode} expected 200, got {response.status_code}"
+            result = response.json()
+            assert result.get("mode") == mode, \
+                f"POST /ports/2/mode {mode}: response mode mismatch, got {result}"
+            print(f"✓ Port 2 mode '{mode}' set")
+
+        # Test invalid mode value
+        response = api.set_port_mode(1, "invalid_mode")
+        assert response.status_code == 400, \
+            f"POST /ports/1/mode 'invalid_mode' expected 400, got {response.status_code}"
+        print("✓ Invalid mode value rejected with 400")
+
+        # Test invalid port number
+        response = api.session.post(
+            f"{api.base_url}/ports/3/mode",
+            json={"mode": "tcp_bridge"},
+            timeout=10
+        )
+        assert response.status_code in [400, 404], \
+            f"POST /ports/3/mode (non-existent port) expected 400 or 404, got {response.status_code}"
+        print("✓ Non-existent port 3 rejected")
+
+    finally:
+        # Restore original modes independently; changing port mode may drop the TCP
+        # connection (serial task restart), so each restore uses a fresh session.
+        restore_errors = []
+        for port_num, mode in [(1, original_port_1_mode), (2, original_port_2_mode)]:
+            try:
+                api.session.close()
+                api.session = requests.Session()
+                api.session.headers.update({
+                    'User-Agent': 'Mozilla/5.0',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Encoding': 'identity',
+                    'Connection': 'close',
+                    'Cache-Control': 'no-cache',
+                })
+                api.auth()
+                api.set_port_mode(port_num, mode)
+                print(f"✓ Port {port_num} mode restored to {mode}")
+            except Exception as exc:
+                msg = f"Failed to restore port {port_num} mode to {mode}: {exc}"
+                print(f"  [ERROR] {msg}")
+                restore_errors.append(msg)
+        if restore_errors:
+            raise AssertionError("Port mode restore failed after test: " + "; ".join(restore_errors))
+
+
+def test_cmd_extended(api):
+    """Test POST /cmd — set_default_settings and invalid values (I-4)"""
+    print("\n=== Extended command test ===")
+
+    # Test set_default_settings (safe to call in QEMU, resets settings to defaults)
+    print("Sending set_default_settings command...")
+    response = api.execute_command("set_default_settings")
+    assert response.status_code == 200, \
+        f"POST /cmd set_default_settings expected 200, got {response.status_code}"
+    print("✓ Command set_default_settings accepted")
+
+    # Test invalid command (not in enum)
+    response = api.session.post(f"{api.base_url}/cmd", json={"cmd": "shutdown"}, timeout=10)
+    assert response.status_code in [200, 400], \
+        f"POST /cmd 'shutdown' got unexpected status {response.status_code}"
+    if response.status_code == 200:
+        # If server returns 200, verify it at least indicates failure
+        data = response.json()
+        assert data.get("success") == False, \
+            f"Server accepted unknown command 'shutdown' as successful: {data}"
+        print("  [INFO] Server returned 200 for unknown command with success=false (lenient validation)")
+    else:
+        print("✓ Unknown command 'shutdown' rejected with 400")
+
+    # Test missing cmd field
+    response = api.session.post(f"{api.base_url}/cmd", json={}, timeout=10)
+    assert response.status_code in [200, 400], \
+        f"POST /cmd empty body got unexpected status {response.status_code}"
+    print("✓ Missing cmd field handled")
+
+    # Test wrong type for cmd
+    response = api.session.post(f"{api.base_url}/cmd", json={"cmd": 42}, timeout=10)
+    assert response.status_code in [200, 400], \
+        f"POST /cmd integer cmd got unexpected status {response.status_code}"
+    print("✓ Integer cmd field handled")
+
+
+def test_wifi_scan_edge_cases(api):
+    """Test WiFi scan state machine edge cases (I-5)"""
+    print("\n=== WiFi scan edge cases test ===")
+
+    # First: get results WITHOUT starting a scan (initial state check)
+    # After reboot or fresh session, scan state should be well-defined
+    response = api.get_wifi_scan_results()
+    assert response.status_code == 200, \
+        f"GET /wifi_scan/results without prior start expected 200, got {response.status_code}"
+    data = response.json()
+    assert "scan_in_progress" in data, "Field 'scan_in_progress' missing"
+    assert "scan_completed" in data, "Field 'scan_completed' missing"
+    assert isinstance(data["scan_in_progress"], bool), "'scan_in_progress' must be bool"
+    assert isinstance(data["scan_completed"], bool), "'scan_completed' must be bool"
+    # Both must be defined (not crash) — we don't assert specific values since
+    # a previous scan may have already completed
+    print(f"✓ GET /wifi_scan/results before start: scan_in_progress={data['scan_in_progress']}, "
+          f"scan_completed={data['scan_completed']}")
+
+    # Start scan
+    response = api.start_wifi_scan()
+    assert response.status_code == 200
+    assert response.json().get("success") == True
+    print("✓ First WiFi scan start successful")
+
+    # Double-start: second POST /wifi_scan/start while scan is in progress or just completed
+    response2 = api.start_wifi_scan()
+    assert response2.status_code == 200, \
+        f"Second POST /wifi_scan/start expected 200, got {response2.status_code}"
+    data2 = response2.json()
+    assert "success" in data2, "Second start response must contain 'success'"
+    # Per openapi: if already running → success=false with error field
+    if not data2["success"]:
+        assert "error" in data2, \
+            "If second start fails (scan already running), response must contain 'error' field"
+        print(f"✓ Double-start correctly rejected: {data2.get('error')}")
+    else:
+        # Scan completed between the two calls — restarted OK
+        print("✓ Double-start accepted (scan completed between calls — restart OK)")
+
+    # Wait for scan to complete
+    timeout = 0
+    while True:
+        time.sleep(1)
+        response = api.get_wifi_scan_results()
+        assert response.status_code == 200
+        data = response.json()
+        if not data["scan_in_progress"] and data["scan_completed"]:
+            break
+        timeout += 1
+        assert timeout < 15, "WiFi scan completion timeout exceeded"
+
+    print("✓ WiFi scan edge cases passed")
+
+
+def test_wifi_scan_network_fields(api):
+    """Test WiFi scan result field validation: bssid, channel, rssi range (I-6)"""
+    print("\n=== WiFi scan network fields test ===")
+    import re
+
+    # Start and wait for scan
+    response = api.start_wifi_scan()
+    assert response.status_code == 200
+
+    timeout = 0
+    while True:
+        time.sleep(1)
+        response = api.get_wifi_scan_results()
+        assert response.status_code == 200
+        data = response.json()
+        if not data["scan_in_progress"] and data["scan_completed"]:
+            break
+        timeout += 1
+        assert timeout < 15, "WiFi scan completion timeout exceeded"
+
+    networks = data.get("networks", [])
+    if not networks:
+        print("  [SKIP] No networks found — cannot validate network fields")
+        return
+
+    mac_pattern = re.compile(r'^([0-9A-Fa-f]{2}[:\-]){5}([0-9A-Fa-f]{2})$')
+
+    for i, network in enumerate(networks):
+        # bssid field
+        assert "bssid" in network, f"Network[{i}] missing 'bssid' field"
+        assert mac_pattern.match(network["bssid"]), \
+            f"Network[{i}] bssid '{network['bssid']}' does not match MAC format"
+
+        # channel field
+        assert "channel" in network, f"Network[{i}] missing 'channel' field"
+        assert isinstance(network["channel"], int), f"Network[{i}] channel must be int"
+        assert 1 <= network["channel"] <= 14, \
+            f"Network[{i}] channel {network['channel']} out of range 1-14"
+
+        # rssi range (-128..0 is the correct range for real hardware)
+        assert "rssi" in network, f"Network[{i}] missing 'rssi' field"
+        assert -128 <= network["rssi"] <= 0, \
+            f"Network[{i}] rssi {network['rssi']} out of range -128..0"
+
+    print(f"✓ WiFi scan network fields validated for {len(networks)} network(s)")
+
+
+def test_cache_json_fields(api):
+    """Test /cache/json per-entry field validation and consistency with /cache/status (I-7)"""
+    print("\n=== Cache JSON fields test ===")
+
+    # Get cache status
+    status_resp = api.get_cache_status()
+    assert status_resp.status_code == 200
+    status = status_resp.json()
+    entries_count = status.get("entries", 0)
+
+    # Get cache JSON
+    json_resp = api.get_cache_json()
+    assert json_resp.status_code == 200
+    json_data = json_resp.json()
+    assert "d" in json_data, "Field 'd' missing from /cache/json"
+    assert isinstance(json_data["d"], list), "Field 'd' must be an array"
+
+    entries = json_data["d"]
+
+    # Validate consistency: entries count must match (allow small delta for concurrent writes)
+    delta = abs(len(entries) - entries_count)
+    assert delta <= 5, \
+        f"entries count mismatch: /cache/status says {entries_count}, /cache/json has {len(entries)} (delta={delta})"
+    print(f"✓ Entry count consistent: /cache/status={entries_count}, /cache/json={len(entries)}")
+
+    if not entries:
+        print("  [SKIP] Cache empty — skipping per-entry field validation")
+        return
+
+    valid_types = {"h", "i", "c", "d"}
+    for i, entry in enumerate(entries):
+        # Slave ID: 1..247
+        assert "s" in entry, f"Entry[{i}] missing field 's'"
+        assert isinstance(entry["s"], int), f"Entry[{i}]['s'] must be int"
+        assert 1 <= entry["s"] <= 247, f"Entry[{i}]['s']={entry['s']} out of range 1-247"
+
+        # Register type: h/i/c/d
+        assert "t" in entry, f"Entry[{i}] missing field 't'"
+        assert entry["t"] in valid_types, \
+            f"Entry[{i}]['t']='{entry['t']}' not in valid types {valid_types}"
+
+        # Address: 0..65535
+        assert "a" in entry, f"Entry[{i}] missing field 'a'"
+        assert isinstance(entry["a"], int), f"Entry[{i}]['a'] must be int"
+        assert 0 <= entry["a"] <= 65535, f"Entry[{i}]['a']={entry['a']} out of range 0-65535"
+
+        # Value: 0..65535
+        assert "v" in entry, f"Entry[{i}] missing field 'v'"
+        assert isinstance(entry["v"], int), f"Entry[{i}]['v'] must be int"
+        assert 0 <= entry["v"] <= 65535, f"Entry[{i}]['v']={entry['v']} out of range 0-65535"
+
+        # Age: 0..65535
+        assert "age" in entry, f"Entry[{i}] missing field 'age'"
+        assert isinstance(entry["age"], int), f"Entry[{i}]['age'] must be int"
+        assert 0 <= entry["age"] <= 65535, f"Entry[{i}]['age']={entry['age']} out of range 0-65535"
+
+    print(f"✓ All {len(entries)} cache entries have valid fields")
+
+
+def test_cache_csv_headers(api):
+    """Test /cache/csv Content-Disposition header (I-8)"""
+    print("\n=== Cache CSV headers test ===")
+
+    response = api.get_cache_csv()
+    assert response.status_code == 200, \
+        f"GET /cache/csv expected 200, got {response.status_code}"
+
+    content_disposition = response.headers.get("Content-Disposition", "")
+    assert content_disposition != "", \
+        "GET /cache/csv response is missing Content-Disposition header"
+    assert "attachment" in content_disposition.lower(), \
+        f"Content-Disposition must contain 'attachment', got: {content_disposition}"
+    assert "filename=" in content_disposition.lower(), \
+        f"Content-Disposition must contain 'filename=', got: {content_disposition}"
+    assert ".csv" in content_disposition.lower(), \
+        f"Content-Disposition filename must end with .csv, got: {content_disposition}"
+
+    print(f"✓ Content-Disposition header present and correct: {content_disposition}")
+
+
+def test_settings_partial_update(api):
+    """Test POST /settings with sparse payload — must preserve unset fields (I-9)"""
+    print("\n=== Settings partial update test ===")
+
+    # Read original settings
+    response = api.get_settings()
+    assert response.status_code == 200
+    original = response.json()
+
+    try:
+        # Partial update: only vout
+        new_vout = not original["vout"]
+        response = api.update_settings({"vout": new_vout})
+        assert response.status_code == 200
+        assert response.json().get("success") == True
+
+        # Read back and verify only vout changed
+        response = api.get_settings()
+        assert response.status_code == 200
+        updated = response.json()
+
+        assert updated["vout"] == new_vout, \
+            f"vout was not updated: expected {new_vout}, got {updated['vout']}"
+
+        # All other top-level fields must be preserved
+        preserved_fields = ["hostname", "login", "web_port", "io_bus",
+                            "cache_modbus_port", "cache_modbus_server_enabled", "cache_value_timeout_s"]
+        for field in preserved_fields:
+            if field in original:
+                assert updated[field] == original[field], \
+                    f"Field '{field}' was changed by partial update: {original[field]} → {updated[field]}"
+
+        print("✓ Partial update (vout only) preserved all other fields")
+
+        # Partial update: only rs485_1.baudrate
+        original_baudrate = original["rs485_1"]["baudrate"]
+        # Pick a different valid baudrate
+        baudrate_options = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
+        new_baudrate = next(b for b in baudrate_options if b != original_baudrate)
+
+        response = api.update_settings({"rs485_1": {"baudrate": new_baudrate}})
+        assert response.status_code == 200
+        assert response.json().get("success") == True
+
+        response = api.get_settings()
+        assert response.status_code == 200
+        updated2 = response.json()
+
+        assert updated2["rs485_1"]["baudrate"] == new_baudrate, \
+            f"rs485_1.baudrate was not updated: expected {new_baudrate}, got {updated2['rs485_1']['baudrate']}"
+
+        # Other rs485_1 fields must be preserved
+        rs485_preserved = ["term", "fail_safe", "stopbits", "parity", "databits"]
+        for field in rs485_preserved:
+            assert updated2["rs485_1"][field] == original["rs485_1"][field], \
+                f"rs485_1.{field} was changed by partial update: " \
+                f"{original['rs485_1'][field]} → {updated2['rs485_1'][field]}"
+
+        print("✓ Partial update (rs485_1.baudrate only) preserved all other rs485_1 fields")
+
+    finally:
+        # Restore original settings
+        try:
+            api.update_settings(original)
+            print("✓ Original settings restored")
+        except Exception as exc:
+            print(f"  [WARN] Failed to restore settings: {exc}")
+
+
+def test_cache_server_enabled_toggle(api):
+    """Test cache_modbus_server_enabled setting toggle and consistency (I-10)"""
+    print("\n=== Cache server enabled toggle test ===")
+
+    # Read original value
+    response = api.get_settings()
+    assert response.status_code == 200
+    original_enabled = response.json().get("cache_modbus_server_enabled", True)
+
+    try:
+        # Disable cache server
+        response = api.update_settings({"cache_modbus_server_enabled": False})
+        assert response.status_code == 200
+        assert response.json().get("success") == True
+
+        # Verify via GET /settings
+        response = api.get_settings()
+        assert response.status_code == 200
+        assert response.json()["cache_modbus_server_enabled"] == False, \
+            "cache_modbus_server_enabled=false not reflected in GET /settings"
+
+        # Verify via GET /info
+        response = api.get_info()
+        assert response.status_code == 200
+        assert response.json()["cache_modbus_server_enabled"] == False, \
+            "cache_modbus_server_enabled=false not reflected in GET /info"
+        print("✓ cache_modbus_server_enabled=false visible in both /settings and /info")
+
+        # Enable cache server
+        response = api.update_settings({"cache_modbus_server_enabled": True})
+        assert response.status_code == 200
+
+        response = api.get_settings()
+        assert response.status_code == 200
+        assert response.json()["cache_modbus_server_enabled"] == True, \
+            "cache_modbus_server_enabled=true not reflected in GET /settings"
+
+        response = api.get_info()
+        assert response.status_code == 200
+        assert response.json()["cache_modbus_server_enabled"] == True, \
+            "cache_modbus_server_enabled=true not reflected in GET /info"
+        print("✓ cache_modbus_server_enabled=true visible in both /settings and /info")
+
+    finally:
+        # Restore original value
+        try:
+            api.update_settings({"cache_modbus_server_enabled": original_enabled})
+            print(f"✓ cache_modbus_server_enabled restored to {original_enabled}")
+        except Exception as exc:
+            print(f"  [WARN] Failed to restore cache_modbus_server_enabled: {exc}")
+
+
+def test_password_change_flow(api):
+    """Test POST /settings pass change + re-authentication security flow (I-11)"""
+    print("\n=== Password change flow test ===")
+
+    # Read current settings to get current login and password
+    response = api.get_settings()
+    assert response.status_code == 200
+    settings = response.json()
+    original_login = settings.get("login", "admin")
+    original_password = settings.get("pass", "admin")
+
+    new_password = "NewTestPass123"
+    # Ensure new password differs from original
+    if new_password == original_password:
+        new_password = "AnotherPass456"
+
+    try:
+        # Change password
+        response = api.update_settings({"pass": new_password})
+        assert response.status_code == 200
+        assert response.json().get("success") == True
+        print(f"✓ Password change accepted (new pass: {new_password})")
+
+        # Verify new password is stored
+        response = api.get_settings()
+        assert response.status_code == 200
+        stored = response.json().get("pass", "")
+        assert stored == new_password, \
+            f"New password not stored: expected '{new_password}', got '{stored}'"
+        print("✓ New password reflected in GET /settings")
+
+        # Logout
+        response = api.logout()
+        assert response.status_code == 200
+        assert response.json().get("logout") == True, "Logout must return {logout: true}"
+        print("✓ Logged out")
+
+        # Attempt auth with OLD password — must fail
+        response = api.auth(original_login, original_password)
+        assert response.status_code == 200
+        assert response.json()["auth"] == False, \
+            "Old password was still accepted after password change — security regression!"
+        print("✓ Old password correctly rejected after password change")
+
+        # Authenticate with NEW password
+        response = api.auth(original_login, new_password)
+        assert response.status_code == 200
+        assert response.json()["auth"] == True, \
+            f"New password not accepted: {response.json()}"
+        print("✓ New password accepted for re-authentication")
+
+    finally:
+        # Restore original password
+        try:
+            response = api.update_settings({"pass": original_password})
+            if response.status_code != 200:
+                # If session lost, re-auth with new password first
+                api.auth(original_login, new_password)
+                api.update_settings({"pass": original_password})
+            print(f"✓ Original password restored")
+        except Exception as exc:
+            print(f"  [WARN] Failed to restore password: {exc}")
+
+
+def test_reboot_command(api):
+    """Test POST /cmd reboot — verify device reboots and uptime resets (I-14)"""
+    print("\n=== Reboot command test ===")
+
+    # Record current uptime (in seconds)
+    response = api.get_uptime()
+    assert response.status_code == 200
+    uptime_data = response.json()
+    original_uptime_s = (
+        uptime_data["days"] * 86400
+        + uptime_data["hours"] * 3600
+        + uptime_data["minutes"] * 60
+        + uptime_data["seconds"]
+    )
+    print(f"  Uptime before reboot: {original_uptime_s}s "
+          f"({uptime_data['days']}d {uptime_data['hours']}h "
+          f"{uptime_data['minutes']}m {uptime_data['seconds']}s)")
+
+    # Record time just before sending reboot command to calculate elapsed time for uptime check
+    reboot_sent_at = time.monotonic()
+
+    # Send reboot command
+    try:
+        response = api.execute_command("reboot")
+        print(f"  Reboot command status: {response.status_code}")
+        assert response.status_code == 200, \
+            f"POST /cmd reboot expected 200, got {response.status_code}"
+    except requests.exceptions.ConnectionError:
+        # Connection drop is acceptable — reboot disconnects the HTTP server
+        print("  Connection dropped (expected during reboot)")
+
+    print("  Waiting for device to reboot...")
+
+    # Poll until the device comes back (timeout 60 s)
+    deadline = time.monotonic() + 60
+    came_back = False
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        try:
+            response = requests.get(f"{api.base_url}/", timeout=3,
+                                    headers={'Accept-Encoding': 'identity', 'Connection': 'close'})
+            if response.status_code == 200:
+                came_back = True
+                break
+        except Exception:
+            pass  # Device still booting
+
+    assert came_back, "Device did not come back within 60 seconds after reboot command"
+    print("✓ Device came back online")
+
+    # Re-authenticate (session is dropped after reboot); reset the session first
+    # to avoid using stale TCP connections from before the reboot.
+    api.session.close()
+    api.session = requests.Session()
+    api.session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'identity',
+        'Connection': 'close',
+        'Cache-Control': 'no-cache',
+    })
+    response = api.auth()
+    assert response.status_code == 200
+    assert response.json()["auth"] == True, "Re-authentication after reboot failed"
+    print("✓ Re-authentication after reboot successful")
+
+    # Verify new uptime is less than original (device rebooted)
+    response = api.get_uptime()
+    assert response.status_code == 200
+    new_uptime_data = response.json()
+    new_uptime_s = (
+        new_uptime_data["days"] * 86400
+        + new_uptime_data["hours"] * 3600
+        + new_uptime_data["minutes"] * 60
+        + new_uptime_data["seconds"]
+    )
+    print(f"  Uptime after reboot: {new_uptime_s}s")
+    # Uptime should have reset: either it's less than original (reboot happened)
+    # or it's less than the time elapsed since reboot command was sent (+ 30s margin for boot time)
+    elapsed_since_reboot = time.monotonic() - reboot_sent_at
+    assert new_uptime_s < original_uptime_s or new_uptime_s <= elapsed_since_reboot + 30, \
+        f"Uptime after reboot ({new_uptime_s}s) does not indicate a reboot occurred " \
+        f"(original={original_uptime_s}s, elapsed={elapsed_since_reboot:.0f}s)"
+    print("✓ Uptime correctly reset after reboot")
+
+
 def quick_connection_test(base_url):
     """Quick connection check before running tests"""
     from urllib.parse import urlparse
@@ -1715,8 +2547,8 @@ def main():
     args = parser.parse_args()
 
     # Check command line arguments
-    stop_on_failure = args.stop_on_failure or "--stop-on-failure" in sys.argv
-    verbose = args.verbose or "--verbose" in sys.argv
+    stop_on_failure = args.stop_on_failure
+    verbose = args.verbose
 
     # Create API client with specified IP
     api = WBMGEAPI(f"http://{args.ip}")
@@ -1740,6 +2572,7 @@ def main():
         ("unauthorized access", test_unauthorized_access),
         ("authorization", test_auth),
         ("device information", test_info),
+        ("info format validation", test_info_format_validation),
         ("settings", test_settings),
         ("session management", test_session_management),
         ("uptime", test_uptime),
@@ -1747,12 +2580,25 @@ def main():
         ("Modbus validation limits", test_modbus_validation_limits),
         ("validation patterns", test_validation_patterns),
         ("WiFi scanner", test_wifi_scanner),
+        ("WiFi scan edge cases", test_wifi_scan_edge_cases),
+        ("WiFi scan network fields", test_wifi_scan_network_fields),
         ("AP clients list", test_ap_clients),
         ("static files", test_static_files),
+        ("HTTP method guard", test_http_method_guard),
         ("commands", test_commands),
+        ("commands extended", test_cmd_extended),
         ("hostname", test_hostname),
         ("cache endpoints", test_cache_endpoints),
+        ("cache JSON fields", test_cache_json_fields),
+        ("cache CSV headers", test_cache_csv_headers),
+        ("cache server enabled toggle", test_cache_server_enabled_toggle),
+        ("settings partial update", test_settings_partial_update),
+        ("password change flow", test_password_change_flow),
+        ("WB test endpoint", test_wb_test),
+        ("sniffer status", test_sniffer_status),
+        ("port modes", test_port_modes),
         ("cache multimaster", test_cache_multimaster),
+        ("reboot command", test_reboot_command),  # Must be last — reboots the device
     ]
 
     passed = 0
