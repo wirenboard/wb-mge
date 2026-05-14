@@ -5,6 +5,7 @@
 #include "serial.h"
 #include "stream_splitter.h"
 #include "cache_multimaster.h"
+#include "auth.h"
 
 /* In unit test builds sniffer.h only provides httpd_handle_t; include the full
  * stub so that httpd_req_t, httpd_ws_frame_t, httpd_uri_t, etc. are available. */
@@ -624,6 +625,10 @@ static void sniffer_ws_task(void *arg)
 
 static esp_err_t sniffer_ws_handler(httpd_req_t *req)
 {
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
     if (req->method == HTTP_GET) {
         xSemaphoreTake(ws_mutex, portMAX_DELAY);
         ws_server    = req->handle;
@@ -675,6 +680,10 @@ static esp_err_t sniffer_ws_handler(httpd_req_t *req)
 
 static esp_err_t sniffer_status_handler(httpd_req_t *req)
 {
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
     char resp[64];
     snprintf(resp, sizeof(resp), "{\"port_%u\":%s,\"port_%u\":%s}",
         port_index_to_name(0), sniff_ctx[0].enabled ? "true" : "false",

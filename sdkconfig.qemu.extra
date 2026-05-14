@@ -1,0 +1,6 @@
+# Extra sdkconfig overrides for QEMU builds.
+# Applied on top of sdkconfig.qemu.minimal (which is auto-generated).
+# Add any QEMU-specific config options here instead of editing the generated file.
+
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_SPIRAM=y

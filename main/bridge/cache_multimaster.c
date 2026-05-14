@@ -1,6 +1,7 @@
 #include "cache_multimaster.h"
 #include "sniffer.h"
 #include "bridge.h"
+#include "auth.h"
 
 #ifdef __unittest_env__
 #include "malloc.h"  /* test_malloc / test_free for allocation tracking in unit tests */
@@ -458,6 +459,10 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
  */
 static esp_err_t cache_status_handler(httpd_req_t *req)
 {
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
     int      entries      = 0;
     int      slaves       = 0;
     uint32_t packets      = 0;
@@ -531,6 +536,10 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
  */
 static esp_err_t cache_csv_handler(httpd_req_t *req)
 {
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
     httpd_resp_set_type(req, "text/csv");
     httpd_resp_set_hdr(req, "Content-Disposition",
                        "attachment; filename=\"modbus_cache.csv\"");
@@ -626,6 +635,10 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
  */
 static esp_err_t cache_json_handler(httpd_req_t *req)
 {
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
     httpd_resp_set_type(req, "application/json");
 
     if (s_cache_mutex == NULL) {

@@ -9,6 +9,10 @@
 #include "auth.h"
 #include "json_utils.h"
 
+#if (QEMU_BUILD)
+#include "modbus_mock_qemu.h"
+#endif
+
 #include "esp_check.h"
 #include "esp_log.h"
 #include "cJSON.h"
@@ -140,6 +144,12 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
         sniffer_set_cache_active(true);
         // Save the serial config used at init so we can detect changes later.
         bridge_read_serial_config(index, &pm_ctx[index].serial_cfg_at_init);
+#if (QEMU_BUILD)
+        /* In QEMU, RS-485 is not functional. Start the Modbus RTU mock task which
+         * injects synthetic request/response pairs into the sniffer so the cache
+         * gets populated and the cache Modbus TCP server can serve data. */
+        modbus_mock_qemu_start(pm_ctx[index].serial_desc);
+#endif
         break;
 
     default:
@@ -181,6 +191,12 @@ static void port_deinit_mode(unsigned index)
         break;
 
     case PM_MODE_CACHE_BUS:
+#if (QEMU_BUILD)
+        /* Stop the mock task before deinitializing serial port to prevent
+         * use-after-free when the task tries to call sniff_handler after
+         * serial_desc is freed. */
+        modbus_mock_qemu_stop();
+#endif
         sniffer_detach(index);
         serial_deinit(pm_ctx[index].serial_desc);
         pm_ctx[index].serial_desc = NULL;

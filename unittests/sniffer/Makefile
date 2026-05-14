@@ -23,6 +23,7 @@ AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 AUX_SRC += mocks/tcp_server.c
 AUX_SRC += mocks/serial.c
 AUX_SRC += mocks/cache_multimaster.c
+AUX_SRC += mocks/auth.c
 
 # Include directories
 INC += mocks

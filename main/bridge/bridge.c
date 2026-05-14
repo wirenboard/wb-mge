@@ -1,9 +1,5 @@
 #include "bridge.h"
 
-#if (QEMU_BUILD)
-    #include "modbus_mock_qemu.h"
-#endif
-
 #include "esp_check.h"
 #include "setting_items.h"
 #include "driver/gpio.h"
@@ -267,11 +263,6 @@ esp_err_t bridge_port_init(unsigned index)
 
     // Note: sniffer_attach() is now called by port_manager after bridge_port_init(),
     // so it is not called here to avoid double-attach.
-#if (QEMU_BUILD)
-    if (index == 0) {
-        modbus_mock_qemu_start(bridge_ctx[index].serial_desc);
-    }
-#endif
     bridge_ctx[index].initialized = true;
     ESP_LOGD(TAG, "Port[%u]: Initialized", index + 1);
 
