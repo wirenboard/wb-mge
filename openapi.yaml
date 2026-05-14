@@ -454,7 +454,7 @@ paths:
                           maxLength: 31
                         rssi:
                           type: integer
-                          minimum: -100
+                          minimum: -128
                           maximum: 0
                         bssid:
                           type: string
@@ -715,6 +715,224 @@ paths:
                 type: string
                 format: binary
 
+  /hostname:
+    get:
+      summary: Get device hostname
+      security: []  # No authentication required for hostname
+      responses:
+        '200':
+          description: Current hostname
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hostname:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                    pattern: '^[a-zA-Z0-9-]+$'
+              example:
+                hostname: "my-device"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /sniffer/status:
+    get:
+      summary: Get sniffer status for all ports
+      description: Returns a map of port names to their sniffer active state.
+      responses:
+        '200':
+          description: Sniffer status per port
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  port_1: { type: boolean }
+                  port_2: { type: boolean }
+              example:
+                port_1: true
+                port_2: false
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /sniffer/ws:
+    get:
+      summary: WebSocket stream for packet sniffer
+      description: >
+        Upgrade this connection to WebSocket to receive real-time sniffer packets.
+        Each message is a JSON object describing a captured Modbus packet.
+      responses:
+        '101':
+          description: WebSocket connection established
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /cache/status:
+    get:
+      summary: Get Modbus cache status
+      responses:
+        '200':
+          description: Cache status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  entries:
+                    type: integer
+                    minimum: 0
+                  max_entries:
+                    type: integer
+                    minimum: 0
+                  slaves:
+                    type: integer
+                    minimum: 0
+                  packets_processed:
+                    type: integer
+                    minimum: 0
+                  last_packet_age_us:
+                    type: integer
+                    minimum: 0
+                  map_age_us:
+                    type: integer
+                    minimum: 0
+                  memory_bytes:
+                    type: integer
+                    minimum: 0
+              example:
+                enabled: true
+                entries: 42
+                max_entries: 1024
+                slaves: 3
+                packets_processed: 1000
+                last_packet_age_us: 500000
+                map_age_us: 1200000
+                memory_bytes: 4096
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /cache/csv:
+    get:
+      summary: Download Modbus register cache as CSV
+      description: >
+        Returns a CSV file containing the cached Modbus register values.
+        The CSV header is: slave_id,type,address,value,age_s
+        where type is one of: holding, input, coil, discrete.
+      responses:
+        '200':
+          description: CSV file with cached register data
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="modbus_cache.csv"'
+          content:
+            text/csv:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /cache/json:
+    get:
+      summary: Get Modbus register cache as JSON
+      responses:
+        '200':
+          description: Cached register data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  d:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        s:
+                          type: integer
+                          minimum: 1
+                          maximum: 247
+                          description: "Modbus slave ID"
+                        t:
+                          type: string
+                          enum: ["h", "i", "c", "d"]
+                          description: "Register type: h=holding, i=input, c=coil, d=discrete"
+                        a:
+                          type: integer
+                          minimum: 0
+                          maximum: 65535
+                          description: "Register address (0-based)"
+                        v:
+                          type: integer
+                          minimum: 0
+                          maximum: 65535
+                          description: "Register value"
+                        age:
+                          type: integer
+                          minimum: 0
+                          maximum: 65535
+                          description: "Seconds since last update"
+              example:
+                d:
+                  - s: 3
+                    t: "h"
+                    a: 100
+                    v: 1234
+                    age: 42
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /ports/{port_number}/mode:
+    post:
+      summary: Set port operating mode
+      parameters:
+        - name: port_number
+          in: path
+          required: true
+          description: "Port number (1 or 2)"
+          schema:
+            type: integer
+            enum: [1, 2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: ["disabled", "tcp_bridge", "sniffer", "cache_bus"]
+              required: [mode]
+            example:
+              mode: "sniffer"
+      responses:
+        '200':
+          description: Port mode updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                    enum: ["disabled", "tcp_bridge", "sniffer", "cache_bus"]
+              example:
+                mode: "sniffer"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
 components:
   securitySchemes:
     sessionCookie:
@@ -746,6 +964,10 @@ components:
           type: integer
           minimum: 0
           maximum: 10
+        port_mode:
+          type: string
+          enum: ["disabled", "tcp_bridge", "sniffer", "cache_bus"]
+          description: "Current operating mode of the RS-485 port"
 
     RS485Settings:
       type: object
