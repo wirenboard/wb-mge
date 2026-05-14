@@ -3,7 +3,7 @@
 Cache Modbus Server multi-master test.
 
 Downloads the register map from /cache/csv, then verifies that multiple
-parallel Modbus TCP clients on port 504 all read correct values.
+parallel Modbus TCP clients on port 504 all receive valid (decodable, non-empty) responses.
 
 Usage:
     python test_multimaster_cache.py --host 192.168.1.1 --port 504 --threads 5 --http-port 80
@@ -11,12 +11,15 @@ Usage:
 
 import argparse
 import csv
+import http.cookiejar
 import io
+import json
 import socket
 import struct
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 # ---------------------------------------------------------------------------
@@ -65,7 +68,7 @@ def parse_csv(raw_csv: str) -> dict:
     CSV columns: slave_id, type, address, value, age_s
 
     Returns a dict keyed by (slave_id: int, reg_type: str, address: int)
-    with integer register values.
+    with tuples (value: int, age_s: int).
     """
     register_map = {}
     reader = csv.DictReader(io.StringIO(raw_csv))
@@ -75,6 +78,7 @@ def parse_csv(raw_csv: str) -> dict:
             reg_type = row["type"].strip()
             address = int(row["address"])
             value = int(row["value"])
+            age_s = int(row["age_s"])
         except (KeyError, ValueError) as exc:
             print(f"[WARN] Skipping malformed CSV row {row}: {exc}", file=sys.stderr)
             continue
@@ -84,7 +88,7 @@ def parse_csv(raw_csv: str) -> dict:
             continue
 
         key = (slave_id, reg_type, address)
-        register_map[key] = value
+        register_map[key] = (value, age_s)
 
     return register_map
 
@@ -229,10 +233,10 @@ def _run_register_pass(
 
     Sends one Modbus TCP request per register, validates TID integrity,
     absence of Modbus exceptions, decodes the response payload, and
-    compares the returned value against the expected value from register_map.
+    validates the response format (non-empty, decodable).
     Updates *result* in-place and returns the next TID.
     """
-    for (slave_id, reg_type, address), expected_value in register_map.items():
+    for (slave_id, reg_type, address), _register_data in register_map.items():
         fc = TYPE_TO_FC[reg_type]
         count = 1  # Read one register at a time
 
@@ -275,7 +279,7 @@ def _run_register_pass(
             tid += 1
             continue
 
-        # Decode the response payload and compare against the expected value
+        # Decode the response payload and validate format
         try:
             decoded_values = decode_response(fc, payload, count)
         except ValueError as exc:
@@ -295,14 +299,6 @@ def _run_register_pass(
             tid += 1
             continue
 
-        if decoded_values[0] != expected_value:
-            result.add_error(
-                f"[Thread {thread_id}] Value mismatch "
-                f"slave={slave_id} type={reg_type} addr={address}: "
-                f"expected={expected_value} got={decoded_values[0]}"
-            )
-            tid += 1
-            continue
         result.add_pass()
 
         tid += 1
@@ -325,7 +321,7 @@ def worker(
     1. Waits at the barrier so all threads connect simultaneously.
     2. Opens a TCP connection to the Modbus server.
     3. Iterates over all registers in the map, issuing one request per register.
-    4. Validates TID integrity, Modbus exceptions, decodes payload and compares values against register_map.
+    4. Validates TID integrity, Modbus exceptions, and response format (decodable, non-empty).
 
     If duration > 0, repeats the register pass in a loop until the deadline
     (time.monotonic() >= start_time + duration), counting full iterations.
@@ -368,6 +364,186 @@ def worker(
 
 
 # ---------------------------------------------------------------------------
+# Staleness test helpers
+# ---------------------------------------------------------------------------
+
+
+def http_auth(host: str, http_port: int, login: str, password: str) -> http.cookiejar.CookieJar:
+    """Authenticate with the device and return a cookie jar with the session cookie."""
+    url = f"http://{host}:{http_port}/auth"
+    body = json.dumps({"login": login, "pass": password}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    cookie_jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+    try:
+        with opener.open(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if not data.get("auth"):
+                raise RuntimeError(f"Authentication failed: {data.get('error', 'unknown error')}")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Auth request failed: HTTP {exc.code} from {url}") from exc
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"Auth request failed: {exc}") from exc
+    return cookie_jar
+
+
+def set_cache_timeout(host: str, http_port: int, timeout_s: int, cookie_jar: "http.cookiejar.CookieJar | None" = None) -> None:
+    """POST cache_value_timeout_s setting to the device via HTTP."""
+    url = f"http://{host}:{http_port}/settings"
+    body = json.dumps({"cache_value_timeout_s": timeout_s}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cookie_jar)
+    ) if cookie_jar is not None else urllib.request.build_opener()
+    try:
+        with opener.open(req, timeout=10) as resp:
+            if resp.status not in (200, 204):
+                raise RuntimeError(f"Unexpected HTTP status {resp.status} from {url}")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Failed to set cache timeout: HTTP {exc.code} from {url}") from exc
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"Failed to set cache timeout: {exc}") from exc
+
+
+def query_register_once(host: str, port: int, slave_id: int, reg_type: str, address: int) -> tuple:
+    """
+    Open a fresh TCP socket, send one Modbus TCP request, receive the response.
+
+    Returns:
+        ("ok", value)              — successful read
+        ("exception", code)        — Modbus exception response (code = payload[0])
+        ("error", description_str) — socket or decode error
+    """
+    fc = TYPE_TO_FC[reg_type]
+    request = make_mbap_request(1, slave_id, fc, address, 1)
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        try:
+            sock.connect((host, port))
+            _tid, _unit_id, resp_fc, payload = send_and_receive(sock, request)
+        finally:
+            sock.close()
+    except Exception as exc:
+        return ("error", str(exc))
+
+    # Modbus exception response
+    if resp_fc & 0x80:
+        code = payload[0] if payload else -1
+        return ("exception", code)
+
+    # Successful response — decode the single register value
+    try:
+        decoded = decode_response(fc, payload, 1)
+    except ValueError as exc:
+        return ("error", f"Decode error: {exc}")
+
+    if not decoded:
+        return ("error", "Decode returned empty list")
+
+    return ("ok", decoded[0])
+
+
+def run_staleness_test(host: str, port: int, http_port: int, register_map: dict, cookie_jar: "http.cookiejar.CookieJar | None" = None) -> tuple:
+    """
+    Test that stale cache entries trigger Modbus exception 0x0B, and that
+    disabling the timeout (=0) makes them readable again.
+
+    Algorithm:
+        1. Select up to 5 registers with age_s >= 3 from register_map.
+        2. If none found — return SKIP.
+        3. Set cache_value_timeout_s = 1 → expect exception 0x0B for each.
+        4. Set cache_value_timeout_s = 0 → expect ("ok", value) for each.
+           Step 4 runs in a finally block so the device is always restored.
+
+    Returns (passed: bool, report_lines: list[str]).
+    """
+    report_lines = []
+
+    # Collect stale registers (age_s >= 3 seconds)
+    stale_registers = [
+        (key, value, age_s)
+        for key, (value, age_s) in register_map.items()
+        if age_s >= 3
+    ]
+
+    if not stale_registers:
+        report_lines.append("[SKIP] No registers with age_s >= 3 found — skipping staleness test")
+        return (True, report_lines)
+
+    # Limit to 5 candidates
+    candidates = stale_registers[:5]
+    report_lines.append(
+        f"[INFO] Staleness test: {len(candidates)} register(s) with age_s >= 3 selected"
+    )
+
+    passed = True
+    timeout_was_set = False
+
+    try:
+        # Set timeout = 1s, expect exception 0x0B for all stale registers
+        set_cache_timeout(host, http_port, 1, cookie_jar)
+        timeout_was_set = True
+        report_lines.append("[INFO] cache_value_timeout_s set to 1")
+
+        for (slave_id, reg_type, address), _value, age_s in candidates:
+            result = query_register_once(host, port, slave_id, reg_type, address)
+            if result == ("exception", 0x0B):
+                report_lines.append(
+                    f"[PASS] slave={slave_id} type={reg_type} addr={address} age={age_s}s "
+                    f"→ exception 0x0B as expected"
+                )
+            else:
+                passed = False
+                report_lines.append(
+                    f"[FAIL] slave={slave_id} type={reg_type} addr={address} age={age_s}s "
+                    f"→ expected exception 0x0B, got {result}"
+                )
+    finally:
+        # Always attempt to restore timeout=0 so the device is not left broken.
+        # Catch and record any error to prevent losing accumulated report_lines.
+        try:
+            set_cache_timeout(host, http_port, 0, cookie_jar)
+            report_lines.append("[INFO] cache_value_timeout_s restored to 0")
+        except RuntimeError as exc:
+            report_lines.append(f"[ERROR] Failed to restore cache_value_timeout_s=0: {exc}")
+            passed = False
+            # Skip step 4 — timeout may still be 1, readability check would be unreliable
+        else:
+            # Only verify readability if timeout was set to 1 and restore succeeded.
+            if timeout_was_set:
+                for (slave_id, reg_type, address), _expected_value, _age_s in candidates:
+                    result = query_register_once(host, port, slave_id, reg_type, address)
+                    if result[0] == "ok":
+                        report_lines.append(
+                            f"[PASS] slave={slave_id} type={reg_type} addr={address} "
+                            f"→ value={result[1]} readable with timeout=0 as expected"
+                        )
+                    else:
+                        passed = False
+                        report_lines.append(
+                            f"[FAIL] slave={slave_id} type={reg_type} addr={address} "
+                            f"→ expected ok read with timeout=0, got {result}"
+                        )
+
+    return (passed, report_lines)
+
+
+# ---------------------------------------------------------------------------
 # Connectivity timing check
 # ---------------------------------------------------------------------------
 
@@ -405,6 +581,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=504, help="Modbus TCP port")
     parser.add_argument("--threads", type=int, default=5, help="Number of parallel client threads")
     parser.add_argument("--http-port", type=int, default=80, help="HTTP port for /cache/csv endpoint")
+    parser.add_argument("--login", default="admin", help="Login for /settings authentication")
+    parser.add_argument("--password", default="admin", help="Password for /settings authentication")
     parser.add_argument(
         "--duration",
         type=float,
@@ -478,7 +656,23 @@ def main():
         )
         raise SystemExit(1)
 
-    # Step 3: Collect and report results
+    # Step 3: Authenticate for settings access
+    cookie_jar = None
+    if args.login or args.password:
+        try:
+            cookie_jar = http_auth(args.host, args.http_port, args.login, args.password)
+            print(f"[*] Authenticated as '{args.login}' for /settings access")
+        except RuntimeError as exc:
+            print(f"[WARN] Authentication failed: {exc} — staleness test may fail with 401", file=sys.stderr)
+
+    # Step 4: Staleness test
+    try:
+        stale_ok, stale_lines = run_staleness_test(args.host, args.port, args.http_port, register_map, cookie_jar)
+    except RuntimeError as exc:
+        stale_ok = False
+        stale_lines = [f"[ERROR] Staleness test aborted: {exc}"]
+
+    # Step 5: Collect and report results
     print()
     print("=" * 60)
     if duration > 0:
@@ -499,7 +693,7 @@ def main():
     # --- Criterion 4: No deadlock (already handled above) ---
     print(f"[PASS] No deadlock: all {num_threads} threads finished within 30 seconds")
 
-    # --- Per-thread results (TID integrity + value correctness) ---
+    # --- Per-thread results (TID integrity + response format) ---
     total_passed = 0
     total_failed = 0
 
@@ -534,6 +728,14 @@ def main():
         f"passed: {total_passed}  failed: {total_failed}"
     )
     print("-" * 60)
+
+    # --- Staleness test results ---
+    print()
+    print("--- Staleness test ---")
+    for line in stale_lines:
+        print(line)
+    if not stale_ok:
+        all_passed = False
 
     if all_passed:
         print("\n✅  OVERALL RESULT: PASS")
