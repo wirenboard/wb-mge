@@ -103,6 +103,11 @@ esp_err_t sys_info_init(void)
         if (!strlen(sys_info.device_signature)) {
             snprintf(sys_info.device_signature, sizeof(sys_info.device_signature), "mge_v3");
         }
+        // In QEMU the eFuse MAC is all-zeros, so the generated serial is 0 which
+        // violates the OpenAPI minimum:1 constraint. Use a fixed non-zero placeholder.
+        if (sys_info.device_serial_num == 0) {
+            sys_info.device_serial_num = 83798374;
+        }
     #endif
 
     #if CONFIG_EFUSE_VIRTUAL

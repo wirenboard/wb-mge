@@ -32,7 +32,14 @@ static esp_netif_t* s_eth_netif = NULL;
     esp_err_t ethernet_init(esp_event_handler_t eth_event_handler, esp_netif_ip_info_t* static_ip, char * netif_hostname)
     {
         ESP_LOGI(TAG, "Initializing Ethernet for QEMU environment");
-        return ethernet_init_qemu(eth_event_handler, static_ip, netif_hostname);
+        esp_err_t ret = ethernet_init_qemu(eth_event_handler, static_ip, netif_hostname);
+        if (ret == ESP_OK) {
+            // ethernet_init_qemu() stores the handle in its own static variable;
+            // mirror it here so that ethernet_get_handle() (defined in this file)
+            // returns a valid handle for the rest of the codebase (e.g. MAC lookup).
+            s_eth_handle = ethernet_get_handle_qemu();
+        }
+        return ret;
     }
 
 #else
