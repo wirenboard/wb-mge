@@ -1,18 +1,28 @@
 """
-Sniffer WebSocket integration test.
+Sniffer WebSocket integration tests.
 
 Connects to the device WebSocket sniffer endpoint, collects Modbus packets
 from RS-485 port 1, and verifies that both valid and bad-CRC packets arrive
 and that the sniffer remains functional after a bad-CRC packet.
+
+Extended coverage includes:
+  - JSON packet field validation (port, id, timestamp_us, raw, sender)
+  - Stream splitter verification (separate master/slave packets)
+  - Stop command behavior
+  - Malformed JSON resilience
+  - Port mode restore after teardown
 """
 
 import json
+import re
 import threading
 import time
 
 import pytest
 import websocket
 from urllib.parse import urlparse
+
+from sniffer_helpers import _ws_connect, _collect_packets
 
 
 @pytest.mark.order(26)
@@ -249,3 +259,664 @@ def test_sniffer_ws_invalid_cookie(api):
         "but connection remained open and recv succeeded"
     )
     print("✓ Invalid-cookie WS connection closed by server immediately after upgrade")
+
+
+# ---------------------------------------------------------------------------
+# Group 1: WS protocol and JSON packet fields
+# ---------------------------------------------------------------------------
+
+@pytest.mark.order(36)
+def test_sniffer_ws_packet_port_field_matches_started_port(api):
+    """All received packets must report port==1 when sniffer started for port 1."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        # Save original port 1 mode
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        ws, stop_ping, _ = _ws_connect(api, 1)
+
+        packets = _collect_packets(
+            ws,
+            min_count=5,
+            timeout_sec=15,
+            filter_fn=lambda p: p.get("type") == "packet",
+        )
+
+        assert len(packets) >= 5, (
+            f"Expected >=5 packets but got {len(packets)}; check that QEMU mock is running"
+        )
+        assert all(p["port"] == 1 for p in packets), (
+            f"Some packets have wrong port field: {[p['port'] for p in packets]}"
+        )
+        print(f"✓ All {len(packets)} packets have port==1")
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+@pytest.mark.order(37)
+def test_sniffer_ws_id_monotonically_increasing(api):
+    """Packet id field must be strictly increasing across all received packets."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        ws, stop_ping, _ = _ws_connect(api, 1)
+
+        packets = _collect_packets(ws, min_count=10, timeout_sec=15)
+
+        assert len(packets) >= 10, (
+            f"Expected >=10 packets but got {len(packets)}; check that QEMU mock is running"
+        )
+        ids = [p["id"] for p in packets]
+        violations = [
+            (i, ids[i], ids[i + 1])
+            for i in range(len(ids) - 1)
+            if ids[i] >= ids[i + 1]
+        ]
+        assert len(violations) == 0, (
+            f"packet id is not strictly increasing at positions: {violations}"
+        )
+        print(f"✓ id strictly increasing across {len(packets)} packets")
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+@pytest.mark.order(38)
+def test_sniffer_ws_timestamp_positive_and_plausible(api):
+    """timestamp_us must be a positive integer and the sequence must be non-decreasing."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        ws, stop_ping, _ = _ws_connect(api, 1)
+
+        packets = _collect_packets(ws, min_count=5, timeout_sec=15)
+
+        assert len(packets) >= 5, (
+            f"Expected >=5 packets but got {len(packets)}; check that QEMU mock is running"
+        )
+
+        for i, p in enumerate(packets):
+            ts = p.get("timestamp_us")
+            assert isinstance(ts, int), (
+                f"Packet[{i}] timestamp_us is not an int: {type(ts).__name__} = {ts!r}"
+            )
+            assert ts > 0, f"Packet[{i}] timestamp_us is not positive: {ts}"
+
+        timestamps = [p["timestamp_us"] for p in packets]
+        for i in range(len(timestamps) - 1):
+            assert timestamps[i] <= timestamps[i + 1], (
+                f"Timestamp sequence is not non-decreasing at index {i}: "
+                f"{timestamps[i]} > {timestamps[i + 1]}"
+            )
+        print(f"✓ All {len(packets)} timestamps are positive and non-decreasing")
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+@pytest.mark.order(39)
+def test_sniffer_ws_raw_field_is_hex_and_matches_size(api):
+    """raw field must be uppercase hex and its length must equal size*2."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        ws, stop_ping, _ = _ws_connect(api, 1)
+
+        packets = _collect_packets(
+            ws,
+            min_count=5,
+            timeout_sec=15,
+            filter_fn=lambda p: p.get("type") == "packet",
+        )
+
+        assert len(packets) >= 5, (
+            f"Expected >=5 type==packet packets but got {len(packets)}; "
+            "check that QEMU mock is running"
+        )
+
+        for i, p in enumerate(packets):
+            raw = p.get("raw", "")
+            size = p.get("size", -1)
+            assert len(raw) == size * 2, (
+                f"Packet[{i}] raw length {len(raw)} != size*2 {size * 2}; raw={raw!r}"
+            )
+            # Implementation uses %02X so output is uppercase hex
+            assert re.fullmatch(r"[0-9A-F]+", raw), (
+                f"Packet[{i}] raw is not uppercase hex: {raw!r}"
+            )
+        print(f"✓ raw field validated for {len(packets)} type==packet packets")
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+@pytest.mark.order(40)
+def test_sniffer_ws_stream_splitter_produces_separate_request_and_response(api):
+    """Stream splitter must emit separate master (FC03) and slave packets."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        ws, stop_ping, _ = _ws_connect(api, 1)
+
+        packets = _collect_packets(
+            ws,
+            min_count=10,
+            timeout_sec=15,
+            filter_fn=lambda p: p.get("type") == "packet" and p.get("crc_valid") is True,
+        )
+
+        assert len(packets) >= 10, (
+            f"Expected >=10 valid packets but got {len(packets)}; "
+            "check that QEMU mock is running"
+        )
+
+        master_fc3 = [p for p in packets if p.get("sender") == "master" and p.get("function") == 3]
+        slave_pkts = [p for p in packets if p.get("sender") == "slave"]
+
+        assert len(master_fc3) > 0, "No master FC03 packets seen"
+        assert len(slave_pkts) > 0, "No slave packets seen"
+
+        # Find a matched consecutive master→slave pair to verify timestamp ordering.
+        # Avoid comparing packets from different transactions (e.g. orphan responses
+        # emitted when the sniffer starts mid-exchange may precede the first master).
+        matched_pair = None
+        for i in range(len(packets) - 1):
+            m = packets[i]
+            s = packets[i + 1]
+            if (
+                m.get("sender") == "master"
+                and s.get("sender") == "slave"
+                and m.get("slave_id") == s.get("slave_id")
+                and m.get("function") == s.get("function")
+            ):
+                matched_pair = (m, s)
+                break
+
+        if matched_pair is not None:
+            m, s = matched_pair
+            assert s["timestamp_us"] >= m["timestamp_us"], (
+                f"Slave timestamp {s['timestamp_us']} < master timestamp {m['timestamp_us']} "
+                f"in matched pair"
+            )
+        print(
+            f"✓ stream_splitter: {len(master_fc3)} master FC03, {len(slave_pkts)} slave packets"
+        )
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+@pytest.mark.order(41)
+def test_sniffer_ws_sender_alternates_master_slave(api):
+    """At least 2 consecutive (master → slave) pairs with matching slave_id and function."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        ws, stop_ping, _ = _ws_connect(api, 1)
+
+        packets = _collect_packets(
+            ws,
+            min_count=10,
+            timeout_sec=15,
+            filter_fn=lambda p: p.get("type") == "packet" and p.get("crc_valid") is True,
+        )
+
+        assert len(packets) >= 10, (
+            f"Expected >=10 valid packets but got {len(packets)}; "
+            "check that QEMU mock is running"
+        )
+
+        pairs_found = 0
+        for i in range(len(packets) - 1):
+            m = packets[i]
+            s = packets[i + 1]
+            if (
+                m.get("sender") == "master"
+                and s.get("sender") == "slave"
+                and m.get("slave_id") == s.get("slave_id")
+                and m.get("function") == s.get("function")
+            ):
+                pairs_found += 1
+
+        assert pairs_found >= 2, (
+            f"Expected >=2 master→slave pairs with matching slave_id/function, "
+            f"found {pairs_found}"
+        )
+        print(f"✓ Found {pairs_found} matching master→slave pairs")
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Group 2: Stop command and verification
+# ---------------------------------------------------------------------------
+
+@pytest.mark.order(42)
+def test_sniffer_ws_stop_command_stops_stream(api):
+    """After sending stop, no more packets must arrive and /sniffer/status must reflect false."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        ws, stop_ping, _ = _ws_connect(api, 1)
+
+        # Confirm sniffer is producing packets before stopping
+        pre_stop = _collect_packets(ws, min_count=1, timeout_sec=10)
+        assert len(pre_stop) >= 1, "No packets received before stop — check QEMU mock"
+
+        # Send stop
+        ws.send(json.dumps({"cmd": "stop", "port": 1}))
+        time.sleep(2)
+
+        # Collect for 2 more seconds — nothing should arrive
+        ws.settimeout(1)
+        post_stop_packets = []
+        post_deadline = time.monotonic() + 2
+        while time.monotonic() < post_deadline:
+            try:
+                msg = ws.recv()
+                if msg:
+                    post_stop_packets.append(json.loads(msg))
+            except websocket.WebSocketTimeoutException:
+                pass
+            except websocket.WebSocketPayloadException:
+                pass
+            except json.JSONDecodeError:
+                pass
+
+        assert len(post_stop_packets) == 0, (
+            f"Expected 0 packets after stop, got {len(post_stop_packets)}"
+        )
+
+        # Verify /sniffer/status reflects the stopped state
+        status_resp = api.get_sniffer_status()
+        assert status_resp.status_code == 200, f"Unexpected status code: {status_resp.status_code}"
+        body = status_resp.json()
+        assert body.get("port_1") is False, (
+            f"Expected port_1==False after stop, got {body.get('port_1')}"
+        )
+        print("✓ stop command stops stream and /sniffer/status reflects false")
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            # Stop already sent above; just close
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+@pytest.mark.order(43)
+def test_sniffer_ws_malformed_json_does_not_crash(api):
+    """Server must survive malformed WS messages and still serve packets afterwards."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        parsed = urlparse(api.base_url)
+        host = parsed.hostname
+        http_port = parsed.port or 80
+        ws_url = f"ws://{host}:{http_port}/sniffer/ws"
+        cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
+
+        ws = websocket.WebSocket()
+        ws.settimeout(15)
+        ws.connect(ws_url, cookie=cookies)
+
+        stop_ping = threading.Event()
+
+        def _ping():
+            while not stop_ping.is_set():
+                try:
+                    ws.ping()
+                except Exception:
+                    break
+                time.sleep(0.5)
+
+        ping_thread = threading.Thread(target=_ping, daemon=True)
+        ping_thread.start()
+
+        malformed_messages = [
+            "not json",
+            "{}",
+            '{"cmd":"start"}',           # missing port field
+            '{"cmd":"start","port":"x"}', # port is not a number
+        ]
+
+        for bad_msg in malformed_messages:
+            ws.send(bad_msg)
+            # Try to receive something briefly; a closed connection would raise
+            ws.settimeout(0.5)
+            try:
+                ws.recv()
+            except websocket.WebSocketTimeoutException:
+                pass  # expected — no immediate reply to malformed messages
+            except websocket.WebSocketConnectionClosedException:
+                pytest.fail(f"Server closed connection after malformed message: {bad_msg!r}")
+            except websocket.WebSocketPayloadException:
+                pass
+            except json.JSONDecodeError:
+                pass
+
+        # Now send a valid start and expect packets
+        ws.send(json.dumps({"cmd": "start", "port": 1}))
+        ws.settimeout(5)
+        packets = _collect_packets(ws, min_count=3, timeout_sec=10)
+
+        assert len(packets) >= 3, (
+            f"Expected >=3 packets after malformed messages but got {len(packets)}; "
+            "server may have crashed"
+        )
+        print(f"✓ Server survived {len(malformed_messages)} malformed messages; "
+              f"{len(packets)} packets received afterwards")
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+@pytest.mark.order(44)
+def test_sniffer_ws_stop_before_start_does_not_crash(api):
+    """Sending stop before start must not crash the server; start must work afterwards."""
+    original_port_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        parsed = urlparse(api.base_url)
+        host = parsed.hostname
+        http_port = parsed.port or 80
+        ws_url = f"ws://{host}:{http_port}/sniffer/ws"
+        cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
+
+        ws = websocket.WebSocket()
+        ws.settimeout(15)
+        ws.connect(ws_url, cookie=cookies)
+
+        stop_ping = threading.Event()
+
+        def _ping():
+            while not stop_ping.is_set():
+                try:
+                    ws.ping()
+                except Exception:
+                    break
+                time.sleep(0.5)
+
+        ping_thread = threading.Thread(target=_ping, daemon=True)
+        ping_thread.start()
+
+        # Send stop immediately — before any start
+        ws.send(json.dumps({"cmd": "stop", "port": 1}))
+        time.sleep(0.3)
+
+        # Verify /sniffer/status is still 200 and port_1 is false
+        status_resp = api.get_sniffer_status()
+        assert status_resp.status_code == 200, (
+            f"Expected 200 from /sniffer/status, got {status_resp.status_code}"
+        )
+        body = status_resp.json()
+        assert body.get("port_1") is False, (
+            f"Expected port_1==False after premature stop, got {body.get('port_1')}"
+        )
+
+        # Now start normally and expect packets
+        ws.send(json.dumps({"cmd": "start", "port": 1}))
+        packets = _collect_packets(ws, min_count=3, timeout_sec=10)
+
+        assert len(packets) >= 3, (
+            f"Expected >=3 packets after stop-before-start but got {len(packets)}; "
+            "server may have crashed"
+        )
+        print(f"✓ stop-before-start did not crash; {len(packets)} packets received")
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_port_mode is not None:
+            r = api.set_port_mode(1, original_port_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Group 4: WS lifecycle
+# ---------------------------------------------------------------------------
+
+@pytest.mark.order(51)
+def test_sniffer_ws_restore_port_mode_on_teardown(api):
+    """Port mode must be correctly restored to its original value after sniffer usage."""
+    original_mode = None
+    ws = None
+    stop_ping = None
+
+    try:
+        info = api.get_info()
+        assert info.status_code == 200
+        original_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+        print(f"  Original port 1 mode: {original_mode}")
+
+        r = api.set_port_mode(1, "sniffer")
+        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        time.sleep(0.5)
+
+        ws, stop_ping, _ = _ws_connect(api, 1)
+
+        # Collect at least 1 packet to confirm sniffer is active
+        packets = _collect_packets(ws, min_count=1, timeout_sec=10)
+        assert len(packets) >= 1, "No packets received — check QEMU mock"
+
+    finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if original_mode is not None:
+            r = api.set_port_mode(1, original_mode)
+            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
+
+    # Verify restoration result (read-only check; runs only when the test body succeeds)
+    info_after = api.get_info()
+    assert info_after.status_code == 200
+    restored_mode = info_after.json().get("rs485_1", {}).get("port_mode")
+    assert restored_mode == original_mode, (
+        f"Port mode not restored: expected {original_mode!r}, got {restored_mode!r}"
+    )
+    print(f"✓ Port 1 mode correctly restored to {original_mode!r}")
