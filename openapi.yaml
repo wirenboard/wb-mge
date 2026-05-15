@@ -342,7 +342,7 @@ paths:
               properties:
                 cmd:
                   type: string
-                  enum: [reboot, set_default_settings, write_factory_data]
+                  enum: [reboot, set_default_settings]
               required: [cmd]
       responses:
         '200':
