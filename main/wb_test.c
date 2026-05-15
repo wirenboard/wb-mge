@@ -112,7 +112,7 @@ static esp_err_t process_request_json(cJSON *request_json)
         if (!clock_out_en) {
             clock_out_en = true;
             s_saved_port_mode = port_manager_get_mode(BRIDGE_PORT_INDEX);
-            esp_err_t err = port_manager_set_mode_transient(BRIDGE_PORT_INDEX, PM_MODE_DISABLED);
+            esp_err_t err = port_manager_set_mode(BRIDGE_PORT_INDEX, PM_MODE_DISABLED);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to disable port for clock_out: %s", esp_err_to_name(err));
             }
@@ -122,7 +122,7 @@ static esp_err_t process_request_json(cJSON *request_json)
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
-            esp_err_t err = port_manager_set_mode_transient(BRIDGE_PORT_INDEX, s_saved_port_mode);
+            esp_err_t err = port_manager_set_mode(BRIDGE_PORT_INDEX, s_saved_port_mode);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to restore port mode after clock_out: %s", esp_err_to_name(err));
             }
