@@ -5,7 +5,7 @@
 
 // Buffer size for HTTP requests
 // Use a reasonable default size for JSON requests
-#define JSON_UTILS_REQ_RECV_BUF_SIZE 1024
+#define JSON_UTILS_REQ_RECV_BUF_SIZE 4096
 
 /**
  * @brief Receive and parse JSON from HTTP request
