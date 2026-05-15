@@ -98,3 +98,10 @@ static inline esp_err_t httpd_resp_send(httpd_req_t *req, const char *buf, ssize
     (void)buf_len;
     return ESP_OK;
 }
+
+static inline esp_err_t httpd_sess_trigger_close(httpd_handle_t handle, int sockfd)
+{
+    (void)handle;
+    (void)sockfd;
+    return ESP_OK;
+}
