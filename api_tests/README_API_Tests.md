@@ -56,9 +56,9 @@ pip install -r api_tests/requirements.txt
 
 ```bash
 # Все тесты с указанием IP
-pytest api_tests/ --ip 192.168.5.1
+pytest api_tests/ --ip localhost:8080
 
-# По умолчанию (192.168.5.1 — AP-режим)
+# По умолчанию (localhost:8080)
 pytest api_tests/
 ```
 
@@ -66,16 +66,16 @@ pytest api_tests/
 
 ```bash
 # Остановиться на первой ошибке
-pytest api_tests/ --ip 192.168.5.1 -x
+pytest api_tests/ --ip localhost:8080 -x
 
 # Запустить только конкретный файл
-pytest api_tests/test_auth.py --ip 192.168.5.1
+pytest api_tests/test_auth.py --ip localhost:8080
 
 # Запустить конкретный тест по имени
-pytest api_tests/ --ip 192.168.5.1 -k test_cache_multimaster
+pytest api_tests/ --ip localhost:8080 -k test_cache_multimaster
 
 # Краткий вывод (без print)
-pytest api_tests/ --ip 192.168.5.1 --no-header -q
+pytest api_tests/ --ip localhost:8080 --no-header -q
 ```
 
 ---

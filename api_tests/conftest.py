@@ -9,14 +9,14 @@ from api_client import WBMGEAPI
 
 
 def pytest_addoption(parser):
-    parser.addoption("--ip", default="192.168.5.1", help="IP address of WB-MGE device")
+    parser.addoption("--ip", default="localhost:8080", help="IP address of WB-MGE device")
 
 
 def quick_connection_test(base_url):
     """Quick connection check before running tests"""
     parsed = urlparse(base_url)
-    host = parsed.hostname or "192.168.5.1"
-    port = parsed.port or 80
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 8080
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

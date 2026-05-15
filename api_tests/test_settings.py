@@ -154,173 +154,187 @@ def test_settings(api):
         }
     }
 
-    response = api.update_settings(test_settings)
-    assert response.status_code == 200
-    result = response.json()
-    assert result["success"] == True
-    print("✓ Writing settings with valid data works")
+    try:
+        response = api.update_settings(test_settings)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["success"] == True
+        print("✓ Writing settings with valid data works")
 
-    response = api.get_settings()
-    assert response.status_code == 200
-    new_settings = response.json()
+        response = api.get_settings()
+        assert response.status_code == 200
+        new_settings = response.json()
 
-    main_fields = [
-        "hostname", "vout", "web_port", "io_bus"
-    ]
-    for field in main_fields:
-        assert new_settings[field] == test_settings[field], f"Incorrect value for field {field}: {new_settings[field]}"
+        main_fields = [
+            "hostname", "vout", "web_port", "io_bus"
+        ]
+        for field in main_fields:
+            assert new_settings[field] == test_settings[field], f"Incorrect value for field {field}: {new_settings[field]}"
 
-    wifi = new_settings["wifi"]
-    for field in wifi_fields:
-        assert wifi[field] == test_settings["wifi"][field], f"Incorrect value for field {field}: {wifi[field]}"
+        wifi = new_settings["wifi"]
+        for field in wifi_fields:
+            assert wifi[field] == test_settings["wifi"][field], f"Incorrect value for field {field}: {wifi[field]}"
 
-    eth = new_settings["ethernet"]
-    for field in eth_fields:
-        assert eth[field] == test_settings["ethernet"][field], f"Incorrect value for field {field}: {eth[field]}"
+        eth = new_settings["ethernet"]
+        for field in eth_fields:
+            assert eth[field] == test_settings["ethernet"][field], f"Incorrect value for field {field}: {eth[field]}"
 
-    rs485_1 = new_settings["rs485_1"]
-    rs485_main_fields = [
-        "term", "fail_safe", "baudrate", "stopbits", "parity", "databits"
-    ]
-    for field in rs485_main_fields:
-        assert rs485_1[field] == test_settings["rs485_1"][field], \
-            f"Incorrect value for field {field}: {rs485_1[field]}"
+        rs485_1 = new_settings["rs485_1"]
+        rs485_main_fields = [
+            "term", "fail_safe", "baudrate", "stopbits", "parity", "databits"
+        ]
+        for field in rs485_main_fields:
+            assert rs485_1[field] == test_settings["rs485_1"][field], \
+                f"Incorrect value for field {field}: {rs485_1[field]}"
 
-    bridge_1 = new_settings["rs485_1"]["bridge"]
-    bridge_fields = [
-        "mode", "port", "ip", "modbus"
-    ]
-    for field in bridge_fields:
-        assert bridge_1[field] == test_settings["rs485_1"]["bridge"][field], \
-            f"Incorrect value for field {field}: {bridge_1[field]}"
+        bridge_1 = new_settings["rs485_1"]["bridge"]
+        bridge_fields = [
+            "mode", "port", "ip", "modbus"
+        ]
+        for field in bridge_fields:
+            assert bridge_1[field] == test_settings["rs485_1"]["bridge"][field], \
+                f"Incorrect value for field {field}: {bridge_1[field]}"
 
-    rs485_2 = new_settings["rs485_2"]
-    for field in rs485_main_fields:
-        assert rs485_2[field] == test_settings["rs485_2"][field], \
-            f"Incorrect value for field {field}: {rs485_2[field]}"
+        rs485_2 = new_settings["rs485_2"]
+        for field in rs485_main_fields:
+            assert rs485_2[field] == test_settings["rs485_2"][field], \
+                f"Incorrect value for field {field}: {rs485_2[field]}"
 
-    bridge_2 = new_settings["rs485_2"]["bridge"]
-    for field in bridge_fields:
-        assert bridge_2[field] == test_settings["rs485_2"]["bridge"][field], \
-            f"Incorrect value for field {field}: {bridge_2[field]}"
+        bridge_2 = new_settings["rs485_2"]["bridge"]
+        for field in bridge_fields:
+            assert bridge_2[field] == test_settings["rs485_2"]["bridge"][field], \
+                f"Incorrect value for field {field}: {bridge_2[field]}"
 
-    print("✓ All settings are saved correctly")
+        print("✓ All settings are saved correctly")
 
-    invalid_settings = {
-        "hostname": "invalid_hostname!",
-        "web_port": 70000,
-        "wifi": {
-            "mode": "disabled",
-            "ap_auth": "close",
-            "sta_auth": "wep",
-            "ap_ssid": "a" * 50,
-            "sta_ssid": "фыва123",
-            "ap_ip_static": "123.456.789.101",
-            "ap_mask_static": "abc.def.ghi.jkl",
-            "ap_gw_static": True,
-            "sta_ip_static": "192.168.1.1.1",
-            "sta_mask_static": "123.aaa.1.1",
-            "sta_gw_static": 192
-        },
-        "ethernet": {
-            "ip_static": "123.456.789.101",
-            "mask_static": 456,
-            "gw_static": 789,
-            "dhcpc": 0
-        },
-        "rs485_1": {
-            "term": 1,
-            "fail_safe": "off",
-            "baudrate": 123456,
-            "stopbits": "2.5",
-            "parity": "all",
-            "databits": "2",
-            "bridge": {
-                "mode": "station",
-                "port": 0,
-                "ip": "201.250.252.256",
-                "modbus": "enabled"
+        invalid_settings = {
+            "hostname": "invalid_hostname!",
+            "web_port": 70000,
+            "wifi": {
+                "mode": "disabled",
+                "ap_auth": "close",
+                "sta_auth": "wep",
+                "ap_ssid": "a" * 50,
+                "sta_ssid": "фыва123",
+                "ap_ip_static": "123.456.789.101",
+                "ap_mask_static": "abc.def.ghi.jkl",
+                "ap_gw_static": True,
+                "sta_ip_static": "192.168.1.1.1",
+                "sta_mask_static": "123.aaa.1.1",
+                "sta_gw_static": 192
             },
-        "rs485_2": {
-            "term": "true",
-            "fail_safe": "true",
-            "baudrate": 0,
-            "stopbits": "0.5",
-            "parity": "disabled",
-            "databits": "4",
-            "bridge": {
-                "mode": "server",
-                "port": 65536,
-                "ip": "102.abc.126.18",
-                "modbus": "disabled"
-            }
-        },
-        "vout": "true",
-        "io_bus": "true"
+            "ethernet": {
+                "ip_static": "123.456.789.101",
+                "mask_static": 456,
+                "gw_static": 789,
+                "dhcpc": 0
+            },
+            "rs485_1": {
+                "term": 1,
+                "fail_safe": "off",
+                "baudrate": 123456,
+                "stopbits": "2.5",
+                "parity": "all",
+                "databits": "2",
+                "bridge": {
+                    "mode": "station",
+                    "port": 0,
+                    "ip": "201.250.252.256",
+                    "modbus": "enabled"
+                }
+            },
+            "rs485_2": {
+                "term": "true",
+                "fail_safe": "true",
+                "baudrate": 0,
+                "stopbits": "0.5",
+                "parity": "disabled",
+                "databits": "4",
+                "bridge": {
+                    "mode": "server",
+                    "port": 65536,
+                    "ip": "102.abc.126.18",
+                    "modbus": "disabled"
+                }
+            },
+            "vout": "true",
+            "io_bus": "true"
         }
-    }
 
-    response = api.update_settings(invalid_settings)
-    assert response.status_code in [200, 400]
-    print("✓ Invalid settings handling works")
+        response = api.update_settings(invalid_settings)
+        assert response.status_code in [200, 400]
+        print("✓ Invalid settings handling works")
 
-    response = api.get_settings()
-    assert response.status_code == 200
-    valid_settings = response.json()
-    assert valid_settings == new_settings, "Invalid settings were saved"
-    print("✓ Invalid settings are not saved")
-
-    response = api.update_settings(original_settings)
-    assert response.status_code == 200
-    print("✓ Original settings restored")
+        response = api.get_settings()
+        assert response.status_code == 200
+        valid_settings = response.json()
+        assert valid_settings == new_settings, "Invalid settings were saved"
+        print("✓ Invalid settings are not saved")
+    finally:
+        # Restore original settings; do not assert here to preserve the original test exception
+        resp = api.update_settings(original_settings)
+        if resp.status_code != 200:
+            print(f"✗ Failed to restore original settings: HTTP {resp.status_code}")
+        else:
+            print("✓ Original settings restored")
 
 
 @pytest.mark.order(10)
 def test_validation_patterns(api):
     """Patterns and constraints validation test"""
-    valid_data = {
-        "hostname": "valid-hostname-123",
-        "login": "valid_user_123",
-        "wifi": {
-            "ap_ssid": "ValidSSID",
-            "ap_pass": "ValidPass123"
+    # Save original settings so they can be restored in the finally block
+    original_response = api.get_settings()
+    assert original_response.status_code == 200
+    original = original_response.json()
+
+    try:
+        valid_data = {
+            "hostname": "valid-hostname-123",
+            "login": "valid_user_123",
+            "wifi": {
+                "ap_ssid": "ValidSSID",
+                "ap_pass": "ValidPass123"
+            }
         }
-    }
 
-    response = api.update_settings(valid_data)
-    assert response.status_code == 200
-    print("✓ Valid patterns accepted")
+        response = api.update_settings(valid_data)
+        assert response.status_code == 200
+        print("✓ Valid patterns accepted")
 
-    boundary_data = {
-        "wifi": {
-            "ap_ssid": "A",
-            "ap_pass": "12345678"
+        boundary_data = {
+            "wifi": {
+                "ap_ssid": "A",
+                "ap_pass": "12345678"
+            }
         }
-    }
 
-    response = api.update_settings(boundary_data)
-    assert response.status_code == 200
-    print("✓ Boundary values accepted")
+        response = api.update_settings(boundary_data)
+        assert response.status_code == 200
+        print("✓ Boundary values accepted")
 
-    limit_data = {
-        "wifi": {
-            "ap_ssid": "A" * 50,
-            "ap_pass": "A" * 100
-        },
-        "web_port": 70000
-    }
+        limit_data = {
+            "wifi": {
+                "ap_ssid": "A" * 50,
+                "ap_pass": "A" * 100
+            },
+            "web_port": 70000
+        }
 
-    response = api.update_settings(limit_data)
-    assert response.status_code in [200, 400]
-    if response.status_code == 200:
-        check_response = api.get_settings()
-        assert check_response.status_code == 200
-        check_settings = check_response.json()
-        assert check_settings["web_port"] != 70000, \
-            "Invalid web_port 70000 was saved (expected rejection)"
-        assert len(check_settings["wifi"]["ap_ssid"]) <= 31, \
-            "Oversized SSID was saved"
-    print("✓ Limit exceeding is handled")
+        response = api.update_settings(limit_data)
+        assert response.status_code in [200, 400]
+        if response.status_code == 200:
+            check_response = api.get_settings()
+            assert check_response.status_code == 200
+            check_settings = check_response.json()
+            assert check_settings["web_port"] != 70000, \
+                "Invalid web_port 70000 was saved (expected rejection)"
+            assert len(check_settings["wifi"]["ap_ssid"]) <= 31, \
+                "Oversized SSID was saved"
+        print("✓ Limit exceeding is handled")
+    finally:
+        # Restore credentials to prevent leakage into subsequent runs (including across reboots)
+        api.update_settings({"hostname": original["hostname"], "login": original["login"], "pass": original["pass"]})
+        print("✓ Original hostname and login restored")
 
 
 @pytest.mark.order(24)

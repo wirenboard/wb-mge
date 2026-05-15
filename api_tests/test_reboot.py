@@ -20,6 +20,15 @@ def test_reboot_command(api):
           f"({uptime_data['days']}d {uptime_data['hours']}h "
           f"{uptime_data['minutes']}m {uptime_data['seconds']}s)")
 
+    # Reset settings to defaults before rebooting so the device always boots
+    # with known credentials (admin/admin), regardless of what previous tests changed.
+    reset_response = api.execute_command("set_default_settings")
+    assert reset_response.status_code == 200, \
+        f"set_default_settings failed (HTTP {reset_response.status_code}): {reset_response.text}"
+    assert reset_response.json().get("success") == True, \
+        f"set_default_settings returned success=false: {reset_response.text}"
+    time.sleep(2)  # Allow the settings update task to finish writing to NVS
+
     reboot_sent_at = time.monotonic()
 
     try:

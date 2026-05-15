@@ -10,53 +10,58 @@ def test_modbus_tcp_parameters(api):
     assert response.status_code == 200
     original_settings = response.json()
 
-    modbus_settings = {
-        "rs485_1": {
-            "bridge": {
-                "mode": "server",
-                "port": 502,
-                "modbus": True
-            }
-        },
-        "rs485_2": {
-            "bridge": {
-                "mode": "client",
-                "port": 503,
-                "ip": "192.168.1.10",
-                "modbus": True
-            }
-        }
-    }
-
-    response = api.update_settings(modbus_settings)
-    assert response.status_code == 200
-    result = response.json()
-    assert result["success"] == True
-    print("✓ Modbus TCP settings saved")
-
-    response = api.get_settings()
-    assert response.status_code == 200
-    new_settings = response.json()
-
-    rs485_1 = new_settings["rs485_1"]["bridge"]
-    assert rs485_1["modbus"] == True
-
-    rs485_2 = new_settings["rs485_2"]["bridge"]
-    assert rs485_2["modbus"] == True
-
-    print("✓ Modbus TCP parameters applied correctly")
-
-    transparent_settings = {
-        "rs485_1": {
-            "bridge": {
-                "modbus": False
+    try:
+        modbus_settings = {
+            "rs485_1": {
+                "bridge": {
+                    "mode": "server",
+                    "port": 502,
+                    "modbus": True
+                }
+            },
+            "rs485_2": {
+                "bridge": {
+                    "mode": "client",
+                    "port": 503,
+                    "ip": "192.168.1.10",
+                    "modbus": True
+                }
             }
         }
-    }
 
-    response = api.update_settings(transparent_settings)
-    assert response.status_code == 200
-    print("✓ Transparent mode settings accepted")
+        response = api.update_settings(modbus_settings)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["success"] == True
+        print("✓ Modbus TCP settings saved")
+
+        response = api.get_settings()
+        assert response.status_code == 200
+        new_settings = response.json()
+
+        rs485_1 = new_settings["rs485_1"]["bridge"]
+        assert rs485_1["modbus"] == True
+
+        rs485_2 = new_settings["rs485_2"]["bridge"]
+        assert rs485_2["modbus"] == True
+
+        print("✓ Modbus TCP parameters applied correctly")
+
+        transparent_settings = {
+            "rs485_1": {
+                "bridge": {
+                    "modbus": False
+                }
+            }
+        }
+
+        response = api.update_settings(transparent_settings)
+        assert response.status_code == 200
+        print("✓ Transparent mode settings accepted")
+    finally:
+        # Restore original RS485 bridge settings to prevent state leakage between tests
+        api.update_settings(original_settings)
+        print("✓ Original RS485 settings restored")
 
 
 @pytest.mark.order(9)

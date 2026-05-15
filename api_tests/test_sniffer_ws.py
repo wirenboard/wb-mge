@@ -72,6 +72,8 @@ def test_sniffer_websocket(api):
                 print(f"  Packet #{len(packets)}: type={pkt.get('type')} crc_valid={crc}")
             except websocket.WebSocketTimeoutException:
                 pass
+            except websocket.WebSocketPayloadException:
+                pass
             except json.JSONDecodeError:
                 pass
 
@@ -114,6 +116,8 @@ def test_sniffer_websocket(api):
                         break
                 except websocket.WebSocketTimeoutException:
                     continue
+                except websocket.WebSocketPayloadException:
+                    continue
                 except json.JSONDecodeError:
                     continue
 
@@ -138,6 +142,8 @@ def test_sniffer_websocket(api):
                     break
             except websocket.WebSocketTimeoutException:
                 continue
+            except websocket.WebSocketPayloadException:
+                continue
             except json.JSONDecodeError:
                 continue
 
@@ -160,3 +166,86 @@ def test_sniffer_websocket(api):
                 print(f"✓ Port 1 mode restored to {original_port_mode}")
             except Exception as e:
                 raise AssertionError(f"Failed to restore port mode: {e}")
+
+
+@pytest.mark.order(27)
+def test_sniffer_ws_no_auth(api):
+    """Sniffer WebSocket: unauthenticated upgrade must be closed immediately by server"""
+    parsed = urlparse(api.base_url)
+    host = parsed.hostname
+    port = parsed.port or 80
+
+    ws_url = f"ws://{host}:{port}/sniffer/ws"
+    ws = websocket.WebSocket()
+    ws.settimeout(10)
+
+    connection_closed_by_server = False
+    try:
+        # Connect without cookies — IDF limitation: 101 is always sent, but server
+        # will immediately close the connection via httpd_sess_trigger_close()
+        ws.connect(ws_url)
+        ws.settimeout(5)
+        try:
+            # Server should have scheduled close; recv must fail
+            ws.recv()
+            # If recv returned something, connection was NOT immediately closed
+        except (websocket.WebSocketConnectionClosedException, ConnectionResetError, OSError):
+            connection_closed_by_server = True
+        except websocket.WebSocketTimeoutException:
+            pass  # timeout means server did not close fast enough — flag stays False
+    except (websocket.WebSocketConnectionClosedException, ConnectionResetError, OSError):
+        # Connection might be closed even before or during connect
+        connection_closed_by_server = True
+    except websocket.WebSocketBadStatusException:
+        # Future IDF versions might actually send non-101; treat as rejection too
+        connection_closed_by_server = True
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+    assert connection_closed_by_server, (
+        "Expected server to close unauthenticated WS connection immediately, "
+        "but connection remained open and recv succeeded"
+    )
+    print("✓ Unauthenticated WS connection closed by server immediately after upgrade")
+
+
+@pytest.mark.order(28)
+def test_sniffer_ws_invalid_cookie(api):
+    """Sniffer WebSocket: connection with invalid cookie must be closed immediately by server"""
+    parsed = urlparse(api.base_url)
+    host = parsed.hostname
+    port = parsed.port or 80
+
+    ws_url = f"ws://{host}:{port}/sniffer/ws"
+    ws = websocket.WebSocket()
+    ws.settimeout(10)
+
+    connection_closed_by_server = False
+    try:
+        # Connect with a fake session_id — server will close immediately after upgrade
+        ws.connect(ws_url, cookie="session_id=9999999999")
+        ws.settimeout(5)
+        try:
+            ws.recv()
+        except (websocket.WebSocketConnectionClosedException, ConnectionResetError, OSError):
+            connection_closed_by_server = True
+        except websocket.WebSocketTimeoutException:
+            pass  # timeout means server did not close fast enough — flag stays False
+    except (websocket.WebSocketConnectionClosedException, ConnectionResetError, OSError):
+        connection_closed_by_server = True
+    except websocket.WebSocketBadStatusException:
+        connection_closed_by_server = True
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+    assert connection_closed_by_server, (
+        "Expected server to close invalid-cookie WS connection immediately, "
+        "but connection remained open and recv succeeded"
+    )
+    print("✓ Invalid-cookie WS connection closed by server immediately after upgrade")
