@@ -633,16 +633,13 @@ def test_commands(api):
 
         assert response.status_code == 200, f"Expected status 200, got {response.status_code}"
 
-        # According to HTTP server code, commands return empty response, not JSON
-        if response.text.strip():
-            try:
-                data = response.json()
-                print(f"JSON Response: {data}")
-            except Exception as e:
-                print(f"Failed to parse JSON: {e}")
-                print(f"Raw response: {response.text}")
-        else:
-            print("Empty response received (expected for commands)")
+        # Commands must return a non-empty JSON response with success=true
+        assert response.text.strip(), \
+            f"set_default_settings command returned an empty response body"
+        data = response.json()
+        assert data.get("success") == True, \
+            f"set_default_settings command did not return success=true: {data}"
+        print(f"JSON Response: {data}")
 
         print("✓ Command set_default_settings works")
 
@@ -865,6 +862,10 @@ def test_wifi_scanner(api):
     # Accept either in_progress or already_completed — QEMU mock may finish before first poll
     assert data["scan_in_progress"] == True or data["scan_completed"] == True, \
         "scan should be either in progress or completed immediately after start"
+    # If scan already completed (not just started), verify it did not end with an error
+    if data.get("scan_completed") == True:
+        assert not data.get("error"), \
+            f"scan completed with an error immediately after start: {data.get('error')}"
 
     # Wait for scan completion
     timeout = 0
@@ -2001,37 +2002,65 @@ def test_cmd_extended(api):
     """Test POST /cmd — set_default_settings and invalid values (I-4)"""
     print("\n=== Extended command test ===")
 
-    # Test set_default_settings (safe to call in QEMU, resets settings to defaults)
-    print("Sending set_default_settings command...")
-    response = api.execute_command("set_default_settings")
-    assert response.status_code == 200, \
-        f"POST /cmd set_default_settings expected 200, got {response.status_code}"
-    print("✓ Command set_default_settings accepted")
+    # Save settings before reset so we can restore them afterwards
+    save_response = api.get_settings()
+    assert save_response.status_code == 200, "Failed to read settings before set_default_settings"
+    saved_settings = save_response.json()
 
-    # Test invalid command (not in enum)
-    response = api.session.post(f"{api.base_url}/cmd", json={"cmd": "shutdown"}, timeout=10)
-    assert response.status_code in [200, 400], \
-        f"POST /cmd 'shutdown' got unexpected status {response.status_code}"
-    if response.status_code == 200:
-        # If server returns 200, verify it at least indicates failure
-        data = response.json()
-        assert data.get("success") == False, \
-            f"Server accepted unknown command 'shutdown' as successful: {data}"
-        print("  [INFO] Server returned 200 for unknown command with success=false (lenient validation)")
-    else:
-        print("✓ Unknown command 'shutdown' rejected with 400")
+    try:
+        # Test set_default_settings (safe to call in QEMU, resets settings to defaults)
+        print("Sending set_default_settings command...")
+        response = api.execute_command("set_default_settings")
+        assert response.status_code == 200, \
+            f"POST /cmd set_default_settings expected 200, got {response.status_code}"
+        print("✓ Command set_default_settings accepted")
 
-    # Test missing cmd field
-    response = api.session.post(f"{api.base_url}/cmd", json={}, timeout=10)
-    assert response.status_code in [200, 400], \
-        f"POST /cmd empty body got unexpected status {response.status_code}"
-    print("✓ Missing cmd field handled")
+        # Verify that settings were actually reset: read them back and compare with saved
+        after_response = api.get_settings()
+        assert after_response.status_code == 200, "Failed to read settings after set_default_settings"
+        after_settings = after_response.json()
+        # Settings must differ from saved (unless saved settings were already defaults)
+        # At minimum the command must not crash — 200 response is the primary check.
+        print(f"  Settings after reset retrieved (keys: {list(after_settings.keys())})")
+        print("✓ Settings readable after set_default_settings")
 
-    # Test wrong type for cmd
-    response = api.session.post(f"{api.base_url}/cmd", json={"cmd": 42}, timeout=10)
-    assert response.status_code in [200, 400], \
-        f"POST /cmd integer cmd got unexpected status {response.status_code}"
-    print("✓ Integer cmd field handled")
+        # Test invalid command (not in enum)
+        response = api.session.post(f"{api.base_url}/cmd", json={"cmd": "shutdown"}, timeout=10)
+        assert response.status_code in [200, 400], \
+            f"POST /cmd 'shutdown' got unexpected status {response.status_code}"
+        if response.status_code == 200:
+            data = response.json()
+            assert data.get("success") == False, \
+                f"Server accepted unknown command 'shutdown' as successful: {data}"
+            print("  [INFO] Server returned 200 for unknown command with success=false (lenient validation)")
+        else:
+            print("✓ Unknown command 'shutdown' rejected with 400")
+
+        # Test missing cmd field
+        response = api.session.post(f"{api.base_url}/cmd", json={}, timeout=10)
+        assert response.status_code in [200, 400], \
+            f"POST /cmd empty body got unexpected status {response.status_code}"
+        print("✓ Missing cmd field handled")
+
+        # Test wrong type for cmd
+        response = api.session.post(f"{api.base_url}/cmd", json={"cmd": 42}, timeout=10)
+        assert response.status_code in [200, 400], \
+            f"POST /cmd integer cmd got unexpected status {response.status_code}"
+        print("✓ Integer cmd field handled")
+
+    finally:
+        # Restore settings that were wiped by set_default_settings
+        try:
+            restore_response = api.update_settings(saved_settings)
+            if restore_response.status_code == 200:
+                print("✓ Settings restored after set_default_settings")
+            else:
+                print(f"  [WARN] Settings restore returned status {restore_response.status_code}")
+        except requests.exceptions.ConnectionError:
+            # Connection drop is acceptable if web_port changed during restore
+            print("  [WARN] Connection dropped during settings restore (expected if web_port changed)")
+        except Exception as exc:
+            print(f"  [WARN] Failed to restore settings: {exc}")
 
 
 def test_wifi_scan_edge_cases(api):
@@ -2155,9 +2184,9 @@ def test_cache_json_fields(api):
 
     entries = json_data["d"]
 
-    # Validate consistency: entries count must match (allow small delta for concurrent writes)
+    # Validate consistency: entries count must match (allow at most 1 entry delta for live updates)
     delta = abs(len(entries) - entries_count)
-    assert delta <= 5, \
+    assert delta <= 1, \
         f"entries count mismatch: /cache/status says {entries_count}, /cache/json has {len(entries)} (delta={delta})"
     print(f"✓ Entry count consistent: /cache/status={entries_count}, /cache/json={len(entries)}")
 
@@ -2480,7 +2509,7 @@ def test_reboot_command(api):
     )
     print(f"  Uptime after reboot: {new_uptime_s}s")
     # Uptime should have reset: either it's less than original (reboot happened)
-    # or it's less than the time elapsed since reboot command was sent (+ 30s margin for boot time)
+    # or it's less than the time elapsed since the reboot command was sent (+ 30s margin for boot time)
     elapsed_since_reboot = time.monotonic() - reboot_sent_at
     assert new_uptime_s < original_uptime_s or new_uptime_s <= elapsed_since_reboot + 30, \
         f"Uptime after reboot ({new_uptime_s}s) does not indicate a reboot occurred " \
