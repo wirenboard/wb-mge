@@ -1,0 +1,72 @@
+"""Reboot command test — must run last"""
+
+import time
+import pytest
+import requests
+
+
+@pytest.mark.order(31)
+def test_reboot_command(api):
+    """Test POST /cmd reboot — verify device reboots and uptime resets"""
+    response = api.get_uptime()
+    assert response.status_code == 200
+    uptime_data = response.json()
+    original_uptime_s = (
+        uptime_data["days"] * 86400
+        + uptime_data["hours"] * 3600
+        + uptime_data["minutes"] * 60
+        + uptime_data["seconds"]
+    )
+    print(f"  Uptime before reboot: {original_uptime_s}s "
+          f"({uptime_data['days']}d {uptime_data['hours']}h "
+          f"{uptime_data['minutes']}m {uptime_data['seconds']}s)")
+
+    reboot_sent_at = time.monotonic()
+
+    try:
+        response = api.execute_command("reboot")
+        print(f"  Reboot command status: {response.status_code}")
+        assert response.status_code == 200, \
+            f"POST /cmd reboot expected 200, got {response.status_code}"
+    except requests.exceptions.ConnectionError:
+        print("  Connection dropped (expected during reboot)")
+
+    print("  Waiting for device to reboot...")
+
+    deadline = time.monotonic() + 60
+    came_back = False
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        try:
+            response = requests.get(f"{api.base_url}/", timeout=3,
+                                    headers={'Accept-Encoding': 'identity', 'Connection': 'close'})
+            if response.status_code == 200:
+                came_back = True
+                break
+        except Exception:
+            pass
+
+    assert came_back, "Device did not come back within 60 seconds after reboot command"
+    print("✓ Device came back online")
+
+    api.reconnect()
+    response = api.auth()
+    assert response.status_code == 200
+    assert response.json()["auth"] == True, "Re-authentication after reboot failed"
+    print("✓ Re-authentication after reboot successful")
+
+    response = api.get_uptime()
+    assert response.status_code == 200
+    new_uptime_data = response.json()
+    new_uptime_s = (
+        new_uptime_data["days"] * 86400
+        + new_uptime_data["hours"] * 3600
+        + new_uptime_data["minutes"] * 60
+        + new_uptime_data["seconds"]
+    )
+    print(f"  Uptime after reboot: {new_uptime_s}s")
+    elapsed_since_reboot = time.monotonic() - reboot_sent_at
+    assert new_uptime_s < original_uptime_s or new_uptime_s <= elapsed_since_reboot + 30, \
+        f"Uptime after reboot ({new_uptime_s}s) does not indicate a reboot occurred " \
+        f"(original={original_uptime_s}s, elapsed={elapsed_since_reboot:.0f}s)"
+    print("✓ Uptime correctly reset after reboot")
