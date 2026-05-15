@@ -626,8 +626,12 @@ static void sniffer_ws_task(void *arg)
 static esp_err_t sniffer_ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
-        /* Authenticate the upgrade request — cookie is available in the HTTP headers */
+        /* Authenticate the upgrade request — cookie is available in the HTTP headers.
+         * IDF v5.4 limitation: cannot reject WS upgrade from the handler (ESP_FAIL is ignored
+         * by the WS layer, 101 is always sent). Instead, close the connection immediately
+         * after the upgrade if auth fails — unauthenticated clients get 101 then FIN. */
         if (!auth_middleware_check(req)) {
+            httpd_sess_trigger_close(req->handle, httpd_req_to_sockfd(req));
             return ESP_OK;
         }
         xSemaphoreTake(ws_mutex, portMAX_DELAY);
@@ -638,8 +642,8 @@ static esp_err_t sniffer_ws_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    /* WebSocket frame message path — no auth re-check needed:
-     * the session was already validated during the HTTP GET upgrade above. */
+    /* WebSocket frame message path — auth was verified during the HTTP GET upgrade above;
+     * unauthenticated connections are closed immediately via httpd_sess_trigger_close(). */
     httpd_ws_frame_t ws_pkt = {0};
     ws_pkt.type = HTTPD_WS_TYPE_TEXT;
 
