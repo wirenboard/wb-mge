@@ -168,7 +168,7 @@ def test_sniffer_websocket(api):
                 raise AssertionError(f"Failed to restore port mode: {e}")
 
 
-@pytest.mark.order(27)
+@pytest.mark.order(33)
 def test_sniffer_ws_no_auth(api):
     """Sniffer WebSocket: unauthenticated upgrade must be closed immediately by server"""
     parsed = urlparse(api.base_url)
@@ -212,7 +212,7 @@ def test_sniffer_ws_no_auth(api):
     print("✓ Unauthenticated WS connection closed by server immediately after upgrade")
 
 
-@pytest.mark.order(28)
+@pytest.mark.order(34)
 def test_sniffer_ws_invalid_cookie(api):
     """Sniffer WebSocket: connection with invalid cookie must be closed immediately by server"""
     parsed = urlparse(api.base_url)

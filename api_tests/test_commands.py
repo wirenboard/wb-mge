@@ -1,47 +1,6 @@
 """Command execution tests"""
 
 import pytest
-import requests
-
-
-@pytest.mark.order(17)
-def test_commands(api):
-    """Command execution test"""
-    save_response = api.get_settings()
-    assert save_response.status_code == 200
-    saved_settings = save_response.json()
-
-    try:
-        print("Sending set_default_settings command...")
-        response = api.execute_command("set_default_settings")
-
-        print(f"Status Code: {response.status_code}")
-        print(f"Headers: {response.headers}")
-        print(f"Content: {response.text[:500]}...")
-
-        assert response.status_code == 200, f"Expected status 200, got {response.status_code}"
-
-        assert response.text.strip(), \
-            f"set_default_settings command returned an empty response body"
-        data = response.json()
-        assert data.get("success") == True, \
-            f"set_default_settings command did not return success=true: {data}"
-        print(f"JSON Response: {data}")
-
-        print("✓ Command set_default_settings works")
-
-    except requests.exceptions.RequestException as e:
-        print(f"Connection error executing command: {e}")
-        raise
-    except Exception as e:
-        print(f"Unexpected error in commands test: {e}")
-        print(f"Error type: {type(e).__name__}")
-        raise
-    finally:
-        restore_response = api.update_settings(saved_settings)
-        assert restore_response.status_code == 200, \
-            f"Settings restore returned status {restore_response.status_code}"
-        print("✓ Settings restored after set_default_settings")
 
 
 @pytest.mark.order(18)

@@ -299,7 +299,15 @@ def test_validation_patterns(api):
 
         response = api.update_settings(valid_data)
         assert response.status_code == 200
-        print("✓ Valid patterns accepted")
+        # Verify the server actually saved the values, not just returned 200
+        check = api.get_settings()
+        assert check.status_code == 200
+        check_data = check.json()
+        assert check_data["hostname"] == valid_data["hostname"], \
+            f"hostname not saved: expected {valid_data['hostname']!r}, got {check_data['hostname']!r}"
+        assert check_data["wifi"]["ap_ssid"] == valid_data["wifi"]["ap_ssid"], \
+            f"wifi.ap_ssid not saved: expected {valid_data['wifi']['ap_ssid']!r}, got {check_data['wifi']['ap_ssid']!r}"
+        print("✓ Valid patterns accepted and read-back verified")
 
         boundary_data = {
             "wifi": {
@@ -332,9 +340,9 @@ def test_validation_patterns(api):
                 "Oversized SSID was saved"
         print("✓ Limit exceeding is handled")
     finally:
-        # Restore credentials to prevent leakage into subsequent runs (including across reboots)
-        api.update_settings({"hostname": original["hostname"], "login": original["login"], "pass": original["pass"]})
-        print("✓ Original hostname and login restored")
+        # Restore all original settings, including wifi fields changed by this test
+        api.update_settings(original)
+        print("✓ Original settings restored")
 
 
 @pytest.mark.order(24)

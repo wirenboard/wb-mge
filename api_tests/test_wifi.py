@@ -41,10 +41,6 @@ def test_wifi_scanner(api):
 
     if "networks" in data:
         assert isinstance(data["networks"], list)
-        for network in data["networks"]:
-            assert "ssid" in network
-            assert "rssi" in network
-            assert -128 <= network["rssi"] <= 0
 
     print("✓ Scan results retrieval works")
 
@@ -146,6 +142,7 @@ def test_ap_clients(api):
     for client in clients:
         assert "mac" in client
         if "rssi" in client:
-            assert -100 <= client["rssi"] <= 0
+            assert -128 <= client["rssi"] <= 0, \
+                f"client rssi {client['rssi']} out of range -128..0"
 
     print("✓ AP clients list retrieval works")

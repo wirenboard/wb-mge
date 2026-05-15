@@ -310,6 +310,10 @@ def run_staleness_test(host: str, port: int, api, register_map: dict) -> tuple:
     """
     report_lines = []
 
+    # Read original timeout value before modification to restore it correctly in finally
+    orig_resp = api.session.get(f"{api.base_url}/settings", timeout=10)
+    original_timeout = orig_resp.json().get("cache_value_timeout_s", 0)
+
     stale_registers = [
         (key, value, age_s)
         for key, (value, age_s) in register_map.items()
@@ -350,12 +354,12 @@ def run_staleness_test(host: str, port: int, api, register_map: dict) -> tuple:
                 )
     finally:
         try:
-            resp = api.session.post(f"{api.base_url}/settings", json={"cache_value_timeout_s": 0}, timeout=10)
+            resp = api.session.post(f"{api.base_url}/settings", json={"cache_value_timeout_s": original_timeout}, timeout=10)
             if resp.status_code not in (200, 204):
                 raise RuntimeError(f"HTTP {resp.status_code}")
-            report_lines.append("[INFO] cache_value_timeout_s restored to 0")
+            report_lines.append(f"[INFO] cache_value_timeout_s restored to {original_timeout}")
         except Exception as exc:
-            report_lines.append(f"[ERROR] Failed to restore cache_value_timeout_s=0: {exc}")
+            report_lines.append(f"[ERROR] Failed to restore cache_value_timeout_s={original_timeout}: {exc}")
             passed = False
         else:
             if timeout_was_set:

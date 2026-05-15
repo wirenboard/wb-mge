@@ -4,7 +4,7 @@ import time
 import pytest
 
 
-@pytest.mark.order(31)
+@pytest.mark.order(35)
 def test_reboot_command(api):
     """Test POST /cmd reboot — verify device reboots and uptime resets"""
     response = api.get_uptime()
@@ -28,8 +28,6 @@ def test_reboot_command(api):
     assert reset_response.json().get("success") == True, \
         f"set_default_settings returned success=false: {reset_response.text}"
     time.sleep(2)  # Allow the settings update task to finish writing to NVS
-
-    reboot_sent_at = time.monotonic()
 
     try:
         response = api.execute_command("reboot")
@@ -56,8 +54,6 @@ def test_reboot_command(api):
         + new_uptime_data["seconds"]
     )
     print(f"  Uptime after reboot: {new_uptime_s}s")
-    elapsed_since_reboot = time.monotonic() - reboot_sent_at
-    assert new_uptime_s < original_uptime_s or new_uptime_s <= elapsed_since_reboot + 30, \
-        f"Uptime after reboot ({new_uptime_s}s) does not indicate a reboot occurred " \
-        f"(original={original_uptime_s}s, elapsed={elapsed_since_reboot:.0f}s)"
+    assert new_uptime_s < original_uptime_s, \
+        f"Uptime after reboot ({new_uptime_s}s) >= uptime before reboot ({original_uptime_s}s) — no reboot detected"
     print("✓ Uptime correctly reset after reboot")
