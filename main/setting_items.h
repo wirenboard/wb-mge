@@ -147,3 +147,8 @@ const char *setting_items_get_default_value(const char *key);
 // Type introspection functions
 setting_item_type_t setting_items_get_type(const char *key);
 const char *setting_items_type_to_string(setting_item_type_t type);
+
+// Validate a setting value without writing to NVS.
+// Returns ESP_OK if valid (or no validator), ESP_ERR_INVALID_ARG if validation fails,
+// ESP_ERR_NOT_FOUND if the key is unknown.
+esp_err_t setting_items_validate(const char *key, const char *value);

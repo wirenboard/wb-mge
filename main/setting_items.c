@@ -313,6 +313,26 @@ esp_err_t setting_items_save(const char *key, const char *value)
     return result;
 }
 
+esp_err_t setting_items_validate(const char *key, const char *value)
+{
+    if (!key || !value) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const setting_item_t *item = find_setting_item(key);
+    if (!item) {
+        ESP_LOGE(TAG, "Unknown setting key: %s", key);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    if (item->validator && !item->validator(value)) {
+        ESP_LOGE(TAG, "Invalid value '%s' for setting '%s'", value, key);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return ESP_OK;
+}
+
 esp_err_t setting_items_read(const char *key, char *value)
 {
     if (!key || !value || !storage_iface) {

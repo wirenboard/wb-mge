@@ -170,6 +170,157 @@ static esp_err_t save_group_settings(cJSON *group_json, const setting_mapping_t 
     return ESP_OK;
 }
 
+// Phase 1 validation functions — check types and run validators without writing to NVS.
+
+// Validate a single JSON item against the expected type and validator for setting_key.
+// For INT type: converts the numeric value to a string and passes it to setting_items_validate().
+// For BOOL type: converts to "true"/"false" and passes it to setting_items_validate().
+// For STRING type: passes item->valuestring directly.
+// Returns true if the value is valid, false otherwise.
+static bool validate_setting_from_json(cJSON *item, const char *setting_key)
+{
+    setting_item_type_t type = setting_items_get_type(setting_key);
+    char str_value[SETTING_ITEM_MAX_STR_LEN];
+
+    switch (type) {
+    case SETTING_ITEM_TYPE_STRING:
+        if (!cJSON_IsString(item)) {
+            ESP_LOGE(TAG, "Validation failed: expected string for setting '%s'", setting_key);
+            return false;
+        }
+        return setting_items_validate(setting_key, item->valuestring) == ESP_OK;
+
+    case SETTING_ITEM_TYPE_BOOL:
+        if (!cJSON_IsBool(item)) {
+            ESP_LOGE(TAG, "Validation failed: expected boolean for setting '%s'", setting_key);
+            return false;
+        }
+        return setting_items_validate(setting_key, cJSON_IsTrue(item) ? "true" : "false") == ESP_OK;
+
+    case SETTING_ITEM_TYPE_INT:
+        if (!cJSON_IsNumber(item)) {
+            ESP_LOGE(TAG, "Validation failed: expected number for setting '%s'", setting_key);
+            return false;
+        }
+        snprintf(str_value, sizeof(str_value), "%d", (int)item->valuedouble);
+        return setting_items_validate(setting_key, str_value) == ESP_OK;
+
+    default:
+        ESP_LOGE(TAG, "Validation failed: unknown type for setting '%s'", setting_key);
+        return false;
+    }
+}
+
+// Validate all fields in a JSON group object against the provided mappings.
+// suffix is appended to each setting key (with "_" separator) when non-empty.
+// Returns false on the first invalid field.
+static bool validate_group_settings(cJSON *group_json, const setting_mapping_t *mappings,
+                                    size_t mapping_count, const char *suffix)
+{
+    if (!group_json || !mappings) {
+        return true; // Nothing to validate — missing group means "leave unchanged"
+    }
+
+    if (!cJSON_IsObject(group_json)) {
+        ESP_LOGW(TAG, "Validation: group must be a JSON object");
+        return false;
+    }
+
+    for (size_t i = 0; i < mapping_count; i++) {
+        cJSON *item = cJSON_GetObjectItem(group_json, mappings[i].json_key);
+        if (item) {
+            char setting_key[SETTING_KEY_BUF_SIZE];
+            if (suffix && strlen(suffix) > 0) {
+                snprintf(setting_key, sizeof(setting_key), "%s_%s", mappings[i].setting_key, suffix);
+            } else {
+                strncpy(setting_key, mappings[i].setting_key, sizeof(setting_key) - 1);
+                setting_key[sizeof(setting_key) - 1] = '\0';
+            }
+
+            if (!validate_setting_from_json(item, setting_key)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+// Validate top-level settings in the request JSON.
+// Returns false on the first invalid field.
+static bool validate_top_level_settings(cJSON *request_json)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(top_level_mappings); i++) {
+        const setting_mapping_t *mapping = &top_level_mappings[i];
+        if (cJSON_HasObjectItem(request_json, mapping->json_key)) {
+            cJSON *item = cJSON_GetObjectItem(request_json, mapping->json_key);
+            if (!validate_setting_from_json(item, mapping->setting_key)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Validate all RS485 port settings (base fields + bridge subgroup) in the request JSON.
+// Returns false on the first invalid field.
+static bool validate_rs485_settings(cJSON *request_json)
+{
+    const char *rs485_json_names[] = {"rs485_1", "rs485_2"};
+    const char *rs485_suffix[] = {"1", "2"};
+    char key_buf[SETTING_KEY_BUF_SIZE];
+
+    for (int port = 0; port < 2; ++port) {
+        if (!cJSON_HasObjectItem(request_json, rs485_json_names[port])) {
+            continue;
+        }
+
+        cJSON *rs485 = cJSON_GetObjectItem(request_json, rs485_json_names[port]);
+        if (!cJSON_IsObject(rs485)) {
+            ESP_LOGW(TAG, "Validation: %s must be an object", rs485_json_names[port]);
+            return false;
+        }
+
+        // Validate regular RS485 base fields
+        for (size_t i = 0; i < ARRAY_SIZE(rs485_base_mappings); i++) {
+            const setting_mapping_t *mapping = &rs485_base_mappings[i];
+
+            if (cJSON_HasObjectItem(rs485, mapping->json_key)) {
+                cJSON *item = cJSON_GetObjectItem(rs485, mapping->json_key);
+                snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
+
+                if (!validate_setting_from_json(item, key_buf)) {
+                    return false;
+                }
+            }
+        }
+
+        // Validate bridge subgroup
+        if (cJSON_HasObjectItem(rs485, "bridge")) {
+            cJSON *bridge = cJSON_GetObjectItem(rs485, "bridge");
+            if (!cJSON_IsObject(bridge)) {
+                ESP_LOGW(TAG, "Validation: bridge in %s must be an object", rs485_json_names[port]);
+                return false;
+            }
+
+            for (size_t i = 0; i < ARRAY_SIZE(rs485_bridge_mappings); i++) {
+                const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
+
+                if (cJSON_HasObjectItem(bridge, mapping->json_key)) {
+                    cJSON *item = cJSON_GetObjectItem(bridge, mapping->json_key);
+                    snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
+
+                    if (!validate_setting_from_json(item, key_buf)) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
 esp_err_t settings_build_response_json(cJSON **response_json)
 {
     if (response_json == NULL) {
@@ -324,6 +475,20 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     // Save current cache server port before applying new settings.
     // Used later to detect a real port change and to enable rollback on init failure.
     int old_cache_port = cache_modbus_server_get_port();
+
+    /* Phase 1: validate all fields before writing anything */
+    if (!validate_top_level_settings(request_json) ||
+        !validate_group_settings(cJSON_GetObjectItem(request_json, "wifi"), wifi_mappings,
+                                 ARRAY_SIZE(wifi_mappings), NULL) ||
+        !validate_group_settings(cJSON_GetObjectItem(request_json, "ethernet"), ethernet_mappings,
+                                 ARRAY_SIZE(ethernet_mappings), NULL) ||
+        !validate_rs485_settings(request_json)) {
+        ESP_LOGE(TAG, "Settings validation failed — rejecting request");
+        cJSON_AddBoolToObject(*response_json, "success", false);
+        cJSON_AddStringToObject(*response_json, "error", "Invalid settings value");
+        return ESP_OK; // Return OK so HTTP layer sends the error JSON
+    }
+    /* Phase 2: all fields valid — apply */
 
     // Process top-level settings
     for (size_t i = 0; i < ARRAY_SIZE(top_level_mappings); i++) {
