@@ -2,7 +2,6 @@
 
 import time
 import pytest
-import requests
 
 
 @pytest.mark.order(31)
@@ -28,32 +27,15 @@ def test_reboot_command(api):
         print(f"  Reboot command status: {response.status_code}")
         assert response.status_code == 200, \
             f"POST /cmd reboot expected 200, got {response.status_code}"
-    except requests.exceptions.ConnectionError:
+    except ConnectionError:
         print("  Connection dropped (expected during reboot)")
 
     print("  Waiting for device to reboot...")
-
-    deadline = time.monotonic() + 60
-    came_back = False
-    while time.monotonic() < deadline:
-        time.sleep(2)
-        try:
-            response = requests.get(f"{api.base_url}/", timeout=3,
-                                    headers={'Accept-Encoding': 'identity', 'Connection': 'close'})
-            if response.status_code == 200:
-                came_back = True
-                break
-        except Exception:
-            pass
-
-    assert came_back, "Device did not come back within 60 seconds after reboot command"
-    print("✓ Device came back online")
-
-    api.reconnect()
-    response = api.auth()
-    assert response.status_code == 200
-    assert response.json()["auth"] == True, "Re-authentication after reboot failed"
-    print("✓ Re-authentication after reboot successful")
+    try:
+        api.wait_for_ready(timeout=60)
+    except TimeoutError:
+        pytest.fail("Device did not come back within 60 seconds after reboot command")
+    print("✓ Device came back online and re-authenticated successfully")
 
     response = api.get_uptime()
     assert response.status_code == 200

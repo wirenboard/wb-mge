@@ -26,7 +26,8 @@ class WBMGEAPI:
             pass
 
     def reconnect(self):
-        """Close current session and create a new one with the same headers."""
+        """Close current session and create a new one, preserving auth cookies."""
+        old_cookies = self.session.cookies.copy()
         self.session.close()
         self.session = requests.Session()
         self.session.headers.update({
@@ -38,6 +39,7 @@ class WBMGEAPI:
             'Cache-Control': 'no-cache',
         })
         self.session.verify = False
+        self.session.cookies.update(old_cookies)
 
     def auth(self, login="admin", password="admin"):
         """Authorization"""

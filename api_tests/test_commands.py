@@ -38,20 +38,10 @@ def test_commands(api):
         print(f"Error type: {type(e).__name__}")
         raise
     finally:
-        try:
-            restore_response = api.update_settings(saved_settings)
-            assert restore_response.status_code == 200, \
-                f"Settings restore returned status {restore_response.status_code}"
-            print("✓ Settings restored after set_default_settings")
-        except requests.exceptions.ConnectionError:
-            api.wait_for_ready()
-            restore_response = api.update_settings(saved_settings)
-            assert restore_response.status_code == 200
-            print("✓ Settings restored after set_default_settings (after reconnect)")
-        except AssertionError:
-            raise
-        except Exception as exc:
-            raise AssertionError(f"Failed to restore settings: {exc}")
+        restore_response = api.update_settings(saved_settings)
+        assert restore_response.status_code == 200, \
+            f"Settings restore returned status {restore_response.status_code}"
+        print("✓ Settings restored after set_default_settings")
 
 
 @pytest.mark.order(18)
@@ -96,17 +86,7 @@ def test_cmd_extended(api):
         print("✓ Integer cmd field handled")
 
     finally:
-        try:
-            restore_response = api.update_settings(saved_settings)
-            assert restore_response.status_code == 200, \
-                f"Settings restore returned status {restore_response.status_code}"
-            print("✓ Settings restored after set_default_settings")
-        except requests.exceptions.ConnectionError:
-            api.wait_for_ready()
-            restore_response = api.update_settings(saved_settings)
-            assert restore_response.status_code == 200
-            print("✓ Settings restored after set_default_settings (after reconnect)")
-        except AssertionError:
-            raise
-        except Exception as exc:
-            raise AssertionError(f"Failed to restore settings: {exc}")
+        restore_response = api.update_settings(saved_settings)
+        assert restore_response.status_code == 200, \
+            f"Settings restore returned status {restore_response.status_code}"
+        print("✓ Settings restored after set_default_settings")

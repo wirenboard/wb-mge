@@ -1,7 +1,6 @@
 """Settings tests: structure, write/read-back, validation, partial update"""
 
 import pytest
-import requests
 
 
 @pytest.mark.order(5)
@@ -271,13 +270,8 @@ def test_settings(api):
     assert valid_settings == new_settings, "Invalid settings were saved"
     print("✓ Invalid settings are not saved")
 
-    try:
-        response = api.update_settings(original_settings)
-        assert response.status_code == 200
-    except requests.exceptions.ConnectionError:
-        api.wait_for_ready()
-        response = api.update_settings(original_settings)
-        assert response.status_code == 200
+    response = api.update_settings(original_settings)
+    assert response.status_code == 200
     print("✓ Original settings restored")
 
 
@@ -382,12 +376,5 @@ def test_settings_partial_update(api):
         print("✓ Partial update (rs485_1.baudrate only) preserved all other rs485_1 fields")
 
     finally:
-        try:
-            api.update_settings(original)
-            print("✓ Original settings restored")
-        except requests.exceptions.ConnectionError:
-            api.wait_for_ready()
-            api.update_settings(original)
-            print("✓ Original settings restored (after reconnect)")
-        except Exception as exc:
-            raise AssertionError(f"Failed to restore settings: {exc}")
+        api.update_settings(original)
+        print("✓ Original settings restored")
