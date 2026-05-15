@@ -3,7 +3,7 @@
 #include "driver/ledc.h"
 #include "auth.h"
 #include "json_utils.h"
-#include "bridge.h"
+#include "bridge/port_manager.h"
 #include "esp_log.h"
 
 
@@ -20,6 +20,7 @@
 
 
 static bool clock_out_en = false;
+static pm_mode_t s_saved_port_mode = PM_MODE_TCP_BRIDGE;
 
 static ledc_timer_config_t timer_config = {
     .speed_mode = LEDC_HIGH_SPEED_MODE,
@@ -110,14 +111,21 @@ static esp_err_t process_request_json(cJSON *request_json)
     if (cmd_item->valueint) {
         if (!clock_out_en) {
             clock_out_en = true;
-            bridge_disable_port(BRIDGE_PORT_INDEX);
+            s_saved_port_mode = port_manager_get_mode(BRIDGE_PORT_INDEX);
+            esp_err_t err = port_manager_set_mode_transient(BRIDGE_PORT_INDEX, PM_MODE_DISABLED);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to disable port for clock_out: %s", esp_err_to_name(err));
+            }
             start_clock_out();
         }
     } else {
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
-            bridge_enable_port(BRIDGE_PORT_INDEX);
+            esp_err_t err = port_manager_set_mode_transient(BRIDGE_PORT_INDEX, s_saved_port_mode);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to restore port mode after clock_out: %s", esp_err_to_name(err));
+            }
         }
     }
 

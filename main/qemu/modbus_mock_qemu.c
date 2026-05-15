@@ -14,9 +14,10 @@
 #define MOCK_TASK_NAME        "modbus_mock"
 
 // Timing constants (milliseconds)
-#define DELAY_INTER_FRAME_MS  10   // Simulated inter-frame gap before request
-#define DELAY_SLAVE_RESP_MS   20   // Simulated slave turnaround time
 #define DELAY_CYCLE_MS        500  // Period between successive exchange cycles
+
+// Bad-CRC injection frequency: inject a corrupt packet every N live cycles
+#define BAD_CRC_PERIOD        5
 
 // Modbus slave parameters for simulated device
 #define MOCK_SLAVE_ADDR       1
@@ -37,6 +38,9 @@
 #define FC03_REQ_LEN          8
 #define FC03_LIVE_RESP_LEN    (5 + MOCK_LIVE_COUNT * 2)    // 15 bytes for N=5
 #define FC03_STATIC_RESP_LEN  (5 + MOCK_STATIC_COUNT * 2)  // 15 bytes for N=5
+// Maximum FC03 response buffer size (covers both live and static register responses)
+#define FC03_RESP_BUF_LEN     (FC03_LIVE_RESP_LEN > FC03_STATIC_RESP_LEN \
+                                ? FC03_LIVE_RESP_LEN : FC03_STATIC_RESP_LEN)
 
 static const char *TAG = "modbus_mock";
 static TaskHandle_t s_mock_task_handle = NULL;
@@ -107,17 +111,40 @@ static void build_fc03_response(uint8_t *buf, uint8_t slave, uint16_t reg_count,
 }
 
 // ----------------------------------------------------------------------------
-// Background task: periodically injects Modbus RTU request/response pairs into
-// the sniffer via serial_desc->sniff_handler.
+// Background task: periodically injects Modbus RTU byte streams into the
+// sniffer via serial_desc->sniff_handler.
+//
+// Both the one-shot static registration and the periodic live registration use
+// concatenated byte stream injection — request and response bytes are combined
+// into a single buffer and delivered to sniff_handler in one call (no
+// inter-frame gap between them). This exercises the stream_splitter path in
+// sniffer_process(), which handles buffers containing multiple Modbus frames.
+//
+// Every BAD_CRC_PERIOD live cycles an additional packet with an intentionally
+// corrupted CRC is injected before the valid stream. The sniffer must emit it
+// with crc_valid=false and continue parsing subsequent valid data normally.
 // ----------------------------------------------------------------------------
 static void modbus_mock_task(void *arg)
 {
     serial_desc_t *desc = (serial_desc_t *)arg;
 
     // Stack-local packet buffers — no heap allocation inside the loop.
-    // Both groups have the same response length (15 bytes), so one buffer suffices.
     uint8_t req_buf[FC03_REQ_LEN];
-    uint8_t resp_buf[FC03_LIVE_RESP_LEN];
+    uint8_t resp_buf[FC03_RESP_BUF_LEN]; /* sized to the largest possible FC03 response */
+
+    // Concatenated static registration buffer (req + resp as one stream).
+    uint8_t static_concat_buf[FC03_REQ_LEN + FC03_STATIC_RESP_LEN];
+
+    // Concatenated live exchange buffer (req + resp as one stream).
+    uint8_t live_concat_buf[FC03_REQ_LEN + FC03_LIVE_RESP_LEN];
+
+    // Bad-CRC packet: slave=1, FC03, addr=0x0000, count=0x0001, CRC=0xFFFF (wrong).
+    // Correct CRC for this payload would be 0x840A; 0xFFFF is intentionally invalid.
+    static uint8_t bad_crc_pkt[FC03_REQ_LEN] = {
+        0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0xFF, 0xFF
+    };
+
+    int cycle_count = 0;
 
     ESP_LOGI(TAG, "Modbus mock task started, waiting for sniff_handler...");
 
@@ -126,31 +153,34 @@ static void modbus_mock_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(DELAY_CYCLE_MS));
     }
 
-    // --- One-shot: inject static registers (5-9) once at startup ---
-    vTaskDelay(pdMS_TO_TICKS(DELAY_INTER_FRAME_MS));
+    // --- One-shot: inject static registers (5-9) as a single concatenated byte stream ---
     build_fc03_request(req_buf, MOCK_SLAVE_ADDR, MOCK_STATIC_START, MOCK_STATIC_COUNT);
-    desc->sniff_handler(desc, req_buf, FC03_REQ_LEN);
-    vTaskDelay(pdMS_TO_TICKS(DELAY_SLAVE_RESP_MS));
     build_fc03_response(resp_buf, MOCK_SLAVE_ADDR, MOCK_STATIC_COUNT, MOCK_STATIC_BASE + MOCK_STATIC_START);
-    desc->sniff_handler(desc, resp_buf, FC03_STATIC_RESP_LEN);
-    ESP_LOGI(TAG, "Static registers injected once (slave=%d, regs %d..%d)",
+    memcpy(static_concat_buf, req_buf, FC03_REQ_LEN);
+    memcpy(static_concat_buf + FC03_REQ_LEN, resp_buf, FC03_STATIC_RESP_LEN);
+    desc->sniff_handler(desc, static_concat_buf, sizeof(static_concat_buf));
+    ESP_LOGI(TAG, "Static registers injected as single stream (slave=%d, regs %d..%d)",
              MOCK_SLAVE_ADDR, MOCK_STATIC_START, MOCK_STATIC_START + MOCK_STATIC_COUNT - 1);
 
     // --- Periodic: refresh live registers (0-4) every DELAY_CYCLE_MS ---
     for (;;) {
-        // Inter-frame gap before injecting the request.
-        vTaskDelay(pdMS_TO_TICKS(DELAY_INTER_FRAME_MS));
+        cycle_count++;
 
-        // Build and inject FC03 request (slave=1, regs 0..4).
+        // Every BAD_CRC_PERIOD cycles inject a corrupt-CRC packet first so that
+        // the Python test can observe at least one packet with crc_valid=false.
+        if ((cycle_count % BAD_CRC_PERIOD) == 0) {
+            desc->sniff_handler(desc, bad_crc_pkt, sizeof(bad_crc_pkt));
+            ESP_LOGD(TAG, "Bad-CRC packet injected (cycle %d)", cycle_count);
+        }
+
+        // Build req and resp, then concatenate into a single buffer and inject
+        // as one sniff_handler call — no inter-frame gap between the two frames.
+        // This forces sniffer_process() to use the stream_splitter path.
         build_fc03_request(req_buf, MOCK_SLAVE_ADDR, MOCK_LIVE_START, MOCK_LIVE_COUNT);
-        desc->sniff_handler(desc, req_buf, FC03_REQ_LEN);
-
-        // Simulate slave response latency.
-        vTaskDelay(pdMS_TO_TICKS(DELAY_SLAVE_RESP_MS));
-
-        // Build and inject FC03 response with live register values.
         build_fc03_response(resp_buf, MOCK_SLAVE_ADDR, MOCK_LIVE_COUNT, MOCK_LIVE_BASE + MOCK_LIVE_START);
-        desc->sniff_handler(desc, resp_buf, FC03_LIVE_RESP_LEN);
+        memcpy(live_concat_buf, req_buf, FC03_REQ_LEN);
+        memcpy(live_concat_buf + FC03_REQ_LEN, resp_buf, FC03_LIVE_RESP_LEN);
+        desc->sniff_handler(desc, live_concat_buf, sizeof(live_concat_buf));
 
         // Wait before the next cycle.
         vTaskDelay(pdMS_TO_TICKS(DELAY_CYCLE_MS));
