@@ -625,11 +625,11 @@ static void sniffer_ws_task(void *arg)
 
 static esp_err_t sniffer_ws_handler(httpd_req_t *req)
 {
-    if (!auth_middleware_check(req)) {
-        return ESP_OK;
-    }
-
     if (req->method == HTTP_GET) {
+        /* Authenticate the upgrade request — cookie is available in the HTTP headers */
+        if (!auth_middleware_check(req)) {
+            return ESP_OK;
+        }
         xSemaphoreTake(ws_mutex, portMAX_DELAY);
         ws_server    = req->handle;
         ws_client_fd = httpd_req_to_sockfd(req);
@@ -638,6 +638,8 @@ static esp_err_t sniffer_ws_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+    /* WebSocket frame message path — no auth re-check needed:
+     * the session was already validated during the HTTP GET upgrade above. */
     httpd_ws_frame_t ws_pkt = {0};
     ws_pkt.type = HTTPD_WS_TYPE_TEXT;
 
