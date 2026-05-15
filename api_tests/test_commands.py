@@ -44,10 +44,7 @@ def test_commands(api):
                 f"Settings restore returned status {restore_response.status_code}"
             print("✓ Settings restored after set_default_settings")
         except requests.exceptions.ConnectionError:
-            import time
-            time.sleep(2)
-            api.reconnect()
-            api.auth()
+            api.wait_for_ready()
             restore_response = api.update_settings(saved_settings)
             assert restore_response.status_code == 200
             print("✓ Settings restored after set_default_settings (after reconnect)")
@@ -105,10 +102,7 @@ def test_cmd_extended(api):
                 f"Settings restore returned status {restore_response.status_code}"
             print("✓ Settings restored after set_default_settings")
         except requests.exceptions.ConnectionError:
-            import time
-            time.sleep(2)
-            api.reconnect()
-            api.auth()
+            api.wait_for_ready()
             restore_response = api.update_settings(saved_settings)
             assert restore_response.status_code == 200
             print("✓ Settings restored after set_default_settings (after reconnect)")

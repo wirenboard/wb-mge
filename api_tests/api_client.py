@@ -126,6 +126,22 @@ class WBMGEAPI:
         """Get sniffer status for all ports"""
         return self.session.get(f"{self.base_url}/sniffer/status", timeout=10)
 
+    def wait_for_ready(self, timeout=10, interval=1):
+        """Poll the server until it responds, then reconnect and re-auth."""
+        import time
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(interval)
+            self.reconnect()
+            try:
+                self.auth()
+                resp = self.get_info()
+                if resp.status_code == 200:
+                    return
+            except requests.exceptions.RequestException:
+                continue
+        raise TimeoutError(f"Server did not come back within {timeout}s")
+
     def execute_command(self, cmd):
         """Execute command"""
         try:
