@@ -4,6 +4,7 @@ import { hasSession } from '@/common/session';
 import { useSettings } from '@/common/settings';
 import type { LogoutResponse } from '@/common/types';
 import Dashboard from '@/views/Dashboard.vue';
+import KnxSettings from '@/views/KnxSettings.vue';
 import Login from '@/views/Login.vue';
 import Network from '@/views/Network.vue';
 import SerialPorts from '@/views/SerialPorts.vue';
@@ -62,6 +63,20 @@ const router = createRouter({
       name: 'settings',
       component: SerialPorts,
       meta: { requiresAuth: true, menuName: 'serial_ports', menuGroup: 'configuration', menuIcon: 'sliders' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
+    },
+    {
+      path: '/knx',
+      name: 'knx',
+      component: KnxSettings,
+      meta: { requiresAuth: true, menuName: 'knx', menuGroup: 'configuration', menuIcon: 'sliders' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();
