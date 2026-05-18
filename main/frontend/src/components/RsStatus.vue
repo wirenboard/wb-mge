@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import type { RsSettings, RsStatus } from '@/common/types';
-import Info from '@/components/Info.vue';
+import InfoRow from '@/components/InfoRow.vue';
 
 defineProps<{ title: string; info: RsStatus; settings: RsSettings }>();
 
@@ -9,52 +9,34 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <div class="rsStatus-label"><b>{{ title }}</b></div>
-  <div></div>
-
-  <div class="rsStatus-label">{{ t('modbus_mode') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
-
-  <div class="rsStatus-label">{{ t('bridge_mode') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
-
-  <div class="rsStatus-label">{{ t('tcp_port') }}</div>
-  <div class="rsStatus-value">{{ settings.bridge.port }}</div>
-
-  <div class="rsStatus-label">{{ t('tcp_count') }}</div>
-  <div class="rsStatus-value">{{ info.server_connections_count }}</div>
-
-  <div class="rsStatus-label">{{ t('status') }}</div>
-  <div class="rsStatus-value">{{ info.is_busy ? t('active') : t('not_active') }}</div>
-  <Info class="rsStatus-info" :text="t('status_info')" />
-
-  <template v-if="settings.bridge.modbus ">
-    <div class="rsStatus-label">{{ t('error_rate') }}</div>
-    <div class="rsStatus-value">{{ info.error_percentage }}%</div>
-    <Info class="rsStatus-info" :text="t('error_rate_description')" />
-  </template>
+  <div>
+    <InfoRow :label="t('modbus_mode')">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</InfoRow>
+    <InfoRow v-if="!settings.bridge.modbus" :label="t('bridge_mode')">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</InfoRow>
+    <InfoRow :label="t('tcp_port')"><span class="mono">{{ settings.bridge.port }}</span></InfoRow>
+    <InfoRow :label="t('tcp_count')">{{ info.server_connections_count }}</InfoRow>
+    <InfoRow :label="t('status')">
+      {{ info.is_busy ? t('active') : t('not_active') }}
+      <template #hint>{{ t('status_info') }}</template>
+    </InfoRow>
+    <template v-if="settings.bridge.modbus">
+      <InfoRow :label="t('error_rate')">
+        {{ info.error_percentage }}%
+        <template #hint>{{ t('error_rate_description') }}</template>
+      </InfoRow>
+    </template>
+  </div>
 </template>
 
 <style>
-.rsStatus-label {
-  justify-self: start !important;
-}
-.rsStatus-value {
-  justify-self: end !important;
-}
-
-.rsStatus-info {
-  margin-top: -14px;
-}
 </style>
 
 <i18n>
 {
   "en": {
-    "modbus_mode": "Modbus mode",
+    "modbus_mode": "Mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Transparent",
+    "bridge_transparent": "Transparent bridge",
     "tcp_port": "TCP port",
     "tcp_count": "TCP count",
     "status": "Status",
@@ -68,7 +50,7 @@ const { t } = useI18n();
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Прозрачный",
+    "bridge_transparent": "Прозрачный мост",
     "tcp_port": "TCP-порт",
     "tcp_count": "TCP подключений",
     "status": "Статус",
@@ -82,7 +64,7 @@ const { t } = useI18n();
     "modbus_mode": "Режим",
     "bridge_mode": "Рөл",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Мөлдір",
+    "bridge_transparent": "Мөлдір көпір",
     "tcp_port": "TCP порты",
     "tcp_count": "TCP қосылымдары",
     "status": "Күйі",
@@ -93,10 +75,10 @@ const { t } = useI18n();
     "error_rate_description": "Соңғы 100 сұрауға қатысты қате пайызы"
   },
   "it": {
-    "modbus_mode": "Modalità Modbus",
+    "modbus_mode": "Modalità",
     "bridge_mode": "Modalità bridge",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Trasparente",
+    "bridge_transparent": "Bridge trasparente",
     "tcp_port": "Porta TCP",
     "tcp_count": "Connessioni TCP",
     "status": "Stato",
@@ -107,10 +89,10 @@ const { t } = useI18n();
     "error_rate_description": "Tasso di errore per le ultime 100 richieste"
   },
   "de": {
-    "modbus_mode": "Modbus-Modus",
+    "modbus_mode": "Modus",
     "bridge_mode": "Bridge-Modus",
     "bridge_modbus": "Modbus TCP",
-    "bridge_transparent": "Transparent",
+    "bridge_transparent": "Transparente Brücke",
     "tcp_port": "TCP-Port",
     "tcp_count": "TCP-Verbindungen",
     "status": "Status",

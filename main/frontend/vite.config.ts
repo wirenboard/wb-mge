@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: './',
-    plugins: [vue(), svgLoader(), VueI18nPlugin({})],
+    plugins: [vue(), svgLoader(), VueI18nPlugin({ strictMessage: false })],
     build: {
       assetsDir: '',
       rollupOptions: {

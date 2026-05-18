@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
 import type { Settings } from '@/common/types';
 import Button from '@/components/Button.vue';
+import InfoRow from '@/components/InfoRow.vue';
 import { downloadFile } from '@/utils/downloadFile';
 
 const { t } = useI18n();
@@ -33,62 +34,30 @@ const handleFileChange = () => {
 </script>
 
 <template>
-  <fieldset class="configuration-container">
-    <legend>{{ t('configuration') }}</legend>
-
-    <div>{{ t('export') }}</div>
-    <div class="configuration-button">
-      <Button @click="downloadSettings">
-        {{ t('downloadSettings') }}
-      </Button>
+  <section class="card">
+    <div class="card-header">
+      <div class="title">{{ t('configuration') }}</div>
     </div>
-
-    <div>{{ t('import') }}</div>
-    <div class="configuration-button">
-      <Button @click="fileInput.click()">{{ t('uploadSettings') }}</Button>
-      <input ref="fileInput" class="configuration-input" type="file" required accept=".json" @change="handleFileChange" />
+    <div class="card-body">
+      <InfoRow :label="t('export')">
+        <Button @click="downloadSettings">{{ t('downloadSettings') }}</Button>
+      </InfoRow>
+      <InfoRow :label="t('import')">
+        <Button @click="fileInput.click()">{{ t('uploadSettings') }}</Button>
+        <input ref="fileInput" class="configuration-input" type="file" required accept=".json" @change="handleFileChange" />
+      </InfoRow>
+      <InfoRow :label="t('reset')">
+        <Button type="button" variant="danger" :disabled="loadedMethod === 'set_default_settings'" @click="cmd('set_default_settings', t('factory_reset_confirm'))">
+          {{ t('set_default_settings') }}
+        </Button>
+      </InfoRow>
     </div>
-
-    <div>{{ t('reset') }}</div>
-    <div class="configuration-button">
-      <Button type="button" variant="danger" :disabled="loadedMethod === 'set_default_settings'" @click="cmd('set_default_settings', t('factory_reset_confirm'))">
-        {{ t('set_default_settings') }}
-      </Button>
-    </div>
-  </fieldset>
+  </section>
 </template>
 
 <style scoped>
-.configuration-container {
-  display: grid;
-  gap: 6px 24px;
-  grid-template-columns: 60fr 40fr;
-  align-items: center;
-  justify-items: flex-start;
-  page-break-inside: avoid;
-  break-inside: avoid;
-}
-
-.configuration-container div {
-  height: 33px;
-  display: flex;
-  align-items: center;
-}
-
-.system-container div:nth-child(odd)  {
-  width: 100%;
-  display: flex;
-  justify-content: end;
-}
-
 .configuration-input {
   display: none;
-}
-
-.configuration-button {
-  width: 100%;
-  display: flex;
-  justify-content: end;
 }
 </style>
 

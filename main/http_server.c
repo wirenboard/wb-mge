@@ -14,7 +14,7 @@
 #include "esp_log.h"
 #include "setting_items.h"
 
-#define MAX_URI_HANDLERS                    20
+#define MAX_URI_HANDLERS                    25
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 
@@ -35,6 +35,19 @@ extern const uint8_t index_js_end[] asm("_binary_index_js_gz_end");
 
 extern const uint8_t index_html_start[] asm("_binary_index_html_gz_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_gz_end");
+
+// Roboto Latin subset — embedded from frontend/dist/
+extern const uint8_t roboto_latin_start[] asm("_binary_roboto_latin_wght_normal_woff2_gz_start");
+extern const uint8_t roboto_latin_end[]   asm("_binary_roboto_latin_wght_normal_woff2_gz_end");
+
+// Roboto Cyrillic subset — embedded from frontend/dist/
+extern const uint8_t roboto_cyrillic_start[] asm("_binary_roboto_cyrillic_wght_normal_woff2_gz_start");
+extern const uint8_t roboto_cyrillic_end[]   asm("_binary_roboto_cyrillic_wght_normal_woff2_gz_end");
+
+// Roboto Cyrillic-ext subset — embedded from frontend/dist/ (covers Kazakh, Ukrainian extended)
+extern const uint8_t roboto_cyrillic_ext_start[] asm("_binary_roboto_cyrillic_ext_wght_normal_woff2_gz_start");
+extern const uint8_t roboto_cyrillic_ext_end[]   asm("_binary_roboto_cyrillic_ext_wght_normal_woff2_gz_end");
+
 
 
 static const httpd_config_t httpd_default_config = HTTPD_DEFAULT_CONFIG();
@@ -68,6 +81,34 @@ static esp_err_t index_js_get_handler(httpd_req_t *req)
     httpd_resp_send(req, (const char *)index_js_start, index_js_end - index_js_start);
     return ESP_OK;
 }
+
+static esp_err_t roboto_latin_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "font/woff2");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
+    httpd_resp_send(req, (const char *)roboto_latin_start, roboto_latin_end - roboto_latin_start);
+    return ESP_OK;
+}
+
+static esp_err_t roboto_cyrillic_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "font/woff2");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
+    httpd_resp_send(req, (const char *)roboto_cyrillic_start, roboto_cyrillic_end - roboto_cyrillic_start);
+    return ESP_OK;
+}
+
+static esp_err_t roboto_cyrillic_ext_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "font/woff2");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000, immutable");
+    httpd_resp_send(req, (const char *)roboto_cyrillic_ext_start, roboto_cyrillic_ext_end - roboto_cyrillic_ext_start);
+    return ESP_OK;
+}
+
 
 static esp_err_t favicon_get_handler(httpd_req_t *req)
 {
@@ -106,6 +147,24 @@ static const httpd_uri_t favicon_get = {
     .method = HTTP_GET,
     .handler = favicon_get_handler,
     .user_ctx = NULL,
+};
+static const httpd_uri_t roboto_latin_get = {
+    .uri       = "/roboto-latin-wght-normal.woff2",
+    .method    = HTTP_GET,
+    .handler   = roboto_latin_get_handler,
+    .user_ctx  = NULL,
+};
+static const httpd_uri_t roboto_cyrillic_get = {
+    .uri       = "/roboto-cyrillic-wght-normal.woff2",
+    .method    = HTTP_GET,
+    .handler   = roboto_cyrillic_get_handler,
+    .user_ctx  = NULL,
+};
+static const httpd_uri_t roboto_cyrillic_ext_get = {
+    .uri       = "/roboto-cyrillic-ext-wght-normal.woff2",
+    .method    = HTTP_GET,
+    .handler   = roboto_cyrillic_ext_get_handler,
+    .user_ctx  = NULL,
 };
 static const httpd_uri_t index_css_get = {
     .uri = "/index.css",
@@ -232,6 +291,9 @@ esp_err_t http_server_init(void)
         httpd_register_uri_handler(http_server, &index_css_get);
         httpd_register_uri_handler(http_server, &index_js_get);
         httpd_register_uri_handler(http_server, &favicon_get);
+        httpd_register_uri_handler(http_server, &roboto_latin_get);
+        httpd_register_uri_handler(http_server, &roboto_cyrillic_get);
+        httpd_register_uri_handler(http_server, &roboto_cyrillic_ext_get);
 
         httpd_register_uri_handler(http_server, &update_post);
         httpd_register_uri_handler(http_server, &info_get);

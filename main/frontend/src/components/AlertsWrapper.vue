@@ -35,7 +35,7 @@ const { alerts } = useAlerts();
   flex-direction: column;
   align-items: end;
   position: absolute;
-  bottom: 12px;
+  top: 12px;
   right: 12px;
 }
 
@@ -44,7 +44,8 @@ const { alerts } = useAlerts();
   margin-top: 6px;
   color: #fff;
   padding: 12px;
-  border-radius: var(--border-radius);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
   width: fit-content;
 }
 

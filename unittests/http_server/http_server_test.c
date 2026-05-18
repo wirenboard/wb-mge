@@ -265,25 +265,28 @@ void test_http_server_uri_handlers_registration(void)
     );
 
     const expected_uri_registry_entry_t expected_uri_registry[] = {
-        {"/auth",              HTTP_POST},
-        {"/session",           HTTP_GET},
-        {"/logout",            HTTP_POST},
-        {"/",                  HTTP_GET},
-        {"/index.css",         HTTP_GET},
-        {"/index.js",          HTTP_GET},
-        {"/favicon.webp",      HTTP_GET},
-        {"/update",            HTTP_POST},
-        {"/info",              HTTP_GET},
-        {"/settings",          HTTP_GET},
-        {"/settings",          HTTP_POST},
-        {"/cmd",               HTTP_POST},
-        {"/wifi_scan/start",   HTTP_POST},
-        {"/wifi_scan/results", HTTP_GET},
-        {"/ap_clients",        HTTP_GET},
-        {"/uptime",            HTTP_GET},
-        {"/wb_test",           HTTP_GET},
-        {"/wb_test",           HTTP_POST},
-        {"/hostname",          HTTP_GET}
+        {"/auth",                           HTTP_POST},
+        {"/session",                        HTTP_GET},
+        {"/logout",                         HTTP_POST},
+        {"/",                               HTTP_GET},
+        {"/index.css",                      HTTP_GET},
+        {"/index.js",                       HTTP_GET},
+        {"/favicon.webp",                   HTTP_GET},
+        {"/update",                         HTTP_POST},
+        {"/info",                           HTTP_GET},
+        {"/settings",                       HTTP_GET},
+        {"/settings",                       HTTP_POST},
+        {"/cmd",                            HTTP_POST},
+        {"/wifi_scan/start",                HTTP_POST},
+        {"/wifi_scan/results",              HTTP_GET},
+        {"/ap_clients",                     HTTP_GET},
+        {"/uptime",                         HTTP_GET},
+        {"/wb_test",                        HTTP_GET},
+        {"/wb_test",                        HTTP_POST},
+        {"/hostname",                       HTTP_GET},
+        {"/roboto-latin-wght-normal.woff2",        HTTP_GET},
+        {"/roboto-cyrillic-wght-normal.woff2",     HTTP_GET},
+        {"/roboto-cyrillic-ext-wght-normal.woff2", HTTP_GET}
     };
 
     size_t expected_count = ARRAY_SIZE(expected_uri_registry);
