@@ -187,6 +187,54 @@ def test_cache_server_enabled_toggle(api):
             raise AssertionError(f"Failed to restore cache_modbus_server_enabled: {exc}")
 
 
+@pytest.mark.order(24)
+def test_cache_value_timeout_setting(api):
+    """Test cache_value_timeout_s setting toggle and consistency"""
+    response = api.get_settings()
+    assert response.status_code == 200
+    original_value_timeout = response.json().get("cache_value_timeout_s", 60)
+
+    try:
+        # Set timeout to 30 seconds
+        response = api.update_settings({"cache_value_timeout_s": 30})
+        assert response.status_code == 200
+        assert response.json().get("success") == True
+
+        response = api.get_settings()
+        assert response.status_code == 200
+        assert response.json()["cache_value_timeout_s"] == 30, \
+            "cache_value_timeout_s=30 not reflected in GET /settings"
+
+        response = api.get_info()
+        assert response.status_code == 200
+        assert response.json()["cache_value_timeout_s"] == 30, \
+            "cache_value_timeout_s=30 not reflected in GET /info"
+        print("✓ cache_value_timeout_s=30 visible in both /settings and /info")
+
+        # Set timeout to 0 (disabled — always serve cached values)
+        response = api.update_settings({"cache_value_timeout_s": 0})
+        assert response.status_code == 200
+        assert response.json().get("success") == True
+
+        response = api.get_settings()
+        assert response.status_code == 200
+        assert response.json()["cache_value_timeout_s"] == 0, \
+            "cache_value_timeout_s=0 not reflected in GET /settings"
+
+        response = api.get_info()
+        assert response.status_code == 200
+        assert response.json()["cache_value_timeout_s"] == 0, \
+            "cache_value_timeout_s=0 not reflected in GET /info"
+        print("✓ cache_value_timeout_s=0 visible in both /settings and /info")
+
+    finally:
+        try:
+            api.update_settings({"cache_value_timeout_s": original_value_timeout})
+            print(f"✓ cache_value_timeout_s restored to {original_value_timeout}")
+        except Exception as exc:
+            raise AssertionError(f"Failed to restore cache_value_timeout_s: {exc}")
+
+
 @pytest.mark.order(30)
 def test_cache_multimaster(api):
     """Test cache Modbus TCP multi-master server"""
