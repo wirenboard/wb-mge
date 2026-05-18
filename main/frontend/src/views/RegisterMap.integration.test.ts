@@ -1335,3 +1335,386 @@ describe('RM-I-11: fetchEntries — error state', () => {
     wrapper.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// RM-I-12: searchFilter — filter devices by slave ID
+// ---------------------------------------------------------------------------
+/**
+ * Verifies that typing into the search input (.rm-search input) filters the device tree
+ * by decimal or hexadecimal slave ID.
+ *
+ * The filterDevices utility performs: trim+lowercase on the query, then checks
+ * d.id.toString().includes(q) || d.id.toString(16).toLowerCase().includes(q).
+ *
+ * Three entries are used: slave 1 (h), slave 2 (h), slave 10 (h).
+ *   - Query "2"  → only slave 2 visible (decimal match)
+ *   - Query "a"  → only slave 10 visible (hex match: 10 → "a")
+ *   - Empty ""   → all 3 visible again
+ */
+describe('RM-I-12: searchFilter — filter devices by slave ID', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  it('filters device rows by decimal and hexadecimal slave ID', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // Return 3 slaves so the search filter has something to filter
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'cache/json') {
+        return {
+          d: [
+            { s: 1,  t: 'h', a: 10, v: 1,   age: 1 },
+            { s: 2,  t: 'h', a: 10, v: 2,   age: 1 },
+            { s: 10, t: 'h', a: 10, v: 10,  age: 1 },
+          ],
+        } as never;
+      }
+      return {} as never;
+    });
+
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // A. Empty query — all 3 device rows visible
+    expect(wrapper.findAll('.rm-row.lvl-dev').length).toBe(3);
+
+    // B. Type "2" — only slave 2 matches decimal "2"; slave 10 does not contain "2"
+    await wrapper.find('.rm-search input').setValue('2');
+    await flushPromises();
+    expect(wrapper.findAll('.rm-row.lvl-dev').length).toBe(1);
+    // Verify it is slave 2 (hex: 0x02) that remains, not another node
+    expect(wrapper.find('.rm-row.lvl-dev .rm-slave').text()).toBe('Slave 0x02');
+
+    // C. Type "a" — only slave 10 matches (hex representation is "a")
+    await wrapper.find('.rm-search input').setValue('a');
+    await flushPromises();
+    expect(wrapper.findAll('.rm-row.lvl-dev').length).toBe(1);
+    // Verify it is slave 10 (hex: 0x0A) that remains, not another node
+    expect(wrapper.find('.rm-row.lvl-dev .rm-slave').text()).toBe('Slave 0x0A');
+
+    // D. Clear query — all 3 visible again
+    await wrapper.find('.rm-search input').setValue('');
+    await flushPromises();
+    expect(wrapper.findAll('.rm-row.lvl-dev').length).toBe(3);
+
+    wrapper.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RM-I-13: selectListenPort — clicking port-tag buttons
+// ---------------------------------------------------------------------------
+/**
+ * Verifies that clicking .rsp-port-tag buttons switches the active port selection.
+ *
+ * Initial state (port1=cache_bus): listenPort1=true (button 1 active), listenPort2=false.
+ * Click port 2: port 2 becomes active, port 1 inactive.
+ * Click port 1: port 1 becomes active again, port 2 inactive.
+ */
+describe('RM-I-13: selectListenPort — clicking port-tag buttons', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  it('clicking port-tag buttons switches the active port selection', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // port1=cache_bus → listenPort1=true, listenPort2=false after init
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // A. Initial state: port 1 active, port 2 inactive
+    expect(portActive(wrapper, 1)).toBe(true);
+    expect(portActive(wrapper, 2)).toBe(false);
+
+    // B. Click port 2 button → port 2 active, port 1 inactive
+    await wrapper.findAll('.rsp-port-tag')[1].trigger('click');
+    await flushPromises();
+    expect(portActive(wrapper, 2)).toBe(true);
+    expect(portActive(wrapper, 1)).toBe(false);
+
+    // C. Click port 1 button → port 1 active again, port 2 inactive
+    await wrapper.findAll('.rsp-port-tag')[0].trigger('click');
+    await flushPromises();
+    expect(portActive(wrapper, 1)).toBe(true);
+    expect(portActive(wrapper, 2)).toBe(false);
+
+    wrapper.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RM-I-14: Export CSV button — window.open call
+// ---------------------------------------------------------------------------
+/**
+ * Verifies that clicking the first .rsp-btn-export (CSV) calls
+ * window.open('/cache/csv', '_blank', 'noopener').
+ */
+describe('RM-I-14: Export CSV button — window.open call', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('clicking CSV export button calls window.open with correct arguments', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // Return an entry so the component reaches the enabled/loaded state and shows export buttons
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'cache/json') {
+        return { d: [{ s: 1, t: 'h', a: 10, v: 100, age: 2 }] } as never;
+      }
+      return {} as never;
+    });
+
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Stub window.open before clicking
+    const openMock = vi.fn();
+    vi.stubGlobal('open', openMock);
+
+    // Click the first .rsp-btn-export (CSV export)
+    const exportButtons = wrapper.findAll('.rsp-btn-export');
+    expect(exportButtons.length).toBeGreaterThanOrEqual(1);
+    await exportButtons[0].trigger('click');
+
+    // Verify window.open was called with the correct URL and options
+    expect(openMock).toHaveBeenCalledWith('/cache/csv', '_blank', 'noopener');
+
+    wrapper.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RM-I-15: tcpServeEnabled toggle + save
+// ---------------------------------------------------------------------------
+/**
+ * Verifies that toggling the TCP serve switch and clicking Save causes
+ * api('settings', { method: 'POST', json: { cache_modbus_server_enabled: false } })
+ * to be called, while the ports API is not called (port mode unchanged).
+ */
+describe('RM-I-15: tcpServeEnabled toggle + save', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  it('toggling TCP serve switch off and saving POSTs cache_modbus_server_enabled=false', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // tcpServerEnabled=true so the switch starts checked
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60, tcpServerEnabled: true });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Verify initial state: TCP serve switch is checked (enabled)
+    expect(switchChecked(wrapper, 'rsp-tcp-serve')).toBe(true);
+
+    // Toggle the switch off by setting its value to false
+    await wrapper.find('#rsp-tcp-serve').setValue(false);
+
+    // Clear recorded API calls so we only assert on the save call
+    vi.mocked(api).mockClear();
+
+    // Click save
+    await wrapper.find('.rsp-btn-save').trigger('click');
+    await flushPromises();
+
+    // settings POST must be called with cache_modbus_server_enabled: false
+    expect(vi.mocked(api)).toHaveBeenCalledWith('settings', {
+      method: 'POST',
+      json: { cache_modbus_server_enabled: false },
+    });
+
+    // Port mode must NOT be changed (port1 is cache_bus in both info and local state)
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
+
+    wrapper.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RM-I-16: Stale indicator — .stale class and .stale-dot
+// ---------------------------------------------------------------------------
+/**
+ * Verifies that a register row with age > valueTimeout gets the .stale class
+ * and renders .stale-dot, while a fresh row does not.
+ *
+ * Stale logic from buildRegsByKey:
+ *   stale = valueTimeout > 0 && updatedAge > valueTimeout
+ *
+ * Setup:
+ *   - valueTimeout = 10 s (from makeInfo timeout: 10)
+ *   - Entry 1: slave 1, addr 10, age 5  → fresh (5 < 10)
+ *   - Entry 2: slave 1, addr 20, age 20 → stale (20 > 10)
+ *
+ * Rows are sorted by address ascending: row[0]=addr10 (fresh), row[1]=addr20 (stale).
+ */
+describe('RM-I-16: Stale indicator — .stale class and .stale-dot', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  it('stale register row has .stale class and .stale-dot; fresh row does not', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // Both entries belong to slave 1, holding registers; different addresses and ages
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'cache/json') {
+        return {
+          d: [
+            { s: 1, t: 'h', a: 10, v: 100, age: 5  }, // fresh: age 5 < timeout 10
+            { s: 1, t: 'h', a: 20, v: 200, age: 20 }, // stale: age 20 > timeout 10
+          ],
+        } as never;
+      }
+      return {} as never;
+    });
+
+    // timeout: 10 → valueTimeout = 10 s
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 10 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Expand the device row to reveal group rows
+    await wrapper.find('.rm-row.lvl-dev').trigger('click');
+    await flushPromises();
+
+    // Expand the group row (Holding registers) to reveal register rows
+    await wrapper.find('.rm-row.lvl-grp').trigger('click');
+    await flushPromises();
+
+    // Both register rows should now be visible
+    const regRows = wrapper.findAll('.rm-row.lvl-reg');
+    expect(regRows.length).toBe(2);
+
+    // Row 0 = addr 10 (fresh) — must NOT have .stale class
+    expect(regRows[0].classes()).not.toContain('stale');
+    expect(regRows[0].find('.stale-dot').exists()).toBe(false);
+
+    // Row 1 = addr 20 (stale) — must have .stale class and .stale-dot
+    expect(regRows[1].classes()).toContain('stale');
+    expect(regRows[1].find('.stale-dot').exists()).toBe(true);
+
+    wrapper.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RM-I-17: Stats DOM values from cache/status
+// ---------------------------------------------------------------------------
+/**
+ * Verifies that values returned by cache/status are rendered in the stats strip DOM.
+ *
+ * Stats strip .stat-block layout:
+ *   [0] Slaves / Registers — derived from rawEntries, NOT from cache/status
+ *   [1] Packets processed  — cachePackets = status.packets_processed
+ *   [2] Last packet        — cacheLastPacketAgeUs = status.last_packet_age_us
+ *   [3] Map age            — cacheMapAgeUs = status.map_age_us
+ *   [4] Memory             — cacheMemoryBytes, cacheMaxEntries, cacheEntries
+ *
+ * This test asserts:
+ *   - stat-block[1] .stat-value text = '42' (packets_processed)
+ *   - .stat-entries-val text = '7' (entries)
+ */
+describe('RM-I-17: Stats DOM values from cache/status', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  it('renders packets_processed and entries values from cache/status in the stats strip', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // Mock api: return status data for cache/status and entries for cache/json
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'cache/status') {
+        return {
+          enabled: true,
+          packets_processed: 42,
+          entries: 7,
+          slaves: 2,
+          last_packet_age_us: 0,
+          map_age_us: 0,
+          memory_bytes: 0,
+          max_entries: 0,
+        } as never;
+      }
+      if (url === 'cache/json') {
+        return {
+          d: [
+            { s: 1, t: 'h', a: 10, v: 1, age: 1 },
+            { s: 2, t: 'h', a: 10, v: 2, age: 1 },
+          ],
+        } as never;
+      }
+      return {} as never;
+    });
+
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Stats strip must be rendered (cacheEnabled=true, loading=false, no error)
+    expect(wrapper.find('.rm-stats').exists()).toBe(true);
+
+    // Find the "packets processed" stat-block by its label text rather than by DOM index,
+    // so the assertion stays correct even if the order of stat blocks changes.
+    // The component uses SFC-level i18n (en.stat_packets = "Packets processed").
+    const statBlocks = wrapper.findAll('.stat-block');
+    expect(statBlocks.length).toBeGreaterThanOrEqual(2);
+    const packetsBlock = statBlocks.find(
+      (b) => b.find('.stat-label').text() === 'Packets processed',
+    );
+    expect(packetsBlock).toBeDefined();
+    expect(packetsBlock!.find('.stat-value').text()).toBe('42');
+
+    // .stat-entries-val displays cacheEntries (entries = 7)
+    expect(wrapper.find('.stat-entries-val').text()).toBe('7');
+
+    wrapper.unmount();
+  });
+});
