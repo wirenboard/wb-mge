@@ -36,7 +36,6 @@
     "typescript": "5.8.3",
     "vite": "7.0.0",
     "vite-svg-loader": "5.1.0",
-    "vitest": "^3.0.0",
     "vue-tsc": "3.0.1"
   }
 }

@@ -11,44 +11,27 @@ const { t } = useI18n();
 <template>
   <div>
     <!-- always visible: operating mode -->
-    <div class="kv">
-      <div class="k">{{ t('port_mode_label') }}</div>
-      <div class="v">{{ t(`port_mode_${info.port_mode}`, info.port_mode) }}</div>
-    </div>
+    <InfoRow :label="t('port_mode_label')">{{ t(`port_mode_${info.port_mode}`, info.port_mode) }}</InfoRow>
 
     <!-- TCP bridge specific rows -->
     <template v-if="info.port_mode === 'tcp_bridge'">
-      <div class="kv">
-        <div class="k">{{ t('modbus_mode') }}</div>
-        <div class="v">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</div>
-      </div>
-      <div class="kv">
-        <div class="k">{{ t('bridge_mode') }}</div>
-        <div class="v">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</div>
-      </div>
-      <div class="kv">
-        <div class="k">{{ t('tcp_port') }}</div>
-        <div class="v mono">{{ settings.bridge.port }}</div>
-      </div>
-      <div class="kv">
-        <div class="k">{{ t('tcp_count') }}</div>
-        <div class="v">{{ info.server_connections_count }}</div>
-      </div>
+      <InfoRow :label="t('modbus_mode')">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</InfoRow>
+      <InfoRow v-if="!settings.bridge.modbus" :label="t('bridge_mode')">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</InfoRow>
+      <InfoRow :label="t('tcp_port')"><span class="mono">{{ settings.bridge.port }}</span></InfoRow>
+      <InfoRow :label="t('tcp_count')">{{ info.server_connections_count }}</InfoRow>
       <template v-if="settings.bridge.modbus">
-        <div class="kv">
-          <div class="k">{{ t('error_rate') }}</div>
-          <div class="v">{{ info.error_percentage }}%</div>
-          <div class="hint">{{ t('error_rate_description') }}</div>
-        </div>
+        <InfoRow :label="t('error_rate')">
+          {{ info.error_percentage }}%
+          <template #hint>{{ t('error_rate_description') }}</template>
+        </InfoRow>
       </template>
     </template>
 
     <!-- always visible: bus activity status -->
-    <div class="kv">
-      <div class="k">{{ t('status') }}</div>
-      <div class="v">{{ info.is_busy ? t('active') : t('not_active') }}</div>
-      <div class="hint">{{ t('status_info') }}</div>
-    </div>
+    <InfoRow :label="t('status')">
+      {{ info.is_busy ? t('active') : t('not_active') }}
+      <template #hint>{{ t('status_info') }}</template>
+    </InfoRow>
   </div>
 </template>
 
@@ -59,6 +42,10 @@ const { t } = useI18n();
 {
   "en": {
     "port_mode_label": "Operating mode",
+    "port_mode_disabled": "Disabled",
+    "port_mode_tcp_bridge": "TCP bridge",
+    "port_mode_sniffer": "Sniffer",
+    "port_mode_cache_bus": "Cache bus",
     "modbus_mode": "Modbus mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
@@ -74,6 +61,10 @@ const { t } = useI18n();
   },
   "ru": {
     "port_mode_label": "Режим работы",
+    "port_mode_disabled": "Отключён",
+    "port_mode_tcp_bridge": "TCP-мост",
+    "port_mode_sniffer": "Сниффер",
+    "port_mode_cache_bus": "Кэш шины",
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",
@@ -89,6 +80,10 @@ const { t } = useI18n();
   },
   "kk": {
     "port_mode_label": "Жұмыс режимі",
+    "port_mode_disabled": "Өшірілген",
+    "port_mode_tcp_bridge": "TCP көпір",
+    "port_mode_sniffer": "Sniffer",
+    "port_mode_cache_bus": "Кэш шина",
     "modbus_mode": "Режим",
     "bridge_mode": "Рөл",
     "bridge_modbus": "Modbus TCP",
@@ -104,6 +99,10 @@ const { t } = useI18n();
   },
   "it": {
     "port_mode_label": "Modalità operativa",
+    "port_mode_disabled": "Disabilitato",
+    "port_mode_tcp_bridge": "Bridge TCP",
+    "port_mode_sniffer": "Sniffer",
+    "port_mode_cache_bus": "Cache bus",
     "modbus_mode": "Modalità Modbus",
     "bridge_mode": "Modalità bridge",
     "bridge_modbus": "Modbus TCP",
@@ -119,6 +118,10 @@ const { t } = useI18n();
   },
   "de": {
     "port_mode_label": "Betriebsmodus",
+    "port_mode_disabled": "Deaktiviert",
+    "port_mode_tcp_bridge": "TCP-Bridge",
+    "port_mode_sniffer": "Sniffer",
+    "port_mode_cache_bus": "Cache-Bus",
     "modbus_mode": "Modbus-Modus",
     "bridge_mode": "Bridge-Modus",
     "bridge_modbus": "Modbus TCP",
