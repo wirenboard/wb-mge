@@ -34,6 +34,15 @@ echo "🔧 Building QEMU configuration..."
 
 echo "🏗️  Building project..."
 
+# Detect stale hardware build cache: if CMakeCache exists but was not a QEMU build,
+# run fullclean to force CMake reconfiguration with correct source file selection
+if [ -f "build/CMakeCache.txt" ]; then
+    if ! grep -q "qemu_mge" "build/CMakeCache.txt"; then
+        echo "🧹 Detected hardware build cache — running fullclean before QEMU build..."
+        "$IDF_PATH/tools/idf.py" fullclean
+    fi
+fi
+
 # Build the project with QEMU-specific config defaults applied on top of base config
 CONFIG_ETH_USE_OPENETH=1 "$IDF_PATH/tools/idf.py" -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" build
 
