@@ -36,7 +36,7 @@ set(COMPONENT_SRCS "main.c"
                    "wb_test.c")
 
 # Conditionally add files based on build type
-if(CONFIG_ETH_USE_OPENETH)
+if($ENV{CONFIG_ETH_USE_OPENETH})
     # QEMU build - add QEMU-specific files only
     set(CONDITIONAL_SRCS
         "qemu/ethernet_qemu.c"
