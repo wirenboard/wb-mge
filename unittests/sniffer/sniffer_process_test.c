@@ -903,6 +903,120 @@ void test_tc16_crc_err_after_sync_alternates_direction(void)
 }
 
 /* ============================================================
+ * TC-17 — Recursive stream split: two glued valid frames injected at once
+ * ============================================================ */
+
+void test_tc17_recursive_stream_split_two_frames(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-17: Recursive stream split — two glued FC03 frames injected via SEND0");
+    LOG_MESSAGE();
+
+    /*
+     * Concatenation of two valid Modbus RTU frames (17 bytes total):
+     *   Frame 0 (FC03 request,  8 bytes, valid CRC): 83 03 00 61 00 02 8B F7
+     *   Frame 1 (FC03 response, 9 bytes, valid CRC): 83 03 04 00 03 00 1E 28 33
+     *
+     * The combined 17-byte buffer does not have a valid CRC as a single frame,
+     * so the sniffer takes the recursive/stream-split path to recover both frames.
+     * Expected: two packets in the queue.
+     *   pkt[0]: is_master=true,  crc_valid=true, slave_id=0x83, function=0x03, data_len=8
+     *   pkt[1]: is_master=false, crc_valid=true, slave_id=0x83, function=0x03
+     */
+    uint8_t buf[] = {
+        /* FC03 request (8 bytes, valid CRC) */
+        0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7,
+        /* FC03 response (9 bytes, valid CRC) */
+        0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33
+    };
+
+    SEND0(buf);
+
+    sniff_packet_t pkt0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt0.is_master,
+        "TC-17 pkt[0]: FC03 request must be MASTER (is_master=true)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt0.crc_valid,
+        "TC-17 pkt[0]: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt0.slave_id,
+        "TC-17 pkt[0]: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt0.function,
+        "TC-17 pkt[0]: function must be 0x03");
+    TEST_ASSERT_EQUAL_MESSAGE(8, pkt0.data_len,
+        "TC-17 pkt[0]: data_len must be 8");
+
+    sniff_packet_t pkt1 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(pkt1.is_master,
+        "TC-17 pkt[1]: FC03 response must be SLAVE (is_master=false)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt1.crc_valid,
+        "TC-17 pkt[1]: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt1.slave_id,
+        "TC-17 pkt[1]: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt1.function,
+        "TC-17 pkt[1]: function must be 0x03");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-CA1 — sniffer_set_cache_active(true): sets SNIFFER RX timeout
+ * ============================================================ */
+
+void test_sniffer_set_cache_active_sets_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-CA1: sniffer_set_cache_active(true) → serial_set_rx_timeout(SERIAL_RX_TOUT_SNIFFER)");
+    LOG_MESSAGE();
+
+    /*
+     * setUp has enabled both ports via sniffer_enable().
+     * sniffer_set_cache_active iterates only ports where enabled==false.
+     * Disable both ports so the function can act on them, then reset the mock
+     * counter before the call under test.
+     */
+    sniffer_disable(0);
+    sniffer_disable(1);
+    mock_serial_reset();
+
+    sniffer_set_cache_active(true);
+
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_serial_set_rx_timeout_data.called,
+        "TC-CA1: serial_set_rx_timeout must be called for both ports");
+    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_RX_TOUT_SNIFFER,
+        mock_serial_set_rx_timeout_data.tout_symbols,
+        "TC-CA1: timeout must be SERIAL_RX_TOUT_SNIFFER when active=true");
+}
+
+/* ============================================================
+ * TC-CA2 — sniffer_set_cache_active(false): sets PROXY RX timeout
+ * ============================================================ */
+
+void test_sniffer_set_cache_active_inactive_sets_proxy_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-CA2: sniffer_set_cache_active(false) → serial_set_rx_timeout(SERIAL_RX_TOUT_PROXY)");
+    LOG_MESSAGE();
+
+    /*
+     * Disable both ports so sniffer_set_cache_active can act on them.
+     * cache_multimaster_is_enabled() returns false by default in the mock.
+     */
+    sniffer_disable(0);
+    sniffer_disable(1);
+    mock_serial_reset();
+
+    sniffer_set_cache_active(false);
+
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_serial_set_rx_timeout_data.called,
+        "TC-CA2: serial_set_rx_timeout must be called for both ports");
+    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_RX_TOUT_PROXY,
+        mock_serial_set_rx_timeout_data.tout_symbols,
+        "TC-CA2: timeout must be SERIAL_RX_TOUT_PROXY when active=false");
+}
+
+/* ============================================================
  * main
  * ============================================================ */
 
@@ -929,6 +1043,9 @@ int main(void)
     RUN_TEST(test_rx_timeout_enable_sets_sniffer_value);
     RUN_TEST(test_rx_timeout_disable_sets_proxy_value);
     RUN_TEST(test_rx_timeout_not_called_after_detach);
+    RUN_TEST(test_tc17_recursive_stream_split_two_frames);
+    RUN_TEST(test_sniffer_set_cache_active_sets_timeout);
+    RUN_TEST(test_sniffer_set_cache_active_inactive_sets_proxy_timeout);
 
     return UNITY_END();
 }

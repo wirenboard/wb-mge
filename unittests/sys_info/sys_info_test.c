@@ -169,6 +169,41 @@ void test_sys_info_init_signature_truncation(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
+// Test sys_info_init when PSRAM is available and initialized
+void test_sys_info_init_psram_available(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - PSRAM available");
+    LOG_MESSAGE();
+
+    mock_esp_psram_is_initialized_return = true;
+    mock_esp_psram_get_size_return = 4 * 1024 * 1024; // 4 MB
+
+    esp_err_t result = sys_info_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK when PSRAM is available");
+    TEST_ASSERT_TRUE_MESSAGE(sys_info.psram_available, "psram_available should be true when PSRAM is initialized");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4096, sys_info.psram_size_kb, "psram_size_kb should be 4096 for 4 MB PSRAM");
+}
+
+// Test sys_info_init when PSRAM is not available
+void test_sys_info_init_psram_not_available(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - PSRAM not available");
+    LOG_MESSAGE();
+
+    mock_esp_psram_is_initialized_return = false;
+    /* Set non-zero size to verify the else-branch actually writes 0, not just relies on mock default */
+    mock_esp_psram_get_size_return = 2 * 1024 * 1024;
+
+    esp_err_t result = sys_info_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK when PSRAM is not available");
+    TEST_ASSERT_FALSE_MESSAGE(sys_info.psram_available, "psram_available should be false when PSRAM is not initialized");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, sys_info.psram_size_kb, "psram_size_kb should be 0 when PSRAM is not available");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -179,6 +214,8 @@ int main(void)
     RUN_TEST(test_sys_info_init_empty_device_signature);
     RUN_TEST(test_sys_info_init_long_device_signature);
     RUN_TEST(test_sys_info_init_signature_truncation);
+    RUN_TEST(test_sys_info_init_psram_available);
+    RUN_TEST(test_sys_info_init_psram_not_available);
 
     return UNITY_END();
 }

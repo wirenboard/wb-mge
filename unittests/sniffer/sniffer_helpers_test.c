@@ -21,6 +21,12 @@ bool     fm_is_slave_subcmd(uint8_t subcmd);
 int      format_timeout_json(char *buf, size_t buf_size, uint32_t id, const sniff_packet_t *pkt);
 int      format_packet_json(char *buf, size_t buf_size, uint32_t id, const sniff_packet_t *pkt);
 
+/* pdu_direction_t is now exported from sniffer.h under __unittest_env__,
+ * so no local typedef is needed here. */
+
+/* Forward declaration for classify_direction exposed via SNIFFER_STATIC */
+pdu_direction_t classify_direction(const uint8_t *data, size_t len);
+
 void setUp(void)
 {
 }
@@ -735,6 +741,232 @@ void test_json_packet_max_length_fits_in_buffer(void)
     }
 }
 
+/* ============================================================
+ * classify_direction tests
+ * ============================================================ */
+
+/* FC02 — Read Discrete Inputs (same length rules as FC01) */
+
+void test_classify_direction_fc02_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC02 - len=8, data[2]=0 → DIRECTION_REQUEST");
+    LOG_MESSAGE();
+
+    /* len=8, data[2]=0 (≠3) → DIRECTION_REQUEST */
+    uint8_t data[] = {0x01, 0x02, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_REQUEST, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc02_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC02 - len=6, data[2]=1 (5+1=6, ≠8) → DIRECTION_RESPONSE");
+    LOG_MESSAGE();
+
+    /* len=6, 5+data[2]=5+1=6, len≠8 → DIRECTION_RESPONSE */
+    uint8_t data[] = {0x01, 0x02, 0x01, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc02_ambiguous(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC02 - len=8, data[2]=3 → DIRECTION_UNKNOWN (ambiguous)");
+    LOG_MESSAGE();
+
+    /* len=8 AND data[2]=3: both request (fixed 8) and response (5+3=8) match → UNKNOWN */
+    uint8_t data[] = {0x01, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
+/* FC07 — Read Exception Status */
+
+void test_classify_direction_fc07_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC07 - len=4 → DIRECTION_REQUEST");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x07, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_REQUEST, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc07_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC07 - len=5 → DIRECTION_RESPONSE");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x07, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc07_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC07 - len=6 → DIRECTION_UNKNOWN");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x07, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
+/* FC08 — Diagnostics (request and response are both 8 bytes → indistinguishable) */
+
+void test_classify_direction_fc08_always_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC08 - len=8 → DIRECTION_UNKNOWN (indistinguishable)");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
+/* FC0B — Get Comm Event Counter */
+
+void test_classify_direction_fc0b_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC0B - len=4 → DIRECTION_REQUEST");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x0B, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_REQUEST, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc0b_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC0B - len=8 → DIRECTION_RESPONSE");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc0b_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC0B - len=6 → DIRECTION_UNKNOWN");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x0B, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
+/* FC0F — Write Multiple Coils */
+
+void test_classify_direction_fc0f_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC0F - len=8 → DIRECTION_RESPONSE");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x0F, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc0f_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC0F - data[6]=4, len=13 (9+4) → DIRECTION_REQUEST");
+    LOG_MESSAGE();
+
+    /* byte_count = data[6] = 4, total = 9 + 4 = 13 */
+    uint8_t data[] = {0x01, 0x0F, 0x00, 0x00, 0x00, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_REQUEST, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc0f_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC0F - len=7 → DIRECTION_UNKNOWN");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x0F, 0x00, 0x00, 0x00, 0x08, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
+/* FC10 — Write Multiple Registers */
+
+void test_classify_direction_fc10_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC10 - len=8 → DIRECTION_RESPONSE");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x10, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc10_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC10 - data[6]=4, len=13 (9+4) → DIRECTION_REQUEST");
+    LOG_MESSAGE();
+
+    /* byte_count = data[6] = 4, total = 9 + 4 = 13 */
+    uint8_t data[] = {0x01, 0x10, 0x00, 0x01, 0x00, 0x02, 0x04, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_REQUEST, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc10_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC10 - len=7 → DIRECTION_UNKNOWN");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x10, 0x00, 0x01, 0x00, 0x02, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
+/* FC11 — Report Server ID */
+
+void test_classify_direction_fc11_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC11 - len=4 → DIRECTION_REQUEST");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x11, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_REQUEST, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc11_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC11 - len=6, data[2]=1 (5+1=6) → DIRECTION_RESPONSE");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x11, 0x01, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(data, sizeof(data)));
+}
+
+void test_classify_direction_fc11_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC11 - len=5, data[2]=5 (5+5=10≠5) → DIRECTION_UNKNOWN");
+    LOG_MESSAGE();
+
+    /* len=5, data[2]=5: 5+data[2]=10 ≠ len=5 → not RESPONSE; len≠4 → not REQUEST → UNKNOWN */
+    uint8_t data[] = {0x01, 0x11, 0x05, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
+/* default — unknown function code */
+
+void test_classify_direction_default_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction default - FC=0x20 → DIRECTION_UNKNOWN");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -799,6 +1031,42 @@ int main(void)
     RUN_TEST(test_json_packet_raw_length_matches_size);
     RUN_TEST(test_json_packet_id_increments);
     RUN_TEST(test_json_packet_max_length_fits_in_buffer);
+
+    /* classify_direction tests — FC02 */
+    RUN_TEST(test_classify_direction_fc02_request);
+    RUN_TEST(test_classify_direction_fc02_response);
+    RUN_TEST(test_classify_direction_fc02_ambiguous);
+
+    /* classify_direction tests — FC07 */
+    RUN_TEST(test_classify_direction_fc07_request);
+    RUN_TEST(test_classify_direction_fc07_response);
+    RUN_TEST(test_classify_direction_fc07_unknown);
+
+    /* classify_direction tests — FC08 */
+    RUN_TEST(test_classify_direction_fc08_always_unknown);
+
+    /* classify_direction tests — FC0B */
+    RUN_TEST(test_classify_direction_fc0b_request);
+    RUN_TEST(test_classify_direction_fc0b_response);
+    RUN_TEST(test_classify_direction_fc0b_unknown);
+
+    /* classify_direction tests — FC0F */
+    RUN_TEST(test_classify_direction_fc0f_response);
+    RUN_TEST(test_classify_direction_fc0f_request);
+    RUN_TEST(test_classify_direction_fc0f_unknown);
+
+    /* classify_direction tests — FC10 */
+    RUN_TEST(test_classify_direction_fc10_response);
+    RUN_TEST(test_classify_direction_fc10_request);
+    RUN_TEST(test_classify_direction_fc10_unknown);
+
+    /* classify_direction tests — FC11 */
+    RUN_TEST(test_classify_direction_fc11_request);
+    RUN_TEST(test_classify_direction_fc11_response);
+    RUN_TEST(test_classify_direction_fc11_unknown);
+
+    /* classify_direction tests — default FC */
+    RUN_TEST(test_classify_direction_default_unknown);
 
     return UNITY_END();
 }

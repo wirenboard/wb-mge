@@ -60,7 +60,7 @@ static transp_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 // Callback function for receiving data from serial port
 static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t len)
 {
-    ESP_LOGD(TAG, "Received data from serial, length: %u", len);
+    ESP_LOGD(TAG, "Received data from serial, length: %zu", len);
 
     transp_tcp_task_ctx_t* ctx = find_ctx_by_serial_desc(desc);
     if (!ctx) {
@@ -72,7 +72,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    ESP_LOGD(TAG, "Port[%u]: Received %u bytes from serial, sending them to TCP", ctx->index + 1, len);
+    ESP_LOGD(TAG, "Port[%u]: Received %zu bytes from serial, sending them to TCP", ctx->index + 1, len);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);
@@ -96,7 +96,7 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 // Callback function for receiving data from TCP socket
 static void process_data_from_tcp(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
 {
-    ESP_LOGD(TAG, "Received data from TCP, length: %u", len);
+    ESP_LOGD(TAG, "Received data from TCP, length: %zu", len);
 
     transp_tcp_task_ctx_t* ctx = find_ctx_by_tcp_desc(desc);
     if (!ctx) {
@@ -113,7 +113,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock, uint8_t *da
         return;
     }
 
-    ESP_LOGD(TAG, "Port[%u]: Received %u bytes from TCP, sending them to serial", ctx->index + 1, len);
+    ESP_LOGD(TAG, "Port[%u]: Received %zu bytes from TCP, sending them to serial", ctx->index + 1, len);
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, len, ESP_LOG_DEBUG);
 
     rs485_busy_monitor_update_activity(ctx->index);

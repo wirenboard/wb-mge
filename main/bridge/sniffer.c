@@ -217,12 +217,16 @@ SNIFFER_STATIC bool fm_is_slave_subcmd(uint8_t subcmd)
             subcmd == 0x09 || subcmd == 0x11 || subcmd == 0x12);
 }
 
-/* Direction classification result for standard Modbus RTU PDUs */
+/* Direction classification result for standard Modbus RTU PDUs.
+ * In __unittest_env__ this typedef is declared in sniffer.h to allow tests
+ * to use symbolic names; in production builds it is defined here. */
+#ifndef __unittest_env__
 typedef enum {
     DIRECTION_REQUEST  = 0, /* Packet is unambiguously a master request */
     DIRECTION_RESPONSE = 1, /* Packet is unambiguously a slave response  */
     DIRECTION_UNKNOWN  = 2, /* Cannot determine direction from length/FC alone */
 } pdu_direction_t;
+#endif
 
 /*
  * classify_direction — heuristic to decide whether a Modbus RTU packet is a

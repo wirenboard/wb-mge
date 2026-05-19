@@ -1024,6 +1024,52 @@ void test_setting_items_validate(void)
     );
 }
 
+// Test that setting_items_set_defaults(false) force-overwrites existing values with defaults
+void test_setting_items_set_defaults_force(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_set_defaults - force reset overwrites existing values");
+    LOG_MESSAGE();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    // Read the value that was written by init (this is the effective default for this key)
+    char default_buf[SETTING_ITEM_MAX_STR_LEN];
+    memset(default_buf, 0, sizeof(default_buf));
+    result = setting_items_read(KEY_HOSTNAME, default_buf);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Reading initial hostname should succeed");
+
+    // Write a custom value that differs from the default
+    result = setting_items_save(KEY_HOSTNAME, "custom-hostname");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Saving custom hostname should succeed");
+
+    // Confirm the custom value is stored
+    char buf[SETTING_ITEM_MAX_STR_LEN];
+    memset(buf, 0, sizeof(buf));
+    result = setting_items_read(KEY_HOSTNAME, buf);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Reading hostname should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("custom-hostname", buf, "Custom hostname should be stored before force reset");
+
+    // Force-reset all settings to defaults
+    result = setting_items_set_defaults(false);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "setting_items_set_defaults(false) should return ESP_OK");
+
+    // Verify hostname was reset to the default value (not the custom value)
+    memset(buf, 0, sizeof(buf));
+    result = setting_items_read(KEY_HOSTNAME, buf);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Reading hostname after force reset should succeed");
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(
+        0, strcmp(buf, "custom-hostname"),
+        "Force reset must overwrite the custom hostname — 'custom-hostname' must no longer be stored"
+    );
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(
+        default_buf, buf,
+        "Hostname after force reset must equal the value written during initialization"
+    );
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1061,6 +1107,7 @@ int main(void)
     RUN_TEST(test_read_wifi_pass_from_efuse_read_error);
 
     RUN_TEST(test_setting_items_validate);
+    RUN_TEST(test_setting_items_set_defaults_force);
 
     return UNITY_END();
 }

@@ -28,6 +28,15 @@ typedef struct {
     uint8_t  data[SNIFFER_MAX_PACKET_LEN];
     uint16_t data_len;
 } sniff_packet_t;
+
+/* Direction classification result; exported for unit tests so that tests can
+ * use the same enum values as the production classify_direction() function
+ * without duplicating the definition and risking value drift. */
+typedef enum {
+    DIRECTION_REQUEST  = 0,
+    DIRECTION_RESPONSE = 1,
+    DIRECTION_UNKNOWN  = 2,
+} pdu_direction_t;
 #endif
 
 esp_err_t sniffer_init(void);

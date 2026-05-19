@@ -11,7 +11,7 @@
 
 
 #define MAX_SESSIONS            10
-#define COOKIE_MAX_LEN          (11 + 10 + 40 + 1)   // "session_id=" + uint32_max + "; HttpOnly; SameSite=Strict; Path=/" + '\0'
+#define COOKIE_MAX_LEN          (11 + 10 + 35 + 1)   // "session_id=" (11) + uint32_max digits (10) + "; HttpOnly; SameSite=Strict; Path=/" (35) + '\0' (1)
 
 
 typedef struct {

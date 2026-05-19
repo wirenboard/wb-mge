@@ -5,6 +5,11 @@
 #include "freertos/queue.h"
 #include "malloc.h"
 
+// In unittest env, packet_queue.c maps free -> test_free, so callers that
+// receive pointers back from pop must also use test_free to stay consistent
+// with the allocation tracking done by the mock.
+#define free test_free
+
 // Must mirror the private packet_queue_elem_t in packet_queue.c so that the
 // sizeof() check in test_packet_queue_create_success stays in sync.
 typedef struct {
@@ -437,6 +442,227 @@ void test_packet_queue_pop_with_timeout(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
 }
 
+// Тестируем успешное добавление пакета с client socket в очередь
+void test_packet_queue_push_with_client_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push_with_client - success case");
+    LOG_MESSAGE();
+
+    const size_t max_len = 5;
+    g_test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
+
+    const uint8_t test_data[] = {0x01, 0x02, 0x03};
+    const size_t test_len = sizeof(test_data);
+    const int client_sock = 42;
+
+    esp_err_t result = packet_queue_push_with_client(g_test_handle, test_data, test_len, client_sock);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "push_with_client should succeed");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(test_len, allocated_ptrs[0].size, "malloc should allocate test_len bytes for buffer");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueSend_data.called, "xQueueSend should be called once");
+}
+
+// Тестируем добавление с NULL дескриптором очереди
+void test_packet_queue_push_with_client_null_handle(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push_with_client - NULL handle");
+    LOG_MESSAGE();
+
+    const uint8_t test_data[] = {0x01, 0x02, 0x03};
+    const size_t test_len = sizeof(test_data);
+
+    esp_err_t result = packet_queue_push_with_client(NULL, test_data, test_len, 42);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "push_with_client should fail with NULL handle");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called");
+}
+
+// Тестируем добавление при заполненной очереди
+void test_packet_queue_push_with_client_no_space(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push_with_client - no space in queue");
+    LOG_MESSAGE();
+
+    const size_t max_len = 2;
+    g_test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
+
+    const uint8_t test_data[] = {0x01, 0x02, 0x03};
+    const size_t test_len = sizeof(test_data);
+
+    esp_err_t result1 = packet_queue_push_with_client(g_test_handle, test_data, test_len, 1);
+    esp_err_t result2 = packet_queue_push_with_client(g_test_handle, test_data, test_len, 2);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result1, "First push_with_client should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result2, "Second push_with_client should succeed");
+
+    esp_err_t result3 = packet_queue_push_with_client(g_test_handle, test_data, test_len, 3);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result3, "Third push_with_client should fail when queue is full");
+}
+
+// Тестируем добавление с ошибкой выделения памяти
+void test_packet_queue_push_with_client_malloc_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push_with_client - malloc failure");
+    LOG_MESSAGE();
+
+    const size_t max_len = 2;
+    g_test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
+
+    const uint8_t test_data[] = {0x01, 0x02, 0x03};
+    const size_t test_len = sizeof(test_data);
+
+    malloc_should_fail = true;
+
+    esp_err_t result = packet_queue_push_with_client(g_test_handle, test_data, test_len, 42);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "push_with_client should fail when malloc fails");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called when malloc fails");
+}
+
+// Тестируем успешное извлечение пакета с client socket
+void test_packet_queue_pop_with_client_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop_with_client - success case");
+    LOG_MESSAGE();
+
+    const size_t max_len = 5;
+    g_test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
+
+    const uint8_t test_data[] = {0xAA, 0xBB, 0xCC};
+    const size_t test_len = sizeof(test_data);
+    const int push_sock = 42;
+
+    esp_err_t push_result = packet_queue_push_with_client(g_test_handle, test_data, test_len, push_sock);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "push_with_client should succeed");
+
+    uint8_t *received_buf = NULL;
+    int received_sock = -1;
+    size_t result = packet_queue_pop_with_client(g_test_handle, &received_buf, 0, &received_sock);
+
+    TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "pop_with_client should return correct packet length");
+    TEST_ASSERT_NOT_NULL_MESSAGE(received_buf, "Buffer pointer should not be NULL");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(test_data, received_buf, test_len, "Received data should match sent data");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(push_sock, received_sock, "Received socket should match pushed socket");
+
+    free(received_buf);
+}
+
+// Тестируем извлечение с NULL дескриптором очереди
+void test_packet_queue_pop_with_client_null_handle(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop_with_client - NULL handle");
+    LOG_MESSAGE();
+
+    uint8_t *received_buf = NULL;
+    int received_sock = -1;
+    size_t result = packet_queue_pop_with_client(NULL, &received_buf, 0, &received_sock);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, result, "pop_with_client should return 0 for NULL handle");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueReceive_data.called, "xQueueReceive should not be called");
+}
+
+// Тестируем извлечение с NULL указателем на client_sock — функция не должна падать
+void test_packet_queue_pop_with_client_null_client_sock(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop_with_client - NULL client_sock pointer");
+    LOG_MESSAGE();
+
+    const size_t max_len = 5;
+    g_test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
+
+    const uint8_t test_data[] = {0x01, 0x02, 0x03};
+    const size_t test_len = sizeof(test_data);
+
+    esp_err_t push_result = packet_queue_push_with_client(g_test_handle, test_data, test_len, 99);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "push_with_client should succeed");
+
+    uint8_t *received_buf = NULL;
+    // Pass NULL as client_sock: function should not crash and still return length
+    size_t result = packet_queue_pop_with_client(g_test_handle, &received_buf, 0, NULL);
+
+    TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "pop_with_client should return correct packet length even with NULL client_sock");
+    TEST_ASSERT_NOT_NULL_MESSAGE(received_buf, "Buffer pointer should not be NULL");
+
+    free(received_buf);
+}
+
+// Test pop_with_client with NULL buf_ptr — data should be freed, no crash
+void test_packet_queue_pop_with_client_null_buffer_ptr(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop_with_client - NULL buffer pointer frees data");
+    LOG_MESSAGE();
+
+    const size_t max_len = 5;
+    g_test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
+
+    const uint8_t test_data[] = {0x11, 0x22, 0x33};
+    const size_t test_len = sizeof(test_data);
+
+    esp_err_t push_result = packet_queue_push_with_client(g_test_handle, test_data, test_len, 55);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "push_with_client should succeed");
+
+    /* Pass NULL buf_ptr: implementation must free the buffer instead of leaking it */
+    int received_sock = -1;
+    size_t result = packet_queue_pop_with_client(g_test_handle, NULL, 0, &received_sock);
+
+    TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "pop_with_client should return correct packet length even with NULL buf_ptr");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(55, received_sock, "client_sock should still be populated with NULL buf_ptr");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(g_test_handle), "Queue should be empty after pop");
+}
+
+// Тестируем сохранение порядка FIFO для client_sock при двух пакетах
+void test_packet_queue_pop_with_client_preserves_sock(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop_with_client - FIFO order preserves client_sock");
+    LOG_MESSAGE();
+
+    const size_t max_len = 5;
+    g_test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
+
+    const uint8_t data1[] = {0x01, 0x02};
+    const uint8_t data2[] = {0x03, 0x04, 0x05};
+    const int sock1 = 33;
+    const int sock2 = 77;
+
+    esp_err_t r1 = packet_queue_push_with_client(g_test_handle, data1, sizeof(data1), sock1);
+    esp_err_t r2 = packet_queue_push_with_client(g_test_handle, data2, sizeof(data2), sock2);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, r1, "First push_with_client should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, r2, "Second push_with_client should succeed");
+
+    uint8_t *buf1 = NULL;
+    uint8_t *buf2 = NULL;
+    int out_sock1 = -1;
+    int out_sock2 = -1;
+
+    size_t len1 = packet_queue_pop_with_client(g_test_handle, &buf1, 0, &out_sock1);
+    size_t len2 = packet_queue_pop_with_client(g_test_handle, &buf2, 0, &out_sock2);
+
+    TEST_ASSERT_EQUAL_MESSAGE(sizeof(data1), len1, "First pop should return correct length");
+    TEST_ASSERT_EQUAL_MESSAGE(sizeof(data2), len2, "Second pop should return correct length");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sock1, out_sock1, "First pop should have sock1");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sock2, out_sock2, "Second pop should have sock2");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(data1, buf1, sizeof(data1), "First pop data should match");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(data2, buf2, sizeof(data2), "Second pop data should match");
+
+    free(buf1);
+    free(buf2);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -463,6 +689,17 @@ int main(void)
     RUN_TEST(test_packet_queue_pop_empty_queue);
     RUN_TEST(test_packet_queue_pop_null_buffer_ptr);
     RUN_TEST(test_packet_queue_pop_with_timeout);
+
+    RUN_TEST(test_packet_queue_push_with_client_success);
+    RUN_TEST(test_packet_queue_push_with_client_null_handle);
+    RUN_TEST(test_packet_queue_push_with_client_no_space);
+    RUN_TEST(test_packet_queue_push_with_client_malloc_fail);
+
+    RUN_TEST(test_packet_queue_pop_with_client_success);
+    RUN_TEST(test_packet_queue_pop_with_client_null_handle);
+    RUN_TEST(test_packet_queue_pop_with_client_null_client_sock);
+    RUN_TEST(test_packet_queue_pop_with_client_null_buffer_ptr);
+    RUN_TEST(test_packet_queue_pop_with_client_preserves_sock);
 
     return UNITY_END();
 }

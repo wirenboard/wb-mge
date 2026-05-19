@@ -21,12 +21,17 @@
 
 void bridge_reset(void);
 
+// Declared here because serial mock header is not exposed; the symbol is defined in mocks/serial.c
+extern bool mock_serial_init_should_succeed;
+void mock_serial_reset(void);
+
 static void mocks_reset(void)
 {
     mock_setting_items_reset();
     mock_modbus_tcp_reset();
     mock_transparent_tcp_reset();
     mock_rs485_stats_reset();
+    mock_serial_reset();
 }
 
 void setUp(void)
@@ -1144,6 +1149,71 @@ void test_bridge_port_check_settings_changed_initialized_changes_4(void)
     }
 }
 
+// Tests for bridge_port_init_serial_only
+
+void test_bridge_port_init_serial_only_invalid_index(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - invalid index");
+    LOG_MESSAGE();
+
+    serial_desc_t *desc = NULL;
+    esp_err_t result = bridge_port_init_serial_only(BRIDGES_COUNT, &desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_port_init_serial_only should return ESP_ERR_INVALID_ARG for index >= BRIDGES_COUNT");
+}
+
+void test_bridge_port_init_serial_only_null_out(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - NULL serial_desc_out");
+    LOG_MESSAGE();
+
+    esp_err_t result = bridge_port_init_serial_only(0, NULL);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_port_init_serial_only should return ESP_ERR_INVALID_ARG for NULL serial_desc_out");
+}
+
+void test_bridge_port_init_serial_only_read_config_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - read_serial_port_config fails");
+    LOG_MESSAGE();
+
+    /* Cause read_serial_port_config to fail by making parity read return an error */
+    mock_setting_items_calls[0].read_result.parity = ESP_FAIL;
+
+    serial_desc_t *desc = NULL;
+    esp_err_t result = bridge_port_init_serial_only(0, &desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, result,
+        "bridge_port_init_serial_only should return ESP_FAIL when read_serial_port_config fails");
+    TEST_ASSERT_NULL_MESSAGE(desc, "serial_desc_out should remain NULL when config read fails");
+}
+
+void test_bridge_port_init_serial_only_serial_init_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - serial_init returns NULL");
+    LOG_MESSAGE();
+
+    // mock_serial_init_should_succeed is false by default (set in setUp via mocks_reset)
+    serial_desc_t *desc = NULL;
+    esp_err_t result = bridge_port_init_serial_only(0, &desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, result, "bridge_port_init_serial_only should return ESP_FAIL when serial_init returns NULL");
+    TEST_ASSERT_NULL_MESSAGE(desc, "serial_desc_out should remain NULL on failure");
+}
+
+void test_bridge_port_init_serial_only_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - success");
+    LOG_MESSAGE();
+
+    mock_serial_init_should_succeed = true;
+    serial_desc_t *desc = NULL;
+    esp_err_t result = bridge_port_init_serial_only(0, &desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init_serial_only should return ESP_OK on success");
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_desc_out should point to a valid descriptor on success");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1194,6 +1264,12 @@ int main(void)
     RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_2);
     RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_3);
     RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_4);
+
+    RUN_TEST(test_bridge_port_init_serial_only_invalid_index);
+    RUN_TEST(test_bridge_port_init_serial_only_null_out);
+    RUN_TEST(test_bridge_port_init_serial_only_read_config_fail);
+    RUN_TEST(test_bridge_port_init_serial_only_serial_init_fail);
+    RUN_TEST(test_bridge_port_init_serial_only_success);
 
     return UNITY_END();
 }

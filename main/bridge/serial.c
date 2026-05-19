@@ -48,7 +48,7 @@ typedef struct {
 static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ctx_t *buffer_ctx)
 {
     switch (event.type) {
-        case UART_DATA:
+        case UART_DATA: {
             int free_space = (int)SERIAL_BUF_SIZE - (int)buffer_ctx->data_len;
             if (free_space < (int)event.size) {
                 ESP_LOGE(TAG, "UART[%d] receive buffer overflow, free: %d, expected: >= %zu", desc->port_num, free_space, event.size);
@@ -71,6 +71,7 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
                 buffer_ctx->data_len = 0;
             }
             break;
+        }
         case UART_FIFO_OVF:
             ESP_LOGW(TAG, "UART[%d] HW fifo overflow", desc->port_num);
             uart_flush_input(desc->port_num);

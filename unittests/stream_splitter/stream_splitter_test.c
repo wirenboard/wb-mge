@@ -501,6 +501,103 @@ void test_tc17_fc06_echo_plus_fm_event_config(void)
     TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
 }
 
+/* TC-18: FC10 request (13 bytes) + FC10 response (8 bytes) = 21 bytes.
+ * FC10 Write Multiple Registers:
+ *   request: slave=0x01, FC=0x10, start=0x0001, count=0x0002, byte_count=4,
+ *            data={0x00,0x01,0x00,0x02}, CRC=0xE2 0x62 → 13 bytes total.
+ *   response: slave=0x01, FC=0x10, start=0x0001, count=0x0002, CRC=0x10 0x08 → 8 bytes. */
+void test_tc18_fc10_request_plus_fc10_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-18: FC10 request (13b) + FC10 response (8b) = 21 bytes");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* FC10 request: 7 header bytes + 4 data bytes + 2 CRC = 13 bytes */
+        0x01, 0x10, 0x00, 0x01, 0x00, 0x02, 0x04,
+        0x00, 0x01, 0x00, 0x02,
+        0xE2, 0x62,
+        /* FC10 response: 6 bytes + 2 CRC = 8 bytes */
+        0x01, 0x10, 0x00, 0x01, 0x00, 0x02, 0x10, 0x08
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "TC-18: expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(13, frames[0].len, "TC-18: frame[0] len must be 13");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-18: frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "TC-18: frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "TC-18: frame[1] CRC must be valid");
+}
+
+/* TC-19: FC0F request (10 bytes) + FC0F response (8 bytes) = 18 bytes.
+ * FC0F Write Multiple Coils:
+ *   request: slave=0x01, FC=0x0F, start=0x0000, count=0x0008, byte_count=1,
+ *            data={0xFF}, CRC=0xBE 0xD5 → 10 bytes total.
+ *   response: slave=0x01, FC=0x0F, start=0x0000, count=0x0008, CRC=0x54 0x0D → 8 bytes. */
+void test_tc19_fc0f_request_plus_fc0f_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-19: FC0F request (10b) + FC0F response (8b) = 18 bytes");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        /* FC0F request: 7 header bytes + 1 data byte + 2 CRC = 10 bytes */
+        0x01, 0x0F, 0x00, 0x00, 0x00, 0x08, 0x01,
+        0xFF,
+        0xBE, 0xD5,
+        /* FC0F response: 6 bytes + 2 CRC = 8 bytes */
+        0x01, 0x0F, 0x00, 0x00, 0x00, 0x08, 0x54, 0x0D
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "TC-19: expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(10, frames[0].len, "TC-19: frame[0] len must be 10");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-19: frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "TC-19: frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "TC-19: frame[1] CRC must be valid");
+}
+
+/* TC-20: STREAM_SPLITTER_MAX_FRAMES limit — 16 consecutive FC06 frames (128 bytes total).
+ * Each frame: 83 06 00 72 00 01 F6 33 (8 bytes, valid CRC).
+ * The splitter must return n <= STREAM_SPLITTER_MAX_FRAMES without crashing.
+ * Note: the defensive tail path emits the last 8 bytes (frame 16) with crc_valid=false
+ * because the loop exits at STREAM_SPLITTER_MAX_FRAMES-1 to reserve the tail slot.
+ * So only the first n-1 frames are guaranteed to have valid CRC. */
+void test_tc20_stream_splitter_max_frames_limit(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-20: 16 FC06 frames (128 bytes) — must not exceed STREAM_SPLITTER_MAX_FRAMES");
+    LOG_MESSAGE();
+
+    /* Standard FC06 frame with valid CRC: 83 06 00 72 00 01 F6 33 */
+    static const uint8_t fc06_frame[] = {0x83, 0x06, 0x00, 0x72, 0x00, 0x01, 0xF6, 0x33};
+    uint8_t buf[STREAM_SPLITTER_MAX_FRAMES * 8];
+
+    for (int i = 0; i < STREAM_SPLITTER_MAX_FRAMES; i++) {
+        memcpy(&buf[i * 8], fc06_frame, 8);
+    }
+
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    /* Must not exceed the maximum and must produce at least one frame */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(STREAM_SPLITTER_MAX_FRAMES, n,
+        "TC-20: exactly STREAM_SPLITTER_MAX_FRAMES frames expected at boundary");
+    /* All frames except the last defensive-tail slot must have valid CRC */
+    for (int i = 0; i < n - 1; i++) {
+        TEST_ASSERT_TRUE_MESSAGE(frames[i].crc_valid,
+            "TC-20: all frames except the last must have valid CRC");
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -523,6 +620,9 @@ int main(void)
     RUN_TEST(test_tc15_fc04_response_plus_fc04_request_with_context);
     RUN_TEST(test_tc16_fc03_response_plus_fc04_request_with_context);
     RUN_TEST(test_tc17_fc06_echo_plus_fm_event_config);
+    RUN_TEST(test_tc18_fc10_request_plus_fc10_response);
+    RUN_TEST(test_tc19_fc0f_request_plus_fc0f_response);
+    RUN_TEST(test_tc20_stream_splitter_max_frames_limit);
 
     return UNITY_END();
 }

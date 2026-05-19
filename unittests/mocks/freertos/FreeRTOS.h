@@ -17,3 +17,10 @@ typedef uint32_t TickType_t;
 
 typedef int BaseType_t;
 typedef unsigned UBaseType_t;
+
+/* FreeRTOS tick rate — keep in sync with task.c mock */
+#ifndef CONFIG_FREERTOS_HZ
+#define CONFIG_FREERTOS_HZ      500u
+#endif
+
+#define pdTICKS_TO_MS(ticks)    ( (uint32_t)(ticks) * 1000u / CONFIG_FREERTOS_HZ )
