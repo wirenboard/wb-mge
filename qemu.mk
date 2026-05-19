@@ -2,6 +2,24 @@
 # QEMU targets
 #######################################
 
+# Helper: find QEMU binary path. Sets $$QEMU_BIN variable in shell context.
+# Used by qemu-web, qemu-bin-path, and Python test harness (via make -s qemu-bin-path).
+define find_qemu_bin
+	QEMU_BIN=""; \
+	for ESPRESSIF_TOOLS in "$(HOME)/.espressif/tools/tools" "$(HOME)/.espressif/tools"; do \
+	    if [ -d "$$ESPRESSIF_TOOLS/qemu-xtensa" ]; then \
+	        QEMU_VERSION_DIR=$$(find "$$ESPRESSIF_TOOLS/qemu-xtensa" -name "esp_develop_*" -type d | sort -V | tail -1); \
+	        if [ -f "$$QEMU_VERSION_DIR/qemu/bin/qemu-system-xtensa" ]; then \
+	            QEMU_BIN="$$QEMU_VERSION_DIR/qemu/bin/qemu-system-xtensa"; \
+	            break; \
+	        fi; \
+	    fi; \
+	done; \
+	if [ -z "$$QEMU_BIN" ] && command -v qemu-system-xtensa >/dev/null 2>&1; then \
+	    QEMU_BIN="qemu-system-xtensa"; \
+	fi
+endef
+
 # QEMU targets
 build-qemu: build-frontend build-idf-project-qemu
 
@@ -48,24 +66,7 @@ qemu-web: qemu-flash-image qemu-efuse-image
 	    pkill -f qemu-system-xtensa 2>/dev/null || true; \
 	    pkill -f "idf.py qemu" 2>/dev/null || true; \
 	    sleep 1; \
-	    QEMU_BIN=""; \
-	    for ESPRESSIF_TOOLS in "$(HOME)/.espressif/tools/tools" "$(HOME)/.espressif/tools"; do \
-	        if [ -d "$$ESPRESSIF_TOOLS/qemu-xtensa" ]; then \
-	            QEMU_VERSION_DIR=$$(find "$$ESPRESSIF_TOOLS/qemu-xtensa" -name "esp_develop_*" -type d | sort -V | tail -1); \
-	            if [ -f "$$QEMU_VERSION_DIR/qemu/bin/qemu-system-xtensa" ]; then \
-	                QEMU_BIN="$$QEMU_VERSION_DIR/qemu/bin/qemu-system-xtensa"; \
-	                break; \
-	            fi; \
-	        fi; \
-	    done; \
-	    if [ -z "$$QEMU_BIN" ] && [ -f "$(IDF_PATH)/tools/qemu/esp-xtensa/bin/qemu-system-xtensa" ]; then \
-	        QEMU_BIN="$(IDF_PATH)/tools/qemu/esp-xtensa/bin/qemu-system-xtensa"; \
-	    elif [ -z "$$QEMU_BIN" ] && [ -f "$(IDF_PATH)/tools/qemu/esp-develop/bin/qemu-system-xtensa" ]; then \
-	        QEMU_BIN="$(IDF_PATH)/tools/qemu/esp-develop/bin/qemu-system-xtensa"; \
-	    fi; \
-	    if [ -z "$$QEMU_BIN" ] && command -v qemu-system-xtensa >/dev/null 2>&1; then \
-	        QEMU_BIN="qemu-system-xtensa"; \
-	    fi; \
+	    $(find_qemu_bin); \
 	    if [ -z "$$QEMU_BIN" ]; then \
 	        echo "QEMU binary not found. Using idf.py method instead..."; \
 	        echo "Note: This method will not have port forwarding built-in"; \
@@ -91,6 +92,20 @@ qemu-web: qemu-flash-image qemu-efuse-image
 	    fi; \
 	}
 
+qemu-bin-path:
+	@{ \
+	    $(find_qemu_bin); \
+	    if [ -z "$$QEMU_BIN" ]; then \
+	        echo "ERROR: QEMU binary not found" >&2; \
+	        exit 1; \
+	    fi; \
+	    echo "$$QEMU_BIN"; \
+	}
+
+# Run API tests against QEMU
+qemu-test: qemu-flash-image qemu-efuse-image
+	cd api_tests && .venv/bin/python -m pytest --qemu --qemu-skip-build $(PYTEST_ARGS)
+
 # Help target for QEMU
 qemu-help:
 	@echo "QEMU Targets:"
@@ -100,11 +115,15 @@ qemu-help:
 	@echo "  qemu-run          - Run in QEMU (basic mode, no port forwarding)"
 	@echo "  qemu-web          - Run in QEMU with web access (localhost:8080)"
 	@echo "  qemu-monitor      - Run QEMU with monitor only"
+	@echo "  qemu-bin-path     - Print path to QEMU binary"
+	@echo "  qemu-test         - Build, run QEMU, run API tests, stop QEMU"
 	@echo ""
 	@echo "Quick start: make qemu-web"
+	@echo "Run tests:   make qemu-test"
+	@echo "One test:    make qemu-test PYTEST_ARGS=\"-k test_auth\""
 
 clean-qemu:
 	$(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
 	rm -rf build sdkconfig
 
-.PHONY: build-qemu build-idf-project-qemu qemu-flash-image qemu-efuse-image qemu-monitor qemu-run qemu-web qemu-help clean-qemu
+.PHONY: build-qemu build-idf-project-qemu qemu-flash-image qemu-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help clean-qemu
