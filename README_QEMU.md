@@ -8,7 +8,7 @@ https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/tools/qem
 Run the WB-MGE firmware in QEMU with web access:
 
 ```bash
-./run_qemu_with_web.sh
+make qemu-web
 ```
 
 **Web Interface:** http://localhost:8080
@@ -16,12 +16,13 @@ Run the WB-MGE firmware in QEMU with web access:
 
 ## 📋 What It Does
 
-The script automatically:
-1. Loads ESP-IDF environment
-2. Builds the project with QEMU configuration
-3. Generates QEMU flash image
-4. Kills any existing QEMU processes
-5. Starts QEMU with port forwarding (localhost:8080 → ESP32:80)
+**Prerequisite:** ESP-IDF environment must be loaded beforehand (e.g. `source ~/.espressif/tools/activate_idf_v5.4.sh`).
+
+The command automatically:
+1. Builds the project with QEMU configuration
+2. Generates QEMU flash image
+3. Kills any existing QEMU processes
+4. Starts QEMU with port forwarding (localhost:8080 → ESP32:80)
 
 ## 🔧 Key Implementation Details
 
