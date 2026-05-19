@@ -72,52 +72,75 @@ def test_cache_endpoints(api):
     print(f"✓ /cache/json works, entries count: {len(json_data['d'])}")
 
 
-@pytest.mark.order(21)
+@pytest.mark.timeout(120)
+@pytest.mark.order(31)
 def test_cache_json_fields(api):
     """Test /cache/json per-entry field validation and consistency with /cache/status"""
-    status_resp = api.get_cache_status()
-    assert status_resp.status_code == 200
-    status = status_resp.json()
-    entries_count = status.get("entries", 0)
+    original_port_mode = None
 
-    json_resp = api.get_cache_json()
-    assert json_resp.status_code == 200
-    json_data = json_resp.json()
-    assert "d" in json_data, "Field 'd' missing from /cache/json"
-    assert isinstance(json_data["d"], list), "Field 'd' must be an array"
+    try:
+        info_resp = api.get_info()
+        assert info_resp.status_code == 200
+        original_port_mode = info_resp.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-    entries = json_data["d"]
+        r = api.set_port_mode(1, "cache_bus")
+        assert r.status_code == 200, f"Failed to set cache_bus mode: {r.status_code}"
 
-    delta = abs(len(entries) - entries_count)
-    assert delta <= 1, \
-        f"entries count mismatch: /cache/status says {entries_count}, /cache/json has {len(entries)} (delta={delta})"
-    print(f"✓ Entry count consistent: /cache/status={entries_count}, /cache/json={len(entries)}")
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            time.sleep(1)
+            st = api.get_cache_status()
+            if st.status_code == 200 and st.json().get("entries", 0) > 0:
+                break
 
-    assert entries, "Cache is empty — expected at least one entry in /cache/json"
+        status_resp = api.get_cache_status()
+        assert status_resp.status_code == 200
+        status = status_resp.json()
+        entries_count = status.get("entries", 0)
 
-    valid_types = {"h", "i", "c", "d"}
-    for i, entry in enumerate(entries):
-        assert "s" in entry, f"Entry[{i}] missing field 's'"
-        assert isinstance(entry["s"], int), f"Entry[{i}]['s'] must be int"
-        assert 1 <= entry["s"] <= 247, f"Entry[{i}]['s']={entry['s']} out of range 1-247"
+        json_resp = api.get_cache_json()
+        assert json_resp.status_code == 200
+        json_data = json_resp.json()
+        assert "d" in json_data, "Field 'd' missing from /cache/json"
+        assert isinstance(json_data["d"], list), "Field 'd' must be an array"
 
-        assert "t" in entry, f"Entry[{i}] missing field 't'"
-        assert entry["t"] in valid_types, \
-            f"Entry[{i}]['t']='{entry['t']}' not in valid types {valid_types}"
+        entries = json_data["d"]
 
-        assert "a" in entry, f"Entry[{i}] missing field 'a'"
-        assert isinstance(entry["a"], int), f"Entry[{i}]['a'] must be int"
-        assert 0 <= entry["a"] <= 65535, f"Entry[{i}]['a']={entry['a']} out of range 0-65535"
+        delta = abs(len(entries) - entries_count)
+        assert delta <= 1, \
+            f"entries count mismatch: /cache/status says {entries_count}, /cache/json has {len(entries)} (delta={delta})"
+        print(f"✓ Entry count consistent: /cache/status={entries_count}, /cache/json={len(entries)}")
 
-        assert "v" in entry, f"Entry[{i}] missing field 'v'"
-        assert isinstance(entry["v"], int), f"Entry[{i}]['v'] must be int"
-        assert 0 <= entry["v"] <= 65535, f"Entry[{i}]['v']={entry['v']} out of range 0-65535"
+        assert entries, "Cache is empty — expected at least one entry in /cache/json"
 
-        assert "age" in entry, f"Entry[{i}] missing field 'age'"
-        assert isinstance(entry["age"], int), f"Entry[{i}]['age'] must be int"
-        assert 0 <= entry["age"] <= 65535, f"Entry[{i}]['age']={entry['age']} out of range 0-65535"
+        valid_types = {"h", "i", "c", "d"}
+        for i, entry in enumerate(entries):
+            assert "s" in entry, f"Entry[{i}] missing field 's'"
+            assert isinstance(entry["s"], int), f"Entry[{i}]['s'] must be int"
+            assert 1 <= entry["s"] <= 247, f"Entry[{i}]['s']={entry['s']} out of range 1-247"
 
-    print(f"✓ All {len(entries)} cache entries have valid fields")
+            assert "t" in entry, f"Entry[{i}] missing field 't'"
+            assert entry["t"] in valid_types, \
+                f"Entry[{i}]['t']='{entry['t']}' not in valid types {valid_types}"
+
+            assert "a" in entry, f"Entry[{i}] missing field 'a'"
+            assert isinstance(entry["a"], int), f"Entry[{i}]['a'] must be int"
+            assert 0 <= entry["a"] <= 65535, f"Entry[{i}]['a']={entry['a']} out of range 0-65535"
+
+            assert "v" in entry, f"Entry[{i}] missing field 'v'"
+            assert isinstance(entry["v"], int), f"Entry[{i}]['v'] must be int"
+            assert 0 <= entry["v"] <= 65535, f"Entry[{i}]['v']={entry['v']} out of range 0-65535"
+
+            assert "age" in entry, f"Entry[{i}] missing field 'age'"
+            assert isinstance(entry["age"], int), f"Entry[{i}]['age'] must be int"
+            assert 0 <= entry["age"] <= 65535, f"Entry[{i}]['age']={entry['age']} out of range 0-65535"
+
+        print(f"✓ All {len(entries)} cache entries have valid fields")
+
+    finally:
+        if original_port_mode is not None:
+            api.set_port_mode(1, original_port_mode)
+            print(f"✓ Port 1 mode restored to {original_port_mode}")
 
 
 @pytest.mark.order(22)

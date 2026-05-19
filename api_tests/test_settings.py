@@ -262,8 +262,11 @@ def test_settings(api):
         }
 
         response = api.update_settings(invalid_settings)
-        assert response.status_code == 400, \
-            f"Invalid settings expected 400, got {response.status_code}"
+        assert response.status_code == 200, \
+            f"Invalid settings expected 200, got {response.status_code}"
+        result = response.json()
+        assert result.get("success") == False, \
+            f"Invalid settings must return success=false: {result}"
         print("✓ Invalid settings handling works")
 
         response = api.get_settings()
@@ -346,7 +349,7 @@ def test_validation_patterns(api):
         print("✓ Original settings restored")
 
 
-@pytest.mark.order(24)
+@pytest.mark.order(21)
 def test_settings_partial_update(api):
     """Test POST /settings with sparse payload — must preserve unset fields"""
     response = api.get_settings()

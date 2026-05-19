@@ -24,12 +24,12 @@ def test_cmd_extended(api):
         print("✓ Settings readable after set_default_settings")
 
         response = api.session.post(f"{api.base_url}/cmd", json={"cmd": "shutdown"}, timeout=10)
-        assert response.status_code == 200, \
-            f"POST /cmd 'shutdown' expected 200, got {response.status_code}"
+        assert response.status_code == 400, \
+            f"POST /cmd 'shutdown' expected 400, got {response.status_code}"
         data = response.json()
         assert data.get("success") == False, \
             f"Server must not accept unknown command 'shutdown' as successful: {data}"
-        print("✓ Unknown command 'shutdown' rejected with success=false")
+        print("✓ Unknown command 'shutdown' rejected with 400 and success=false")
 
         response = api.session.post(f"{api.base_url}/cmd", json={}, timeout=10)
         assert response.status_code == 400, \

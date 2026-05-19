@@ -82,8 +82,11 @@ def test_modbus_validation_limits(api):
         }
 
         response = api.update_settings(invalid_settings)
-        assert response.status_code == 400, \
-            f"Invalid port 0 expected 400, got {response.status_code}"
+        assert response.status_code == 200, \
+            f"Invalid port 0 expected 200, got {response.status_code}"
+        result = response.json()
+        assert result.get("success") == False, \
+            f"Invalid port 0 must return success=false: {result}"
         print("✓ Invalid port 0 is handled")
 
         invalid_settings = {
@@ -96,8 +99,11 @@ def test_modbus_validation_limits(api):
         }
 
         response = api.update_settings(invalid_settings)
-        assert response.status_code == 400, \
-            f"Invalid port 70000 expected 400, got {response.status_code}"
+        assert response.status_code == 200, \
+            f"Invalid port 70000 expected 200, got {response.status_code}"
+        result = response.json()
+        assert result.get("success") == False, \
+            f"Invalid port 70000 must return success=false: {result}"
         print("✓ Port limit exceeding is handled")
     finally:
         # Restore baseline settings to prevent state leakage if invalid data slips through validation

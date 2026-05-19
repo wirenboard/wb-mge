@@ -631,6 +631,7 @@ def test_sniffer_ws_sender_alternates_master_slave(api):
 # Group 2: Stop command and verification
 # ---------------------------------------------------------------------------
 
+@pytest.mark.timeout(60)
 @pytest.mark.order(42)
 def test_sniffer_ws_stop_command_stops_stream(api):
     """After sending stop, no more packets must arrive and /sniffer/status must reflect false."""
