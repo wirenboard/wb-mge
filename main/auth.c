@@ -11,7 +11,7 @@
 
 
 #define MAX_SESSIONS            10
-#define COOKIE_MAX_LEN          (11 + 10 + 1)   // "session_id=" + uint32_max + '\0'
+#define COOKIE_MAX_LEN          (11 + 10 + 40 + 1)   // "session_id=" + uint32_max + "; HttpOnly; SameSite=Strict; Path=/" + '\0'
 
 
 typedef struct {
@@ -169,7 +169,7 @@ static uint32_t authorization(char *login_req, char *pass_req)
 
 static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, char *cookie_header)
 {
-    snprintf(cookie_header, COOKIE_MAX_LEN, "session_id=%lu", session_id);
+    snprintf(cookie_header, COOKIE_MAX_LEN, "session_id=%lu; HttpOnly; SameSite=Strict; Path=/", session_id);
     ESP_LOGD(TAG, "Cookie header: %s", cookie_header);
     if (httpd_resp_set_hdr(req, "Set-Cookie", cookie_header) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set cookie header");

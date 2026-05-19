@@ -3,6 +3,8 @@
 import pytest
 import requests
 
+from api_client import WBMGEAPI
+
 
 @pytest.mark.order(1)
 def test_unauthorized_access(api):
@@ -68,6 +70,37 @@ def test_auth(api):
     data = response.json()
     assert data["auth"] == True
     print("✓ Correct authorization accepted")
+
+
+@pytest.mark.order(3)
+def test_cookie_security_attributes(api):
+    """Cookie must have HttpOnly, SameSite=Strict and Path=/ attributes"""
+    fresh_session = requests.Session()
+    response = fresh_session.post(f"{api.base_url}/auth", json={
+        "login": WBMGEAPI.DEFAULT_LOGIN, "pass": WBMGEAPI.DEFAULT_PASSWORD
+    }, timeout=10)
+
+    assert response.status_code == 200
+    assert response.json()["auth"] == True
+
+    set_cookie = response.headers.get("Set-Cookie", "")
+    cookie_attrs = [attr.strip() for attr in set_cookie.split(";")]
+    assert any(a.startswith("session_id=") for a in cookie_attrs), \
+        "session_id missing from Set-Cookie"
+    assert "HttpOnly" in cookie_attrs, "HttpOnly flag missing"
+    assert "SameSite=Strict" in cookie_attrs, "SameSite=Strict missing"
+    assert "Path=/" in cookie_attrs, "Path=/ missing"
+    assert "Secure" not in cookie_attrs, \
+        "Secure must not be set (HTTP-only device)"
+    print("✓ Cookie has correct security attributes")
+
+    failed_response = fresh_session.post(f"{api.base_url}/auth", json={
+        "login": "wrong", "pass": "wrong"
+    }, timeout=10)
+    failed_set_cookie = failed_response.headers.get("Set-Cookie", "")
+    assert "session_id=" not in failed_set_cookie, \
+        "Set-Cookie must not be sent on failed login"
+    print("✓ No cookie set on failed login")
 
 
 @pytest.mark.order(6)

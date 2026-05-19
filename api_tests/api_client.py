@@ -4,6 +4,9 @@ import requests
 
 
 class WBMGEAPI:
+    DEFAULT_LOGIN = "admin"
+    DEFAULT_PASSWORD = "admin"
+
     def __init__(self, base_url="http://localhost:8080"):
         self.base_url = base_url
         self.session = requests.Session()
@@ -41,7 +44,7 @@ class WBMGEAPI:
         self.session.verify = False
         self.session.cookies.update(old_cookies)
 
-    def auth(self, login="admin", password="admin"):
+    def auth(self, login=DEFAULT_LOGIN, password=DEFAULT_PASSWORD):
         """Authorization"""
         try:
             response = self.session.post(f"{self.base_url}/auth", json={
