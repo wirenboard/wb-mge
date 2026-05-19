@@ -4,6 +4,7 @@ import time
 import pytest
 
 
+@pytest.mark.timeout(120)
 @pytest.mark.order(35)
 def test_reboot_command(api):
     """Test POST /cmd reboot — verify device reboots and uptime resets"""
@@ -39,9 +40,9 @@ def test_reboot_command(api):
 
     print("  Waiting for device to reboot...")
     try:
-        api.wait_for_ready(timeout=60)
+        api.wait_for_ready(timeout=30)
     except TimeoutError:
-        pytest.fail("Device did not come back within 60 seconds after reboot command")
+        pytest.fail("Device did not come back within 30 seconds after reboot command")
     print("✓ Device came back online and re-authenticated successfully")
 
     response = api.get_uptime()

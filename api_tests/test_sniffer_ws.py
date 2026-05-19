@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 from sniffer_helpers import _ws_connect, _collect_packets
 
 
+@pytest.mark.timeout(120)
 @pytest.mark.order(26)
 def test_sniffer_websocket(api):
     """Sniffer WebSocket: collect packets, verify CRC fields, check resilience after bad-CRC"""

@@ -77,19 +77,19 @@ class WBMGEAPI:
 
     def get_ap_clients(self):
         """Get list of AP clients"""
-        return self.session.get(f"{self.base_url}/ap_clients")
+        return self.session.get(f"{self.base_url}/ap_clients", timeout=10)
 
     def get_static_file(self, path):
         """Get static file"""
-        return self.session.get(f"{self.base_url}/{path}")
+        return self.session.get(f"{self.base_url}/{path}", timeout=10)
 
     def get_session(self):
         """Check session status"""
-        return self.session.get(f"{self.base_url}/session")
+        return self.session.get(f"{self.base_url}/session", timeout=10)
 
     def logout(self):
         """Logout"""
-        return self.session.post(f"{self.base_url}/logout")
+        return self.session.post(f"{self.base_url}/logout", timeout=10)
 
     def get_uptime(self):
         """Get device uptime"""

@@ -4,3 +4,4 @@ urllib3>=1.26.0
 websocket-client>=1.6.0
 pytest>=7.0.0
 pytest-order>=1.0.0
+pytest-timeout>=2.2.0

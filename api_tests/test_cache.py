@@ -235,6 +235,7 @@ def test_cache_value_timeout_setting(api):
             raise AssertionError(f"Failed to restore cache_value_timeout_s: {exc}")
 
 
+@pytest.mark.timeout(120)
 @pytest.mark.order(30)
 def test_cache_multimaster(api):
     """Test cache Modbus TCP multi-master server"""
