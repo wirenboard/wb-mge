@@ -792,6 +792,31 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
             except json.JSONDecodeError:
                 pass
 
+        # Reconnect with a fresh WebSocket so residual state doesn't interfere
+        stop_ping.set()
+        try:
+            ws.close()
+        except Exception:
+            pass
+        time.sleep(1)
+
+        ws = websocket.WebSocket()
+        ws.settimeout(15)
+        ws.connect(ws_url, cookie=cookies)
+
+        stop_ping = threading.Event()
+
+        def _ping2():
+            while not stop_ping.is_set():
+                try:
+                    ws.ping()
+                except Exception:
+                    break
+                time.sleep(0.5)
+
+        ping_thread = threading.Thread(target=_ping2, daemon=True)
+        ping_thread.start()
+
         # Now send a valid start and expect packets
         ws.send(json.dumps({"cmd": "start", "port": 1}))
         ws.settimeout(5)
