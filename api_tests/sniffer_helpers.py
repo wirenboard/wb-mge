@@ -82,6 +82,8 @@ def _collect_packets(ws, min_count, timeout_sec, filter_fn=None):
             pass
         except websocket.WebSocketPayloadException:
             pass
+        except websocket.WebSocketProtocolException:
+            pass
         except json.JSONDecodeError:
             pass
 

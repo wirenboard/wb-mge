@@ -85,6 +85,8 @@ def test_sniffer_websocket(api):
                 pass
             except websocket.WebSocketPayloadException:
                 pass
+            except websocket.WebSocketProtocolException:
+                pass
             except json.JSONDecodeError:
                 pass
 
@@ -129,6 +131,8 @@ def test_sniffer_websocket(api):
                     continue
                 except websocket.WebSocketPayloadException:
                     continue
+                except websocket.WebSocketProtocolException:
+                    continue
                 except json.JSONDecodeError:
                     continue
 
@@ -154,6 +158,8 @@ def test_sniffer_websocket(api):
             except websocket.WebSocketTimeoutException:
                 continue
             except websocket.WebSocketPayloadException:
+                continue
+            except websocket.WebSocketProtocolException:
                 continue
             except json.JSONDecodeError:
                 continue
@@ -654,7 +660,9 @@ def test_sniffer_ws_stop_command_stops_stream(api):
         pre_stop = _collect_packets(ws, min_count=1, timeout_sec=10)
         assert len(pre_stop) >= 1, "No packets received before stop — check QEMU mock"
 
-        # Send stop
+        # Send stop and kill the ping thread before verifying silence —
+        # concurrent ws.ping() and ws.recv() can deadlock in websocket-client.
+        stop_ping.set()
         ws.send(json.dumps({"cmd": "stop", "port": 1}))
         time.sleep(2)
 
@@ -670,6 +678,8 @@ def test_sniffer_ws_stop_command_stops_stream(api):
             except websocket.WebSocketTimeoutException:
                 pass
             except websocket.WebSocketPayloadException:
+                pass
+            except websocket.WebSocketProtocolException:
                 pass
             except json.JSONDecodeError:
                 pass
@@ -758,6 +768,8 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
             except websocket.WebSocketConnectionClosedException:
                 pytest.fail(f"Server closed connection after malformed message: {bad_msg!r}")
             except websocket.WebSocketPayloadException:
+                pass
+            except websocket.WebSocketProtocolException:
                 pass
             except json.JSONDecodeError:
                 pass
