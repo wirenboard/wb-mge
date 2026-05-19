@@ -172,7 +172,9 @@ esp_err_t transparent_tcp_init_port(unsigned index, serial_config_t *config,
     *serial_desc = serial_init(config, process_data_from_serial);
 
     if (!*serial_desc) {
-        ESP_LOGE(TAG, "Port[%u]: Failed to initialize serial port", index + 1);
+        ESP_LOGE(TAG, "Port[%u]: Failed to initialize serial port, cleaning up TCP", index + 1);
+        tcp_deinit_func(*tcp_desc);
+        *tcp_desc = NULL;  // prevent caller from holding a dangling pointer
         return ESP_FAIL;
     }
 
@@ -199,10 +201,16 @@ esp_err_t transparent_tcp_deinit_port(unsigned index)
     ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
 
     transp_tcp_task_ctx_t* ctx = &transp_tcp_task_ctx[index];
-    ctx->initialized = 0;
+    if (!ctx->initialized) {
+        ESP_LOGW(TAG, "Port[%u]: Not initialized, skipping deinit", index + 1);
+        return ESP_OK;
+    }
+    ctx->initialized = 0;  // clear before calling deinit to prevent re-entrancy
 
     ctx->tcp_deinit_func(ctx->tcp_desc);
     serial_deinit(ctx->serial_desc);
+    ctx->tcp_desc    = NULL;    // prevent stale pointer from matching in find_ctx_by_tcp_desc()
+    ctx->serial_desc = NULL;    // prevent stale pointer from matching in find_ctx_by_serial_desc()
 
     ESP_LOGD(TAG, "Port[%u]: Deinitialized", index + 1);
     return ESP_OK;
