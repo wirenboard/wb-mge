@@ -1484,6 +1484,64 @@ void test_serial_deinit_task_not_finished(void)
     verify_malloc_tracking(1, 0);
 }
 
+// Test serial_set_rx_timeout — success path
+void test_serial_set_rx_timeout_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_rx_timeout - success path");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    /* Reset the mock counter so only the set_rx_timeout call is counted */
+    mock_uart_set_rx_timeout_data.called = 0;
+    mock_uart_set_rx_timeout_data.result = ESP_OK;
+
+    esp_err_t err = serial_set_rx_timeout(desc, 11);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_rx_timeout should return ESP_OK");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_rx_timeout_data.called, "uart_set_rx_timeout should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_NUM_1, mock_uart_set_rx_timeout_data.uart_num, "uart_set_rx_timeout called with wrong uart_num");
+    TEST_ASSERT_EQUAL_MESSAGE(11, mock_uart_set_rx_timeout_data.rx_timeout, "uart_set_rx_timeout called with wrong timeout value");
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_FINISHED;
+    serial_deinit(desc);
+    verify_malloc_tracking(1, 1);
+}
+
+// Test serial_set_rx_timeout — failure path
+void test_serial_set_rx_timeout_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_rx_timeout - failure path");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    /* Reset the mock counter and configure it to return an error */
+    mock_uart_set_rx_timeout_data.called = 0;
+    mock_uart_set_rx_timeout_data.result = ESP_FAIL;
+
+    esp_err_t err = serial_set_rx_timeout(desc, 11);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, err, "serial_set_rx_timeout should return ESP_FAIL on uart error");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_rx_timeout_data.called, "uart_set_rx_timeout should be called once");
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_FINISHED;
+    serial_deinit(desc);
+    verify_malloc_tracking(1, 1);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1527,6 +1585,9 @@ int main(void)
     RUN_TEST(test_serial_deinit_already_deinitialized_event_group);
     RUN_TEST(test_serial_deinit_success);
     RUN_TEST(test_serial_deinit_task_not_finished);
+
+    RUN_TEST(test_serial_set_rx_timeout_success);
+    RUN_TEST(test_serial_set_rx_timeout_failure);
 
     return UNITY_END();
 }

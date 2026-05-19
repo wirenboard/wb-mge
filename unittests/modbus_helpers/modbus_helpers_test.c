@@ -411,6 +411,85 @@ void test_modbus_tcp_from_rtu_valid(void)
     TEST_ASSERT_EQUAL_HEX8(valid_rtu_response[8], out[14]);
 }
 
+// Test modbus_rtu_check_response with exception response that matches the request function
+void test_modbus_rtu_check_response_exception_response_valid(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_response - exception response valid (FC|0x80 accepted)");
+    LOG_MESSAGE();
+
+    /* Build a copy of valid_rtu_response with FC|0x80 and recomputed CRC */
+    uint8_t buf[valid_rtu_response_len];
+    memcpy(buf, valid_rtu_response, valid_rtu_response_len);
+
+    /* Set the exception bit on the function code */
+    buf[1] |= MODBUS_EXCEPTION_FLAG;
+
+    /* Recompute CRC over bytes 0..len-3 (everything except the existing CRC) */
+    uint16_t new_crc = modbus_crc16(buf, valid_rtu_response_len - MODBUS_RTU_CRC16_LEN);
+    buf[valid_rtu_response_len - 2] = (uint8_t)(new_crc & 0xFF);
+    buf[valid_rtu_response_len - 1] = (uint8_t)((new_crc >> 8) & 0xFF);
+
+    /* Request with slave_id from buf[0] and original function code 0x03 */
+    mb_rtu_header_t req = { .slave_id = buf[0], .function = 0x03 };
+
+    TEST_ASSERT_EQUAL(ESP_OK, modbus_rtu_check_response(buf, valid_rtu_response_len, &req));
+}
+
+// Test modbus_rtu_check_response with exception response whose function mismatches the request
+void test_modbus_rtu_check_response_exception_response_func_mismatch(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_check_response - exception response function mismatch");
+    LOG_MESSAGE();
+
+    /* Build exception response: FC = 0x83 (0x03 | 0x80), but request has function 0x04 */
+    uint8_t buf[valid_rtu_response_len];
+    memcpy(buf, valid_rtu_response, valid_rtu_response_len);
+
+    buf[1] |= MODBUS_EXCEPTION_FLAG; /* buf[1] becomes 0x83 */
+
+    uint16_t new_crc = modbus_crc16(buf, valid_rtu_response_len - MODBUS_RTU_CRC16_LEN);
+    buf[valid_rtu_response_len - 2] = (uint8_t)(new_crc & 0xFF);
+    buf[valid_rtu_response_len - 1] = (uint8_t)((new_crc >> 8) & 0xFF);
+
+    /* Request expects function 0x04 — mismatch against 0x83 & ~0x80 = 0x03 */
+    mb_rtu_header_t req = { .slave_id = buf[0], .function = 0x04 };
+
+    TEST_ASSERT_EQUAL(ESP_FAIL, modbus_rtu_check_response(buf, valid_rtu_response_len, &req));
+}
+
+// Test RTU -> TCP -> RTU round-trip conversion
+void test_modbus_rtu_tcp_round_trip(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test RTU <-> TCP round-trip conversion");
+    LOG_MESSAGE();
+
+    /* Step 1: RTU -> TCP */
+    uint8_t tcp_buf[32];
+    const size_t tcp_len = modbus_tcp_from_rtu(
+        MODBUS_TCP_TRANSACTION_ID, valid_rtu_response, valid_rtu_response_len,
+        tcp_buf, sizeof(tcp_buf)
+    );
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, tcp_len, "modbus_tcp_from_rtu should produce non-zero length");
+
+    /* Step 2: TCP -> RTU */
+    uint8_t rtu_buf[32];
+    const size_t rtu_len = modbus_rtu_from_tcp(tcp_buf, rtu_buf, sizeof(rtu_buf));
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, rtu_len, "modbus_rtu_from_tcp should produce non-zero length");
+
+    /* Step 3: Verify byte-for-byte match with original RTU response */
+    TEST_ASSERT_EQUAL_MESSAGE(
+        valid_rtu_response_len, rtu_len,
+        "Round-trip RTU length should match original"
+    );
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(
+        valid_rtu_response, rtu_buf, valid_rtu_response_len,
+        "Round-trip RTU bytes should match original"
+    );
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -448,6 +527,10 @@ int main(void)
     RUN_TEST(test_modbus_tcp_from_rtu_null_args);
     RUN_TEST(test_modbus_tcp_from_rtu_small_out_buf);
     RUN_TEST(test_modbus_tcp_from_rtu_valid);
+
+    RUN_TEST(test_modbus_rtu_check_response_exception_response_valid);
+    RUN_TEST(test_modbus_rtu_check_response_exception_response_func_mismatch);
+    RUN_TEST(test_modbus_rtu_tcp_round_trip);
 
     return UNITY_END();
 }

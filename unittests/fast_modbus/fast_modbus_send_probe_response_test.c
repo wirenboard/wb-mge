@@ -29,7 +29,8 @@ static const mb_tcp_task_ctx_t test_ctx = {
     .tcp_desc = &mock_tcp_desc
 };
 
-static const char *FAST_MODBUS_REQUEST_STR = "WB-FAST-MODBUS?";
+static const char *FAST_MODBUS_REQUEST_STR  = "WB-FAST-MODBUS?";
+static const char *FAST_MODBUS_RESPONSE_STR = "WB-FAST-MODBUS-OK";
 static const size_t tcp_req_data_len = 15;
 static const size_t tcp_req_len = sizeof(mb_tcp_header_t) + tcp_req_data_len;
 
@@ -78,6 +79,22 @@ void test_fast_modbus_send_probe_response_success(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(tcp_server_send_mock.desc, test_ctx.tcp_desc, "tcp_server_send called with incorrect tcp_desc");
     TEST_ASSERT_EQUAL_MESSAGE(MODBUS_TCP_RESP_LENGTH, tcp_server_send_mock.len, "tcp_server_send called with incorrect length");
     verify_malloc_tracking(1, 1);
+
+    /* Verify response content: transaction_id must echo the request value */
+    mb_tcp_header_t *resp_header = (mb_tcp_header_t *)tcp_server_send_mock.last_data;
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(
+        MODBUS_TCP_TRANSACTION_ID,
+        resp_header->transaction_id,
+        "Response transaction_id must echo the request transaction_id"
+    );
+
+    /* Verify payload (after MBAP header) contains the Fast Modbus response string */
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        FAST_MODBUS_RESPONSE_STR,
+        (const char *)&tcp_server_send_mock.last_data[sizeof(mb_tcp_header_t)],
+        strlen(FAST_MODBUS_RESPONSE_STR),
+        "Response payload must contain WB-FAST-MODBUS-OK"
+    );
 }
 
 // Тестируем случай, когда запрос не является запросом Быстрого Modbus (другой код функции)

@@ -10,6 +10,7 @@ typedef struct {
     int client_sock;
     size_t len;
     esp_err_t result;
+    uint8_t last_data[64]; /* copy of data buffer before free() */
 } tcp_server_send_mock_t;
 
 extern tcp_server_send_mock_t tcp_server_send_mock;

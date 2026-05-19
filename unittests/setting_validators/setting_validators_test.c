@@ -304,6 +304,33 @@ void test_validate_login(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_login("user|name"), "Login with pipe should be invalid");
 }
 
+// Test validate_timeout function
+void test_validate_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_timeout function");
+    LOG_MESSAGE();
+
+    // NULL and empty string are invalid
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout(NULL), "NULL timeout should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout(""), "Empty timeout should be invalid");
+
+    // 0 = disable timeout — valid
+    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("0"), "Timeout '0' (disable) should be valid");
+
+    // Valid range 1..65535
+    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("1"), "Timeout '1' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("100"), "Timeout '100' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("65535"), "Timeout '65535' should be valid");
+
+    // Out-of-range
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("65536"), "Timeout '65536' should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("-1"), "Negative timeout should be invalid");
+
+    // Non-numeric
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("abc"), "Non-numeric timeout should be invalid");
+}
+
 // Test validate_password function
 void test_validate_password(void)
 {
@@ -355,6 +382,7 @@ int main(void)
     RUN_TEST(test_validate_bool);
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);
+    RUN_TEST(test_validate_timeout);
 
     return UNITY_END();
 }

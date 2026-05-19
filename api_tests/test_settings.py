@@ -49,7 +49,7 @@ def test_settings(api):
 
     assert isinstance(wifi["sta_dhcpc"], bool), "Field sta_dhcpc has incorrect type"
 
-    assert wifi["mode"] in ["ap", "sta", "none"], f"Field mode has incorrect value: {wifi['mode']}"
+    assert wifi["mode"] in ["ap", "sta", "apsta", "none"], f"Field mode has incorrect value: {wifi['mode']}"
     assert wifi["ap_auth"] in ["open", "wpa2_psk", "wpa3_psk"], f"Field ap_auth has incorrect value: {wifi['ap_auth']}"
     assert wifi["sta_auth"] in ["open", "wpa2_psk", "wpa3_psk"], f"Field sta_auth has incorrect value: {wifi['sta_auth']}"
 
@@ -262,7 +262,8 @@ def test_settings(api):
         }
 
         response = api.update_settings(invalid_settings)
-        assert response.status_code in [200, 400]
+        assert response.status_code == 400, \
+            f"Invalid settings expected 400, got {response.status_code}"
         print("✓ Invalid settings handling works")
 
         response = api.get_settings()

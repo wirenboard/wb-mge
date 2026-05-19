@@ -73,7 +73,7 @@ def test_info(api):
     assert 0 <= wifi["con_ap"] <= 10, f"Field con_ap has incorrect value: {wifi['con_ap']}"
     assert -128 <= wifi["sta_rssi"] <= 127, f"Field sta_rssi has incorrect value: {wifi['sta_rssi']}"
     assert 1 <= wifi["ap_channel"] <= 14, f"Field ap_channel has incorrect value: {wifi['ap_channel']}"
-    assert wifi["mode"] in ["ap", "sta", "none"], \
+    assert wifi["mode"] in ["ap", "sta", "apsta", "none"], \
         f"Field mode has unexpected value: {wifi['mode']}"
 
     for port in ["rs485_1", "rs485_2"]:

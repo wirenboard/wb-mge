@@ -987,6 +987,43 @@ void test_read_wifi_pass_from_efuse_read_error(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return MAC-based password when eFuse read fails");
 }
 
+// Test setting_items_validate function
+void test_setting_items_validate(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_validate function");
+    LOG_MESSAGE();
+
+    // NULL key must return ESP_ERR_INVALID_ARG
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_ERR_INVALID_ARG,
+        setting_items_validate(NULL, "100"),
+        "NULL key should return ESP_ERR_INVALID_ARG"
+    );
+
+    // Unknown key must return ESP_ERR_NOT_FOUND
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_ERR_NOT_FOUND,
+        setting_items_validate("nonexistent_key_xyz", "100"),
+        "Unknown key should return ESP_ERR_NOT_FOUND"
+    );
+
+    // Known key with valid value must return ESP_OK
+    // validate_timeout mock always returns true, so "100" is valid
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        setting_items_validate(KEY_CACHE_VALUE_TIMEOUT_S, "100"),
+        "Known key with valid value should return ESP_OK"
+    );
+
+    // Known key with invalid value: validate_hostname mock rejects empty strings
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_ERR_INVALID_ARG,
+        setting_items_validate(KEY_HOSTNAME, ""),
+        "Known key with invalid value should return ESP_ERR_INVALID_ARG"
+    );
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1022,6 +1059,8 @@ int main(void)
     RUN_TEST(test_read_wifi_pass_from_efuse_12_symbols);
     RUN_TEST(test_read_wifi_pass_from_efuse_13_symbols);
     RUN_TEST(test_read_wifi_pass_from_efuse_read_error);
+
+    RUN_TEST(test_setting_items_validate);
 
     return UNITY_END();
 }

@@ -24,25 +24,22 @@ def test_cmd_extended(api):
         print("✓ Settings readable after set_default_settings")
 
         response = api.session.post(f"{api.base_url}/cmd", json={"cmd": "shutdown"}, timeout=10)
-        assert response.status_code in [200, 400], \
-            f"POST /cmd 'shutdown' got unexpected status {response.status_code}"
-        if response.status_code == 200:
-            data = response.json()
-            assert data.get("success") == False, \
-                f"Server accepted unknown command 'shutdown' as successful: {data}"
-            print("  [INFO] Server returned 200 for unknown command with success=false (lenient validation)")
-        else:
-            print("✓ Unknown command 'shutdown' rejected with 400")
+        assert response.status_code == 200, \
+            f"POST /cmd 'shutdown' expected 200, got {response.status_code}"
+        data = response.json()
+        assert data.get("success") == False, \
+            f"Server must not accept unknown command 'shutdown' as successful: {data}"
+        print("✓ Unknown command 'shutdown' rejected with success=false")
 
         response = api.session.post(f"{api.base_url}/cmd", json={}, timeout=10)
-        assert response.status_code in [200, 400], \
-            f"POST /cmd empty body got unexpected status {response.status_code}"
-        print("✓ Missing cmd field handled")
+        assert response.status_code == 400, \
+            f"POST /cmd empty body expected 400, got {response.status_code}"
+        print("✓ Missing cmd field rejected with 400")
 
         response = api.session.post(f"{api.base_url}/cmd", json={"cmd": 42}, timeout=10)
-        assert response.status_code in [200, 400], \
-            f"POST /cmd integer cmd got unexpected status {response.status_code}"
-        print("✓ Integer cmd field handled")
+        assert response.status_code == 400, \
+            f"POST /cmd integer cmd expected 400, got {response.status_code}"
+        print("✓ Integer cmd field rejected with 400")
 
     finally:
         restore_response = api.update_settings(saved_settings)
