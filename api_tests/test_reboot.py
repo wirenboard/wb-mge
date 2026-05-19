@@ -1,36 +1,58 @@
-"""Reboot tests — must run last"""
+"""Reboot test — must run last"""
 
 import time
 import pytest
 
 
 @pytest.mark.timeout(120)
-@pytest.mark.order(34)
-def test_settings_persist_after_reboot(api):
-    """Write custom settings, reboot, verify they survived"""
+@pytest.mark.order(35)
+def test_reboot(api):
+    """Reboot: verify uptime resets and custom settings survive"""
+    # --- remember uptime before reboot ---
+    response = api.get_uptime()
+    assert response.status_code == 200
+    uptime_data = response.json()
+    original_uptime_s = (
+        uptime_data["days"] * 86400
+        + uptime_data["hours"] * 3600
+        + uptime_data["minutes"] * 60
+        + uptime_data["seconds"]
+    )
+    print(f"  Uptime before reboot: {original_uptime_s}s "
+          f"({uptime_data['days']}d {uptime_data['hours']}h "
+          f"{uptime_data['minutes']}m {uptime_data['seconds']}s)")
+
+    # --- reset to defaults so previous tests' network changes don't break connectivity ---
+    reset_response = api.execute_command("set_default_settings")
+    assert reset_response.status_code == 200
+    assert reset_response.json().get("success") == True
+    time.sleep(2)
+    print("✓ Settings reset to defaults before applying custom values")
+
+    # --- read defaults, then apply custom non-network settings ---
     response = api.get_settings()
     assert response.status_code == 200
-    original = response.json()
+    defaults = response.json()
 
     custom_settings = {
         "hostname": "persist-test-host",
-        "vout": not original["vout"],
-        "io_bus": not original["io_bus"],
+        "vout": not defaults["vout"],
+        "io_bus": not defaults["io_bus"],
         "rs485_1": {
-            "baudrate": 38400 if original["rs485_1"]["baudrate"] != 38400 else 19200,
-            "term": not original["rs485_1"]["term"],
-            "fail_safe": not original["rs485_1"]["fail_safe"],
+            "baudrate": 38400 if defaults["rs485_1"]["baudrate"] != 38400 else 19200,
+            "term": not defaults["rs485_1"]["term"],
+            "fail_safe": not defaults["rs485_1"]["fail_safe"],
         },
         "rs485_2": {
-            "stopbits": "2" if original["rs485_2"]["stopbits"] != "2" else "1",
-            "parity": "odd" if original["rs485_2"]["parity"] != "odd" else "even",
+            "stopbits": "2" if defaults["rs485_2"]["stopbits"] != "2" else "1",
+            "parity": "odd" if defaults["rs485_2"]["parity"] != "odd" else "even",
         },
     }
 
     response = api.update_settings(custom_settings)
     assert response.status_code == 200
     assert response.json().get("success") == True
-    print("✓ Custom settings written before reboot")
+    print("✓ Custom settings written")
 
     response = api.get_settings()
     assert response.status_code == 200
@@ -41,10 +63,12 @@ def test_settings_persist_after_reboot(api):
 
     time.sleep(2)
 
+    # --- reboot ---
     try:
         response = api.execute_command("reboot")
         print(f"  Reboot command status: {response.status_code}")
-        assert response.status_code == 200
+        assert response.status_code == 200, \
+            f"POST /cmd reboot expected 200, got {response.status_code}"
     except ConnectionError:
         print("  Connection dropped (expected during reboot)")
 
@@ -53,8 +77,24 @@ def test_settings_persist_after_reboot(api):
         api.wait_for_ready(timeout=30)
     except TimeoutError:
         pytest.fail("Device did not come back within 30 seconds after reboot")
-    print("✓ Device came back online after reboot")
+    print("✓ Device came back online")
 
+    # --- verify uptime reset ---
+    response = api.get_uptime()
+    assert response.status_code == 200
+    new_uptime_data = response.json()
+    new_uptime_s = (
+        new_uptime_data["days"] * 86400
+        + new_uptime_data["hours"] * 3600
+        + new_uptime_data["minutes"] * 60
+        + new_uptime_data["seconds"]
+    )
+    print(f"  Uptime after reboot: {new_uptime_s}s")
+    assert new_uptime_s < original_uptime_s, \
+        f"Uptime after reboot ({new_uptime_s}s) >= uptime before reboot ({original_uptime_s}s) — no reboot detected"
+    print("✓ Uptime correctly reset after reboot")
+
+    # --- verify settings persisted ---
     response = api.get_settings()
     assert response.status_code == 200
     post = response.json()
@@ -77,63 +117,8 @@ def test_settings_persist_after_reboot(api):
         f"rs485_2.parity not persisted: expected {custom_settings['rs485_2']['parity']!r}, got {post['rs485_2']['parity']!r}"
     print("✓ All custom settings persisted after reboot")
 
+    # --- restore defaults ---
     reset = api.execute_command("set_default_settings")
     assert reset.status_code == 200
     time.sleep(2)
     print("✓ Settings reset to defaults")
-
-
-@pytest.mark.timeout(120)
-@pytest.mark.order(35)
-def test_reboot_command(api):
-    """Test POST /cmd reboot — verify device reboots and uptime resets"""
-    response = api.get_uptime()
-    assert response.status_code == 200
-    uptime_data = response.json()
-    original_uptime_s = (
-        uptime_data["days"] * 86400
-        + uptime_data["hours"] * 3600
-        + uptime_data["minutes"] * 60
-        + uptime_data["seconds"]
-    )
-    print(f"  Uptime before reboot: {original_uptime_s}s "
-          f"({uptime_data['days']}d {uptime_data['hours']}h "
-          f"{uptime_data['minutes']}m {uptime_data['seconds']}s)")
-
-    # Reset settings to defaults before rebooting so the device always boots
-    # with known credentials (admin/admin), regardless of what previous tests changed.
-    reset_response = api.execute_command("set_default_settings")
-    assert reset_response.status_code == 200, \
-        f"set_default_settings failed (HTTP {reset_response.status_code}): {reset_response.text}"
-    assert reset_response.json().get("success") == True, \
-        f"set_default_settings returned success=false: {reset_response.text}"
-    time.sleep(2)  # Allow the settings update task to finish writing to NVS
-
-    try:
-        response = api.execute_command("reboot")
-        print(f"  Reboot command status: {response.status_code}")
-        assert response.status_code == 200, \
-            f"POST /cmd reboot expected 200, got {response.status_code}"
-    except ConnectionError:
-        print("  Connection dropped (expected during reboot)")
-
-    print("  Waiting for device to reboot...")
-    try:
-        api.wait_for_ready(timeout=30)
-    except TimeoutError:
-        pytest.fail("Device did not come back within 30 seconds after reboot command")
-    print("✓ Device came back online and re-authenticated successfully")
-
-    response = api.get_uptime()
-    assert response.status_code == 200
-    new_uptime_data = response.json()
-    new_uptime_s = (
-        new_uptime_data["days"] * 86400
-        + new_uptime_data["hours"] * 3600
-        + new_uptime_data["minutes"] * 60
-        + new_uptime_data["seconds"]
-    )
-    print(f"  Uptime after reboot: {new_uptime_s}s")
-    assert new_uptime_s < original_uptime_s, \
-        f"Uptime after reboot ({new_uptime_s}s) >= uptime before reboot ({original_uptime_s}s) — no reboot detected"
-    print("✓ Uptime correctly reset after reboot")
