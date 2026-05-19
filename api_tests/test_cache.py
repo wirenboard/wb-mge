@@ -93,9 +93,7 @@ def test_cache_json_fields(api):
         f"entries count mismatch: /cache/status says {entries_count}, /cache/json has {len(entries)} (delta={delta})"
     print(f"✓ Entry count consistent: /cache/status={entries_count}, /cache/json={len(entries)}")
 
-    if not entries:
-        print("  [SKIP] Cache empty — skipping per-entry field validation")
-        return
+    assert entries, "Cache is empty — expected at least one entry in /cache/json"
 
     valid_types = {"h", "i", "c", "d"}
     for i, entry in enumerate(entries):
@@ -278,10 +276,8 @@ def test_cache_multimaster(api):
             f"GET /cache/status expected 200, got {response.status_code}"
         status = response.json()
 
-        if not status.get("enabled") or status.get("entries", 0) == 0:
-            print("  [SKIP] Cache did not populate within 30s — skipping Modbus TCP part")
-            print("✓ Port mode switching to cache_bus works")
-            return
+        assert status.get("enabled"), "Cache not enabled after switching port to cache_bus"
+        assert status.get("entries", 0) > 0, "Cache did not populate within 30s"
 
         info_response = api.get_info()
         assert info_response.status_code == 200, \
@@ -303,17 +299,7 @@ def test_cache_multimaster(api):
 
         print(f"✓ Register map loaded: {len(register_map)} entries")
 
-        if not register_map:
-            print("  [SKIP] Register map is empty — testing TCP connectivity only")
-            try:
-                test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                test_sock.settimeout(5)
-                test_sock.connect((host, modbus_port))
-                test_sock.close()
-                print(f"✓ Modbus TCP server on port {modbus_port} accepts connections")
-            except Exception as exc:
-                assert False, f"Cannot connect to Modbus TCP server on {host}:{modbus_port}: {exc}"
-            return
+        assert register_map, "Register map CSV is empty — cache reports entries but CSV has none"
 
         num_threads = 3
         results = {}
@@ -363,11 +349,6 @@ def test_cache_multimaster(api):
 
         assert all_passed, "One or more threads had failures in multi-master Modbus TCP test"
         print("✓ Multi-master Modbus TCP test passed")
-
-        has_stale = any(age_s >= 3 for (_key, (_val, age_s)) in register_map.items())
-        if not has_stale:
-            print("  [SKIP] No stale registers (age_s >= 3) found — skipping staleness test")
-            return
 
         stale_ok, stale_lines = run_staleness_test(host, modbus_port, api, register_map)
         for line in stale_lines:

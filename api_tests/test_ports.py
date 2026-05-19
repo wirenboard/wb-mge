@@ -393,21 +393,17 @@ def test_sniffer_status_both_ports_independent(api):
         assert body.get("port_1") is True, f"Expected port_1==True, got {body}"
         assert body.get("port_2") is False, f"Expected port_2==False, got {body}"
 
-        # Set port 2 to sniffer and start it (may not work on all setups)
         r2 = api.set_port_mode(2, "sniffer")
-        if r2.status_code != 200:
-            print(f"  [WARN] set_port_mode(2, 'sniffer') returned {r2.status_code} — skipping port 2 part")
-        else:
-            time.sleep(0.3)
-            try:
-                ws2, stop_ping2, _ = _ws_connect(api, 2)
-                time.sleep(0.5)
+        assert r2.status_code == 200, \
+            f"set_port_mode(2, 'sniffer') expected 200, got {r2.status_code}"
+        time.sleep(0.3)
 
-                body = api.get_sniffer_status().json()
-                assert body.get("port_1") is True, f"Expected port_1==True, got {body}"
-                assert body.get("port_2") is True, f"Expected port_2==True, got {body}"
-            except Exception as e:
-                print(f"  [WARN] Port 2 WS connection failed: {e} — skipping port 2 assertions")
+        ws2, stop_ping2, _ = _ws_connect(api, 2)
+        time.sleep(0.5)
+
+        body = api.get_sniffer_status().json()
+        assert body.get("port_1") is True, f"Expected port_1==True, got {body}"
+        assert body.get("port_2") is True, f"Expected port_2==True, got {body}"
 
         # Stop port 1
         if ws1 is not None:

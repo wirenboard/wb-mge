@@ -307,74 +307,78 @@ def run_staleness_test(host: str, port: int, api, register_map: dict) -> tuple:
     """
     Test that stale cache entries trigger Modbus exception 0x0B, and that
     disabling the timeout (=0) makes them readable again.
+
+    Sets cache_value_timeout_s=1, waits for entries to expire, then verifies
+    that reads return 0x0B. Sets timeout=0, verifies reads succeed, then
+    restores the original timeout.
     """
     report_lines = []
 
-    # Read original timeout value before modification to restore it correctly in finally
+    if not register_map:
+        return (False, ["[FAIL] register_map is empty — staleness test requires at least one register"])
+
     orig_resp = api.session.get(f"{api.base_url}/settings", timeout=10)
     original_timeout = orig_resp.json().get("cache_value_timeout_s", 0)
 
-    stale_registers = [
-        (key, value, age_s)
-        for key, (value, age_s) in register_map.items()
-        if age_s >= 3
-    ]
-
-    if not stale_registers:
-        report_lines.append("[FAIL] No registers with age_s >= 3 found — staleness test requires stale data")
-        return (False, report_lines)
-
-    candidates = stale_registers[:5]
+    candidates = list(register_map.items())[:5]
     report_lines.append(
-        f"[INFO] Staleness test: {len(candidates)} register(s) with age_s >= 3 selected"
+        f"[INFO] Staleness test: {len(candidates)} register(s) selected"
     )
 
     passed = True
-    timeout_was_set = False
 
     try:
         resp = api.session.post(f"{api.base_url}/settings", json={"cache_value_timeout_s": 1}, timeout=10)
         if resp.status_code not in (200, 204):
             raise RuntimeError(f"Failed to set cache_value_timeout_s=1: HTTP {resp.status_code}")
-        timeout_was_set = True
         report_lines.append("[INFO] cache_value_timeout_s set to 1")
 
-        for (slave_id, reg_type, address), _value, age_s in candidates:
+        time.sleep(3)
+
+        for (slave_id, reg_type, address), (_value, _age_s) in candidates:
             result = query_register_once(host, port, slave_id, reg_type, address)
             if result == ("exception", 0x0B):
                 report_lines.append(
-                    f"[PASS] slave={slave_id} type={reg_type} addr={address} age={age_s}s "
+                    f"[PASS] slave={slave_id} type={reg_type} addr={address} "
                     f"→ exception 0x0B as expected"
                 )
             else:
                 passed = False
                 report_lines.append(
-                    f"[FAIL] slave={slave_id} type={reg_type} addr={address} age={age_s}s "
+                    f"[FAIL] slave={slave_id} type={reg_type} addr={address} "
                     f"→ expected exception 0x0B, got {result}"
+                )
+
+        resp = api.session.post(f"{api.base_url}/settings", json={"cache_value_timeout_s": 0}, timeout=10)
+        if resp.status_code not in (200, 204):
+            raise RuntimeError(f"Failed to set cache_value_timeout_s=0: HTTP {resp.status_code}")
+        report_lines.append("[INFO] cache_value_timeout_s set to 0 for read-back check")
+
+        for (slave_id, reg_type, address), (_value, _age_s) in candidates:
+            result = query_register_once(host, port, slave_id, reg_type, address)
+            if result[0] == "ok":
+                report_lines.append(
+                    f"[PASS] slave={slave_id} type={reg_type} addr={address} "
+                    f"→ value={result[1]} readable with timeout=0"
+                )
+            else:
+                passed = False
+                report_lines.append(
+                    f"[FAIL] slave={slave_id} type={reg_type} addr={address} "
+                    f"→ expected ok read with timeout=0, got {result}"
                 )
     finally:
         try:
-            resp = api.session.post(f"{api.base_url}/settings", json={"cache_value_timeout_s": original_timeout}, timeout=10)
+            resp = api.session.post(
+                f"{api.base_url}/settings",
+                json={"cache_value_timeout_s": original_timeout},
+                timeout=10,
+            )
             if resp.status_code not in (200, 204):
                 raise RuntimeError(f"HTTP {resp.status_code}")
             report_lines.append(f"[INFO] cache_value_timeout_s restored to {original_timeout}")
         except Exception as exc:
             report_lines.append(f"[ERROR] Failed to restore cache_value_timeout_s={original_timeout}: {exc}")
             passed = False
-        else:
-            if timeout_was_set:
-                for (slave_id, reg_type, address), _expected_value, _age_s in candidates:
-                    result = query_register_once(host, port, slave_id, reg_type, address)
-                    if result[0] == "ok":
-                        report_lines.append(
-                            f"[PASS] slave={slave_id} type={reg_type} addr={address} "
-                            f"→ value={result[1]} readable with timeout=0 as expected"
-                        )
-                    else:
-                        passed = False
-                        report_lines.append(
-                            f"[FAIL] slave={slave_id} type={reg_type} addr={address} "
-                            f"→ expected ok read with timeout=0, got {result}"
-                        )
 
     return (passed, report_lines)

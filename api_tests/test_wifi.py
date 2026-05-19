@@ -108,9 +108,7 @@ def test_wifi_scan_network_fields(api):
         assert timeout < 15, "WiFi scan completion timeout exceeded"
 
     networks = data.get("networks", [])
-    if not networks:
-        print("  [SKIP] No networks found — cannot validate network fields")
-        return
+    assert networks, "WiFi scan completed but no networks found"
 
     mac_pattern = re.compile(r'^([0-9A-Fa-f]{2}[:\-]){5}([0-9A-Fa-f]{2})$')
 
