@@ -607,7 +607,7 @@ esp_err_t settings_post_handler(httpd_req_t *req)
 
     cJSON *request_json = json_utils_receive_json(req);
     if (request_json == NULL) {
-        return ESP_FAIL;
+        return json_utils_send_error(req, "Invalid settings request JSON");
     }
 
     settings_save_timer_wait();

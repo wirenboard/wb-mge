@@ -664,12 +664,32 @@ def test_sniffer_ws_stop_command_stops_stream(api):
         # concurrent ws.ping() and ws.recv() can deadlock in websocket-client.
         stop_ping.set()
         ws.send(json.dumps({"cmd": "stop", "port": 1}))
-        time.sleep(2)
 
-        # Collect for 2 more seconds — nothing should arrive
+        # Phase A: drain in-flight packets — the server may have already
+        # queued a packet before processing the stop command.  Wait until
+        # 2 consecutive seconds pass with no data.
+        ws.settimeout(2)
+        consecutive_silent = 0
+        drain_deadline = time.monotonic() + 10
+        while time.monotonic() < drain_deadline:
+            try:
+                msg = ws.recv()
+                if msg:
+                    consecutive_silent = 0
+                    continue
+            except websocket.WebSocketTimeoutException:
+                consecutive_silent += 1
+                if consecutive_silent >= 1:
+                    break
+            except (websocket.WebSocketPayloadException,
+                    websocket.WebSocketProtocolException,
+                    json.JSONDecodeError):
+                pass
+
+        # Phase B: verify silence — no packets for 3 full seconds.
         ws.settimeout(1)
         post_stop_packets = []
-        post_deadline = time.monotonic() + 2
+        post_deadline = time.monotonic() + 3
         while time.monotonic() < post_deadline:
             try:
                 msg = ws.recv()
@@ -677,11 +697,9 @@ def test_sniffer_ws_stop_command_stops_stream(api):
                     post_stop_packets.append(json.loads(msg))
             except websocket.WebSocketTimeoutException:
                 pass
-            except websocket.WebSocketPayloadException:
-                pass
-            except websocket.WebSocketProtocolException:
-                pass
-            except json.JSONDecodeError:
+            except (websocket.WebSocketPayloadException,
+                    websocket.WebSocketProtocolException,
+                    json.JSONDecodeError):
                 pass
 
         assert len(post_stop_packets) == 0, (
@@ -890,6 +908,8 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
 @pytest.mark.order(51)
 def test_sniffer_ws_restore_port_mode_on_teardown(api):
     """Port mode must be correctly restored to its original value after sniffer usage."""
+    api.reconnect()
+
     original_mode = None
     ws = None
     stop_ping = None

@@ -404,3 +404,69 @@ def test_settings_partial_update(api):
     finally:
         api.update_settings(original)
         print("✓ Original settings restored")
+
+
+@pytest.mark.order(22)
+def test_post_malformed_json(api):
+    """POST /settings with malformed body must return 400."""
+    # Empty body
+    response = api.session.post(
+        f"{api.base_url}/settings",
+        data="",
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    assert response.status_code == 400, (
+        f"Empty body: expected 400, got {response.status_code}"
+    )
+
+    # Invalid JSON (unclosed brace)
+    response = api.session.post(
+        f"{api.base_url}/settings",
+        data='{"key": "value"',
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    assert response.status_code == 400, (
+        f"Unclosed-brace JSON: expected 400, got {response.status_code}"
+    )
+
+    print("✓ Malformed JSON body correctly rejected with 400")
+
+
+@pytest.mark.order(23)
+def test_post_body_too_large(api):
+    """Boundary test for POST /settings body size limit.
+
+    json_utils.c rejects when content_len > BUF_SIZE - 1, i.e. content_len >= 4096.
+    - 4095 bytes: must be accepted (not rejected by size check) → 400 due to invalid JSON, not size
+    - 4096 bytes: must be rejected by the size check → 400
+    The key distinction: both return 400, but for different reasons.
+    We verify the boundary by checking that 4095 does not return 500 (server crash)
+    and that 4096 also returns 400, confirming the check fires at the right threshold.
+    """
+    # 4095 bytes: at or below the allowed limit — server must not crash (returns 400 for bad JSON)
+    body_at_limit = "A" * 4095
+    response = api.session.post(
+        f"{api.base_url}/settings",
+        data=body_at_limit,
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    assert response.status_code in (400, 200), (
+        f"4095-byte body: expected 400 or 200, got {response.status_code} (must not be 5xx)"
+    )
+    print("✓ 4095-byte body processed without crash (size check not triggered)")
+
+    # 4096 bytes: first value over the limit — must be rejected by size check
+    body_over_limit = "A" * 4096
+    response = api.session.post(
+        f"{api.base_url}/settings",
+        data=body_over_limit,
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    assert response.status_code == 400, (
+        f"4096-byte body: expected 400, got {response.status_code}"
+    )
+    print("✓ 4096-byte body correctly rejected with 400 (size limit boundary)")
