@@ -899,6 +899,31 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
             f"Expected port_1==False after premature stop, got {body.get('port_1')}"
         )
 
+        # Reconnect with a fresh WebSocket so residual state doesn't interfere
+        stop_ping.set()
+        try:
+            ws.close()
+        except Exception:
+            pass
+        time.sleep(1)
+
+        ws = websocket.WebSocket()
+        ws.settimeout(15)
+        ws.connect(ws_url, cookie=cookies)
+
+        stop_ping = threading.Event()
+
+        def _ping2():
+            while not stop_ping.is_set():
+                try:
+                    ws.ping()
+                except Exception:
+                    break
+                time.sleep(0.5)
+
+        ping_thread = threading.Thread(target=_ping2, daemon=True)
+        ping_thread.start()
+
         # Now start normally and expect packets
         ws.send(json.dumps({"cmd": "start", "port": 1}))
         packets = _collect_packets(ws, min_count=3, timeout_sec=10)
