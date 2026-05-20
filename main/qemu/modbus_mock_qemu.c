@@ -10,7 +10,7 @@
 
 // Task configuration
 #define MOCK_TASK_STACK_SIZE  2048
-#define MOCK_TASK_PRIORITY    (tskIDLE_PRIORITY + 1)
+#define MOCK_TASK_PRIORITY    5
 #define MOCK_TASK_NAME        "modbus_mock"
 
 // Timing constants (milliseconds)
