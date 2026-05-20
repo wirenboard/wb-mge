@@ -180,6 +180,13 @@ def pytest_sessionfinish(session, exitstatus):
         _dump_qemu_log("tests failed")
 
 
+@pytest.fixture(autouse=True)
+def delay_between_tests():
+    """Add a 2-second delay after each test to avoid overloading the device."""
+    yield
+    time.sleep(2)
+
+
 @pytest.fixture(scope="session")
 def api(request):
     """Session-scoped API client: creates, checks connectivity, authenticates."""
