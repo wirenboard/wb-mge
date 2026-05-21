@@ -151,3 +151,112 @@ Remove Docker image:
 ```bash
 docker rmi wb-mge-builder
 ```
+
+## Test infrastructure setup from scratch (Debian 13)
+
+Steps to provision a clean Debian 13 (trixie) host to build the QEMU firmware and run the `api_tests/` suite end-to-end. Performed as `root`.
+
+### 1. OS packages
+
+```bash
+apt-get update
+apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg lsb-release \
+    git make cmake ninja-build \
+    python3 python3-pip python3-venv \
+    libusb-1.0-0 libssl-dev libffi-dev \
+    libsdl2-2.0-0 libpixman-1-0 libslirp0 libglib2.0-0 \
+    file flex bison gperf wget xz-utils dfu-util
+```
+
+### 2. Node.js 20.x
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+```
+
+### 3. ESP-IDF v5.4 via EIM (Espressif Installation Manager)
+
+Add the official EIM apt repository and install `eim-cli`:
+
+```bash
+echo "deb [trusted=yes] https://dl.espressif.com/dl/eim/apt/ stable main" \
+    > /etc/apt/sources.list.d/espressif.list
+apt-get update
+apt-get install -y eim-cli
+```
+
+Install ESP-IDF (uses `/var/tmp/eim-work` as scratch space to avoid filling `/tmp`):
+
+```bash
+mkdir -p /var/tmp/eim-work
+TMPDIR=/var/tmp/eim-work eim install \
+    --idf-versions v5.4 --target esp32 --non-interactive true -v
+```
+
+After install, ESP-IDF lives in `/root/.espressif/v5.4/esp-idf` and is activated with:
+
+```bash
+source /root/.espressif/tools/activate_idf_v5.4.sh
+```
+
+> The EIM activate script exports `IDF_PATH`, `IDF_TOOLS_PATH`, etc. and prepends the python venv + toolchain dirs to `PATH`, but it does **not** put `idf.py` on `PATH`. Export it explicitly:
+>
+> ```bash
+> export IDF_PY="$IDF_PATH/tools/idf.py"
+> ```
+>
+> All `make` targets in this repo honour `IDF_PY` and will invoke it directly.
+
+### 4. QEMU xtensa
+
+EIM does not install QEMU. Use `idf_tools.py` from the activated environment:
+
+```bash
+source /root/.espressif/tools/activate_idf_v5.4.sh
+python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
+```
+
+This places the binary at `/root/.espressif/tools/tools/qemu-xtensa/esp_develop_*/qemu/bin/qemu-system-xtensa`, which the `make qemu-*` targets discover automatically.
+
+### 5. Clone the repository
+
+```bash
+cd /root
+git clone https://github.com/wirenboard/wb-mge.git
+cd wb-mge
+```
+
+### 6. Python virtualenv for `api_tests/`
+
+```bash
+python3 -m venv api_tests/.venv
+api_tests/.venv/bin/pip install -r api_tests/requirements.txt
+```
+
+The `make qemu-test` target invokes `api_tests/.venv/bin/python` directly, so the venv must live at `api_tests/.venv`.
+
+### 7. Build firmware + frontend and run tests
+
+```bash
+source /root/.espressif/tools/activate_idf_v5.4.sh
+export IDF_PY="$IDF_PATH/tools/idf.py"
+cd /root/wb-mge
+
+make build-frontend
+make qemu-flash-image qemu-efuse-image   # builds firmware + flash + eFuse images
+make qemu-test                            # boots QEMU, runs pytest, kills QEMU
+```
+
+`make qemu-test` accepts `PYTEST_ARGS` for filtering, e.g.:
+
+```bash
+make qemu-test PYTEST_ARGS="-k test_auth"
+```
+
+### Notes
+
+- Initial run downloads ~2 GB of toolchains/components (EIM + xtensa toolchain + IDF managed components); expect ~10 minutes on a fresh host.
+- ESP-IDF tools occupy ~5 GB under `/root/.espressif`. Allocate at least 15 GB of free disk before starting.
+- On low-core hosts (2 vCPU) a small number of api tests may flake on the 20 s pytest timeout under QEMU load. Rerun the affected test in isolation: `make qemu-test PYTEST_ARGS="-k <test_name>"`.
