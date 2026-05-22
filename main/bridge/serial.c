@@ -285,6 +285,15 @@ esp_err_t serial_deinit(serial_desc_t *desc)
         return ESP_FAIL;
     }
 
+    // Disable UART peripheral interrupts BEFORE uart_driver_delete().
+    // uart_driver_delete() calls esp_intr_free() before uart_disable_*_intr(),
+    // leaving a window where the ISR is detached but the UART interrupt is still
+    // enabled. If an interrupt fires in that window it lands in the default
+    // xt_unhandled_interrupt handler, which never clears the source, so the CPU
+    // spins forever ("Unhandled interrupt 9 on cpu 0!"). Masking here closes it.
+    uart_disable_rx_intr(desc->port_num);
+    uart_disable_tx_intr(desc->port_num);
+
     uart_driver_delete(desc->port_num);
     vEventGroupDelete(desc->event_group);
 

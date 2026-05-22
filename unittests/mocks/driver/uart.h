@@ -106,6 +106,18 @@ esp_err_t uart_wait_tx_done(uart_port_t uart_num, TickType_t ticks_to_wait);
 int uart_read_bytes(uart_port_t uart_num, void *buf, uint32_t length, TickType_t ticks_to_wait);
 int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size);
 void uart_set_always_rx_timeout(uart_port_t uart_num, bool always_rx_timeout_en);
+esp_err_t uart_disable_rx_intr(uart_port_t uart_num);
+esp_err_t uart_disable_tx_intr(uart_port_t uart_num);
+
+typedef struct {
+    int called;
+    uart_port_t uart_num;
+} mock_uart_disable_rx_intr_t;
+
+typedef struct {
+    int called;
+    uart_port_t uart_num;
+} mock_uart_disable_tx_intr_t;
 
 typedef struct {
     int called;
@@ -187,6 +199,8 @@ typedef struct {
     bool always_rx_timeout_en;
 } uart_set_always_rx_timeout_t;
 
+extern mock_uart_disable_rx_intr_t mock_uart_disable_rx_intr_data;
+extern mock_uart_disable_tx_intr_t mock_uart_disable_tx_intr_data;
 extern mock_uart_flush_input_t mock_uart_flush_input_data;
 extern mock_uart_driver_install_t mock_uart_driver_install_data;
 extern mock_uart_driver_delete_t mock_uart_driver_delete_data;

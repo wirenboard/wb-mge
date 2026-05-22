@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+mock_uart_disable_rx_intr_t mock_uart_disable_rx_intr_data = {0};
+mock_uart_disable_tx_intr_t mock_uart_disable_tx_intr_data = {0};
 mock_uart_flush_input_t mock_uart_flush_input_data = {0};
 mock_uart_driver_install_t mock_uart_driver_install_data = {0};
 mock_uart_driver_delete_t mock_uart_driver_delete_data = {0};
@@ -15,6 +17,26 @@ mock_uart_wait_tx_done_t mock_uart_wait_tx_done_data = {0};
 mock_uart_read_bytes_t mock_uart_read_bytes_data = {0};
 mock_uart_write_bytes_t mock_uart_write_bytes_data = {0};
 uart_set_always_rx_timeout_t uart_set_always_rx_timeout_data = {0};
+
+esp_err_t uart_disable_rx_intr(uart_port_t uart_num)
+{
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_disable_rx_intr called with invalid uart_num");
+
+    mock_uart_disable_rx_intr_data.called++;
+    mock_uart_disable_rx_intr_data.uart_num = uart_num;
+
+    return ESP_OK;
+}
+
+esp_err_t uart_disable_tx_intr(uart_port_t uart_num)
+{
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_disable_tx_intr called with invalid uart_num");
+
+    mock_uart_disable_tx_intr_data.called++;
+    mock_uart_disable_tx_intr_data.uart_num = uart_num;
+
+    return ESP_OK;
+}
 
 esp_err_t uart_flush_input(uart_port_t uart_num)
 {
@@ -165,6 +187,8 @@ void uart_set_always_rx_timeout(uart_port_t uart_num, bool always_rx_timeout_en)
 
 void mock_uart_reset(void)
 {
+    memset(&mock_uart_disable_rx_intr_data, 0, sizeof(mock_uart_disable_rx_intr_data));
+    memset(&mock_uart_disable_tx_intr_data, 0, sizeof(mock_uart_disable_tx_intr_data));
     memset(&mock_uart_flush_input_data, 0, sizeof(mock_uart_flush_input_data));
     memset(&mock_uart_driver_install_data, 0, sizeof(mock_uart_driver_install_data));
     memset(&mock_uart_driver_delete_data, 0, sizeof(mock_uart_driver_delete_data));
