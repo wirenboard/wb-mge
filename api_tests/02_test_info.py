@@ -1,10 +1,8 @@
 """Device information tests"""
 
 import re
-import pytest
 
 
-@pytest.mark.order(3)
 def test_info(api):
     """Device information test"""
     response = api.get_info()
@@ -93,7 +91,6 @@ def test_info(api):
     print("✓ Information structure is correct")
 
 
-@pytest.mark.order(4)
 def test_info_format_validation(api):
     """Test GET /info response field format validation: firmware, git_info, MAC addresses"""
     response = api.get_info()

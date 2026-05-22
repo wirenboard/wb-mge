@@ -1,12 +1,10 @@
 """Authentication, session management, and password change tests"""
 
-import pytest
 import requests
 
 from api_client import WBMGEAPI
 
 
-@pytest.mark.order(1)
 def test_unauthorized_access(api):
     """Unauthorized access test"""
     unauth_session = requests.Session()
@@ -55,7 +53,6 @@ def test_unauthorized_access(api):
     print("✓ Cache endpoints require authorization")
 
 
-@pytest.mark.order(2)
 def test_auth(api):
     """Authorization test"""
     response = api.auth("wrong", "wrong")
@@ -72,7 +69,6 @@ def test_auth(api):
     print("✓ Correct authorization accepted")
 
 
-@pytest.mark.order(3)
 def test_cookie_security_attributes(api):
     """Cookie must have HttpOnly, SameSite=Strict and Path=/ attributes"""
     fresh_session = requests.Session()
@@ -103,7 +99,6 @@ def test_cookie_security_attributes(api):
     print("✓ No cookie set on failed login")
 
 
-@pytest.mark.order(6)
 def test_session_management(api):
     """Session management test"""
     response = api.get_session()
@@ -126,7 +121,6 @@ def test_session_management(api):
     print("✓ Re-authorization works")
 
 
-@pytest.mark.order(25)
 def test_password_change_flow(api):
     """Test POST /settings pass change + re-authentication security flow"""
     response = api.get_settings()

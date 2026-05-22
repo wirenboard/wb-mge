@@ -1,9 +1,7 @@
 """Static files serving test"""
 
-import pytest
 
 
-@pytest.mark.order(15)
 def test_static_files(api):
     """Static files test"""
     static_files = [

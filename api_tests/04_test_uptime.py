@@ -1,9 +1,7 @@
 """Device uptime test"""
 
-import pytest
 
 
-@pytest.mark.order(7)
 def test_uptime(api):
     """Device uptime test"""
     response = api.get_uptime()

@@ -1,9 +1,7 @@
 """Command execution tests"""
 
-import pytest
 
 
-@pytest.mark.order(18)
 def test_cmd_extended(api):
     """Test POST /cmd — set_default_settings and invalid values"""
     save_response = api.get_settings()

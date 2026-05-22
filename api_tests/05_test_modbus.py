@@ -1,9 +1,7 @@
 """Modbus TCP parameters and validation tests"""
 
-import pytest
 
 
-@pytest.mark.order(8)
 def test_modbus_tcp_parameters(api):
     """Modbus TCP specific parameters test"""
     response = api.get_settings()
@@ -64,7 +62,6 @@ def test_modbus_tcp_parameters(api):
         print("✓ Original RS485 settings restored")
 
 
-@pytest.mark.order(9)
 def test_modbus_validation_limits(api):
     """Validation limits test for Modbus parameters"""
     baseline_response = api.get_settings()

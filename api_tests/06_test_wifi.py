@@ -2,10 +2,8 @@
 
 import re
 import time
-import pytest
 
 
-@pytest.mark.order(11)
 def test_wifi_scanner(api):
     """WiFi scanner test"""
     response = api.start_wifi_scan()
@@ -45,7 +43,6 @@ def test_wifi_scanner(api):
     print("✓ Scan results retrieval works")
 
 
-@pytest.mark.order(12)
 def test_wifi_scan_edge_cases(api):
     """Test WiFi scan state machine edge cases"""
     response = api.get_wifi_scan_results()
@@ -90,7 +87,6 @@ def test_wifi_scan_edge_cases(api):
     print("✓ WiFi scan edge cases passed")
 
 
-@pytest.mark.order(13)
 def test_wifi_scan_network_fields(api):
     """Test WiFi scan result field validation: bssid, channel, rssi range"""
     response = api.start_wifi_scan()
@@ -129,7 +125,6 @@ def test_wifi_scan_network_fields(api):
     print(f"✓ WiFi scan network fields validated for {len(networks)} network(s)")
 
 
-@pytest.mark.order(14)
 def test_ap_clients(api):
     """AP clients list test"""
     response = api.get_ap_clients()

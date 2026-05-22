@@ -1,9 +1,7 @@
 """Settings tests: structure, write/read-back, validation, partial update"""
 
-import pytest
 
 
-@pytest.mark.order(5)
 def test_settings(api):
     """Settings test"""
     response = api.get_settings()
@@ -283,7 +281,6 @@ def test_settings(api):
             print("✓ Original settings restored")
 
 
-@pytest.mark.order(10)
 def test_validation_patterns(api):
     """Patterns and constraints validation test"""
     # Save original settings so they can be restored in the finally block
@@ -349,7 +346,6 @@ def test_validation_patterns(api):
         print("✓ Original settings restored")
 
 
-@pytest.mark.order(21)
 def test_settings_partial_update(api):
     """Test POST /settings with sparse payload — must preserve unset fields"""
     response = api.get_settings()
@@ -406,7 +402,6 @@ def test_settings_partial_update(api):
         print("✓ Original settings restored")
 
 
-@pytest.mark.order(22)
 def test_post_malformed_json(api):
     """POST /settings with malformed body must return 400."""
     # Empty body
@@ -434,7 +429,6 @@ def test_post_malformed_json(api):
     print("✓ Malformed JSON body correctly rejected with 400")
 
 
-@pytest.mark.order(23)
 def test_post_body_too_large(api):
     """Boundary test for POST /settings body size limit.
 

@@ -5,9 +5,10 @@ import pytest
 
 
 @pytest.mark.timeout(120)
-@pytest.mark.order(35)
 def test_reboot(api):
     """Reboot: verify uptime resets and custom settings survive"""
+    # Allow previous tests' teardown activity to settle before making requests
+    time.sleep(1)
     # --- remember uptime before reboot ---
     response = api.get_uptime()
     assert response.status_code == 200

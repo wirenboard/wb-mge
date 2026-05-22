@@ -3,14 +3,12 @@
 import json
 import time
 
-import pytest
 import requests
 from urllib.parse import urlparse
 
 from sniffer_helpers import _ws_connect
 
 
-@pytest.mark.order(27)
 def test_wb_test(api):
     """Test GET /wb_test + POST /wb_test"""
     response = api.get_wb_test()
@@ -70,7 +68,6 @@ def test_wb_test(api):
         print(f"✓ clock_out restored to {original_clock_out}")
 
 
-@pytest.mark.order(28)
 def test_sniffer_status(api):
     """Test GET /sniffer/status and verify it reflects port mode changes"""
     info_response = api.get_info()
@@ -121,7 +118,6 @@ def test_sniffer_status(api):
             raise AssertionError(f"Failed to restore port 1 mode: {exc}")
 
 
-@pytest.mark.order(29)
 def test_port_modes(api):
     """Test POST /ports/{n}/mode — all modes, both ports"""
     info_response = api.get_info()
@@ -189,7 +185,6 @@ def test_port_modes(api):
 # Group 3: /sniffer/status endpoint
 # ---------------------------------------------------------------------------
 
-@pytest.mark.order(45)
 def test_sniffer_status_response_shape_and_content_type(api):
     """GET /sniffer/status must return 200 with application/json and keys port_1/port_2."""
     # Ensure both ports are not in sniffer mode before testing
@@ -245,7 +240,6 @@ def test_sniffer_status_response_shape_and_content_type(api):
             assert r.status_code == 200, f"Failed to restore port 2 mode: {r.status_code}"
 
 
-@pytest.mark.order(46)
 def test_sniffer_status_reflects_start_command(api):
     """/sniffer/status must report port_1==True after WS start command for port 1."""
     original_port_mode = None
@@ -292,7 +286,6 @@ def test_sniffer_status_reflects_start_command(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(47)
 def test_sniffer_status_reflects_stop_command(api):
     """/sniffer/status must report port_1==False after WS stop command."""
     original_port_mode = None
@@ -348,7 +341,6 @@ def test_sniffer_status_reflects_stop_command(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(48)
 def test_sniffer_status_unauthenticated(api):
     """GET /sniffer/status without auth must return HTTP 401."""
     parsed = urlparse(api.base_url)
@@ -364,7 +356,6 @@ def test_sniffer_status_unauthenticated(api):
     print("✓ /sniffer/status returns 401 for unauthenticated requests")
 
 
-@pytest.mark.order(49)
 def test_sniffer_status_both_ports_independent(api):
     """Starting/stopping port 1 and port 2 independently must be reflected in status."""
     original_mode_1 = None
@@ -447,7 +438,6 @@ def test_sniffer_status_both_ports_independent(api):
             assert r.status_code == 200, f"Failed to restore port 2 mode: {r.status_code}"
 
 
-@pytest.mark.order(50)
 def test_sniffer_status_post_method_rejected(api):
     """POST /sniffer/status must return HTTP 405 (method not allowed)."""
     response = api.session.post(f"{api.base_url}/sniffer/status", timeout=10)

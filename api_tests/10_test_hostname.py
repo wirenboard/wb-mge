@@ -1,10 +1,8 @@
 """Hostname endpoint test"""
 
-import pytest
 import requests
 
 
-@pytest.mark.order(19)
 def test_hostname(api):
     """Test GET /hostname endpoint"""
     response = api.get_hostname()

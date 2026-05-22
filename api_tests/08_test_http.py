@@ -1,10 +1,8 @@
 """HTTP method guard test"""
 
-import pytest
 import requests
 
 
-@pytest.mark.order(16)
 def test_http_method_guard(api):
     """Test that endpoints reject wrong HTTP methods (expect 405 Method Not Allowed)"""
     wrong_method_cases = [

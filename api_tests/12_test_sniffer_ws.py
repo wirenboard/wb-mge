@@ -26,7 +26,6 @@ from sniffer_helpers import _ws_connect, _collect_packets
 
 
 @pytest.mark.timeout(120)
-@pytest.mark.order(26)
 def test_sniffer_websocket(api):
     """Sniffer WebSocket: collect packets, verify CRC fields, check resilience after bad-CRC"""
     parsed = urlparse(api.base_url)
@@ -185,7 +184,6 @@ def test_sniffer_websocket(api):
                 raise AssertionError(f"Failed to restore port mode: {e}")
 
 
-@pytest.mark.order(33)
 def test_sniffer_ws_no_auth(api):
     """Sniffer WebSocket: unauthenticated upgrade must be closed immediately by server"""
     parsed = urlparse(api.base_url)
@@ -229,7 +227,6 @@ def test_sniffer_ws_no_auth(api):
     print("✓ Unauthenticated WS connection closed by server immediately after upgrade")
 
 
-@pytest.mark.order(34)
 def test_sniffer_ws_invalid_cookie(api):
     """Sniffer WebSocket: connection with invalid cookie must be closed immediately by server"""
     parsed = urlparse(api.base_url)
@@ -272,7 +269,6 @@ def test_sniffer_ws_invalid_cookie(api):
 # Group 1: WS protocol and JSON packet fields
 # ---------------------------------------------------------------------------
 
-@pytest.mark.order(36)
 def test_sniffer_ws_packet_port_field_matches_started_port(api):
     """All received packets must report port==1 when sniffer started for port 1."""
     original_port_mode = None
@@ -323,7 +319,6 @@ def test_sniffer_ws_packet_port_field_matches_started_port(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(37)
 def test_sniffer_ws_id_monotonically_increasing(api):
     """Packet id field must be strictly increasing across all received packets."""
     original_port_mode = None
@@ -374,7 +369,6 @@ def test_sniffer_ws_id_monotonically_increasing(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(38)
 def test_sniffer_ws_timestamp_positive_and_plausible(api):
     """timestamp_us must be a positive integer and the sequence must be non-decreasing."""
     original_port_mode = None
@@ -430,7 +424,6 @@ def test_sniffer_ws_timestamp_positive_and_plausible(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(39)
 def test_sniffer_ws_raw_field_is_hex_and_matches_size(api):
     """raw field must be uppercase hex and its length must equal size*2."""
     original_port_mode = None
@@ -489,7 +482,6 @@ def test_sniffer_ws_raw_field_is_hex_and_matches_size(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(40)
 def test_sniffer_ws_stream_splitter_produces_separate_request_and_response(api):
     """Stream splitter must emit separate master (FC03) and slave packets."""
     original_port_mode = None
@@ -568,7 +560,6 @@ def test_sniffer_ws_stream_splitter_produces_separate_request_and_response(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(41)
 def test_sniffer_ws_sender_alternates_master_slave(api):
     """At least 2 consecutive (master → slave) pairs with matching slave_id and function."""
     original_port_mode = None
@@ -638,7 +629,6 @@ def test_sniffer_ws_sender_alternates_master_slave(api):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.timeout(60)
-@pytest.mark.order(42)
 def test_sniffer_ws_stop_command_stops_stream(api):
     """After sending stop, no more packets must arrive and /sniffer/status must reflect false."""
     original_port_mode = None
@@ -729,7 +719,6 @@ def test_sniffer_ws_stop_command_stops_stream(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(43)
 def test_sniffer_ws_malformed_json_does_not_crash(api):
     """Server must survive malformed WS messages and still serve packets afterwards."""
     original_port_mode = None
@@ -846,7 +835,6 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
-@pytest.mark.order(44)
 def test_sniffer_ws_stop_before_start_does_not_crash(api):
     """Sending stop before start must not crash the server; start must work afterwards."""
     original_port_mode = None
@@ -955,7 +943,6 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
 # Group 4: WS lifecycle
 # ---------------------------------------------------------------------------
 
-@pytest.mark.order(51)
 def test_sniffer_ws_restore_port_mode_on_teardown(api):
     """Port mode must be correctly restored to its original value after sniffer usage."""
     api.reconnect()

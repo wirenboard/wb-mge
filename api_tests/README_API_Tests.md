@@ -2,7 +2,7 @@
 
 ## Описание
 
-Автоматические интеграционные тесты для HTTP API устройства WB-MGE. Используют **pytest** + **pytest-order** для упорядоченного запуска. Тесты покрывают:
+Автоматические интеграционные тесты для HTTP API устройства WB-MGE. Используют **pytest**; порядок запуска задаётся числовыми префиксами имён файлов (`01_`, `02_`, …). Тесты покрывают:
 
 - **Авторизация и сессии** — логин, logout, смена пароля, защита эндпоинтов
 - **Информация об устройстве** — структура, типы данных (heap, PSRAM, cache), форматы полей
@@ -20,26 +20,26 @@
 
 ```text
 api_tests/
-├── conftest.py          # pytest-фикстуры (api-клиент, --ip, проверка соединения)
-├── api_client.py        # Класс WBMGEAPI — HTTP-клиент для всех эндпоинтов
-├── modbus_helpers.py    # Утилиты Modbus TCP (encode/decode, worker-потоки, staleness)
-├── pytest.ini           # Конфигурация pytest
-├── requirements.txt     # Зависимости
+├── conftest.py              # pytest-фикстуры (api-клиент, --ip, проверка соединения)
+├── api_client.py            # Класс WBMGEAPI — HTTP-клиент для всех эндпоинтов
+├── modbus_helpers.py        # Утилиты Modbus TCP (encode/decode, worker-потоки, staleness)
+├── pytest.ini               # Конфигурация pytest
+├── requirements.txt         # Зависимости
 │
-├── test_auth.py         # Авторизация, сессии, смена пароля (order 1,2,6,25)
-├── test_info.py         # Информация об устройстве (order 3,4)
-├── test_settings.py     # Настройки, валидация, partial update (order 5,10,24)
-├── test_uptime.py       # Uptime (order 7)
-├── test_modbus.py       # Modbus TCP параметры (order 8,9)
-├── test_wifi.py         # WiFi сканер, edge cases, AP clients (order 11-14)
-├── test_static_files.py # Статические файлы (order 15)
-├── test_http.py         # HTTP method guard (order 16)
-├── test_commands.py     # Команды set_default_settings (order 17,18)
-├── test_hostname.py     # Hostname endpoint (order 19)
-├── test_cache.py        # Cache эндпоинты, multimaster (order 20-23,30)
-├── test_sniffer_ws.py   # WebSocket sniffer (order 26)
-├── test_ports.py        # Порты, sniffer, WB test (order 27-29)
-└── test_reboot.py       # Reboot — всегда последний (order 31)
+├── 01_test_auth.py          # Авторизация, сессии, смена пароля
+├── 02_test_info.py          # Информация об устройстве
+├── 03_test_settings.py      # Настройки, валидация, partial update
+├── 04_test_uptime.py        # Uptime
+├── 05_test_modbus.py        # Modbus TCP параметры
+├── 06_test_wifi.py          # WiFi сканер, edge cases, AP clients
+├── 07_test_static_files.py  # Статические файлы
+├── 08_test_http.py          # HTTP method guard
+├── 09_test_commands.py      # Команды set_default_settings
+├── 10_test_hostname.py      # Hostname endpoint
+├── 11_test_cache.py         # Cache эндпоинты, multimaster
+├── 12_test_sniffer_ws.py    # WebSocket sniffer
+├── 13_test_ports.py         # Порты, sniffer, WB test
+└── 14_test_reboot.py        # Reboot — всегда последний
 ```
 
 ---
@@ -69,7 +69,7 @@ pytest api_tests/
 pytest api_tests/ --ip localhost:8080 -x
 
 # Запустить только конкретный файл
-pytest api_tests/test_auth.py --ip localhost:8080
+pytest api_tests/01_test_auth.py --ip localhost:8080
 
 # Запустить конкретный тест по имени
 pytest api_tests/ --ip localhost:8080 -k test_cache_multimaster
@@ -126,20 +126,17 @@ python3 -m venv .venv
 | ---- | ---------------- |
 | `test_wifi_scanner` | Сразу завершается с 2 фиктивными сетями |
 | `test_cache_multimaster` | Переключает порт 1 в `cache_bus`, ждёт заполнения кэша (~2с), подключается к `localhost:50504` |
-| `test_reboot_command` | Перезагружает QEMU-эмулятор, ждёт возврата |
+| `test_reboot` | Перезагружает QEMU-эмулятор, ждёт возврата |
 
 ---
 
 ## Добавление нового теста
 
-1. Добавьте функцию в подходящий файл (или создайте новый `test_*.py`)
+1. Добавьте функцию в подходящий файл (или создайте новый файл с подходящим числовым префиксом, например `11a_test_cache_extra.py`)
 2. Используйте фикстуру `api` — она предоставляет авторизованный `WBMGEAPI` клиент
-3. Задайте порядок через `@pytest.mark.order(N)`
+3. Порядок запуска определяется числовым префиксом файла; внутри файла — порядком определения функций
 
 ```python
-import pytest
-
-@pytest.mark.order(31)
 def test_new_feature(api):
     response = api.session.get(f"{api.base_url}/new_endpoint", timeout=10)
     assert response.status_code == 200
