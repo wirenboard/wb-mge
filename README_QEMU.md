@@ -19,7 +19,7 @@ make qemu-web
 The Makefile activates the EIM environment automatically — no manual `source` needed.
 
 The command automatically:
-1. Builds the project with QEMU configuration
+1. Recompiles QEMU firmware if sources changed (incremental, does NOT rebuild frontend)
 2. Generates QEMU flash image
 3. Kills any existing QEMU processes
 4. Starts QEMU with port forwarding (localhost:8080 → ESP32:80)
@@ -129,7 +129,7 @@ cd api_tests && .venv/bin/python -m pytest --ip localhost:8080
 
 ### Build Errors
 1. Clean and rebuild: `make qemu-clean && make qemu-build`
-2. If switching from native to QEMU build: `make clean && make qemu-build`
+2. If switching from native to QEMU build: `make qemu-build` (the build system detects a native CMakeCache and runs `fullclean` automatically)
 
 ## ⚡ Performance Notes
 
