@@ -28,14 +28,15 @@ The command automatically:
 
 ```mermaid
 graph TD
-    B["🔨 Build firmware"] --> build-qemu
+    B["🔨 Build firmware"] --> qemu-build
     W["🌐 UI at :8080"] --> qemu-web
     T["🧪 Run API tests"] --> qemu-test
-    R["⚡ QEMU without port "] --> qemu-run
+    R["⚡ QEMU without port"] --> qemu-run
     M["🔍 QEMU console"] --> qemu-monitor
+    C["🧹 Clean QEMU artifacts"] --> qemu-clean
 
-    build-qemu --> build-frontend
-    build-qemu --> build-idf-project-qemu
+    qemu-build --> build-frontend
+    qemu-build --> build-idf-project-qemu
 
     qemu-web --> qemu-flash-image
     qemu-web --> qemu-efuse-image
@@ -45,11 +46,12 @@ graph TD
     qemu-test --> qemu-efuse-image
 ```
 
-- `build-qemu` — the only build target (frontend + firmware)
+- `qemu-build` — the only build target (frontend + firmware)
 - `qemu-flash-image` — no dependencies: merges existing build/ into a single .bin
 - `qemu-efuse-image` — no dependencies: creates the eFuse image once
 - `qemu-web`, `qemu-run`, `qemu-test` — pull flash + efuse images but **do not rebuild firmware**
 - `qemu-monitor` — no dependencies: connects to an already-running QEMU instance
+- `qemu-clean` — removes build/ and sdkconfig.qemu\_build
 
 ## 🔧 Key Implementation Details
 
@@ -57,7 +59,8 @@ graph TD
 - `main/ethernet_qemu.c` - OpenEth driver for QEMU networking
 - `main/wifi_qemu_mock.c` - WiFi functionality mock
 - `main/hardware_mocks_qemu.c` - Hardware component mocks
-- `sdkconfig.qemu.minimal` - QEMU-compatible configuration
+- `sdkconfig.qemu.minimal` - base QEMU-compatible configuration (auto-generated, do not edit)
+- `sdkconfig.qemu.extra` - extra overrides applied on top of minimal (`CONFIG_HTTPD_WS_SUPPORT`, `CONFIG_SPIRAM`)
 
 ### Critical Configuration Changes
 ```
@@ -76,7 +79,7 @@ CONFIG_ETH_USE_OPENETH=y                  # Enable OpenEth for QEMU
 ## 🛠️ Make Targets Reference
 
 ```bash
-make build-qemu              # Build frontend + QEMU firmware (run once, or after code changes)
+make qemu-build              # Build frontend + QEMU firmware (run once, or after code changes)
 make qemu-flash-image        # Merge build/ into qemu_flash.bin (no compile, pure merge)
 make qemu-efuse-image        # Create build/qemu_efuse.bin if missing (idempotent)
 make qemu-web                # Merge flash + create efuse, then run QEMU (no compile)
@@ -84,7 +87,7 @@ make qemu-run                # Merge flash + create efuse, then run QEMU basic m
 make qemu-monitor            # Connect monitor to already-running QEMU (no build at all)
 make qemu-test               # Merge flash + create efuse, then run pytest suite
 make qemu-bin-path           # Print path to qemu-system-xtensa binary
-make clean-qemu              # Remove build/ and sdkconfig.qemu_build
+make qemu-clean              # Remove build/ and sdkconfig.qemu_build
 ```
 
 ## 🌐 Web Interface Features
@@ -111,13 +114,21 @@ pkill -9 -f qemu-system-xtensa
 ```
 Verify the process is gone: `pgrep -af qemu-system-xtensa` (must be empty)
 
+### Running tests against an already-running QEMU
+The `--qemu` pytest flag means "launch and manage QEMU yourself". If QEMU is already running
+(e.g. started with `make qemu-web`), do **not** pass `--qemu` to pytest — it will detect
+the occupied ports and abort. Instead, use `--ip` directly:
+```bash
+cd api_tests && .venv/bin/python -m pytest --ip localhost:8080
+```
+
 ### QEMU Won't Start
 1. Verify `build/qemu_flash.bin` exists: run `make qemu-flash-image` first
 2. Install QEMU via `idf_tools.py`: `python $IDF_PATH/tools/idf_tools.py install qemu-xtensa`
 
 ### Build Errors
-1. Clean and rebuild: `make clean-qemu && make build-qemu`
-2. If switching from native to QEMU build: `make clean && make build-qemu`
+1. Clean and rebuild: `make qemu-clean && make qemu-build`
+2. If switching from native to QEMU build: `make clean && make qemu-build`
 
 ## ⚡ Performance Notes
 

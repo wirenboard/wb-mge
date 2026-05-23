@@ -30,32 +30,30 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
-### 1. Установка ESP-IDF
+### 1. Установка ESP-IDF через EIM
+
+Debian/Ubuntu:
 
 ```bash
-# Клонирование репозитория ESP-IDF
-git clone --branch v5.4 --single-branch --depth 1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-idf.git
-
-# Запуск скрипта установки
-cd esp-idf
-./install.sh
-
-# Настройка переменных окружения
-source export.sh
+echo "deb [trusted=yes] https://dl.espressif.com/dl/eim/apt/ stable main" | sudo tee /etc/apt/sources.list.d/espressif.list
+sudo apt update
+sudo apt install eim-cli
 ```
 
-Для MacOS:
+macOS:
 
 ```bash
-# Установка Espressif Installation Manager
+brew tap espressif/eim
 brew install eim
-
-# Установка ESP-IDF
-eim install -i v5.4
-
-# Активация окружения
-source ~/.espressif/tools/activate_idf_v5.4.sh  
 ```
+
+Установка IDF:
+
+```bash
+eim install -i v5.4
+```
+
+Makefile активирует окружение EIM автоматически — `source` перед `make` не нужен.
 
 
 ### 2. Клонирование репозитория
@@ -128,13 +126,19 @@ docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 ## Прошивка устройства
 
 ```bash
-idf.py -p /dev/ttyACM* flash
+make flash
+```
+
+Для прошивки всех разделов явно (загрузчик, таблица разделов, OTA-данные, приложение):
+
+```bash
+make flash-all
 ```
 
 ## Подключение к консоли устройства
 
 ```bash
-idf.py monitor
+make monitor
 ```
 
 Для отключения от монитора нажмите `Ctrl+]`.

@@ -90,6 +90,43 @@ Then build the firmware:
 make build-idf-project
 ```
 
+## Make Dependency Graph
+
+```mermaid
+graph TD
+    B["🔨 Full build"] --> all
+    F["⚡ Flash firmware"] --> flash
+    FA["⚡ Flash all partitions"] --> flash-all
+    M["🔍 Device console"] --> monitor
+    O["🌐 OTA update"] --> ota-flash
+    C["🧹 Clean artifacts"] --> clean
+
+    all --> unittests
+    all --> build-frontend
+    all --> build-idf-project
+    build-idf-project --> prepare_release
+```
+
+```mermaid
+graph TD
+    BQ["🔨 Build for QEMU"] --> qemu-build
+    W["🌐 QEMU web UI at localhost:8080"] --> qemu-web
+    T["🧪 Run API tests in QEMU"] --> qemu-test
+    R["⚡ Run QEMU basic mode"] --> qemu-run
+    MC["🔍 QEMU console"] --> qemu-monitor
+    CQ["🧹 Clean QEMU artifacts"] --> qemu-clean
+
+    qemu-build --> build-frontend
+    qemu-build --> build-idf-project-qemu
+
+    qemu-web --> qemu-flash-image
+    qemu-web --> qemu-efuse-image
+    qemu-run --> qemu-flash-image
+    qemu-run --> qemu-efuse-image
+    qemu-test --> qemu-flash-image
+    qemu-test --> qemu-efuse-image
+```
+
 ## Building with Docker
 
 Docker allows you to build the project without installing ESP-IDF and Node.js on your host system.
@@ -245,22 +282,46 @@ The `make qemu-test` target invokes `api_tests/.venv/bin/python` directly, so th
 
 ### 7. Build firmware + frontend and run tests
 
+Build everything for QEMU (frontend + firmware with QEMU config):
+
 ```bash
 cd /root/wb-mge
-
-make build-frontend
-make qemu-flash-image qemu-efuse-image   # builds firmware + flash + eFuse images
-make qemu-test                            # boots QEMU, runs pytest, kills QEMU
+make qemu-build
 ```
 
-`make qemu-test` accepts `PYTEST_ARGS` for filtering, e.g.:
+Generate flash and eFuse images:
+
+```bash
+make qemu-flash-image
+make qemu-efuse-image
+```
+
+Run the API test suite (boots QEMU, runs pytest, kills QEMU):
+
+```bash
+make qemu-test
+```
+
+Filter tests by name:
 
 ```bash
 make qemu-test PYTEST_ARGS="-k test_auth"
+```
+
+Run QEMU with web UI at http://localhost:8080:
+
+```bash
+make qemu-web
+```
+
+If a previous QEMU run left a stale process, kill it before retrying:
+
+```bash
+pkill -9 -f qemu-system-xtensa
 ```
 
 ### Notes
 
 - Initial run downloads ~2 GB of toolchains/components (EIM + xtensa toolchain + IDF managed components); expect ~10 minutes on a fresh host.
 - ESP-IDF tools occupy ~5 GB under `/root/.espressif`. Allocate at least 15 GB of free disk before starting.
-- On low-core hosts (2 vCPU) a small number of api tests may flake on the 20 s pytest timeout under QEMU load. Rerun the affected test in isolation: `make qemu-test PYTEST_ARGS="-k <test_name>"`.
+- `make qemu-flash-image` and `make qemu-efuse-image` have no build dependencies — they only merge/create image files. Always run `make qemu-build` before generating images on a clean checkout.

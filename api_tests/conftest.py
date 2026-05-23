@@ -63,13 +63,19 @@ def quick_connection_test(base_url):
 QEMU_HOST_PORTS = [8080, 50504]
 
 
-def _check_no_stale_qemu():
-    """Check for stale QEMU processes or occupied ports and fail fast with a helpful message.
+def _check_no_stale_qemu(skip_build: bool = False):
+    """Check for stale QEMU processes or occupied ports.
 
-    A stale QEMU from a previous run holds the hostfwd ports, making the next
-    launch fail with 'Could not set up host forwarding rule'. Rather than letting
-    QEMU fail silently, we detect the condition upfront and tell the user exactly
-    what to run.
+    When skip_build is False (default): any stale process or occupied port is a hard error —
+    we are about to launch a new QEMU and it would fail to bind the ports.
+
+    When skip_build is True: the user may have intentionally started QEMU manually before
+    running tests. In this case we only warn, not abort — but still print the PID/port info
+    so the user is aware of potential conflicts.
+
+    NOTE: The --qemu flag means "launch QEMU yourself and manage its lifecycle".
+    If you want to run tests against an already-running QEMU instance, do NOT
+    use --qemu — just point --ip at the running instance (e.g. --ip localhost:8080).
     """
     # Check for running qemu-system-xtensa processes.
     result = subprocess.run(
@@ -87,12 +93,27 @@ def _check_no_stale_qemu():
             occupied_ports.append(port)
         sock.close()
 
-    if stale_pids or occupied_ports:
-        lines = ["Stale QEMU detected — cannot start a new instance safely."]
-        if stale_pids:
-            lines.append(f"  Running QEMU PIDs: {', '.join(stale_pids)}")
-        if occupied_ports:
-            lines.append(f"  Occupied ports: {', '.join(str(p) for p in occupied_ports)}")
+    if not (stale_pids or occupied_ports):
+        return  # No conflict detected.
+
+    lines = []
+    if skip_build:
+        # User passed --qemu-skip-build: they may have started QEMU manually. Warn only.
+        lines.append("WARNING: QEMU process or occupied ports detected (--qemu-skip-build is set).")
+        lines.append("  If QEMU is already running intentionally, ignore this warning.")
+        lines.append("  If you want to run tests without launching a new QEMU, use --ip instead of --qemu.")
+    else:
+        lines.append("Stale QEMU detected — cannot start a new instance safely.")
+
+    if stale_pids:
+        lines.append(f"  Running QEMU PIDs: {', '.join(stale_pids)}")
+    if occupied_ports:
+        lines.append(f"  Occupied ports: {', '.join(str(p) for p in occupied_ports)}")
+
+    if skip_build:
+        lines.append("  To kill stale QEMU: pkill -9 -f qemu-system-xtensa")
+        print("\n".join(lines))  # Warning only, do not abort.
+    else:
         lines.append("  Kill it with:")
         lines.append("    pkill -9 -f qemu-system-xtensa")
         pytest.exit("\n".join(lines), returncode=1)
@@ -143,8 +164,8 @@ def qemu_process(request):
         yield None
         return
 
-    # --- Preflight: fail fast if a stale QEMU is already running ---
-    _check_no_stale_qemu()
+    # --- Preflight: check for stale QEMU processes or occupied ports ---
+    _check_no_stale_qemu(skip_build=request.config.getoption("qemu_skip_build"))
 
     # --- Build ---
     if not request.config.getoption("qemu_skip_build"):

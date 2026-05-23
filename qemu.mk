@@ -21,11 +21,11 @@ define find_qemu_bin
 endef
 
 # QEMU targets
-# build-qemu: full build including frontend (use for initial/explicit QEMU builds).
+# qemu-build: full build including frontend (use for initial/explicit QEMU builds).
 # qemu-flash-image depends only on build-idf-project-qemu to avoid re-running the
 # frontend build (npm install + vitest + vite) on every make qemu-test invocation.
 # Frontend must already be built and embedded in firmware before calling qemu-test.
-build-qemu: build-frontend build-idf-project-qemu
+qemu-build: build-frontend build-idf-project-qemu
 
 build-idf-project-qemu:
 	@echo "Building for QEMU with OpenEth ethernet driver"
@@ -59,7 +59,7 @@ qemu-monitor:
 	@echo "Starting QEMU monitor..."
 	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" monitor
 
-qemu-run: qemu-flash-image
+qemu-run: qemu-flash-image qemu-efuse-image
 	@echo "Running in QEMU..."
 	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor
 
@@ -114,22 +114,24 @@ qemu-test: qemu-flash-image qemu-efuse-image
 # Help target for QEMU
 qemu-help:
 	@echo "QEMU Targets:"
-	@echo "  build-qemu        - Build project for QEMU emulation"
-	@echo "  qemu-flash-image  - Generate QEMU flash image"
-	@echo "  qemu-efuse-image  - Create ESP32 eFuse image (build/qemu_efuse.bin)"
-	@echo "  qemu-run          - Run in QEMU (basic mode, no port forwarding)"
-	@echo "  qemu-web          - Run in QEMU with web access (localhost:8080)"
-	@echo "  qemu-monitor      - Run QEMU with monitor only"
-	@echo "  qemu-bin-path     - Print path to QEMU binary"
-	@echo "  qemu-test         - Build, run QEMU, run API tests, stop QEMU"
+	@echo "  qemu-build        - Build frontend + QEMU firmware (run once or after code changes)"
+	@echo "  qemu-flash-image  - Merge build/ into qemu_flash.bin (no compile, requires prior qemu-build)"
+	@echo "  qemu-efuse-image  - Create eFuse image build/qemu_efuse.bin if missing (idempotent)"
+	@echo "  qemu-run          - Run QEMU in basic mode (no port forwarding)"
+	@echo "  qemu-web          - Run QEMU with web UI at localhost:8080"
+	@echo "  qemu-monitor      - Attach monitor to already-running QEMU (no build)"
+	@echo "  qemu-bin-path     - Print path to qemu-system-xtensa binary"
+	@echo "  qemu-test         - Build flash image and run API pytest suite in QEMU"
+	@echo "  qemu-clean        - Remove build/ and sdkconfig.qemu_build"
 	@echo ""
+	@echo "Build:       make qemu-build"
 	@echo "Quick start: make qemu-web"
 	@echo "Run tests:   make qemu-test"
 	@echo "One test:    make qemu-test PYTEST_ARGS=\"-k test_auth\""
 
-clean-qemu:
+qemu-clean:
 	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
 	@rm -rf build
 	@rm -f sdkconfig.qemu_build sdkconfig.qemu_build.old
 
-.PHONY: build-qemu build-idf-project-qemu qemu-flash-image qemu-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help clean-qemu
+.PHONY: qemu-build build-idf-project-qemu qemu-flash-image qemu-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help qemu-clean
