@@ -105,11 +105,11 @@ $(TEST_REPORT_DIRS):
 
 # Remove test build directory
 remove_build_dir:
-	rm -rf $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR)
 
 # Remove test coverage report directory
 remove_report_dir:
-	rm -rf $(REPORT_DIR)
+	@rm -rf $(REPORT_DIR)
 
 # Clean test directory: remove build and report directories
 clean: remove_build_dir remove_report_dir

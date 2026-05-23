@@ -1,3 +1,7 @@
+# Force bash for all recipes: the EIM activate script defines functions with dots
+# in their names (e.g. idf.py()), which POSIX sh (dash on Debian/Ubuntu) rejects.
+SHELL := /bin/bash
+
 #######################################
 # EIM (Espressif IDF Manager) settings
 #######################################
@@ -27,12 +31,16 @@ RELEASE_DIR = release
 # Tool selection (platform-specific)
 #######################################
 
-# EIM activate script sources IDF_PATH, venv, and tool paths into the current shell.
-# idf.py is a shell alias set by EIM — not a binary — so it cannot be called directly
-# in Makefile recipes. Use EIM_ACTIVATE before every idf.py invocation instead.
-EIM_ACTIVATE := . $(HOME)/.espressif/tools/activate_idf_$(EIM_IDF_VERSION).sh
+# EIM_ACTIVATE sources the EIM activate script when it exists (local EIM install).
+# If the script is absent (Docker espressif/idf image, Jenkins with export.sh),
+# it expands to "true" — a no-op — assuming IDF_PATH is already set in the environment.
+# stdout is redirected to /dev/null to suppress the verbose activation messages;
+# stderr is kept so that errors (missing script, bad env) are still visible.
+EIM_ACTIVATE_SCRIPT := $(HOME)/.espressif/tools/activate_idf_$(EIM_IDF_VERSION).sh
+EIM_ACTIVATE := $(if $(wildcard $(EIM_ACTIVATE_SCRIPT)),. $(EIM_ACTIVATE_SCRIPT) >/dev/null,true)
 
-# idf.py path derived from IDF_PATH set by the activate script ($$IDF_PATH → $IDF_PATH in shell).
+# idf.py path: IDF_PATH is set either by EIM_ACTIVATE or by the caller's export.sh.
+# $$IDF_PATH in a recipe expands to $IDF_PATH in the shell at recipe execution time.
 IDF_PY = $$IDF_PATH/tools/idf.py
 
 UNAME_S := $(shell uname -s)
@@ -81,7 +89,10 @@ RELEASE_FILE_NAME := $(shell echo $(TARGET)__$(VERSION)_$(GIT_BRANCH)_$(GIT_HASH
 # unittests
 #######################################
 
-UNITTESTS_DIRS += $(shell $(FIND) . -type d | $(GREP) unittests)
+# Find only top-level unittest module directories (those that have their own Makefile).
+# Avoids the old pattern of grep-ing all dirs by name, which matched nested subdirs
+# (mocks/, freertos/ etc.) and caused dozens of spurious "rm -rf build" lines in clean.
+UNITTESTS_DIRS += $(shell $(FIND) ./unittests -maxdepth 1 -mindepth 1 -type d -exec test -f {}/Makefile \; -print)
 UNITTESTS_TARGETS = $(addprefix UNITTEST_, $(UNITTESTS_DIRS))
 
 # C source files for coverage measurement (exclude frontend files)
@@ -135,7 +146,8 @@ clean:
 	@echo 'Cleaning unittests'
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
-			cd $$dir && $(MAKE) clean --no-print-directory; cd -; \
+			echo "  Cleaning $$dir"; \
+			cd $$dir && $(MAKE) clean --no-print-directory --silent; cd - >/dev/null; \
 		fi; \
 	done
 

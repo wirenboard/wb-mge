@@ -98,8 +98,9 @@ coverage: $(COVERAGE_DEPS)
 $(COVERAGE_TARGETS): $(COVERAGE_DATA_LIST_FILE)
 	$(eval COV_DIR := $(subst COVERAGE_,,$@))
 #	Usage: coverage_helper.sh --make-coverage TEST_DIR OUT_COVR_DATA_FILE
+#	EIM_ACTIVATE is sourced so that IDF_PATH is available for sub-make (unity.c path).
 	@if [ -f "$(COV_DIR)/Makefile" ]; then \
-		./unittests/coverage_helper.sh --make-coverage $(COV_DIR) $(COVERAGE_DATA_LIST_FILE); \
+		$(EIM_ACTIVATE) && ./unittests/coverage_helper.sh --make-coverage $(COV_DIR) $(COVERAGE_DATA_LIST_FILE); \
 	fi
 
 # Create an empty file in which the list of coverage data files will be written
