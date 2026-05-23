@@ -30,14 +30,14 @@ build-idf-project-qemu:
 	@if [ -f "build/CMakeCache.txt" ]; then \
 	    if ! grep -q "qemu_mge" "build/CMakeCache.txt"; then \
 	        echo "Detected hardware build cache — running fullclean before QEMU build..."; \
-	        $(IDF_PY) fullclean; \
+	        $(EIM_ACTIVATE) && $(IDF_PY) fullclean; \
 	    fi; \
 	fi
-	CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" $(addprefix -D, $(DEFS)) build
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" $(addprefix -D, $(DEFS)) build
 
 qemu-flash-image: build-qemu
 	@echo "Generating QEMU flash image..."
-	cd build && python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin --fill-flash-size=4MB @flash_args
+	@$(EIM_ACTIVATE) && cd build && python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin --fill-flash-size=4MB @flash_args
 	@test -f build/qemu_flash.bin || { echo "QEMU flash image not found after generation"; exit 1; }
 	@echo "QEMU flash image ready"
 
@@ -52,11 +52,11 @@ qemu-efuse-image:
 
 qemu-monitor: build-qemu
 	@echo "Starting QEMU monitor..."
-	CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" monitor
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" monitor
 
 qemu-run: qemu-flash-image
 	@echo "Running in QEMU..."
-	CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor
 
 qemu-web: qemu-flash-image qemu-efuse-image
 	@echo "Running QEMU with web server port forwarding..."
@@ -70,7 +70,7 @@ qemu-web: qemu-flash-image qemu-efuse-image
 	    if [ -z "$$QEMU_BIN" ]; then \
 	        echo "QEMU binary not found. Using idf.py method instead..."; \
 	        echo "Note: This method will not have port forwarding built-in"; \
-	        CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
+	        $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
 	    else \
 	        echo "Found QEMU at: $$QEMU_BIN"; \
 	        echo "Starting QEMU with port forwarding: localhost:8080 -> ESP32:80, localhost:50504 -> ESP32:50504"; \
@@ -87,7 +87,7 @@ qemu-web: qemu-flash-image qemu-efuse-image
 	            -serial mon:stdio || { \
 	                echo "Direct QEMU launch failed. Trying idf.py qemu monitor..."; \
 	                echo "Note: This method will not have port forwarding - you will need to find the ESP32 IP"; \
-	                CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
+	                $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
 	            }; \
 	    fi; \
 	}
@@ -123,7 +123,7 @@ qemu-help:
 	@echo "One test:    make qemu-test PYTEST_ARGS=\"-k test_auth\""
 
 clean-qemu:
-	$(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
 	rm -rf build sdkconfig
 
 .PHONY: build-qemu build-idf-project-qemu qemu-flash-image qemu-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help clean-qemu

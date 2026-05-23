@@ -1,16 +1,19 @@
 # Agent Instructions
 
-## Build or Test Command (macOS)
+## Build or Test Command
 
 ```bash
-source ~/.espressif/tools/activate_idf_v5.4.sh && make build-frontend unittests build-idf-project
+make build-frontend unittests build-idf-project
 ```
+
+The Makefile sources the EIM activate script (`~/.espressif/tools/activate_idf_v5.4.sh`) internally — no manual `source` needed.
 
 ## Rules
 
 - **Always build before delivering results to the user.** Run the build command above and confirm it succeeds before presenting any changes.
 - **Always run tests after every fix.** After each code change, run the relevant test suite and confirm all tests pass before proceeding. For backend (C) changes: `make unittests`. For frontend changes: `cd main/frontend && npm run test`.
 - **Always run `make clean` after editing `sdkconfig.defaults`.** The IDF build system caches configuration; without a clean the new defaults will not be picked up correctly.
+- **Always run `make clean` when switching between native and QEMU builds.** The CMake cache (`build/CMakeCache.txt`) stores the build target (native ESP32 vs QEMU OpenEth). Switching without a clean causes compile errors such as `esp_eth_mac_new_esp32` not found (when a QEMU cache is reused for a native build) or `esp_eth_mac_new_openeth` not found (the reverse). Fix: `make clean && make build-frontend build-idf-project` for native, or `make clean-qemu && make build-qemu` for QEMU.
 
 ## Backend (Embedded C) Coding Standards
 
@@ -110,3 +113,45 @@ Note: for ESP32, RX is input and TX is output.
 | Config (B1) | +     |
 
 Note: the button drives the ESP32 pin to logic low when pressed.
+
+## QEMU and tests — gotchas
+
+### Killing QEMU correctly
+
+`pkill -9 qemu-system-xtensa` **silently fails** (stderr warning, exit 1, zero
+processes killed): the process name `qemu-system-xtensa` is longer than 15
+characters, and without `-f` `pkill` matches against the 15-char-truncated name
+in `/proc/PID/comm`, which mismatches the real one.
+
+**Always** use `-f` (match against the full command line):
+```bash
+pkill -9 -f qemu-system-xtensa
+```
+
+Verify it actually died:
+```bash
+pgrep -af qemu-system-xtensa            # must be empty
+ss -tnlp 2>/dev/null | grep 8080        # port must be free
+```
+
+### Killing the wrapper bash script does NOT kill the QEMU child
+
+`pkill -9 -f make qemu-tests` kills the script but the `qemu-system-xtensa` it
+spawned keeps running → it still holds port 8080 → the next QEMU cannot bind
+(`Could not set up host forwarding rule`) → the next run is garbage. After
+killing any test-runner script, always also explicitly kill its children:
+```bash
+pkill -9 -f qemu-system-xtensa
+pkill -9 -f pytest
+```
+
+### `qemu_flash.bin` is a writable MTD!
+
+The firmware writes to the NVS partition and those changes **persist in the
+file** across QEMU runs. Tests that change network settings (e.g. `eth_dhcpc=false`
+plus a static IP) leave the flash in a state where the next boot makes the
+server unreachable on the QEMU network (`hostfwd` only NATs to the
+DHCP-assigned 10.0.2.15). Before each test run **always** regenerate the image:
+```bash
+rm -f build/qemu_flash.bin && make qemu-flash-image
+```

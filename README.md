@@ -27,31 +27,40 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
-### 1. Install ESP-IDF
+### 0. Install EIM (ESP-IDF Installation Manager)
 
+Debian:
 ```bash
-# Clone ESP-IDF repository
-git clone --branch v5.4 --single-branch --depth 1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-idf.git
-
-# Run the installation script
-cd esp-idf
-./install.sh
-
-# Set up environment variables
-source export.sh
+echo "deb [trusted=yes] https://dl.espressif.com/dl/eim/apt/ stable main" | sudo tee /etc/apt/sources.list.d/espressif.list
+sudo apt update
+sudo apt install eim-cli
 ```
 
-For MacOS:
+RPM-Based Linux:
+```bash
+sudo tee /etc/yum.repos.d/espressif-eim.repo << 'EOF'
+[eim]
+name=ESP-IDF Installation Manager
+baseurl=https://dl.espressif.com/dl/eim/rpm/$basearch
+enabled=1
+gpgcheck=0
+EOF
+
+sudo dnf install eim-cli
+```
+
+MacOS:
+```bash
+brew tap espressif/eim
+brew install eim
+```
+
+
+### 1. Install ESP-IDF
+
 
 ```bash
-# Install Espressif Installation Manager
-brew install eim
-
-# Install ESP-IDF
 eim install -i v5.4
-
-# Activate the environment
-source ~/.espressif/tools/activate_idf_v5.4.sh
 ```
 
 ### 2. Clone the Repository
@@ -124,13 +133,19 @@ docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 ## Flashing the Device
 
 ```bash
-idf.py -p /dev/ttyACM* flash
+make flash
+```
+
+To flash all partitions explicitly (bootloader, partition table, OTA data, app):
+
+```bash
+make flash-all
 ```
 
 ## Connecting to Device Console
 
 ```bash
-idf.py monitor
+make monitor
 ```
 
 To disconnect from the monitor, press `Ctrl+]`.
@@ -191,8 +206,7 @@ Install ESP-IDF (uses `/var/tmp/eim-work` as scratch space to avoid filling `/tm
 
 ```bash
 mkdir -p /var/tmp/eim-work
-TMPDIR=/var/tmp/eim-work eim install \
-    --idf-versions v5.4 --target esp32 --non-interactive true -v
+TMPDIR=/var/tmp/eim-work eim install --idf-versions v5.4 --target esp32 --non-interactive true -v
 ```
 
 After install, ESP-IDF lives in `/root/.espressif/v5.4/esp-idf` and is activated with:
@@ -200,14 +214,6 @@ After install, ESP-IDF lives in `/root/.espressif/v5.4/esp-idf` and is activated
 ```bash
 source /root/.espressif/tools/activate_idf_v5.4.sh
 ```
-
-> The EIM activate script exports `IDF_PATH`, `IDF_TOOLS_PATH`, etc. and prepends the python venv + toolchain dirs to `PATH`, but it does **not** put `idf.py` on `PATH`. Export it explicitly:
->
-> ```bash
-> export IDF_PY="$IDF_PATH/tools/idf.py"
-> ```
->
-> All `make` targets in this repo honour `IDF_PY` and will invoke it directly.
 
 ### 4. QEMU xtensa
 
@@ -240,8 +246,6 @@ The `make qemu-test` target invokes `api_tests/.venv/bin/python` directly, so th
 ### 7. Build firmware + frontend and run tests
 
 ```bash
-source /root/.espressif/tools/activate_idf_v5.4.sh
-export IDF_PY="$IDF_PATH/tools/idf.py"
 cd /root/wb-mge
 
 make build-frontend

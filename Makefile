@@ -1,4 +1,11 @@
 #######################################
+# EIM (Espressif IDF Manager) settings
+#######################################
+
+# IDF version installed via EIM; used to locate the activate script.
+EIM_IDF_VERSION := v5.4
+
+#######################################
 # device signature
 #######################################
 
@@ -17,24 +24,27 @@ BUILD_DIR = build
 RELEASE_DIR = release
 
 #######################################
-# OS detection and tool selection
+# Tool selection (platform-specific)
 #######################################
+
+# EIM activate script sources IDF_PATH, venv, and tool paths into the current shell.
+# idf.py is a shell alias set by EIM — not a binary — so it cannot be called directly
+# in Makefile recipes. Use EIM_ACTIVATE before every idf.py invocation instead.
+EIM_ACTIVATE := . $(HOME)/.espressif/tools/activate_idf_$(EIM_IDF_VERSION).sh
+
+# idf.py path derived from IDF_PATH set by the activate script ($$IDF_PATH → $IDF_PATH in shell).
+IDF_PY = $$IDF_PATH/tools/idf.py
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-    # macOS - use GNU tools if available, fallback to BSD versions
-    SED := $(shell which gsed 2>/dev/null || which sed)
+    # macOS: prefer GNU tools from Homebrew (gsed/ggrep/gfind) over BSD variants
+    SED  := $(shell which gsed  2>/dev/null || which sed)
     GREP := $(shell which ggrep 2>/dev/null || which grep)
-    # Try to find GNU find first, then use system find with compatible syntax
     FIND := $(shell which gfind 2>/dev/null || echo "find")
-    # On macOS idf.py is not in PATH by default; resolve via IDF_PATH set by activate script
-    IDF_PY ?= $(if $(IDF_PATH),$(IDF_PATH)/tools/idf.py,idf.py)
 else
-    # Linux and other Unix-like systems
-    SED := sed
+    SED  := sed
     GREP := grep
     FIND := find
-    IDF_PY ?= idf.py
 endif
 
 #######################################
@@ -88,7 +98,7 @@ unittests: $(UNITTESTS_TARGETS)
 $(UNITTESTS_TARGETS):
 	$(eval UT_DIR := $(subst UNITTEST_,,$@))
 	@if [ -f $(UT_DIR)/Makefile ]; then \
-		cd $(UT_DIR) && $(MAKE) --no-print-directory && cd -; \
+		$(EIM_ACTIVATE) && cd $(UT_DIR) && $(MAKE) --no-print-directory && cd -; \
 	fi
 
 build-frontend:
@@ -105,7 +115,7 @@ build-frontend:
 
 build-idf-project:
 	@echo 'Building ESP-IDF project'
-	@$(IDF_PY) $(addprefix -D, $(DEFS)) build
+	@$(EIM_ACTIVATE) && $(IDF_PY) $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
 
 prepare_release:
@@ -117,7 +127,7 @@ prepare_release:
 clean:
 	@echo 'Cleaning project'
 	@rm -rf $(BUILD_DIR)
-	@$(IDF_PY) fullclean
+	@$(EIM_ACTIVATE) && $(IDF_PY) fullclean
 	@rm -rf $(RELEASE_DIR)
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
@@ -128,6 +138,27 @@ clean:
 			cd $$dir && $(MAKE) clean --no-print-directory; cd -; \
 		fi; \
 	done
+
+#######################################
+# Flash and monitor
+#######################################
+
+flash:
+	@$(EIM_ACTIVATE) && $(IDF_PY) flash
+
+# Flash all partitions (bootloader + partition table + OTA data + app) via esptool directly.
+# Useful when idf.py flash cannot detect the port automatically.
+flash-all:
+	@$(EIM_ACTIVATE) && python -m esptool --chip esp32 -b 460800 \
+		--before default_reset --after hard_reset write_flash \
+		--flash_mode dio --flash_size 4MB --flash_freq 40m \
+		0x1000  build/bootloader/bootloader.bin \
+		0x8000  build/partition_table/partition-table.bin \
+		0xd000  build/ota_data_initial.bin \
+		0x90000 build/$(TARGET).bin
+
+monitor:
+	@$(EIM_ACTIVATE) && $(IDF_PY) monitor
 
 #######################################
 # OTA flash
@@ -156,7 +187,7 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all unittests build-frontend build-idf-project prepare_release clean ota-flash
+.PHONY: all unittests build-frontend build-idf-project prepare_release clean flash flash-all monitor ota-flash
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk
