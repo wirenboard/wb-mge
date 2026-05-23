@@ -114,7 +114,6 @@ def _one_attempt(host, port, cookies):
 
 
 @pytest.mark.timeout(900)
-@pytest.mark.order(60)
 def test_ws_pong_race_no_corruption(api):
     """
     The WS stream must not corrupt under an aggressive PING flood.

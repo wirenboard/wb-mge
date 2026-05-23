@@ -61,7 +61,6 @@ def _pinger(ws, stop_evt):
 
 
 @pytest.mark.timeout(900)
-@pytest.mark.order(61)
 def test_uart_teardown_no_crash(api):
     """
     Frequent port-mode switches (uart_driver_delete) under WS+PING load must not
