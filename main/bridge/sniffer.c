@@ -162,7 +162,10 @@ static void resp_timer_cb(TimerHandle_t timer)
     unsigned port_index = (unsigned)(uintptr_t)pvTimerGetTimerID(timer);
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
-    sniff_packet_t pkt = {0};
+    /* sniff_packet_t (~280 bytes) on the Tmr Svc stack (2048) causes overflow under load.
+     * All timer callbacks in Tmr Svc execute sequentially — static is safe here. */
+    static sniff_packet_t pkt;
+    memset(&pkt, 0, sizeof(pkt));
     bool do_enqueue = false;
 
     taskENTER_CRITICAL(&sniff_mux);

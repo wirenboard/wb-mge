@@ -9,7 +9,11 @@
 #include <string.h>
 
 // Task configuration
-#define MOCK_TASK_STACK_SIZE  2048
+// Raised from 2048 to match SERIAL_TASK_STACK_SIZE (serial.c): the mock task calls
+// sniffer_process() which allocates two sniff_packet_t + stream_frame_t[16] + recursion
+// (~700+ bytes). Real hardware runs sniffer_process in the UART event task (4096);
+// the mock must match to avoid stack overflow in "modbus_mock" task.
+#define MOCK_TASK_STACK_SIZE  4096
 #define MOCK_TASK_PRIORITY    5
 #define MOCK_TASK_NAME        "modbus_mock"
 
