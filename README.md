@@ -20,14 +20,14 @@ Two modes are available for each port:
 
 **Note:** These instructions are for Debian/Ubuntu systems
 
-### 0. Install Node.js 20.x
+### 1. Install Node.js 20.x
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
-### 0. Install EIM (ESP-IDF Installation Manager)
+### 2. Install EIM (ESP-IDF Installation Manager)
 
 Debian:
 ```bash
@@ -56,21 +56,21 @@ brew install eim
 ```
 
 
-### 1. Install ESP-IDF
+### 3. Install ESP-IDF
 
 
 ```bash
 eim install -i v5.4
 ```
 
-### 2. Clone the Repository
+### 4. Clone the Repository
 
 ```bash
 git clone git@github.com:wirenboard/wb-mge.git
 cd wb-mge
 ```
 
-### 3. Build the Project
+### 5. Build the Project
 
 For a complete build (unit tests + frontend + firmware):
 
