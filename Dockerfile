@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y \
     gcovr \
     && apt-get clean
 
+# Mounted host repos have foreign UID — let git read .git for FIRMWARE_GIT_INFO
+RUN git config --global --add safe.directory '*'
+
 WORKDIR /root/esp/project
 
 CMD ["/bin/bash"]
