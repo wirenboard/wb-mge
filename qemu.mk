@@ -27,7 +27,29 @@ endef
 # Frontend must already be built and embedded in firmware before calling qemu-test.
 qemu-build: build-frontend build-idf-project-qemu
 
-build-idf-project-qemu:
+# Apply patches to ESP-IDF sources required for QEMU builds.
+# Patches live in patches/ and are idempotent: re-running is safe if already applied.
+# This target must run before any QEMU firmware compile so that the patched IDF
+# sources are compiled in, regardless of whether the build runs locally or in Docker.
+IDF_PATCHES_DIR := $(CURDIR)/patches
+apply-idf-patches:
+	@echo "Applying IDF patches for QEMU build..."
+	@if grep -q "bug01 fix" "$(IDF_PATH)/components/esp_driver_uart/src/uart.c"; then \
+	    echo "  [skip] bug01-uart-driver-delete-intr-order.patch already applied"; \
+	else \
+	    echo "  Applying bug01-uart-driver-delete-intr-order.patch ..."; \
+	    patch -p1 -d "$(IDF_PATH)" < "$(IDF_PATCHES_DIR)/bug01-uart-driver-delete-intr-order.patch"; \
+	    echo "  Done."; \
+	fi
+	@if grep -q "ESP_DRAM_LOGW" "$(IDF_PATH)/components/esp_eth/src/openeth/esp_eth_mac_openeth.c"; then \
+	    echo "  [skip] bug04-openeth-isr-dram-log.patch already applied"; \
+	else \
+	    echo "  Applying bug04-openeth-isr-dram-log.patch ..."; \
+	    patch -p1 -d "$(IDF_PATH)" < "$(IDF_PATCHES_DIR)/bug04-openeth-isr-dram-log.patch"; \
+	    echo "  Done."; \
+	fi
+
+build-idf-project-qemu: apply-idf-patches
 	@echo "Building for QEMU with OpenEth ethernet driver"
 	@# Detect stale hardware build cache: if CMakeCache exists but was not a QEMU build,
 	@# run fullclean to force CMake reconfiguration with correct source file selection.
@@ -134,4 +156,4 @@ qemu-clean:
 	@rm -rf build
 	@rm -f sdkconfig.qemu_build sdkconfig.qemu_build.old
 
-.PHONY: qemu-build build-idf-project-qemu qemu-flash-image qemu-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help qemu-clean
+.PHONY: qemu-build apply-idf-patches build-idf-project-qemu qemu-flash-image qemu-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help qemu-clean

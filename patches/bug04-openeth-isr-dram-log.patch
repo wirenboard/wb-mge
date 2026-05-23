@@ -1,0 +1,20 @@
+--- a/components/esp_eth/src/openeth/esp_eth_mac_openeth.c	2026-05-23 21:31:00.571250331 +0300
++++ b/components/esp_eth/src/openeth/esp_eth_mac_openeth.c	2026-05-23 21:58:44.765224049 +0300
+@@ -64,7 +64,16 @@
+     }
+ 
+     if (status & OPENETH_INT_BUSY) {
+-        ESP_EARLY_LOGW(TAG, "%s: RX frame dropped (0x%" PRIx32 ")", __func__, status);
++        /* Use ESP_DRAM_LOGW instead of ESP_EARLY_LOGW (bug04 fix).
++         * emac_opencores_isr_handler is registered with ESP_INTR_FLAG_IRAM, so IDF
++         * keeps it unmasked during flash-cache-disable windows (e.g. NVS reads).
++         * ESP_EARLY_LOGW -> vprintf -> uart_hal_write_txfifo lives in flash (IROM);
++         * if cache is off when ISR fires -> "Cache disabled" panic.
++         * ESP_DRAM_LOGW routes through esp_rom_printf (ROM, always safe); the format
++         * string literal is placed in DRAM automatically by the macro internals.
++         * NOTE: __func__ is intentionally omitted -- it points to a .rodata string
++         * in flash, which is inaccessible when cache is disabled. */
++        ESP_DRAM_LOGW(DRAM_STR("opencores.emac"), "RX frame dropped (0x%x)", (unsigned)status);
+     }
+ 
+     // Clear interrupt
