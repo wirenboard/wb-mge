@@ -617,7 +617,14 @@ static void sniffer_ws_task(void *arg)
             .final   = true,
         };
 
-        esp_err_t ret = httpd_ws_send_frame_async(srv, fd, &ws_frame);
+        /* Use httpd_ws_send_data (blocking) instead of httpd_ws_send_frame_async:
+         * the actual socket write runs in the httpd worker task, serialized with
+         * the auto-PONG reply httpd sends for client PINGs. send_frame_async wrote
+         * the frame (header + payload as two separate send() calls) directly from
+         * this task, so an auto-PONG from the httpd task could interleave between
+         * the two send()s and corrupt the WS byte stream. Routing through the worker
+         * task removes the concurrency. Blocking variant lets us safely reuse json_buf. */
+        esp_err_t ret = httpd_ws_send_data(srv, fd, &ws_frame);
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "WS send failed (%d), dropping client", ret);
             xSemaphoreTake(ws_mutex, portMAX_DELAY);

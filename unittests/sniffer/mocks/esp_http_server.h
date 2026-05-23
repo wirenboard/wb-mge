@@ -78,6 +78,14 @@ static inline esp_err_t httpd_ws_send_frame_async(httpd_handle_t handle, int fd,
     return ESP_OK;
 }
 
+static inline esp_err_t httpd_ws_send_data(httpd_handle_t handle, int fd, httpd_ws_frame_t *frame)
+{
+    (void)handle;
+    (void)fd;
+    (void)frame;
+    return ESP_OK;
+}
+
 static inline int httpd_req_to_sockfd(httpd_req_t *req)
 {
     (void)req;
