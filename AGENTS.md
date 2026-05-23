@@ -155,3 +155,48 @@ DHCP-assigned 10.0.2.15). Before each test run **always** regenerate the image:
 ```bash
 rm -f build/qemu_flash.bin && make qemu-flash-image
 ```
+
+## Shell command style
+
+Claude Code's circuit breakers fire even in bypass mode on "dangerous-looking"
+commands. To avoid getting stuck on confirmation prompts, follow these rules:
+
+### Don't chain commands with `;` or `&&` on one line
+Each command is a separate Bash call. Exception: trivial `cd dir && cmd` and etc
+If there are more than two steps, write a script and run it.
+
+### No `ps … | grep … | awk … | xargs kill`
+To kill processes by name, use:
+```bash
+pkill -f '<stable pattern>'
+```
+`kill -9` only when `pkill` (SIGTERM) already failed, and only against a
+specific PID you just obtained and displayed in the output. Never kill
+processes based on `ps | grep` results without explicitly verifying the PID.
+
+### Destructive operations — one per call
+- `rm` with a glob (`rm -f dir/*`) — separate command, no neighbors on the line.
+- Truncating redirect (`> file`) — separate command.
+- `rm -rf` on paths with variables (`$VAR`, `~`, `$HOME/…`) — forbidden.
+  First `echo` the path, confirm it expanded correctly, then delete.
+- Never `rm -rf /…` or `rm -rf ~` under any framing.
+
+### Background processes
+`nohup … &`, `disown`, `setsid` — separate command. Do not silence stderr
+(`2>/dev/null` is forbidden when launching workers — the log is needed for
+diagnostics). After launch, print the PID and verify with `ps -p $PID` as
+a separate call.
+
+### Long sequences — use a script
+If you need to: stop old → clean up → start new — that's three steps,
+three calls. Or put them in `scripts/<task>.sh`, commit it, and invoke the
+script. Easier to review, and the circuit breakers stay quiet.
+
+### What NOT to do (antipatterns from real interruptions)
+```bash
+# ❌ everything on one line, kill via grep, glob rm, truncate, nohup, hidden stderr
+cd /x; ps -ef|grep foo|grep -v grep|awk '{print $2}'|xargs -r kill -9; sleep 2
+> /x/out.txt; rm -f /x/fails/* 2>/dev/null
+nohup /x/run.sh > /x/log 2>&1 &
+```
+Split this into 4–5 separate calls with clearly named steps.
