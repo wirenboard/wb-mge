@@ -16,13 +16,40 @@ make qemu-web
 
 ## 📋 What It Does
 
-**Prerequisite:** ESP-IDF environment must be loaded beforehand (e.g. `source ~/.espressif/tools/activate_idf_v5.4.sh`).
+The Makefile activates the EIM environment automatically — no manual `source` needed.
 
 The command automatically:
 1. Builds the project with QEMU configuration
 2. Generates QEMU flash image
 3. Kills any existing QEMU processes
 4. Starts QEMU with port forwarding (localhost:8080 → ESP32:80)
+
+## 🔗 Make Dependency Graph
+
+```mermaid
+graph TD
+    B["🔨 Build firmware"] --> build-qemu
+    W["🌐 UI at :8080"] --> qemu-web
+    T["🧪 Run API tests"] --> qemu-test
+    R["⚡ QEMU without port "] --> qemu-run
+    M["🔍 QEMU console"] --> qemu-monitor
+
+    build-qemu --> build-frontend
+    build-qemu --> build-idf-project-qemu
+
+    qemu-web --> qemu-flash-image
+    qemu-web --> qemu-efuse-image
+    qemu-run --> qemu-flash-image
+    qemu-run --> qemu-efuse-image
+    qemu-test --> qemu-flash-image
+    qemu-test --> qemu-efuse-image
+```
+
+- `build-qemu` — the only build target (frontend + firmware)
+- `qemu-flash-image` — no dependencies: merges existing build/ into a single .bin
+- `qemu-efuse-image` — no dependencies: creates the eFuse image once
+- `qemu-web`, `qemu-run`, `qemu-test` — pull flash + efuse images but **do not rebuild firmware**
+- `qemu-monitor` — no dependencies: connects to an already-running QEMU instance
 
 ## 🔧 Key Implementation Details
 
@@ -46,28 +73,18 @@ CONFIG_ETH_USE_OPENETH=y                  # Enable OpenEth for QEMU
 - **IP Address:** Assigned via DHCP (typically 10.0.2.15)
 - **Port Forwarding:** localhost:8080 forwards to ESP32 port 80
 
-## 🛠️ Manual QEMU Commands
-
-If you need to run QEMU manually:
+## 🛠️ Make Targets Reference
 
 ```bash
-# Generate flash image
-source /Users/radmir/esp/v5.4.1/esp-idf/export.sh
-CONFIG_ETH_USE_OPENETH=1 idf.py build
-cd build
-python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin \
-  --fill-flash-size=4MB --flash_mode dio --flash_freq 40m --flash_size 4MB \
-  0x1000 bootloader/bootloader.bin 0x10000 qemu_mge.bin 0x8000 partition_table/partition-table.bin
-
-# Run QEMU with port forwarding
-~/.espressif/tools/qemu-xtensa/esp_develop_9.0.0_20240606/qemu/bin/qemu-system-xtensa \
-  -M esp32 -m 4M \
-  -drive file=qemu_flash.bin,if=mtd,format=raw \
-  -drive file=qemu_efuse.bin,if=none,format=raw,id=efuse \
-  -global driver=nvram.esp32.efuse,property=drive,value=efuse \
-  -global driver=timer.esp32.timg,property=wdt_disable,value=true \
-  -nic user,model=open_eth,hostfwd=tcp:127.0.0.1:8080-:80 \
-  -nographic -serial mon:stdio
+make build-qemu              # Build frontend + QEMU firmware (run once, or after code changes)
+make qemu-flash-image        # Merge build/ into qemu_flash.bin (no compile, pure merge)
+make qemu-efuse-image        # Create build/qemu_efuse.bin if missing (idempotent)
+make qemu-web                # Merge flash + create efuse, then run QEMU (no compile)
+make qemu-run                # Merge flash + create efuse, then run QEMU basic mode
+make qemu-monitor            # Connect monitor to already-running QEMU (no build at all)
+make qemu-test               # Merge flash + create efuse, then run pytest suite
+make qemu-bin-path           # Print path to qemu-system-xtensa binary
+make clean-qemu              # Remove build/ and sdkconfig.qemu_build
 ```
 
 ## 🌐 Web Interface Features
@@ -83,18 +100,24 @@ Once running, access these endpoints:
 ## 🔍 Troubleshooting
 
 ### No Web Access
-1. Check QEMU is running with port forwarding: `ps aux | grep qemu`
-2. Verify port forwarding in command: should include `hostfwd=tcp:127.0.0.1:8080-:80`
+1. Check QEMU is running with port forwarding: `pgrep -af qemu-system-xtensa`
+2. Verify port forwarding: should include `hostfwd=tcp:127.0.0.1:8080-:80`
 3. Check ESP32 got IP address in QEMU logs: `eth ip: 10.0.2.15`
 
+### Stale QEMU Process (port already in use)
+If `make qemu-test` or `make qemu-web` fails with `Could not set up host forwarding rule`:
+```bash
+pkill -9 -f qemu-system-xtensa
+```
+Verify the process is gone: `pgrep -af qemu-system-xtensa` (must be empty)
+
 ### QEMU Won't Start
-1. Ensure ESP-IDF environment is loaded
-2. Verify `qemu_flash.bin` exists in build directory
-3. Check QEMU binary path in script
+1. Verify `build/qemu_flash.bin` exists: run `make qemu-flash-image` first
+2. Install QEMU via `idf_tools.py`: `python $IDF_PATH/tools/idf_tools.py install qemu-xtensa`
 
 ### Build Errors
-1. Use QEMU configuration: `cp sdkconfig.qemu.minimal sdkconfig`
-2. Clean and rebuild: `idf.py clean && CONFIG_ETH_USE_OPENETH=1 idf.py build`
+1. Clean and rebuild: `make clean-qemu && make build-qemu`
+2. If switching from native to QEMU build: `make clean && make build-qemu`
 
 ## ⚡ Performance Notes
 

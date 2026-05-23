@@ -21,6 +21,10 @@ define find_qemu_bin
 endef
 
 # QEMU targets
+# build-qemu: full build including frontend (use for initial/explicit QEMU builds).
+# qemu-flash-image depends only on build-idf-project-qemu to avoid re-running the
+# frontend build (npm install + vitest + vite) on every make qemu-test invocation.
+# Frontend must already be built and embedded in firmware before calling qemu-test.
 build-qemu: build-frontend build-idf-project-qemu
 
 build-idf-project-qemu:
@@ -36,7 +40,7 @@ build-idf-project-qemu:
 	fi
 	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" $(addprefix -D, $(DEFS)) build
 
-qemu-flash-image: build-qemu
+qemu-flash-image:
 	@echo "Generating QEMU flash image..."
 	@$(EIM_ACTIVATE) && cd build && python -m esptool --chip=esp32 merge_bin --output=qemu_flash.bin --fill-flash-size=4MB @flash_args
 	@test -f build/qemu_flash.bin || { echo "QEMU flash image not found after generation"; exit 1; }
@@ -51,7 +55,7 @@ qemu-efuse-image:
 	    python3 -c "import binascii,sys; sys.stdout.buffer.write(binascii.unhexlify('00000000000000000000000000800000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'))" > build/qemu_efuse.bin; \
 	fi
 
-qemu-monitor: build-qemu
+qemu-monitor:
 	@echo "Starting QEMU monitor..."
 	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" monitor
 
