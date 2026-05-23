@@ -168,6 +168,8 @@ You can build the project without entering the container:
 docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 ```
 
+> **Note:** After running `docker run … make`, artifacts in `build/` and `release/` are owned by root.
+> Use `sudo make clean` or `sudo rm -rf build release` before any subsequent host build.
 
 ## Flashing the Device
 
