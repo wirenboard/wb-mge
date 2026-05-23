@@ -53,6 +53,15 @@ apply-idf-patches:
 	    grep -q "ESP_DRAM_LOGW" "$$IDF_PATH/components/esp_eth/src/openeth/esp_eth_mac_openeth.c" || { echo "  ERROR: patch did not apply correctly"; exit 1; }; \
 	    echo "  Done."; \
 	fi
+	@$(EIM_ACTIVATE) && \
+	if grep -q "bug05 fix" "$$IDF_PATH/components/esp_timer/src/esp_timer_impl_lac.c"; then \
+	    echo "  [skip] bug05-lact-timer-null-isr-guard.patch already applied"; \
+	else \
+	    echo "  Applying bug05-lact-timer-null-isr-guard.patch ..."; \
+	    patch -p1 -d "$$IDF_PATH" < "$(IDF_PATCHES_DIR)/bug05-lact-timer-null-isr-guard.patch" || exit 1; \
+	    grep -q "bug05 fix" "$$IDF_PATH/components/esp_timer/src/esp_timer_impl_lac.c" || { echo "  ERROR: patch did not apply correctly"; exit 1; }; \
+	    echo "  Done."; \
+	fi
 
 build-idf-project-qemu: apply-idf-patches
 	@echo "Building for QEMU with OpenEth ethernet driver"

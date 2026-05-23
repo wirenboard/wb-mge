@@ -14,10 +14,6 @@
 #include <freertos/task.h>
 #include <string.h>
 
-#if (QEMU_BUILD)
-    #include <soc/timer_group_reg.h>
-#endif
-
 static const char *TAG = "cmd_handler";
 
 #define CMD_NAME_MAX_LEN        32
@@ -31,6 +27,10 @@ static const char *TAG = "cmd_handler";
 typedef enum {
     CMD_REBOOT,
     CMD_SET_DEFAULT_SETTINGS,
+#if (QEMU_BUILD)
+    CMD_REBOOT_RAW, /* DEBUG/QEMU: esp_restart() without LACT silence — reproduces
+                     * panic-path condition (bug05 repro). Not for production. */
+#endif
 } cmd_code_t;
 
 typedef struct {
@@ -42,7 +42,21 @@ typedef struct {
 static const cmd_t available_commands[] = {
     {CMD_REBOOT, "reboot", "Restart the device"},
     {CMD_SET_DEFAULT_SETTINGS, "set_default_settings", "Reset all settings to factory defaults"},
+#if (QEMU_BUILD)
+    {CMD_REBOOT_RAW, "reboot_raw", "DEBUG: esp_restart() without LACT shutdown (bug05 repro)"},
+#endif
 };
+
+#if (QEMU_BUILD)
+static void reboot_raw_task(void *pvParameters)
+{
+    vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
+    /* Intentionally do NOT silence LACT — same as panic path. Bug05 repro tool.
+     * With the IDF-level NULL guard in timer_alarm_isr() (patches/bug05-lact-timer-null-isr-guard.patch),
+     * this should now result in one clean reboot instead of a boot-loop. */
+    esp_restart();
+}
+#endif
 
 static void reboot_task(void *pvParameters)
 {
@@ -54,22 +68,6 @@ static void reboot_task(void *pvParameters)
     #endif
 
     vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
-
-    #if (QEMU_BUILD)
-        // In QEMU, SW_CPU_RESET does not reinitialize the .data section from flash,
-        // but clears BSS. The LACT timer (used by esp_timer) keeps running after reset
-        // and fires an ISR immediately on the next boot. _xt_interrupt_table (.data)
-        // still contains the old timer_alarm_isr handler, but s_alarm_handler (BSS)
-        // is NULL after BSS clear, causing a null-pointer call: PC=0x00000000.
-        //
-        // Fix: stop the LACT timer hardware and disable its interrupt before reset,
-        // so no ISR fires during the next boot's initialization phase.
-        // LACT is Timer Group 0, LACT unit (LACT_MODULE=0 in esp_timer_impl_lac.c).
-        // Mirror of what esp_timer_impl_deinit() does with CONFIG_REG and INT registers.
-        REG_WRITE(TIMG_LACTCONFIG_REG(0), 0);                              // disable LACT timer
-        REG_CLR_BIT(TIMG_INT_ENA_TIMERS_REG(0), TIMG_LACT_INT_ENA);      // disable LACT interrupt enable
-        REG_WRITE(TIMG_INT_CLR_TIMERS_REG(0), TIMG_LACT_INT_CLR);        // clear any pending LACT interrupt
-    #endif
 
     esp_restart();
 }
@@ -105,6 +103,12 @@ static esp_err_t cmd_execute(int cmd_code)
     case CMD_REBOOT:
         cmd_reboot_device();
         break;
+
+#if (QEMU_BUILD)
+    case CMD_REBOOT_RAW:
+        xTaskCreate(reboot_raw_task, "reboot_raw", REBOOT_TASK_STACK_SIZE, NULL, REBOOT_TASK_PRIORITY, NULL);
+        break;
+#endif
 
     case CMD_SET_DEFAULT_SETTINGS:
         settings_save_timer_auto_init();
