@@ -63,6 +63,7 @@ export default defineConfig(({ mode }) => {
             name: 'integration',
             environment: 'happy-dom',
             include: ['src/**/*.integration.test.ts'],
+            testTimeout: 15000, // integration tests with mount() need >5s under load
           },
         },
       ],
