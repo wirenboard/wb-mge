@@ -26,14 +26,15 @@ build-qemu: build-frontend build-idf-project-qemu
 build-idf-project-qemu:
 	@echo "Building for QEMU with OpenEth ethernet driver"
 	@# Detect stale hardware build cache: if CMakeCache exists but was not a QEMU build,
-	@# run fullclean to force CMake reconfiguration with correct source file selection
+	@# run fullclean to force CMake reconfiguration with correct source file selection.
+	@# No need to rm sdkconfig — each build type uses its own sdkconfig file.
 	@if [ -f "build/CMakeCache.txt" ]; then \
 	    if ! grep -q "qemu_mge" "build/CMakeCache.txt"; then \
 	        echo "Detected hardware build cache — running fullclean before QEMU build..."; \
-	        $(EIM_ACTIVATE) && $(IDF_PY) fullclean; \
+	        $(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build fullclean; \
 	    fi; \
 	fi
-	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" $(addprefix -D, $(DEFS)) build
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" $(addprefix -D, $(DEFS)) build
 
 qemu-flash-image: build-qemu
 	@echo "Generating QEMU flash image..."
@@ -52,11 +53,11 @@ qemu-efuse-image:
 
 qemu-monitor: build-qemu
 	@echo "Starting QEMU monitor..."
-	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" monitor
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" monitor
 
 qemu-run: qemu-flash-image
 	@echo "Running in QEMU..."
-	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor
 
 qemu-web: qemu-flash-image qemu-efuse-image
 	@echo "Running QEMU with web server port forwarding..."
@@ -70,7 +71,7 @@ qemu-web: qemu-flash-image qemu-efuse-image
 	    if [ -z "$$QEMU_BIN" ]; then \
 	        echo "QEMU binary not found. Using idf.py method instead..."; \
 	        echo "Note: This method will not have port forwarding built-in"; \
-	        $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
+	        $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
 	    else \
 	        echo "Found QEMU at: $$QEMU_BIN"; \
 	        echo "Starting QEMU with port forwarding: localhost:8080 -> ESP32:80, localhost:50504 -> ESP32:50504"; \
@@ -87,7 +88,7 @@ qemu-web: qemu-flash-image qemu-efuse-image
 	            -serial mon:stdio || { \
 	                echo "Direct QEMU launch failed. Trying idf.py qemu monitor..."; \
 	                echo "Note: This method will not have port forwarding - you will need to find the ESP32 IP"; \
-	                $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
+	                $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
 	            }; \
 	    fi; \
 	}
@@ -123,7 +124,8 @@ qemu-help:
 	@echo "One test:    make qemu-test PYTEST_ARGS=\"-k test_auth\""
 
 clean-qemu:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
-	rm -rf build sdkconfig
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
+	@rm -rf build
+	@rm -f sdkconfig.qemu_build sdkconfig.qemu_build.old
 
 .PHONY: build-qemu build-idf-project-qemu qemu-flash-image qemu-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help clean-qemu

@@ -8,6 +8,10 @@
 build/**
 sdkconfig
 sdkconfig.old
+sdkconfig.native
+sdkconfig.native.old
+sdkconfig.qemu_build
+sdkconfig.qemu_build.old
 dependencies.lock
 **/build/
 

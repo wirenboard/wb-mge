@@ -126,7 +126,7 @@ build-frontend:
 
 build-idf-project:
 	@echo 'Building ESP-IDF project'
-	@$(EIM_ACTIVATE) && $(IDF_PY) $(addprefix -D, $(DEFS)) build
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
 
 prepare_release:
@@ -138,11 +138,11 @@ prepare_release:
 clean:
 	@echo 'Cleaning project'
 	@rm -rf $(BUILD_DIR)
-	@$(EIM_ACTIVATE) && $(IDF_PY) fullclean
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native fullclean
 	@rm -rf $(RELEASE_DIR)
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
-	@rm -rf sdkconfig
+	@rm -f sdkconfig sdkconfig.old sdkconfig.native sdkconfig.native.old sdkconfig.qemu_build sdkconfig.qemu_build.old
 	@echo 'Cleaning unittests'
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
@@ -156,7 +156,7 @@ clean:
 #######################################
 
 flash:
-	@$(EIM_ACTIVATE) && $(IDF_PY) flash
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native flash
 
 # Flash all partitions (bootloader + partition table + OTA data + app) via esptool directly.
 # Useful when idf.py flash cannot detect the port automatically.
@@ -170,7 +170,7 @@ flash-all:
 		0x90000 build/$(TARGET).bin
 
 monitor:
-	@$(EIM_ACTIVATE) && $(IDF_PY) monitor
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native monitor
 
 #######################################
 # OTA flash
