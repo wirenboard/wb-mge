@@ -147,7 +147,7 @@ clean:
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
 			echo "  Cleaning $$dir"; \
-			cd $$dir && $(MAKE) clean --no-print-directory --silent; cd - >/dev/null; \
+			$(MAKE) -C $$dir clean --no-print-directory --silent; \
 		fi; \
 	done
 

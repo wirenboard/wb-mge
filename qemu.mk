@@ -35,18 +35,22 @@ qemu-build: build-frontend build-idf-project-qemu
 IDF_PATCHES_DIR := $(CURDIR)/patches
 apply-idf-patches:
 	@echo "Applying IDF patches for QEMU build..."
-	@if grep -q "bug01 fix" "$(IDF_PATH)/components/esp_driver_uart/src/uart.c"; then \
+	@$(EIM_ACTIVATE) && \
+	if grep -q "bug01 fix" "$$IDF_PATH/components/esp_driver_uart/src/uart.c"; then \
 	    echo "  [skip] bug01-uart-driver-delete-intr-order.patch already applied"; \
 	else \
 	    echo "  Applying bug01-uart-driver-delete-intr-order.patch ..."; \
-	    patch -p1 -d "$(IDF_PATH)" < "$(IDF_PATCHES_DIR)/bug01-uart-driver-delete-intr-order.patch"; \
+	    patch -p1 -d "$$IDF_PATH" < "$(IDF_PATCHES_DIR)/bug01-uart-driver-delete-intr-order.patch" || exit 1; \
+	    grep -q "bug01 fix" "$$IDF_PATH/components/esp_driver_uart/src/uart.c" || { echo "  ERROR: patch did not apply correctly"; exit 1; }; \
 	    echo "  Done."; \
 	fi
-	@if grep -q "ESP_DRAM_LOGW" "$(IDF_PATH)/components/esp_eth/src/openeth/esp_eth_mac_openeth.c"; then \
+	@$(EIM_ACTIVATE) && \
+	if grep -q "ESP_DRAM_LOGW" "$$IDF_PATH/components/esp_eth/src/openeth/esp_eth_mac_openeth.c"; then \
 	    echo "  [skip] bug04-openeth-isr-dram-log.patch already applied"; \
 	else \
 	    echo "  Applying bug04-openeth-isr-dram-log.patch ..."; \
-	    patch -p1 -d "$(IDF_PATH)" < "$(IDF_PATCHES_DIR)/bug04-openeth-isr-dram-log.patch"; \
+	    patch -p1 -d "$$IDF_PATH" < "$(IDF_PATCHES_DIR)/bug04-openeth-isr-dram-log.patch" || exit 1; \
+	    grep -q "ESP_DRAM_LOGW" "$$IDF_PATH/components/esp_eth/src/openeth/esp_eth_mac_openeth.c" || { echo "  ERROR: patch did not apply correctly"; exit 1; }; \
 	    echo "  Done."; \
 	fi
 
@@ -139,6 +143,7 @@ qemu-test: qemu-create-flash-image qemu-create-efuse-image
 # Help target for QEMU
 qemu-help:
 	@echo "QEMU Targets:"
+	@echo "  apply-idf-patches       - Apply IDF source patches for QEMU builds (called automatically; idempotent)"
 	@echo "  qemu-build              - Build frontend + QEMU firmware (run once or after code changes)"
 	@echo "  qemu-create-flash-image - Compile QEMU firmware (incremental) and merge into qemu_flash.bin"
 	@echo "  qemu-create-efuse-image - Create eFuse image build/qemu_efuse.bin if missing (idempotent)"

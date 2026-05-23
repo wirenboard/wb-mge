@@ -39,6 +39,7 @@ api_tests/
 ├── 11_test_cache.py         # Cache endpoints, multimaster
 ├── 12_test_sniffer_ws.py    # WebSocket sniffer
 ├── 13_test_ports.py         # Ports, sniffer, WB test
+├── 14_test_reboot.py        # Reboot, uptime verification
 ├── 15_test_ws_pong_race.py  # WebSocket pong race condition (long-running)
 └── 16_test_uart_teardown_crash.py  # UART teardown crash (long-running, always last)
 ```

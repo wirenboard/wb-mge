@@ -126,6 +126,7 @@ graph TD
     qemu-test --> qemu-create-flash-image
     qemu-test --> qemu-create-efuse-image
     qemu-create-flash-image --> build-idf-project-qemu
+    build-idf-project-qemu --> apply-idf-patches
 ```
 
 ## Building with Docker
