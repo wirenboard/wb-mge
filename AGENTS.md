@@ -14,6 +14,7 @@ The Makefile sources the EIM activate script (`~/.espressif/tools/activate_idf_v
 - **Always run tests after every fix.** After each code change, run the relevant test suite and confirm all tests pass before proceeding. For backend (C) changes: `make unittests`. For frontend changes: `cd main/frontend && npm run test`.
 - **Always run `make clean` after editing `sdkconfig.defaults`.** The IDF build system caches configuration; without a clean the new defaults will not be picked up correctly.
 - **Always run `make clean` when switching between native and QEMU builds.** The CMake cache (`build/CMakeCache.txt`) stores the build target (native ESP32 vs QEMU OpenEth). Switching without a clean causes compile errors such as `esp_eth_mac_new_esp32` not found (when a QEMU cache is reused for a native build) or `esp_eth_mac_new_openeth` not found (the reverse). Fix: `make clean && make build-frontend build-idf-project` for native, or `make qemu-clean && make qemu-build` for QEMU.
+- **Always update documentation when renaming or changing build targets.** After any change to `Makefile` or `qemu.mk` (adding, removing, or renaming targets; changing dependencies), grep all `*.md` files for the old target names and update every occurrence. README.md, README_QEMU.md, AGENTS.md, and `bugs/*/README.md` all reference make targets by name.
 
 ## Backend (Embedded C) Coding Standards
 
@@ -153,7 +154,7 @@ plus a static IP) leave the flash in a state where the next boot makes the
 server unreachable on the QEMU network (`hostfwd` only NATs to the
 DHCP-assigned 10.0.2.15). Before each test run **always** regenerate the image:
 ```bash
-rm -f build/qemu_flash.bin && make qemu-flash-image
+rm -f build/qemu_flash.bin && make qemu-create-flash-image
 ```
 
 ## Shell command style

@@ -38,18 +38,19 @@ graph TD
     qemu-build --> build-frontend
     qemu-build --> build-idf-project-qemu
 
-    qemu-web --> qemu-flash-image
-    qemu-web --> qemu-efuse-image
-    qemu-run --> qemu-flash-image
-    qemu-run --> qemu-efuse-image
-    qemu-test --> qemu-flash-image
-    qemu-test --> qemu-efuse-image
+    qemu-web --> qemu-create-flash-image
+    qemu-web --> qemu-create-efuse-image
+    qemu-run --> qemu-create-flash-image
+    qemu-run --> qemu-create-efuse-image
+    qemu-test --> qemu-create-flash-image
+    qemu-test --> qemu-create-efuse-image
+    qemu-create-flash-image --> build-idf-project-qemu
 ```
 
-- `qemu-build` — the only build target (frontend + firmware)
-- `qemu-flash-image` — no dependencies: merges existing build/ into a single .bin
-- `qemu-efuse-image` — no dependencies: creates the eFuse image once
-- `qemu-web`, `qemu-run`, `qemu-test` — pull flash + efuse images but **do not rebuild firmware**
+- `qemu-build` — full build target (frontend + firmware)
+- `qemu-create-flash-image` — depends on `build-idf-project-qemu`: compiles QEMU firmware (incremental) then merges into a single .bin
+- `qemu-create-efuse-image` — no dependencies: creates the eFuse image once
+- `qemu-web`, `qemu-run`, `qemu-test` — always compile QEMU firmware (incremental, fast if nothing changed) before running
 - `qemu-monitor` — no dependencies: connects to an already-running QEMU instance
 - `qemu-clean` — removes build/ and sdkconfig.qemu\_build
 
@@ -80,12 +81,12 @@ CONFIG_ETH_USE_OPENETH=y                  # Enable OpenEth for QEMU
 
 ```bash
 make qemu-build              # Build frontend + QEMU firmware (run once, or after code changes)
-make qemu-flash-image        # Merge build/ into qemu_flash.bin (no compile, pure merge)
-make qemu-efuse-image        # Create build/qemu_efuse.bin if missing (idempotent)
-make qemu-web                # Merge flash + create efuse, then run QEMU (no compile)
-make qemu-run                # Merge flash + create efuse, then run QEMU basic mode
+make qemu-create-flash-image # Compile QEMU firmware (incremental) and merge into qemu_flash.bin
+make qemu-create-efuse-image # Create build/qemu_efuse.bin if missing (idempotent)
+make qemu-web                # Compile firmware + create images, then run QEMU with web UI
+make qemu-run                # Compile firmware + create images, then run QEMU basic mode
 make qemu-monitor            # Connect monitor to already-running QEMU (no build at all)
-make qemu-test               # Merge flash + create efuse, then run pytest suite
+make qemu-test               # Compile firmware + create images, then run pytest suite
 make qemu-bin-path           # Print path to qemu-system-xtensa binary
 make qemu-clean              # Remove build/ and sdkconfig.qemu_build
 ```
@@ -123,7 +124,7 @@ cd api_tests && .venv/bin/python -m pytest --ip localhost:8080
 ```
 
 ### QEMU Won't Start
-1. Verify `build/qemu_flash.bin` exists: run `make qemu-flash-image` first
+1. Verify `build/qemu_flash.bin` exists: run `make qemu-create-flash-image` first
 2. Install QEMU via `idf_tools.py`: `python $IDF_PATH/tools/idf_tools.py install qemu-xtensa`
 
 ### Build Errors

@@ -119,12 +119,13 @@ graph TD
     qemu-build --> build-frontend
     qemu-build --> build-idf-project-qemu
 
-    qemu-web --> qemu-flash-image
-    qemu-web --> qemu-efuse-image
-    qemu-run --> qemu-flash-image
-    qemu-run --> qemu-efuse-image
-    qemu-test --> qemu-flash-image
-    qemu-test --> qemu-efuse-image
+    qemu-web --> qemu-create-flash-image
+    qemu-web --> qemu-create-efuse-image
+    qemu-run --> qemu-create-flash-image
+    qemu-run --> qemu-create-efuse-image
+    qemu-test --> qemu-create-flash-image
+    qemu-test --> qemu-create-efuse-image
+    qemu-create-flash-image --> build-idf-project-qemu
 ```
 
 ## Building with Docker
@@ -292,8 +293,8 @@ make qemu-build
 Generate flash and eFuse images:
 
 ```bash
-make qemu-flash-image
-make qemu-efuse-image
+make qemu-create-flash-image
+make qemu-create-efuse-image
 ```
 
 Run the API test suite (boots QEMU, runs pytest, kills QEMU):
@@ -324,4 +325,4 @@ pkill -9 -f qemu-system-xtensa
 
 - Initial run downloads ~2 GB of toolchains/components (EIM + xtensa toolchain + IDF managed components); expect ~10 minutes on a fresh host.
 - ESP-IDF tools occupy ~5 GB under `/root/.espressif`. Allocate at least 15 GB of free disk before starting.
-- `make qemu-flash-image` and `make qemu-efuse-image` have no build dependencies — they only merge/create image files. Always run `make qemu-build` before generating images on a clean checkout.
+- `make qemu-create-flash-image` depends on `build-idf-project-qemu` and compiles QEMU firmware (incremental) before merging images. If `build/` contains a hardware build, it automatically runs `fullclean` and rebuilds for QEMU.
