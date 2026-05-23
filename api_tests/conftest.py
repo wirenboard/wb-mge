@@ -59,6 +59,45 @@ def quick_connection_test(base_url):
         return False
 
 
+# Ports that QEMU reserves on the host (must match hostfwd arguments in qemu_process fixture).
+QEMU_HOST_PORTS = [8080, 50504]
+
+
+def _check_no_stale_qemu():
+    """Check for stale QEMU processes or occupied ports and fail fast with a helpful message.
+
+    A stale QEMU from a previous run holds the hostfwd ports, making the next
+    launch fail with 'Could not set up host forwarding rule'. Rather than letting
+    QEMU fail silently, we detect the condition upfront and tell the user exactly
+    what to run.
+    """
+    # Check for running qemu-system-xtensa processes.
+    result = subprocess.run(
+        ["pgrep", "-f", "qemu-system-xtensa"],
+        capture_output=True, text=True
+    )
+    stale_pids = result.stdout.strip().splitlines()
+
+    # Check for occupied ports (QEMU hostfwd binds on localhost).
+    occupied_ports = []
+    for port in QEMU_HOST_PORTS:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        if sock.connect_ex(("127.0.0.1", port)) == 0:
+            occupied_ports.append(port)
+        sock.close()
+
+    if stale_pids or occupied_ports:
+        lines = ["Stale QEMU detected — cannot start a new instance safely."]
+        if stale_pids:
+            lines.append(f"  Running QEMU PIDs: {', '.join(stale_pids)}")
+        if occupied_ports:
+            lines.append(f"  Occupied ports: {', '.join(str(p) for p in occupied_ports)}")
+        lines.append("  Kill it with:")
+        lines.append("    pkill -9 -f qemu-system-xtensa")
+        pytest.exit("\n".join(lines), returncode=1)
+
+
 def _get_qemu_bin_path():
     """Get QEMU binary path from make target."""
     result = subprocess.run(
@@ -103,6 +142,9 @@ def qemu_process(request):
     if not request.config.getoption("--qemu"):
         yield None
         return
+
+    # --- Preflight: fail fast if a stale QEMU is already running ---
+    _check_no_stale_qemu()
 
     # --- Build ---
     if not request.config.getoption("qemu_skip_build"):
