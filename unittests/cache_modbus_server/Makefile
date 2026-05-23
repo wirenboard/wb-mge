@@ -15,6 +15,7 @@ AUX_SRC += mocks/cache_multimaster.c
 AUX_SRC += mocks/setting_items.c
 AUX_SRC += mocks/tcp_server.c
 AUX_SRC += $(PROJ_DIR)/main/bridge/modbus_helpers.c
+AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
 AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 
 # Include directories (order matters: mocks first to override ESP-IDF headers)

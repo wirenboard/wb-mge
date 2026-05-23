@@ -66,6 +66,7 @@ static void build_request(uint8_t *buf, uint16_t txid, uint8_t unit_id, uint8_t 
 
 void setUp(void)
 {
+    cache_modbus_server_test_reset();   /* reinit reassembly table */
     mock_cache_multimaster_reset();
     mock_tcp_server_reset();
     mock_setting_items_reset();
@@ -1462,6 +1463,118 @@ void test_cache_modbus_server_fc02_stale_end_to_end(void)
         "FC02 STALE: exception code must be 0x0B (GW_TARGET_FAILED)");
 }
 
+/* ---- CMS-U-038: split frame — two halves ---------------------------------- */
+
+/* Verify that a 12-byte request split into two 6-byte chunks is reassembled
+ * correctly: first half must not trigger a response; second half must. */
+void test_reassembly_split_frame(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-038: TCP stream reassembly — split frame (two halves)");
+    LOG_MESSAGE();
+
+    uint8_t buf[12];
+    build_request(buf, 0x0010, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x1234;
+    mock_setting_items_set_timeout(0);
+
+    /* Send only the first 6 bytes: frame is incomplete, no response yet. */
+    cache_modbus_server_test_process(NULL, 10, buf, 6);
+    TEST_ASSERT_EQUAL_INT(0, mock_tcp_send_called);
+
+    /* Send the remaining 6 bytes: frame completes, response sent. */
+    cache_modbus_server_test_process(NULL, 10, buf + 6, 6);
+    TEST_ASSERT_EQUAL_INT(1, mock_tcp_send_called);
+}
+
+/* ---- CMS-U-039: coalesced frames — two frames in one call ----------------- */
+
+/* Verify that two complete 12-byte requests sent in a single call are both
+ * dispatched: exactly two responses must be sent. */
+void test_reassembly_coalesced_frames(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-039: TCP stream reassembly — coalesced frames (two in one recv)");
+    LOG_MESSAGE();
+
+    uint8_t buf[24]; /* room for two 12-byte requests */
+    build_request(buf,      0x0020, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    build_request(buf + 12, 0x0021, 1, MB_FC_READ_HOLDING_REGS, 1, 1);
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0xABCD;
+    mock_setting_items_set_timeout(0);
+
+    /* Two complete frames sent in one recv() call. */
+    cache_modbus_server_test_process(NULL, 11, buf, 24);
+    TEST_ASSERT_EQUAL_INT(2, mock_tcp_send_called);
+}
+
+/* ---- CMS-U-040: carry-over — 1.5 frames, second arrives later ------------- */
+
+/* Verify that 18 bytes (frame1 + first half of frame2) dispatches only frame1,
+ * and the remaining 6 bytes of frame2 dispatches frame2. */
+void test_reassembly_carryover(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-040: TCP stream reassembly — 1.5 frames then remainder");
+    LOG_MESSAGE();
+
+    uint8_t buf[24];
+    build_request(buf,      0x0030, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    build_request(buf + 12, 0x0031, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x5678;
+    mock_setting_items_set_timeout(0);
+
+    /* First 18 bytes: frame1(12) + half of frame2(6). Only frame1 dispatched. */
+    cache_modbus_server_test_process(NULL, 12, buf, 18);
+    TEST_ASSERT_EQUAL_INT(1, mock_tcp_send_called);
+
+    /* Remaining 6 bytes of frame2. Now frame2 dispatched. */
+    mock_tcp_server_reset();
+    cache_modbus_server_test_process(NULL, 12, buf + 18, 6);
+    TEST_ASSERT_EQUAL_INT(1, mock_tcp_send_called);
+}
+
+/* ---- CMS-U-041: independent reassembly buffers per socket ----------------- */
+
+/* Verify that two different sockets each maintain their own reassembly buffer:
+ * interleaved partial frames from sockets 20 and 21 must not corrupt each other. */
+void test_reassembly_independent_sockets(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-041: TCP stream reassembly — independent buffers per socket");
+    LOG_MESSAGE();
+
+    uint8_t buf_a[12], buf_b[12];
+    build_request(buf_a, 0x0040, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    build_request(buf_b, 0x0041, 2, MB_FC_READ_HOLDING_REGS, 0, 1);
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x0001;
+    mock_setting_items_set_timeout(0);
+
+    /* Interleave partial frames from two sockets. */
+    cache_modbus_server_test_process(NULL, 20, buf_a, 6);   /* sock 20: first half */
+    cache_modbus_server_test_process(NULL, 21, buf_b, 6);   /* sock 21: first half */
+    TEST_ASSERT_EQUAL_INT(0, mock_tcp_send_called);
+
+    cache_modbus_server_test_process(NULL, 20, buf_a + 6, 6);  /* sock 20: completes */
+    TEST_ASSERT_EQUAL_INT(1, mock_tcp_send_called);
+
+    mock_tcp_server_reset();
+    cache_modbus_server_test_process(NULL, 21, buf_b + 6, 6);  /* sock 21: completes */
+    TEST_ASSERT_EQUAL_INT(1, mock_tcp_send_called);
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -1512,6 +1625,11 @@ int main(void)
     RUN_TEST(test_cache_modbus_server_timeout_forwarded);
     RUN_TEST(test_cache_modbus_server_fc01_not_found_end_to_end);
     RUN_TEST(test_cache_modbus_server_fc02_stale_end_to_end);
+
+    RUN_TEST(test_reassembly_split_frame);
+    RUN_TEST(test_reassembly_coalesced_frames);
+    RUN_TEST(test_reassembly_carryover);
+    RUN_TEST(test_reassembly_independent_sockets);
 
     return UNITY_END();
 }

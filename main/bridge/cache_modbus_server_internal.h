@@ -63,4 +63,8 @@ size_t cache_modbus_server_build_coil_response(
  */
 void cache_modbus_server_test_process(tcp_desc_t *desc, int client_sock,
                                        uint8_t *data, size_t len);
+
+/* Reinitializes the per-connection reassembly table. Call from setUp() in
+ * unit tests because tests do not call cache_modbus_server_init(). */
+void cache_modbus_server_test_reset(void);
 #endif /* __unittest_env__ */

@@ -7,7 +7,10 @@
 #include "cache_modbus_server_internal.h"
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
+#include <stddef.h>
 #include <string.h>
 #include <arpa/inet.h>
 
@@ -222,18 +225,18 @@ size_t cache_modbus_server_build_coil_response(
 /* ---- TCP receive callback ------------------------------------------------- */
 
 /**
- * @brief Process one Modbus TCP request received from a client.
+ * @brief Process one complete Modbus TCP ADU received from a client.
  *
  * Handles FC01/FC02/FC03/FC04 read requests by looking up values in the
  * in-memory register cache.  All other function codes receive a Modbus
  * exception 0x01 (ILLEGAL FUNCTION).  Missing cache entries result in
  * exception 0x02 (ILLEGAL DATA ADDRESS).
  *
- * This callback is invoked synchronously from the tcp_server receiver task,
- * so multiple clients are handled concurrently without any additional locking.
+ * This function expects exactly one complete ADU in data[0..len-1].
+ * Stream reassembly (splitting/coalescing) is handled by process_data_from_tcp().
  */
-static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
-                                   uint8_t *data, size_t len)
+static void process_one_frame(tcp_desc_t *desc, int client_sock,
+                               uint8_t *data, size_t len)
 {
     /* ---- 1. Basic length check ------------------------------------------ */
     if (len < sizeof(mb_tcp_header_t)) {
@@ -341,14 +344,137 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
     }
 }
 
+/* ====================================================================== *
+ * Bug 07 fix: TCP stream reassembly into whole Modbus frames.
+ *
+ * TCP is a byte stream: one recv() may deliver a partial frame OR several
+ * frames coalesced. The old code assumed one recv() == one frame.
+ * We keep a small per-connection accumulation buffer, parse the MBAP
+ * length field to find frame boundaries, dispatch every complete frame,
+ * and carry the remainder over to the next recv().
+ * ====================================================================== */
+
+#define CACHE_MB_MAX_CONNS  8
+#define CACHE_MB_FRAME_MAX  300   /* > any Modbus TCP ADU we accept */
+
+typedef struct {
+    int     sock;                        /* -1 == free slot */
+    size_t  len;
+    uint8_t buf[CACHE_MB_FRAME_MAX];
+} conn_reasm_t;
+
+static conn_reasm_t      s_reasm[CACHE_MB_MAX_CONNS];
+static SemaphoreHandle_t s_reasm_mutex = NULL;   /* guards slot alloc/free only */
+
+/* Find (or allocate) the reassembly slot for a socket. */
+static conn_reasm_t *reasm_get(int sock)
+{
+    conn_reasm_t *slot = NULL;
+    if (s_reasm_mutex) { xSemaphoreTake(s_reasm_mutex, portMAX_DELAY); }
+    conn_reasm_t *free_slot = NULL;
+    for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
+        if (s_reasm[i].sock == sock) { slot = &s_reasm[i]; break; }
+        if ((free_slot == NULL) && (s_reasm[i].sock == -1)) { free_slot = &s_reasm[i]; }
+    }
+    if ((slot == NULL) && free_slot) {
+        free_slot->sock = sock;
+        free_slot->len  = 0;
+        slot = free_slot;
+    }
+    if (s_reasm_mutex) { xSemaphoreGive(s_reasm_mutex); }
+    return slot;
+}
+
+static void reasm_free(int sock)
+{
+    if (s_reasm_mutex) { xSemaphoreTake(s_reasm_mutex, portMAX_DELAY); }
+    for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
+        if (s_reasm[i].sock == sock) {
+            s_reasm[i].sock = -1;
+            s_reasm[i].len  = 0;
+            break;
+        }
+    }
+    if (s_reasm_mutex) { xSemaphoreGive(s_reasm_mutex); }
+}
+
+/* Total ADU length declared by the MBAP header (needs >= 6 bytes available). */
+static size_t frame_total_len(const uint8_t *buf)
+{
+    uint16_t mbap_len = ((uint16_t)buf[4] << 8) | buf[5]; /* length field, big-endian */
+    return (size_t)mbap_len + offsetof(mb_tcp_header_t, unit_id); /* +6 */
+}
+
+/* TCP receive callback: reassemble the byte stream into whole Modbus frames. */
+static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
+                                  uint8_t *data, size_t len)
+{
+    conn_reasm_t *c = reasm_get(client_sock);
+    if (c == NULL) {
+        /* Table full — best effort: process the buffer as a single frame. */
+        process_one_frame(desc, client_sock, data, len);
+        return;
+    }
+
+    size_t off = 0;
+    while (off < len) {
+        size_t space = CACHE_MB_FRAME_MAX - c->len;
+        size_t chunk = len - off;
+        if (chunk > space) { chunk = space; }
+        memcpy(c->buf + c->len, data + off, chunk);
+        c->len += chunk;
+        off    += chunk;
+
+        /* Dispatch every complete frame currently buffered. */
+        size_t pos = 0;
+        while ((c->len - pos) >= sizeof(mb_tcp_header_t)) {
+            size_t flen = frame_total_len(c->buf + pos);
+            if ((flen < sizeof(mb_tcp_header_t)) || (flen > CACHE_MB_FRAME_MAX)) {
+                pos = c->len;   /* bogus length -> drop to resync */
+                break;
+            }
+            if ((c->len - pos) < flen) { break; }   /* frame not complete yet */
+            process_one_frame(desc, client_sock, c->buf + pos, flen);
+            pos += flen;
+        }
+        if (pos > 0) {
+            memmove(c->buf, c->buf + pos, c->len - pos);
+            c->len -= pos;
+        }
+        /* Buffer full but no complete frame -> desynced/oversized; drop. */
+        if (c->len == CACHE_MB_FRAME_MAX) {
+            ESP_LOGW(TAG, "sock=%d: reassembly buffer full, resync (drop)", client_sock);
+            c->len = 0;
+        }
+    }
+}
+
+/* Connection-close hook: release this socket's reassembly slot. */
+static void on_conn_close(tcp_desc_t *desc, int client_sock)
+{
+    (void)desc;
+    reasm_free(client_sock);
+}
+
 /* ---- Public API ---------------------------------------------------------- */
 
 esp_err_t cache_modbus_server_init(int port)
 {
     ESP_LOGI(TAG, "Starting cache Modbus TCP server on port %d", port);
+
+    /* Init per-connection reassembly state (bug 07 fix). */
+    for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
+        s_reasm[i].sock = -1;
+        s_reasm[i].len  = 0;
+    }
+    if (s_reasm_mutex == NULL) {
+        s_reasm_mutex = xSemaphoreCreateMutex();
+    }
+
     esp_err_t ret = tcp_server_init(port, process_data_from_tcp, &s_tcp_desc);
     if (ret == ESP_OK) {
         s_port = port;
+        s_tcp_desc->close_handler = on_conn_close;   /* free reassembly slot on close */
     }
     return ret;
 }
@@ -375,5 +501,14 @@ void cache_modbus_server_test_process(tcp_desc_t *desc, int client_sock,
                                        uint8_t *data, size_t len)
 {
     process_data_from_tcp(desc, client_sock, data, len);
+}
+
+void cache_modbus_server_test_reset(void)
+{
+    for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
+        s_reasm[i].sock = -1;
+        s_reasm[i].len  = 0;
+    }
+    s_reasm_mutex = NULL;
 }
 #endif /* __unittest_env__ */

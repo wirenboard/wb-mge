@@ -144,6 +144,12 @@ static void receiver_task(void *pvParameters)
         }
     } while (len > 0);
 
+    /* Notify handler that this connection is closing so it can free any
+     * per-connection state (e.g. Modbus frame reassembly buffer). */
+    if (desc->close_handler) {
+        desc->close_handler(desc, client_sock);
+    }
+
     shutdown(client_sock, SHUT_RDWR);
     close(client_sock);
 
