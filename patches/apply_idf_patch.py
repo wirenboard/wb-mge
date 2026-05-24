@@ -15,6 +15,8 @@ Usage:
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +42,26 @@ def apply_patch(idf_path, patch_file):
     if result.returncode != 0:
         print("ERROR: Failed to apply patch: {}".format(patch_file.name), file=sys.stderr)
         sys.exit(1)
+
+
+def backup_originals(idf_path: Path, patch_file: Path) -> None:
+    """Copy each file touched by patch_file to <file>.orig if the backup does not yet exist."""
+    lines = patch_file.read_text(errors="replace").splitlines()
+    for line in lines:
+        match = re.match(r"^--- a/(\S+)", line)
+        if not match:
+            continue
+        rel_path = match.group(1).rstrip("\r")  # strip CR if the patch file has CRLF line endings
+        src = idf_path / rel_path
+        orig = Path(str(src) + ".orig")
+        if not src.is_file():
+            print("[backup-warn] source not found, skipping: {}".format(rel_path), file=sys.stderr)
+            continue
+        if orig.is_file():
+            print("[backup-skip] {}".format(rel_path))
+        else:
+            shutil.copy2(src, orig)
+            print("[backup] {}".format(rel_path))
 
 
 def main():
@@ -77,6 +99,9 @@ def main():
     if is_applied(idf_path, patch_file):
         print("[skip] {}".format(patch_name))
         sys.exit(0)
+
+    # Back up original files before applying so they can be restored if needed.
+    backup_originals(idf_path, patch_file)
 
     # Apply the patch and verify it was applied correctly.
     apply_patch(idf_path, patch_file)
