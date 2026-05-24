@@ -41,8 +41,7 @@ if($ENV{CONFIG_ETH_USE_OPENETH})
     set(CONDITIONAL_SRCS
         "qemu/ethernet_qemu.c"
         "qemu/wifi_qemu_mock.c"
-        "qemu/hardware_mocks_qemu.c"
-        "qemu/modbus_mock_qemu.c")
+        "qemu/hardware_mocks_qemu.c")
     message(STATUS "Building for QEMU - including QEMU-specific files only")
 else()
     # Hardware build - add hardware-specific files only

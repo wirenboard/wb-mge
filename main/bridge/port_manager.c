@@ -9,10 +9,6 @@
 #include "auth.h"
 #include "json_utils.h"
 
-#if (QEMU_BUILD)
-#include "modbus_mock_qemu.h"
-#endif
-
 #include "esp_check.h"
 #include "esp_log.h"
 #include "cJSON.h"
@@ -151,23 +147,6 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
         return ESP_ERR_INVALID_ARG;
     }
 
-#if (QEMU_BUILD)
-    /* In QEMU, simulate an always-active RS-485 bus on port 0.
-     * Start the mock unconditionally for port 0 so traffic is generated in
-     * all port modes (sniffer, cache_bus, tcp_bridge). */
-    if (index == 0) {
-        serial_desc_t *mock_sd = NULL;
-        if (mode == PM_MODE_TCP_BRIDGE) {
-            mock_sd = bridge_get_serial_desc(index);
-        } else if ((mode == PM_MODE_SNIFFER) || (mode == PM_MODE_CACHE_BUS)) {
-            mock_sd = pm_ctx[index].serial_desc;
-        }
-        if (mock_sd != NULL) {
-            modbus_mock_qemu_start(mock_sd);
-        }
-    }
-#endif
-
     pm_ctx[index].mode = mode;
     return ESP_OK;
 }
@@ -176,13 +155,6 @@ static void port_deinit_mode(unsigned index)
 {
     pm_mode_t mode = pm_ctx[index].mode;
     ESP_LOGI(TAG, "Port[%u]: Deinitializing mode '%s'", index + 1, port_manager_mode_to_str(mode));
-
-#if (QEMU_BUILD)
-    /* Stop the RS-485 mock before tearing down the port to avoid use-after-free. */
-    if (index == 0) {
-        modbus_mock_qemu_stop();
-    }
-#endif
 
     switch (mode) {
     case PM_MODE_DISABLED:
