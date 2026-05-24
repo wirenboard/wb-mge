@@ -605,6 +605,21 @@ static void sniffer_ws_task(void *arg)
 
         if (fd == -1 || srv == NULL) continue;
 
+        /* When a WS client TCP-closes without an explicit cleanup the saved
+         * fd can be recycled by the httpd layer for a subsequent plain-HTTP
+         * connection. Sending a WS frame to such a recycled fd would dump
+         * the WS bytes into an HTTP request stream — and httpd_ws_send_data
+         * happily reports ESP_OK because the write succeeds. Verify the fd
+         * still backs a WebSocket client before writing. */
+        if (httpd_ws_get_fd_info(srv, fd) != HTTPD_WS_CLIENT_WEBSOCKET) {
+            xSemaphoreTake(ws_mutex, portMAX_DELAY);
+            if (ws_client_fd == fd) {
+                ws_client_fd = -1;
+            }
+            xSemaphoreGive(ws_mutex);
+            continue;
+        }
+
         packet_counter++;
 
         if (pkt.is_timeout) {
@@ -631,7 +646,9 @@ static void sniffer_ws_task(void *arg)
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "WS send failed (%d), dropping client", ret);
             xSemaphoreTake(ws_mutex, portMAX_DELAY);
-            ws_client_fd = -1;
+            if (ws_client_fd == fd) {
+                ws_client_fd = -1;
+            }
             xSemaphoreGive(ws_mutex);
         }
     }
