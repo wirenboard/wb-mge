@@ -72,16 +72,16 @@ cd wb-mge
 
 ### 5. Build the Project
 
-For a complete build (unit tests + frontend + firmware):
+For a complete build (frontend + firmware):
 
 ```bash
 make
 ```
 
-To run tests only (C unit tests + frontend tests):
+To run all tests (C unit tests + frontend tests):
 
 ```bash
-make unittests test-frontend
+make test
 ```
 
 If building components separately, first build the frontend:
@@ -101,17 +101,18 @@ make build-idf-project
 ```mermaid
 graph TD
     B["🔨 Full build"] --> all
+    T["🧪 Run all tests"] --> test
     F["⚡ Flash firmware"] --> flash
     FA["⚡ Flash all partitions"] --> flash-all
     M["🔍 Device console"] --> monitor
     O["🌐 OTA update"] --> ota-flash
     C["🧹 Clean artifacts"] --> clean
 
-    all --> unittests
-    all --> test-frontend
     all --> build-frontend
     all --> build-idf-project
     build-idf-project --> prepare_release
+    test --> unittests
+    test --> test-frontend
 ```
 
 ```mermaid

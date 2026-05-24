@@ -6,10 +6,10 @@
 make build-frontend unittests test-frontend build-idf-project
 ```
 
-To run all tests separately:
+To run all tests:
 
 ```bash
-make unittests test-frontend
+make test
 ```
 
 The Makefile sources the EIM activate script (`~/.espressif/tools/activate_idf_v5.4.sh`) internally — no manual `source` needed.

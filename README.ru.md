@@ -77,16 +77,16 @@ cd wb-mge
 
 ### 5. Сборка проекта
 
-Для полной сборки проекта (юниттесты + frontend + прошивка):
+Для полной сборки проекта (frontend + прошивка):
 
 ```bash
 make
 ```
 
-Чтобы запустить только тесты (C юниттесты + тесты фронтенда):
+Чтобы запустить все тесты (C юниттесты + тесты фронтенда):
 
 ```bash
-make unittests test-frontend
+make test
 ```
 
 Если компоненты собираются отдельно, то сначала соберите frontend:
@@ -106,17 +106,18 @@ make build-idf-project
 ```mermaid
 graph TD
     B["🔨 Full build"] --> all
+    T["🧪 Запуск всех тестов"] --> test
     F["⚡ Flash firmware"] --> flash
     FA["⚡ Flash all partitions"] --> flash-all
     M["🔍 Device console"] --> monitor
     O["🌐 OTA update"] --> ota-flash
     C["🧹 Clean artifacts"] --> clean
 
-    all --> unittests
-    all --> test-frontend
     all --> build-frontend
     all --> build-idf-project
     build-idf-project --> prepare_release
+    test --> unittests
+    test --> test-frontend
 ```
 
 ```mermaid
