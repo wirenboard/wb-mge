@@ -22,14 +22,58 @@ import sys
 from pathlib import Path
 
 
+def _extract_marker(patch_file):
+    """Extract the first added line that can serve as an idempotency marker.
+
+    A reliable marker is a unique string that exists in the patched file but
+    NOT in the original. We use the first '+'-prefixed non-empty, non-hunk
+    line from the patch body (skipping the diff header lines).
+    """
+    lines = patch_file.read_text(errors="replace").splitlines()
+    for line in lines:
+        if line.startswith("+") and not line.startswith("+++") and len(line) > 2:
+            return line[1:].strip()   # strip the leading '+' and whitespace
+    return None
+
+
+def _marker_present_in_target(idf_path, patch_file, marker):
+    """Return True if 'marker' is found in any file touched by the patch."""
+    import re as _re
+    lines = patch_file.read_text(errors="replace").splitlines()
+    for line in lines:
+        m = _re.match(r"^--- a/(\S+)", line)
+        if not m:
+            continue
+        rel = m.group(1).rstrip("\r")
+        target = idf_path / rel
+        if target.is_file() and marker in target.read_text(errors="replace"):
+            return True
+    return False
+
+
 def is_applied(idf_path, patch_file):
-    """Return True if the patch is already applied (reverse dry-run succeeds)."""
+    """Return True if the patch is already applied.
+
+    Primary check: reverse dry-run (accurate but fails when surrounding context
+    has changed since the patch was first applied).
+    Fallback: search for a unique marker string from the patch body in the
+    target file — if the marker is present the patch is already applied.
+    """
     result = subprocess.run(
         ["patch", "--dry-run", "-R", "-p1", "-i", str(patch_file)],
         cwd=idf_path,
         capture_output=True,
     )
-    return result.returncode == 0
+    if result.returncode == 0:
+        return True
+
+    # Reverse dry-run failed (possibly because surrounding context changed).
+    # Fall back to a marker-based check: look for a distinctive added string.
+    marker = _extract_marker(patch_file)
+    if marker and _marker_present_in_target(idf_path, patch_file, marker):
+        return True
+
+    return False
 
 
 def apply_patch(idf_path, patch_file):
