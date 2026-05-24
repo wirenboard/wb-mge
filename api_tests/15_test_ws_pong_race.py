@@ -25,6 +25,8 @@ import pytest
 import websocket
 from urllib.parse import urlparse
 
+from packet_injector import PacketInjector
+
 
 # Long deterministic regression test.
 # Without the fix, each attempt catches frame corruption with probability ~0.65.
@@ -137,42 +139,46 @@ def test_ws_pong_race_no_corruption(api):
 
         cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
 
-        desync_attempts = []   # frame corruption -- direct signature of the race bug
-        starved = []           # too few packets without corruption (secondary symptom)
-        conn_errs = 0          # connect/timeout failures under flood (noise)
-        for i in range(ATTEMPTS):
-            r = _one_attempt(host, port, cookies)
-            if r["desync"]:
-                tag = "DESYNC"
-                desync_attempts.append(i + 1)
-            elif r["conn_err"]:
-                tag = "connerr"
-                conn_errs += 1
-            elif r["valid"] < MIN_PACKETS_OK:
-                tag = "starved"
-                starved.append((i + 1, r["valid"]))
-            else:
-                tag = "ok"
-            print(f"  attempt {i+1:2d}/{ATTEMPTS}: {tag:7s} valid={r['valid']} "
-                  f"desync={r['desync']} conn_err={r['conn_err']}")
-            time.sleep(0.2)
+        # Start packet injector so the sniffer has traffic to forward over WS.
+        # Without injected traffic ws.recv() blocks indefinitely — the firmware
+        # no longer has a built-in modbus mock (dropped in 7d5b257).
+        with PacketInjector(port=1) as _inj:
+            desync_attempts = []   # frame corruption -- direct signature of the race bug
+            starved = []           # too few packets without corruption (secondary symptom)
+            conn_errs = 0          # connect/timeout failures under flood (noise)
+            for i in range(ATTEMPTS):
+                r = _one_attempt(host, port, cookies)
+                if r["desync"]:
+                    tag = "DESYNC"
+                    desync_attempts.append(i + 1)
+                elif r["conn_err"]:
+                    tag = "connerr"
+                    conn_errs += 1
+                elif r["valid"] < MIN_PACKETS_OK:
+                    tag = "starved"
+                    starved.append((i + 1, r["valid"]))
+                else:
+                    tag = "ok"
+                print(f"  attempt {i+1:2d}/{ATTEMPTS}: {tag:7s} valid={r['valid']} "
+                      f"desync={r['desync']} conn_err={r['conn_err']}")
+                time.sleep(0.2)
 
-        print(f"\n  desync(corruption)={len(desync_attempts)} starved={len(starved)} "
-              f"conn_err={conn_errs} / {ATTEMPTS}")
+            print(f"\n  desync(corruption)={len(desync_attempts)} starved={len(starved)} "
+                  f"conn_err={conn_errs} / {ATTEMPTS}")
 
-        # Primary criterion: no frame corruption at all.
-        assert not desync_attempts, (
-            f"WS frame corruption in {len(desync_attempts)} of {ATTEMPTS} attempts: "
-            f"{desync_attempts}. This is the httpd auto-PONG vs sniffer_ws_task race."
-        )
-        # Secondary check: the stream is actually delivering packets (not just connecting).
-        # Majority of attempts must receive data; otherwise something is broadly broken.
-        good = ATTEMPTS - len(desync_attempts) - len(starved) - conn_errs
-        assert good >= ATTEMPTS // 2, (
-            f"Too few healthy attempts: {good}/{ATTEMPTS} "
-            f"(starved={len(starved)}, conn_err={conn_errs}). Stream is degraded."
-        )
-        print("OK: no WS frame corruption under aggressive PING flood -- race eliminated")
+            # Primary criterion: no frame corruption at all.
+            assert not desync_attempts, (
+                f"WS frame corruption in {len(desync_attempts)} of {ATTEMPTS} attempts: "
+                f"{desync_attempts}. This is the httpd auto-PONG vs sniffer_ws_task race."
+            )
+            # Secondary check: the stream is actually delivering packets (not just connecting).
+            # Majority of attempts must receive data; otherwise something is broadly broken.
+            good = ATTEMPTS - len(desync_attempts) - len(starved) - conn_errs
+            assert good >= ATTEMPTS // 2, (
+                f"Too few healthy attempts: {good}/{ATTEMPTS} "
+                f"(starved={len(starved)}, conn_err={conn_errs}). Stream is degraded."
+            )
+            print("OK: no WS frame corruption under aggressive PING flood -- race eliminated")
 
     finally:
         if original_port_mode is not None:
