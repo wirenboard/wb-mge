@@ -11,6 +11,7 @@ deliver exactly one complete Modbus TCP frame per call.
 
 import socket
 import struct
+import threading
 import time
 from urllib.parse import urlparse
 
@@ -313,3 +314,159 @@ def test_cache_tcp_coalesced_frames(cache_tcp_server):
         )
     finally:
         sock.close()
+
+
+@pytest.mark.timeout(60)
+def test_cache_tcp_concurrent_connections(cache_tcp_server):
+    """Multiple simultaneous connections each reassemble their split frames independently.
+
+    Three threads each open a separate TCP connection, split a request across
+    two TCP writes (with a 50 ms gap), and receive their own response.  The
+    server must keep reassembly state per-connection so that partial data from
+    one socket does not bleed into another socket's buffer.
+    """
+    host, port = cache_tcp_server
+
+    NUM_CONNS = 3
+    results = {}
+    lock = threading.Lock()
+
+    def conn_worker(idx, tid):
+        # Initialize sock to None so the finally block is safe even if socket() raises.
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(CACHE_MODBUS_TCP_CONNECT_TIMEOUT)
+            sock.connect((host, port))
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            req = make_mbap_request(tid, CACHE_SLAVE_ID, FC_READ_HOLDING, CACHE_REG_ADDR, 1)
+            # Send the first 4 bytes (TID + protocol ID), pause, then send the rest.
+            # This forces the server to buffer and wait for the remaining bytes.
+            sock.send(req[:4])
+            time.sleep(0.05)
+            sock.sendall(req[4:])
+            sock.settimeout(5.0)
+            resp_tid, resp_fc, payload = _recv_one_response(sock)
+            with lock:
+                results[idx] = {"tid": resp_tid, "fc": resp_fc, "payload": payload, "error": None}
+        except Exception as exc:
+            with lock:
+                results[idx] = {"tid": None, "fc": None, "payload": b"", "error": str(exc)}
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    tids = [100 + i for i in range(NUM_CONNS)]
+    threads = [
+        threading.Thread(target=conn_worker, args=(i, tids[i]), daemon=True)
+        for i in range(NUM_CONNS)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    still_alive = [t for t in threads if t.is_alive()]
+    assert not still_alive, f"{len(still_alive)} connection thread(s) did not finish (deadlock?)"
+
+    for i in range(NUM_CONNS):
+        r = results.get(i, {})
+        assert r.get("error") is None, f"Connection {i} raised: {r.get('error')}"
+        assert r["tid"] == tids[i], \
+            f"Conn {i}: TID mismatch: expected {tids[i]}, got {r['tid']}"
+        assert not (r["fc"] & 0x80), \
+            f"Conn {i}: Modbus exception FC=0x{r['fc']:02X}"
+        assert r["fc"] == FC_READ_HOLDING, \
+            f"Conn {i}: FC mismatch: got 0x{r['fc']:02X}"
+
+    print(f"✓ Concurrent connections: all {NUM_CONNS} threads got valid split-frame responses")
+
+
+@pytest.mark.timeout(60)
+def test_cache_tcp_large_split(cache_tcp_server):
+    """Frame delivered across 4 separate TCP writes (3+ recv() calls) → one correct response.
+
+    A 12-byte FC03 request is cut into four 3-byte chunks each separated by a
+    20 ms gap.  The server must accumulate all four recv() calls before it has
+    enough data to parse the full MBAP header and PDU and produce a response.
+    """
+    host, port = cache_tcp_server
+    test_tid = 3
+    CHUNK_SIZE = 3
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(CACHE_MODBUS_TCP_CONNECT_TIMEOUT)
+    try:
+        sock.connect((host, port))
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        req = make_mbap_request(test_tid, CACHE_SLAVE_ID, FC_READ_HOLDING, CACHE_REG_ADDR, 1)
+        assert len(req) == 12, f"Unexpected request length: {len(req)} (expected 12)"
+        # Send in 4 chunks of 3 bytes with inter-chunk gaps so that each chunk
+        # arrives as a separate TCP segment.
+        for offset in range(0, len(req), CHUNK_SIZE):
+            sock.send(req[offset:offset + CHUNK_SIZE])
+            time.sleep(0.02)
+        sock.settimeout(5.0)
+        resp_tid, resp_fc, payload = _recv_one_response(sock)
+        assert resp_tid == test_tid, \
+            f"TID mismatch: expected {test_tid}, got {resp_tid}"
+        assert not (resp_fc & 0x80), \
+            f"Modbus exception: FC=0x{resp_fc:02X}, payload={payload.hex()}"
+        assert resp_fc == FC_READ_HOLDING, \
+            f"FC mismatch: 0x{resp_fc:02X}"
+        print(
+            f"✓ Large-split (4 chunks): TID={resp_tid} FC=0x{resp_fc:02X} payload={payload.hex()}"
+        )
+    finally:
+        sock.close()
+
+
+@pytest.mark.timeout(60)
+def test_cache_tcp_close_mid_frame(cache_tcp_server):
+    """Connection closed mid-frame → reassembly slot freed; server handles next connection normally.
+
+    Socket A sends only 4 bytes of a 12-byte request and then closes the
+    connection.  The server must release the partially-filled reassembly slot.
+    Socket B then sends a complete request and must receive a valid response,
+    proving the slot was freed and the server did not crash.
+    """
+    host, port = cache_tcp_server
+
+    # Socket A: partial frame then immediate close — triggers close_handler in tcp_server.c
+    sock_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock_a.settimeout(CACHE_MODBUS_TCP_CONNECT_TIMEOUT)
+    try:
+        sock_a.connect((host, port))
+        req_partial = make_mbap_request(99, CACHE_SLAVE_ID, FC_READ_HOLDING, CACHE_REG_ADDR, 1)
+        # Send only 4 bytes — an incomplete MBAP header; server cannot determine frame length yet.
+        sock_a.send(req_partial[:4])
+        time.sleep(0.05)  # give server time to buffer the partial data
+    finally:
+        sock_a.close()  # close mid-frame — server must free the reassembly slot
+
+    time.sleep(0.1)  # allow the server to process the close event
+
+    # Socket B: complete request — must succeed after slot is freed
+    test_tid = 4
+    sock_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock_b.settimeout(CACHE_MODBUS_TCP_CONNECT_TIMEOUT)
+    try:
+        sock_b.connect((host, port))
+        sock_b.settimeout(5.0)
+        req = make_mbap_request(test_tid, CACHE_SLAVE_ID, FC_READ_HOLDING, CACHE_REG_ADDR, 1)
+        sock_b.sendall(req)
+        resp_tid, resp_fc, payload = _recv_one_response(sock_b)
+        assert resp_tid == test_tid, \
+            f"TID mismatch after mid-frame close: expected {test_tid}, got {resp_tid}"
+        assert not (resp_fc & 0x80), \
+            f"Modbus exception after mid-frame close: FC=0x{resp_fc:02X}"
+        assert resp_fc == FC_READ_HOLDING, \
+            f"FC mismatch: 0x{resp_fc:02X}"
+        print(
+            f"✓ Close-mid-frame: server survived and returned TID={resp_tid} FC=0x{resp_fc:02X}"
+        )
+    finally:
+        sock_b.close()
