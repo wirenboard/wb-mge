@@ -73,41 +73,81 @@ def test_ota_requires_auth(api, firmware_bytes):
 
 
 def test_ota_wrong_content_type(api, firmware_bytes):
-    """Wrong Content-Type → 400 with error JSON.
+    """Wrong Content-Type → exactly one HTTP 400 response on the raw TCP connection.
 
-    NOTE: as of f5326e9, main/ota_handler.c's ota_validate_content_type sends
-    the error via json_utils_send_error (which returns ESP_OK) but the OTA
-    handler does not propagate that as ESP_FAIL — so begin_update + recv +
-    finalize all still run and a *second* error response ('Network timeout
-    during upload' or 'Firmware validation failed', depending on payload
-    size) is sent on the same request. We work around this in two ways:
-
-      1. Use tiny all-zero bytes so the post-content-type recv loop bails
-         at "App descriptor not received" without writing to ota_1.
-      2. Reconnect after the test to drain any leftover response bytes that
-         requests' connection pool may have buffered — otherwise the next
-         test reads our response 2 as its own response.
+    Uses a raw socket to count how many HTTP responses the server sends.
+    With the bug (ota_validate_content_type returns ESP_OK instead of ESP_FAIL):
+      1. Server sends response #1 (400 — "Invalid content type")
+      2. OTA handler continues, tries to receive/write 256 bytes, fails
+      3. Server sends response #2 (400 — "Network timeout during upload")
+    After the fix, the handler returns ESP_FAIL immediately and only one
+    response is sent.  Counting b"HTTP/1.1" occurrences in the raw bytes
+    detects the double-response reliably, regardless of connection pooling.
     """
-    junk = b"\x00" * 256
+    parsed = requests.utils.urlparse(api.base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 80
+    cookie_header = "; ".join(f"{k}={v}" for k, v in api.session.cookies.items())
+
+    body_bytes = firmware_bytes[:256]
+    request = (
+        f"POST /update HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        f"Cookie: {cookie_header}\r\n"
+        f"Content-Type: text/plain\r\n"
+        f"Content-Length: {len(body_bytes)}\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
+    ).encode() + body_bytes
+
+    sock = socket.create_connection((host, port), timeout=30)
     try:
-        resp = _post_update(api, junk, content_type="text/plain")
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text!r}"
-        body = resp.json()
-        assert body.get("success") is False
-        assert "content type" in body.get("error", "").lower(), (
-            f"Unexpected error message: {body.get('error')!r}"
-        )
+        sock.sendall(request)
+        sock.shutdown(socket.SHUT_WR)
+        # Collect all bytes until the server closes the connection (EOF).
+        # A 15-second timeout guards against the server stalling indefinitely.
+        sock.settimeout(15)
+        raw_response = b""
+        try:
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                raw_response += chunk
+        except socket.timeout:
+            pass
     finally:
-        api.reconnect()
+        sock.close()
+
+    # Exactly one HTTP response must be present. Split on the header/body boundary
+    # and count blocks whose first line starts with "HTTP/" — this is immune to
+    # "HTTP/1.1" appearing in a response body or a future protocol version change.
+    header_blocks = raw_response.split(b"\r\n\r\n")
+    http_response_count = sum(1 for block in header_blocks if block.lstrip().startswith(b"HTTP/"))
+    assert http_response_count == 1, (
+        f"Expected exactly 1 HTTP response, got {http_response_count}. "
+        f"Double-response bug detected. Raw response:\n{raw_response!r}"
+    )
+    # The single response must be a 400.
+    first_status_line = raw_response.split(b"\r\n")[0]
+    assert b"400" in first_status_line, (
+        f"Expected HTTP 400, got: {first_status_line!r}"
+    )
+    # The body must mention the content-type error.
+    assert b"content type" in raw_response.lower(), (
+        f"Expected 'content type' in response body. Raw response:\n{raw_response!r}"
+    )
 
 
-def test_ota_short_body_no_app_desc(api, firmware_bytes):
+def test_ota_short_body_no_app_desc(api, firmware_bytes, is_qemu):
     """Body smaller than 480 bytes (WB_APP_DESC_OFFSET + WB_APP_DESC_SIZE) → error.
 
     main/ota_handler.c requires the first recv chunk to be large enough to
     contain the wb_app_desc struct; otherwise it logs
     'App descriptor not received' and aborts.
     """
+    if is_qemu:
+        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     short = firmware_bytes[: MIN_VALID_HEAD_LEN - 1]
     resp = _post_update(api, short)
     assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text!r}"
@@ -115,8 +155,10 @@ def test_ota_short_body_no_app_desc(api, firmware_bytes):
     assert body.get("success") is False
 
 
-def test_ota_bad_magic_word(api, firmware_bytes):
+def test_ota_bad_magic_word(api, firmware_bytes, is_qemu):
     """Magic word mismatch → 'Invalid OTA firmware'."""
+    if is_qemu:
+        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     payload = bytearray(firmware_bytes[: MIN_VALID_HEAD_LEN + 1024])
     struct.pack_into("<I", payload, WB_APP_DESC_OFFSET, 0xDEADBEEF)
     resp = _post_update(api, bytes(payload))
@@ -128,8 +170,10 @@ def test_ota_bad_magic_word(api, firmware_bytes):
     )
 
 
-def test_ota_bad_signature(api, firmware_bytes):
+def test_ota_bad_signature(api, firmware_bytes, is_qemu):
     """Signature mismatch → 'Invalid OTA firmware'."""
+    if is_qemu:
+        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     payload = bytearray(firmware_bytes[: MIN_VALID_HEAD_LEN + 1024])
     fake_signature = b"hacker_v9\x00\x00\x00"
     assert len(fake_signature) == SIGNATURE_LEN
@@ -143,7 +187,7 @@ def test_ota_bad_signature(api, firmware_bytes):
     )
 
 
-def test_ota_truncated_stream(api, firmware_bytes):
+def test_ota_truncated_stream(api, firmware_bytes, is_qemu):
     """Promise more bytes via Content-Length than we send → server must
     abort cleanly and stay responsive.
 
@@ -151,6 +195,8 @@ def test_ota_truncated_stream(api, firmware_bytes):
     the actual body length. esp_ota_abort should release the partition; no
     boot-partition switch happens, so /info must still work.
     """
+    if is_qemu:
+        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     parsed = requests.utils.urlparse(api.base_url)
     host = parsed.hostname or "localhost"
     port = parsed.port or 80
@@ -193,10 +239,12 @@ def test_ota_truncated_stream(api, firmware_bytes):
 # --- Positive path: MUST stay last — reboots into ota_1 ----------------------
 
 @pytest.mark.timeout(240)
-def test_ota_full_update(api, firmware_bytes):
+def test_ota_full_update(api, firmware_bytes, is_qemu):
     """Upload the full QEMU firmware → 200 with bytes_written == size →
     device reboots → /info responds again.
     """
+    if is_qemu:
+        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     fw_size = len(firmware_bytes)
     print(f"  Uploading {fw_size} bytes to /update...")
     resp = _post_update(api, firmware_bytes, timeout=180)
