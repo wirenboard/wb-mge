@@ -155,11 +155,11 @@ def qemu_process(request):
     if not request.config.getoption("qemu_skip_build"):
         print("Building QEMU flash image...")
         result = subprocess.run(
-            ["make", "qemu-flash-image", "qemu-efuse-image"],
+            ["make", "qemu-create-flash-image", "qemu-create-efuse-image"],
             cwd=PROJECT_ROOT,
         )
         if result.returncode != 0:
-            pytest.exit("make qemu-flash-image failed", returncode=1)
+            pytest.exit("make qemu-create-flash-image failed", returncode=1)
 
     flash_bin = PROJECT_ROOT / "build/qemu_flash.bin"
     efuse_bin = PROJECT_ROOT / "build/qemu_efuse.bin"
