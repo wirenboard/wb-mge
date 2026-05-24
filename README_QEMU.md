@@ -45,12 +45,12 @@ graph TD
     qemu-test --> qemu-create-flash-image
     qemu-test --> qemu-create-efuse-image
     qemu-create-flash-image --> build-idf-project-qemu
-    build-idf-project-qemu --> apply-idf-patches
+    build-idf-project-qemu --> qemu-apply-idf-patches
 ```
 
 - `qemu-build` — full build target (frontend + firmware)
 - `qemu-create-flash-image` — depends on `build-idf-project-qemu`: compiles QEMU firmware (incremental) then merges into a single .bin
-- `apply-idf-patches` — called automatically by `build-idf-project-qemu`: applies idempotent patches to IDF source files required for QEMU builds (UART teardown fix, OpenEth ISR DRAM log fix)
+- `qemu-apply-idf-patches` — called automatically by `build-idf-project-qemu`: applies idempotent patches to IDF source files required for QEMU builds (UART teardown fix bug01, OpenEth ISR DRAM log fix bug04, LACT timer NULL ISR guard bug05) via patches/apply_idf_patch.py
 - `qemu-create-efuse-image` — no dependencies: creates the eFuse image once
 - `qemu-web`, `qemu-run`, `qemu-test` — always compile QEMU firmware (incremental, fast if nothing changed) before running
 - `qemu-monitor` — no dependencies: connects to an already-running QEMU instance
@@ -82,7 +82,8 @@ CONFIG_ETH_USE_OPENETH=y                  # Enable OpenEth for QEMU
 ## 🛠️ Make Targets Reference
 
 ```bash
-make apply-idf-patches       # Apply IDF source patches for QEMU builds (called automatically; idempotent)
+make qemu-apply-idf-patches  # Apply IDF source patches for QEMU builds via patches/apply_idf_patch.py (called automatically; idempotent)
+make apply-idf-patches       # Apply IDF source patches for hardware builds via patches/apply_idf_patch.py (called automatically by build-idf-project; idempotent)
 make qemu-build              # Build frontend + QEMU firmware (run once, or after code changes)
 make qemu-create-flash-image # Compile QEMU firmware (incremental) and merge into qemu_flash.bin
 make qemu-create-efuse-image # Create build/qemu_efuse.bin if missing (idempotent)

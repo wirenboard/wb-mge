@@ -32,38 +32,13 @@ qemu-build: build-frontend build-idf-project-qemu
 # Patches live in patches/ and are idempotent: re-running is safe if already applied.
 # This target must run before any QEMU firmware compile so that the patched IDF
 # sources are compiled in, regardless of whether the build runs locally or in Docker.
-IDF_PATCHES_DIR := $(CURDIR)/patches
-apply-idf-patches:
+qemu-apply-idf-patches:
 	@echo "Applying IDF patches for QEMU build..."
-	@$(EIM_ACTIVATE) && \
-	if grep -q "bug01 fix" "$$IDF_PATH/components/esp_driver_uart/src/uart.c"; then \
-	    echo "  [skip] bug01-uart-driver-delete-intr-order.patch already applied"; \
-	else \
-	    echo "  Applying bug01-uart-driver-delete-intr-order.patch ..."; \
-	    patch -p1 -d "$$IDF_PATH" < "$(IDF_PATCHES_DIR)/bug01-uart-driver-delete-intr-order.patch" || exit 1; \
-	    grep -q "bug01 fix" "$$IDF_PATH/components/esp_driver_uart/src/uart.c" || { echo "  ERROR: patch did not apply correctly"; exit 1; }; \
-	    echo "  Done."; \
-	fi
-	@$(EIM_ACTIVATE) && \
-	if grep -q "ESP_DRAM_LOGW" "$$IDF_PATH/components/esp_eth/src/openeth/esp_eth_mac_openeth.c"; then \
-	    echo "  [skip] bug04-openeth-isr-dram-log.patch already applied"; \
-	else \
-	    echo "  Applying bug04-openeth-isr-dram-log.patch ..."; \
-	    patch -p1 -d "$$IDF_PATH" < "$(IDF_PATCHES_DIR)/bug04-openeth-isr-dram-log.patch" || exit 1; \
-	    grep -q "ESP_DRAM_LOGW" "$$IDF_PATH/components/esp_eth/src/openeth/esp_eth_mac_openeth.c" || { echo "  ERROR: patch did not apply correctly"; exit 1; }; \
-	    echo "  Done."; \
-	fi
-	@$(EIM_ACTIVATE) && \
-	if grep -q "bug05 fix" "$$IDF_PATH/components/esp_timer/src/esp_timer_impl_lac.c"; then \
-	    echo "  [skip] bug05-lact-timer-null-isr-guard.patch already applied"; \
-	else \
-	    echo "  Applying bug05-lact-timer-null-isr-guard.patch ..."; \
-	    patch -p1 -d "$$IDF_PATH" < "$(IDF_PATCHES_DIR)/bug05-lact-timer-null-isr-guard.patch" || exit 1; \
-	    grep -q "bug05 fix" "$$IDF_PATH/components/esp_timer/src/esp_timer_impl_lac.c" || { echo "  ERROR: patch did not apply correctly"; exit 1; }; \
-	    echo "  Done."; \
-	fi
+	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
+	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug04-openeth-isr-dram-log.patch
+	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug05-lact-timer-null-isr-guard.patch
 
-build-idf-project-qemu: apply-idf-patches
+build-idf-project-qemu: qemu-apply-idf-patches
 	@echo "Building for QEMU with OpenEth ethernet driver"
 	@# Detect stale hardware build cache: if CMakeCache exists but was not a QEMU build,
 	@# run fullclean to force CMake reconfiguration with correct source file selection.
@@ -152,7 +127,7 @@ qemu-test: qemu-create-flash-image qemu-create-efuse-image
 # Help target for QEMU
 qemu-help:
 	@echo "QEMU Targets:"
-	@echo "  apply-idf-patches       - Apply IDF source patches for QEMU builds (called automatically; idempotent)"
+	@echo "  qemu-apply-idf-patches  - Apply IDF source patches for QEMU builds (called automatically; idempotent)"
 	@echo "  qemu-build              - Build frontend + QEMU firmware (run once or after code changes)"
 	@echo "  qemu-create-flash-image - Compile QEMU firmware (incremental) and merge into qemu_flash.bin"
 	@echo "  qemu-create-efuse-image - Create eFuse image build/qemu_efuse.bin if missing (idempotent)"
@@ -173,4 +148,4 @@ qemu-clean:
 	@rm -rf build
 	@rm -f sdkconfig.qemu_build sdkconfig.qemu_build.old
 
-.PHONY: qemu-build apply-idf-patches build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help qemu-clean
+.PHONY: qemu-build qemu-apply-idf-patches build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help qemu-clean

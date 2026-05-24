@@ -124,7 +124,11 @@ build-frontend:
 		$(FIND) dist/ -type f -exec gzip -k {} \; ; \
 	}
 
-build-idf-project:
+apply-idf-patches:
+	@echo "Applying IDF patches..."
+	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
+
+build-idf-project: apply-idf-patches
 	@echo 'Building ESP-IDF project'
 	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
@@ -199,7 +203,7 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all unittests build-frontend build-idf-project prepare_release clean flash flash-all monitor ota-flash
+.PHONY: all unittests build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk
