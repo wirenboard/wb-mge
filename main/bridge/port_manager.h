@@ -115,3 +115,7 @@ bool port_manager_check_settings_changed(unsigned port_index);
  */
 esp_err_t port_manager_register_handlers(httpd_handle_t server);
 
+#ifdef __unittest_env__
+void port_manager_reset_for_test(void);
+#endif /* __unittest_env__ */
+

@@ -410,3 +410,10 @@ esp_err_t port_manager_register_handlers(httpd_handle_t server)
     ESP_LOGI(TAG, "HTTP handlers registered");
     return ESP_OK;
 }
+
+#ifdef __unittest_env__
+void port_manager_reset_for_test(void)
+{
+    memset(pm_ctx, 0, sizeof(pm_ctx));
+}
+#endif /* __unittest_env__ */

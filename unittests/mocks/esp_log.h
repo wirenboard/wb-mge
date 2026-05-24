@@ -28,3 +28,13 @@ typedef enum {
             printf("\n"); \
         } \
     } while(0)
+
+#define ESP_LOG_LEVEL(level, tag, format, ...) \
+    do { \
+        switch (level) { \
+        case ESP_LOG_ERROR:   printf("[ERROR] %s: " format "\n", tag, ##__VA_ARGS__); break; \
+        case ESP_LOG_WARN:    printf("[WARN] %s: " format "\n", tag, ##__VA_ARGS__); break; \
+        case ESP_LOG_INFO:    printf("[INFO] %s: " format "\n", tag, ##__VA_ARGS__); break; \
+        default:              printf("[DEBUG] %s: " format "\n", tag, ##__VA_ARGS__); break; \
+        } \
+    } while(0)

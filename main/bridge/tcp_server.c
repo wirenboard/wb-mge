@@ -364,3 +364,35 @@ esp_err_t tcp_server_deinit(tcp_desc_t *desc)
     ESP_LOGD(TAG, "Deinitialized");
     return ESP_OK;
 }
+
+#ifdef __unittest_env__
+/* Run the receiver_task logic synchronously for unit testing.
+ * Allows tests to verify close_handler and active_connections behavior
+ * without requiring full task infrastructure. */
+void tcp_server_run_receiver_for_test(tcp_desc_t *desc, int client_sock)
+{
+    char rx_buffer[RX_BUFFER_SIZE];
+    int len;
+
+    do {
+        len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+        if (len < 0) {
+            /* Error path — just break */
+            break;
+        } else if (len == 0) {
+            /* Connection closed */
+        } else {
+            desc->last_client_sock = client_sock;
+            desc->receive_handler(desc, client_sock, (uint8_t *)rx_buffer, len);
+        }
+    } while (len > 0);
+
+    if (desc->close_handler) {
+        desc->close_handler(desc, client_sock);
+    }
+
+    shutdown(client_sock, SHUT_RDWR);
+    close(client_sock);
+    desc->active_connections--;
+}
+#endif /* __unittest_env__ */
