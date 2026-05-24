@@ -234,6 +234,12 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 @pytest.fixture(scope="session")
+def is_qemu(request):
+    """Returns True when running against a QEMU instance (--qemu flag)."""
+    return request.config.getoption("--qemu", default=False)
+
+
+@pytest.fixture(scope="session")
 def api(request):
     """Session-scoped API client: creates, checks connectivity, authenticates."""
     ip = request.config.getoption("--ip")
