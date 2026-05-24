@@ -71,7 +71,7 @@ static esp_err_t ota_validate_content_type(httpd_req_t *req)
     if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type, sizeof(content_type)) == ESP_OK) {
         if (strstr(content_type, "application/octet-stream") == NULL) {
             ESP_LOGW(TAG, "Invalid content type for OTA update: %s", content_type);
-            return json_utils_send_error(req, "Invalid content type. Expected: application/octet-stream");
+            return ESP_FAIL;  // Caller chain: ota_update_from_http → ota_update_post_handler sends the error response
         }
     } else {
         ESP_LOGW(TAG, "No Content-Type header found, proceeding anyway");
