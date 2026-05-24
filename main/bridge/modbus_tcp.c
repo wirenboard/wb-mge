@@ -1,4 +1,5 @@
 #include "modbus_tcp.h"
+#include "modbus_tcp_internal.h"
 #include <string.h>
 #include <esp_log.h>
 #include "tcp_server.h"
@@ -103,6 +104,9 @@ static mb_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
  * allocation (one receiver_task per connection). Returns NULL if table is full. */
 static mbtcp_reasm_t *mbtcp_reasm_get(mb_tcp_task_ctx_t *ctx, int sock)
 {
+    /* Reject invalid socket descriptors: -1 is used as the "free slot" sentinel
+     * and must never match a real client socket. */
+    if (sock < 0) { return NULL; }
     mbtcp_reasm_t *slot = NULL;
     if (ctx->reasm_mutex) { xSemaphoreTake(ctx->reasm_mutex, portMAX_DELAY); }
     mbtcp_reasm_t *free_slot = NULL;
@@ -688,3 +692,67 @@ esp_err_t modbus_tcp_deinit_port(unsigned index)
     ESP_LOGD(TAG, "Port[%u]: Deinitialized", index + 1);
     return ESP_OK;
 }
+
+
+#ifdef __unittest_env__
+
+void modbus_tcp_test_init_ctx(unsigned ctx_idx, packet_queue_handle queue, tcp_desc_t *tcp_desc)
+{
+    mb_tcp_task_ctx_t *ctx = &mb_tcp_task_ctx[ctx_idx];
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->index       = ctx_idx;
+    ctx->tcp_queue   = queue;
+    ctx->tcp_desc    = tcp_desc;
+    ctx->reasm_mutex = NULL;   /* no mutex in unit tests: single-threaded */
+    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
+        ctx->reasm[i].sock = -1;
+        ctx->reasm[i].len  = 0;
+    }
+}
+
+int modbus_tcp_test_reasm_get(unsigned ctx_idx, int sock)
+{
+    return (mbtcp_reasm_get(&mb_tcp_task_ctx[ctx_idx], sock) != NULL) ? 1 : 0;
+}
+
+void modbus_tcp_test_reasm_free(unsigned ctx_idx, int sock)
+{
+    mbtcp_reasm_free(&mb_tcp_task_ctx[ctx_idx], sock);
+}
+
+int modbus_tcp_test_reasm_has_slot(unsigned ctx_idx, int sock)
+{
+    mb_tcp_task_ctx_t *ctx = &mb_tcp_task_ctx[ctx_idx];
+    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
+        if (ctx->reasm[i].sock == sock) { return 1; }
+    }
+    return 0;
+}
+
+size_t modbus_tcp_test_reasm_pending_bytes(unsigned ctx_idx, int sock)
+{
+    mb_tcp_task_ctx_t *ctx = &mb_tcp_task_ctx[ctx_idx];
+    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
+        if (ctx->reasm[i].sock == sock) { return ctx->reasm[i].len; }
+    }
+    return 0;
+}
+
+size_t modbus_tcp_test_frame_total_len(const uint8_t *buf)
+{
+    return mbtcp_frame_total_len(buf);
+}
+
+unsigned modbus_tcp_test_push_data(unsigned ctx_idx, int client_sock,
+                                    const uint8_t *data, size_t len)
+{
+    return separate_and_push_requests_from_tcp_with_client(
+        &mb_tcp_task_ctx[ctx_idx], client_sock, data, len);
+}
+
+void modbus_tcp_test_conn_close(unsigned ctx_idx, int client_sock)
+{
+    on_tcp_conn_close(mb_tcp_task_ctx[ctx_idx].tcp_desc, client_sock);
+}
+
+#endif /* __unittest_env__ */
