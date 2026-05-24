@@ -24,6 +24,7 @@ AUX_SRC += mocks/tcp_server.c
 AUX_SRC += mocks/serial.c
 AUX_SRC += mocks/cache_multimaster.c
 AUX_SRC += mocks/auth.c
+AUX_SRC += mocks/esp_http_server_mock.c
 
 # Include directories
 INC += mocks
@@ -35,7 +36,7 @@ INC += $(IDF_PATH)/components/esp_common/include
 INC += $(IDF_PATH)/components/esp_gdbstub/test_gdbstub_host/rv_decode/include
 
 # List of tests
-TEST_LIST = sniffer_helpers_test sniffer_process_test
+TEST_LIST = sniffer_helpers_test sniffer_process_test sniffer_ws_dispatch_test
 
 # Include base unit test build system
 include $(PROJ_DIR)/unittests/build_unittests.mk

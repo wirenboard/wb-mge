@@ -563,98 +563,104 @@ static const serial_receive_handler_t s_port_callbacks[BRIDGES_COUNT] = {
 };
 
 
-static void sniffer_ws_task(void *arg)
+/* Process one packet from the sniffer queue: update the multimaster cache,
+ * verify the saved WebSocket fd is still live, format JSON and send.
+ * Extracted from sniffer_ws_task so that unit tests can call it directly
+ * without blocking on xQueueReceive(portMAX_DELAY). */
+SNIFFER_STATIC void sniffer_ws_dispatch(sniff_packet_t *pkt)
 {
-    (void)arg;
-    sniff_packet_t pkt;
-    char *json_buf = malloc(SNIFFER_JSON_BUF_SIZE);
+    static char json_buf[SNIFFER_JSON_BUF_SIZE];
 
-    if (!json_buf) {
-        ESP_LOGE(TAG, "Failed to allocate WS JSON buffer");
-        vTaskDelete(NULL);
+    /* Feed packet to caching multimaster regardless of WS client connection state.
+     * Cache accumulates data even when no WS client is connected. */
+    if (cache_multimaster_is_enabled()) {
+        if (pkt->is_master && !pkt->is_timeout &&
+            (pkt->function == 0x01 || pkt->function == 0x02 ||
+             pkt->function == 0x03 || pkt->function == 0x04) &&
+            pkt->crc_valid && pkt->data_len >= 8) {
+            uint16_t start_reg = ((uint16_t)pkt->data[2] << 8) | pkt->data[3];
+            uint16_t count     = ((uint16_t)pkt->data[4] << 8) | pkt->data[5];
+            cache_multimaster_on_request(pkt->port, pkt->slave_id, pkt->function,
+                                         start_reg, count);
+        } else if (!pkt->is_master && !pkt->is_timeout &&
+                   (pkt->function == 0x01 || pkt->function == 0x02 ||
+                    pkt->function == 0x03 || pkt->function == 0x04) &&
+                   pkt->crc_valid && pkt->data_len >= 5) {
+            cache_multimaster_on_response(pkt->port, pkt->slave_id, pkt->function,
+                                          pkt->data, pkt->data_len, pkt->timestamp_us);
+        }
+    }
+
+    xSemaphoreTake(ws_mutex, portMAX_DELAY);
+    int fd = ws_client_fd;
+    httpd_handle_t srv = ws_server;
+    xSemaphoreGive(ws_mutex);
+
+    if (fd == -1 || srv == NULL) return;
+
+    /* When a WS client TCP-closes without an explicit cleanup the saved
+     * fd can be recycled by the httpd layer for a subsequent plain-HTTP
+     * connection. Sending a WS frame to such a recycled fd would dump
+     * the WS bytes into an HTTP request stream — and httpd_ws_send_data
+     * happily reports ESP_OK because the write succeeds. Verify the fd
+     * still backs a WebSocket client before writing. */
+    if (httpd_ws_get_fd_info(srv, fd) != HTTPD_WS_CLIENT_WEBSOCKET) {
+        xSemaphoreTake(ws_mutex, portMAX_DELAY);
+        if (ws_client_fd == fd) {
+            ws_client_fd = -1;
+        }
+        xSemaphoreGive(ws_mutex);
         return;
     }
 
-    while (1) {
-        xQueueReceive(sniff_queue, &pkt, portMAX_DELAY);
+    packet_counter++;
 
-        /* Feed packet to caching multimaster regardless of WS client connection state.
-         * Cache accumulates data even when no WS client is connected. */
-        if (cache_multimaster_is_enabled()) {
-            if (pkt.is_master && !pkt.is_timeout &&
-                (pkt.function == 0x01 || pkt.function == 0x02 ||
-                 pkt.function == 0x03 || pkt.function == 0x04) &&
-                pkt.crc_valid && pkt.data_len >= 8) {
-                uint16_t start_reg = ((uint16_t)pkt.data[2] << 8) | pkt.data[3];
-                uint16_t count     = ((uint16_t)pkt.data[4] << 8) | pkt.data[5];
-                cache_multimaster_on_request(pkt.port, pkt.slave_id, pkt.function,
-                                             start_reg, count);
-            } else if (!pkt.is_master && !pkt.is_timeout &&
-                       (pkt.function == 0x01 || pkt.function == 0x02 ||
-                        pkt.function == 0x03 || pkt.function == 0x04) &&
-                       pkt.crc_valid && pkt.data_len >= 5) {
-                cache_multimaster_on_response(pkt.port, pkt.slave_id, pkt.function,
-                                              pkt.data, pkt.data_len, pkt.timestamp_us);
-            }
-        }
+    if (pkt->is_timeout) {
+        format_timeout_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, pkt);
+    } else {
+        format_packet_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, pkt);
+    }
 
+    httpd_ws_frame_t ws_frame = {
+        .type    = HTTPD_WS_TYPE_TEXT,
+        .payload = (uint8_t *)json_buf,
+        .len     = strlen(json_buf),
+        .final   = true,
+    };
+
+    /* Use httpd_ws_send_data (blocking) instead of httpd_ws_send_frame_async:
+     * the actual socket write runs in the httpd worker task, serialized with
+     * the auto-PONG reply httpd sends for client PINGs. send_frame_async wrote
+     * the frame (header + payload as two separate send() calls) directly from
+     * this task, so an auto-PONG from the httpd task could interleave between
+     * the two send()s and corrupt the WS byte stream. Routing through the worker
+     * task removes the concurrency. Blocking variant lets us safely reuse json_buf. */
+    esp_err_t ret = httpd_ws_send_data(srv, fd, &ws_frame);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "WS send failed (%d), dropping client", ret);
         xSemaphoreTake(ws_mutex, portMAX_DELAY);
-        int fd = ws_client_fd;
-        httpd_handle_t srv = ws_server;
+        if (ws_client_fd == fd) {
+            ws_client_fd = -1;
+        }
         xSemaphoreGive(ws_mutex);
-
-        if (fd == -1 || srv == NULL) continue;
-
-        /* When a WS client TCP-closes without an explicit cleanup the saved
-         * fd can be recycled by the httpd layer for a subsequent plain-HTTP
-         * connection. Sending a WS frame to such a recycled fd would dump
-         * the WS bytes into an HTTP request stream — and httpd_ws_send_data
-         * happily reports ESP_OK because the write succeeds. Verify the fd
-         * still backs a WebSocket client before writing. */
-        if (httpd_ws_get_fd_info(srv, fd) != HTTPD_WS_CLIENT_WEBSOCKET) {
-            xSemaphoreTake(ws_mutex, portMAX_DELAY);
-            if (ws_client_fd == fd) {
-                ws_client_fd = -1;
-            }
-            xSemaphoreGive(ws_mutex);
-            continue;
-        }
-
-        packet_counter++;
-
-        if (pkt.is_timeout) {
-            format_timeout_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, &pkt);
-        } else {
-            format_packet_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, &pkt);
-        }
-
-        httpd_ws_frame_t ws_frame = {
-            .type    = HTTPD_WS_TYPE_TEXT,
-            .payload = (uint8_t *)json_buf,
-            .len     = strlen(json_buf),
-            .final   = true,
-        };
-
-        /* Use httpd_ws_send_data (blocking) instead of httpd_ws_send_frame_async:
-         * the actual socket write runs in the httpd worker task, serialized with
-         * the auto-PONG reply httpd sends for client PINGs. send_frame_async wrote
-         * the frame (header + payload as two separate send() calls) directly from
-         * this task, so an auto-PONG from the httpd task could interleave between
-         * the two send()s and corrupt the WS byte stream. Routing through the worker
-         * task removes the concurrency. Blocking variant lets us safely reuse json_buf. */
-        esp_err_t ret = httpd_ws_send_data(srv, fd, &ws_frame);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "WS send failed (%d), dropping client", ret);
-            xSemaphoreTake(ws_mutex, portMAX_DELAY);
-            if (ws_client_fd == fd) {
-                ws_client_fd = -1;
-            }
-            xSemaphoreGive(ws_mutex);
-        }
     }
 }
 
-static esp_err_t sniffer_ws_handler(httpd_req_t *req)
+static void sniffer_ws_task(void *arg)
+{
+    (void)arg;
+    while (1) {
+        sniff_packet_t pkt;
+        xQueueReceive(sniff_queue, &pkt, portMAX_DELAY);
+        sniffer_ws_dispatch(&pkt);
+    }
+}
+
+#ifdef __unittest_env__
+int sniffer_test_get_ws_client_fd(void) { return ws_client_fd; }
+#endif
+
+SNIFFER_STATIC esp_err_t sniffer_ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
         /* Authenticate the upgrade request — cookie is available in the HTTP headers.

@@ -37,6 +37,17 @@ typedef enum {
     DIRECTION_RESPONSE = 1,
     DIRECTION_UNKNOWN  = 2,
 } pdu_direction_t;
+
+/* Forward-declare httpd_req_t so the test-only prototypes below compile without
+ * pulling in the full esp_http_server mock header (which is not on every test
+ * suite's include path). The complete definition is provided by esp_http_server.h
+ * which sniffer.c includes directly in __unittest_env__ builds. */
+struct httpd_req;
+
+/* Test-only accessors and forward declarations — not available in production builds */
+void sniffer_ws_dispatch(sniff_packet_t *pkt);
+esp_err_t sniffer_ws_handler(struct httpd_req *req);
+int sniffer_test_get_ws_client_fd(void);
 #endif
 
 esp_err_t sniffer_init(void);

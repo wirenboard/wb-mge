@@ -84,18 +84,11 @@ static inline esp_err_t httpd_ws_send_frame_async(httpd_handle_t handle, int fd,
     return ESP_OK;
 }
 
-static inline esp_err_t httpd_ws_send_data(httpd_handle_t handle, int fd, httpd_ws_frame_t *frame)
-{
-    (void)handle;
-    (void)fd;
-    (void)frame;
-    return ESP_OK;
-}
-
+/* Return the fd stored in req->aux cast to int; fall back to 42 if aux is NULL.
+ * This allows tests to configure a specific fd by setting req->aux. */
 static inline int httpd_req_to_sockfd(httpd_req_t *req)
 {
-    (void)req;
-    return 0;
+    return req->aux ? (int)(intptr_t)req->aux : 42;
 }
 
 static inline esp_err_t httpd_resp_set_type(httpd_req_t *req, const char *type)
@@ -120,11 +113,19 @@ static inline esp_err_t httpd_sess_trigger_close(httpd_handle_t handle, int sock
     return ESP_OK;
 }
 
-/* Stub: always report the fd as a live WebSocket client so sniffer_ws_task
- * sends frames without clearing ws_client_fd unexpectedly in unit tests. */
-static inline httpd_ws_client_info_t httpd_ws_get_fd_info(httpd_handle_t hd, int fd)
-{
-    (void)hd;
-    (void)fd;
-    return HTTPD_WS_CLIENT_WEBSOCKET;
-}
+/* Controllable mock state for httpd_ws_get_fd_info and httpd_ws_send_data.
+ * Defined in esp_http_server_mock.c; tests use mock_esp_http_server_reset()
+ * in setUp() to restore defaults before each test case. */
+extern httpd_ws_client_info_t mock_httpd_ws_get_fd_info_return;
+extern int mock_httpd_ws_get_fd_info_called;
+extern int mock_httpd_ws_get_fd_info_last_fd;
+
+extern esp_err_t mock_httpd_ws_send_data_return;
+extern int mock_httpd_ws_send_data_called;
+extern httpd_ws_frame_t mock_httpd_ws_send_data_last_frame;
+extern int mock_httpd_ws_send_data_last_fd;
+
+void mock_esp_http_server_reset(void);
+
+httpd_ws_client_info_t httpd_ws_get_fd_info(httpd_handle_t hd, int fd);
+esp_err_t httpd_ws_send_data(httpd_handle_t handle, int fd, httpd_ws_frame_t *frame);
