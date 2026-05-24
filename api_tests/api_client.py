@@ -65,7 +65,7 @@ class WBMGEAPI:
 
     def update_settings(self, data):
         """Update settings"""
-        return self.session.post(f"{self.base_url}/settings", json=data, timeout=10)
+        return self.session.post(f"{self.base_url}/settings", json=data, timeout=30)
 
     def start_wifi_scan(self):
         """Start WiFi scan"""
@@ -154,7 +154,7 @@ class WBMGEAPI:
             payload = {"cmd": cmd}
             print(f"JSON payload: {payload}")
 
-            response = self.session.post(f"{self.base_url}/cmd", json=payload, timeout=10)
+            response = self.session.post(f"{self.base_url}/cmd", json=payload, timeout=30)
             print(f"Command {cmd} sent, status: {response.status_code}")
 
             return response
