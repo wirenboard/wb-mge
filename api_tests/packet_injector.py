@@ -128,6 +128,7 @@ def open_uart_socket(port: int, connect_timeout: float = 5.0) -> socket.socket:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(connect_timeout)
     s.connect((UART_HOST, UART_TCP_PORT[port]))
+    s.settimeout(None)  # switch to true blocking mode after connect
     return s
 
 
