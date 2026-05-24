@@ -668,8 +668,9 @@ static esp_err_t sniffer_ws_handler(httpd_req_t *req)
         xSemaphoreTake(ws_mutex, portMAX_DELAY);
         ws_server    = req->handle;
         ws_client_fd = httpd_req_to_sockfd(req);
+        int new_fd   = ws_client_fd; // capture under mutex to avoid race in log
         xSemaphoreGive(ws_mutex);
-        ESP_LOGI(TAG, "WS client connected, fd=%d", ws_client_fd);
+        ESP_LOGI(TAG, "WS client connected, fd=%d", new_fd);
         return ESP_OK;
     }
 
