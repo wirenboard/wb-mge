@@ -23,6 +23,7 @@ import websocket
 from urllib.parse import urlparse
 
 from sniffer_helpers import _ws_connect, _collect_packets
+from packet_injector import PacketInjector
 
 
 @pytest.mark.timeout(120)
@@ -48,83 +49,113 @@ def test_sniffer_websocket(api):
         time.sleep(0.5)
         print("✓ Port 1 switched to sniffer mode")
 
-        ws_url = f"ws://{host}:{port}/sniffer/ws"
-        cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
-        ws = websocket.WebSocket()
-        ws.settimeout(15)
-        ws.connect(ws_url, cookie=cookies)
-        print(f"✓ WebSocket connected to {ws_url}")
+        with PacketInjector(api, port=1):
+            ws_url = f"ws://{host}:{port}/sniffer/ws"
+            cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
+            ws = websocket.WebSocket()
+            ws.settimeout(15)
+            ws.connect(ws_url, cookie=cookies)
+            print(f"✓ WebSocket connected to {ws_url}")
 
-        ws.send(json.dumps({"cmd": "start", "port": 1}))
+            ws.send(json.dumps({"cmd": "start", "port": 1}))
 
-        def _ping_thread():
-            while not stop_ping.is_set():
-                try:
-                    ws.ping()
-                except Exception:
-                    break
-                time.sleep(0.5)
+            def _ping_thread():
+                while not stop_ping.is_set():
+                    try:
+                        ws.ping()
+                    except Exception:
+                        break
+                    time.sleep(0.5)
 
-        ping_thread = threading.Thread(target=_ping_thread, daemon=True)
-        ping_thread.start()
+            ping_thread = threading.Thread(target=_ping_thread, daemon=True)
+            ping_thread.start()
 
-        # Phase 1: collect up to 20 packets within 15 s
-        packets = []
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and len(packets) < 20:
-            try:
-                msg = ws.recv()
-                if not msg:
-                    continue
-                pkt = json.loads(msg)
-                packets.append(pkt)
-                crc = pkt.get("crc_valid", "N/A")
-                print(f"  Packet #{len(packets)}: type={pkt.get('type')} crc_valid={crc}")
-            except websocket.WebSocketTimeoutException:
-                pass
-            except websocket.WebSocketPayloadException:
-                pass
-            except websocket.WebSocketProtocolException:
-                pass
-            except json.JSONDecodeError:
-                pass
-
-        print(f"\n  Collected {len(packets)} packet(s) in phase 1")
-        assert len(packets) > 0, "No packets received — check that QEMU mock is running"
-
-        valid_pkts = []
-        invalid_pkts = []
-        for i, pkt in enumerate(packets):
-            for field in ("type", "id", "port", "timestamp_us"):
-                assert field in pkt, f"Packet[{i}] missing '{field}': {pkt}"
-            if pkt["type"] == "packet":
-                for field in ("sender", "slave_id", "function", "crc_valid", "raw", "size"):
-                    assert field in pkt, f"Packet[{i}] missing '{field}': {pkt}"
-                assert pkt["sender"] in ("master", "slave"), f"Packet[{i}] bad sender: {pkt['sender']}"
-                assert isinstance(pkt["crc_valid"], bool), f"Packet[{i}] crc_valid not bool"
-                if pkt["crc_valid"]:
-                    valid_pkts.append(pkt)
-                else:
-                    invalid_pkts.append(pkt)
-
-        assert len(valid_pkts) >= 1, f"Expected >= 1 valid packet, got {len(valid_pkts)}"
-        print(f"✓ {len(valid_pkts)} valid CRC packet(s) received")
-
-        # Phase 2: if no bad-CRC packets, extend up to 30 s
-        if len(invalid_pkts) == 0:
-            print("  [INFO] No bad-CRC packets yet — extending window (up to 30 s)...")
-            ws.settimeout(5)
-            extra_deadline = time.monotonic() + 30
-            while time.monotonic() < extra_deadline:
+            # Phase 1: collect up to 20 packets within 15 s
+            packets = []
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and len(packets) < 20:
                 try:
                     msg = ws.recv()
                     if not msg:
                         continue
                     pkt = json.loads(msg)
                     packets.append(pkt)
-                    if pkt.get("type") == "packet" and pkt.get("crc_valid") is False:
+                    crc = pkt.get("crc_valid", "N/A")
+                    print(f"  Packet #{len(packets)}: type={pkt.get('type')} crc_valid={crc}")
+                except websocket.WebSocketTimeoutException:
+                    pass
+                except websocket.WebSocketPayloadException:
+                    pass
+                except websocket.WebSocketProtocolException:
+                    pass
+                except json.JSONDecodeError:
+                    pass
+
+            print(f"\n  Collected {len(packets)} packet(s) in phase 1")
+            assert len(packets) > 0, "No packets received — check that PacketInjector is running"
+
+            valid_pkts = []
+            invalid_pkts = []
+            for i, pkt in enumerate(packets):
+                for field in ("type", "id", "port", "timestamp_us"):
+                    assert field in pkt, f"Packet[{i}] missing '{field}': {pkt}"
+                if pkt["type"] == "packet":
+                    for field in ("sender", "slave_id", "function", "crc_valid", "raw", "size"):
+                        assert field in pkt, f"Packet[{i}] missing '{field}': {pkt}"
+                    assert pkt["sender"] in ("master", "slave"), f"Packet[{i}] bad sender: {pkt['sender']}"
+                    assert isinstance(pkt["crc_valid"], bool), f"Packet[{i}] crc_valid not bool"
+                    if pkt["crc_valid"]:
+                        valid_pkts.append(pkt)
+                    else:
                         invalid_pkts.append(pkt)
-                        print(f"  Bad-CRC packet: {pkt}")
+
+            assert len(valid_pkts) >= 1, f"Expected >= 1 valid packet, got {len(valid_pkts)}"
+            print(f"✓ {len(valid_pkts)} valid CRC packet(s) received")
+
+            # Phase 2: if no bad-CRC packets, extend up to 30 s
+            if len(invalid_pkts) == 0:
+                print("  [INFO] No bad-CRC packets yet — extending window (up to 30 s)...")
+                ws.settimeout(5)
+                extra_deadline = time.monotonic() + 30
+                while time.monotonic() < extra_deadline:
+                    try:
+                        msg = ws.recv()
+                        if not msg:
+                            continue
+                        pkt = json.loads(msg)
+                        packets.append(pkt)
+                        if pkt.get("type") == "packet" and pkt.get("crc_valid") is False:
+                            invalid_pkts.append(pkt)
+                            print(f"  Bad-CRC packet: {pkt}")
+                            break
+                    except websocket.WebSocketTimeoutException:
+                        continue
+                    except websocket.WebSocketPayloadException:
+                        continue
+                    except websocket.WebSocketProtocolException:
+                        continue
+                    except json.JSONDecodeError:
+                        continue
+
+            assert len(invalid_pkts) >= 1, (
+                "Expected >= 1 bad-CRC packet (PacketInjector emits one every "
+                "bad_crc_period cycles). "
+                f"Received {len(packets)} total packets, none with crc_valid=false."
+            )
+            print(f"✓ {len(invalid_pkts)} bad-CRC packet(s) received")
+
+            # Phase 3: verify valid packets still arrive AFTER bad-CRC
+            ws.settimeout(5)
+            post_bad_crc = []
+            post_deadline = time.monotonic() + 5
+            while time.monotonic() < post_deadline:
+                try:
+                    msg = ws.recv()
+                    if not msg:
+                        continue
+                    pkt = json.loads(msg)
+                    if pkt.get("type") == "packet" and pkt.get("crc_valid") is True:
+                        post_bad_crc.append(pkt)
                         break
                 except websocket.WebSocketTimeoutException:
                     continue
@@ -135,39 +166,11 @@ def test_sniffer_websocket(api):
                 except json.JSONDecodeError:
                     continue
 
-        assert len(invalid_pkts) >= 1, (
-            "Expected >= 1 bad-CRC packet (mock injects one every 5×500ms cycles). "
-            f"Received {len(packets)} total packets, none with crc_valid=false."
-        )
-        print(f"✓ {len(invalid_pkts)} bad-CRC packet(s) received")
-
-        # Phase 3: verify valid packets still arrive AFTER bad-CRC
-        ws.settimeout(5)
-        post_bad_crc = []
-        post_deadline = time.monotonic() + 5
-        while time.monotonic() < post_deadline:
-            try:
-                msg = ws.recv()
-                if not msg:
-                    continue
-                pkt = json.loads(msg)
-                if pkt.get("type") == "packet" and pkt.get("crc_valid") is True:
-                    post_bad_crc.append(pkt)
-                    break
-            except websocket.WebSocketTimeoutException:
-                continue
-            except websocket.WebSocketPayloadException:
-                continue
-            except websocket.WebSocketProtocolException:
-                continue
-            except json.JSONDecodeError:
-                continue
-
-        assert len(post_bad_crc) >= 1, (
-            "No valid packets received AFTER bad-CRC — sniffer may have stalled. "
-            f"Total packets: {len(packets)}"
-        )
-        print("✓ Valid packets arrive after bad-CRC — sniffer remains functional")
+            assert len(post_bad_crc) >= 1, (
+                "No valid packets received AFTER bad-CRC — sniffer may have stalled. "
+                f"Total packets: {len(packets)}"
+            )
+            print("✓ Valid packets arrive after bad-CRC — sniffer remains functional")
 
     finally:
         stop_ping.set()
@@ -285,22 +288,23 @@ def test_sniffer_ws_packet_port_field_matches_started_port(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        ws, stop_ping, _ = _ws_connect(api, 1)
+        with PacketInjector(api, port=1):
+            ws, stop_ping, _ = _ws_connect(api, 1)
 
-        packets = _collect_packets(
-            ws,
-            min_count=5,
-            timeout_sec=15,
-            filter_fn=lambda p: p.get("type") == "packet",
-        )
+            packets = _collect_packets(
+                ws,
+                min_count=5,
+                timeout_sec=15,
+                filter_fn=lambda p: p.get("type") == "packet",
+            )
 
-        assert len(packets) >= 5, (
-            f"Expected >=5 packets but got {len(packets)}; check that QEMU mock is running"
-        )
-        assert all(p["port"] == 1 for p in packets), (
-            f"Some packets have wrong port field: {[p['port'] for p in packets]}"
-        )
-        print(f"✓ All {len(packets)} packets have port==1")
+            assert len(packets) >= 5, (
+                f"Expected >=5 packets but got {len(packets)}; check PacketInjector is running"
+            )
+            assert all(p["port"] == 1 for p in packets), (
+                f"Some packets have wrong port field: {[p['port'] for p in packets]}"
+            )
+            print(f"✓ All {len(packets)} packets have port==1")
 
     finally:
         if stop_ping is not None:
@@ -334,23 +338,24 @@ def test_sniffer_ws_id_monotonically_increasing(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        ws, stop_ping, _ = _ws_connect(api, 1)
+        with PacketInjector(api, port=1):
+            ws, stop_ping, _ = _ws_connect(api, 1)
 
-        packets = _collect_packets(ws, min_count=10, timeout_sec=15)
+            packets = _collect_packets(ws, min_count=10, timeout_sec=15)
 
-        assert len(packets) >= 10, (
-            f"Expected >=10 packets but got {len(packets)}; check that QEMU mock is running"
-        )
-        ids = [p["id"] for p in packets]
-        violations = [
-            (i, ids[i], ids[i + 1])
-            for i in range(len(ids) - 1)
-            if ids[i] >= ids[i + 1]
-        ]
-        assert len(violations) == 0, (
-            f"packet id is not strictly increasing at positions: {violations}"
-        )
-        print(f"✓ id strictly increasing across {len(packets)} packets")
+            assert len(packets) >= 10, (
+                f"Expected >=10 packets but got {len(packets)}; check PacketInjector is running"
+            )
+            ids = [p["id"] for p in packets]
+            violations = [
+                (i, ids[i], ids[i + 1])
+                for i in range(len(ids) - 1)
+                if ids[i] >= ids[i + 1]
+            ]
+            assert len(violations) == 0, (
+                f"packet id is not strictly increasing at positions: {violations}"
+            )
+            print(f"✓ id strictly increasing across {len(packets)} packets")
 
     finally:
         if stop_ping is not None:
@@ -384,28 +389,29 @@ def test_sniffer_ws_timestamp_positive_and_plausible(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        ws, stop_ping, _ = _ws_connect(api, 1)
+        with PacketInjector(api, port=1):
+            ws, stop_ping, _ = _ws_connect(api, 1)
 
-        packets = _collect_packets(ws, min_count=5, timeout_sec=15)
+            packets = _collect_packets(ws, min_count=5, timeout_sec=15)
 
-        assert len(packets) >= 5, (
-            f"Expected >=5 packets but got {len(packets)}; check that QEMU mock is running"
-        )
-
-        for i, p in enumerate(packets):
-            ts = p.get("timestamp_us")
-            assert isinstance(ts, int), (
-                f"Packet[{i}] timestamp_us is not an int: {type(ts).__name__} = {ts!r}"
+            assert len(packets) >= 5, (
+                f"Expected >=5 packets but got {len(packets)}; check PacketInjector is running"
             )
-            assert ts > 0, f"Packet[{i}] timestamp_us is not positive: {ts}"
 
-        timestamps = [p["timestamp_us"] for p in packets]
-        for i in range(len(timestamps) - 1):
-            assert timestamps[i] <= timestamps[i + 1], (
-                f"Timestamp sequence is not non-decreasing at index {i}: "
-                f"{timestamps[i]} > {timestamps[i + 1]}"
-            )
-        print(f"✓ All {len(packets)} timestamps are positive and non-decreasing")
+            for i, p in enumerate(packets):
+                ts = p.get("timestamp_us")
+                assert isinstance(ts, int), (
+                    f"Packet[{i}] timestamp_us is not an int: {type(ts).__name__} = {ts!r}"
+                )
+                assert ts > 0, f"Packet[{i}] timestamp_us is not positive: {ts}"
+
+            timestamps = [p["timestamp_us"] for p in packets]
+            for i in range(len(timestamps) - 1):
+                assert timestamps[i] <= timestamps[i + 1], (
+                    f"Timestamp sequence is not non-decreasing at index {i}: "
+                    f"{timestamps[i]} > {timestamps[i + 1]}"
+                )
+            print(f"✓ All {len(packets)} timestamps are positive and non-decreasing")
 
     finally:
         if stop_ping is not None:
@@ -439,31 +445,32 @@ def test_sniffer_ws_raw_field_is_hex_and_matches_size(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        ws, stop_ping, _ = _ws_connect(api, 1)
+        with PacketInjector(api, port=1):
+            ws, stop_ping, _ = _ws_connect(api, 1)
 
-        packets = _collect_packets(
-            ws,
-            min_count=5,
-            timeout_sec=15,
-            filter_fn=lambda p: p.get("type") == "packet",
-        )
-
-        assert len(packets) >= 5, (
-            f"Expected >=5 type==packet packets but got {len(packets)}; "
-            "check that QEMU mock is running"
-        )
-
-        for i, p in enumerate(packets):
-            raw = p.get("raw", "")
-            size = p.get("size", -1)
-            assert len(raw) == size * 2, (
-                f"Packet[{i}] raw length {len(raw)} != size*2 {size * 2}; raw={raw!r}"
+            packets = _collect_packets(
+                ws,
+                min_count=5,
+                timeout_sec=15,
+                filter_fn=lambda p: p.get("type") == "packet",
             )
-            # Implementation uses %02X so output is uppercase hex
-            assert re.fullmatch(r"[0-9A-F]+", raw), (
-                f"Packet[{i}] raw is not uppercase hex: {raw!r}"
+
+            assert len(packets) >= 5, (
+                f"Expected >=5 type==packet packets but got {len(packets)}; "
+                "check PacketInjector is running"
             )
-        print(f"✓ raw field validated for {len(packets)} type==packet packets")
+
+            for i, p in enumerate(packets):
+                raw = p.get("raw", "")
+                size = p.get("size", -1)
+                assert len(raw) == size * 2, (
+                    f"Packet[{i}] raw length {len(raw)} != size*2 {size * 2}; raw={raw!r}"
+                )
+                # Implementation uses %02X so output is uppercase hex
+                assert re.fullmatch(r"[0-9A-F]+", raw), (
+                    f"Packet[{i}] raw is not uppercase hex: {raw!r}"
+                )
+            print(f"✓ raw field validated for {len(packets)} type==packet packets")
 
     finally:
         if stop_ping is not None:
@@ -497,51 +504,52 @@ def test_sniffer_ws_stream_splitter_produces_separate_request_and_response(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        ws, stop_ping, _ = _ws_connect(api, 1)
+        with PacketInjector(api, port=1):
+            ws, stop_ping, _ = _ws_connect(api, 1)
 
-        packets = _collect_packets(
-            ws,
-            min_count=10,
-            timeout_sec=15,
-            filter_fn=lambda p: p.get("type") == "packet" and p.get("crc_valid") is True,
-        )
-
-        assert len(packets) >= 10, (
-            f"Expected >=10 valid packets but got {len(packets)}; "
-            "check that QEMU mock is running"
-        )
-
-        master_fc3 = [p for p in packets if p.get("sender") == "master" and p.get("function") == 3]
-        slave_pkts = [p for p in packets if p.get("sender") == "slave"]
-
-        assert len(master_fc3) > 0, "No master FC03 packets seen"
-        assert len(slave_pkts) > 0, "No slave packets seen"
-
-        # Find a matched consecutive master→slave pair to verify timestamp ordering.
-        # Avoid comparing packets from different transactions (e.g. orphan responses
-        # emitted when the sniffer starts mid-exchange may precede the first master).
-        matched_pair = None
-        for i in range(len(packets) - 1):
-            m = packets[i]
-            s = packets[i + 1]
-            if (
-                m.get("sender") == "master"
-                and s.get("sender") == "slave"
-                and m.get("slave_id") == s.get("slave_id")
-                and m.get("function") == s.get("function")
-            ):
-                matched_pair = (m, s)
-                break
-
-        if matched_pair is not None:
-            m, s = matched_pair
-            assert s["timestamp_us"] >= m["timestamp_us"], (
-                f"Slave timestamp {s['timestamp_us']} < master timestamp {m['timestamp_us']} "
-                f"in matched pair"
+            packets = _collect_packets(
+                ws,
+                min_count=10,
+                timeout_sec=15,
+                filter_fn=lambda p: p.get("type") == "packet" and p.get("crc_valid") is True,
             )
-        print(
-            f"✓ stream_splitter: {len(master_fc3)} master FC03, {len(slave_pkts)} slave packets"
-        )
+
+            assert len(packets) >= 10, (
+                f"Expected >=10 valid packets but got {len(packets)}; "
+                "check PacketInjector is running"
+            )
+
+            master_fc3 = [p for p in packets if p.get("sender") == "master" and p.get("function") == 3]
+            slave_pkts = [p for p in packets if p.get("sender") == "slave"]
+
+            assert len(master_fc3) > 0, "No master FC03 packets seen"
+            assert len(slave_pkts) > 0, "No slave packets seen"
+
+            # Find a matched consecutive master→slave pair to verify timestamp ordering.
+            # Avoid comparing packets from different transactions (e.g. orphan responses
+            # emitted when the sniffer starts mid-exchange may precede the first master).
+            matched_pair = None
+            for i in range(len(packets) - 1):
+                m = packets[i]
+                s = packets[i + 1]
+                if (
+                    m.get("sender") == "master"
+                    and s.get("sender") == "slave"
+                    and m.get("slave_id") == s.get("slave_id")
+                    and m.get("function") == s.get("function")
+                ):
+                    matched_pair = (m, s)
+                    break
+
+            if matched_pair is not None:
+                m, s = matched_pair
+                assert s["timestamp_us"] >= m["timestamp_us"], (
+                    f"Slave timestamp {s['timestamp_us']} < master timestamp {m['timestamp_us']} "
+                    f"in matched pair"
+                )
+            print(
+                f"✓ stream_splitter: {len(master_fc3)} master FC03, {len(slave_pkts)} slave packets"
+            )
 
     finally:
         if stop_ping is not None:
@@ -575,37 +583,38 @@ def test_sniffer_ws_sender_alternates_master_slave(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        ws, stop_ping, _ = _ws_connect(api, 1)
+        with PacketInjector(api, port=1):
+            ws, stop_ping, _ = _ws_connect(api, 1)
 
-        packets = _collect_packets(
-            ws,
-            min_count=10,
-            timeout_sec=15,
-            filter_fn=lambda p: p.get("type") == "packet" and p.get("crc_valid") is True,
-        )
+            packets = _collect_packets(
+                ws,
+                min_count=10,
+                timeout_sec=15,
+                filter_fn=lambda p: p.get("type") == "packet" and p.get("crc_valid") is True,
+            )
 
-        assert len(packets) >= 10, (
-            f"Expected >=10 valid packets but got {len(packets)}; "
-            "check that QEMU mock is running"
-        )
+            assert len(packets) >= 10, (
+                f"Expected >=10 valid packets but got {len(packets)}; "
+                "check PacketInjector is running"
+            )
 
-        pairs_found = 0
-        for i in range(len(packets) - 1):
-            m = packets[i]
-            s = packets[i + 1]
-            if (
-                m.get("sender") == "master"
-                and s.get("sender") == "slave"
-                and m.get("slave_id") == s.get("slave_id")
-                and m.get("function") == s.get("function")
-            ):
-                pairs_found += 1
+            pairs_found = 0
+            for i in range(len(packets) - 1):
+                m = packets[i]
+                s = packets[i + 1]
+                if (
+                    m.get("sender") == "master"
+                    and s.get("sender") == "slave"
+                    and m.get("slave_id") == s.get("slave_id")
+                    and m.get("function") == s.get("function")
+                ):
+                    pairs_found += 1
 
-        assert pairs_found >= 2, (
-            f"Expected >=2 master→slave pairs with matching slave_id/function, "
-            f"found {pairs_found}"
-        )
-        print(f"✓ Found {pairs_found} matching master→slave pairs")
+            assert pairs_found >= 2, (
+                f"Expected >=2 master→slave pairs with matching slave_id/function, "
+                f"found {pairs_found}"
+            )
+            print(f"✓ Found {pairs_found} matching master→slave pairs")
 
     finally:
         if stop_ping is not None:
@@ -644,11 +653,19 @@ def test_sniffer_ws_stop_command_stops_stream(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        ws, stop_ping, _ = _ws_connect(api, 1)
+        injector = PacketInjector(api, port=1)
+        injector.start()
+        try:
+            ws, stop_ping, _ = _ws_connect(api, 1)
 
-        # Confirm sniffer is producing packets before stopping
-        pre_stop = _collect_packets(ws, min_count=1, timeout_sec=10)
-        assert len(pre_stop) >= 1, "No packets received before stop — check QEMU mock"
+            # Confirm sniffer is producing packets before stopping
+            pre_stop = _collect_packets(ws, min_count=1, timeout_sec=10)
+            assert len(pre_stop) >= 1, "No packets received before stop — check PacketInjector"
+        finally:
+            # Stop injection before checking silence so any post-stop packets
+            # come solely from drained queue, not from continued injection
+            # racing the sniffer's disable.
+            injector.stop()
 
         # Send stop and kill the ping thread before verifying silence —
         # concurrent ws.ping() and ws.recv() can deadlock in websocket-client.
@@ -734,89 +751,90 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        parsed = urlparse(api.base_url)
-        host = parsed.hostname
-        http_port = parsed.port or 80
-        ws_url = f"ws://{host}:{http_port}/sniffer/ws"
-        cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
+        with PacketInjector(api, port=1):
+            parsed = urlparse(api.base_url)
+            host = parsed.hostname
+            http_port = parsed.port or 80
+            ws_url = f"ws://{host}:{http_port}/sniffer/ws"
+            cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
 
-        ws = websocket.WebSocket()
-        ws.settimeout(15)
-        ws.connect(ws_url, cookie=cookies)
+            ws = websocket.WebSocket()
+            ws.settimeout(15)
+            ws.connect(ws_url, cookie=cookies)
 
-        stop_ping = threading.Event()
+            stop_ping = threading.Event()
 
-        def _ping():
-            while not stop_ping.is_set():
+            def _ping():
+                while not stop_ping.is_set():
+                    try:
+                        ws.ping()
+                    except Exception:
+                        break
+                    time.sleep(0.5)
+
+            ping_thread = threading.Thread(target=_ping, daemon=True)
+            ping_thread.start()
+
+            malformed_messages = [
+                "not json",
+                "{}",
+                '{"cmd":"start"}',           # missing port field
+                '{"cmd":"start","port":"x"}', # port is not a number
+            ]
+
+            for bad_msg in malformed_messages:
+                ws.send(bad_msg)
+                # Try to receive something briefly; a closed connection would raise
+                ws.settimeout(0.5)
                 try:
-                    ws.ping()
-                except Exception:
-                    break
-                time.sleep(0.5)
+                    ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    pass  # expected — no immediate reply to malformed messages
+                except websocket.WebSocketConnectionClosedException:
+                    pytest.fail(f"Server closed connection after malformed message: {bad_msg!r}")
+                except websocket.WebSocketPayloadException:
+                    pass
+                except websocket.WebSocketProtocolException:
+                    pass
+                except json.JSONDecodeError:
+                    pass
 
-        ping_thread = threading.Thread(target=_ping, daemon=True)
-        ping_thread.start()
-
-        malformed_messages = [
-            "not json",
-            "{}",
-            '{"cmd":"start"}',           # missing port field
-            '{"cmd":"start","port":"x"}', # port is not a number
-        ]
-
-        for bad_msg in malformed_messages:
-            ws.send(bad_msg)
-            # Try to receive something briefly; a closed connection would raise
-            ws.settimeout(0.5)
+            # Reconnect with a fresh WebSocket so residual state doesn't interfere
+            stop_ping.set()
             try:
-                ws.recv()
-            except websocket.WebSocketTimeoutException:
-                pass  # expected — no immediate reply to malformed messages
-            except websocket.WebSocketConnectionClosedException:
-                pytest.fail(f"Server closed connection after malformed message: {bad_msg!r}")
-            except websocket.WebSocketPayloadException:
+                ws.close()
+            except Exception:
                 pass
-            except websocket.WebSocketProtocolException:
-                pass
-            except json.JSONDecodeError:
-                pass
+            time.sleep(1)
 
-        # Reconnect with a fresh WebSocket so residual state doesn't interfere
-        stop_ping.set()
-        try:
-            ws.close()
-        except Exception:
-            pass
-        time.sleep(1)
+            ws = websocket.WebSocket()
+            ws.settimeout(15)
+            ws.connect(ws_url, cookie=cookies)
 
-        ws = websocket.WebSocket()
-        ws.settimeout(15)
-        ws.connect(ws_url, cookie=cookies)
+            stop_ping = threading.Event()
 
-        stop_ping = threading.Event()
+            def _ping2():
+                while not stop_ping.is_set():
+                    try:
+                        ws.ping()
+                    except Exception:
+                        break
+                    time.sleep(0.5)
 
-        def _ping2():
-            while not stop_ping.is_set():
-                try:
-                    ws.ping()
-                except Exception:
-                    break
-                time.sleep(0.5)
+            ping_thread = threading.Thread(target=_ping2, daemon=True)
+            ping_thread.start()
 
-        ping_thread = threading.Thread(target=_ping2, daemon=True)
-        ping_thread.start()
+            # Now send a valid start and expect packets
+            ws.send(json.dumps({"cmd": "start", "port": 1}))
+            ws.settimeout(5)
+            packets = _collect_packets(ws, min_count=3, timeout_sec=10)
 
-        # Now send a valid start and expect packets
-        ws.send(json.dumps({"cmd": "start", "port": 1}))
-        ws.settimeout(5)
-        packets = _collect_packets(ws, min_count=3, timeout_sec=10)
-
-        assert len(packets) >= 3, (
-            f"Expected >=3 packets after malformed messages but got {len(packets)}; "
-            "server may have crashed"
-        )
-        print(f"✓ Server survived {len(malformed_messages)} malformed messages; "
-              f"{len(packets)} packets received afterwards")
+            assert len(packets) >= 3, (
+                f"Expected >=3 packets after malformed messages but got {len(packets)}; "
+                "server may have crashed"
+            )
+            print(f"✓ Server survived {len(malformed_messages)} malformed messages; "
+                  f"{len(packets)} packets received afterwards")
 
     finally:
         if stop_ping is not None:
@@ -850,77 +868,78 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        parsed = urlparse(api.base_url)
-        host = parsed.hostname
-        http_port = parsed.port or 80
-        ws_url = f"ws://{host}:{http_port}/sniffer/ws"
-        cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
+        with PacketInjector(api, port=1):
+            parsed = urlparse(api.base_url)
+            host = parsed.hostname
+            http_port = parsed.port or 80
+            ws_url = f"ws://{host}:{http_port}/sniffer/ws"
+            cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
 
-        ws = websocket.WebSocket()
-        ws.settimeout(15)
-        ws.connect(ws_url, cookie=cookies)
+            ws = websocket.WebSocket()
+            ws.settimeout(15)
+            ws.connect(ws_url, cookie=cookies)
 
-        stop_ping = threading.Event()
+            stop_ping = threading.Event()
 
-        def _ping():
-            while not stop_ping.is_set():
-                try:
-                    ws.ping()
-                except Exception:
-                    break
-                time.sleep(0.5)
+            def _ping():
+                while not stop_ping.is_set():
+                    try:
+                        ws.ping()
+                    except Exception:
+                        break
+                    time.sleep(0.5)
 
-        ping_thread = threading.Thread(target=_ping, daemon=True)
-        ping_thread.start()
+            ping_thread = threading.Thread(target=_ping, daemon=True)
+            ping_thread.start()
 
-        # Send stop immediately — before any start
-        ws.send(json.dumps({"cmd": "stop", "port": 1}))
-        time.sleep(0.3)
+            # Send stop immediately — before any start
+            ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            time.sleep(0.3)
 
-        # Verify /sniffer/status is still 200 and port_1 is false
-        status_resp = api.get_sniffer_status()
-        assert status_resp.status_code == 200, (
-            f"Expected 200 from /sniffer/status, got {status_resp.status_code}"
-        )
-        body = status_resp.json()
-        assert body.get("port_1") is False, (
-            f"Expected port_1==False after premature stop, got {body.get('port_1')}"
-        )
+            # Verify /sniffer/status is still 200 and port_1 is false
+            status_resp = api.get_sniffer_status()
+            assert status_resp.status_code == 200, (
+                f"Expected 200 from /sniffer/status, got {status_resp.status_code}"
+            )
+            body = status_resp.json()
+            assert body.get("port_1") is False, (
+                f"Expected port_1==False after premature stop, got {body.get('port_1')}"
+            )
 
-        # Reconnect with a fresh WebSocket so residual state doesn't interfere
-        stop_ping.set()
-        try:
-            ws.close()
-        except Exception:
-            pass
-        time.sleep(1)
+            # Reconnect with a fresh WebSocket so residual state doesn't interfere
+            stop_ping.set()
+            try:
+                ws.close()
+            except Exception:
+                pass
+            time.sleep(1)
 
-        ws = websocket.WebSocket()
-        ws.settimeout(15)
-        ws.connect(ws_url, cookie=cookies)
+            ws = websocket.WebSocket()
+            ws.settimeout(15)
+            ws.connect(ws_url, cookie=cookies)
 
-        stop_ping = threading.Event()
+            stop_ping = threading.Event()
 
-        def _ping2():
-            while not stop_ping.is_set():
-                try:
-                    ws.ping()
-                except Exception:
-                    break
-                time.sleep(0.5)
+            def _ping2():
+                while not stop_ping.is_set():
+                    try:
+                        ws.ping()
+                    except Exception:
+                        break
+                    time.sleep(0.5)
 
-        ping_thread = threading.Thread(target=_ping2, daemon=True)
-        ping_thread.start()
+            ping_thread = threading.Thread(target=_ping2, daemon=True)
+            ping_thread.start()
 
-        # Now start normally and expect packets
-        ws.send(json.dumps({"cmd": "start", "port": 1}))
-        packets = _collect_packets(ws, min_count=3, timeout_sec=10)
+            # Now start normally and expect packets
+            ws.send(json.dumps({"cmd": "start", "port": 1}))
+            packets = _collect_packets(ws, min_count=3, timeout_sec=10)
 
-        assert len(packets) >= 3, (
-            f"Expected >=3 packets after stop-before-start but got {len(packets)}; "
-            "server may have crashed"
-        )
-        print(f"✓ stop-before-start did not crash; {len(packets)} packets received")
+            assert len(packets) >= 3, (
+                f"Expected >=3 packets after stop-before-start but got {len(packets)}; "
+                "server may have crashed"
+            )
+            print(f"✓ stop-before-start did not crash; {len(packets)} packets received")
 
     finally:
         if stop_ping is not None:
@@ -961,11 +980,12 @@ def test_sniffer_ws_restore_port_mode_on_teardown(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        ws, stop_ping, _ = _ws_connect(api, 1)
+        with PacketInjector(api, port=1):
+            ws, stop_ping, _ = _ws_connect(api, 1)
 
-        # Collect at least 1 packet to confirm sniffer is active
-        packets = _collect_packets(ws, min_count=1, timeout_sec=10)
-        assert len(packets) >= 1, "No packets received — check QEMU mock"
+            # Collect at least 1 packet to confirm sniffer is active
+            packets = _collect_packets(ws, min_count=1, timeout_sec=10)
+            assert len(packets) >= 1, "No packets received — check PacketInjector"
 
     finally:
         if stop_ping is not None:
