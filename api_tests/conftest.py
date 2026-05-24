@@ -60,7 +60,7 @@ def quick_connection_test(base_url):
 
 
 # Ports that QEMU reserves on the host (must match hostfwd arguments in qemu_process fixture).
-QEMU_HOST_PORTS = [8080, 50504]
+QEMU_HOST_PORTS = [8080, 50502, 50503, 50504, 5561, 5562]
 
 
 def _check_no_stale_qemu():
@@ -184,9 +184,15 @@ def qemu_process(request):
             "-drive", f"file={efuse_bin},if=none,format=raw,id=efuse",
             "-global", "driver=nvram.esp32.efuse,property=drive,value=efuse",
             "-global", "driver=timer.esp32.timg,property=wdt_disable,value=true",
-            "-nic", "user,model=open_eth,hostfwd=tcp:127.0.0.1:8080-:80,hostfwd=tcp:127.0.0.1:50504-:50504",
+            "-nic", ("user,model=open_eth,"
+                     "hostfwd=tcp:127.0.0.1:8080-:80,"
+                     "hostfwd=tcp:127.0.0.1:50502-:502,"
+                     "hostfwd=tcp:127.0.0.1:50503-:503,"
+                     "hostfwd=tcp:127.0.0.1:50504-:50504"),
             "-nographic",
             "-serial", "mon:stdio",
+            "-serial", "tcp::5561,server,nowait",  # UART1 (RS485-1) exposed as TCP on port 5561
+            "-serial", "tcp::5562,server,nowait",  # UART2 (RS485-2) exposed as TCP on port 5562
         ],
         stdout=log_handle, stderr=subprocess.STDOUT,
     )

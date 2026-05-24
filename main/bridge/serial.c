@@ -160,7 +160,16 @@ static esp_err_t configure_uart_parameters(serial_config_t *serial_config)
         return err;
     }
 
+#if QEMU_BUILD
+    /* QEMU does not implement RS485 half-duplex mode: uart_set_mode() with
+     * UART_MODE_RS485_HALF_DUPLEX sets the RS485_EN bit, causing
+     * uart_wait_tx_done() to assert on the TX_DONE interrupt state (uart.c:1348).
+     * Use plain UART mode in QEMU — the chardev TCP socket is a simple byte stream
+     * without RTS/CTS or RS485 direction control. */
+    err = uart_set_mode(serial_config->port_num, UART_MODE_UART);
+#else
     err = uart_set_mode(serial_config->port_num, UART_MODE_RS485_HALF_DUPLEX);
+#endif
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Error during UART mode set");
         return err;
@@ -253,7 +262,15 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 
 esp_err_t serial_wait_tx_done(serial_desc_t *desc, TickType_t timeout_ticks)
 {
+#if QEMU_BUILD
+    /* uart_wait_tx_done() asserts when called in RS485 mode in QEMU (uart.c:1348).
+     * In QEMU the UART chardev flushes bytes synchronously — TX is always done. */
+    (void)desc;
+    (void)timeout_ticks;
+    return ESP_OK;
+#else
     return uart_wait_tx_done(desc->port_num, timeout_ticks);
+#endif
 }
 
 esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols)
