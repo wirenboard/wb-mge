@@ -49,7 +49,7 @@ def test_sniffer_websocket(api):
         time.sleep(0.5)
         print("✓ Port 1 switched to sniffer mode")
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             ws_url = f"ws://{host}:{port}/sniffer/ws"
             cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
             ws = websocket.WebSocket()
@@ -288,7 +288,7 @@ def test_sniffer_ws_packet_port_field_matches_started_port(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             ws, stop_ping, _ = _ws_connect(api, 1)
 
             packets = _collect_packets(
@@ -338,7 +338,7 @@ def test_sniffer_ws_id_monotonically_increasing(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             ws, stop_ping, _ = _ws_connect(api, 1)
 
             packets = _collect_packets(ws, min_count=10, timeout_sec=15)
@@ -389,7 +389,7 @@ def test_sniffer_ws_timestamp_positive_and_plausible(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             ws, stop_ping, _ = _ws_connect(api, 1)
 
             packets = _collect_packets(ws, min_count=5, timeout_sec=15)
@@ -445,7 +445,7 @@ def test_sniffer_ws_raw_field_is_hex_and_matches_size(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             ws, stop_ping, _ = _ws_connect(api, 1)
 
             packets = _collect_packets(
@@ -504,7 +504,7 @@ def test_sniffer_ws_stream_splitter_produces_separate_request_and_response(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             ws, stop_ping, _ = _ws_connect(api, 1)
 
             packets = _collect_packets(
@@ -583,7 +583,7 @@ def test_sniffer_ws_sender_alternates_master_slave(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             ws, stop_ping, _ = _ws_connect(api, 1)
 
             packets = _collect_packets(
@@ -653,7 +653,7 @@ def test_sniffer_ws_stop_command_stops_stream(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        injector = PacketInjector(api, port=1)
+        injector = PacketInjector(port=1)
         injector.start()
         try:
             ws, stop_ping, _ = _ws_connect(api, 1)
@@ -751,7 +751,7 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             parsed = urlparse(api.base_url)
             host = parsed.hostname
             http_port = parsed.port or 80
@@ -868,7 +868,7 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             parsed = urlparse(api.base_url)
             host = parsed.hostname
             http_port = parsed.port or 80
@@ -980,7 +980,7 @@ def test_sniffer_ws_restore_port_mode_on_teardown(api):
         assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
         time.sleep(0.5)
 
-        with PacketInjector(api, port=1):
+        with PacketInjector(port=1):
             ws, stop_ping, _ = _ws_connect(api, 1)
 
             # Collect at least 1 packet to confirm sniffer is active

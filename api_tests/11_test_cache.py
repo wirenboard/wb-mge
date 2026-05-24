@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from modbus_helpers import (
     parse_csv, worker, check_simultaneous_connection, run_staleness_test
 )
+from packet_injector import PacketInjector
 
 
 def test_cache_endpoints(api):
@@ -209,100 +210,104 @@ def test_cache_multimaster(api):
             f"POST /ports/1/mode expected 200, got {response.status_code}"
         print("✓ Port 1 switched to cache_bus mode")
 
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            time.sleep(1)
-            status_resp = api.get_cache_status()
-            if status_resp.status_code == 200:
-                status = status_resp.json()
-                if status.get("entries", 0) > 0:
-                    break
+        # The firmware no longer fabricates Modbus traffic on its own — pytest
+        # drives the bus via POST /qemu/inject through PacketInjector so the
+        # cache has something to record.
+        with PacketInjector(port=1):
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                time.sleep(1)
+                status_resp = api.get_cache_status()
+                if status_resp.status_code == 200:
+                    status = status_resp.json()
+                    if status.get("entries", 0) > 0:
+                        break
 
-        response = api.get_cache_status()
-        assert response.status_code == 200, \
-            f"GET /cache/status expected 200, got {response.status_code}"
-        status = response.json()
+            response = api.get_cache_status()
+            assert response.status_code == 200, \
+                f"GET /cache/status expected 200, got {response.status_code}"
+            status = response.json()
 
-        assert status.get("enabled"), "Cache not enabled after switching port to cache_bus"
-        assert status.get("entries", 0) > 0, "Cache did not populate within 30s"
+            assert status.get("enabled"), "Cache not enabled after switching port to cache_bus"
+            assert status.get("entries", 0) > 0, "Cache did not populate within 30s"
 
-        info_response = api.get_info()
-        assert info_response.status_code == 200, \
-            f"GET /info expected 200, got {info_response.status_code}"
-        info_data = info_response.json()
-        modbus_port = info_data.get("cache_modbus_port", 504)
+            info_response = api.get_info()
+            assert info_response.status_code == 200, \
+                f"GET /info expected 200, got {info_response.status_code}"
+            info_data = info_response.json()
+            modbus_port = info_data.get("cache_modbus_port", 504)
 
-        parsed = urlparse(api.base_url)
-        host = parsed.hostname
+            parsed = urlparse(api.base_url)
+            host = parsed.hostname
 
-        print(f"✓ Cache server enabled, Modbus TCP port: {modbus_port}, host: {host}")
+            print(f"✓ Cache server enabled, Modbus TCP port: {modbus_port}, host: {host}")
 
-        response = api.get_cache_csv()
-        assert response.status_code == 200, \
-            f"GET /cache/csv expected 200, got {response.status_code}"
+            response = api.get_cache_csv()
+            assert response.status_code == 200, \
+                f"GET /cache/csv expected 200, got {response.status_code}"
 
-        raw_csv = response.text
-        register_map = parse_csv(raw_csv)
+            raw_csv = response.text
+            register_map = parse_csv(raw_csv)
 
-        print(f"✓ Register map loaded: {len(register_map)} entries")
+            print(f"✓ Register map loaded: {len(register_map)} entries")
 
-        assert register_map, "Register map CSV is empty — cache reports entries but CSV has none"
+            assert register_map, "Register map CSV is empty — cache reports entries but CSV has none"
 
-        num_threads = 3
-        results = {}
-        start_barrier = threading.Barrier(num_threads)
+            num_threads = 3
+            results = {}
+            start_barrier = threading.Barrier(num_threads)
 
-        threads = [
-            threading.Thread(
-                target=worker,
-                args=(i, host, modbus_port, register_map, results, start_barrier, 0),
-                daemon=True,
-            )
-            for i in range(num_threads)
-        ]
+            threads = [
+                threading.Thread(
+                    target=worker,
+                    args=(i, host, modbus_port, register_map, results, start_barrier, 0),
+                    daemon=True,
+                )
+                for i in range(num_threads)
+            ]
 
-        print(f"✓ Starting {num_threads} parallel Modbus TCP clients on {host}:{modbus_port} ...")
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=30)
+            print(f"✓ Starting {num_threads} parallel Modbus TCP clients on {host}:{modbus_port} ...")
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
 
-        still_alive = [t for t in threads if t.is_alive()]
-        assert not still_alive, \
-            f"{len(still_alive)} thread(s) did not finish within 30 seconds (deadlock?)"
+            still_alive = [t for t in threads if t.is_alive()]
+            assert not still_alive, \
+                f"{len(still_alive)} thread(s) did not finish within 30 seconds (deadlock?)"
 
-        conn_ok, conn_msg = check_simultaneous_connection(results, num_threads)
-        assert conn_ok, f"Connectivity check failed: {conn_msg}"
-        print(f"✓ Connectivity: {conn_msg}")
+            conn_ok, conn_msg = check_simultaneous_connection(results, num_threads)
+            assert conn_ok, f"Connectivity check failed: {conn_msg}"
+            print(f"✓ Connectivity: {conn_msg}")
 
-        all_passed = True
-        for tid_key in sorted(results.keys()):
-            r = results[tid_key]
-            if r.exception:
-                all_passed = False
-                print(f"  [FAIL] Thread {r.thread_id}: EXCEPTION — {r.exception}")
-                continue
-            thread_ok = r.checks_failed == 0
-            status_str = "PASS" if thread_ok else "FAIL"
-            print(
-                f"  [{status_str}] Thread {r.thread_id}: "
-                f"{r.iterations} iteration(s), "
-                f"{r.checks_passed} checks passed, {r.checks_failed} failed"
-            )
-            if not thread_ok:
-                all_passed = False
-                for err in r.errors:
-                    print(f"    {err}")
+            all_passed = True
+            for tid_key in sorted(results.keys()):
+                r = results[tid_key]
+                if r.exception:
+                    all_passed = False
+                    print(f"  [FAIL] Thread {r.thread_id}: EXCEPTION — {r.exception}")
+                    continue
+                thread_ok = r.checks_failed == 0
+                status_str = "PASS" if thread_ok else "FAIL"
+                print(
+                    f"  [{status_str}] Thread {r.thread_id}: "
+                    f"{r.iterations} iteration(s), "
+                    f"{r.checks_passed} checks passed, {r.checks_failed} failed"
+                )
+                if not thread_ok:
+                    all_passed = False
+                    for err in r.errors:
+                        print(f"    {err}")
 
-        assert all_passed, "One or more threads had failures in multi-master Modbus TCP test"
-        print("✓ Multi-master Modbus TCP test passed")
+            assert all_passed, "One or more threads had failures in multi-master Modbus TCP test"
+            print("✓ Multi-master Modbus TCP test passed")
 
-        stale_ok, stale_lines = run_staleness_test(host, modbus_port, api, register_map)
-        for line in stale_lines:
-            print(f"  {line}")
+            stale_ok, stale_lines = run_staleness_test(host, modbus_port, api, register_map)
+            for line in stale_lines:
+                print(f"  {line}")
 
-        assert stale_ok, "Staleness test failed — see lines above for details"
-        print("✓ Staleness test passed")
+            assert stale_ok, "Staleness test failed — see lines above for details"
+            print("✓ Staleness test passed")
 
     finally:
         restore_errors = []
@@ -339,56 +344,60 @@ def test_cache_json_fields(api):
         r = api.set_port_mode(1, "cache_bus")
         assert r.status_code == 200, f"Failed to set cache_bus mode: {r.status_code}"
 
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            time.sleep(1)
-            st = api.get_cache_status()
-            if st.status_code == 200 and st.json().get("entries", 0) > 0:
-                break
+        # Drive Modbus traffic via the QEMU inject endpoint while we wait for
+        # the cache to populate.  Without an active injector the cache stays
+        # empty and the entry-shape assertions below have nothing to check.
+        with PacketInjector(port=1):
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                time.sleep(1)
+                st = api.get_cache_status()
+                if st.status_code == 200 and st.json().get("entries", 0) > 0:
+                    break
 
-        status_resp = api.get_cache_status()
-        assert status_resp.status_code == 200
-        status = status_resp.json()
-        entries_count = status.get("entries", 0)
+            status_resp = api.get_cache_status()
+            assert status_resp.status_code == 200
+            status = status_resp.json()
+            entries_count = status.get("entries", 0)
 
-        json_resp = api.get_cache_json()
-        assert json_resp.status_code == 200
-        json_data = json_resp.json()
-        assert "d" in json_data, "Field 'd' missing from /cache/json"
-        assert isinstance(json_data["d"], list), "Field 'd' must be an array"
+            json_resp = api.get_cache_json()
+            assert json_resp.status_code == 200
+            json_data = json_resp.json()
+            assert "d" in json_data, "Field 'd' missing from /cache/json"
+            assert isinstance(json_data["d"], list), "Field 'd' must be an array"
 
-        entries = json_data["d"]
+            entries = json_data["d"]
 
-        delta = abs(len(entries) - entries_count)
-        assert delta <= 1, \
-            f"entries count mismatch: /cache/status says {entries_count}, /cache/json has {len(entries)} (delta={delta})"
-        print(f"✓ Entry count consistent: /cache/status={entries_count}, /cache/json={len(entries)}")
+            delta = abs(len(entries) - entries_count)
+            assert delta <= 1, \
+                f"entries count mismatch: /cache/status says {entries_count}, /cache/json has {len(entries)} (delta={delta})"
+            print(f"✓ Entry count consistent: /cache/status={entries_count}, /cache/json={len(entries)}")
 
-        assert entries, "Cache is empty — expected at least one entry in /cache/json"
+            assert entries, "Cache is empty — expected at least one entry in /cache/json"
 
-        valid_types = {"h", "i", "c", "d"}
-        for i, entry in enumerate(entries):
-            assert "s" in entry, f"Entry[{i}] missing field 's'"
-            assert isinstance(entry["s"], int), f"Entry[{i}]['s'] must be int"
-            assert 1 <= entry["s"] <= 247, f"Entry[{i}]['s']={entry['s']} out of range 1-247"
+            valid_types = {"h", "i", "c", "d"}
+            for i, entry in enumerate(entries):
+                assert "s" in entry, f"Entry[{i}] missing field 's'"
+                assert isinstance(entry["s"], int), f"Entry[{i}]['s'] must be int"
+                assert 1 <= entry["s"] <= 247, f"Entry[{i}]['s']={entry['s']} out of range 1-247"
 
-            assert "t" in entry, f"Entry[{i}] missing field 't'"
-            assert entry["t"] in valid_types, \
-                f"Entry[{i}]['t']='{entry['t']}' not in valid types {valid_types}"
+                assert "t" in entry, f"Entry[{i}] missing field 't'"
+                assert entry["t"] in valid_types, \
+                    f"Entry[{i}]['t']='{entry['t']}' not in valid types {valid_types}"
 
-            assert "a" in entry, f"Entry[{i}] missing field 'a'"
-            assert isinstance(entry["a"], int), f"Entry[{i}]['a'] must be int"
-            assert 0 <= entry["a"] <= 65535, f"Entry[{i}]['a']={entry['a']} out of range 0-65535"
+                assert "a" in entry, f"Entry[{i}] missing field 'a'"
+                assert isinstance(entry["a"], int), f"Entry[{i}]['a'] must be int"
+                assert 0 <= entry["a"] <= 65535, f"Entry[{i}]['a']={entry['a']} out of range 0-65535"
 
-            assert "v" in entry, f"Entry[{i}] missing field 'v'"
-            assert isinstance(entry["v"], int), f"Entry[{i}]['v'] must be int"
-            assert 0 <= entry["v"] <= 65535, f"Entry[{i}]['v']={entry['v']} out of range 0-65535"
+                assert "v" in entry, f"Entry[{i}] missing field 'v'"
+                assert isinstance(entry["v"], int), f"Entry[{i}]['v'] must be int"
+                assert 0 <= entry["v"] <= 65535, f"Entry[{i}]['v']={entry['v']} out of range 0-65535"
 
-            assert "age" in entry, f"Entry[{i}] missing field 'age'"
-            assert isinstance(entry["age"], int), f"Entry[{i}]['age'] must be int"
-            assert 0 <= entry["age"] <= 65535, f"Entry[{i}]['age']={entry['age']} out of range 0-65535"
+                assert "age" in entry, f"Entry[{i}] missing field 'age'"
+                assert isinstance(entry["age"], int), f"Entry[{i}]['age'] must be int"
+                assert 0 <= entry["age"] <= 65535, f"Entry[{i}]['age']={entry['age']} out of range 0-65535"
 
-        print(f"✓ All {len(entries)} cache entries have valid fields")
+            print(f"✓ All {len(entries)} cache entries have valid fields")
 
     finally:
         if original_port_mode is not None:
