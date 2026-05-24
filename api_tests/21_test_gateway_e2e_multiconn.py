@@ -158,6 +158,10 @@ def gateway_slave(api):
         assert resp.status_code == 200, f"POST /settings failed: {resp.status_code}"
         result = resp.json()
         assert result.get("success") is True, f"Settings update not successful: {result}"
+        # Allow any async settings_update_task to settle and the previous TCP server
+        # (transparent bridge on port 502) to be fully released by lwIP before
+        # binding the same port for the Modbus TCP server.
+        time.sleep(0.5)
 
         # Step 5: switch to tcp_bridge mode to activate the gateway.
         resp = api.set_port_mode(1, "tcp_bridge")
