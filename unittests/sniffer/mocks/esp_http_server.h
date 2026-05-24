@@ -39,6 +39,12 @@ typedef struct httpd_uri {
 } httpd_uri_t;
 
 typedef enum {
+    HTTPD_WS_CLIENT_INVALID        = 0x0,
+    HTTPD_WS_CLIENT_HTTP           = 0x1,
+    HTTPD_WS_CLIENT_WEBSOCKET      = 0x2,
+} httpd_ws_client_info_t;
+
+typedef enum {
     HTTPD_WS_TYPE_CONTINUE = 0,
     HTTPD_WS_TYPE_TEXT,
     HTTPD_WS_TYPE_BINARY,
@@ -112,4 +118,13 @@ static inline esp_err_t httpd_sess_trigger_close(httpd_handle_t handle, int sock
     (void)handle;
     (void)sockfd;
     return ESP_OK;
+}
+
+/* Stub: always report the fd as a live WebSocket client so sniffer_ws_task
+ * sends frames without clearing ws_client_fd unexpectedly in unit tests. */
+static inline httpd_ws_client_info_t httpd_ws_get_fd_info(httpd_handle_t hd, int fd)
+{
+    (void)hd;
+    (void)fd;
+    return HTTPD_WS_CLIENT_WEBSOCKET;
 }
