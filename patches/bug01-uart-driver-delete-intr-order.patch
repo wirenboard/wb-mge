@@ -1,9 +1,9 @@
---- a/components/esp_driver_uart/src/uart.c	2026-05-23 21:44:03.237256800 +0300
-+++ b/components/esp_driver_uart/src/uart.c	2026-05-23 21:45:08.781992645 +0300
-@@ -1788,9 +1788,15 @@
-         ESP_LOGI(UART_TAG, "ALREADY NULL");
-         return ESP_OK;
-     }
+--- a/components/esp_driver_uart/src/uart.c
++++ b/components/esp_driver_uart/src/uart.c
+@@ -2017,9 +2017,15 @@
+
+     uart_release_pin(uart_num, true, true, true, true);
+
 -    esp_intr_free(p_uart_obj[uart_num]->intr_handle);
 +    /* bug01 fix: disable UART peripheral interrupts BEFORE freeing the ISR.
 +     * The original order (esp_intr_free first) leaves a race window: the ISR
