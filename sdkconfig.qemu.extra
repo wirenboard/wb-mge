@@ -4,3 +4,17 @@
 
 CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_SPIRAM=y
+
+# Use the project's OTA partition table so /update has somewhere to write.
+# sdkconfig.qemu.minimal defaults to single-app, which makes
+# esp_ota_get_next_update_partition() return NULL.
+CONFIG_PARTITION_TABLE_SINGLE_APP=n
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_table.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_table.csv"
+
+# Virtual eFuse so main/sys_info.c can write the device signature at boot
+# (write_device_signature_to_efuse() is guarded by #if CONFIG_EFUSE_VIRTUAL).
+# Without this the signature stays empty and the OTA handler rejects any
+# upload with "Device signature is empty, OTA not allowed".
+CONFIG_EFUSE_VIRTUAL=y
