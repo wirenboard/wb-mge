@@ -78,6 +78,12 @@ For a complete build (unit tests + frontend + firmware):
 make
 ```
 
+To run tests only (C unit tests + frontend tests):
+
+```bash
+make unittests test-frontend
+```
+
 If building components separately, first build the frontend:
 
 ```bash
@@ -102,6 +108,7 @@ graph TD
     C["🧹 Clean artifacts"] --> clean
 
     all --> unittests
+    all --> test-frontend
     all --> build-frontend
     all --> build-idf-project
     build-idf-project --> prepare_release

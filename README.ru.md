@@ -83,6 +83,12 @@ cd wb-mge
 make
 ```
 
+Чтобы запустить только тесты (C юниттесты + тесты фронтенда):
+
+```bash
+make unittests test-frontend
+```
+
 Если компоненты собираются отдельно, то сначала соберите frontend:
 
 ```bash
@@ -107,6 +113,7 @@ graph TD
     C["🧹 Clean artifacts"] --> clean
 
     all --> unittests
+    all --> test-frontend
     all --> build-frontend
     all --> build-idf-project
     build-idf-project --> prepare_release

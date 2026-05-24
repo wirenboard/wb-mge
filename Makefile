@@ -102,7 +102,7 @@ C_SOURCES = $(shell $(FIND) main -name "*.c" -not -path "*/frontend/*")
 # targets
 #######################################
 
-all: unittests build-frontend build-idf-project
+all: unittests test-frontend build-frontend build-idf-project
 
 unittests: $(UNITTESTS_TARGETS)
 
@@ -112,13 +112,21 @@ $(UNITTESTS_TARGETS):
 		$(EIM_ACTIVATE) && cd $(UT_DIR) && $(MAKE) --no-print-directory && cd -; \
 	fi
 
+test-frontend:
+	@echo 'Running frontend tests'
+	@{ \
+		set -e && \
+		cd main/frontend/ && \
+		npm install && \
+		npm run test; \
+	}
+
 build-frontend:
 	@echo 'Building frontend'
 	@{ \
 		set -e && \
 		cd main/frontend/ && \
 		npm install && \
-		npm run test && \
 		npm run build && \
 		$(FIND) dist/ -type f -name "*.gz" -exec rm -f {} \; && \
 		$(FIND) dist/ -type f -exec gzip -k {} \; ; \
@@ -203,7 +211,7 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all unittests build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
+.PHONY: all unittests test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk

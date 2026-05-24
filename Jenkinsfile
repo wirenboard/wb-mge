@@ -22,10 +22,17 @@ pipeline {
                 }
             }
         }
+        stage('Test') {
+            steps {
+                script {
+                    sh 'bash -c "source /opt/esp/idf/export.sh && make unittests test-frontend"'
+                }
+            }
+        }
         stage('Build') {
             steps {
                 script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make"'
+                    sh 'bash -c "source /opt/esp/idf/export.sh && make build-frontend build-idf-project"'
                     // copy binaries to separate 'result' directory because s3_uploader job searches for files there
                     sh 'mkdir -p result && cp release/*.bin result/'
                 }

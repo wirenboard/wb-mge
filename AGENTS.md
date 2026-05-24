@@ -3,7 +3,13 @@
 ## Build or Test Command
 
 ```bash
-make build-frontend unittests build-idf-project
+make build-frontend unittests test-frontend build-idf-project
+```
+
+To run all tests separately:
+
+```bash
+make unittests test-frontend
 ```
 
 The Makefile sources the EIM activate script (`~/.espressif/tools/activate_idf_v5.4.sh`) internally — no manual `source` needed.
@@ -11,7 +17,7 @@ The Makefile sources the EIM activate script (`~/.espressif/tools/activate_idf_v
 ## Rules
 
 - **Always build before delivering results to the user.** Run the build command above and confirm it succeeds before presenting any changes.
-- **Always run tests after every fix.** After each code change, run the relevant test suite and confirm all tests pass before proceeding. For backend (C) changes: `make unittests`. For frontend changes: `cd main/frontend && npm run test`.
+- **Always run tests after every fix.** After each code change, run the relevant test suite and confirm all tests pass before proceeding. For backend (C) changes: `make unittests`. For frontend changes: `make test-frontend`.
 - **Always update documentation when renaming or changing build targets.** After any change to `Makefile` or `qemu.mk` (adding, removing, or renaming targets; changing dependencies), grep all `*.md` files for the old target names and update every occurrence. README.md, README_QEMU.md, AGENTS.md, and `bugs/*/README.md` all reference make targets by name.
 
 ## Backend (Embedded C) Coding Standards
