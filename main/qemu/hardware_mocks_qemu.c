@@ -20,14 +20,14 @@ uint32_t config_button_get_press_count(void)
     return 0; // No button presses in QEMU
 }
 
-// RS485 control mock
+// RS485 control mock — no-op in QEMU (GPIO expander TCA9535 not present)
 void update_rs485_control(void)
 {
     ESP_LOGD(TAG, "Mock update_rs485_control() called");
     // No-op in QEMU
 }
 
-// IO bus control mock
+// IO bus control mock — no-op in QEMU (GPIO expander TCA9535 not present)
 void update_io_bus_control(void)
 {
     ESP_LOGD(TAG, "Mock update_io_bus_control() called");

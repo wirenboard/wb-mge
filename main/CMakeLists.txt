@@ -33,7 +33,8 @@ set(COMPONENT_SRCS "main.c"
                    "settings_update.c"
                    "settings_save_timer.c"
                    "debug_log.c"
-                   "wb_test.c")
+                   "wb_test.c"
+                   "update_rs485_mio_gpio_states.c")
 
 # Conditionally add files based on build type
 if($ENV{CONFIG_ETH_USE_OPENETH})
@@ -49,7 +50,6 @@ else()
         "gpio_expander.c"
         "rs485_control.c"
         "mio_control.c"
-        "update_rs485_mio_gpio_states.c"
         "config_button.c"
         "indication/indication.c"
         "indication/leds_control.c"

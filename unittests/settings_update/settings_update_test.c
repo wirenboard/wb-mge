@@ -42,6 +42,8 @@ static void verify_settings_update_checks(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_update_rs485_control_called, "update_rs485_control should be called once");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_update_io_bus_control_called, "update_io_bus_control should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_update_serial_tx_disabled_called,
+        "update_serial_tx_disabled should be called once per settings_update() call");
 
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         TEST_ASSERT_EQUAL_MESSAGE(1, mock_port_manager_check_settings_changed_called[i], "Port manager check_settings_changed should be called once per port");

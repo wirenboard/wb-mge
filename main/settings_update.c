@@ -73,6 +73,7 @@ esp_err_t settings_update(void)
 {
     update_rs485_control();
     update_io_bus_control();
+    update_serial_tx_disabled();
 
     if (update_task_handle != NULL) {
         ESP_LOGW(TAG, "Previous settings have not yet been applied, waiting for setting update task finished");
