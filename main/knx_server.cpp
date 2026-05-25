@@ -50,6 +50,7 @@ static TaskHandle_t s_task = nullptr;
 static volatile bool s_running = false;
 static Router *s_router = nullptr;
 static uint16_t s_tcp_port = 0;
+static bool s_uart_vfs_registered = false; /* track VFS registration to avoid double-register */
 
 /* Stats counters — defined here, incremented from knxd's tcptunserver/tunchannel. */
 std::atomic<uint32_t> g_knx_tx_count{0};   /* bus -> tunnel client telegrams */
@@ -166,7 +167,11 @@ static esp_err_t uart_vfs_init(const knx_server_config_t *cfg)
                      UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE),
         TAG, "uart_set_pin");
 
-    uart_vfs_dev_register();
+    /* Register UART VFS only once — repeated registration returns ESP_ERR_NO_MEM */
+    if (!s_uart_vfs_registered) {
+        uart_vfs_dev_register();
+        s_uart_vfs_registered = true;
+    }
     uart_vfs_dev_use_driver(cfg->uart_num);
     /* Disable CR→LF translation — NCN5120 sends raw binary data where
      * 0x0D is a valid byte (e.g. PID=13). Default VFS converts CR→LF,
