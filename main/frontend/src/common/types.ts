@@ -84,6 +84,7 @@ export type WiFiMode = 'none' | 'ap' | 'sta';
 export interface RsSettings {
   term: boolean;
   fail_safe: boolean;
+  tx_disabled: boolean;
   baudrate: Baudrate;
   stopbits: Stopbits;
   parity: Parity;

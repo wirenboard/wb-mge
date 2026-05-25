@@ -83,6 +83,21 @@ static pm_mode_t read_port_mode_from_nvs(unsigned index)
     return str_to_pm_mode(value);
 }
 
+// Return the serial_desc for the given port regardless of which mode owns it.
+// Returns NULL if the port has no active serial port (disabled or not running).
+static serial_desc_t *get_port_serial_desc(unsigned index)
+{
+    switch (pm_ctx[index].mode) {
+    case PM_MODE_TCP_BRIDGE:
+        return bridge_get_serial_desc(index);
+    case PM_MODE_SNIFFER:
+    case PM_MODE_CACHE_BUS:
+        return pm_ctx[index].serial_desc;
+    default:
+        return NULL;
+    }
+}
+
 // ────────────────────────────────────────────────────────────────
 // Per-port init / deinit
 // ────────────────────────────────────────────────────────────────
@@ -148,6 +163,19 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
     }
 
     pm_ctx[index].mode = mode;
+
+    // Apply tx_disabled setting immediately after serial init
+    static const char * const tx_disabled_nvs_keys[BRIDGES_COUNT] = {
+        KEY_485_TX_DISABLED_1, KEY_485_TX_DISABLED_2
+    };
+    bool tx_disabled = setting_items_read_bool(tx_disabled_nvs_keys[index]);
+    if (tx_disabled) {
+        serial_desc_t *sd = get_port_serial_desc(index);
+        if (sd != NULL) {
+            serial_set_tx_disabled(sd, true);
+        }
+    }
+
     return ESP_OK;
 }
 
@@ -256,6 +284,19 @@ pm_mode_t port_manager_get_mode(unsigned port_index)
         return PM_MODE_DISABLED;
     }
     return pm_ctx[port_index].mode;
+}
+
+esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled)
+{
+    if (port_index >= BRIDGES_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    serial_desc_t *sd = get_port_serial_desc(port_index);
+    if (sd == NULL) {
+        // Port not running — setting will be applied on next port_init_mode()
+        return ESP_OK;
+    }
+    return serial_set_tx_disabled(sd, disabled);
 }
 
 esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)

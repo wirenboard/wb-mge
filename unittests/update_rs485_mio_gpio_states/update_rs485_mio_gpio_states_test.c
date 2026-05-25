@@ -88,9 +88,9 @@ void test_update_rs485_control_all_enabled(void)
 
     update_rs485_control();
 
-    // Verify setting_items_read_bool was called 5 times
-    TEST_ASSERT_EQUAL_INT_MESSAGE(5, mock_setting_items_read_bool_called,
-        "setting_items_read_bool should be called 5 times");
+    // Verify setting_items_read_bool was called 7 times (5 GPIO + 2 TX disabled)
+    TEST_ASSERT_EQUAL_INT_MESSAGE(7, mock_setting_items_read_bool_called,
+        "setting_items_read_bool should be called 7 times");
 
     // Verify the correct keys were read
     TEST_ASSERT_EQUAL_STRING_MESSAGE(KEY_485_FAIL_SAFE_1, mock_setting_items_read_bool_keys[0],
@@ -103,6 +103,10 @@ void test_update_rs485_control_all_enabled(void)
         "Fourth read should be KEY_485_TERM_2");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(KEY_485_VOUT, mock_setting_items_read_bool_keys[4],
         "Fifth read should be KEY_485_VOUT");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(KEY_485_TX_DISABLED_1, mock_setting_items_read_bool_keys[5],
+        "Sixth read should be KEY_485_TX_DISABLED_1");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(KEY_485_TX_DISABLED_2, mock_setting_items_read_bool_keys[6],
+        "Seventh read should be KEY_485_TX_DISABLED_2");
 
     verify_rs485_pupd_calls(true, true);
     verify_rs485_term_calls(true, true);

@@ -57,6 +57,13 @@ esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols)
     return ESP_OK;
 }
 
+esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
+{
+    (void)desc;
+    (void)disabled;
+    return ESP_OK;
+}
+
 void mock_serial_reset(void)
 {
     memset(mock_serial_deinit_called, 0, sizeof(mock_serial_deinit_called));

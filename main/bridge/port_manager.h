@@ -115,6 +115,24 @@ bool port_manager_check_settings_changed(unsigned port_index);
  */
 esp_err_t port_manager_register_handlers(httpd_handle_t server);
 
+/**
+ * @brief Set or clear the TX-disabled flag for a running RS-485 port immediately.
+ *
+ * When disabled is true, the RS-485 line driver is physically switched off
+ * (dir_pin forced LOW) and serial_send() will silently drop outgoing data.
+ * When disabled is false, the dir_pin is returned to UART half-duplex control
+ * and normal transmission resumes.
+ *
+ * Changing tx_disabled does NOT trigger a port restart.
+ * If the port is not currently running, the call is a no-op (setting will be
+ * applied on the next port_init_mode() invocation).
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param disabled    True to disable TX, false to re-enable.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if port_index is out of range.
+ */
+esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled);
+
 #ifdef __unittest_env__
 void port_manager_reset_for_test(void);
 #endif /* __unittest_env__ */

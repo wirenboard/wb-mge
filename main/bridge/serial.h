@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "driver/uart.h"
 #include "esp_err.h"
@@ -32,6 +33,8 @@ typedef void (*serial_receive_handler_t)(serial_desc_t *desc, uint8_t *, size_t)
 
 struct serial_desc_t {
     uart_port_t port_num;
+    int dir_pin;            // Direction pin used for RS-485 half-duplex control
+    bool tx_disabled;       // When true, serial_send() returns immediately without transmitting
     QueueHandle_t uart_queue;
     serial_receive_handler_t receive_handler;
     serial_receive_handler_t sniff_handler;
@@ -44,3 +47,4 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len);
 esp_err_t serial_wait_tx_done(serial_desc_t *desc, TickType_t timeout_ticks);
 esp_err_t serial_deinit(serial_desc_t *desc);
 esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols);
+esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled);

@@ -63,6 +63,7 @@ static const setting_mapping_t rs485_base_mappings[] = {
     {"databits", "databits"},
     {"term", "485_term"},
     {"fail_safe", "485_fail_safe"},
+    {"tx_disabled", "485_tx_dis"},
 };
 
 static const setting_mapping_t rs485_bridge_mappings[] = {

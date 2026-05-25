@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #define SETTING_ITEM_MAX_STR_LEN            64          // WPA2 passwords can be up to 63 characters + null terminator
-#define SETTING_ITEMS_NUM_MAX               50
+#define SETTING_ITEMS_NUM_MAX               52
 
 // Keys for storing settings
 #define KEY_HOSTNAME                "hostname"
@@ -56,6 +56,8 @@
 #define KEY_485_TERM_2              "485_term_2"
 #define KEY_485_FAIL_SAFE_1         "485_fail_safe_1"
 #define KEY_485_FAIL_SAFE_2         "485_fail_safe_2"
+#define KEY_485_TX_DISABLED_1       "485_tx_dis_1"
+#define KEY_485_TX_DISABLED_2       "485_tx_dis_2"
 
 // Enable MIO on RS485-2
 #define KEY_IO_BUS_ENABLED          "io_bus"

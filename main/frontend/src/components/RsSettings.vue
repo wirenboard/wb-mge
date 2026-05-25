@@ -87,6 +87,10 @@ const isSaveDisabled = computed(() => {
           <label :for="`${field}-term`">{{ t('terminator') }}</label>
           <div class="field-switch"><Switch :id="`${field}-term`" v-model="settings!.term" /></div>
         </div>
+        <div class="field">
+          <label :for="`${field}-tx_disabled`">{{ t('tx_disabled') }}</label>
+          <div class="field-switch"><Switch :id="`${field}-tx_disabled`" v-model="settings!.tx_disabled" /></div>
+        </div>
       </div>
     </form>
   </section>
@@ -108,7 +112,8 @@ const isSaveDisabled = computed(() => {
     "stopbits": "Stop bits",
     "databits": "Data bits",
     "failsafe": "Failsafe bias",
-    "terminator": "120Ω termination resistor"
+    "terminator": "120Ω termination resistor",
+    "tx_disabled": "Disable transmission (TX)"
   },
   "ru": {
     "baudrate": "Скорость",
@@ -118,7 +123,8 @@ const isSaveDisabled = computed(() => {
     "stopbits": "Стоп-бит",
     "databits": "Биты данных",
     "failsafe": "Failsafe bias",
-    "terminator": "120Ω резистор-терминатор"
+    "terminator": "120Ω резистор-терминатор",
+    "tx_disabled": "Отключить передачу (TX)"
   },
   "kk": {
     "baudrate": "Жылдамдық",
@@ -128,7 +134,8 @@ const isSaveDisabled = computed(() => {
     "stopbits": "Стоп-биттер",
     "databits": "Дерек биттері",
     "failsafe": "Failsafe bias",
-    "terminator": "120Ω терминатор резисторы"
+    "terminator": "120Ω терминатор резисторы",
+    "tx_disabled": "Жіберуді өшіру (TX)"
   },
   "it": {
     "baudrate": "Velocità in baud",
@@ -138,7 +145,8 @@ const isSaveDisabled = computed(() => {
     "stopbits": "Bit di stop",
     "databits": "Bit di dati",
     "failsafe": "Failsafe bias",
-    "terminator": "Resistenza di terminazione 120Ω"
+    "terminator": "Resistenza di terminazione 120Ω",
+    "tx_disabled": "Disabilita trasmissione (TX)"
   },
   "de": {
     "baudrate": "Baudrate",
@@ -148,7 +156,8 @@ const isSaveDisabled = computed(() => {
     "stopbits": "Stoppbits",
     "databits": "Datenbits",
     "failsafe": "Failsafe bias",
-    "terminator": "120Ω Abschlusswiderstand"
+    "terminator": "120Ω Abschlusswiderstand",
+    "tx_disabled": "Senden deaktivieren (TX)"
   }
 }
 </i18n>

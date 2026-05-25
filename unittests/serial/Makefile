@@ -15,6 +15,7 @@ AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/event_groups.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/task.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/queue.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/driver/uart.c
+AUX_SRC += $(UNITTEST_DIR)/mocks/driver/gpio.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/malloc.c
 
 # Include directories
