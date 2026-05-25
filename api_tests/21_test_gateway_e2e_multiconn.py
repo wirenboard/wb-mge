@@ -21,6 +21,21 @@ import pytest
 from rtu_slave_helpers import ModbusRtuSlaveThread
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({
+        "rs485_1": {
+            "tx_disabled": False,
+            "baudrate": 9600,
+            "stopbits": "1",
+            "parity": "none",
+            "databits": "8",
+        }
+    })
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    # bridge.* and port_mode are set by the `gateway_slave` fixture
+
+
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------

@@ -26,6 +26,22 @@ from sniffer_helpers import _ws_connect, _collect_packets
 from packet_injector import PacketInjector
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({
+        "rs485_1": {
+            "tx_disabled": True,    # required for QEMU sniffer mode (commit 9c8fd67)
+            "baudrate": 9600,       # RTU framing depends on baud (inter-frame gap)
+            "stopbits": "1",
+            "parity": "none",
+            "databits": "8",
+        }
+    })
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    resp = api.set_port_mode(1, "tcp_bridge")    # start state; individual tests will switch to sniffer
+    assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
+
+
 @pytest.mark.timeout(120)
 def test_sniffer_websocket(api):
     """Sniffer WebSocket: collect packets, verify CRC fields, check resilience after bad-CRC"""

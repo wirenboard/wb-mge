@@ -31,6 +31,19 @@ import pytest
 import websocket
 from urllib.parse import urlparse
 
+
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({
+        "rs485_1": {
+            "tx_disabled": True,          # required for the sniffer toggle cycle in QEMU
+            "bridge": {"mode": "server", "port": 502, "ip": "0.0.0.0", "modbus": False},
+        }
+    })
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    resp = api.set_port_mode(1, "tcp_bridge")
+    assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
+
 # Crash signatures in the QEMU log. Cover the full class of teardown crashes:
 #   bug 01 (Unhandled interrupt), 04 (Cache disabled), 05 (PC=0 NULL-ISR),
 #   06 (stack overflow), plus any Guru/Load/StoreProhibited panics.

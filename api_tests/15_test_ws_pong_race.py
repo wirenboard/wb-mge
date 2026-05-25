@@ -28,6 +28,12 @@ from urllib.parse import urlparse
 from packet_injector import PacketInjector
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.set_port_mode(1, "tcp_bridge")    # test will switch to sniffer; start from a known state
+    assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
+
+
 # Long deterministic regression test.
 # Without the fix, each attempt catches frame corruption with probability ~0.65.
 # At ATTEMPTS=80, P(miss bug) = 0.35^80 ≈ 1e-36 — practically impossible.

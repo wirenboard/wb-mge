@@ -22,6 +22,19 @@ from modbus_helpers import make_mbap_request, recv_exactly, send_and_receive, MI
 from packet_injector import PacketInjector
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({
+        "cache_modbus_server_enabled": True,
+        "cache_value_timeout_s": 60,
+        "rs485_1": {
+            "tx_disabled": True,      # PacketInjector drives traffic via UART chardev in QEMU cache_bus mode
+        }
+    })
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    # cache_modbus_port and port_mode=cache_bus are set by the module's own cache_tcp_server fixture
+
+
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------

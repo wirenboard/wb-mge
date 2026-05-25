@@ -3,6 +3,16 @@
 import re
 import time
 
+import pytest
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({"wifi": {"mode": "apsta"}})
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    # apsta is required: /ap_clients needs an AP interface,
+    # /wifi_scan/start needs STA radio.
+
 
 def test_wifi_scanner(api):
     """WiFi scanner test"""

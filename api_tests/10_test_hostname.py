@@ -1,6 +1,14 @@
 """Hostname endpoint test"""
 
 import requests
+import pytest
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({"hostname": "wb-mge-test"})
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    # assertion requires len(hostname) > 0
 
 
 def test_hostname(api):

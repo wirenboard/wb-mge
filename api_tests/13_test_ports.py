@@ -3,10 +3,21 @@
 import json
 import time
 
+import pytest
 import requests
 from urllib.parse import urlparse
 
 from sniffer_helpers import _ws_connect
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.set_port_mode(1, "tcp_bridge")    # first assertion: sniffer.port_1 == False
+    assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
+    resp = api.set_port_mode(2, "tcp_bridge")    # first assertion: sniffer.port_2 == False
+    assert resp.status_code == 200, f"_baseline: set_port_mode(2, tcp_bridge) failed: {resp.status_code} {resp.text}"
+    resp = api.set_wb_test(False)                # test expects a known baseline for clock_out
+    assert resp.status_code == 200, f"_baseline: set_wb_test(False) failed: {resp.status_code} {resp.text}"
 
 
 def test_wb_test(api):

@@ -12,6 +12,18 @@ from modbus_helpers import (
 from packet_injector import PacketInjector
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({
+        "cache_modbus_server_enabled": True,   # tests expect the server to be enabled
+        "cache_modbus_port": 502,              # known value; multimaster test will change it to 50504
+        "cache_value_timeout_s": 60,           # large enough so that entries do not expire
+    })
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    resp = api.set_port_mode(1, "tcp_bridge")  # deterministic start; multimaster test will switch to cache_bus
+    assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
+
+
 def test_cache_endpoints(api):
     """Test cache HTTP endpoints: /cache/status, /cache/csv, /cache/json"""
     response = api.get_cache_status()

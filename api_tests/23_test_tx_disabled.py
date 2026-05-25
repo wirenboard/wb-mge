@@ -14,6 +14,20 @@ import struct
 import time
 import pytest
 
+
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({
+        "rs485_1": {
+            "bridge": {"mode": "server", "port": 502, "ip": "0.0.0.0", "modbus": False},
+        }
+    })
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    resp = api.set_port_mode(1, "tcp_bridge")
+    assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
+    # tx_disabled is set per-phase by the test itself: false → true
+
+
 GATEWAY_PORT_1 = 50502   # hostfwd 50502 -> QEMU:502 (modbus_bus port 1)
 UART1_TCP_PORT = 5561    # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
 

@@ -25,6 +25,23 @@ import websocket
 from urllib.parse import urlparse
 from packet_injector import PacketInjector
 
+
+@pytest.fixture(scope="module", autouse=True)
+def _baseline(api):
+    resp = api.update_settings({
+        "rs485_1": {
+            "tx_disabled": True,    # required for sniffer mode in QEMU
+            "baudrate": 9600,       # RTU framing inter-frame gap depends on baud
+            "stopbits": "1",
+            "parity": "none",
+            "databits": "8",
+        }
+    })
+    assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
+    resp = api.set_port_mode(1, "tcp_bridge")
+    assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
+
+
 ATTEMPTS = 30  # ~18% failure rate without fix → P(miss) = 0.82^30 ≈ 0.3% at 30 attempts
 
 
