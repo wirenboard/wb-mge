@@ -3,6 +3,13 @@
 # Add any QEMU-specific config options here instead of editing the generated file.
 
 CONFIG_HTTPD_WS_SUPPORT=y
+
+# Increase the lwIP socket pool for QEMU test runs.
+# The table-exhaustion test opens 9 simultaneous Modbus TCP connections, and
+# the system also needs sockets for httpd, the transparent-TCP listen socket,
+# mDNS (IPv4 + IPv6), DHCP, etc.  15 (the hardware default) is not enough;
+# 20 gives comfortable headroom without impacting the QEMU memory budget.
+CONFIG_LWIP_MAX_SOCKETS=20
 CONFIG_SPIRAM=y
 
 # Use a QEMU-specific partition table with factory + ota_0 + ota_1.

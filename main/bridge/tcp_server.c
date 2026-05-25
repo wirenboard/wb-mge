@@ -178,18 +178,28 @@ static void tcp_server_task(void *pvParameters)
             if (check_task_exit_req(desc)) {
                 ESP_LOGD(TAG, "Socket on port %d returned error %d during connection accept", desc->port, errno);
                 break;
-            } else {
-                ESP_LOGE(TAG, "Unable to accept connection on port %d, errno: %d", desc->port, errno);
-                // Try to re-create listen socket
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                close(desc->listen_sock);
-                desc->listen_sock = create_listen_socket(desc->port);
-                if (desc->listen_sock < 0) {
-                    ESP_LOGE(TAG, "Failed to re-create listen socket");
-                    break;
-                }
+            }
+
+            /* Resource exhaustion (socket table full, out of memory, etc.):
+             * the listen socket itself is still valid — do NOT close it.
+             * Just wait briefly; resources will free up when a client disconnects. */
+            if ((errno == ENFILE) || (errno == EMFILE) || (errno == ENOBUFS) || (errno == ENOMEM)) {
+                ESP_LOGW(TAG, "Port %d: accept() resource exhaustion (errno=%d), retrying in 100 ms",
+                         desc->port, errno);
+                vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
+
+            /* For other errors the listen socket may itself be broken — close and recreate. */
+            ESP_LOGE(TAG, "Unable to accept connection on port %d, errno: %d", desc->port, errno);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            close(desc->listen_sock);
+            desc->listen_sock = create_listen_socket(desc->port);
+            if (desc->listen_sock < 0) {
+                ESP_LOGE(TAG, "Failed to re-create listen socket");
+                break;
+            }
+            continue;
         }
 
         // Print client IP address and port

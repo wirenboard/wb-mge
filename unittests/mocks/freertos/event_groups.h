@@ -4,7 +4,7 @@
 
 #include <stdbool.h>
 
-#define MAX_SET_WAIT_CALLS              8
+#define MAX_SET_WAIT_CALLS              16
 
 typedef TickType_t EventBits_t;
 

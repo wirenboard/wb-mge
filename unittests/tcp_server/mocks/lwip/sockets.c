@@ -28,6 +28,8 @@ bool mock_bind_should_fail = false;
 bool mock_listen_should_fail = false;
 int  mock_accept_fd = 10;
 int  mock_accept_call_count = 0;
+int  mock_accept_fail_count = 0;   /* number of leading ENFILE-class failures */
+int  mock_accept_errno = ENFILE;   /* errno to set on simulated failures */
 
 int  mock_close_call_count = 0;
 int  mock_shutdown_call_count = 0;
@@ -80,9 +82,21 @@ int mock_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 
     mock_accept_call_count++;
 
-    /* Return configured client fd on first call, then -1 to stop acceptor loop */
-    if (mock_accept_call_count == 1) {
-        return mock_accept_fd;
+    /* Simulate leading resource-exhaustion failures (e.g. ENFILE) before the
+     * real fd is returned.  This lets tests verify that the acceptor does NOT
+     * close the listen socket on such errors. */
+    if (mock_accept_fail_count > 0) {
+        mock_accept_fail_count--;
+        errno = mock_accept_errno;
+        return -1;
+    }
+
+    /* Return configured client fd on the first non-failure call, then -1 to
+     * stop the acceptor loop (simulates exit-request path via errno != ENFILE). */
+    if (mock_accept_fd >= 0) {
+        int fd = mock_accept_fd;
+        mock_accept_fd = -2;   /* -2 = "already consumed" sentinel */
+        return fd;
     }
     return -1;
 }
@@ -168,6 +182,8 @@ void mock_lwip_sockets_reset(void)
     mock_listen_should_fail = false;
     mock_accept_fd = 10;
     mock_accept_call_count = 0;
+    mock_accept_fail_count = 0;
+    mock_accept_errno = ENFILE;
 
     mock_close_call_count = 0;
     mock_shutdown_call_count = 0;

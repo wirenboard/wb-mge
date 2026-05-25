@@ -22,6 +22,8 @@ extern bool mock_bind_should_fail;
 extern bool mock_listen_should_fail;
 extern int  mock_accept_fd;
 extern int  mock_accept_call_count;
+extern int  mock_accept_fail_count;
+extern int  mock_accept_errno;
 extern int  mock_close_call_count;
 extern int  mock_shutdown_call_count;
 void mock_lwip_sockets_reset(void);
@@ -259,7 +261,83 @@ void test_tcp_server_init_task_create_fail(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Section 3: tcp_server_connected()
+ * Section 3: accept() resource-exhaustion error handling
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* When accept() fails with ENFILE (socket table full), the acceptor must NOT
+ * close the listen socket — it must just wait and retry.  Closing the listen
+ * socket would RST any pending connections in the backlog, causing data loss
+ * for other clients.
+ *
+ * Scenario:
+ *   1. accept() call #1 → ENFILE  (mock_accept_fail_count = 1)
+ *   2. Acceptor retries.
+ *   3. xEventGroupWaitBits sees EVENT_TASK_EXIT_REQ on call #3 → acceptor exits.
+ *   4. Acceptor closes the listen socket exactly once (clean shutdown).
+ *
+ * Expected: mock_close_call_count == 1 (final clean-up only, no intermediate close).
+ * With the old (buggy) code the count would be 2 (one on ENFILE + one at exit). */
+void test_acceptor_enfile_does_not_close_listen_socket(void)
+{
+    /* Simulate 1 ENFILE failure.  After the failure the acceptor retries.
+     * EXIT_REQ fires on the 3rd xEventGroupWaitBits call so the task exits
+     * before the second accept() completes:
+     *
+     *  New code (fixed):
+     *    WaitBits #1: check at top of while(1), 1st iteration  → 0
+     *    accept()  #1: → ENFILE
+     *    WaitBits #2: check inside ENFILE branch               → 0
+     *    vTaskDelay(100 ms), continue
+     *    WaitBits #3: check at top of while(1), 2nd iteration  → EXIT_REQ → break
+     *    close(listen_sock)                                     ← close #1  (final)
+     *    → mock_close_call_count == 1
+     *
+     *  Old code (buggy):
+     *    WaitBits #1: check at top of while(1), 1st iteration  → 0
+     *    accept()  #1: → ENFILE
+     *    WaitBits #2: check inside else branch                  → 0
+     *    vTaskDelay(1000 ms)
+     *    close(listen_sock)                                     ← close #1  (spurious!)
+     *    create_listen_socket()
+     *    continue
+     *    WaitBits #3: check at top of while(1), 2nd iteration  → EXIT_REQ → break
+     *    close(listen_sock)                                     ← close #2  (final)
+     *    → mock_close_call_count == 2
+     */
+    mock_accept_fail_count = 1;
+    mock_accept_errno      = ENFILE;
+    /* EXIT_REQ fires before the second accept() — this fd is never dispensed
+     * because we do NOT use self_execution (no receiver_task is created). */
+    mock_accept_fd = 10;
+
+    /* Trigger EXIT_REQ starting from the 3rd xEventGroupWaitBits call.
+     * Without self_execution the xTaskCreate mock records pvTaskCode/pvParameters
+     * but does NOT call the task; we invoke the acceptor synchronously below.
+     * EVENT_TASK_EXIT_REQ is defined as BIT8 = (1 << 8) in tcp_server.c. */
+    mock_xEventGroupWaitBits_data.set_event_on_call = 2;       /* trigger after 2nd call */
+    mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8); /* EVENT_TASK_EXIT_REQ = BIT8 */
+
+    /* Init creates the desc and records the task function in the xTaskCreate mock. */
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+
+    /* Invoke the acceptor task synchronously (no self_execution to avoid the
+     * receiver_task being spawned, which would skew the close-call count). */
+    TEST_ASSERT_NOT_NULL(mock_xTaskCreate_data.pvTaskCode);
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
+
+    /* The listen socket must have been closed exactly once — during the clean-
+     * shutdown path at the end of tcp_server_task(), NOT inside the ENFILE handler. */
+    TEST_ASSERT_EQUAL(1, mock_accept_call_count);   /* exactly 1 accept() attempted */
+    TEST_ASSERT_EQUAL(1, mock_close_call_count);    /* exactly 1 close() — final shutdown only */
+
+    free(desc);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Section 4: tcp_server_connected()
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /* tcp_server_connected returns ESP_FAIL when active_connections == 0 */
@@ -308,7 +386,10 @@ int tcp_server_test(void)
     RUN_TEST(test_tcp_server_init_event_group_fail);
     RUN_TEST(test_tcp_server_init_task_create_fail);
 
-    /* Section 3 — active_connections */
+    /* Section 3 — accept() ENFILE error handling */
+    RUN_TEST(test_acceptor_enfile_does_not_close_listen_socket);
+
+    /* Section 4 — active_connections */
     RUN_TEST(test_tcp_server_connected_no_connections);
     RUN_TEST(test_tcp_server_connected_with_connections);
     RUN_TEST(test_tcp_server_connected_null_desc);

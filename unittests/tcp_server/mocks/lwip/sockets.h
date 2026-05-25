@@ -51,6 +51,10 @@ extern bool mock_bind_should_fail;
 extern bool mock_listen_should_fail;
 extern int  mock_accept_fd;
 extern int  mock_accept_call_count;
+/* When > 0, mock_accept() returns -1 with mock_accept_errno for the first
+ * mock_accept_fail_count calls, then falls through to normal behaviour. */
+extern int  mock_accept_fail_count;
+extern int  mock_accept_errno;
 
 extern int  mock_close_call_count;
 extern int  mock_shutdown_call_count;
