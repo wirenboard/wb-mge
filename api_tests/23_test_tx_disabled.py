@@ -128,12 +128,11 @@ def test_tx_disabled_blocks_uart_transmission(api):
             "QEMU must expose UART1 as TCP (check -serial tcp::5561,server,nowait argument)."
         )
 
-    # Read original port mode
+    # Read original state so it can be restored after the test
     info_resp = api.get_info()
     assert info_resp.status_code == 200, f"GET /info returned {info_resp.status_code}"
     original_mode = info_resp.json().get("rs485_1", {}).get("port_mode", "sniffer")
 
-    # Read original tx_disabled value
     settings_resp = api.get_settings()
     assert settings_resp.status_code == 200, (
         f"GET /settings returned {settings_resp.status_code}"
@@ -143,9 +142,20 @@ def test_tx_disabled_blocks_uart_transmission(api):
     try:
         uart1_sock.settimeout(2.0)
 
-        # Switch port 1 to tcp_bridge mode so the gateway forwards requests to UART1
+        # Force required pre-conditions regardless of what previous tests may have changed:
+        # Step 1: set bridge to transparent mode (modbus=False) and clear tx_disabled.
+        # This may trigger a port restart via settings_update_task — wait for it to settle.
+        api.update_settings({
+            "rs485_1": {
+                "tx_disabled": False,
+                "bridge": {"modbus": False, "mode": "server"},
+            }
+        })
+        time.sleep(1.0)  # Allow settings_update_task to finish restarting the port if needed
+
+        # Step 2: Switch port 1 to tcp_bridge mode explicitly
         api.set_port_mode(1, "tcp_bridge")
-        time.sleep(0.3)  # Allow mode switch to take effect
+        time.sleep(0.5)  # Allow mode switch to take effect
 
         # --- Phase 1: tx_disabled=True — expect NO bytes on UART1 ---
         resp = api.update_settings({"rs485_1": {"tx_disabled": True}})
@@ -196,11 +206,13 @@ def test_tx_disabled_blocks_uart_transmission(api):
         )
 
         # --- Phase 2: tx_disabled=False — expect bytes on UART1 ---
+        # After the restart-loop fix, update_settings(tx_disabled=False) applies the flag
+        # directly without triggering a port restart.
         resp = api.update_settings({"rs485_1": {"tx_disabled": False}})
         assert resp.status_code == 200, (
             f"POST /settings (tx_disabled=False) returned {resp.status_code}"
         )
-        time.sleep(0.3)  # Allow the new setting to propagate
+        time.sleep(0.3)  # Allow the flag to propagate
 
         # Send the same Modbus TCP request again
         request2 = _build_modbus_tcp_request(txid=2, unit_id=1, fc=3, addr=0, count=1)
@@ -237,7 +249,49 @@ def test_tx_disabled_blocks_uart_transmission(api):
 
     finally:
         uart1_sock.close()
-        # Restore original tx_disabled value
+        # Restore only tx_disabled — bridge config was intentionally set to transparent
+        # as part of the test preconditions and is acceptable to leave in that state
         api.update_settings({"rs485_1": {"tx_disabled": original_tx_disabled}})
         # Restore original port mode
         api.set_port_mode(1, original_mode)
+
+
+@pytest.mark.qemu
+def test_tx_disabled_no_port_restart_loop(api):
+    """Verify that toggling tx_disabled does not cause an infinite port restart loop.
+
+    Toggles tx_disabled twice in quick succession and verifies that the port
+    remains reachable (no crash or infinite restart loop).
+    """
+    # Read original state
+    settings_resp = api.get_settings()
+    assert settings_resp.status_code == 200
+    original_tx = settings_resp.json().get("rs485_1", {}).get("tx_disabled", False)
+
+    try:
+        # Rapidly toggle tx_disabled — this should not cause a restart loop
+        resp = api.update_settings({"rs485_1": {"tx_disabled": True}})
+        assert resp.status_code == 200, f"First tx_disabled=True: {resp.status_code}"
+
+        resp = api.update_settings({"rs485_1": {"tx_disabled": False}})
+        assert resp.status_code == 200, f"Second tx_disabled=False: {resp.status_code}"
+
+        # Wait for any pending restart to settle
+        time.sleep(2.0)
+
+        # Verify device is still reachable — if there was a restart loop, the device would be unresponsive
+        info_resp = api.get_info()
+        assert info_resp.status_code == 200, (
+            f"Device unreachable after tx_disabled toggle (possible restart loop): {info_resp.status_code}"
+        )
+
+        # Verify tx_disabled is now False (correctly saved)
+        settings_resp = api.get_settings()
+        assert settings_resp.status_code == 200
+        final_tx = settings_resp.json().get("rs485_1", {}).get("tx_disabled", True)
+        assert final_tx == False, f"Expected tx_disabled=False, got {final_tx}"
+
+        print("✓ No port restart loop detected after tx_disabled toggle")
+
+    finally:
+        api.update_settings({"rs485_1": {"tx_disabled": original_tx}})
