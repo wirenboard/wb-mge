@@ -292,7 +292,10 @@ python3 -m venv api_tests/.venv
 api_tests/.venv/bin/pip install -r api_tests/requirements.txt
 ```
 
-Цель `make qemu-test` вызывает `api_tests/.venv/bin/python` напрямую, поэтому виртуальное окружение должно находиться в `api_tests/.venv`.
+Цель `make qemu-test` выбирает интерпретатор Python через переменную `PYTEST_PYTHON`: предпочитает
+`api_tests/.venv/bin/python` (workflow разработчика), при его отсутствии использует
+`/opt/api_tests_venv/bin/python` (CI/Docker-образ, где venv запечён заранее). Для явного выбора:
+`make qemu-test PYTEST_PYTHON=/path/to/python`.
 
 ### 7. Сборка прошивки + frontend и запуск тестов
 

@@ -43,6 +43,20 @@ pipeline {
                 }
             }
         }
+        stage('QEMU Tests') {
+            steps {
+                // catchError keeps build UNSTABLE (yellow) on e2e failure — S3 Upload still runs
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sh 'bash -c "source /opt/esp/idf/export.sh && make qemu-test"'
+                }
+            }
+            post {
+                always {
+                    // Archive QEMU log for debugging regardless of test outcome
+                    archiveArtifacts artifacts: "build/qemu_test.log", allowEmptyArchive: true
+                }
+            }
+        }
         stage('S3 Upload') {
             steps {
                 build job: 's3_uploader', parameters: [

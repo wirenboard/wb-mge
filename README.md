@@ -291,7 +291,9 @@ python3 -m venv api_tests/.venv
 api_tests/.venv/bin/pip install -r api_tests/requirements.txt
 ```
 
-The `make qemu-test` target invokes `api_tests/.venv/bin/python` directly, so the venv must live at `api_tests/.venv`.
+The `make qemu-test` target selects the Python interpreter via `PYTEST_PYTHON`: it prefers
+`api_tests/.venv/bin/python` (developer workflow) and falls back to `/opt/api_tests_venv/bin/python`
+(CI/Docker image, where the venv is pre-baked). Override with `make qemu-test PYTEST_PYTHON=/path/to/python` if needed.
 
 ### 7. Build firmware + frontend and run tests
 

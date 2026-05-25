@@ -2,6 +2,10 @@
 # QEMU targets
 #######################################
 
+# Python interpreter for running api_tests pytest suite.
+# Prefer the local .venv (developer workflow); fall back to the Docker image venv (CI/Jenkins).
+PYTEST_PYTHON ?= $(shell [ -f api_tests/.venv/bin/python ] && echo api_tests/.venv/bin/python || echo /opt/api_tests_venv/bin/python)
+
 # Helper: find QEMU binary path. Sets $$QEMU_BIN variable in shell context.
 # Used by qemu-web, qemu-bin-path, and Python test harness (via make -s qemu-bin-path).
 define find_qemu_bin
@@ -122,7 +126,7 @@ qemu-bin-path:
 # qemu-create-flash-image depends on build-idf-project-qemu, so the correct QEMU
 # firmware is always compiled (incremental) before packaging and running tests.
 qemu-test: qemu-create-flash-image qemu-create-efuse-image
-	cd api_tests && .venv/bin/python -m pytest --qemu --qemu-skip-build $(PYTEST_ARGS)
+	cd api_tests && $(PYTEST_PYTHON) -m pytest --qemu --qemu-skip-build $(PYTEST_ARGS)
 
 # Help target for QEMU
 qemu-help:
