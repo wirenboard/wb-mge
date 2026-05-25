@@ -107,7 +107,12 @@ watch(
             </span>
           </div>
           <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_1.port_mode}`, info.rs485_1.port_mode) }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
+          <div class="sb-port-row mono">
+            <span class="sb-port-k">Line</span>
+            <span class="sb-port-v">
+              {{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}<template v-if="savedSettings.rs485_1.tx_disabled"> · <span class="sb-tx-off">TX</span></template>
+            </span>
+          </div>
         </div>
         <div class="sb-port">
           <div class="sb-port-head">
@@ -117,7 +122,12 @@ watch(
             </span>
           </div>
           <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_2.port_mode}`, info.rs485_2.port_mode) }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-k">Line</span><span class="sb-port-v">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
+          <div class="sb-port-row mono">
+            <span class="sb-port-k">Line</span>
+            <span class="sb-port-v">
+              {{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}<template v-if="savedSettings.rs485_2.tx_disabled"> · <span class="sb-tx-off">TX</span></template>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -378,6 +388,11 @@ watch(
 
 .sb-port-v {
   color: var(--text-on-dark);
+}
+
+.sb-tx-off {
+  text-decoration: line-through;
+  color: var(--danger-color);
 }
 
 .sb-links {

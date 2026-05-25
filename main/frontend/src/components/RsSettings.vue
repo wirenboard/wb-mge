@@ -91,6 +91,10 @@ const isSaveDisabled = computed(() => {
           <label :for="`${field}-tx_disabled`">{{ t('tx_disabled') }}</label>
           <div class="field-switch"><Switch :id="`${field}-tx_disabled`" v-model="settings!.tx_disabled" /></div>
         </div>
+        <div v-if="settings!.tx_disabled" class="field-warning">
+          <span class="field-warning-icon">⚠</span>
+          {{ t('tx_disabled_warning') }}
+        </div>
       </div>
     </form>
   </section>
@@ -99,6 +103,20 @@ const isSaveDisabled = computed(() => {
 <style scoped>
 .field-switch {
   justify-self: end;
+}
+
+.field-warning {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--warn);
+  padding: 6px 0 2px 0;
+  line-height: 1.4;
+}
+
+.field-warning-icon {
+  flex-shrink: 0;
 }
 </style>
 
@@ -113,7 +131,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Data bits",
     "failsafe": "Failsafe bias",
     "terminator": "120Ω termination resistor",
-    "tx_disabled": "Disable transmission (TX)"
+    "tx_disabled": "Disable transmission (TX)",
+    "tx_disabled_warning": "Disabling TX will break bridge modes — only sniffer and cache bus will remain fully functional. Bridge connections will only forward data from RS-485 to TCP, but will not send data from TCP into the RS-485 bus."
   },
   "ru": {
     "baudrate": "Скорость",
@@ -124,7 +143,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Биты данных",
     "failsafe": "Failsafe bias",
     "terminator": "120Ω резистор-терминатор",
-    "tx_disabled": "Отключить передачу (TX)"
+    "tx_disabled": "Отключить передачу (TX)",
+    "tx_disabled_warning": "Отключение TX сломает режимы моста — полностью работоспособными останутся только сниффер и кэш шины. Мосты будут только передавать данные из RS-485 в TCP, но не смогут отправлять данные из TCP в шину RS-485."
   },
   "kk": {
     "baudrate": "Жылдамдық",
@@ -135,7 +155,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Дерек биттері",
     "failsafe": "Failsafe bias",
     "terminator": "120Ω терминатор резисторы",
-    "tx_disabled": "Жіберуді өшіру (TX)"
+    "tx_disabled": "Жіберуді өшіру (TX)",
+    "tx_disabled_warning": "TX өшіру көпір режимдерін бұзады — тек sniffer және кэш шина толық жұмыс істейді. Көпірлер тек RS-485-тен TCP-ге дерек береді, бірақ TCP-ден RS-485 шинасына жібере алмайды."
   },
   "it": {
     "baudrate": "Velocità in baud",
@@ -146,7 +167,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Bit di dati",
     "failsafe": "Failsafe bias",
     "terminator": "Resistenza di terminazione 120Ω",
-    "tx_disabled": "Disabilita trasmissione (TX)"
+    "tx_disabled": "Disabilita trasmissione (TX)",
+    "tx_disabled_warning": "La disabilitazione di TX interromperà le modalità bridge — solo sniffer e cache bus rimarranno completamente funzionali. I bridge inoltreranno solo i dati da RS-485 a TCP, ma non invieranno dati da TCP al bus RS-485."
   },
   "de": {
     "baudrate": "Baudrate",
@@ -157,7 +179,8 @@ const isSaveDisabled = computed(() => {
     "databits": "Datenbits",
     "failsafe": "Failsafe bias",
     "terminator": "120Ω Abschlusswiderstand",
-    "tx_disabled": "Senden deaktivieren (TX)"
+    "tx_disabled": "Senden deaktivieren (TX)",
+    "tx_disabled_warning": "Das Deaktivieren von TX unterbricht Bridge-Modi — nur Sniffer und Cache-Bus bleiben vollständig funktionsfähig. Bridges leiten nur Daten von RS-485 zu TCP weiter, senden aber keine Daten vom TCP in den RS-485-Bus."
   }
 }
 </i18n>
