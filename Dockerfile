@@ -11,9 +11,11 @@ RUN apt-get update && apt-get install -y \
 # Mounted host repos have foreign UID — let git read .git for FIRMWARE_GIT_INFO
 RUN git config --global --add safe.directory '*'
 
-# Install QEMU for ESP32 emulation (required for e2e QEMU tests)
+# Install QEMU for ESP32 emulation (required for e2e QEMU tests).
+# The espressif/idf Docker image stores tools under /opt/esp/tools (IDF_TOOLS_PATH),
+# not ~/.espressif — so we search both locations to be safe.
 RUN python3 /opt/esp/idf/tools/idf_tools.py install qemu-xtensa \
- && find /root/.espressif -name "qemu-system-xtensa" -type f | grep -q . \
+ && find /opt/esp/tools /root/.espressif -name "qemu-system-xtensa" -type f 2>/dev/null | grep -q . \
  || { echo "ERROR: qemu-system-xtensa not found after install"; exit 1; }
 
 # Pre-create Python venv for api_tests dependencies (baked into image — no network needed at runtime)

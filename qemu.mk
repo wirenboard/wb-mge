@@ -8,9 +8,13 @@ PYTEST_PYTHON ?= $(shell [ -f api_tests/.venv/bin/python ] && echo api_tests/.ve
 
 # Helper: find QEMU binary path. Sets $$QEMU_BIN variable in shell context.
 # Used by qemu-web, qemu-bin-path, and Python test harness (via make -s qemu-bin-path).
+# Search order:
+#   1. $(HOME)/.espressif/tools — standard local EIM install
+#   2. /opt/esp/tools           — espressif/idf Docker image (IDF_TOOLS_PATH)
+#   3. PATH                     — fallback for any other install method
 define find_qemu_bin
 	QEMU_BIN=""; \
-	for ESPRESSIF_TOOLS in "$(HOME)/.espressif/tools/tools" "$(HOME)/.espressif/tools"; do \
+	for ESPRESSIF_TOOLS in "$(HOME)/.espressif/tools/tools" "$(HOME)/.espressif/tools" "/opt/esp/tools"; do \
 	    if [ -d "$$ESPRESSIF_TOOLS/qemu-xtensa" ]; then \
 	        QEMU_VERSION_DIR=$$(find "$$ESPRESSIF_TOOLS/qemu-xtensa" -name "esp_develop_*" -type d | sort -V | tail -1); \
 	        if [ -f "$$QEMU_VERSION_DIR/qemu/bin/qemu-system-xtensa" ]; then \
