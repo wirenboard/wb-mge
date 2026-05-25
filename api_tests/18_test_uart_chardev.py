@@ -55,8 +55,9 @@ def test_uart1_chardev_receives_bytes(api):
     try:
         uart1_sock.settimeout(2.0)
 
-        # Switch port 1 to modbus_bus: firmware now sends RTU requests over UART1
-        api.set_port_mode(1, "modbus_bus")
+        # Switch port 1 to tcp_bridge: firmware forwards Modbus TCP requests to UART1 as RTU
+        resp = api.set_port_mode(1, "tcp_bridge")
+        assert resp.status_code == 200, f"Failed to set tcp_bridge mode: {resp.status_code}"
         time.sleep(0.5)  # allow mode switch to complete
 
         # Send a Modbus TCP request to the gateway — firmware will forward it to UART1 as RTU
