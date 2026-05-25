@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import Heading from '@/components/Heading.vue';
+import InfoRow from '@/components/InfoRow.vue';
 import Layout from '@/components/Layout.vue';
 import Switch from '@/components/Switch.vue';
 import RsStatus from '@/components/RsStatus.vue';
@@ -33,100 +34,73 @@ const getDisplayValue = (val: string | boolean | number) => {
   <Layout>
     <Heading :title="t('title')" />
 
-    <div class="dashboard">
-      <fieldset class="dashboard-container">
-        <legend>{{ t('ethernet') }}</legend>
+    <div class="main-body">
+      <div class="dashboard">
+        <section class="card">
+          <div class="card-header"><div class="title">{{ t('ethernet') }}</div></div>
+          <div class="card-body">
+            <InfoRow :label="t('status')">{{ info!.ethernet.con_eth ? t('connected') : t('not_connected') }}</InfoRow>
+            <InfoRow :label="t('ip')">{{ getDisplayValue(info!.ethernet.ip) }}</InfoRow>
+            <InfoRow :label="t('mac')">{{ getDisplayValue(info!.ethernet.mac) }}</InfoRow>
+          </div>
+        </section>
 
-        <div>{{ t('status') }}</div>
-        <div>{{ info!.ethernet.con_eth ? t('connected') : t('not_connected') }}</div>
+        <section class="card">
+          <div class="card-header"><div class="title">{{ t('wifi') }}</div></div>
+          <div class="card-body">
+            <InfoRow :label="t('status')">{{ getDisplayValue(info!.wifi.enabled) }}</InfoRow>
+            <InfoRow :label="t('wifi_mode')">{{ t(info!.wifi.mode) }}</InfoRow>
 
-        <div>{{ t('ip') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.ip) }}</div>
+            <template v-if="info!.wifi.mode === 'ap'">
+              <InfoRow :label="t('connections_count')">{{ info!.wifi.con_ap }}</InfoRow>
+              <InfoRow :label="t('ip')">{{ info!.wifi.ap_ip }}</InfoRow>
+              <InfoRow :label="t('mac')">{{ info!.wifi.ap_mac }}</InfoRow>
+            </template>
 
-        <div>{{ t('mac') }}</div>
-        <div>{{ getDisplayValue(info!.ethernet.mac) }}</div>
-      </fieldset>
+            <template v-else-if="info!.wifi.mode === 'sta'">
+              <InfoRow :label="t('connection')">{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</InfoRow>
 
-      <fieldset class="dashboard-container">
-        <legend>{{ t('wifi') }}</legend>
+              <template v-if="info!.wifi.con_sta">
+                <InfoRow :label="t('ssid')">{{ info!.wifi.con_sta_ssid }}</InfoRow>
+              </template>
 
-        <div>{{ t('status') }}</div>
-        <div>{{ getDisplayValue(info!.wifi.enabled) }}</div>
+              <InfoRow :label="t('ip')">{{ info!.wifi.sta_ip }}</InfoRow>
+              <InfoRow :label="t('mac')">{{ info!.wifi.sta_mac }}</InfoRow>
 
-        <div>{{ t('wifi_mode') }}</div>
-        <div>{{ t(info!.wifi.mode) }}</div>
+              <template v-if="info!.wifi.enabled && info!.wifi.con_sta">
+                <InfoRow :label="t('rssi')">{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</InfoRow>
+              </template>
+            </template>
+          </div>
+        </section>
 
-        <template v-if="info!.wifi.mode === 'ap'">
-          <div>{{ t('connections_count') }}</div>
-          <div>{{ info!.wifi.con_ap }}</div>
+        <section class="card">
+          <div class="card-header"><div class="title">{{ t('gateway') }}</div></div>
+          <div class="card-body">
+            <InfoRow :label="t('power_vout')">
+              <Switch
+                id="power_vout"
+                v-model="settings!.vout"
+                @change="() => updateSettings({ vout: settings!.vout })"
+              />
+            </InfoRow>
+            <InfoRow :label="t('power')">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</InfoRow>
+            <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
+          </div>
+        </section>
 
-          <div>{{ t('ip') }}</div>
-          <div>{{ info!.wifi.ap_ip }}</div>
-
-          <div>{{ t('mac') }}</div>
-          <div>{{ info!.wifi.ap_mac }}</div>
-        </template>
-
-        <template v-else-if="info!.wifi.mode === 'sta'">
-          <div>{{ t('connection') }}</div>
-          <div>{{ info!.wifi.con_sta ? t('connected') : t('not_connected') }}</div>
-
-          <template v-if="info!.wifi.con_sta">
-            <div>{{ t('ssid') }}</div>
-            <div>{{ info!.wifi.con_sta_ssid }}</div>
-          </template>
-
-          <div>{{ t('ip') }}</div>
-          <div>{{ info!.wifi.sta_ip }}</div>
-
-          <div>{{ t('mac') }}</div>
-          <div>{{ info!.wifi.sta_mac }}</div>
-
-          <template v-if="info!.wifi.enabled && info!.wifi.con_sta">
-            <div>{{ t('rssi') }}</div>
-            <div>{{ info?.wifi.sta_rssi }} {{ t('dbm') }}</div>
-          </template>
-        </template>
-      </fieldset>
-
-      <fieldset class="dashboard-container">
-        <legend>{{ t('gateway') }}</legend>
-
-        <div>{{ t('power_vout') }}</div>
-        <div>
-          <Switch
-            id="power_vout"
-            v-model="settings!.vout"
-            @change="() => updateSettings({ vout: settings!.vout })"
-          />
-        </div>
-        <div>{{ t('power') }}</div>
-        <div>{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</div>
-
-        <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
-      </fieldset>
-
-      <fieldset v-if="info!.knx" class="dashboard-container">
-        <legend>{{ t('knx') }}</legend>
-
-        <div>{{ t('status') }}</div>
-        <div>{{ info!.knx.running ? t('running') : t('stopped') }}</div>
-
-        <div>{{ t('knx_bus') }}</div>
-        <div>{{ info!.knx.bus_alive ? t('alive') : t('not_connected') }}</div>
-
-        <div>{{ t('knx_tcp_port') }}</div>
-        <div>{{ info!.knx.tcp_port }}</div>
-
-        <div>{{ t('knx_clients') }}</div>
-        <div>{{ info!.knx.clients_count }} ({{ info!.knx.secure_count }} {{ t('knx_secure') }})</div>
-
-        <div>{{ t('knx_to_bus') }}</div>
-        <div>{{ info!.knx.rx_count }}</div>
-
-        <div>{{ t('knx_from_bus') }}</div>
-        <div>{{ info!.knx.tx_count }}</div>
-      </fieldset>
+        <section v-if="info!.knx" class="card">
+          <div class="card-header"><div class="title">{{ t('knx') }}</div></div>
+          <div class="card-body">
+            <InfoRow :label="t('status')">{{ info!.knx.running ? t('running') : t('stopped') }}</InfoRow>
+            <InfoRow :label="t('knx_bus')">{{ info!.knx.bus_alive ? t('alive') : t('not_connected') }}</InfoRow>
+            <InfoRow :label="t('knx_tcp_port')">{{ info!.knx.tcp_port }}</InfoRow>
+            <InfoRow :label="t('knx_clients')">{{ info!.knx.clients_count }} ({{ info!.knx.secure_count }} {{ t('knx_secure') }})</InfoRow>
+            <InfoRow :label="t('knx_to_bus')">{{ info!.knx.rx_count }}</InfoRow>
+            <InfoRow :label="t('knx_from_bus')">{{ info!.knx.tx_count }}</InfoRow>
+          </div>
+        </section>
+      </div>
     </div>
   </Layout>
 </template>
@@ -134,42 +108,18 @@ const getDisplayValue = (val: string | boolean | number) => {
 <style>
 .dashboard {
   columns: 2;
-  column-gap: 12px;
-
-  @media (max-width: 1320px) {
-    columns: 2;
-  }
+  column-gap: 20px;
 
   @media (max-width: 1024px) {
     columns: 1;
-    max-width: 470px;
-  }
-
-  @media (max-width: 500px) {
-    width: 100%;
   }
 }
 
-.dashboard-container {
-  display: grid;
-  gap: 6px 24px;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  justify-items: end;
-  page-break-inside: avoid;
+/* Cards in dashboard must not break across columns */
+.dashboard .card {
   break-inside: avoid;
-}
-
-.dashboard-container div {
-  height: 33px;
-}
-
-.dashboard-container div:nth-child(even) {
-  justify-self: start;
-}
-
-.dashboard-container div:nth-child(odd) {
-  justify-self: end;
+  page-break-inside: avoid;
+  margin-bottom: 20px;
 }
 </style>
 
@@ -194,6 +144,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "client": "Client",
     "access_point": "Access Point",
     "connections_count": "Number of connections",
+    "ssid": "SSID",
     "rssi": "RSSI",
     "dbm": "dBm",
 
@@ -232,6 +183,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "access_point": "Точка доступа",
     "wifi_mode": "Роль",
     "connections_count": "Количество подключений",
+    "ssid": "SSID",
     "rssi": "RSSI",
     "dbm": "дБ",
 
@@ -259,6 +211,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "client": "Клиент",
     "access_point": "Қатынас нүктесі",
     "connections_count": "Қосылымдар саны",
+    "ssid": "SSID",
     "rssi": "RSSI",
     "dbm": "dBm",
 
@@ -286,6 +239,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "client": "Client",
     "access_point": "Access Point",
     "connections_count": "Numero di connessioni",
+    "ssid": "SSID",
     "rssi": "RSSI",
     "dbm": "dBm",
 
@@ -313,6 +267,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "client": "Client",
     "access_point": "Access Point",
     "connections_count": "Anzahl der Verbindungen",
+    "ssid": "SSID",
     "rssi": "RSSI",
     "dbm": "dBm",
 
