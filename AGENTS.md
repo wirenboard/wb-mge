@@ -14,6 +14,27 @@ make test
 
 The Makefile sources the EIM activate script (`~/.espressif/tools/activate_idf_v5.4.sh`) internally — no manual `source` needed.
 
+## Running individual QEMU API tests
+
+To run a specific test file against QEMU:
+
+```bash
+make qemu-test PYTEST_ARGS="23_test_tx_disabled.py"
+```
+
+To run a specific test function:
+
+```bash
+make qemu-test PYTEST_ARGS="23_test_tx_disabled.py::test_tx_disabled_blocks_uart_transmission"
+```
+
+The `make qemu-test` target:
+1. Rebuilds the QEMU firmware (incremental)
+2. Creates the QEMU flash image
+3. Launches QEMU
+4. Runs pytest with `--qemu` flag
+5. Kills QEMU after tests complete
+
 ## Rules
 
 - **Always build before delivering results to the user.** Run the build command above and confirm it succeeds before presenting any changes.
