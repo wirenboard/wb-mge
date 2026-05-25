@@ -1,6 +1,18 @@
 """WB-MGE HTTP API client"""
 
+import time
+
 import requests
+
+
+class _DelayedSession(requests.Session):
+    """A requests.Session that sleeps 50ms before every request."""
+
+    DELAY_S = 0.05
+
+    def request(self, method, url, **kwargs):
+        time.sleep(self.DELAY_S)
+        return super().request(method, url, **kwargs)
 
 
 class WBMGEAPI:
@@ -9,7 +21,7 @@ class WBMGEAPI:
 
     def __init__(self, base_url="http://localhost:8080"):
         self.base_url = base_url
-        self.session = requests.Session()
+        self.session = _DelayedSession()
 
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -32,7 +44,7 @@ class WBMGEAPI:
         """Close current session and create a new one, preserving auth cookies."""
         old_cookies = self.session.cookies.copy()
         self.session.close()
-        self.session = requests.Session()
+        self.session = _DelayedSession()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
@@ -133,7 +145,6 @@ class WBMGEAPI:
 
     def wait_for_ready(self, timeout=10, interval=1):
         """Poll the server until it responds, then reconnect and re-auth."""
-        import time
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             time.sleep(interval)
