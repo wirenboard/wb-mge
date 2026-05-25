@@ -139,15 +139,13 @@ def test_ota_wrong_content_type(api, firmware_bytes):
     )
 
 
-def test_ota_short_body_no_app_desc(api, firmware_bytes, is_qemu):
+def test_ota_short_body_no_app_desc(api, firmware_bytes):
     """Body smaller than 480 bytes (WB_APP_DESC_OFFSET + WB_APP_DESC_SIZE) → error.
 
     main/ota_handler.c requires the first recv chunk to be large enough to
     contain the wb_app_desc struct; otherwise it logs
     'App descriptor not received' and aborts.
     """
-    if is_qemu:
-        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     short = firmware_bytes[: MIN_VALID_HEAD_LEN - 1]
     resp = _post_update(api, short)
     assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text!r}"
@@ -155,10 +153,8 @@ def test_ota_short_body_no_app_desc(api, firmware_bytes, is_qemu):
     assert body.get("success") is False
 
 
-def test_ota_bad_magic_word(api, firmware_bytes, is_qemu):
+def test_ota_bad_magic_word(api, firmware_bytes):
     """Magic word mismatch → 'Invalid OTA firmware'."""
-    if is_qemu:
-        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     payload = bytearray(firmware_bytes[: MIN_VALID_HEAD_LEN + 1024])
     struct.pack_into("<I", payload, WB_APP_DESC_OFFSET, 0xDEADBEEF)
     resp = _post_update(api, bytes(payload))
@@ -170,10 +166,8 @@ def test_ota_bad_magic_word(api, firmware_bytes, is_qemu):
     )
 
 
-def test_ota_bad_signature(api, firmware_bytes, is_qemu):
+def test_ota_bad_signature(api, firmware_bytes):
     """Signature mismatch → 'Invalid OTA firmware'."""
-    if is_qemu:
-        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     payload = bytearray(firmware_bytes[: MIN_VALID_HEAD_LEN + 1024])
     fake_signature = b"hacker_v9\x00\x00\x00"
     assert len(fake_signature) == SIGNATURE_LEN
@@ -187,7 +181,7 @@ def test_ota_bad_signature(api, firmware_bytes, is_qemu):
     )
 
 
-def test_ota_truncated_stream(api, firmware_bytes, is_qemu):
+def test_ota_truncated_stream(api, firmware_bytes):
     """Promise more bytes via Content-Length than we send → server must
     abort cleanly and stay responsive.
 
@@ -195,8 +189,6 @@ def test_ota_truncated_stream(api, firmware_bytes, is_qemu):
     the actual body length. esp_ota_abort should release the partition; no
     boot-partition switch happens, so /info must still work.
     """
-    if is_qemu:
-        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     parsed = requests.utils.urlparse(api.base_url)
     host = parsed.hostname or "localhost"
     port = parsed.port or 80
@@ -239,12 +231,10 @@ def test_ota_truncated_stream(api, firmware_bytes, is_qemu):
 # --- Positive path: MUST stay last — reboots into ota_1 ----------------------
 
 @pytest.mark.timeout(240)
-def test_ota_full_update(api, firmware_bytes, is_qemu):
+def test_ota_full_update(api, firmware_bytes):
     """Upload the full QEMU firmware → 200 with bytes_written == size →
     device reboots → /info responds again.
     """
-    if is_qemu:
-        pytest.skip("QEMU uses single-app partition table — no OTA partition available")
     fw_size = len(firmware_bytes)
     print(f"  Uploading {fw_size} bytes to /update...")
     resp = _post_update(api, firmware_bytes, timeout=180)
