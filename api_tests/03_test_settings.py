@@ -63,7 +63,7 @@ def test_settings(api):
     for port in ["rs485_1", "rs485_2"]:
         rs485 = original_settings[port]
         rs485_fields = [
-            "term", "fail_safe", "baudrate", "stopbits",
+            "term", "fail_safe", "tx_disabled", "baudrate", "stopbits",
             "parity", "databits", "bridge"
         ]
         for field in rs485_fields:
@@ -71,6 +71,7 @@ def test_settings(api):
 
         assert isinstance(rs485["term"], bool), f"Field term has incorrect type"
         assert isinstance(rs485["fail_safe"], bool), f"Field fail_safe has incorrect type"
+        assert isinstance(rs485["tx_disabled"], bool), f"Field tx_disabled has incorrect type"
         assert isinstance(rs485["baudrate"], int), f"Field baudrate has incorrect type"
         assert rs485["baudrate"] in [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200], \
             f"Field baudrate has incorrect value: {rs485['baudrate']}"
@@ -125,6 +126,7 @@ def test_settings(api):
         "rs485_1": {
             "term": not original_settings["rs485_1"]["term"],
             "fail_safe": not original_settings["rs485_1"]["fail_safe"],
+            "tx_disabled": not original_settings["rs485_1"]["tx_disabled"],
             "baudrate": 115200,
             "stopbits": "1.5",
             "parity": "even",
@@ -139,6 +141,7 @@ def test_settings(api):
         "rs485_2": {
             "term": not original_settings["rs485_2"]["term"],
             "fail_safe": not original_settings["rs485_2"]["fail_safe"],
+            "tx_disabled": not original_settings["rs485_2"]["tx_disabled"],
             "baudrate": 38400,
             "stopbits": "1",
             "parity": "odd",
@@ -179,7 +182,7 @@ def test_settings(api):
 
         rs485_1 = new_settings["rs485_1"]
         rs485_main_fields = [
-            "term", "fail_safe", "baudrate", "stopbits", "parity", "databits"
+            "term", "fail_safe", "tx_disabled", "baudrate", "stopbits", "parity", "databits"
         ]
         for field in rs485_main_fields:
             assert rs485_1[field] == test_settings["rs485_1"][field], \
@@ -230,6 +233,7 @@ def test_settings(api):
             "rs485_1": {
                 "term": 1,
                 "fail_safe": "off",
+                "tx_disabled": "off",
                 "baudrate": 123456,
                 "stopbits": "2.5",
                 "parity": "all",
@@ -244,6 +248,7 @@ def test_settings(api):
             "rs485_2": {
                 "term": "true",
                 "fail_safe": "true",
+                "tx_disabled": "true",
                 "baudrate": 0,
                 "stopbits": "0.5",
                 "parity": "disabled",
@@ -389,7 +394,7 @@ def test_settings_partial_update(api):
         assert updated2["rs485_1"]["baudrate"] == new_baudrate, \
             f"rs485_1.baudrate was not updated: expected {new_baudrate}, got {updated2['rs485_1']['baudrate']}"
 
-        rs485_preserved = ["term", "fail_safe", "stopbits", "parity", "databits"]
+        rs485_preserved = ["term", "fail_safe", "tx_disabled", "stopbits", "parity", "databits"]
         for field in rs485_preserved:
             assert updated2["rs485_1"][field] == original["rs485_1"][field], \
                 f"rs485_1.{field} was changed by partial update: " \
