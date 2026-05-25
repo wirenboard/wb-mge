@@ -962,8 +962,8 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
 # Group 4: WS lifecycle
 # ---------------------------------------------------------------------------
 
-def test_sniffer_ws_restore_port_mode_on_teardown(api):
-    """Port mode must be correctly restored to its original value after sniffer usage."""
+def test_sniffer_ws_cleanup_restores_port_mode(api):
+    """Port mode is explicitly restored to its original value in test cleanup (teardown)."""
     api.reconnect()
 
     original_mode = None
