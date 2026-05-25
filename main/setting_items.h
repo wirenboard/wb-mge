@@ -4,7 +4,6 @@
 #include <stdbool.h>
 
 #define SETTING_ITEM_MAX_STR_LEN            64          // WPA2 passwords can be up to 63 characters + null terminator
-#define SETTING_ITEMS_NUM_MAX               52
 
 // Keys for storing settings
 #define KEY_HOSTNAME                "hostname"
