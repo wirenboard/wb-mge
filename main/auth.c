@@ -3,11 +3,13 @@
 #include "setting_items.h"
 #include "cJSON.h"
 
+#include <assert.h>
 #include <esp_log.h>
 #include <esp_random.h>
 #include <string.h>
 #include <errno.h>
 #include "array_size.h"
+#include "freertos/semphr.h"
 
 
 #define MAX_SESSIONS            10
@@ -25,6 +27,19 @@ static session_buffer_t session_buffer = {
     .session_ids = {0},
     .current_index = 0,
 };
+
+static SemaphoreHandle_t session_mutex = NULL;
+
+static inline void session_lock(void)
+{
+    BaseType_t taken = xSemaphoreTake(session_mutex, portMAX_DELAY);
+    assert(taken == pdTRUE);
+}
+
+static inline void session_unlock(void)
+{
+    xSemaphoreGive(session_mutex);
+}
 
 // Backup session IDs buffer is used to restore sessions only
 // when reset reason is ESP_RST_SW (esp_restart() called)
@@ -193,6 +208,9 @@ esp_err_t auth_init(void)
         ESP_LOGI(TAG, "Auth sessions were reset");
     }
 
+    session_mutex = xSemaphoreCreateMutex();
+    assert(session_mutex != NULL);
+
     ESP_LOGI(TAG, "Auth initialized");
     return ESP_OK;
 }
@@ -200,14 +218,21 @@ esp_err_t auth_init(void)
 bool auth_middleware_check(httpd_req_t *req)
 {
     uint32_t session_id = get_session_id_from_cookie(req);
+    bool valid = false;
+
     if (session_id != 0) {
-        if (session_id_exists(session_id)) {
-            return true;
-        } else {
+        session_lock();
+        valid = session_id_exists(session_id);
+        session_unlock();
+        if (!valid) {
             ESP_LOGW(TAG, "Session ID %lu is not valid", session_id);
         }
     } else {
         ESP_LOGW(TAG, "Session ID cookie not found");
+    }
+
+    if (valid) {
+        return true;
     }
 
     httpd_resp_set_status(req, "401 Unauthorized");
@@ -237,7 +262,9 @@ esp_err_t auth_login_handler(httpd_req_t *req)
         cJSON *pass_req = cJSON_GetObjectItem(request_json, "pass");
 
         if ((login_req->type == cJSON_String) && (pass_req->type == cJSON_String)) {
+            session_lock();
             uint32_t session_id = authorization(login_req->valuestring, pass_req->valuestring);
+            session_unlock();
             if (session_id != 0) {
                 result = set_cookie_session_id(req, session_id, cookie_header);
             } else {
@@ -261,7 +288,9 @@ esp_err_t auth_logout_handler(httpd_req_t *req)
 
     uint32_t session_id = get_session_id_from_cookie(req);
     if (session_id != 0) {
+        session_lock();
         find_and_remove_session_id(session_id);
+        session_unlock();
     } else {
         ESP_LOGW(TAG, "Session ID cookie not found, skipping logout");
     }
