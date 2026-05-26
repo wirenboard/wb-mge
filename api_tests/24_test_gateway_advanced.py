@@ -324,10 +324,8 @@ def test_gateway_client_disconnect_during_rtu_wait(gateway_slave):
     Key invariant (from test strategy report): gateway does NOT crash or deadlock
     after client A disconnects mid-RTU-wait. The gateway must remain operational.
 
-    Note on TID: due to a known firmware race condition (pending_tid not cleared
-    after client disconnect), B may receive a response with A's TID (0x1100).
-    This is a documented firmware limitation, not tested here. We only verify
-    that the gateway is alive and sends a valid Modbus TCP response frame to B.
+    TID correctness after disconnect is verified by test_gateway_disconnect_tid_mismatch_regression.
+    Here we only verify that the gateway is alive and sends a valid Modbus TCP response frame to B.
     """
     # Slave will drop A's request — no RTU response sent
     gateway_slave.drop_count = 1
@@ -377,8 +375,7 @@ def test_gateway_client_disconnect_during_rtu_wait(gateway_slave):
         resp_txid_b = struct.unpack('>H', resp_b[:2])[0]
         print(
             f"✓ Gateway survived client disconnect during RTU wait; "
-            f"B received valid response TID={resp_txid_b:#06x} "
-            f"(expected {txid_b:#06x}, stale TID is a known firmware limitation)"
+            f"B received valid response TID={resp_txid_b:#06x}"
         )
     finally:
         gw_sock_b.close()
@@ -391,25 +388,12 @@ def test_gateway_client_disconnect_during_rtu_wait(gateway_slave):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(30)
-@pytest.mark.xfail(
-    reason="Known firmware bug: pending_tid not cleared after client A disconnect; "
-           "B receives response with A's TID (0x1100) instead of its own (0x1101). "
-           "Fix: clear ctx->pending_tid in on_tcp_conn_close() callback.",
-    strict=True,   # must fail — if it passes, the bug was fixed and strict=True
-)
 def test_gateway_disconnect_tid_mismatch_regression(gateway_slave):
     """Regression test: TID in B's response must equal B's request TID.
 
-    This test documents a known firmware bug: when client A disconnects while
-    the gateway is processing its request (RTU round-trip), the pending_tid
-    field is not cleared. When client B connects and sends its own request,
-    the RTU slave responds, but process_data_from_serial() may use the stale
-    pending_tid from A's request, so B receives a response with A's TID.
-
-    The test is marked xfail strict=True so that:
-    - Currently it is expected to fail (TID mismatch is the bug).
-    - When the firmware bug is fixed, this test will start passing,
-      triggering an XPASS which fails CI — a reminder to remove the xfail.
+    Verifies fix for the bug where pending_tid was not cleared in
+    on_tcp_conn_close(), causing B to receive a response with A's stale TID.
+    Bug fix: clear ctx->pending_tid when the pending client disconnects.
     """
     gateway_slave.drop_count = 1
 
@@ -436,10 +420,10 @@ def test_gateway_disconnect_tid_mismatch_regression(gateway_slave):
         resp_b = _recv_modbus_tcp_response(gw_sock_b, time.monotonic() + 10.0)
         assert len(resp_b) >= 8, f"No response from gateway: {resp_b.hex()!r}"
         resp_txid_b = struct.unpack('>H', resp_b[:2])[0]
-        # This assert is expected to FAIL (xfail) because of the firmware bug
+        # After the fix in on_tcp_conn_close(): B must receive its own TID, not A's stale TID
         assert resp_txid_b == txid_b, (
             f"TID mismatch: B received TID={resp_txid_b:#06x} instead of {txid_b:#06x}. "
-            f"Firmware bug: pending_tid not cleared after client A disconnected."
+            f"Regression: pending_tid not cleared after client A disconnected."
         )
     finally:
         gw_sock_b.close()
