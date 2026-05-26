@@ -36,12 +36,15 @@ class ModbusRtuSlaveThread(threading.Thread):
     """
 
     def __init__(self, host: str = '127.0.0.1', port: int = 5561,
-                 fake_value: int = 0x1234, connect_timeout: float = 5.0):
+                 fake_value: int = 0x1234, connect_timeout: float = 5.0,
+                 exception_fc: dict = None, drop_count: int = 0):
         super().__init__(daemon=True)
         self.host = host
         self.port = port
         self.fake_value = fake_value      # register/coil value returned for any address
         self.connect_timeout = connect_timeout
+        self.exception_fc = exception_fc or {}   # FC -> exception_code mapping
+        self.drop_count = drop_count             # silently drop next N requests
         self.request_count = 0            # number of RTU requests handled
         self.connected = False            # True once TCP connection is established
         self._stop_event = threading.Event()
@@ -96,6 +99,13 @@ class ModbusRtuSlaveThread(threading.Thread):
                 buf = buf[1:]
                 continue
 
+            # Silent drop: simulate RTU slave not responding (for timeout tests)
+            if self.drop_count > 0:
+                self.drop_count -= 1
+                self.request_count += 1
+                buf = buf[8:]
+                continue
+
             response = self._build_response(slave_id, fc, addr, count)
             if response and self._sock:
                 try:
@@ -108,7 +118,12 @@ class ModbusRtuSlaveThread(threading.Thread):
         return buf
 
     def _build_response(self, slave_id: int, fc: int, addr: int, count: int):
-        """Build a Modbus RTU response for FC01/FC02/FC03/FC04."""
+        """Build a Modbus RTU response for FC01/FC02/FC03/FC04, or exception if configured."""
+        # Return configured exception if this FC is in the exception map
+        if fc in self.exception_fc:
+            exc_code = self.exception_fc[fc]
+            return _build_rtu_response(slave_id, fc | 0x80, bytes([exc_code]))
+
         if fc in (0x03, 0x04):
             # FC03/FC04: read holding/input registers
             values = [self.fake_value] * count

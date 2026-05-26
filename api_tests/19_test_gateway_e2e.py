@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from rtu_slave_helpers import ModbusRtuSlaveThread
+from conftest import build_gateway_fixture
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -44,117 +44,15 @@ def _build_modbus_tcp_request(txid: int, unit_id: int, fc: int, addr: int, count
     return mbap + bytes([unit_id, fc]) + pdu
 
 
-def _try_connect_tcp(host: str, port: int, timeout: float = 3.0):
-    """Try connecting to a TCP endpoint. Returns socket or None."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect((host, port))
-        return sock
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        sock.close()
-        return None
-
-
-@pytest.fixture
-def gateway_slave(api):
-    """Configure the Modbus TCP gateway and start the RTU slave.
-
-    Steps:
-    1. Check that UART1 TCP port (5561) is reachable — skip if not.
-    2. Save original settings.
-    3. Disable port 1 first to release the UART driver before reconfiguring.
-    4. Apply full RS-485 config for port 1 with bridge modbus=true.
-    5. Switch port 1 to tcp_bridge mode to activate the gateway.
-    6. Start the RTU slave thread and wait for it to connect.
-    7. Yield the slave to the test.
-    8. Restore original settings and mode in finally block.
-    9. Stop the slave thread.
-    """
-    # Step 1: verify UART1 TCP chardev is reachable before doing anything else
-    probe = _try_connect_tcp("127.0.0.1", UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(
-            f"Cannot connect to UART1 chardev TCP port {UART1_TCP_PORT}. "
-            "QEMU may not expose UART1 as TCP in this configuration."
-        )
-    probe.close()
-
-    # Step 2: save original settings for restoration
-    resp = api.get_settings()
-    assert resp.status_code == 200, f"GET /settings failed: {resp.status_code}"
-    original_settings = resp.json()
-
-    slave = None
-    try:
-        # Step 3: disable port 1 first to release the UART driver before reconfiguring.
-        # If the port is already in tcp_bridge mode the UART driver is active; updating
-        # settings without teardown causes a double-init conflict (uart: UART driver already
-        # installed) and the port fails to reinitialize.
-        resp = api.set_port_mode(1, "disabled")
-        assert resp.status_code == 200, f"Failed to disable port 1: {resp.status_code}"
-        time.sleep(0.5)
-
-        # Step 4: build the full RS-485 config for port 1 with the bridge sub-object set.
-        # Copy all existing RS-485 parameters so that the settings validator receives a
-        # complete object — providing only the bridge sub-key may be rejected.
-        port1_settings = dict(original_settings.get("rs485_1", {}))
-        port1_settings["bridge"] = {
-            "mode": "server",
-            "port": 502,
-            "ip": "0.0.0.0",
-            "modbus": True,
-        }
-        resp = api.update_settings({"rs485_1": port1_settings})
-        assert resp.status_code == 200, f"POST /settings failed: {resp.status_code}"
-        result = resp.json()
-        assert result.get("success") is True, f"Settings update not successful: {result}"
-        # Allow any async settings_update_task to settle and the previous TCP server
-        # (transparent bridge on port 502) to be fully released by lwIP before
-        # binding the same port for the Modbus TCP server.
-        time.sleep(0.5)
-
-        # Step 5: switch to tcp_bridge mode to activate the gateway and wait for it to
-        # start listening on port 502.
-        resp = api.set_port_mode(1, "tcp_bridge")
-        assert resp.status_code == 200, f"POST /ports/1/mode tcp_bridge failed: {resp.status_code}"
-        time.sleep(1.0)
-
-        # Step 6: start the RTU slave and wait for connection
-        slave = ModbusRtuSlaveThread(
-            host="127.0.0.1",
-            port=UART1_TCP_PORT,
-            fake_value=FAKE_VALUE,
-            connect_timeout=5.0,
-        )
-        slave.start()
-
-        connected = slave.wait_connected(timeout=5.0)
-        assert connected, (
-            f"RTU slave could not connect to UART1 chardev on port {UART1_TCP_PORT} within 5 s"
-        )
-
-        # Step 7: yield slave to the test
-        yield slave
-
-    finally:
-        # Step 8: restore original settings — disable first so the UART driver is released,
-        # then restore the full settings, then restore the original port mode.
-        api.set_port_mode(1, "disabled")
-        time.sleep(0.3)
-
-        restore_resp = api.update_settings(original_settings)
-        if restore_resp.status_code != 200:
-            print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
-
-        original_mode = original_settings.get("rs485_1", {}).get("port_mode", "sniffer")
-        api.set_port_mode(1, original_mode)
-        time.sleep(0.3)
-
-        # Step 9: stop the RTU slave thread
-        if slave is not None:
-            slave.stop()
-            slave.join(timeout=3.0)
+# Use shared gateway fixture from conftest (R5)
+gateway_slave = build_gateway_fixture(
+    port_num=1,
+    tcp_host_port=GATEWAY_HOST_PORT,
+    uart_tcp_port=UART1_TCP_PORT,
+    bridge_port=502,
+    modbus=True,
+    fake_value=FAKE_VALUE,
+)
 
 
 # --------------------------------------------------------------------------- #

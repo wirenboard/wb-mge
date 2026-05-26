@@ -10,6 +10,7 @@ import pytest
 import requests
 
 from api_client import WBMGEAPI
+from rtu_slave_helpers import ModbusRtuSlaveThread
 
 PROJECT_ROOT = Path(__file__).parent.parent
 QEMU_READY_TIMEOUT = 120
@@ -139,6 +140,144 @@ def _dump_qemu_log(label):
     print(f"QEMU LOG ({label}):")
     print('=' * 60)
     print(log_file.read_text())
+
+
+def _poll_tcp_connect(host: str, port: int, timeout: float = 5.0) -> bool:
+    """Poll a TCP endpoint until it accepts connections or timeout expires.
+
+    Returns True if connection succeeded within timeout, False otherwise.
+    More reliable than time.sleep() in CI: adapts to actual server readiness.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.5)
+        try:
+            sock.connect((host, port))
+            sock.close()
+            return True
+        except (ConnectionRefusedError, OSError, socket.timeout):
+            sock.close()
+            time.sleep(0.1)
+    return False
+
+
+def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
+                           bridge_port: int, modbus: bool, fake_value: int = 0x1234):
+    """Factory: returns a pytest fixture that configures a gateway on the given port.
+
+    Args:
+        port_num: RS-485 port number (1 or 2).
+        tcp_host_port: Host-side TCP port (QEMU hostfwd destination).
+        uart_tcp_port: QEMU UART chardev TCP port (e.g. 5561 for UART1).
+        bridge_port: TCP port the gateway listens on inside the firmware.
+        modbus: True for Modbus TCP gateway mode, False for transparent bridge.
+        fake_value: Register value returned by the RTU slave for any register read.
+
+    Returns:
+        A pytest fixture function that yields a ModbusRtuSlaveThread (or None
+        when modbus=False) and handles full setup/teardown.
+    """
+    @pytest.fixture
+    def gateway_fixture(api):
+        # Step 1: verify UART chardev is reachable
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.settimeout(3.0)
+        try:
+            probe.connect(("127.0.0.1", uart_tcp_port))
+            probe.close()
+        except (ConnectionRefusedError, OSError, socket.timeout):
+            probe.close()
+            pytest.skip(
+                f"Cannot connect to UART chardev TCP port {uart_tcp_port}. "
+                "QEMU may not expose this UART as TCP in this configuration."
+            )
+
+        # Step 2: save original settings
+        resp = api.get_settings()
+        assert resp.status_code == 200, f"GET /settings failed: {resp.status_code}"
+        original_settings = resp.json()
+
+        rs485_key = f"rs485_{port_num}"
+        slave = None
+        try:
+            # Step 3: disable port first to release the UART driver
+            resp = api.set_port_mode(port_num, "disabled")
+            assert resp.status_code == 200, \
+                f"Failed to disable port {port_num}: {resp.status_code}"
+            time.sleep(0.3)
+
+            # Step 4: apply full RS-485 config with bridge sub-object
+            port_settings = dict(original_settings.get(rs485_key, {}))
+            port_settings["bridge"] = {
+                "mode": "server",
+                "port": bridge_port,
+                "ip": "0.0.0.0",
+                "modbus": modbus,
+            }
+            resp = api.update_settings({rs485_key: port_settings})
+            assert resp.status_code == 200, \
+                f"POST /settings failed: {resp.status_code}"
+            result = resp.json()
+            assert result.get("success") is True, \
+                f"Settings update not successful: {result}"
+            time.sleep(0.3)
+
+            # Step 5: switch to tcp_bridge mode and wait for the port to open
+            resp = api.set_port_mode(port_num, "tcp_bridge")
+            assert resp.status_code == 200, \
+                f"POST /ports/{port_num}/mode tcp_bridge failed: {resp.status_code}"
+            # Poll instead of fixed sleep: wait for the gateway TCP port to bind
+            ready = _poll_tcp_connect("127.0.0.1", tcp_host_port, timeout=5.0)
+            assert ready, (
+                f"Gateway did not start listening on host port {tcp_host_port} within 5 s"
+            )
+
+            # Step 6: start RTU slave (only for modbus=True)
+            if modbus:
+                slave = ModbusRtuSlaveThread(
+                    host="127.0.0.1",
+                    port=uart_tcp_port,
+                    fake_value=fake_value,
+                    connect_timeout=5.0,
+                )
+                slave.start()
+                connected = slave.wait_connected(timeout=5.0)
+                assert connected, (
+                    f"RTU slave could not connect to UART chardev on port "
+                    f"{uart_tcp_port} within 5 s"
+                )
+
+            # Step 7: yield slave (or None) to the test
+            yield slave
+
+        finally:
+            # Step 8: restore settings
+            api.set_port_mode(port_num, "disabled")
+            time.sleep(0.3)
+
+            restore_resp = api.update_settings(original_settings)
+            # Use print instead of assert: assert in finally would mask the original
+            # test failure with a teardown exception, hiding the real root cause.
+            if restore_resp.status_code != 200:
+                print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+
+            original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
+            api.set_port_mode(port_num, original_mode)
+            time.sleep(0.3)
+
+            # Step 9: stop the RTU slave thread
+            if slave is not None:
+                slave.stop()
+                slave.join(timeout=3.0)
+                # Use print instead of assert: assert in finally masks the original test failure.
+                if slave.is_alive():
+                    print(
+                        f"✗ RTU slave thread on port {uart_tcp_port} did not stop within 3 s "
+                        "(port leak!)"
+                    )
+
+    return gateway_fixture
 
 
 @pytest.fixture(scope="session", autouse=True)
