@@ -6,9 +6,9 @@ import requests
 
 
 class _DelayedSession(requests.Session):
-    """A requests.Session that sleeps 50ms before every request."""
+    """A requests.Session that sleeps 100ms before every request."""
 
-    DELAY_S = 0.05
+    DELAY_S = 0.10
 
     def request(self, method, url, **kwargs):
         time.sleep(self.DELAY_S)
