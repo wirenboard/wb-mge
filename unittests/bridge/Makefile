@@ -17,6 +17,7 @@ AUX_SRC += mocks/*.c
 INC += mocks
 INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
+INC += $(PROJ_DIR)/main
 INC += $(PROJ_DIR)/main/bridge
 INC += $(IDF_PATH)/components/esp_common/include
 
