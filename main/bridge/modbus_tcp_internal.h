@@ -33,4 +33,7 @@ unsigned modbus_tcp_test_push_data(unsigned ctx_idx, int client_sock,
 /* Simulate connection close for client_sock using ctx[ctx_idx]'s tcp_desc. */
 void modbus_tcp_test_conn_close(unsigned ctx_idx, int client_sock);
 
+/* Expose calc_response_timeout_ticks() for unit tests (R1). */
+unsigned modbus_tcp_test_calc_timeout(unsigned baudrate);
+
 #endif /* __unittest_env__ */

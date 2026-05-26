@@ -7,6 +7,14 @@
 #include <stdbool.h>
 #include <string.h>
 
+/* ---- Mock state from mocks/tcp_server.c (R2) ----------------------------- */
+extern uint8_t   mock_tcp_send_buf[];
+extern size_t    mock_tcp_send_len;
+extern int       mock_tcp_send_sock;
+extern esp_err_t mock_tcp_send_result;
+extern bool      mock_tcp_send_overflow;
+void mock_tcp_server_reset(void);
+
 /* ---- Mock state from mocks/packet_queue.c ------------------------------- */
 
 #define MOCK_PQ_MAX_PACKETS 64
@@ -33,6 +41,7 @@ static tcp_desc_t s_test_tcp_desc;
 void setUp(void)
 {
     mock_packet_queue_reset();
+    mock_tcp_server_reset();
     modbus_tcp_test_init_ctx(TEST_CTX_IDX, (packet_queue_handle)1, &s_test_tcp_desc);
 }
 
@@ -436,6 +445,212 @@ void test_reasm_get_negative_sock_returns_zero(void)
     }
 }
 
+/* ---- MBTCP-U-018: mbtcp_frame_total_len boundary off-by-one -------------- */
+/* MBTCP_REASM_FRAME_MAX = 300.
+ * MBAP length=294 -> flen=300 (exactly at limit, accepted and pushed).
+ * MBAP length=295 -> flen=301 (one over the limit, triggers bogus/resync path). */
+void test_frame_total_len_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-018: flen=300 (MBAP len=294) accepted; flen=301 (MBAP len=295) dropped");
+    LOG_MESSAGE();
+
+    /* Build a synthetic frame large enough: 300 bytes total.
+     * MBAP length field = 294, so bytes [0..5] are MBAP header (6 bytes),
+     * bytes [6..299] are PDU (294 bytes).  unit_id=1, FC=0x03, rest zeroes.
+     * The exact PDU content does not matter for the length check. */
+    uint8_t big_buf[302];
+    memset(big_buf, 0, sizeof(big_buf));
+
+    /* --- Case A: MBAP length=294 -> flen=300 <= MBTCP_REASM_FRAME_MAX -> push succeeds --- */
+    /* Transaction ID = 0x0100, protocol_id = 0x0000, length = 294 */
+    big_buf[0] = 0x01; big_buf[1] = 0x00;   /* txid */
+    big_buf[2] = 0x00; big_buf[3] = 0x00;   /* protocol_id = 0 */
+    big_buf[4] = 0x01; big_buf[5] = 0x26;   /* length = 294 = 0x0126 */
+    big_buf[6] = 0x01;                       /* unit_id */
+    big_buf[7] = 0x03;                       /* FC03 */
+    /* bytes [8..299] remain 0 (register address + count + padding) */
+
+    /* Verify frame_total_len returns 300 */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(300u, modbus_tcp_test_frame_total_len(big_buf),
+        "MBAP length=294 must give flen=300");
+
+    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 91, big_buf, 300);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed,
+        "flen=300 (==MBTCP_REASM_FRAME_MAX): frame must be accepted and pushed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count,
+        "push_with_client must be called once for flen=300 frame");
+
+    /* --- Case B: MBAP length=295 -> flen=301 > MBTCP_REASM_FRAME_MAX -> bogus/drop --- */
+    mock_packet_queue_reset();
+    memset(big_buf, 0, sizeof(big_buf));
+    big_buf[0] = 0x01; big_buf[1] = 0x01;   /* txid */
+    big_buf[2] = 0x00; big_buf[3] = 0x00;   /* protocol_id = 0 */
+    big_buf[4] = 0x01; big_buf[5] = 0x27;   /* length = 295 = 0x0127 */
+    big_buf[6] = 0x01;                       /* unit_id */
+    big_buf[7] = 0x03;                       /* FC03 */
+
+    unsigned pushed2 = modbus_tcp_test_push_data(TEST_CTX_IDX, 92, big_buf, 301);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, pushed2,
+        "flen=301 (>MBTCP_REASM_FRAME_MAX): frame must be dropped (bogus path)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count,
+        "no push_with_client call for oversized frame");
+}
+
+/* ---- MBTCP-U-019: calc_response_timeout_ticks — 9600 baud >= 300 ms ------ */
+/* At 9600 baud, 11 bits/frame, 266 byte max response:
+ *   bytes_rate = 9600/11 = 872 (integer)
+ *   timeout_ms = ceil(266000/872) = 306 ms -> +30 reserve = 336 ms
+ *   ticks = ceil(336*500/1000) = 168 ticks (configTICK_RATE_HZ=500)
+ * 168 ticks * 2 ms/tick = 336 ms >= 300 ms: gateway must not time out too early. */
+void test_calc_timeout_9600_baud(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-019: calc_response_timeout_ticks(9600) >= 150 ticks (>= 300 ms at 500 Hz)");
+    LOG_MESSAGE();
+
+    unsigned ticks = modbus_tcp_test_calc_timeout(9600);
+    /* At configTICK_RATE_HZ=500, 300 ms = 150 ticks. */
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT_MESSAGE(150u, ticks,
+        "9600 baud timeout must be at least 300 ms worth of ticks");
+    /* Sanity upper bound: must not exceed 10 seconds (5000 ticks at 500 Hz). */
+    TEST_ASSERT_LESS_THAN_UINT_MESSAGE(5000u, ticks,
+        "9600 baud timeout must be sane (< 10 s)");
+    printf("  9600 baud -> %u ticks (%u ms)\n", ticks, ticks * 2);
+}
+
+/* ---- MBTCP-U-020: calc_response_timeout_ticks — 115200 baud > 0 ---------- */
+/* At 115200 baud the timeout is much smaller but must still be positive so
+ * that xEventGroupWaitBits() actually waits and does not immediately expire. */
+void test_calc_timeout_115200_baud(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-020: calc_response_timeout_ticks(115200) > 0");
+    LOG_MESSAGE();
+
+    unsigned ticks = modbus_tcp_test_calc_timeout(115200);
+    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(0u, ticks,
+        "115200 baud timeout must be > 0 ticks");
+    printf("  115200 baud -> %u ticks (%u ms)\n", ticks, ticks * 2);
+}
+
+/* ---- MBTCP-U-024: calc_response_timeout_ticks — baudrate=1, no division by zero -- */
+/* At baudrate=1, bytes_rate = 1/11 = 0 (integer division), which would cause
+ * division by zero without the guard added in the production code fix.
+ * After the fix (bytes_rate clamped to 1), the function must return a positive
+ * (and very large) timeout without crashing. */
+void test_calc_timeout_very_low_baud(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-024: calc_response_timeout_ticks(1) must not divide by zero, returns > 0");
+    LOG_MESSAGE();
+
+    unsigned ticks = modbus_tcp_test_calc_timeout(1);
+    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(0u, ticks,
+        "baudrate=1 must return a positive timeout (no division by zero)");
+    printf("  baudrate=1 -> %u ticks\n", ticks);
+}
+
+/* ---- MBTCP-U-021: one-pass fallback — declared length > actual bytes ------ */
+/* In separate_and_push_one_pass(), when the declared req_len + pos > len the
+ * loop breaks and the frame is skipped (not pushed, no crash). */
+void test_one_pass_fallback_short_data(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-021: one-pass fallback: declared length > actual data -> 0 pushed, no crash");
+    LOG_MESSAGE();
+
+    /* Fill all 8 reassembly slots so that socket 9 falls back to one-pass. */
+    for (int i = 1; i <= 8; i++) {
+        modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
+    }
+
+    /* Build a frame that declares MBAP length = 6 (total = 12 bytes)
+     * but supply only 8 bytes — declared length exceeds actual data. */
+    uint8_t buf[8];
+    buf[0] = 0x01; buf[1] = 0x00;   /* txid */
+    buf[2] = 0x00; buf[3] = 0x00;   /* protocol_id = 0 */
+    buf[4] = 0x00; buf[5] = 0x06;   /* MBAP length = 6 -> req_len = 12 */
+    buf[6] = 0x01;                   /* unit_id */
+    buf[7] = 0x03;                   /* FC03 */
+
+    /* Push only 8 bytes for sock 9 (table is full -> one-pass fallback). */
+    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 9, buf, 8);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, pushed,
+        "one-pass: declared length exceeds actual data -> 0 frames pushed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count,
+        "no push call when declared length > actual data");
+}
+
+/* ---- MBTCP-U-022: one-pass fallback — invalid protocol ID -> dropped ------ */
+/* modbus_tcp_check_request() rejects frames with protocol_id != 0x0000.
+ * In the fallback path the frame must be skipped (break, not pushed). */
+void test_one_pass_fallback_invalid_pid(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-022: one-pass fallback: protocol_id=1 -> dropped by check_request, 0 pushed");
+    LOG_MESSAGE();
+
+    /* Fill all 8 reassembly slots so that socket 9 uses one-pass fallback. */
+    for (int i = 1; i <= 8; i++) {
+        modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
+    }
+
+    /* Build a complete 12-byte frame but with protocol_id = 0x0001 (invalid). */
+    uint8_t buf[12];
+    buf[0] = 0x00; buf[1] = 0x02;   /* txid */
+    buf[2] = 0x00; buf[3] = 0x01;   /* protocol_id = 1 (invalid, must be 0) */
+    buf[4] = 0x00; buf[5] = 0x06;   /* MBAP length = 6 */
+    buf[6] = 0x01;                   /* unit_id */
+    buf[7] = 0x03;                   /* FC03 */
+    buf[8] = 0x00; buf[9] = 0x00;   /* start address */
+    buf[10] = 0x00; buf[11] = 0x01; /* count */
+
+    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 9, buf, 12);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, pushed,
+        "one-pass: protocol_id=1 must be dropped by check_request");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count,
+        "no push call for frame with invalid protocol ID");
+}
+
+/* ---- MBTCP-U-023: reasm path — protocol_id != 0 -> dropped by check_request */
+/* When a frame with protocol_id != 0x0000 arrives via the normal reassembly
+ * path, modbus_tcp_check_request() must reject it and it must not be pushed. */
+void test_reasm_invalid_pid_dropped(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-023: reasm path: protocol_id=0xFFFF -> dropped by check_request, 0 pushed");
+    LOG_MESSAGE();
+
+    /* Build a complete 12-byte frame with protocol_id = 0xFFFF (invalid). */
+    uint8_t buf[12];
+    buf[0] = 0x00; buf[1] = 0x03;   /* txid */
+    buf[2] = 0xFF; buf[3] = 0xFF;   /* protocol_id = 0xFFFF (invalid) */
+    buf[4] = 0x00; buf[5] = 0x06;   /* MBAP length = 6 */
+    buf[6] = 0x01;                   /* unit_id */
+    buf[7] = 0x03;                   /* FC03 */
+    buf[8] = 0x00; buf[9] = 0x00;   /* start address */
+    buf[10] = 0x00; buf[11] = 0x01; /* count */
+
+    /* Use sock 100 — table is NOT full, so this goes through the normal reasm path. */
+    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 100, buf, 12);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, pushed,
+        "reasm path: protocol_id=0xFFFF must be dropped");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count,
+        "no push call for frame with invalid protocol ID in reasm path");
+    /* After dropping, the buffer must be empty — the invalid frame was consumed. */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u,
+        modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 100),
+        "buffer must be empty after invalid-PID frame consumed/dropped");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -464,6 +679,17 @@ int main(void)
 
     RUN_TEST(test_push_bogus_length_too_small);
     RUN_TEST(test_reasm_get_negative_sock_returns_zero);
+
+    RUN_TEST(test_frame_total_len_boundary);
+
+    RUN_TEST(test_calc_timeout_9600_baud);
+    RUN_TEST(test_calc_timeout_115200_baud);
+    RUN_TEST(test_calc_timeout_very_low_baud);
+
+    RUN_TEST(test_one_pass_fallback_short_data);
+    RUN_TEST(test_one_pass_fallback_invalid_pid);
+
+    RUN_TEST(test_reasm_invalid_pid_dropped);
 
     return UNITY_END();
 }

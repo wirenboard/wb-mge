@@ -539,12 +539,23 @@ static unsigned calc_response_timeout_ticks(unsigned baudrate)
     static const unsigned max_resp_len = MODBUS_RTU_MAX_PACKET_LEN + MODBUS_RTU_RECV_RESERVE_LEN;
 
     unsigned bytes_rate = baudrate / RS485_BITS_PER_FRAME;
+    if (bytes_rate == 0) {
+        bytes_rate = 1;  /* Guard against division by zero for very low baudrates. */
+    }
     unsigned timeout_ms = ((1000 * max_resp_len) + bytes_rate - 1) / bytes_rate;
     timeout_ms += MODBUS_RTU_RECV_TOUT_RESERVE_MS;
     unsigned timeout_ticks = (timeout_ms * configTICK_RATE_HZ + 999) / 1000;
 
     return timeout_ticks;
 }
+
+#ifdef __unittest_env__
+/* Test shim: expose calc_response_timeout_ticks() for unit tests. */
+unsigned modbus_tcp_test_calc_timeout(unsigned baudrate)
+{
+    return calc_response_timeout_ticks(baudrate);
+}
+#endif /* __unittest_env__ */
 
 
 esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
