@@ -13,6 +13,9 @@
 #include "esp_log.h"
 #include "cJSON.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include <string.h>
 
 static const char *TAG = "port_manager";
@@ -25,9 +28,36 @@ typedef struct {
     serial_config_t serial_cfg_at_init; // Serial config snapshot taken at port init time,
                                         // used to detect serial parameter changes for
                                         // SNIFFER and CACHE_BUS modes.
+    SemaphoreHandle_t init_mutex;       // Serialises port_init_mode/port_deinit_mode against
+                                        // races between the HTTP set_mode handler and the
+                                        // async settings_update_task (both can trigger a
+                                        // port reinit; without serialisation they collide on
+                                        // uart_driver_install and the second one gets
+                                        // ESP_FAIL with "UART driver already installed").
 } pm_ctx_t;
 
 static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
+
+// Take the per-port init mutex. Lazily creates it on first use so we don't depend
+// on init order (port_manager_init may not have run yet when an early handler is
+// dispatched). portMAX_DELAY because the critical section is the entire reinit and
+// callers genuinely need exclusive access.
+static void pm_lock(unsigned index)
+{
+    if (pm_ctx[index].init_mutex == NULL) {
+        pm_ctx[index].init_mutex = xSemaphoreCreateMutex();
+    }
+    if (pm_ctx[index].init_mutex) {
+        xSemaphoreTake(pm_ctx[index].init_mutex, portMAX_DELAY);
+    }
+}
+
+static void pm_unlock(unsigned index)
+{
+    if (pm_ctx[index].init_mutex) {
+        xSemaphoreGive(pm_ctx[index].init_mutex);
+    }
+}
 
 // ────────────────────────────────────────────────────────────────
 // Helpers
@@ -305,6 +335,8 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
         return ESP_ERR_INVALID_ARG;
     }
 
+    pm_lock(port_index);
+
     port_deinit_mode(port_index);
 
     // Persist the new mode.
@@ -316,7 +348,9 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
         // Proceed with init anyway; mode is lost on reboot but at least works now.
     }
 
-    return port_init_mode(port_index, mode);
+    esp_err_t init_ret = port_init_mode(port_index, mode);
+    pm_unlock(port_index);
+    return init_ret;
 }
 
 esp_err_t port_manager_apply_settings(unsigned port_index)
@@ -325,11 +359,15 @@ esp_err_t port_manager_apply_settings(unsigned port_index)
         return ESP_ERR_INVALID_ARG;
     }
 
+    pm_lock(port_index);
+
     port_deinit_mode(port_index);
 
     // Re-read the mode from NVS (it may have been changed externally).
     pm_mode_t mode = read_port_mode_from_nvs(port_index);
-    return port_init_mode(port_index, mode);
+    esp_err_t ret = port_init_mode(port_index, mode);
+    pm_unlock(port_index);
+    return ret;
 }
 
 bool port_manager_check_settings_changed(unsigned port_index)
