@@ -17,11 +17,8 @@ def _baseline(api):
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
     resp = api.set_port_mode(1, "tcp_bridge")    # CRITICAL: TCP listener on port 502 only opens in tcp_bridge mode
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
-    # NB: the test sends set_port_mode(1, "modbus_bus"), but that mode does not exist in firmware
-    # (see main/bridge/port_manager.h: only disabled/tcp_bridge/sniffer/cache_bus).
-    # The call returns 400; the mode stays tcp_bridge — that is the desired state.
 
-GATEWAY_PORT_1 = 50502   # hostfwd 50502 -> QEMU:502 (modbus_bus port 1)
+GATEWAY_PORT_1 = 50502   # hostfwd 50502 -> QEMU:502 (tcp_bridge port 1)
 UART1_TCP_PORT = 5561    # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
 UART2_TCP_PORT = 5562    # UART2 chardev TCP socket (QEMU -serial tcp::5562,server,nowait)
 
@@ -48,7 +45,7 @@ def _try_connect_tcp(host, port, timeout=3.0):
 
 @pytest.mark.qemu
 def test_uart1_chardev_receives_bytes(api):
-    """Verify that UART1 TCP chardev (port 5561) receives bytes when modbus_bus is active.
+    """Verify that UART1 TCP chardev (port 5561) receives bytes when tcp_bridge is active.
 
     This is a diagnostic test: it proves that QEMU -serial tcp::5561,server,nowait
     correctly exposes UART1 TX data on the host TCP socket. If this test passes,
@@ -57,7 +54,7 @@ def test_uart1_chardev_receives_bytes(api):
     """
     # Save original port mode so we can restore it
     info = api.get_info().json()
-    original_mode = info.get("rs485_1", {}).get("port_mode", "sniffer")
+    original_mode = info.get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
     # Connect to UART1 TCP socket BEFORE switching mode (QEMU server must have a
     # client connected to buffer any bytes that UART1 transmits)

@@ -28,7 +28,7 @@ def _baseline(api):
     # tx_disabled is set per-phase by the test itself: false → true
 
 
-GATEWAY_PORT_1 = 50502   # hostfwd 50502 -> QEMU:502 (modbus_bus port 1)
+GATEWAY_PORT_1 = 50502   # hostfwd 50502 -> QEMU:502 (tcp_bridge port 1)
 UART1_TCP_PORT = 5561    # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
 
 
