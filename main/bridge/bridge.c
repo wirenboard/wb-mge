@@ -12,6 +12,7 @@
 #include "rs485_stats.h"
 
 #include "freertos/FreeRTOS.h"
+#include "array_size.h"
 #include <string.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
@@ -117,6 +118,18 @@ static bridge_mode_t string_to_bridge_mode(const char *str) {
     return BRIDGE_MODE_DISABLED;
 }
 
+/* Map a string value to its corresponding integer constant using a lookup table.
+ * Returns default_val when the string does not match any entry. */
+static int lookup_str_to_int(const char *str, const char * const keys[], const int vals[], int count, int default_val)
+{
+    for (int i = 0; i < count; i++) {
+        if (strncmp(str, keys[i], SETTING_ITEM_MAX_STR_LEN) == 0) {
+            return vals[i];
+        }
+    }
+    return default_val;
+}
+
 static esp_err_t read_serial_port_config(const int index, serial_config_t* serial_config)
 {
     static const uart_port_t port_nums[BRIDGES_COUNT] = {SERIAL_PORT_NUM_1, SERIAL_PORT_NUM_2};
@@ -139,43 +152,41 @@ static esp_err_t read_serial_port_config(const int index, serial_config_t* seria
         return ESP_FAIL;
     }
 
+    static const char * const parity_keys[] = {
+        UART_PARITY_DISABLE_STR, UART_PARITY_EVEN_STR, UART_PARITY_ODD_STR
+    };
+    static const int parity_vals[] = {
+        UART_PARITY_DISABLE, UART_PARITY_EVEN, UART_PARITY_ODD
+    };
     snprintf(key_buf, sizeof(key_buf), "parity_%d", index + 1);
     ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read parity for port %d", index + 1);
-    if (strncmp(value_str, UART_PARITY_DISABLE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->parity = UART_PARITY_DISABLE;
-    } else if (strncmp(value_str, UART_PARITY_EVEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->parity = UART_PARITY_EVEN;
-    } else if (strncmp(value_str, UART_PARITY_ODD_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->parity = UART_PARITY_ODD;
-    } else {
-        serial_config->parity = UART_PARITY_DISABLE;
-    }
+    serial_config->parity = (uart_parity_t)lookup_str_to_int(
+        value_str, parity_keys, parity_vals, ARRAY_SIZE(parity_keys), UART_PARITY_DISABLE
+    );
 
+    static const char * const stopbits_keys[] = {
+        UART_STOP_BITS_1_STR, UART_STOP_BITS_1_5_STR, UART_STOP_BITS_2_STR
+    };
+    static const int stopbits_vals[] = {
+        UART_STOP_BITS_1, UART_STOP_BITS_1_5, UART_STOP_BITS_2
+    };
     snprintf(key_buf, sizeof(key_buf), "stopbits_%d", index + 1);
     ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read stopbits for port %d", index + 1);
-    if (strncmp(value_str, UART_STOP_BITS_1_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->stopbits = UART_STOP_BITS_1;
-    } else if (strncmp(value_str, UART_STOP_BITS_1_5_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->stopbits = UART_STOP_BITS_1_5;
-    } else if (strncmp(value_str, UART_STOP_BITS_2_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->stopbits = UART_STOP_BITS_2;
-    } else {
-        serial_config->stopbits = UART_STOP_BITS_2;
-    }
+    serial_config->stopbits = (uart_stop_bits_t)lookup_str_to_int(
+        value_str, stopbits_keys, stopbits_vals, ARRAY_SIZE(stopbits_keys), UART_STOP_BITS_2
+    );
 
+    static const char * const databits_keys[] = {
+        UART_DATA_5_BITS_STR, UART_DATA_6_BITS_STR, UART_DATA_7_BITS_STR, UART_DATA_8_BITS_STR
+    };
+    static const int databits_vals[] = {
+        UART_DATA_5_BITS, UART_DATA_6_BITS, UART_DATA_7_BITS, UART_DATA_8_BITS
+    };
     snprintf(key_buf, sizeof(key_buf), "databits_%d", index + 1);
     ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read databits for port %d", index + 1);
-    if (strncmp(value_str, UART_DATA_5_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->databits = UART_DATA_5_BITS;
-    } else if (strncmp(value_str, UART_DATA_6_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->databits = UART_DATA_6_BITS;
-    } else if (strncmp(value_str, UART_DATA_7_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->databits = UART_DATA_7_BITS;
-    } else if (strncmp(value_str, UART_DATA_8_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->databits = UART_DATA_8_BITS;
-    } else {
-        serial_config->databits = UART_DATA_8_BITS;
-    }
+    serial_config->databits = (uart_word_length_t)lookup_str_to_int(
+        value_str, databits_keys, databits_vals, ARRAY_SIZE(databits_keys), UART_DATA_8_BITS
+    );
 
     return ESP_OK;
 }
