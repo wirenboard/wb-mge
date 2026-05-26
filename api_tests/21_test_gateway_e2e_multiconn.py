@@ -19,6 +19,7 @@ import time
 import pytest
 
 from conftest import build_gateway_fixture
+from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -60,51 +61,6 @@ GATEWAY_CONNECT_TIMEOUT = 5.0
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
-
-def _build_modbus_tcp_request(txid: int, unit_id: int, fc: int, addr: int, count: int) -> bytes:
-    """Build a complete Modbus TCP frame (MBAP + PDU)."""
-    pdu = struct.pack('>HH', addr, count)
-    mbap_length = 1 + 1 + len(pdu)   # unit_id + FC + PDU
-    mbap = struct.pack('>HHH', txid, 0, mbap_length)
-    return mbap + bytes([unit_id, fc]) + pdu
-
-
-def _recv_gateway_response(sock: socket.socket, deadline: float) -> bytes:
-    """Receive one complete Modbus TCP response.
-
-    Reads until at least 6 bytes (MBAP header) are available, then reads the
-    full PDU indicated by the MBAP length field.  Raises on connection close or
-    deadline exceeded.  Uses deadline rather than the socket's recv timeout so
-    that socket.timeout exceptions are caught and treated as a deadline check.
-    """
-    response = b''
-    while len(response) < 6:
-        if time.monotonic() >= deadline:
-            raise TimeoutError(f"Deadline exceeded reading MBAP header: got {response.hex()!r}")
-        try:
-            chunk = sock.recv(256)
-        except socket.timeout:
-            continue   # let the deadline check above handle timeout
-        if not chunk:
-            raise ConnectionError("Gateway closed connection unexpectedly")
-        response += chunk
-    _txid, _proto, resp_length = struct.unpack('>HHH', response[:6])
-    total_expected = 6 + resp_length
-    while len(response) < total_expected:
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"Deadline exceeded reading PDU: got {len(response)}/{total_expected} bytes "
-                f"({response.hex()!r})"
-            )
-        try:
-            chunk = sock.recv(256)
-        except socket.timeout:
-            continue   # let the deadline check above handle timeout
-        if not chunk:
-            break
-        response += chunk
-    return response
-
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -149,13 +105,13 @@ def test_gateway_multiconn_concurrent_split_frames(gateway_slave):
             sock.settimeout(GATEWAY_CONNECT_TIMEOUT)
             sock.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            req = _build_modbus_tcp_request(txid, 1, 0x03, 0, 1)
+            req = make_mbap_request(txid, 1, 0x03, 0, 1)
             # Send MBAP header only, pause, then send the PDU — exercises reassembly
             sock.sendall(req[:6])
             time.sleep(0.02)
             sock.sendall(req[6:])
             deadline = time.monotonic() + 10.0
-            response = _recv_gateway_response(sock, deadline)
+            response = recv_modbus_tcp_response(sock, deadline)
             with results_lock:
                 results[idx] = {"raw": response, "error": None, "txid": txid}
         except Exception as exc:
@@ -206,8 +162,8 @@ def test_gateway_multiconn_independent_buffers(gateway_slave):
     """
     txid_a = 300
     txid_b = 301
-    req_a = _build_modbus_tcp_request(txid_a, 1, 0x03, 0, 1)
-    req_b = _build_modbus_tcp_request(txid_b, 1, 0x03, 0, 1)
+    req_a = make_mbap_request(txid_a, 1, 0x03, 0, 1)
+    req_b = make_mbap_request(txid_b, 1, 0x03, 0, 1)
 
     sock_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock_a.settimeout(GATEWAY_CONNECT_TIMEOUT)
@@ -225,7 +181,7 @@ def test_gateway_multiconn_independent_buffers(gateway_slave):
         sock_b.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         sock_b.sendall(req_b)
         deadline_b = time.monotonic() + 10.0
-        resp_b = _recv_gateway_response(sock_b, deadline_b)
+        resp_b = recv_modbus_tcp_response(sock_b, deadline_b)
         assert len(resp_b) >= 8, f"Socket B: response too short: {resp_b.hex()!r}"
         resp_txid_b, _, _ = struct.unpack('>HHH', resp_b[:6])
         assert resp_txid_b == txid_b, \
@@ -240,7 +196,7 @@ def test_gateway_multiconn_independent_buffers(gateway_slave):
         sock_a.sendall(req_a[6:])
         sock_a.settimeout(10.0)
         deadline_a = time.monotonic() + 10.0
-        resp_a = _recv_gateway_response(sock_a, deadline_a)
+        resp_a = recv_modbus_tcp_response(sock_a, deadline_a)
         assert len(resp_a) >= 8, f"Socket A: response too short: {resp_a.hex()!r}"
         resp_txid_a, _, _ = struct.unpack('>HHH', resp_a[:6])
         assert resp_txid_a == txid_a, \
@@ -281,12 +237,12 @@ def test_gateway_multiconn_table_exhaustion(gateway_slave):
         # Send and receive sequentially to avoid overwhelming the RTU bus
         for i, s in enumerate(sockets):
             txid = 400 + i
-            req = _build_modbus_tcp_request(txid, 1, 0x03, 0, 1)
+            req = make_mbap_request(txid, 1, 0x03, 0, 1)
             s.settimeout(10.0)
             s.sendall(req)
             deadline = time.monotonic() + 10.0
             try:
-                resp = _recv_gateway_response(s, deadline)
+                resp = recv_modbus_tcp_response(s, deadline)
                 responses[i] = {"raw": resp, "txid": txid, "error": None}
             except Exception as exc:
                 responses[i] = {"raw": b"", "txid": txid, "error": str(exc)}

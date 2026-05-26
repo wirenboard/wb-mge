@@ -39,6 +39,48 @@ def recv_exactly(sock: socket.socket, n: int) -> bytes:
     return buf
 
 
+def recv_modbus_tcp_response(sock: socket.socket, deadline: float) -> bytes:
+    """Receive one complete Modbus TCP response frame within the given deadline.
+
+    Reads the 6-byte MBAP header first, then reads the PDU indicated by the
+    MBAP length field.  Uses deadline (monotonic clock) rather than a fixed
+    socket timeout so that recv() loops are bounded without re-arming the
+    socket timeout on every call.
+
+    Raises:
+        TimeoutError: if the deadline is exceeded before the full frame arrives.
+        ConnectionError: if the remote side closes the connection mid-read.
+    """
+    response = b''
+    while len(response) < 6:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Deadline exceeded reading MBAP header: got {response.hex()!r}"
+            )
+        try:
+            chunk = sock.recv(256)
+        except socket.timeout:
+            continue
+        if not chunk:
+            raise ConnectionError("Gateway closed connection unexpectedly")
+        response += chunk
+    _txid, _proto, resp_length = struct.unpack('>HHH', response[:6])
+    total_expected = 6 + resp_length
+    while len(response) < total_expected:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Deadline exceeded reading PDU: {len(response)}/{total_expected} bytes"
+            )
+        try:
+            chunk = sock.recv(256)
+        except socket.timeout:
+            continue
+        if not chunk:
+            break
+        response += chunk
+    return response
+
+
 def send_and_receive(sock: socket.socket, request: bytes) -> tuple:
     """
     Send a Modbus TCP request and receive the full response.
@@ -333,7 +375,26 @@ def run_staleness_test(host: str, port: int, api, register_map: dict) -> tuple:
             raise RuntimeError(f"Failed to set cache_value_timeout_s=1: HTTP {resp.status_code}")
         report_lines.append("[INFO] cache_value_timeout_s set to 1")
 
-        time.sleep(3)
+        # Poll until the first candidate register goes stale (returns exception 0x0B)
+        # rather than sleeping a fixed duration, so the test adapts to the actual
+        # expiry latency.
+        _first_key = list(candidates)[0][0]
+        _first_slave, _first_type, _first_addr = _first_key
+        _stale_deadline = time.monotonic() + 8.0
+        _POLL_INTERVAL = 0.2
+        _went_stale = False
+        while time.monotonic() < _stale_deadline:
+            _probe = query_register_once(host, port, _first_slave, _first_type, _first_addr)
+            if _probe == ("exception", 0x0B):
+                _went_stale = True
+                break
+            time.sleep(_POLL_INTERVAL)
+        if not _went_stale:
+            report_lines.append(
+                "[WARN] Stale poll deadline (8 s) exceeded — first register did not go stale; "
+                "cache expiry may be slower than expected"
+            )
+        # Proceed regardless — checks below will fail with a clear [FAIL] message if needed
 
         for (slave_id, reg_type, address), (_value, _age_s) in candidates:
             result = query_register_once(host, port, slave_id, reg_type, address)

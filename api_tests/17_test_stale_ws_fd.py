@@ -104,8 +104,12 @@ def test_stale_ws_fd_no_http_corruption(api):
                         pass
 
                     # Step 3: immediately open a plain HTTP connection.
-                    # Give httpd just a small window to accept the new connection on
-                    # the recycled fd, then send our HTTP request.
+                    # The 10 ms gap opens the race window: httpd may accept a new
+                    # connection on the just-freed fd before sniffer_ws_task checks
+                    # whether the fd is still a WebSocket.  Without the fix this
+                    # race fires ~18% of the time; with 30 attempts the probability
+                    # of missing it is 0.82^30 ≈ 0.3%, giving a reliable regression
+                    # signal while keeping the test deterministic enough for CI.
                     time.sleep(0.01)
 
                     try:

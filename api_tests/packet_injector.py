@@ -105,6 +105,89 @@ def build_fc03_exchange(slave: int, start_addr: int, reg_count: int,
         build_fc03_response(slave, reg_count, base_value)
 
 
+def build_fc01_request(slave: int, start_addr: int, bit_count: int) -> bytes:
+    """Build an FC01 Read Coils request frame (8 bytes incl. CRC)."""
+    pdu = bytes([
+        slave & 0xFF,
+        0x01,
+        (start_addr >> 8) & 0xFF, start_addr & 0xFF,
+        (bit_count >> 8) & 0xFF, bit_count & 0xFF,
+    ])
+    return append_crc(pdu)
+
+
+def build_fc01_response(slave: int, bit_count: int, value: int) -> bytes:
+    """Build an FC01 Read Coils response; all bits set to `value & 1`."""
+    byte_count = (bit_count + 7) // 8
+    bit_byte = 0xFF if (value & 1) else 0x00
+    body = bytearray([slave & 0xFF, 0x01, byte_count])
+    body.extend([bit_byte] * byte_count)
+    return append_crc(bytes(body))
+
+
+def build_fc01_exchange(slave: int, start_addr: int, bit_count: int,
+                        value: int) -> bytes:
+    """Concatenated FC01 request + response."""
+    return build_fc01_request(slave, start_addr, bit_count) + \
+        build_fc01_response(slave, bit_count, value)
+
+
+def build_fc02_request(slave: int, start_addr: int, bit_count: int) -> bytes:
+    """Build an FC02 Read Discrete Inputs request frame (8 bytes incl. CRC)."""
+    pdu = bytes([
+        slave & 0xFF,
+        0x02,
+        (start_addr >> 8) & 0xFF, start_addr & 0xFF,
+        (bit_count >> 8) & 0xFF, bit_count & 0xFF,
+    ])
+    return append_crc(pdu)
+
+
+def build_fc02_response(slave: int, bit_count: int, value: int) -> bytes:
+    """Build an FC02 Read Discrete Inputs response; all bits set to `value & 1`."""
+    byte_count = (bit_count + 7) // 8
+    bit_byte = 0xFF if (value & 1) else 0x00
+    body = bytearray([slave & 0xFF, 0x02, byte_count])
+    body.extend([bit_byte] * byte_count)
+    return append_crc(bytes(body))
+
+
+def build_fc02_exchange(slave: int, start_addr: int, bit_count: int,
+                        value: int) -> bytes:
+    """Concatenated FC02 request + response."""
+    return build_fc02_request(slave, start_addr, bit_count) + \
+        build_fc02_response(slave, bit_count, value)
+
+
+def build_fc04_request(slave: int, start_addr: int, reg_count: int) -> bytes:
+    """Build an FC04 Read Input Registers request frame (8 bytes incl. CRC)."""
+    pdu = bytes([
+        slave & 0xFF,
+        0x04,
+        (start_addr >> 8) & 0xFF, start_addr & 0xFF,
+        (reg_count >> 8) & 0xFF, reg_count & 0xFF,
+    ])
+    return append_crc(pdu)
+
+
+def build_fc04_response(slave: int, reg_count: int, base_value: int) -> bytes:
+    """Build an FC04 Read Input Registers response; register[i] = base_value + i."""
+    byte_count = reg_count * 2
+    body = bytearray([slave & 0xFF, 0x04, byte_count])
+    for i in range(reg_count):
+        value = (base_value + i) & 0xFFFF
+        body.append((value >> 8) & 0xFF)
+        body.append(value & 0xFF)
+    return append_crc(bytes(body))
+
+
+def build_fc04_exchange(slave: int, start_addr: int, reg_count: int,
+                        base_value: int) -> bytes:
+    """Concatenated FC04 request + response."""
+    return build_fc04_request(slave, start_addr, reg_count) + \
+        build_fc04_response(slave, reg_count, base_value)
+
+
 # Static bad-CRC packet identical to the old mock's choice:
 # slave=1, FC03, addr=0x0000, count=0x0001, CRC bytes 0xFF 0xFF (correct
 # would be 0x0A 0x84).  Kept as a constant so multiple tests share the same
@@ -205,6 +288,7 @@ class PacketInjector:
         interval: float = DEFAULT_INTERVAL,
         bad_crc_period: int = DEFAULT_BAD_CRC_PERIOD,
         include_bad_crc: bool = True,
+        include_all_fc: bool = True,   # inject FC01/FC02/FC04 at startup
     ):
         self.port = port
         self.slave = slave
@@ -217,6 +301,7 @@ class PacketInjector:
         self.interval = interval
         self.bad_crc_period = bad_crc_period
         self.include_bad_crc = include_bad_crc
+        self.include_all_fc = include_all_fc
 
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -254,6 +339,14 @@ class PacketInjector:
                     self.static_count,
                     self.static_base + self.static_start,
                 ))
+
+            # Inject one exchange for each additional FC type so the device cache
+            # contains coil, discrete-input, and input-register entries in addition
+            # to the holding-register entries from FC03.
+            if self.include_all_fc:
+                inject_bytes(self.port, build_fc01_exchange(self.slave, 100, 1, 1), sock=self._sock)
+                inject_bytes(self.port, build_fc02_exchange(self.slave, 200, 1, 0), sock=self._sock)
+                inject_bytes(self.port, build_fc04_exchange(self.slave, 300, 1, 3000), sock=self._sock)
 
             # One live exchange immediately so tests can see traffic without
             # waiting for the first interval tick.

@@ -265,6 +265,18 @@ def test_cache_multimaster(api):
 
             assert register_map, "Register map CSV is empty — cache reports entries but CSV has none"
 
+            # Log which FC types are covered so gaps are visible in CI output
+            covered_fc_types = {reg_type for (_sid, reg_type, _addr) in register_map}
+            all_fc_types = {"holding", "input", "coil", "discrete"}
+            missing_fc_types = all_fc_types - covered_fc_types
+            print(f"  FC types in cache: {sorted(covered_fc_types)}")
+            if missing_fc_types:
+                print(f"  [WARN] FC types not covered: {sorted(missing_fc_types)}")
+            assert covered_fc_types == all_fc_types, (
+                f"Cache register map missing FC types: {sorted(missing_fc_types)}. "
+                f"PacketInjector must inject FC01/FC02/FC03/FC04 exchanges."
+            )
+
             num_threads = 3
             results = {}
             start_barrier = threading.Barrier(num_threads)

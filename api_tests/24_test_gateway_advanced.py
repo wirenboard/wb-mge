@@ -19,6 +19,7 @@ import time
 import pytest
 
 from conftest import build_gateway_fixture
+from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 
 
 # ---------------------------------------------------------------------------
@@ -67,46 +68,6 @@ gateway_slave = build_gateway_fixture(
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-def _build_modbus_tcp_request(txid: int, unit_id: int, fc: int, addr: int, count: int) -> bytes:
-    """Build a complete Modbus TCP frame (MBAP + PDU)."""
-    pdu = struct.pack('>HH', addr, count)
-    mbap_length = 1 + 1 + len(pdu)   # unit_id + FC + PDU
-    mbap = struct.pack('>HHH', txid, 0, mbap_length)
-    return mbap + bytes([unit_id, fc]) + pdu
-
-
-def _recv_modbus_tcp_response(sock: socket.socket, deadline: float) -> bytes:
-    """Receive one complete Modbus TCP response frame within deadline."""
-    response = b''
-    while len(response) < 6:
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"Deadline exceeded reading MBAP header: got {response.hex()!r}"
-            )
-        try:
-            chunk = sock.recv(256)
-        except socket.timeout:
-            continue
-        if not chunk:
-            raise ConnectionError("Gateway closed connection unexpectedly")
-        response += chunk
-    _txid, _proto, resp_length = struct.unpack('>HHH', response[:6])
-    total_expected = 6 + resp_length
-    while len(response) < total_expected:
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"Deadline exceeded reading PDU: {len(response)}/{total_expected} bytes"
-            )
-        try:
-            chunk = sock.recv(256)
-        except socket.timeout:
-            continue
-        if not chunk:
-            break
-        response += chunk
-    return response
-
-
 # ---------------------------------------------------------------------------
 # Test #7: RTU timeout visible at TCP level
 # ---------------------------------------------------------------------------
@@ -130,7 +91,7 @@ def test_gateway_rtu_timeout_no_response(gateway_slave):
         gw_sock.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
 
         txid = 0x0700
-        request = _build_modbus_tcp_request(txid, 1, 0x03, 0, 1)
+        request = make_mbap_request(txid, 1, 0x03, 0, 1)
         gw_sock.sendall(request)
 
         # Wait up to 3 seconds for ANY response (timeout response or connection close).
@@ -161,9 +122,9 @@ def test_gateway_rtu_timeout_no_response(gateway_slave):
         # A new request on the same connection must produce a valid response.
         gateway_slave.drop_count = 0
         txid2 = 0x0701
-        request2 = _build_modbus_tcp_request(txid2, 1, 0x03, 0, 1)
+        request2 = make_mbap_request(txid2, 1, 0x03, 0, 1)
         gw_sock.sendall(request2)
-        resp2 = _recv_modbus_tcp_response(gw_sock, time.monotonic() + 5.0)
+        resp2 = recv_modbus_tcp_response(gw_sock, time.monotonic() + 5.0)
         resp_txid2 = struct.unpack('>H', resp2[:2])[0]
         assert resp_txid2 == txid2, (
             f"Second request TID mismatch: expected {txid2:#06x}, got {resp_txid2:#06x}. "
@@ -195,10 +156,10 @@ def test_gateway_exception_forwarded_to_tcp(gateway_slave):
 
             txid = 0x0800
             unit_id = 0x01
-            request = _build_modbus_tcp_request(txid, unit_id, 0x03, 0, 1)
+            request = make_mbap_request(txid, unit_id, 0x03, 0, 1)
             gw_sock.sendall(request)
 
-            resp = _recv_modbus_tcp_response(gw_sock, time.monotonic() + 5.0)
+            resp = recv_modbus_tcp_response(gw_sock, time.monotonic() + 5.0)
             assert len(resp) >= 9, f"Exception response too short: {resp.hex()!r}"
 
             resp_txid = struct.unpack('>H', resp[:2])[0]
@@ -245,7 +206,7 @@ def test_gateway_fc06_write_single_register(gateway_slave):
         request = mbap + bytes([unit_id, 0x06]) + pdu_bytes
         gw_sock.sendall(request)
 
-        resp = _recv_modbus_tcp_response(gw_sock, time.monotonic() + 5.0)
+        resp = recv_modbus_tcp_response(gw_sock, time.monotonic() + 5.0)
         assert len(resp) >= 8, f"FC06 response too short: {resp.hex()!r}"
 
         resp_txid = struct.unpack('>H', resp[:2])[0]
@@ -285,10 +246,10 @@ def test_gateway_back_to_back_requests(gateway_slave):
 
         for i in range(NUM_REQUESTS):
             txid = 0x1000 + i
-            request = _build_modbus_tcp_request(txid, 1, 0x03, i, 1)
+            request = make_mbap_request(txid, 1, 0x03, i, 1)
             gw_sock.sendall(request)
 
-            resp = _recv_modbus_tcp_response(gw_sock, time.monotonic() + 10.0)
+            resp = recv_modbus_tcp_response(gw_sock, time.monotonic() + 10.0)
             assert len(resp) >= 9, f"Request {i}: response too short: {resp.hex()!r}"
 
             resp_txid = struct.unpack('>H', resp[:2])[0]
@@ -336,18 +297,18 @@ def test_gateway_client_disconnect_during_rtu_wait(gateway_slave):
     try:
         gw_sock_a.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
         txid_a = 0x1100
-        request_a = _build_modbus_tcp_request(txid_a, 1, 0x03, 0, 1)
+        request_a = make_mbap_request(txid_a, 1, 0x03, 0, 1)
         gw_sock_a.sendall(request_a)
         # Immediately close — gateway is still waiting for RTU response
     finally:
         gw_sock_a.close()
 
-    # Wait for gateway to fully exhaust A's RTU timeout and return to idle.
-    # At 9600 baud: RTU timeout ~336 ms + 30 ms reserve + QEMU overhead.
-    # 2 s is conservative enough to guarantee A's transaction is fully drained.
-    time.sleep(2.0)
-
-    # Allow slave to respond normally to B's request
+    # Wait 0.5 s before resetting drop_count to guarantee:
+    # 1. QEMU UART has delivered A's RTU frame to the slave (< 50 ms typically).
+    # 2. The slave has processed and dropped it (drop_count consumed).
+    # This ensures the gateway's RTU timeout fires, which is the condition under test.
+    # B's 10 s socket timeout absorbs the remaining wait comfortably.
+    time.sleep(0.5)
     gateway_slave.drop_count = 0
 
     # Client B: must receive a valid Modbus TCP response frame (any TID)
@@ -356,10 +317,10 @@ def test_gateway_client_disconnect_during_rtu_wait(gateway_slave):
     try:
         gw_sock_b.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
         txid_b = 0x1101
-        request_b = _build_modbus_tcp_request(txid_b, 1, 0x03, 0, 1)
+        request_b = make_mbap_request(txid_b, 1, 0x03, 0, 1)
         gw_sock_b.sendall(request_b)
 
-        resp_b = _recv_modbus_tcp_response(gw_sock_b, time.monotonic() + 10.0)
+        resp_b = recv_modbus_tcp_response(gw_sock_b, time.monotonic() + 10.0)
         # Gateway alive check: we must receive at least a valid MBAP header
         assert len(resp_b) >= 8, (
             f"Client B response too short — gateway may have crashed: {resp_b.hex()!r}"
@@ -401,13 +362,17 @@ def test_gateway_disconnect_tid_mismatch_regression(gateway_slave):
     gw_sock_a.settimeout(5.0)
     try:
         gw_sock_a.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
-        request_a = _build_modbus_tcp_request(0x1100, 1, 0x03, 0, 1)
+        request_a = make_mbap_request(0x1100, 1, 0x03, 0, 1)
         gw_sock_a.sendall(request_a)
     finally:
         gw_sock_a.close()
 
-    # Wait for RTU timeout to drain A's request
-    time.sleep(2.0)
+    # Wait 0.5 s before resetting drop_count to ensure that:
+    # 1. The QEMU UART slave has received and dropped A's RTU request (< 50 ms typically).
+    # 2. The gateway's RTU timeout (~336 ms at 9600 baud) has fired, exercising the
+    #    pending_tid cleanup path that this test validates.
+    # B's 10 s socket timeout comfortably absorbs the remaining wait.
+    time.sleep(0.5)
     gateway_slave.drop_count = 0
 
     gw_sock_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -415,9 +380,9 @@ def test_gateway_disconnect_tid_mismatch_regression(gateway_slave):
     try:
         gw_sock_b.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
         txid_b = 0x1101
-        gw_sock_b.sendall(_build_modbus_tcp_request(txid_b, 1, 0x03, 0, 1))
+        gw_sock_b.sendall(make_mbap_request(txid_b, 1, 0x03, 0, 1))
 
-        resp_b = _recv_modbus_tcp_response(gw_sock_b, time.monotonic() + 10.0)
+        resp_b = recv_modbus_tcp_response(gw_sock_b, time.monotonic() + 10.0)
         assert len(resp_b) >= 8, f"No response from gateway: {resp_b.hex()!r}"
         resp_txid_b = struct.unpack('>H', resp_b[:2])[0]
         # After the fix in on_tcp_conn_close(): B must receive its own TID, not A's stale TID

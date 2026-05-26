@@ -103,7 +103,12 @@ def test_session_management(api):
     """Session management test"""
     response = api.get_session()
     assert response.status_code == 200
-    print("✓ Session status check works")
+    # Handler must send Content-Length: 0 with no body
+    assert response.content == b"", (
+        f"GET /session body must be empty (Content-Length: 0), "
+        f"got {len(response.content)} byte(s): {response.content[:50]!r}"
+    )
+    print("✓ Session status check works, body is empty")
 
     response = api.logout()
     assert response.status_code == 200

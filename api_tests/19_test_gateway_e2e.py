@@ -11,6 +11,7 @@ import time
 import pytest
 
 from conftest import build_gateway_fixture
+from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -33,15 +34,6 @@ GATEWAY_HOST_PORT = 50502
 UART1_TCP_PORT = 5561
 # Fake register value returned by the RTU slave for any register read
 FAKE_VALUE = 0x1234
-
-
-def _build_modbus_tcp_request(txid: int, unit_id: int, fc: int, addr: int, count: int) -> bytes:
-    """Build a complete Modbus TCP MBAP + PDU frame."""
-    pdu = struct.pack('>HH', addr, count)
-    # MBAP: transaction_id(2) + protocol_id(2, always 0) + length(2) + unit_id(1) + fc(1) + PDU
-    mbap_length = 1 + 1 + len(pdu)   # unit_id + FC + PDU
-    mbap = struct.pack('>HHH', txid, 0, mbap_length)
-    return mbap + bytes([unit_id, fc]) + pdu
 
 
 # Use shared gateway fixture from conftest (R5)
@@ -79,7 +71,7 @@ def test_gateway_e2e_whole_frame(gateway_slave):
     start_addr = 0x0000
     count = 2          # Read 2 registers
 
-    request = _build_modbus_tcp_request(txid, unit_id, fc, start_addr, count)
+    request = make_mbap_request(txid, unit_id, fc, start_addr, count)
 
     gw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     gw_sock.settimeout(5.0)
@@ -87,28 +79,9 @@ def test_gateway_e2e_whole_frame(gateway_slave):
         gw_sock.connect(("127.0.0.1", GATEWAY_HOST_PORT))
         gw_sock.sendall(request)
 
-        # Read Modbus TCP response (MBAP header is 6 bytes)
-        response = b''
-        deadline = time.monotonic() + 5.0
-        while len(response) < 6 and time.monotonic() < deadline:
-            chunk = gw_sock.recv(256)
-            if not chunk:
-                break
-            response += chunk
-
-        # Parse MBAP header
-        assert len(response) >= 6, (
-            f"Gateway returned too few bytes for MBAP header: {response.hex()!r}"
-        )
+        response = recv_modbus_tcp_response(gw_sock, time.monotonic() + 5.0)
         resp_txid, resp_proto, resp_length = struct.unpack('>HHH', response[:6])
-
-        # Read the rest of the frame if not yet received
         total_expected = 6 + resp_length
-        while len(response) < total_expected and time.monotonic() < deadline:
-            chunk = gw_sock.recv(256)
-            if not chunk:
-                break
-            response += chunk
 
         assert len(response) >= total_expected, (
             f"Gateway returned incomplete frame: got {len(response)} bytes, "
@@ -176,7 +149,7 @@ def test_gateway_e2e_split_frame(gateway_slave):
     start_addr = 0x0000
     count = 2
 
-    request = _build_modbus_tcp_request(txid, unit_id, fc, start_addr, count)
+    request = make_mbap_request(txid, unit_id, fc, start_addr, count)
 
     # Split: first 6 bytes (MBAP header only), pause, rest of frame
     part1 = request[:6]
@@ -194,27 +167,9 @@ def test_gateway_e2e_split_frame(gateway_slave):
         # Send the rest of the frame
         gw_sock.sendall(part2)
 
-        # Expect a valid Modbus TCP response
-        response = b''
-        deadline = time.monotonic() + 5.0
-        while len(response) < 6 and time.monotonic() < deadline:
-            chunk = gw_sock.recv(256)
-            if not chunk:
-                break
-            response += chunk
-
-        assert len(response) >= 6, (
-            f"Gateway returned too few bytes — split-frame was dropped: {response.hex()!r}"
-        )
-
+        response = recv_modbus_tcp_response(gw_sock, time.monotonic() + 5.0)
         resp_txid, resp_proto, resp_length = struct.unpack('>HHH', response[:6])
         total_expected = 6 + resp_length
-
-        while len(response) < total_expected and time.monotonic() < deadline:
-            chunk = gw_sock.recv(256)
-            if not chunk:
-                break
-            response += chunk
 
         assert len(response) >= total_expected, (
             f"Split-frame response incomplete: got {len(response)} bytes, "

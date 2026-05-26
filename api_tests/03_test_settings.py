@@ -286,6 +286,121 @@ def test_settings(api):
             print("✓ Original settings restored")
 
 
+def test_per_field_validation(api):
+    """Validate each field independently so that each validator is exercised.
+
+    The firmware stops validation on the first error in a batch request, so
+    sending all invalid fields at once only exercises the first validator.
+    Here each field is sent alone so we verify every validator fires.
+    """
+    original_response = api.get_settings()
+    assert original_response.status_code == 200
+    original_settings = original_response.json()
+
+    # List of (field_path_dict, description) tuples.
+    # Each entry is a minimal settings dict with exactly one invalid field.
+    invalid_cases = [
+        ({"hostname": "invalid_hostname!"}, "hostname with special chars"),
+        ({"web_port": 70000}, "web_port out of range (>65535)"),
+        ({"web_port": 0}, "web_port out of range (0)"),
+        ({"wifi": {"mode": "disabled", "ap_auth": "close", "sta_auth": "wep",
+                   "ap_ssid": "", "sta_ssid": "valid", "ap_ip_static": "192.168.4.1",
+                   "ap_mask_static": "255.255.255.0", "ap_gw_static": "192.168.4.1",
+                   "sta_ip_static": "192.168.1.2", "sta_mask_static": "255.255.255.0",
+                   "sta_gw_static": "192.168.1.1"}},
+         "wifi.ap_ssid empty"),
+        ({"wifi": {"mode": "disabled", "ap_auth": "close", "sta_auth": "wep",
+                   "ap_ssid": "a" * 50, "sta_ssid": "valid", "ap_ip_static": "192.168.4.1",
+                   "ap_mask_static": "255.255.255.0", "ap_gw_static": "192.168.4.1",
+                   "sta_ip_static": "192.168.1.2", "sta_mask_static": "255.255.255.0",
+                   "sta_gw_static": "192.168.1.1"}},
+         "wifi.ap_ssid too long"),
+        ({"wifi": {"mode": "disabled", "ap_auth": "close", "sta_auth": "wep",
+                   "ap_ssid": "valid", "sta_ssid": "valid", "ap_ip_static": "123.456.789.101",
+                   "ap_mask_static": "255.255.255.0", "ap_gw_static": "192.168.4.1",
+                   "sta_ip_static": "192.168.1.2", "sta_mask_static": "255.255.255.0",
+                   "sta_gw_static": "192.168.1.1"}},
+         "wifi.ap_ip_static invalid IP"),
+        ({"wifi": {"mode": "disabled", "ap_auth": "close", "sta_auth": "wep",
+                   "ap_ssid": "valid", "sta_ssid": "valid", "ap_ip_static": "192.168.4.1",
+                   "ap_mask_static": "abc.def.ghi.jkl", "ap_gw_static": "192.168.4.1",
+                   "sta_ip_static": "192.168.1.2", "sta_mask_static": "255.255.255.0",
+                   "sta_gw_static": "192.168.1.1"}},
+         "wifi.ap_mask_static invalid mask"),
+        ({"ethernet": {"ip_static": "123.456.789.101", "mask_static": "255.255.255.0",
+                       "gw_static": "192.168.1.1", "dhcpc": True}},
+         "ethernet.ip_static invalid IP"),
+        ({"ethernet": {"ip_static": "192.168.1.2", "mask_static": 456,
+                       "gw_static": "192.168.1.1", "dhcpc": True}},
+         "ethernet.mask_static wrong type (int)"),
+        ({"rs485_1": {"term": 1, "fail_safe": "off", "tx_disabled": False,
+                      "baudrate": 123456, "stopbits": "1", "parity": "none",
+                      "databits": "8", "bridge": {"mode": "server", "port": 502,
+                      "ip": "0.0.0.0", "modbus": "true"}}},
+         "rs485_1.baudrate invalid value"),
+        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
+                      "baudrate": 9600, "stopbits": "2.5", "parity": "none",
+                      "databits": "8", "bridge": {"mode": "server", "port": 502,
+                      "ip": "0.0.0.0", "modbus": "true"}}},
+         "rs485_1.stopbits invalid value"),
+        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
+                      "baudrate": 9600, "stopbits": "1", "parity": "all",
+                      "databits": "8", "bridge": {"mode": "server", "port": 502,
+                      "ip": "0.0.0.0", "modbus": "true"}}},
+         "rs485_1.parity invalid value"),
+        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
+                      "baudrate": 9600, "stopbits": "1", "parity": "none",
+                      "databits": "2", "bridge": {"mode": "server", "port": 502,
+                      "ip": "0.0.0.0", "modbus": "true"}}},
+         "rs485_1.databits invalid value"),
+        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
+                      "baudrate": 9600, "stopbits": "1", "parity": "none",
+                      "databits": "8", "bridge": {"mode": "client", "port": 0,
+                      "ip": "0.0.0.0", "modbus": "true"}}},
+         "rs485_1.bridge.port=0 invalid"),
+        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
+                      "baudrate": 9600, "stopbits": "1", "parity": "none",
+                      "databits": "8", "bridge": {"mode": "client", "port": 65536,
+                      "ip": "0.0.0.0", "modbus": "true"}}},
+         "rs485_1.bridge.port=65536 out of range"),
+        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
+                      "baudrate": 9600, "stopbits": "1", "parity": "none",
+                      "databits": "8", "bridge": {"mode": "client", "port": 502,
+                      "ip": "201.250.252.256", "modbus": "true"}}},
+         "rs485_1.bridge.ip invalid"),
+    ]
+
+    failed_cases = []
+    try:
+        for settings_dict, description in invalid_cases:
+            response = api.update_settings(settings_dict)
+            assert response.status_code == 200, \
+                f"[{description}] HTTP {response.status_code} (expected 200)"
+            result = response.json()
+            if result.get("success") != False:
+                failed_cases.append(
+                    f"[{description}] Expected success=false, got: {result}"
+                )
+                continue
+            print(f"  ✓ Rejected: {description}")
+
+            # Verify settings were not saved
+            check = api.get_settings()
+            assert check.status_code == 200
+            current = check.json()
+            assert current == original_settings, \
+                f"[{description}] Invalid settings were saved! Current != original"
+    finally:
+        # Restore original settings in case any were accidentally saved
+        api.update_settings(original_settings)
+
+    assert not failed_cases, (
+        f"{len(failed_cases)} validation(s) did not fire:\n" +
+        "\n".join(failed_cases)
+    )
+    print(f"✓ Per-field validation: all {len(invalid_cases)} cases correctly rejected")
+
+
 def test_validation_patterns(api):
     """Patterns and constraints validation test"""
     # Save original settings so they can be restored in the finally block
