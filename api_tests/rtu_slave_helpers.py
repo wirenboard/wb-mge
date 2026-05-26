@@ -49,6 +49,10 @@ class ModbusRtuSlaveThread(threading.Thread):
         self.connected = False            # True once TCP connection is established
         self._stop_event = threading.Event()
         self._sock = None
+        # FC16 write tracking — set when a valid FC16 frame is received
+        self.last_write_addr = None       # starting address of the last FC16 write
+        self.last_write_qty = None        # quantity of registers in the last FC16 write
+        self.last_write_values = None     # list of register values from the last FC16 write
 
     # ------------------------------------------------------------------ #
     # Thread entry point                                                   #
@@ -85,10 +89,61 @@ class ModbusRtuSlaveThread(threading.Thread):
 
     def _process_buffer(self, buf: bytes) -> bytes:
         """Parse and respond to all complete RTU frames in buf; return leftover bytes."""
-        # Minimum RTU request: slave(1) + FC(1) + addr(2) + count(2) + CRC(2) = 8 bytes
-        while len(buf) >= 8:
-            slave_id = buf[0]
+        while True:
+            # Need at least slave_id + FC to determine frame type
+            if len(buf) < 4:
+                break
+
             fc = buf[1]
+
+            if fc == 0x10:
+                # FC16 (Write Multiple Registers): variable-length frame
+                # Frame: slave_id(1) + FC(1) + start_addr(2) + qty(2) + byte_count(1)
+                #        + data(byte_count) + CRC(2)
+                if len(buf) < 7:
+                    break   # need at least 7 bytes to read byte_count field
+                byte_count = buf[6]
+                req_len = 9 + byte_count  # 7-byte header + data + 2-byte CRC
+                if len(buf) < req_len:
+                    break   # incomplete FC16 frame — wait for more data
+                # Validate CRC over the complete frame (excluding 2-byte CRC suffix)
+                crc_recv = (buf[req_len - 1] << 8) | buf[req_len - 2]
+                crc_calc = _crc16(buf[:req_len - 2])
+                if crc_recv != crc_calc:
+                    # CRC mismatch: discard one byte and retry (re-sync)
+                    buf = buf[1:]
+                    continue
+                # Parse FC16 fields
+                slave_id = buf[0]
+                addr = (buf[2] << 8) | buf[3]
+                qty = (buf[4] << 8) | buf[5]
+                # Store write data for test verification (only when lengths match)
+                if byte_count == qty * 2 and qty > 0:
+                    self.last_write_addr = addr
+                    self.last_write_qty = qty
+                    self.last_write_values = list(
+                        struct.unpack(f'>{qty}H', buf[7:7 + byte_count])
+                    )
+                # Silent drop: simulate RTU slave not responding (for timeout tests)
+                if self.drop_count > 0:
+                    self.drop_count -= 1
+                    self.request_count += 1
+                    buf = buf[req_len:]
+                    continue
+                response = self._build_response(slave_id, fc, addr, qty)
+                if response and self._sock:
+                    try:
+                        self._sock.sendall(response)
+                    except OSError:
+                        return buf
+                self.request_count += 1
+                buf = buf[req_len:]
+                continue
+
+            # Standard fixed-length request: slave(1) + FC(1) + addr(2) + count(2) + CRC(2) = 8 bytes
+            if len(buf) < 8:
+                break
+            slave_id = buf[0]
             addr = (buf[2] << 8) | buf[3]
             count = (buf[4] << 8) | buf[5]
             crc_recv = (buf[7] << 8) | buf[6]   # little-endian in RTU
@@ -118,7 +173,7 @@ class ModbusRtuSlaveThread(threading.Thread):
         return buf
 
     def _build_response(self, slave_id: int, fc: int, addr: int, count: int):
-        """Build a Modbus RTU response for FC01/FC02/FC03/FC04, or exception if configured."""
+        """Build a Modbus RTU response for FC01/FC02/FC03/FC04/FC16, or exception if configured."""
         # Return configured exception if this FC is in the exception map
         if fc in self.exception_fc:
             exc_code = self.exception_fc[fc]
@@ -139,6 +194,9 @@ class ModbusRtuSlaveThread(threading.Thread):
                     coil_bytes[i // 8] |= (1 << (i % 8))
             data = bytes([byte_count]) + bytes(coil_bytes)
             return _build_rtu_response(slave_id, fc, data)
+        if fc == 0x10:
+            # FC16 (Write Multiple Registers): echo response = slave_id + FC + start_addr + qty
+            return _build_rtu_response(slave_id, fc, struct.pack('>HH', addr, count))
         # Unsupported FC: return exception 0x01
         return _build_rtu_response(slave_id, fc | 0x80, bytes([0x01]))
 

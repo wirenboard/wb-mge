@@ -72,12 +72,16 @@ class TestBuildResponse:
         assert resp[1] == (0x06 | 0x80)   # exception FC
         assert resp[2] == 0x01            # exception code: Illegal Function
 
-    def test_fc16_returns_exception_0x01(self):
-        """FC16 is unsupported: must return exception code 0x01."""
-        resp = self.slave._build_response(slave_id=1, fc=0x10, addr=0, count=0)
+    def test_fc16_returns_echo_response(self):
+        """FC16 (Write Multiple Registers) is now supported: must return echo response."""
+        resp = self.slave._build_response(slave_id=1, fc=0x10, addr=0x0010, count=3)
         assert resp is not None
-        assert resp[1] == (0x10 | 0x80)
-        assert resp[2] == 0x01
+        # Echo response: slave_id(1) + FC(1) + start_addr(2) + qty(2) + CRC(2) = 8 bytes
+        assert resp[0] == 1          # slave_id
+        assert resp[1] == 0x10      # FC16 (not exception)
+        assert resp[2:4] == b'\x00\x10'  # start_addr = 0x0010
+        assert resp[4:6] == b'\x00\x03'  # qty = 3
+        assert len(resp) == 8       # 6 header + 2 CRC
 
     def test_exception_fc_overrides_normal_response(self):
         """exception_fc dict: FC03 -> exception 0x02 overrides normal FC03 response."""
