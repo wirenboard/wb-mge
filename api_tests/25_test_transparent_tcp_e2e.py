@@ -8,7 +8,7 @@ Coverage:
 12. Basic round-trip — 16 arbitrary bytes TCP → serial → TCP (echo via UART chardev).
 13. Multiple clients — last-writer routing: last client's bytes are echoed back to it.
 14. Zero-byte edge case — null byte + real data; connection stays open throughout.
-15. Client mode (skipped — requires additional QEMU network setup).
+15. Client mode — firmware connects outbound to a Python TCP echo server on the host.
 """
 
 import socket
@@ -137,6 +137,140 @@ class _UartEchoThread(threading.Thread):
                 self._sock.close()
             except OSError:
                 pass
+
+
+class _TcpEchoServer(threading.Thread):
+    """TCP echo server that listens on a random free port and echoes all received bytes.
+
+    Suitable for transparent bridge client mode tests: firmware connects outbound
+    to this server, which reflects all received bytes back to the firmware.
+    """
+
+    def __init__(self, host: str = "0.0.0.0"):
+        super().__init__(daemon=True)
+        self.host = host
+        self._stop_event = threading.Event()
+        self._server_sock = None
+        self.port = None              # assigned after bind
+        self._ready_event = threading.Event()
+        self._accepted_event = threading.Event()  # set when firmware connects
+
+
+    def run(self) -> None:
+        """Bind, listen, accept one client, echo all data until stop()."""
+        self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server_sock.bind((self.host, 0))   # port=0 → OS picks a free port
+        self.port = self._server_sock.getsockname()[1]
+        self._server_sock.listen(1)
+        self._server_sock.settimeout(0.5)
+        self._ready_event.set()
+
+        client_sock = None
+        try:
+            # Accept one client connection (firmware)
+            while not self._stop_event.is_set():
+                try:
+                    client_sock, _ = self._server_sock.accept()
+                    self._accepted_event.set()   # firmware connected
+                    break
+                except socket.timeout:
+                    continue
+            if client_sock is None:
+                return
+
+            client_sock.settimeout(0.5)
+            # Echo loop
+            while not self._stop_event.is_set():
+                try:
+                    data = client_sock.recv(256)
+                    if not data:
+                        break
+                    client_sock.sendall(data)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+        finally:
+            if client_sock:
+                try:
+                    client_sock.close()
+                except OSError:
+                    pass
+            try:
+                self._server_sock.close()
+            except OSError:
+                pass
+
+    def wait_ready(self, timeout: float = 5.0) -> bool:
+        """Block until server is bound and listening."""
+        return self._ready_event.wait(timeout=timeout)
+
+    def wait_accepted(self, timeout: float = 10.0) -> bool:
+        """Block until firmware has connected to the echo server."""
+        return self._accepted_event.wait(timeout=timeout)
+
+
+    def stop(self) -> None:
+        """Signal the server to stop."""
+        self._stop_event.set()
+        if self._server_sock:
+            try:
+                self._server_sock.close()
+            except OSError:
+                pass
+
+
+def _setup_client_mode_bridge(api, port_num: int, bridge_ip: str, bridge_port: int,
+                               uart_tcp_port: int) -> tuple:
+    """Configure firmware for transparent TCP client mode.
+
+    Returns (original_settings, rs485_key) for teardown.
+    Raises AssertionError on failure.
+    """
+    resp = api.get_settings()
+    assert resp.status_code == 200, f"GET /settings failed: {resp.status_code}"
+    original_settings = resp.json()
+    rs485_key = f"rs485_{port_num}"
+
+    # Disable port first to release UART driver
+    resp = api.set_port_mode(port_num, "disabled")
+    assert resp.status_code == 200, f"Failed to disable port {port_num}: {resp.status_code}"
+    time.sleep(0.3)
+
+    # Apply bridge settings: client mode
+    port_settings = dict(original_settings.get(rs485_key, {}))
+    port_settings["bridge"] = {
+        "mode": "client",
+        "port": bridge_port,
+        "ip": bridge_ip,
+        "modbus": False,
+    }
+    resp = api.update_settings({rs485_key: port_settings})
+    assert resp.status_code == 200, f"POST /settings failed: {resp.status_code}"
+    result = resp.json()
+    assert result.get("success") is True, f"Settings update not successful: {result}"
+    time.sleep(0.3)
+
+    # Activate tcp_bridge mode
+    resp = api.set_port_mode(port_num, "tcp_bridge")
+    assert resp.status_code == 200, \
+        f"POST /ports/{port_num}/mode tcp_bridge failed: {resp.status_code}"
+
+    return original_settings, rs485_key
+
+
+def _teardown_client_mode_bridge(api, port_num: int, original_settings: dict,
+                                  rs485_key: str) -> None:
+    """Restore firmware to original state after client mode test."""
+    api.set_port_mode(port_num, "disabled")
+    time.sleep(0.3)
+    restore_resp = api.update_settings(original_settings)
+    if restore_resp.status_code != 200:
+        print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+    original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
+    api.set_port_mode(port_num, original_mode)
+    time.sleep(0.3)
 
 
 # ---------------------------------------------------------------------------
@@ -328,16 +462,88 @@ def test_transparent_zero_bytes_edge_case(transparent_bridge):
 
 
 # ---------------------------------------------------------------------------
-# Test #15: Client mode (skipped)
+# Test #15: Client mode — firmware connects outbound to a TCP echo server
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason="client mode requires additional QEMU network setup: "
-                          "a TCP echo server must be running on host at 10.0.2.2")
 @pytest.mark.qemu
+@pytest.mark.timeout(30)
 def test_transparent_client_mode(api):
-    """Transparent bridge client mode: firmware connects outbound to TCP server.
+    """Transparent bridge client mode: firmware connects outbound to a TCP echo server.
 
-    Requires bridge.mode=client with bridge.ip=10.0.2.2 (QEMU host IP).
-    Skipped until host-side echo server infrastructure is added to conftest.
+    Setup:
+    - Start a Python TCP echo server on the host at a random free port.
+    - Configure firmware: bridge.mode=client, bridge.ip=10.0.2.2, bridge.port=<echo_port>.
+    - Activate tcp_bridge mode — firmware connects outbound to the echo server.
+    - Connect to UART1 chardev (port 5561), send bytes, expect echo back.
+
+    Data flow:
+      UART1_chardev → firmware_UART1 → firmware_tcp_client → echo_server
+                   ← firmware_UART1 ← firmware_tcp_client ←
+
+    10.0.2.2 is the QEMU user-network host IP (standard QEMU convention).
     """
-    pass
+    # Step 1: verify UART1 chardev is reachable
+    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
+    if probe is None:
+        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
+    probe.close()
+
+    # Step 2: start echo server on host
+    echo_server = _TcpEchoServer(host="0.0.0.0")
+    echo_server.start()
+    assert echo_server.wait_ready(timeout=5.0), "Echo server did not bind within 5 s"
+    echo_port = echo_server.port
+    print(f"Echo server listening on 0.0.0.0:{echo_port}")
+
+    original_settings = None
+    rs485_key = None
+    uart_sock = None
+    try:
+        # Step 3: configure firmware for client mode
+        original_settings, rs485_key = _setup_client_mode_bridge(
+            api, port_num=1,
+            bridge_ip="10.0.2.2",   # QEMU host IP
+            bridge_port=echo_port,
+            uart_tcp_port=UART1_TCP_PORT,
+        )
+
+        # Step 4: wait for firmware to connect to echo server (outbound connection).
+        # The firmware tcp_client_task tries to connect every ~1 s after tcp_bridge starts.
+        # We poll echo_server.wait_accepted() which signals when firmware accepted.
+        firmware_connected = echo_server.wait_accepted(timeout=10.0)
+        assert firmware_connected, (
+            "Firmware did not connect to the echo server within 10 s. "
+            "Check that 10.0.2.2 is reachable from QEMU (QEMU user-network host IP)."
+        )
+
+        # Step 5: connect to UART1 chardev and test data flow
+        uart_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        uart_sock.settimeout(5.0)
+        uart_sock.connect((GATEWAY_HOST, UART1_TCP_PORT))
+
+        test_data = b'\xCA\xFE\xBA\xBE'
+        uart_sock.sendall(test_data)
+
+        received = b''
+        deadline = time.monotonic() + 5.0
+        while len(received) < len(test_data) and time.monotonic() < deadline:
+            try:
+                chunk = uart_sock.recv(64)
+                if not chunk:
+                    break
+                received += chunk
+            except socket.timeout:
+                continue
+
+        assert received == test_data, (
+            f"Client mode round-trip failed: sent={test_data.hex()!r}, got={received.hex()!r}"
+        )
+        print(f"✓ Transparent bridge client mode: {len(test_data)} bytes echoed via 10.0.2.2:{echo_port}")
+
+    finally:
+        if uart_sock:
+            uart_sock.close()
+        if original_settings is not None:
+            _teardown_client_mode_bridge(api, 1, original_settings, rs485_key)
+        echo_server.stop()
+        echo_server.join(timeout=3.0)
