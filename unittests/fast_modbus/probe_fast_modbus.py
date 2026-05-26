@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-Fast Modbus Support Probe Test Client
-Usage: python3 test_fast_modbus_probe.py <IP> <PORT>
+Fast Modbus Support Probe — manual diagnostic tool.
+
+This script is NOT a pytest test. It is a standalone command-line utility
+for manually probing whether a device supports WB Fast Modbus over TCP.
+
+Usage:
+    python3 probe_fast_modbus.py <IP_ADDRESS> <PORT>
+    python3 probe_fast_modbus.py 192.168.1.100 502
 """
 
 import socket
@@ -89,8 +95,8 @@ def test_fast_modbus_probe(ip, port):
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python3 test_fast_modbus_probe.py <IP_ADDRESS> <PORT>")
-        print("Example: python3 test_fast_modbus_probe.py 192.168.1.100 502")
+        print("Usage: python3 probe_fast_modbus.py <IP_ADDRESS> <PORT>")
+        print("Example: python3 probe_fast_modbus.py 192.168.1.100 502")
         sys.exit(1)
 
     ip = sys.argv[1]
