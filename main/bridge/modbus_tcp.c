@@ -334,6 +334,17 @@ static void on_tcp_conn_close(tcp_desc_t *desc, int client_sock)
     mb_tcp_task_ctx_t *ctx = find_ctx_by_tcp_desc(desc);
     if (ctx) {
         mbtcp_reasm_free(ctx, client_sock);
+        /* Clear stale pending state if the disconnected client was the one
+         * whose RTU request is currently in flight. Without this, the next
+         * client receives a response with the disconnected client's TID.
+         * Also clear pending_client_sock to prevent fd-reuse aliasing: if a new
+         * client gets the same fd before process_data_from_serial() fires, the
+         * RTU response would be sent to the wrong client. */
+        if (ctx->pending_client_sock == client_sock) {
+            ctx->pending_tid         = 0;
+            ctx->pending_slave_id    = 0;
+            ctx->pending_client_sock = -1;
+        }
     }
 }
 
