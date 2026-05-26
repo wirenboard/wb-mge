@@ -20,6 +20,8 @@ AUX_SRC += mocks/setting_items.c
 AUX_SRC += mocks/rs485_stats.c
 AUX_SRC += mocks/auth.c
 AUX_SRC += mocks/json_utils.c
+AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
+AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/debug_log.c
 AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c
 
