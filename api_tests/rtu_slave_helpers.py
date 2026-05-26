@@ -163,3 +163,81 @@ class ModbusRtuSlaveThread(threading.Thread):
                 return True
             time.sleep(0.05)
         return False
+
+
+class _UartNoEchoThread(threading.Thread):
+    """Connects to QEMU UART chardev and reads data without ever responding.
+
+    Simulates a silent RS-485 line (no device replies). Used for SN-02 tests
+    that verify the sniffer emits a {type: "timeout"} WebSocket packet when
+    the RTU slave does not respond within the configured timeout.
+
+    Usage:
+        with _UartNoEchoThread(host="127.0.0.1", port=5561) as t:
+            t.wait_connected(timeout=5.0)
+            # ... trigger a Modbus request that will time out ...
+    """
+    def __init__(self, host: str = '127.0.0.1', port: int = 5561,
+                 connect_timeout: float = 5.0):
+        super().__init__(daemon=True)
+        self.host = host
+        self.port = port
+        self.connect_timeout = connect_timeout
+        self.connected = False
+        self.bytes_received = 0       # count of bytes absorbed (for diagnostics)
+        self._stop_event = threading.Event()
+        self._sock = None
+
+    def run(self) -> None:
+        """Connect and drain data without sending any response."""
+        try:
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._sock.settimeout(self.connect_timeout)
+            self._sock.connect((self.host, self.port))
+            self.connected = True
+            self._sock.settimeout(0.5)  # short recv timeout to check stop event
+        except OSError:
+            return
+
+        while not self._stop_event.is_set():
+            try:
+                chunk = self._sock.recv(256)
+                if not chunk:
+                    break
+                self.bytes_received += len(chunk)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+    def stop(self) -> None:
+        """Signal the thread to stop and close the socket."""
+        self._stop_event.set()
+        if self._sock:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+
+    def wait_connected(self, timeout: float = 5.0) -> bool:
+        """Block until connected (or timeout). Returns True if connected."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.connected:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.stop()
+        self.join(timeout=3.0)
+        return False
