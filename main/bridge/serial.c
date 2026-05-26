@@ -132,8 +132,16 @@ static void uart_event_task(void *pvParameters)
 
     free(dtmp);
     ESP_LOGI(TAG, "UART[%d] event task finished", desc->port_num);
-    xEventGroupSetBits(desc->event_group, EVENT_TASK_FINISHED);
+    /* IMPORTANT: clear task_handle BEFORE signalling EVENT_TASK_FINISHED.
+     * serial_deinit() blocks waiting on that bit and, on wake, may free(desc)
+     * before this task is rescheduled. If the heap reuses the same address for
+     * the next serial_init(), writing task_handle = NULL afterwards would
+     * clobber the freshly initialised handle and the *next* serial_deinit()
+     * would see "UART[N] not initialized" and skip uart_driver_delete() —
+     * leaving the driver installed and breaking subsequent uart_driver_install().
+     */
     desc->task_handle = NULL;
+    xEventGroupSetBits(desc->event_group, EVENT_TASK_FINISHED);
     vTaskDelete(NULL);
 }
 
