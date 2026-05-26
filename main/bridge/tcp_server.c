@@ -37,43 +37,66 @@ static int create_listen_socket(int port)
     ESP_LOGD(TAG, "Creating listen socket on port %d", port);
 
     int addr_family = (int)AF_INET;
-    int ip_protocol = 0;
+    int ip_protocol = IPPROTO_IP;
     struct sockaddr_storage dest_addr;
 
     struct sockaddr_in *dest_addr_ip4 = (struct sockaddr_in *)&dest_addr;
     dest_addr_ip4->sin_addr.s_addr = htonl(INADDR_ANY);
     dest_addr_ip4->sin_family = AF_INET;
     dest_addr_ip4->sin_port = htons(port);
-    ip_protocol = IPPROTO_IP;
 
-    int listen_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
-    if (listen_sock < 0) {
-        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+    /* Retry bind/listen up to N times with backoff. Under rapid mode toggles
+     * (test_uart_teardown_no_crash) the previous deinit's listen socket may
+     * still be in lwIP's pcb table when this init runs — bind() / listen()
+     * returns errno EADDRINUSE/ECONNABORTED transiently. SO_REUSEADDR alone is
+     * not sufficient: it allows reusing TIME_WAIT addresses but not addresses
+     * still actively bound to a not-yet-released netconn. */
+    const int max_attempts = 10;
+    int listen_sock = -1;
+    for (int attempt = 0; attempt < max_attempts; attempt++) {
+        listen_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
+        if (listen_sock < 0) {
+            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+            return listen_sock;
+        }
+
+        int opt = 1;
+        setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        if (bind(listen_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr)) != 0) {
+            int e = errno;
+            close(listen_sock);
+            listen_sock = -1;
+            if (attempt + 1 < max_attempts) {
+                ESP_LOGW(TAG, "bind(port=%d) errno %d, retry %d/%d in 100ms",
+                         port, e, attempt + 1, max_attempts);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+            ESP_LOGE(TAG, "Socket unable to bind: errno %d (gave up after %d attempts)",
+                     e, max_attempts);
+            return -1;
+        }
+
+        if (listen(listen_sock, 5) != 0) {
+            int e = errno;
+            close(listen_sock);
+            listen_sock = -1;
+            if (attempt + 1 < max_attempts) {
+                ESP_LOGW(TAG, "listen(port=%d) errno %d, retry %d/%d in 100ms",
+                         port, e, attempt + 1, max_attempts);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+            ESP_LOGE(TAG, "Error occurred during listen: errno %d (gave up after %d attempts)",
+                     e, max_attempts);
+            return -1;
+        }
+
+        ESP_LOGD(TAG, "Socket listening on port %d", port);
         return listen_sock;
     }
-
-    int opt = 1;
-    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    ESP_LOGD(TAG, "Socket created");
-
-    int err = bind(listen_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-    if (err != 0) {
-        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
-        ESP_LOGE(TAG, "IPPROTO: %d", addr_family);
-        close(listen_sock);
-        return -1;
-    }
-    ESP_LOGD(TAG, "Socket bound, port %d", port);
-
-    err = listen(listen_sock, 5);
-    if (err != 0) {
-        ESP_LOGE(TAG, "Error occurred during listen: errno %d", errno);
-        close(listen_sock);
-        return -1;
-    }
-
-    ESP_LOGD(TAG, "Socket listening");
-    return listen_sock;
+    return -1;
 }
 
 
