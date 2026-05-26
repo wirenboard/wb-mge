@@ -368,17 +368,24 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock, uint8_t *da
 }
 
 
-// Wait for active TCP connection
+// Wait for active TCP connection.
+//
+// Returns immediately when at least one client is connected OR the queue has
+// data to drain. The queue may still hold a request from a client that
+// connected briefly and disconnected before this task woke up from its
+// vTaskDelay — without the queue-non-empty check, the previous version of
+// this function would packet_queue_clear() those bytes and the request would
+// be silently lost (UART never sees the RTU frame).
 static void wait_tcp_connection(const mb_tcp_task_ctx_t* ctx)
 {
-    bool wait_conn = false;
+    bool logged = false;
 
     while ((tcp_server_connected(ctx->tcp_desc) != ESP_OK) &&
-            !check_task_exit_req(ctx)) {
-        if (!wait_conn) {
+           (packet_queue_count(ctx->tcp_queue) == 0) &&
+           !check_task_exit_req(ctx)) {
+        if (!logged) {
             ESP_LOGI(TAG, "Waiting for TCP connection...");
-            packet_queue_clear(ctx->tcp_queue);
-            wait_conn = true;
+            logged = true;
         }
         vTaskDelay(pdMS_TO_TICKS(WAIT_LOOP_DELAY_MS));  // Delay to avoid hanging the system
     }
