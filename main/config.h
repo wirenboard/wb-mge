@@ -26,6 +26,7 @@
 #define DEFAULT_ETH_GW_STATIC       "192.168.0.1"
 #define DEFAULT_ETH_DHCPC           "true"
 
+#define DEFAULT_WIFI_PERM_DISABLE   "false"
 #define DEFAULT_WIFI_MODE           WIFI_MODE_AP_STR
 #define DEFAULT_WIFI_AUTH           WIFI_AUTH_WPA2_PSK_STR
 #define DEFAULT_AP_IP_STATIC        "192.168.5.1"

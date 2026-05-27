@@ -513,7 +513,10 @@ esp_err_t network_init(void)
         ESP_LOGE(TAG, "Unable to read Ethernet settings");
     }
 
-    if (read_wifi_settings(&current_settings.wifi_settings) == ESP_OK) {
+    // Skip WiFi initialization entirely when permanently disabled
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        ESP_LOGI(TAG, "WiFi permanently disabled — skipping WiFi init");
+    } else if (read_wifi_settings(&current_settings.wifi_settings) == ESP_OK) {
         init_wifi(&current_settings.wifi_settings, current_settings.hostname);
         update_sys_info_wifi_mac();
         update_sys_info_wifi_state(&current_settings.wifi_settings);
@@ -593,6 +596,11 @@ esp_err_t network_update_eth_settings(void)
 
 bool network_check_wifi_settings_changed(void)
 {
+    // When WiFi is permanently disabled, settings never change
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        return false;
+    }
+
     wifi_settings_t new_settings;
     esp_err_t ret = read_wifi_settings(&new_settings);
     if (ret != ESP_OK) {
@@ -645,6 +653,12 @@ bool network_check_wifi_settings_changed(void)
 
 esp_err_t network_update_wifi_settings(void)
 {
+    // When WiFi is permanently disabled, silently succeed without touching WiFi hardware
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        ESP_LOGD(TAG, "WiFi permanently disabled — skipping WiFi settings update");
+        return ESP_OK;
+    }
+
     ESP_LOGD(TAG, "Updating WiFi settings...");
 
     char hostname[SETTING_ITEM_MAX_STR_LEN] = {0};

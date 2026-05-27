@@ -24,20 +24,20 @@ const addedWifiNetworks = ref([]);
 const computedWifiNetworks = computed(() => {
   const networks: Partial<WiFiNetwork>[] = [...addedWifiNetworks.value, ...wifi.value];
   // @ts-ignore
-  if (data.value?.wifi.sta_ssid && !networks.find((item: WiFiNetwork) => item?.ssid === data.value?.wifi.sta_ssid)) {
-    networks.unshift({ ssid: data.value?.wifi.sta_ssid });
+  if (data.value?.wifi?.sta_ssid && !networks.find((item: WiFiNetwork) => item?.ssid === data.value?.wifi?.sta_ssid)) {
+    networks.unshift({ ssid: data.value?.wifi?.sta_ssid });
   }
   return networks;
 });
 
-watch(() => data.value?.wifi.mode, () => {
-  if (initData.value?.wifi.mode !== 'none') {
+watch(() => data.value?.wifi?.mode, () => {
+  if (initData.value?.wifi?.mode !== 'none') {
     startPolling();
   }
 }, { immediate: true });
 
-watch([() => data.value?.wifi.sta_ssid, () => wifi.value], () => {
-  selectedWifi.value = computedWifiNetworks.value.find(item => item.ssid === data.value?.wifi.sta_ssid);
+watch([() => data.value?.wifi?.sta_ssid, () => wifi.value], () => {
+  selectedWifi.value = computedWifiNetworks.value.find(item => item.ssid === data.value?.wifi?.sta_ssid);
 });
 
 onBeforeRouteLeave(() => {
@@ -46,28 +46,31 @@ onBeforeRouteLeave(() => {
 
 const securityProtocol: WiFiSecuityProtocol[] = ['open', 'wpa2_psk', 'wpa3_psk'];
 
+// Non-optional accessor used in the template; only rendered when !data.wifi_perm_disable (wifi is present)
+const wifiSettings = computed(() => data.value!.wifi as NonNullable<Settings['wifi']>);
+
 const updateWifiSettings = async () => {
   const val: Partial<Settings['wifi']> = {
-    mode: data.value!.wifi.mode,
+    mode: data.value!.wifi!.mode,
   };
 
-  if (data.value!.wifi.mode === 'ap') {
-    val.ap_ssid = data.value!.wifi.ap_ssid;
-    val.ap_auth = data.value!.wifi.ap_auth;
-    val.ap_pass = data.value!.wifi.ap_auth === 'open' ? '' : data.value!.wifi.ap_pass;
-    val.ap_ip_static = data.value!.wifi.ap_ip_static;
-    val.ap_mask_static = data.value!.wifi.ap_mask_static;
-    val.ap_gw_static = data.value!.wifi.ap_gw_static;
-  } else if (data.value!.wifi.mode === 'sta') {
-    val.sta_ssid = data.value?.wifi.sta_ssid;
-    val.sta_auth = data.value!.wifi.sta_auth;
-    val.sta_pass = val.sta_auth === 'open' ? '' : data.value!.wifi.sta_pass;
-    val.sta_dhcpc = data.value!.wifi.sta_dhcpc;
+  if (data.value!.wifi!.mode === 'ap') {
+    val.ap_ssid = data.value!.wifi!.ap_ssid;
+    val.ap_auth = data.value!.wifi!.ap_auth;
+    val.ap_pass = data.value!.wifi!.ap_auth === 'open' ? '' : data.value!.wifi!.ap_pass;
+    val.ap_ip_static = data.value!.wifi!.ap_ip_static;
+    val.ap_mask_static = data.value!.wifi!.ap_mask_static;
+    val.ap_gw_static = data.value!.wifi!.ap_gw_static;
+  } else if (data.value!.wifi!.mode === 'sta') {
+    val.sta_ssid = data.value?.wifi?.sta_ssid;
+    val.sta_auth = data.value!.wifi!.sta_auth;
+    val.sta_pass = val.sta_auth === 'open' ? '' : data.value!.wifi!.sta_pass;
+    val.sta_dhcpc = data.value!.wifi!.sta_dhcpc;
 
     if (!val.sta_dhcpc) {
-      val.sta_ip_static = data.value!.wifi.sta_ip_static;
-      val.sta_gw_static = data.value!.wifi.sta_gw_static;
-      val.sta_mask_static = data.value!.wifi.sta_mask_static;
+      val.sta_ip_static = data.value!.wifi!.sta_ip_static;
+      val.sta_gw_static = data.value!.wifi!.sta_gw_static;
+      val.sta_mask_static = data.value!.wifi!.sta_mask_static;
     }
   }
 
@@ -75,14 +78,14 @@ const updateWifiSettings = async () => {
 };
 
 const changeWifi = ({ ssid }: WiFiNetwork) => {
-  data.value!.wifi.sta_ssid = ssid;
+  data.value!.wifi!.sta_ssid = ssid;
 };
 
 const addNetwork = () => {
   const val = { ssid: searhcValue.value };
   // @ts-ignore
   addedWifiNetworks.value.push(val);
-  data.value!.wifi.sta_ssid = searhcValue.value;
+  data.value!.wifi!.sta_ssid = searhcValue.value;
   wifiSelect.value.deactivate();
   selectedWifi.value = val;
 };
@@ -138,6 +141,7 @@ const addNetwork = () => {
           </form>
         </section>
 
+        <template v-if="!data.wifi_perm_disable">
         <section class="card">
           <form @submit.prevent="updateWifiSettings">
             <div class="card-header">
@@ -153,19 +157,19 @@ const addNetwork = () => {
             <div class="card-body">
               <div class="field">
                 <label for="wifi_mode">{{ t('wifi_mode') }}</label>
-                <select id="wifi_mode" v-model="data.wifi.mode" name="wifi_mode">
+                <select id="wifi_mode" v-model="wifiSettings.mode" name="wifi_mode">
                   <option value="none">{{ t('disabled') }}</option>
                   <option value="ap">{{ t('ap') }}</option>
                   <option value="sta">{{ t('sta') }}</option>
                 </select>
               </div>
 
-              <template v-if="data.wifi.mode === 'ap'">
+              <template v-if="wifiSettings.mode === 'ap'">
                 <div class="field">
                   <label for="ap_ssid">{{ t('ssid') }}</label>
                   <input
                     id="ap_ssid"
-                    v-model="data.wifi.ap_ssid"
+                    v-model="wifiSettings.ap_ssid"
                     type="text"
                     name="ap_ssid"
                     pattern="^[\x20-\x7E]{1,31}$"
@@ -177,17 +181,17 @@ const addNetwork = () => {
                 </div>
                 <div class="field">
                   <label for="ap_auth">{{ t('wifi_pass_security') }}</label>
-                  <select id="ap_auth" v-model="data.wifi.ap_auth" name="ap_auth">
+                  <select id="ap_auth" v-model="wifiSettings.ap_auth" name="ap_auth">
                     <option v-for="item in securityProtocol" :key="item" :value="item">{{ t(item) }}</option>
                   </select>
                 </div>
 
-                <template v-if="data.wifi.ap_auth !== 'open'">
+                <template v-if="wifiSettings.ap_auth !== 'open'">
                   <div class="field">
                     <label for="ap_pass">{{ t('password') }}</label>
                     <input
                       id="ap_pass"
-                      v-model="data.wifi.ap_pass"
+                      v-model="wifiSettings.ap_pass"
                       required
                       :placeholder="t('pass_placeholder')"
                       pattern="[\x20-\x7E]{8,63}"
@@ -202,19 +206,19 @@ const addNetwork = () => {
 
                 <div class="field">
                   <label for="ap_ip_static">{{ t('ip') }}</label>
-                  <IpInput id="ap_ip_static" v-model="data.wifi.ap_ip_static" name="ap_ip_static" />
+                  <IpInput id="ap_ip_static" v-model="wifiSettings.ap_ip_static" name="ap_ip_static" />
                 </div>
                 <div class="field">
                   <label for="ap_mask_static">{{ t('mask') }}</label>
-                  <IpInput id="ap_mask_static" v-model="data.wifi.ap_mask_static" name="ap_mask_static" />
+                  <IpInput id="ap_mask_static" v-model="wifiSettings.ap_mask_static" name="ap_mask_static" />
                 </div>
                 <div class="field">
                   <label for="ap_gw_static">{{ t('gateway') }}</label>
-                  <IpInput id="ap_gw_static" v-model="data.wifi.ap_gw_static" name="ap_gw_static" />
+                  <IpInput id="ap_gw_static" v-model="wifiSettings.ap_gw_static" name="ap_gw_static" />
                 </div>
               </template>
 
-              <template v-if="data.wifi.mode === 'sta'">
+              <template v-if="wifiSettings.mode === 'sta'">
                 <div class="field">
                   <label for="sta_ssid">{{ t('ssid') }}</label>
                   <div class="network-dropdown">
@@ -224,7 +228,7 @@ const addNetwork = () => {
                       label="ssid"
                       track-by="ssid"
                       open-direction="bottom"
-                      :placeholder="isPolling ? (data?.wifi.sta_ssid || '') : ''"
+                      :placeholder="isPolling ? (wifiSettings.sta_ssid || '') : ''"
                       :options="computedWifiNetworks"
                       :disabled="isPolling"
                       :max-height="600"
@@ -263,41 +267,42 @@ const addNetwork = () => {
 
                 <div class="field">
                   <label for="sta_auth">{{ t('wifi_pass_security') }}</label>
-                  <select id="sta_auth" v-model="data.wifi.sta_auth" name="sta_auth">
+                  <select id="sta_auth" v-model="wifiSettings.sta_auth" name="sta_auth">
                     <option v-for="item in securityProtocol" :key="item" :value="item">{{ t(item) }}</option>
                   </select>
                 </div>
 
-                <template v-if="data.wifi.sta_auth !== 'open'">
+                <template v-if="wifiSettings.sta_auth !== 'open'">
                   <div class="field">
                     <label for="sta_pass">{{ t('password') }}</label>
-                    <input id="sta_pass" v-model="data.wifi.sta_pass" required :placeholder="t('pass_placeholder')" type="password" name="sta_pass" />
+                    <input id="sta_pass" v-model="wifiSettings.sta_pass" required :placeholder="t('pass_placeholder')" type="password" name="sta_pass" />
                   </div>
                 </template>
 
                 <div class="field">
                   <label for="sta_dhcpc">{{ t('dhcp_client') }}</label>
-                  <div class="network-switchEnd"><Switch id="sta_dhcpc" v-model="data.wifi.sta_dhcpc" /></div>
+                  <div class="network-switchEnd"><Switch id="sta_dhcpc" v-model="wifiSettings.sta_dhcpc" /></div>
                 </div>
 
-                <template v-if="!data.wifi.sta_dhcpc">
+                <template v-if="!wifiSettings.sta_dhcpc">
                   <div class="field">
                     <label for="sta_ip_static">{{ t('ip') }}</label>
-                    <IpInput id="sta_ip_static" v-model="data.wifi.sta_ip_static" name="sta_ip_static" />
+                    <IpInput id="sta_ip_static" v-model="wifiSettings.sta_ip_static" name="sta_ip_static" />
                   </div>
                   <div class="field">
                     <label for="sta_gw_static">{{ t('mask') }}</label>
-                    <IpInput id="sta_mask_static" v-model="data.wifi.sta_mask_static" name="sta_mask_static" />
+                    <IpInput id="sta_mask_static" v-model="wifiSettings.sta_mask_static" name="sta_mask_static" />
                   </div>
                   <div class="field">
                     <label for="sta_mask_static">{{ t('gateway') }}</label>
-                    <IpInput id="sta_gw_static" v-model="data.wifi.sta_gw_static" name="sta_gw_static" />
+                    <IpInput id="sta_gw_static" v-model="wifiSettings.sta_gw_static" name="sta_gw_static" />
                   </div>
                 </template>
               </template>
             </div>
           </form>
         </section>
+        </template>
       </div>
     </div>
   </Layout>

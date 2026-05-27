@@ -26,6 +26,7 @@
 #define KEY_ETH_GW_STATIC           "eth_gw_static"
 #define KEY_ETH_DHCPC               "eth_dhcpc"
 
+#define KEY_WIFI_PERM_DISABLE       "wifi_perm_dis"
 #define KEY_WIFI_MODE               "wifi_mode"
 #define KEY_WIFI_AUTH_AP            "ap_auth"
 #define KEY_WIFI_AUTH_STA           "sta_auth"

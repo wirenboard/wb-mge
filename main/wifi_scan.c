@@ -1,6 +1,7 @@
 #include "wifi_scan.h"
 #include "json_utils.h"
 #include "auth.h"
+#include "setting_items.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -234,6 +235,12 @@ static esp_err_t wifi_scan_start(void)
 {
     if (wifi_scan_mutex == NULL) {
         ESP_LOGE(TAG, "WiFi scan not initialized");
+        return ESP_FAIL;
+    }
+
+    // When WiFi is permanently disabled, scanning is not available
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        ESP_LOGE(TAG, "WiFi scan not available: WiFi is permanently disabled");
         return ESP_FAIL;
     }
 

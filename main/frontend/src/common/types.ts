@@ -49,6 +49,7 @@ export interface Info {
     con_sta: boolean;
     con_sta_ssid: string;
     enabled: boolean;
+    perm_disabled?: boolean;
     sta_ip: string;
     sta_mask: string;
     sta_gw: string;
@@ -107,7 +108,8 @@ export interface Settings {
   cache_modbus_port: number;
   cache_modbus_server_enabled: boolean;
   cache_value_timeout_s: number;
-  wifi: {
+  wifi_perm_disable?: boolean;
+  wifi?: {
     mode: WiFiMode;
     ap_ip_static: string;
     ap_mask_static: string;

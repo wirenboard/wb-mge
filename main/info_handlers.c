@@ -55,35 +55,45 @@ static esp_err_t info_build_network_json(cJSON **network_json)
         return ESP_FAIL;
     }
 
-    cJSON_AddBoolToObject(wifi, "enabled", sys_info.wifi_enabled);
-    cJSON_AddStringToObject(wifi, "mode", sys_info.wifi_mode);
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        // WiFi hardware was never initialised — only report the disabled/perm_disabled state.
+        // Do NOT call esp_wifi_get_mac or esp_wifi_sta_get_ap_info here: they will crash
+        // because the WiFi driver was never started.
+        cJSON_AddBoolToObject(wifi, "enabled", false);
+        cJSON_AddBoolToObject(wifi, "perm_disabled", true);
+    } else {
+        cJSON_AddBoolToObject(wifi, "enabled", sys_info.wifi_enabled);
+        cJSON_AddBoolToObject(wifi, "perm_disabled", false);
+        cJSON_AddStringToObject(wifi, "mode", sys_info.wifi_mode);
 
-    cJSON_AddBoolToObject(wifi, "con_sta", sys_info.wifi_sta_is_connected);
-    cJSON_AddStringToObject(wifi, "con_sta_ssid", sys_info.wifi_sta_con_ssid);
-    cJSON_AddStringToObject(wifi, "sta_ip", sys_info.wifi_sta_ip);
-    cJSON_AddStringToObject(wifi, "sta_mask", sys_info.wifi_sta_mask);
-    cJSON_AddStringToObject(wifi, "sta_gw", sys_info.wifi_sta_gw);
+        cJSON_AddBoolToObject(wifi, "con_sta", sys_info.wifi_sta_is_connected);
+        cJSON_AddStringToObject(wifi, "con_sta_ssid", sys_info.wifi_sta_con_ssid);
+        cJSON_AddStringToObject(wifi, "sta_ip", sys_info.wifi_sta_ip);
+        cJSON_AddStringToObject(wifi, "sta_mask", sys_info.wifi_sta_mask);
+        cJSON_AddStringToObject(wifi, "sta_gw", sys_info.wifi_sta_gw);
 
-    cJSON_AddNumberToObject(wifi, "con_ap", sys_info.wifi_ap_connections_count);
-    cJSON_AddStringToObject(wifi, "ap_ip", sys_info.wifi_ap_ip);
-    cJSON_AddStringToObject(wifi, "ap_mask", sys_info.wifi_ap_mask);
-    cJSON_AddStringToObject(wifi, "ap_gw", sys_info.wifi_ap_gw);
+        cJSON_AddNumberToObject(wifi, "con_ap", sys_info.wifi_ap_connections_count);
+        cJSON_AddStringToObject(wifi, "ap_ip", sys_info.wifi_ap_ip);
+        cJSON_AddStringToObject(wifi, "ap_mask", sys_info.wifi_ap_mask);
+        cJSON_AddStringToObject(wifi, "ap_gw", sys_info.wifi_ap_gw);
 
-    // Add WiFi STA RSSI
-    if (sys_info.wifi_sta_is_connected) {
-        wifi_ap_record_t ap_info;
-        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-            cJSON_AddNumberToObject(wifi, "sta_rssi", ap_info.rssi);
+        // Add WiFi STA RSSI
+        if (sys_info.wifi_sta_is_connected) {
+            wifi_ap_record_t ap_info;
+            if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+                cJSON_AddNumberToObject(wifi, "sta_rssi", ap_info.rssi);
+            } else {
+                cJSON_AddNumberToObject(wifi, "sta_rssi", -128);
+            }
         } else {
             cJSON_AddNumberToObject(wifi, "sta_rssi", -128);
         }
-    } else {
-        cJSON_AddNumberToObject(wifi, "sta_rssi", -128);
+
+        cJSON_AddNumberToObject(wifi, "ap_channel", WIFI_CHAN_AP);
+        cJSON_AddStringToObject(wifi, "sta_mac", sys_info.wifi_sta_mac);
+        cJSON_AddStringToObject(wifi, "ap_mac", sys_info.wifi_ap_mac);
     }
 
-    cJSON_AddNumberToObject(wifi, "ap_channel", WIFI_CHAN_AP);
-    cJSON_AddStringToObject(wifi, "sta_mac", sys_info.wifi_sta_mac);
-    cJSON_AddStringToObject(wifi, "ap_mac", sys_info.wifi_ap_mac);
     cJSON_AddItemToObject(*network_json, "wifi", wifi);
 
     return ESP_OK;
@@ -175,6 +185,12 @@ static esp_err_t info_build_ap_clients_json(cJSON **clients_json)
 {
     if (clients_json == NULL) {
         return ESP_FAIL;
+    }
+
+    // When WiFi is permanently disabled, return an empty clients list
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        *clients_json = cJSON_CreateArray();
+        return (*clients_json != NULL) ? ESP_OK : ESP_FAIL;
     }
 
     *clients_json = cJSON_CreateArray();

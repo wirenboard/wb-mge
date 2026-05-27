@@ -174,6 +174,9 @@ static const setting_item_t setting_items[] = {
     {KEY_IO_BUS_ENABLED, DEFAULT_IO_BUS_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_VOUT, DEFAULT_485_VOUT, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
+    // WiFi permanent disable flag (one-way: can be set to true but never cleared back to false)
+    {KEY_WIFI_PERM_DISABLE, DEFAULT_WIFI_PERM_DISABLE, validate_bool, SETTING_ITEM_TYPE_BOOL},
+
     // WiFi settings
     {KEY_WIFI_MODE, DEFAULT_WIFI_MODE, validate_wifi_mode, SETTING_ITEM_TYPE_STRING},
     {KEY_WIFI_AUTH_AP, DEFAULT_WIFI_AUTH, validate_wifi_auth, SETTING_ITEM_TYPE_STRING},

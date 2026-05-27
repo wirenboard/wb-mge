@@ -340,3 +340,34 @@ pkill -9 -f qemu-system-xtensa
 - Initial run downloads ~2 GB of toolchains/components (EIM + xtensa toolchain + IDF managed components); expect ~10 minutes on a fresh host.
 - ESP-IDF tools occupy ~5 GB under `/root/.espressif`. Allocate at least 15 GB of free disk before starting.
 - `make qemu-create-flash-image` depends on `build-idf-project-qemu` and compiles QEMU firmware (incremental) before merging images. If `build/` contains a hardware build, it automatically runs `fullclean` and rebuilds for QEMU.
+
+## Permanently Disabling Wi-Fi
+
+WB-MGE supports a one-way permanent Wi-Fi disable mode. When activated, the Wi-Fi hardware driver
+is never initialised — the radio stays off across all boots. The Wi-Fi settings section is hidden
+in the web UI. This mode cannot be reversed via the API.
+
+**Activate via API (requires reboot to take effect):**
+
+```bash
+# Authenticate first
+curl -s -c cookies.txt -X POST http://192.168.0.7/auth \
+  -H 'Content-Type: application/json' \
+  -d '{"login":"admin","pass":"admin"}'
+
+# Permanently disable Wi-Fi
+curl -s -b cookies.txt -X POST http://192.168.0.7/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"wifi_perm_disable": true}'
+
+# Reboot to apply
+curl -s -b cookies.txt -X POST http://192.168.0.7/cmd \
+  -H 'Content-Type: application/json' \
+  -d '{"cmd": "reboot"}'
+```
+
+After reboot, `GET /settings` no longer includes a `wifi` group and returns `"wifi_perm_disable": true`.
+Sending `{"wifi_perm_disable": false}` is silently ignored.
+
+> **Warning:** This operation is irreversible via the API. To restore Wi-Fi, perform a factory reset
+> via the Config button (hold 5 seconds) or flash the device firmware again.

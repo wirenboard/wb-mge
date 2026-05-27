@@ -340,11 +340,25 @@ esp_err_t settings_build_response_json(cJSON **response_json)
                            top_level_mappings[i].json_key);
     }
 
-    // Add WiFi settings group
-    if (add_group_to_json(*response_json, "wifi", wifi_mappings, ARRAY_SIZE(wifi_mappings)) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to add WiFi settings to JSON");
-        cJSON_Delete(*response_json);
-        return ESP_FAIL;
+    // Add WiFi settings group (omitted when WiFi is permanently disabled)
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        // WiFi is permanently disabled — report only the flag, no wifi sub-object
+        if (!cJSON_AddBoolToObject(*response_json, "wifi_perm_disable", true)) {
+            ESP_LOGE(TAG, "Failed to add wifi_perm_disable flag to JSON");
+            cJSON_Delete(*response_json);
+            return ESP_FAIL;
+        }
+    } else {
+        if (!cJSON_AddBoolToObject(*response_json, "wifi_perm_disable", false)) {
+            ESP_LOGE(TAG, "Failed to add wifi_perm_disable flag to JSON");
+            cJSON_Delete(*response_json);
+            return ESP_FAIL;
+        }
+        if (add_group_to_json(*response_json, "wifi", wifi_mappings, ARRAY_SIZE(wifi_mappings)) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to add WiFi settings to JSON");
+            cJSON_Delete(*response_json);
+            return ESP_FAIL;
+        }
     }
 
     // Add Ethernet settings group
@@ -477,9 +491,35 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     // Used later to detect a real port change and to enable rollback on init failure.
     int old_cache_port = cache_modbus_server_get_port();
 
+    // --- Phase 0: determine wifi_perm_disable intent (do NOT write to NVS yet) ---
+    bool wifi_perm_disabled = setting_items_read_bool(KEY_WIFI_PERM_DISABLE);
+    bool should_set_wifi_perm_disable = false;
+    if (cJSON_HasObjectItem(request_json, "wifi_perm_disable")) {
+        cJSON *perm_dis_item = cJSON_GetObjectItem(request_json, "wifi_perm_disable");
+        if (cJSON_IsBool(perm_dis_item)) {
+            if (cJSON_IsTrue(perm_dis_item)) {
+                // Activate permanent disable
+                should_set_wifi_perm_disable = true;
+                wifi_perm_disabled = true; // used in Phase 1 validation logic only
+            } else {
+#if QEMU_BUILD
+                // In QEMU builds, allow clearing the flag for test fixture teardown.
+                // On real hardware this path is never compiled — the flag is truly one-way.
+                should_set_wifi_perm_disable = true;
+                wifi_perm_disabled = false;
+#endif
+                // On hardware: false is silently ignored — the flag cannot be cleared
+            }
+        }
+    }
+
     /* Phase 1: validate all fields before writing anything */
+    // When wifi is permanently disabled, skip WiFi group validation entirely
+    cJSON *wifi_group_for_validation = wifi_perm_disabled
+        ? NULL
+        : cJSON_GetObjectItem(request_json, "wifi");
     if (!validate_top_level_settings(request_json) ||
-        !validate_group_settings(cJSON_GetObjectItem(request_json, "wifi"), wifi_mappings,
+        !validate_group_settings(wifi_group_for_validation, wifi_mappings,
                                  ARRAY_SIZE(wifi_mappings), NULL) ||
         !validate_group_settings(cJSON_GetObjectItem(request_json, "ethernet"), ethernet_mappings,
                                  ARRAY_SIZE(ethernet_mappings), NULL) ||
@@ -491,6 +531,17 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     }
     /* Phase 2: all fields valid — apply */
 
+    // Write wifi_perm_disable to NVS first (before other settings)
+    if (should_set_wifi_perm_disable) {
+        const char *perm_val = wifi_perm_disabled ? "true" : "false";
+        esp_err_t ret = setting_items_save(KEY_WIFI_PERM_DISABLE, perm_val);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to save wifi_perm_disable: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "WiFi permanently disabled flag set to %s via API request", perm_val);
+        }
+    }
+
     // Process top-level settings
     for (size_t i = 0; i < ARRAY_SIZE(top_level_mappings); i++) {
         const setting_mapping_t *mapping = &top_level_mappings[i];
@@ -500,8 +551,8 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         }
     }
 
-    // Process WiFi settings group
-    if (cJSON_HasObjectItem(request_json, "wifi")) {
+    // Process WiFi settings group — skip entirely when permanently disabled
+    if (!wifi_perm_disabled && cJSON_HasObjectItem(request_json, "wifi")) {
         cJSON *wifi_json = cJSON_GetObjectItem(request_json, "wifi");
         if (cJSON_IsObject(wifi_json)) {
             save_group_settings(wifi_json, wifi_mappings, ARRAY_SIZE(wifi_mappings), NULL);

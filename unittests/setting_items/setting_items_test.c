@@ -34,6 +34,8 @@ const mock_setting_item_t expected_items[] = {
     {"io_bus", "true", SETTING_ITEM_TYPE_BOOL},
     {"vout", "true", SETTING_ITEM_TYPE_BOOL},
 
+    {"wifi_perm_dis", "false", SETTING_ITEM_TYPE_BOOL},
+
     {"wifi_mode", "ap", SETTING_ITEM_TYPE_STRING},
     {"ap_auth", "wpa2_psk", SETTING_ITEM_TYPE_STRING},
     {"sta_auth", "wpa2_psk", SETTING_ITEM_TYPE_STRING},
@@ -1072,6 +1074,56 @@ void test_setting_items_set_defaults_force(void)
     );
 }
 
+// Test that KEY_WIFI_PERM_DISABLE defaults to false after initialization
+void test_wifi_perm_disable_default_is_false(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test wifi_perm_disable default is false");
+    LOG_MESSAGE();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    bool value = setting_items_read_bool(KEY_WIFI_PERM_DISABLE);
+    TEST_ASSERT_FALSE_MESSAGE(value, "wifi_perm_disable should default to false after initialization");
+}
+
+// Test that KEY_WIFI_PERM_DISABLE can be set to true and read back correctly
+void test_wifi_perm_disable_can_be_set_to_true(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test wifi_perm_disable can be set to true");
+    LOG_MESSAGE();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    result = setting_items_save(KEY_WIFI_PERM_DISABLE, "true");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Saving wifi_perm_disable=true should succeed");
+
+    bool value = setting_items_read_bool(KEY_WIFI_PERM_DISABLE);
+    TEST_ASSERT_TRUE_MESSAGE(value, "wifi_perm_disable should read back as true after saving 'true'");
+}
+
+// Test that KEY_WIFI_PERM_DISABLE exists in the setting_items array with the correct type
+void test_wifi_perm_disable_key_exists_in_setting_items(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test wifi_perm_disable key exists in setting_items");
+    LOG_MESSAGE();
+
+    setting_item_type_t type = setting_items_get_type(KEY_WIFI_PERM_DISABLE);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        SETTING_ITEM_TYPE_BOOL,
+        type,
+        "KEY_WIFI_PERM_DISABLE (\"wifi_perm_dis\") should be of type BOOL in setting_items"
+    );
+
+    const char *default_value = setting_items_get_default_value(KEY_WIFI_PERM_DISABLE);
+    TEST_ASSERT_NOT_NULL_MESSAGE(default_value, "KEY_WIFI_PERM_DISABLE should have a default value");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("false", default_value, "Default value for wifi_perm_disable should be 'false'");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1110,6 +1162,10 @@ int main(void)
 
     RUN_TEST(test_setting_items_validate);
     RUN_TEST(test_setting_items_set_defaults_force);
+
+    RUN_TEST(test_wifi_perm_disable_default_is_false);
+    RUN_TEST(test_wifi_perm_disable_can_be_set_to_true);
+    RUN_TEST(test_wifi_perm_disable_key_exists_in_setting_items);
 
     return UNITY_END();
 }
