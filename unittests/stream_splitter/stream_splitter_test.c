@@ -598,6 +598,136 @@ void test_tc20_stream_splitter_max_frames_limit(void)
     }
 }
 
+/* TC-21: Level-3 CRC scan finds a frame of exactly MODBUS_RTU_MAX_FRAME_LEN (256) bytes.
+ * slave=0x01, FC=0x99 (unknown/exception), 252 bytes payload 0xAB, CRC=0x5D 0xFA.
+ * Level-2 probes exception length 5; CRC at 5 is wrong; Level-3 must scan to 256. */
+void test_tc21_level3_scan_at_max_frame_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-21: Level-3 CRC scan finds frame at MODBUS_RTU_MAX_FRAME_LEN boundary (256 bytes)");
+    LOG_MESSAGE();
+
+    /* 256-byte frame: 0x01 0x99 + 252 * 0xAB + CRC(0x5D, 0xFA) */
+    static uint8_t buf[256];
+    buf[0] = 0x01;  /* slave id */
+    buf[1] = 0x99;  /* unknown FC with high bit set (treated as exception by Level-2) */
+    memset(&buf[2], 0xAB, 252);  /* payload */
+    buf[254] = 0x5D;  /* CRC low byte */
+    buf[255] = 0xFA;  /* CRC high byte */
+
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, n, "TC-21: expected exactly 1 frame");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(256, frames[0].len, "TC-21: frame len must be 256");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-21: CRC must be valid");
+}
+
+/* TC-22: FC04 large response (251 bytes, byte_count=246) found by Level-2 despite cap.
+ * Followed by FC06 request (8 bytes). Total 259 bytes > MODBUS_RTU_MAX_FRAME_LEN.
+ * Verifies cap does not block Level-2 detection of near-maximum-size frames. */
+void test_tc22_large_frame_found_by_level2_despite_cap(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-22: FC04 large response (251b) + FC06 req (8b) — Level-2 finds 251b, cap irrelevant");
+    LOG_MESSAGE();
+
+    /* FC04 response: slave=0x83, fc=0x04, byte_count=246, data=246*0xAA, CRC=0x69 0x55 */
+    static uint8_t buf[259];
+    buf[0] = 0x83;
+    buf[1] = 0x04;
+    buf[2] = 0xF6;  /* byte_count = 246 */
+    memset(&buf[3], 0xAA, 246);
+    buf[249] = 0x69;  /* CRC low */
+    buf[250] = 0x55;  /* CRC high */
+    /* FC06 request (known valid): 0x83 0x06 0x00 0x72 0x00 0x01 0xF6 0x33 */
+    static const uint8_t fc06[] = {0x83, 0x06, 0x00, 0x72, 0x00, 0x01, 0xF6, 0x33};
+    memcpy(&buf[251], fc06, 8);
+
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "TC-22: expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(251, frames[0].len, "TC-22: frame[0] len must be 251");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-22: frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "TC-22: frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "TC-22: frame[1] CRC must be valid");
+}
+
+/* TC-23: 300-byte buffer of 0xAA garbage — no valid CRC in 4..256, scan capped.
+ * The whole buffer is emitted as one broken frame (crc_valid=false).
+ * Verifies the cap prevents scanning beyond MODBUS_RTU_MAX_FRAME_LEN. */
+void test_tc23_oversized_garbage_emitted_as_broken_frame(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-23: 300-byte 0xAA garbage — scan capped at 256, whole buffer broken frame");
+    LOG_MESSAGE();
+
+    static uint8_t buf[300];
+    memset(buf, 0xAA, sizeof(buf));
+
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, n, "TC-23: expected 1 broken frame");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(300, frames[0].len, "TC-23: broken frame must cover all 300 bytes");
+    TEST_ASSERT_FALSE_MESSAGE(frames[0].crc_valid, "TC-23: broken frame crc_valid must be false");
+}
+
+/* TC-24: FC06 request (8b, valid) + 270-byte 0xBB garbage tail.
+ * First frame found by Level-2; Level-3 scans tail up to 256, no match,
+ * emits 270-byte broken frame. */
+void test_tc24_valid_frame_then_garbage_tail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-24: FC06 (8b valid) + 270-byte 0xBB garbage — frame[0] OK, frame[1] broken");
+    LOG_MESSAGE();
+
+    static uint8_t buf[278];
+    static const uint8_t fc06[] = {0x83, 0x06, 0x00, 0x72, 0x00, 0x01, 0xF6, 0x33};
+    memcpy(&buf[0], fc06, 8);
+    memset(&buf[8], 0xBB, 270);
+
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "TC-24: expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[0].len, "TC-24: frame[0] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-24: frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(270, frames[1].len, "TC-24: frame[1] (broken tail) len must be 270");
+    TEST_ASSERT_FALSE_MESSAGE(frames[1].crc_valid, "TC-24: frame[1] crc_valid must be false");
+}
+
+/* TC-25: exactly MODBUS_RTU_MAX_FRAME_LEN+1 = 257-byte buffer of 0xCC garbage.
+ * No valid CRC in 4..256 (scan_limit). Whole buffer emitted as broken frame.
+ * Regression: if '<' in scan_limit formula is changed to '<=', this test catches it. */
+void test_tc25_boundary_257_bytes_garbage(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-25: 257-byte 0xCC garbage (MAX+1 boundary) — scan capped at 256, broken frame");
+    LOG_MESSAGE();
+
+    static uint8_t buf[257];
+    memset(buf, 0xCC, sizeof(buf));
+
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, n, "TC-25: expected 1 broken frame");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(257, frames[0].len, "TC-25: broken frame must cover all 257 bytes");
+    TEST_ASSERT_FALSE_MESSAGE(frames[0].crc_valid, "TC-25: broken frame crc_valid must be false");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -623,6 +753,11 @@ int main(void)
     RUN_TEST(test_tc18_fc10_request_plus_fc10_response);
     RUN_TEST(test_tc19_fc0f_request_plus_fc0f_response);
     RUN_TEST(test_tc20_stream_splitter_max_frames_limit);
+    RUN_TEST(test_tc21_level3_scan_at_max_frame_boundary);
+    RUN_TEST(test_tc22_large_frame_found_by_level2_despite_cap);
+    RUN_TEST(test_tc23_oversized_garbage_emitted_as_broken_frame);
+    RUN_TEST(test_tc24_valid_frame_then_garbage_tail);
+    RUN_TEST(test_tc25_boundary_257_bytes_garbage);
 
     return UNITY_END();
 }

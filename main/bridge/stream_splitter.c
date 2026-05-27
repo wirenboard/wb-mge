@@ -189,9 +189,11 @@ int stream_split(const uint8_t *buf, size_t len,
         }
 
         /* Level 3: CRC scan fallback — try every possible length from 4 up to
-         * the remaining byte count and take the first one with a valid CRC. */
+         * rem_len, capped at MODBUS_RTU_MAX_FRAME_LEN to bound the O(N^2) scan
+         * regardless of input buffer size. No valid RTU frame exceeds 256 bytes. */
         if (frame_len == 0) {
-            for (size_t try_len = 4; try_len <= rem_len; try_len++) {
+            size_t scan_limit = (rem_len < MODBUS_RTU_MAX_FRAME_LEN) ? rem_len : MODBUS_RTU_MAX_FRAME_LEN;
+            for (size_t try_len = 4; try_len <= scan_limit; try_len++) {
                 if (frame_crc_ok(rem, try_len)) {
                     frame_len = try_len;
                     break;

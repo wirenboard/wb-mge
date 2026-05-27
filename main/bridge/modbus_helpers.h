@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Maximum Modbus RTU ADU length: 1 slave + 253 PDU + 2 CRC = 256 bytes */
+#define MODBUS_RTU_MAX_FRAME_LEN 256u
+
 // Modbus RTU packet header
 typedef struct __attribute__((packed)) {
     uint8_t slave_id;
