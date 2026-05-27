@@ -123,6 +123,34 @@ lint-frontend:
 		npm run lint; \
 	}
 
+# C linter. Requires build/compile_commands.json from a prior idf.py build
+# (any build flavour — Lint reads what was actually compiled). The wrapper
+# script patches a couple of pyclang defaults that don't fit our toolchain.
+# Paths to esp-clang / pyclang are derived at runtime from IDF_PYTHON_ENV_PATH
+# and IDF_TOOLS_PATH so this works in both EIM (local) and the Docker image.
+# See docs/linters.md.
+CLANG_TIDY_OUT := /tmp/clang-tidy-out
+CLANG_TIDY_LOG := /tmp/clang-tidy-log
+
+lint-c:
+	@echo 'Running clang-tidy on main/'
+	@test -f build/compile_commands.json || { echo "ERROR: build/compile_commands.json missing. Run 'make build-idf-project' or equivalent first."; exit 1; }
+	@mkdir -p $(CLANG_TIDY_OUT) $(CLANG_TIDY_LOG)
+	@$(EIM_ACTIVATE) && \
+	    PATH="$$IDF_PATH/tools:$$PATH" && \
+	    test -n "$$IDF_PYTHON_ENV_PATH" || { echo "ERROR: IDF_PYTHON_ENV_PATH not set. Source the IDF env first."; exit 1; } && \
+	    TOOLS_PATH="$${IDF_TOOLS_PATH:-$$HOME/.espressif}" && \
+	    NEWLIB_INCLUDE=$$(ls -d $$TOOLS_PATH/xtensa-esp-elf/*/xtensa-esp-elf/xtensa-esp-elf/include $$TOOLS_PATH/tools/xtensa-esp-elf/*/xtensa-esp-elf/xtensa-esp-elf/include 2>/dev/null | head -n1) && \
+	    test -n "$$NEWLIB_INCLUDE" || { echo "ERROR: xtensa-esp-elf newlib include dir not found under $$TOOLS_PATH (tried with and without /tools prefix)"; exit 1; } && \
+	    "$$IDF_PYTHON_ENV_PATH/bin/python3" scripts/clang-tidy/wb_clang_tidy.py \
+	        --build-dir build \
+	        --check-files-regex '.*/wb-mge/main/.*\.c' \
+	        --output-path $(CLANG_TIDY_OUT) \
+	        --log-path $(CLANG_TIDY_LOG) \
+	        --exit-code \
+	        --clang-extra-args="-header-filter=.*/main/.* -config-file=$(CURDIR)/.clang-tidy -extra-arg-before=-isystem -extra-arg-before=$$NEWLIB_INCLUDE" \
+	        $(CURDIR)
+
 test-frontend:
 	@echo 'Running frontend tests'
 	@{ \
@@ -222,7 +250,7 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all test unittests lint-frontend test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
+.PHONY: all test unittests lint-frontend lint-c test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk

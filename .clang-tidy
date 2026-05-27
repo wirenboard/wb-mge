@@ -1,0 +1,33 @@
+---
+# clang-tidy config for wb-mge firmware (main/).
+# Invoked via `make lint-c-clang-tidy` → scripts/clang-tidy/wb_clang_tidy.py.
+#
+# Disabled checks fall in three groups:
+#   - noisy / opinionated readability (we keep none of readability-*)
+#   - false positives in this codebase (branch-clone fires on ESP_LOG macro,
+#     reserved-identifier fires on our and IDF header guards, etc.)
+#   - performance hints that conflict with idiomatic FreeRTOS / ESP-IDF code
+#     (no-int-to-ptr — packing index into task/timer void* pData).
+
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -clang-analyzer-security.insecureAPI.strcpy,
+  -bugprone-branch-clone,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-not-null-terminated-result,
+  -bugprone-macro-parentheses,
+  -performance-no-int-to-ptr
+
+HeaderFilterRegex: '.*/main/.*'
+WarningsAsErrors: ''
+FormatStyle: none

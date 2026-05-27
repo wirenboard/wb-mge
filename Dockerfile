@@ -18,6 +18,12 @@ RUN python3 /opt/esp/idf/tools/idf_tools.py install qemu-xtensa \
  && find /opt/esp/tools /root/.espressif -name "qemu-system-xtensa" -type f 2>/dev/null | grep -q . \
  || { echo "ERROR: qemu-system-xtensa not found after install"; exit 1; }
 
+# Install esp-clang (xtensa-capable LLVM) + pyclang for `make lint-c`.
+# Both are absent from the base espressif/idf image. esp-clang is large
+# (~500 MB), but its xtensa target is required to parse IDF headers correctly.
+RUN python3 /opt/esp/idf/tools/idf_tools.py install esp-clang \
+ && bash -c '. /opt/esp/idf/export.sh >/dev/null && pip install --no-cache-dir pyclang'
+
 # Pre-create Python venv for api_tests dependencies (baked into image — no network needed at runtime)
 COPY api_tests/requirements.txt /tmp/api_tests_requirements.txt
 RUN python3 -m venv /opt/api_tests_venv \

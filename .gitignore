@@ -27,7 +27,6 @@ release/
 managed_components/
 
 .clang-format
-.clang-tidy
 
 # Coverage reports
 **/covr_report/

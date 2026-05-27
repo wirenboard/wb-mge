@@ -51,6 +51,14 @@ pipeline {
                 }
             }
         }
+        stage('Lint C') {
+            steps {
+                // catchError keeps build UNSTABLE (yellow) on lint findings — QEMU/S3 still run
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sh 'bash -c "source /opt/esp/idf/export.sh && make lint-c"'
+                }
+            }
+        }
         stage('QEMU Tests') {
             steps {
                 // catchError keeps build UNSTABLE (yellow) on e2e failure — S3 Upload still runs
