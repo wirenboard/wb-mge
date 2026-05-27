@@ -50,6 +50,6 @@ curl -s -u "$AUTH" "$JOB/<N>/logText/progressiveText?start=0"
 curl -s -u "$AUTH" "$JOB/<N>/api/json?tree=building,result,duration"
 ```
 
-Stage semantics worth knowing: the `Lint` stage is wrapped in `catchError`, so
-lint failures turn the build **UNSTABLE**, not FAILURE. QEMU/integration test
-failures also mark builds UNSTABLE.
+Stage semantics worth knowing: both `Lint frontend (ESLint)` and `Lint C
+(clang-tidy)` are wrapped in `catchError`, so lint failures turn the build
+**UNSTABLE**, not FAILURE. The `E2E tests (QEMU)` stage behaves the same way.

@@ -14,7 +14,7 @@ pipeline {
     }
 
     stages {
-        stage('Cleanup') {
+        stage('Cleanup workspace') {
             steps {
                 script {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make clean"'
@@ -22,7 +22,7 @@ pipeline {
                 }
             }
         }
-        stage('Lint') {
+        stage('Lint frontend (ESLint)') {
             steps {
                 // catchError keeps build UNSTABLE (yellow) on lint failure — subsequent stages still run
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
@@ -30,14 +30,14 @@ pipeline {
                 }
             }
         }
-        stage('Test') {
+        stage('Unit tests (frontend + C)') {
             steps {
                 script {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make unittests test-frontend"'
                 }
             }
         }
-        stage('Build') {
+        stage('Build firmware') {
             steps {
                 script {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make build-frontend build-idf-project"'
@@ -51,7 +51,7 @@ pipeline {
                 }
             }
         }
-        stage('Lint C') {
+        stage('Lint C (clang-tidy)') {
             steps {
                 // catchError keeps build UNSTABLE (yellow) on lint findings — QEMU/S3 still run
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
@@ -59,7 +59,7 @@ pipeline {
                 }
             }
         }
-        stage('QEMU Tests') {
+        stage('E2E tests (QEMU)') {
             steps {
                 // catchError keeps build UNSTABLE (yellow) on e2e failure — S3 Upload still runs
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
@@ -73,7 +73,7 @@ pipeline {
                 }
             }
         }
-        stage('S3 Upload') {
+        stage('Upload to S3') {
             steps {
                 build job: 's3_uploader', parameters: [
                     string(name: 'UPSTREAM_JOB_NAME', value: env.JOB_NAME),
