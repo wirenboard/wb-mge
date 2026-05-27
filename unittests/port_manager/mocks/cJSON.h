@@ -21,3 +21,5 @@ static inline void   cJSON_Delete(cJSON *c)                              { (void
 static inline cJSON *cJSON_CreateObject(void)                            { return 0; }
 static inline cJSON *cJSON_AddStringToObject(cJSON *o, const char *n,
                                               const char *s)             { (void)o; (void)n; (void)s; return 0; }
+static inline cJSON *cJSON_AddNumberToObject(cJSON *o, const char *n,
+                                              double v)                  { (void)o; (void)n; (void)v; return 0; }

@@ -10,6 +10,7 @@
 #include <esp_log.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 
 static const char *TAG = "settings_manager";
 
@@ -125,6 +126,12 @@ static bool save_setting_from_json(cJSON *item, const char *setting_key) {
             ESP_LOGE(TAG, "Expected number for setting %s", setting_key);
             return false;
         }
+        // Casting a double outside [INT_MIN, INT_MAX] to int is undefined behaviour;
+        // reject the value before the cast.
+        if ((item->valuedouble < (double)INT_MIN) || (item->valuedouble > (double)INT_MAX)) {
+            ESP_LOGE(TAG, "Integer value out of range for setting %s: %f", setting_key, item->valuedouble);
+            return false;
+        }
         return setting_items_save_int(setting_key, (int)item->valuedouble) == ESP_OK;
 
     default:
@@ -162,9 +169,15 @@ static esp_err_t save_group_settings(cJSON *group_json, const setting_mapping_t 
                 snprintf(setting_key, sizeof(setting_key), "%s_%s", mappings[i].setting_key, suffix);
             } else {
                 strncpy(setting_key, mappings[i].setting_key, sizeof(setting_key) - 1);
+                setting_key[sizeof(setting_key) - 1] = '\0';
             }
 
-            save_setting_from_json(item, setting_key);
+            // Return early on NVS write failure so the caller can report success:false
+            // instead of silently writing a partial set of settings.
+            if (!save_setting_from_json(item, setting_key)) {
+                ESP_LOGE(TAG, "Failed to save setting '%s'", setting_key);
+                return ESP_FAIL;
+            }
         }
     }
 
@@ -201,6 +214,13 @@ static bool validate_setting_from_json(cJSON *item, const char *setting_key)
     case SETTING_ITEM_TYPE_INT:
         if (!cJSON_IsNumber(item)) {
             ESP_LOGE(TAG, "Validation failed: expected number for setting '%s'", setting_key);
+            return false;
+        }
+        // Casting a double outside [INT_MIN, INT_MAX] to int is undefined behaviour;
+        // reject the value before the cast.
+        if ((item->valuedouble < (double)INT_MIN) || (item->valuedouble > (double)INT_MAX)) {
+            ESP_LOGE(TAG, "Validation failed: integer value out of range for setting '%s': %f",
+                     setting_key, item->valuedouble);
             return false;
         }
         snprintf(str_value, sizeof(str_value), "%d", (int)item->valuedouble);
@@ -448,7 +468,11 @@ static esp_err_t process_rs485_settings(cJSON *request_json)
                 // Create setting key with port suffix
                 snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
 
-                save_setting_from_json(item, key_buf);
+                // Return early on NVS write failure so the caller can report success:false.
+                if (!save_setting_from_json(item, key_buf)) {
+                    ESP_LOGE(TAG, "Failed to save RS485 setting '%s'", key_buf);
+                    return ESP_FAIL;
+                }
             }
         }
 
@@ -465,7 +489,11 @@ static esp_err_t process_rs485_settings(cJSON *request_json)
                         // Create setting key with port suffix
                         snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
 
-                        save_setting_from_json(item, key_buf);
+                        // Return early on NVS write failure so the caller can report success:false.
+                        if (!save_setting_from_json(item, key_buf)) {
+                            ESP_LOGE(TAG, "Failed to save RS485 bridge setting '%s'", key_buf);
+                            return ESP_FAIL;
+                        }
                     }
                 }
             }
@@ -531,15 +559,20 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     }
     /* Phase 2: all fields valid — apply */
 
-    // Write wifi_perm_disable to NVS first (before other settings)
+    // Write wifi_perm_disable to NVS and only consider the flag active after the write succeeds.
+    // Without this guard, a failed write would leave the in-memory flag set while NVS still says
+    // Wi-Fi is enabled, causing subsequent WiFi group processing to be skipped silently.
     if (should_set_wifi_perm_disable) {
         const char *perm_val = wifi_perm_disabled ? "true" : "false";
         esp_err_t ret = setting_items_save(KEY_WIFI_PERM_DISABLE, perm_val);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to save wifi_perm_disable: %s", esp_err_to_name(ret));
-        } else {
-            ESP_LOGI(TAG, "WiFi permanently disabled flag set to %s via API request", perm_val);
+            cJSON_AddBoolToObject(*response_json, "success", false);
+            cJSON_AddStringToObject(*response_json, "error", "Failed to save wifi_perm_disable");
+            return ESP_OK; // Return OK so HTTP layer sends the error JSON
         }
+        // In-memory flag updated only after confirmed NVS write
+        ESP_LOGI(TAG, "WiFi permanently disabled flag set to %s via API request", perm_val);
     }
 
     // Process top-level settings
@@ -547,7 +580,14 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         const setting_mapping_t *mapping = &top_level_mappings[i];
         if (cJSON_HasObjectItem(request_json, mapping->json_key)) {
             cJSON *item = cJSON_GetObjectItem(request_json, mapping->json_key);
-            save_setting_from_json(item, mapping->setting_key);
+            // Return early on NVS write failure so the client receives success:false
+            // instead of a partial-write acknowledged as success.
+            if (!save_setting_from_json(item, mapping->setting_key)) {
+                ESP_LOGE(TAG, "Failed to save top-level setting '%s'", mapping->setting_key);
+                cJSON_AddBoolToObject(*response_json, "success", false);
+                cJSON_AddStringToObject(*response_json, "error", "Failed to save setting");
+                return ESP_OK; // Return OK so HTTP layer sends the error JSON
+            }
         }
     }
 
@@ -555,7 +595,13 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     if (!wifi_perm_disabled && cJSON_HasObjectItem(request_json, "wifi")) {
         cJSON *wifi_json = cJSON_GetObjectItem(request_json, "wifi");
         if (cJSON_IsObject(wifi_json)) {
-            save_group_settings(wifi_json, wifi_mappings, ARRAY_SIZE(wifi_mappings), NULL);
+            // Return early on any NVS write failure; do not report success:true for partial writes.
+            if (save_group_settings(wifi_json, wifi_mappings, ARRAY_SIZE(wifi_mappings), NULL) != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to save WiFi settings");
+                cJSON_AddBoolToObject(*response_json, "success", false);
+                cJSON_AddStringToObject(*response_json, "error", "Failed to save WiFi settings");
+                return ESP_OK; // Return OK so HTTP layer sends the error JSON
+            }
         }
     }
 
@@ -563,11 +609,23 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     if (cJSON_HasObjectItem(request_json, "ethernet")) {
         cJSON *eth_json = cJSON_GetObjectItem(request_json, "ethernet");
         if (cJSON_IsObject(eth_json)) {
-            save_group_settings(eth_json, ethernet_mappings, ARRAY_SIZE(ethernet_mappings), NULL);
+            // Return early on any NVS write failure; do not report success:true for partial writes.
+            if (save_group_settings(eth_json, ethernet_mappings, ARRAY_SIZE(ethernet_mappings), NULL) != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to save Ethernet settings");
+                cJSON_AddBoolToObject(*response_json, "success", false);
+                cJSON_AddStringToObject(*response_json, "error", "Failed to save Ethernet settings");
+                return ESP_OK; // Return OK so HTTP layer sends the error JSON
+            }
         }
     }
 
-    process_rs485_settings(request_json);
+    // Return early on any NVS write failure inside RS485 processing.
+    if (process_rs485_settings(request_json) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save RS485 settings");
+        cJSON_AddBoolToObject(*response_json, "success", false);
+        cJSON_AddStringToObject(*response_json, "error", "Failed to save RS485 settings");
+        return ESP_OK; // Return OK so HTTP layer sends the error JSON
+    }
 
     // If cache_modbus_port was in the request, check whether the validated NVS value
     // differs from the port active before this request and restart the server if needed.
@@ -599,9 +657,13 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     }
 
     // If cache_modbus_server_enabled was in the request, start or stop the server accordingly.
+    // cache_modbus_server_get_port() is called exactly once and stored in running_port so that
+    // both the "is running?" check and the stop branch use the same snapshot — calling it twice
+    // would be a TOCTOU: the server state could change between the two calls.
     if (cJSON_HasObjectItem(request_json, "cache_modbus_server_enabled")) {
         bool enabled = setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
-        bool running = (cache_modbus_server_get_port() > 0);
+        int running_port = cache_modbus_server_get_port();
+        bool running = (running_port > 0);
         if (enabled && !running) {
             // Server should be running but isn't — start it.
             int port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
