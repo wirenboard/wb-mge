@@ -24,6 +24,9 @@ import requests
 PROJECT_ROOT = Path(__file__).parent.parent
 QEMU_FIRMWARE = PROJECT_ROOT / "build" / "qemu_mge.bin"
 
+# Baudrate options for rs485 settings persistence check
+_BAUDRATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
+
 # Layout constants — keep in sync with main/wb_app_desc/wb_app_desc.h
 ESP_IMAGE_HEADER_LEN = 24
 ESP_IMAGE_SEGMENT_HEADER_LEN = 8
@@ -234,26 +237,133 @@ def test_ota_truncated_stream(api, firmware_bytes):
 def test_ota_full_update(api, firmware_bytes):
     """Upload the full QEMU firmware → 200 with bytes_written == size →
     device reboots → /info responds again.
+    Also verifies that NVS settings (hostname, vout, rs485_1 baudrate and term)
+    are preserved across the OTA reboot.
     """
-    fw_size = len(firmware_bytes)
-    print(f"  Uploading {fw_size} bytes to /update...")
-    resp = _post_update(api, firmware_bytes, timeout=180)
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text!r}"
-    body = resp.json()
-    assert body.get("success") is True, f"OTA reported failure: {body}"
-    assert body.get("bytes_written") == fw_size, (
-        f"Expected bytes_written={fw_size}, got {body.get('bytes_written')}"
+    # Step 1: Read original settings as a baseline for restore in finally block
+    orig_resp = api.get_settings()
+    assert orig_resp.status_code == 200, (
+        f"Failed to read settings before OTA: {orig_resp.status_code} {orig_resp.text!r}"
     )
-    print(f"✓ Firmware accepted ({fw_size} bytes), device will reboot shortly")
+    original_settings = orig_resp.json()
+    print(f"  Original settings read: hostname={original_settings.get('hostname')!r}, "
+          f"vout={original_settings.get('vout')}, "
+          f"rs485_1.baudrate={original_settings.get('rs485_1', {}).get('baudrate')}, "
+          f"rs485_1.term={original_settings.get('rs485_1', {}).get('term')}")
 
     try:
-        api.wait_for_ready(timeout=90)
-    except TimeoutError:
-        pytest.fail("Device did not come back online within 90s after OTA reboot")
-    print("✓ Device back online after OTA reboot")
+        # Step 2: Compute test settings — only network-safe fields to keep the device reachable
+        new_vout = not original_settings["vout"]
+        current_baudrate = original_settings["rs485_1"]["baudrate"]
+        new_baudrate = next(b for b in _BAUDRATES if b != current_baudrate)
+        new_term = not original_settings["rs485_1"]["term"]
 
-    info = api.get_info()
-    assert info.status_code == 200, (
-        f"Device unhealthy after OTA reboot: {info.status_code} {info.text!r}"
-    )
-    print("✓ /info responsive on the post-OTA firmware")
+        test_settings = {
+            "hostname": "ota-persist-test",
+            "vout": new_vout,
+            "rs485_1": {
+                **original_settings["rs485_1"],
+                "baudrate": new_baudrate,
+                "term": new_term,
+            },
+        }
+        print(f"  Test settings to write: hostname='ota-persist-test', vout={new_vout}, "
+              f"rs485_1.baudrate={new_baudrate}, rs485_1.term={new_term}")
+
+        # Step 3: Write test settings
+        set_resp = api.update_settings(test_settings)
+        assert set_resp.status_code == 200, (
+            f"Failed to write test settings: {set_resp.status_code} {set_resp.text!r}"
+        )
+        set_body = set_resp.json()
+        assert set_body.get("success") is True, (
+            f"POST /settings reported failure: {set_body}"
+        )
+        print("  ✓ Test settings written")
+
+        # Step 4: Read back and verify all four fields were accepted
+        rb_resp = api.get_settings()
+        assert rb_resp.status_code == 200, (
+            f"Failed to read back settings: {rb_resp.status_code} {rb_resp.text!r}"
+        )
+        rb = rb_resp.json()
+        assert rb.get("hostname") == "ota-persist-test", (
+            f"Read-back hostname mismatch: expected 'ota-persist-test', got {rb.get('hostname')!r}"
+        )
+        assert rb.get("vout") == new_vout, (
+            f"Read-back vout mismatch: expected {new_vout}, got {rb.get('vout')}"
+        )
+        assert rb.get("rs485_1", {}).get("baudrate") == new_baudrate, (
+            f"Read-back rs485_1.baudrate mismatch: expected {new_baudrate}, "
+            f"got {rb.get('rs485_1', {}).get('baudrate')}"
+        )
+        assert rb.get("rs485_1", {}).get("term") == new_term, (
+            f"Read-back rs485_1.term mismatch: expected {new_term}, "
+            f"got {rb.get('rs485_1', {}).get('term')}"
+        )
+        print("  ✓ Read-back verification passed")
+
+        # Step 5: Perform OTA firmware upload
+        fw_size = len(firmware_bytes)
+        print(f"  Uploading {fw_size} bytes to /update...")
+        resp = _post_update(api, firmware_bytes, timeout=180)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text!r}"
+        body = resp.json()
+        assert body.get("success") is True, f"OTA reported failure: {body}"
+        assert body.get("bytes_written") == fw_size, (
+            f"Expected bytes_written={fw_size}, got {body.get('bytes_written')}"
+        )
+        print(f"✓ Firmware accepted ({fw_size} bytes), device will reboot shortly")
+
+        # Step 6: Wait for device to come back online after reboot
+        try:
+            api.wait_for_ready(timeout=90)
+        except TimeoutError:
+            pytest.fail("Device did not come back online within 90s after OTA reboot")
+        print("✓ Device back online after OTA reboot")
+
+        # Step 7: Verify /info is responsive on the new firmware
+        info = api.get_info()
+        assert info.status_code == 200, (
+            f"Device unhealthy after OTA reboot: {info.status_code} {info.text!r}"
+        )
+        print("✓ /info responsive on the post-OTA firmware")
+
+        # Step 8: Read settings after reboot
+        post_ota_resp = api.get_settings()
+        assert post_ota_resp.status_code == 200, (
+            f"Failed to read settings after OTA reboot: "
+            f"{post_ota_resp.status_code} {post_ota_resp.text!r}"
+        )
+        post_ota_settings = post_ota_resp.json()
+        print(f"  Post-OTA settings: hostname={post_ota_settings.get('hostname')!r}, "
+              f"vout={post_ota_settings.get('vout')}, "
+              f"rs485_1.baudrate={post_ota_settings.get('rs485_1', {}).get('baudrate')}, "
+              f"rs485_1.term={post_ota_settings.get('rs485_1', {}).get('term')}")
+
+        # Step 9: Assert all four fields survived the OTA reboot (NVS persistence check)
+        assert post_ota_settings.get("hostname") == "ota-persist-test", (
+            f"NVS persistence failed for hostname: "
+            f"expected 'ota-persist-test', got {post_ota_settings.get('hostname')!r}"
+        )
+        assert post_ota_settings.get("vout") == new_vout, (
+            f"NVS persistence failed for vout: "
+            f"expected {new_vout}, got {post_ota_settings.get('vout')}"
+        )
+        assert post_ota_settings.get("rs485_1", {}).get("baudrate") == new_baudrate, (
+            f"NVS persistence failed for rs485_1.baudrate: "
+            f"expected {new_baudrate}, got {post_ota_settings.get('rs485_1', {}).get('baudrate')}"
+        )
+        assert post_ota_settings.get("rs485_1", {}).get("term") == new_term, (
+            f"NVS persistence failed for rs485_1.term: "
+            f"expected {new_term}, got {post_ota_settings.get('rs485_1', {}).get('term')}"
+        )
+        print("✓ All settings persisted across OTA reboot")
+
+    finally:
+        # Restore original settings regardless of test outcome — no asserts here
+        try:
+            restore_resp = api.update_settings(original_settings)
+            print(f"  Settings restored (status={restore_resp.status_code})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  WARNING: Failed to restore original settings: {exc}")
