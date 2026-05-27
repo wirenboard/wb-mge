@@ -342,6 +342,9 @@ bool validate_password(const char *value)
     }
 
     size_t len = strlen(value);
+    if (len == 0) {
+        return false;
+    }
     if (len > MAX_PASS_LEN) {
         return false;
     }

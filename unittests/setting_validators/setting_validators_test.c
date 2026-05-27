@@ -340,7 +340,6 @@ void test_validate_password(void)
 
     // Valid passwords
     TEST_ASSERT_TRUE_MESSAGE(validate_password("admin"), "Simple password should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_password(""), "Empty password should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_password("Password123!"), "Complex password should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_password(" "), "Single space password should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_password("~"), "Tilde password should be valid");
@@ -348,6 +347,7 @@ void test_validate_password(void)
 
     // Invalid passwords
     TEST_ASSERT_FALSE_MESSAGE(validate_password(NULL), "NULL password should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_password(""), "Empty password should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_password("12345678901234567890123456789012"), "32-character password should be invalid");
 
     // Test non-printable ASCII characters (coverage for ASCII range check)
