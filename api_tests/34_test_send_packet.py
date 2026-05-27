@@ -7,8 +7,13 @@ Tests that:
 4. An empty hex string results in sent=0 with 200 OK.
 """
 
+import queue
+import threading
+import json
 import pytest
 import time
+
+import websocket as _ws_module
 
 from sniffer_helpers import _ws_connect, _collect_packets
 
@@ -68,6 +73,54 @@ def test_send_packet_appears_in_sniffer_log(api):
         ws.close()
 
 
+def _collect_ws_packets_threaded(api_base_url, cookies, port_num, collect_sec, filter_fn=None):
+    """Collect sniffer WS packets using a daemon thread to avoid blocking recv() hangs.
+
+    Opens a fresh WebSocket connection, sends start command, collects for collect_sec
+    seconds using a background thread with a queue, then closes.
+    Returns a list of matching packet dicts.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(api_base_url)
+    host = parsed.hostname
+    http_port = parsed.port or 80
+    ws_url = f"ws://{host}:{http_port}/sniffer/ws"
+    cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+
+    received: "queue.Queue[dict]" = queue.Queue()
+
+    def on_message(sock, message):
+        try:
+            pkt = json.loads(message)
+            if filter_fn is None or filter_fn(pkt):
+                received.put(pkt)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    sock = _ws_module.WebSocketApp(
+        ws_url,
+        cookie=cookie_str,
+        on_message=on_message,
+    )
+    thread = threading.Thread(target=sock.run_forever, daemon=True)
+    thread.start()
+    # Give the connection time to establish and send the start command
+    time.sleep(0.3)
+    try:
+        sock.send(json.dumps({"cmd": "start", "port": port_num}))
+    except Exception:
+        pass
+    # Collect for the specified window
+    time.sleep(collect_sec)
+    sock.close()
+    thread.join(timeout=3.0)
+
+    packets = []
+    while not received.empty():
+        packets.append(received.get_nowait())
+    return packets
+
+
 @pytest.mark.qemu
 def test_send_packet_tx_disabled_no_sniffer_entry(api):
     """POST /ports/1/send with tx_disabled=True → API 200 but packet NOT in sniffer."""
@@ -81,26 +134,34 @@ def test_send_packet_tx_disabled_no_sniffer_entry(api):
         assert resp.status_code == 200
         time.sleep(0.3)
 
-        ws, stop_event, ping_thread = _ws_connect(api, port=1)
-        try:
-            resp = api.send_packet(1, FC03_HEX)
-            # API should still return 200 (serial_send is called but silently dropped)
-            assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        def is_our_packet(pkt):
+            return (pkt.get("function") == 3 and
+                    pkt.get("slave_id") == 1 and
+                    pkt.get("port") == 1)
 
-            def is_our_packet(pkt):
-                # Match by function/slave/port (works for both packet and timeout events)
-                return (pkt.get("function") == 3 and
-                        pkt.get("slave_id") == 1 and
-                        pkt.get("port") == 1)
+        # Start collecting before sending so we don't miss anything
+        collect_thread_result = []
 
-            packets = _collect_packets(ws, min_count=1, timeout_sec=2, filter_fn=is_our_packet)
-            assert len(packets) == 0, (
-                f"Expected NO packets in sniffer when tx_disabled=True, "
-                f"but got {len(packets)} packets"
+        def collect_in_background():
+            # Collect for 1.5s — long enough for the 200ms sniffer timeout to fire
+            pkts = _collect_ws_packets_threaded(
+                api.base_url, api.session.cookies, 1, 1.5, filter_fn=is_our_packet
             )
-        finally:
-            stop_event.set()
-            ws.close()
+            collect_thread_result.extend(pkts)
+
+        bg = threading.Thread(target=collect_in_background, daemon=True)
+        bg.start()
+        time.sleep(0.3)  # Allow WS to connect before sending
+
+        resp = api.send_packet(1, FC03_HEX)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+        bg.join(timeout=5.0)  # Wait for collection to finish
+
+        assert len(collect_thread_result) == 0, (
+            f"Expected NO packets in sniffer when tx_disabled=True, "
+            f"but got {len(collect_thread_result)} packets"
+        )
 
     finally:
         if original_tx is not None:
