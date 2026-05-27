@@ -20,6 +20,8 @@ const { t } = useI18n();
 const rows = ref<SniffRow[]>([]);
 const running = ref(false);
 const ws = ref<WebSocket | null>(null);
+// Timer handle for the WS reconnect delay — stored so it can be cleared in stopCapture().
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastTimestampUs = 0;
 const wsStatus = ref<'connected' | 'disconnected' | 'reconnecting'>('disconnected');
 
@@ -74,7 +76,8 @@ function connectWs() {
     ws.value = null
     if (running.value) {
       wsStatus.value = 'reconnecting'
-      setTimeout(connectWs, 2000)
+      // Capture the timer handle so it can be cleared in stopCapture() / onUnmounted().
+      reconnectTimer = setTimeout(connectWs, 2000)
     } else {
       wsStatus.value = 'disconnected'
     }
@@ -88,6 +91,8 @@ function startCapture() {
 }
 
 function stopCapture() {
+  // Clear any pending reconnect timer before closing the WebSocket.
+  if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   running.value = false
   wsStatus.value = 'disconnected'
   sendPortStop(parseInt(portFilter.value))

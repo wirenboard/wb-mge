@@ -56,6 +56,8 @@ const cacheTcpPort = ref(504);
 const tcpServeEnabled = ref(true);
 // Save-button status for the Settings panel
 const settingsSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+// Guard flag that prevents concurrent toggleCaching() / resetMap() calls.
+const isMutating = ref(false);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let statsInterval: ReturnType<typeof setInterval> | null = null;
@@ -102,6 +104,8 @@ async function fetchEntries(): Promise<void> {
 }
 
 async function toggleCaching(): Promise<void> {
+  if (isMutating.value) return; // prevent concurrent calls
+  isMutating.value = true;
   try {
     if (cacheEnabled.value) {
       // Disable: switch all ports currently in cache_bus back to disabled
@@ -131,6 +135,8 @@ async function toggleCaching(): Promise<void> {
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Action failed';
     // cacheEnabled is derived from info — no manual resync needed
+  } finally {
+    isMutating.value = false;
   }
 }
 
@@ -139,6 +145,8 @@ async function resetMap(): Promise<void> {
   const port1WasActive = info.value?.rs485_1.port_mode === 'cache_bus';
   const port2WasActive = info.value?.rs485_2.port_mode === 'cache_bus';
   if (!port1WasActive && !port2WasActive) return;
+  if (isMutating.value) return; // prevent concurrent calls
+  isMutating.value = true;
   try {
     // Disable active ports to clear the cache
     if (port1WasActive) {
@@ -161,6 +169,8 @@ async function resetMap(): Promise<void> {
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Reset failed';
     // cacheEnabled is derived from info — no manual resync needed
+  } finally {
+    isMutating.value = false;
   }
 }
 
@@ -299,6 +309,8 @@ const filteredDevices = computed((): DeviceNode[] => filterDevices(devices.value
 // undefined, even though the cache is still running on the device.
 watch(cacheEnabled, (val, oldVal) => {
   if (val) {
+    // Clear any stale interval from a previous enable cycle before starting a new one.
+    if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
     fetchCacheStats(); // immediate fetch on enable
     statsInterval = setInterval(fetchCacheStats, 5000);
   } else {

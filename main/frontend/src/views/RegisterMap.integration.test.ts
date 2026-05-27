@@ -1718,3 +1718,203 @@ describe('RM-I-17: Stats DOM values from cache/status', () => {
     wrapper.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// RM-I-18: isMutating guard — toggleCaching double-click prevention
+// ---------------------------------------------------------------------------
+/**
+ * Verifies that isMutating prevents a second toggleCaching() call from starting
+ * while the first one is still in-flight.
+ *
+ * Test: make the ports/1/mode POST hang, double-click the toggle, resolve the
+ * hanging promise, and verify that ports/1/mode was called exactly once.
+ */
+describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  it('double-click on caching toggle issues only one ports/1/mode call', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // Start with cacheEnabled=true (port1=cache_bus) so the toggle is on the disable path.
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Make the ports/1/mode POST hang indefinitely to simulate an in-flight request.
+    let resolveApiCall!: (v: unknown) => void;
+    vi.mocked(api).mockImplementation(
+      (url: string) =>
+        new Promise((res) => {
+          if (url === 'ports/1/mode') {
+            resolveApiCall = res;
+          } else {
+            res({ d: [] });
+          }
+        }),
+    );
+
+    // Clear call history so we only count toggle-click calls.
+    vi.mocked(api).mockClear();
+
+    // First click — starts the disable operation (isMutating becomes true).
+    await wrapper.find('.rm-caching-toggle').trigger('click');
+    await wrapper.vm.$nextTick();
+
+    // Second click while the first is still in-flight — must be ignored.
+    await wrapper.find('.rm-caching-toggle').trigger('click');
+    await wrapper.vm.$nextTick();
+
+    // Resolve the hanging call so the component can finish.
+    resolveApiCall({ d: [] });
+    await flushPromises();
+
+    // Count only ports/1/mode calls — must be exactly 1.
+    const port1Calls = vi.mocked(api).mock.calls.filter(
+      (c: unknown[]) => c[0] === 'ports/1/mode',
+    );
+    expect(port1Calls.length).toBe(1);
+
+    wrapper.unmount();
+  });
+
+  it('double-click on reset button issues only one disable+re-enable cycle', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // Start with cacheEnabled=true (port1=cache_bus) so the reset button is visible.
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Track how many times ports/1/mode has been called.
+    // The first call hangs (so the second button click arrives while the first resetMap is in-flight).
+    // All subsequent calls resolve immediately.
+    let port1CallCount = 0;
+    let resolveFirstPort1Call!: (v: unknown) => void;
+    vi.mocked(api).mockImplementation(
+      (url: string) =>
+        new Promise((res) => {
+          if (url === 'ports/1/mode') {
+            port1CallCount += 1;
+            if (port1CallCount === 1) {
+              // Hang the first call so the second click arrives before resetMap() finishes.
+              resolveFirstPort1Call = res;
+            } else {
+              // All subsequent ports/1/mode calls resolve immediately.
+              res({ d: [] });
+            }
+          } else {
+            // All non-ports/1/mode calls (cache/json, etc.) resolve immediately.
+            res({ d: [] });
+          }
+        }),
+    );
+
+    // Clear call history so we only count reset-click calls.
+    vi.mocked(api).mockClear();
+    port1CallCount = 0;
+
+    // First click — starts resetMap() (isMutating becomes true).
+    await wrapper.find('.rsp-btn-reset').trigger('click');
+    await wrapper.vm.$nextTick();
+
+    // Second click while the first resetMap() is still in-flight — must be ignored by the guard.
+    await wrapper.find('.rsp-btn-reset').trigger('click');
+    await wrapper.vm.$nextTick();
+
+    // Resolve the hanging first ports/1/mode call so the single resetMap() can finish.
+    resolveFirstPort1Call({ d: [] });
+    await flushPromises();
+
+    // Count only ports/1/mode calls.
+    // One resetMap() execution = 2 calls (disable then re-enable).
+    // With the isMutating guard: ≤2 calls total.
+    // Without the guard (two parallel executions): 4 calls total.
+    const port1Calls = vi.mocked(api).mock.calls.filter(
+      (c: unknown[]) => c[0] === 'ports/1/mode',
+    );
+    expect(port1Calls.length).toBe(2);
+
+    wrapper.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RM-I-19: statsInterval not double-scheduled on cacheEnabled flicker
+// ---------------------------------------------------------------------------
+/**
+ * Verifies that the cacheEnabled watcher clears any existing statsInterval before
+ * starting a new one, so a true→false→true transition does not leave two overlapping
+ * intervals running simultaneously.
+ *
+ * With the fix: only one setInterval is active after the second true transition.
+ * After 10 001ms, a single 5000ms interval fires at ~5000ms and ~10000ms → 2 calls.
+ *
+ * Without the fix: two intervals overlap → ~4 calls in 10 001ms.
+ */
+describe('RM-I-19: statsInterval not double-scheduled on cacheEnabled flicker', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    infoRef.value = undefined;
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('cache/status called at most 2 times in 10s after a true→false→true flicker', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // Step 1: Start with cacheEnabled=true → watcher fires, first interval starts.
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    // Settle the initial mount without advancing timers into the intervals.
+    await vi.advanceTimersByTimeAsync(50);
+    await flushPromises();
+
+    // Step 2: cacheEnabled → false (info undefined simulates a brief poll gap).
+    // The watcher's else branch clears statsInterval.
+    infoRef.value = undefined;
+    await wrapper.vm.$nextTick();
+    await flushPromises();
+
+    // Step 3: cacheEnabled → true again — the watcher must clear any stale interval
+    // before starting a new one, then calls fetchCacheStats immediately.
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+    await wrapper.vm.$nextTick();
+    await flushPromises();
+
+    // Clear all recorded calls so we count only from step 3 onwards.
+    vi.mocked(api).mockClear();
+
+    // Step 4: Advance 10 001ms — a single 5000ms interval fires at ~5000ms and ~10000ms.
+    // The immediate fetchCacheStats at step 3 was already counted and cleared above.
+    await vi.advanceTimersByTimeAsync(10001);
+    await flushPromises();
+
+    // Count cache/status calls in this window.
+    const statusCalls = vi.mocked(api).mock.calls.filter(
+      (c: unknown[]) => c[0] === 'cache/status',
+    );
+
+    // With the fix: exactly 2 calls (one at ~5000ms, one at ~10000ms).
+    // Without the fix: 4+ calls (two overlapping intervals each firing twice).
+    expect(statusCalls.length).toBe(2);
+
+    wrapper.unmount();
+  });
+});
