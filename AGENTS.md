@@ -41,6 +41,11 @@ The `make qemu-test` target:
 - **Always run tests after every fix.** After each code change, run the relevant test suite and confirm all tests pass before proceeding. For backend (C) changes: `make unittests`. For frontend changes: `make test-frontend`.
 - **Always update documentation when renaming or changing build targets.** After any change to `Makefile` or `qemu.mk` (adding, removing, or renaming targets; changing dependencies), grep all `*.md` files for the old target names and update every occurrence. README.md, README_QEMU.md, AGENTS.md, and `bugs/*/README.md` all reference make targets by name.
 
+## Jenkins access
+
+CI lives at <https://jenkins.wirenboard.com>. Setup (API token in `.env`) and
+curl recipes for checking builds: see [docs/jenkins_wb.md](docs/jenkins_wb.md).
+
 ## Backend (Embedded C) Coding Standards
 
 Full style guide: https://raw.githubusercontent.com/wirenboard/codestyle/refs/heads/master/embedded_c.ru.md

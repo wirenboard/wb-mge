@@ -10,6 +10,12 @@ Two modes are available for each port:
  - Modbus TCP — for Modbus devices only
  - Transparent gateway — suitable for any protocols running over RS-485.
 
+## CI
+
+Builds run on Jenkins at <https://jenkins.wirenboard.com/job/wirenboard/job/wb-mge/>.
+See [docs/jenkins_wb.md](docs/jenkins_wb.md) for API token setup and commands
+to query build status / logs from the shell.
+
 ## Manual Build Instructions
 
 ### Prerequisites
