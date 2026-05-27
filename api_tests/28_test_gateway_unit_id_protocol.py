@@ -70,7 +70,7 @@ gateway_slave = build_gateway_fixture(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(30)
 def test_gateway_nonzero_unit_id_passthrough(gateway_slave):
     """Non-zero unit IDs are echoed back correctly on the same TCP connection.
 

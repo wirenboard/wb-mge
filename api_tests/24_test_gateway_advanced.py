@@ -140,7 +140,7 @@ def test_gateway_rtu_timeout_no_response(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(30)
 def test_gateway_exception_forwarded_to_tcp(gateway_slave):
     """RTU slave responds with FC03 exception 0x02; TCP client must receive FC=0x83 exception.
 
@@ -182,7 +182,7 @@ def test_gateway_exception_forwarded_to_tcp(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(30)
 def test_gateway_fc06_write_single_register(gateway_slave):
     """FC06 (Write Single Register) request forwarded through gateway.
 

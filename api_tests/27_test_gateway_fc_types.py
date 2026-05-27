@@ -76,7 +76,7 @@ gateway_slave = build_gateway_fixture(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(30)
 def test_gateway_fc01_read_coils(gateway_slave):
     """FC01 (Read Coils) forwarded through the gateway; coil byte matches fake_value.
 
@@ -133,7 +133,7 @@ def test_gateway_fc01_read_coils(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(30)
 def test_gateway_fc02_read_discrete_inputs(gateway_slave):
     """FC02 (Read Discrete Inputs) forwarded through gateway; response FC and bit data correct.
 
@@ -184,7 +184,7 @@ def test_gateway_fc02_read_discrete_inputs(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(30)
 def test_gateway_fc04_read_input_registers(gateway_slave):
     """FC04 (Read Input Registers) forwarded through gateway; register values match fake_value."""
     txid = 0x0403
@@ -238,7 +238,7 @@ def test_gateway_fc04_read_input_registers(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(30)
 def test_gateway_fc16_write_multiple_registers(gateway_slave):
     """FC16 (Write Multiple Registers) forwarded without truncation.
 

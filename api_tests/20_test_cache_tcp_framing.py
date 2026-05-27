@@ -43,7 +43,10 @@ def _baseline(api):
 QEMU_CACHE_MODBUS_PORT = 50504
 
 # Timeout for opening TCP connections to the cache server.
-CACHE_MODBUS_TCP_CONNECT_TIMEOUT = 5.0
+# 15s is generous enough to ride out a SYN drop in QEMU's OpenETH (Linux retransmits
+# SYN at ~1s/~3s/~7s). A 5s timeout used to flake when one of several parallel SYNs
+# happened to land while the emulated NIC's RX buffer was momentarily full.
+CACHE_MODBUS_TCP_CONNECT_TIMEOUT = 15.0
 
 # Modbus function code: Read Holding Registers.
 FC_READ_HOLDING = 0x03
@@ -377,8 +380,11 @@ def test_cache_tcp_concurrent_connections(cache_tcp_server):
         threading.Thread(target=conn_worker, args=(i, tids[i]), daemon=True)
         for i in range(NUM_CONNS)
     ]
+    # Stagger by ~50 ms so three SYNs don't hit OpenETH in the same emulator tick;
+    # the test still exercises concurrent open sockets, just not simultaneous SYNs.
     for t in threads:
         t.start()
+        time.sleep(0.05)
     for t in threads:
         t.join(timeout=30)
 
@@ -410,6 +416,11 @@ def test_cache_tcp_large_split(cache_tcp_server):
     test_tid = 3
     CHUNK_SIZE = 3
 
+    # Let the server settle after the previous test's 3 concurrent connections —
+    # otherwise lingering close events can delay this test's response and push
+    # us past the recv() timeout under host CPU contention.
+    time.sleep(0.3)
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(CACHE_MODBUS_TCP_CONNECT_TIMEOUT)
     try:
@@ -422,7 +433,7 @@ def test_cache_tcp_large_split(cache_tcp_server):
         for offset in range(0, len(req), CHUNK_SIZE):
             sock.send(req[offset:offset + CHUNK_SIZE])
             time.sleep(0.02)
-        sock.settimeout(5.0)
+        sock.settimeout(10.0)
         resp_tid, resp_fc, payload = _recv_one_response(sock)
         assert resp_tid == test_tid, \
             f"TID mismatch: expected {test_tid}, got {resp_tid}"

@@ -55,7 +55,10 @@ FAKE_VALUE = 0x1234
 MBTCP_MAX_CONNS = 8
 
 # Timeout for opening TCP connections to the gateway.
-GATEWAY_CONNECT_TIMEOUT = 5.0
+# 15s rides out a SYN drop in QEMU's emulated OpenETH (Linux retransmits at ~1s/~3s/~7s).
+# A 5s timeout used to flake when several rapid connects coincided with an RX buffer
+# overflow in the emulator.
+GATEWAY_CONNECT_TIMEOUT = 15.0
 
 
 # ---------------------------------------------------------------------------
@@ -125,8 +128,10 @@ def test_gateway_multiconn_concurrent_split_frames(gateway_slave):
         threading.Thread(target=gw_split_worker, args=(i,), daemon=True)
         for i in range(NUM_CLIENTS)
     ]
+    # Stagger by ~50 ms so the two SYNs don't hit the emulated OpenETH in the same tick.
     for t in threads:
         t.start()
+        time.sleep(0.05)
     for t in threads:
         t.join(timeout=60)
 
@@ -227,12 +232,15 @@ def test_gateway_multiconn_table_exhaustion(gateway_slave):
     sockets = []
     responses = {}
     try:
-        # Open all connections before sending any requests
+        # Open all connections before sending any requests.
+        # Stagger by ~50 ms each so 9 SYNs don't hit the emulated OpenETH in the same
+        # tick — without this the RX buffer occasionally overflows and a SYN gets dropped.
         for i in range(NUM_SOCKETS):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(GATEWAY_CONNECT_TIMEOUT)
             s.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
             sockets.append(s)
+            time.sleep(0.05)
 
         # Send and receive sequentially to avoid overwhelming the RTU bus
         for i, s in enumerate(sockets):

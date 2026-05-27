@@ -1,5 +1,8 @@
 """Settings tests: structure, write/read-back, validation, partial update"""
 
+import time
+
+import pytest
 
 
 def test_settings(api):
@@ -286,12 +289,18 @@ def test_settings(api):
             print("✓ Original settings restored")
 
 
+@pytest.mark.timeout(180)
 def test_per_field_validation(api):
     """Validate each field independently so that each validator is exercised.
 
     The firmware stops validation on the first error in a batch request, so
     sending all invalid fields at once only exercises the first validator.
     Here each field is sent alone so we verify every validator fires.
+
+    Bumped to 180s (default is 60s) because this test issues 32 sequential
+    HTTP requests followed by a restore POST; on QEMU the per-request latency
+    occasionally spikes when a background settings_update task is doing a
+    full port deinit/init cycle.
     """
     original_response = api.get_settings()
     assert original_response.status_code == 200
@@ -390,6 +399,10 @@ def test_per_field_validation(api):
             current = check.json()
             assert current == original_settings, \
                 f"[{description}] Invalid settings were saved! Current != original"
+            # Brief pause between cases: prevents the per-test 60s budget from
+            # being eaten when the firmware happens to be busy with a background
+            # settings_update task from an earlier write.
+            time.sleep(0.1)
     finally:
         # Restore original settings in case any were accidentally saved
         api.update_settings(original_settings)

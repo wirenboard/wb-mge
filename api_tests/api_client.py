@@ -124,11 +124,17 @@ class WBMGEAPI:
         return self.session.get(f"{self.base_url}/hostname", timeout=10)
 
     def set_port_mode(self, port_num, mode):
-        """Set port mode via POST /ports/{port_num}/mode"""
+        """Set port mode via POST /ports/{port_num}/mode
+
+        30s timeout: a port-mode change runs serial+bridge deinit and reinit,
+        which under host CPU contention (QEMU on a busy host) can take several
+        seconds — especially when the listen socket from the previous mode is
+        still being released by lwIP and create_listen_socket() retries.
+        """
         return self.session.post(
             f"{self.base_url}/ports/{port_num}/mode",
             json={"mode": mode},
-            timeout=10
+            timeout=30
         )
 
     def send_packet(self, port_num: int, hex_str: str):
