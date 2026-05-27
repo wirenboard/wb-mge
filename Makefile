@@ -114,6 +114,15 @@ $(UNITTESTS_TARGETS):
 		$(EIM_ACTIVATE) && cd $(UT_DIR) && $(MAKE) --no-print-directory && cd -; \
 	fi
 
+lint-frontend:
+	@echo 'Running frontend linter'
+	@{ \
+		set -e && \
+		cd main/frontend/ && \
+		npm install && \
+		npm run lint; \
+	}
+
 test-frontend:
 	@echo 'Running frontend tests'
 	@{ \
@@ -213,7 +222,7 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all test unittests test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
+.PHONY: all test unittests lint-frontend test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk

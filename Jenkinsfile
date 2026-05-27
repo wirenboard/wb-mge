@@ -22,6 +22,14 @@ pipeline {
                 }
             }
         }
+        stage('Lint') {
+            steps {
+                // catchError keeps build UNSTABLE (yellow) on lint failure — subsequent stages still run
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sh 'bash -c "make lint-frontend"'
+                }
+            }
+        }
         stage('Test') {
             steps {
                 script {
