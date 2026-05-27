@@ -17,6 +17,8 @@
  * TC-14 FC05 in SNIFF_IDLE → DIRECTION_UNKNOWN → packet dropped, state stays IDLE
  * TC-15 CRC ERR in SNIFF_IDLE, no prior sync — packet dropped
  * TC-16 CRC ERR in SNIFF_IDLE after sync — alternates master/slave
+ * TC-18 Multi-master in RES_WAIT — second master request flushes buffered req
+ * TC-19 Post-disable timer callback does not emit a packet (race condition guard)
  */
 
 #include "unity.h"
@@ -1017,6 +1019,131 @@ void test_sniffer_set_cache_active_inactive_sets_proxy_timeout(void)
 }
 
 /* ============================================================
+ * TC-18 — Multi-master in RES_WAIT (Bug #17)
+ * ============================================================ */
+
+void test_tc18_multi_master_in_res_wait(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-18: Multi-master in RES_WAIT — second master flushes buffered req and restarts timer");
+    LOG_MESSAGE();
+
+    /*
+     * Master A request: slave=0x83, FC03, addr=0x0061, count=2, valid CRC.
+     * classify_direction: FC03, len==8 → DIRECTION_REQUEST → buffered in RES_WAIT.
+     */
+    uint8_t req_a[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
+
+    /*
+     * Master B request: slave=0x01, FC03, addr=0x0000, count=2, valid CRC.
+     * CRC of {01 03 00 00 00 02} = 0x0BC4 (lo=0xC4, hi=0x0B).
+     * classify_direction: FC03, len==8 → DIRECTION_REQUEST.
+     * Arrives in RES_WAIT → second master path: flushes buffered req_a, buffers req_b.
+     */
+    uint8_t req_b[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /*
+     * Slave 0x01 response: 4 data bytes, valid CRC.
+     * CRC of {01 03 04 00 00 00 00} = 0x33FA (lo=0xFA, hi=0x33).
+     * Arrives in RES_WAIT → paired with buffered req_b → state → SNIFF_IDLE.
+     */
+    uint8_t resp_b[] = {0x01, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0xFA, 0x33};
+
+    /* Step 1: Master A request → RES_WAIT; nothing enqueued. */
+    SEND0(req_a);
+    assert_queue_empty();
+
+    /* Step 2: Master B request arrives in RES_WAIT.
+     * Expected: Master A's buffered request is emitted (1 packet).
+     *           Master B's request is buffered; timer is restarted. */
+    int timer_start_before = mock_xTimerStart_called;
+    SEND0(req_b);
+
+    /* Master A's buffered request must have been flushed to the queue. */
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p1.is_master,
+        "TC-18 p1: Master A's buffered request must be MASTER (is_master=true)");
+    TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,
+        "TC-18 p1: Master A's buffered request must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id,
+        "TC-18 p1: slave_id must be 0x83 (Master A target)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function,
+        "TC-18 p1: function must be FC03");
+
+    /* Master B's request must be buffered (not yet emitted). */
+    assert_queue_empty();
+
+    /* Timer must have been restarted (xTimerStart called once more). */
+    TEST_ASSERT_EQUAL_MESSAGE(timer_start_before + 1, mock_xTimerStart_called,
+        "TC-18: xTimerStart must be called once to restart timer for Master B's request");
+
+    /* Step 3: Slave 0x01 responds → paired with Master B's buffered request.
+     * Expected: Master B's request + Slave 0x01 response emitted (2 packets).
+     *           State → SNIFF_IDLE. */
+    SEND0(resp_b);
+
+    sniff_packet_t p2 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p2.is_master,
+        "TC-18 p2: Master B's buffered request must be MASTER (is_master=true)");
+    TEST_ASSERT_TRUE_MESSAGE(p2.crc_valid,
+        "TC-18 p2: Master B's buffered request must have valid CRC (hardcoded true in DIRECTION_REQUEST branch)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p2.slave_id,
+        "TC-18 p2: slave_id must be 0x01 (Master B target)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p2.function,
+        "TC-18 p2: function must be FC03");
+
+    sniff_packet_t p3 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p3.is_master,
+        "TC-18 p3: Slave 0x01 response must be SLAVE (is_master=false)");
+    TEST_ASSERT_TRUE_MESSAGE(p3.crc_valid,
+        "TC-18 p3: Slave 0x01 response must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p3.slave_id,
+        "TC-18 p3: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p3.function,
+        "TC-18 p3: function must be FC03");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-19 — Post-disable timer callback does not emit (Bug #3)
+ * ============================================================ */
+
+void test_tc19_post_disable_timer_no_spurious_packet(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-19: After sniffer_disable(), stale timer callback must not emit a packet");
+    LOG_MESSAGE();
+
+    /*
+     * Get the timer callback reference registered by sniffer_init().
+     * Both ports use the same resp_timer_cb function.
+     * pvTimerGetTimerID is stubbed to always return 0, so the callback acts on port 0.
+     */
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* Send a request to port 0 → enters RES_WAIT, req_buf populated. */
+    uint8_t req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
+    SEND0(req);
+    assert_queue_empty();
+
+    /* Disable the sniffer before the timer fires.
+     * This clears req_len (Bug #3b fix) and sets enabled=false (Bug #3a guard). */
+    sniffer_disable(0);
+
+    /* Simulate the timer firing anyway (race: callback was already queued
+     * in the FreeRTOS timer service queue before xTimerStop was processed). */
+    timer_cb(MOCK_TIMER_HANDLE);
+
+    /* Queue must be empty — the guard must prevent the spurious timeout packet. */
+    assert_queue_empty();
+}
+
+/* ============================================================
  * main
  * ============================================================ */
 
@@ -1046,6 +1173,8 @@ int main(void)
     RUN_TEST(test_tc17_recursive_stream_split_two_frames);
     RUN_TEST(test_sniffer_set_cache_active_sets_timeout);
     RUN_TEST(test_sniffer_set_cache_active_inactive_sets_proxy_timeout);
+    RUN_TEST(test_tc18_multi_master_in_res_wait);
+    RUN_TEST(test_tc19_post_disable_timer_no_spurious_packet);
 
     return UNITY_END();
 }

@@ -169,7 +169,7 @@ static void resp_timer_cb(TimerHandle_t timer)
     bool do_enqueue = false;
 
     taskENTER_CRITICAL(&sniff_mux);
-    if (ctx->req_len >= 2) {
+    if (ctx->req_len >= 2 && (ctx->enabled || cache_multimaster_is_enabled())) {
         pkt.port         = (uint8_t)port_index;
         pkt.timestamp_us = ctx->req_timestamp_us + (uint64_t)SNIFFER_RESP_TIMEOUT_MS * 1000ULL;
         pkt.is_master    = true;
@@ -482,6 +482,9 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             enqueue_res = true;
 
             ctx->state = SNIFF_IDLE;
+            /* Defensive: stop the response timer even though this branch is currently
+             * unreachable (effective_len is always >= 4 after strip_arbitration). */
+            should_stop_timer = true;
             goto exit_critical;
         }
 
@@ -509,32 +512,61 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             goto exit_critical;
         }
 
-        req_pkt.port         = (uint8_t)port_index;
-        req_pkt.timestamp_us = ctx->req_timestamp_us;
-        req_pkt.is_master    = true;
-        req_pkt.crc_valid    = true;
-        req_pkt.slave_id     = ctx->req_buf[0];
-        req_pkt.function     = ctx->req_buf[1];
-        memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
-        req_pkt.data_len     = ctx->req_len;
-        ctx->synchronized    = true;
-        ctx->last_was_master = true;
-        enqueue_req = true;
+        /* Before pairing, check if the arriving packet is actually a new master request
+         * (second master starting a transaction while we were waiting for a response). */
+        pdu_direction_t dir2 = classify_direction(effective, effective_len);
+        if (dir2 == DIRECTION_REQUEST) {
+            /* Second master: flush the pending buffered request as a standalone MASTER
+             * packet and start waiting for the response to the new request. */
+            req_pkt.port         = (uint8_t)port_index;
+            req_pkt.timestamp_us = ctx->req_timestamp_us;
+            req_pkt.is_master    = true;
+            req_pkt.crc_valid    = true;
+            req_pkt.slave_id     = ctx->req_buf[0];
+            req_pkt.function     = ctx->req_buf[1];
+            memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
+            req_pkt.data_len     = ctx->req_len;
+            ctx->synchronized    = true;
+            ctx->last_was_master = true;
+            enqueue_req          = true;
 
-        res_pkt.port         = (uint8_t)port_index;
-        res_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-        res_pkt.is_master    = false;
-        res_pkt.crc_valid    = crc_check(effective, effective_len);
-        res_pkt.slave_id     = effective[0];
-        res_pkt.function     = effective[1];
-        size_t copy_len      = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-        memcpy(res_pkt.data, effective, copy_len);
-        res_pkt.data_len     = (uint16_t)copy_len;
-        ctx->synchronized    = true;
-        ctx->last_was_master = false;
-        enqueue_res = true;
+            /* Buffer the new request; restart timer; stay in SNIFF_RES_WAIT. */
+            size_t new_cpy        = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
+            memcpy(ctx->req_buf, effective, new_cpy);
+            ctx->req_len          = (uint16_t)new_cpy;
+            ctx->req_timestamp_us = (uint64_t)esp_timer_get_time();
+            should_start_timer    = true;
+            /* ctx->state stays SNIFF_RES_WAIT */
+        } else {
+            /* Normal response (DIRECTION_RESPONSE or DIRECTION_UNKNOWN):
+             * pair the incoming packet with the buffered request. */
+            req_pkt.port         = (uint8_t)port_index;
+            req_pkt.timestamp_us = ctx->req_timestamp_us;
+            req_pkt.is_master    = true;
+            req_pkt.crc_valid    = true;
+            req_pkt.slave_id     = ctx->req_buf[0];
+            req_pkt.function     = ctx->req_buf[1];
+            memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
+            req_pkt.data_len     = ctx->req_len;
+            ctx->synchronized    = true;
+            ctx->last_was_master = true;
+            enqueue_req          = true;
 
-        ctx->state = SNIFF_IDLE;
+            res_pkt.port         = (uint8_t)port_index;
+            res_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
+            res_pkt.is_master    = false;
+            res_pkt.crc_valid    = crc_check(effective, effective_len);
+            res_pkt.slave_id     = effective[0];
+            res_pkt.function     = effective[1];
+            size_t copy_len      = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
+            memcpy(res_pkt.data, effective, copy_len);
+            res_pkt.data_len     = (uint16_t)copy_len;
+            ctx->synchronized    = true;
+            ctx->last_was_master = false;
+            enqueue_res          = true;
+
+            ctx->state = SNIFF_IDLE;
+        }
     }
 exit_critical:
     taskEXIT_CRITICAL(&sniff_mux);
@@ -841,7 +873,8 @@ void sniffer_disable(unsigned port_index)
         /* else: leave timeout at SNIFFER value — cache still needs short inter-frame gaps */
     }
     xTimerStop(sniff_ctx[port_index].resp_timer, 0);
-    sniff_ctx[port_index].state = SNIFF_IDLE;
+    sniff_ctx[port_index].req_len = 0;   /* Prevent stale timer CB from emitting a packet */
+    sniff_ctx[port_index].state   = SNIFF_IDLE;
     ESP_LOGI(TAG, "Sniffer disabled on port %u", port_index);
 }
 
