@@ -88,7 +88,9 @@ const sendDisabled = computed(() =>
 )
 
 const sendLabel = computed(() =>
-  mode.value === 'read' ? t('send_read') : t('send_write')
+  mode.value === 'read'
+    ? t('send_read', { port: props.portNum })
+    : t('send_write', { port: props.portNum })
 )
 
 const valueLabel = computed(() =>
@@ -169,18 +171,16 @@ const valueLabel = computed(() =>
 
     <!-- Footer -->
     <div class="sniffer-sender-foot">
+      <button
+        class="sniffer-sender-foot-send"
+        :disabled="sendDisabled"
+        @click="handleSend"
+      >▶ {{ sendLabel }}</button>
+      <!-- CRC hint or TX-disabled warning below the send button -->
       <span class="sniffer-sender-hint">
         <template v-if="txDisabled">{{ t('hint_tx_disabled') }}</template>
-        <template v-else>{{ t('hint_port', { port: portNum }) }}</template>
+        <template v-else>{{ t('hint_crc') }}</template>
       </span>
-      <div class="sniffer-sender-foot-actions">
-        <button class="sniffer-sender-foot-cancel" @click="emit('close')">{{ t('cancel') }}</button>
-        <button
-          class="sniffer-sender-foot-send"
-          :disabled="sendDisabled"
-          @click="handleSend"
-        >▶ {{ sendLabel }}</button>
-      </div>
     </div>
   </div>
 </template>
@@ -191,7 +191,7 @@ const valueLabel = computed(() =>
   top: 16px;
   right: 16px;
   z-index: 100;
-  width: 400px;
+  width: 480px;
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: var(--r-lg, 10px);
@@ -369,49 +369,23 @@ const valueLabel = computed(() =>
 /* Footer */
 .sniffer-sender-foot {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   padding: 10px 16px 14px;
   border-top: 1px solid var(--border-color);
-  gap: 10px;
+  gap: 6px;
 }
 
 .sniffer-sender-hint {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-muted);
   font-style: italic;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.sniffer-sender-foot-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.sniffer-sender-foot-cancel {
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--r-md, 6px);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
-}
-
-.sniffer-sender-foot-cancel:hover {
-  background: var(--bg-surface-subtle);
-  border-color: var(--border-strong);
+  text-align: center;
 }
 
 .sniffer-sender-foot-send {
-  height: 30px;
+  width: 100%;
+  height: 34px;
   padding: 0 14px;
   border: 1px solid var(--primary-color);
   border-radius: var(--r-md, 6px);
@@ -447,11 +421,10 @@ const valueLabel = computed(() =>
     "label_count": "Count",
     "label_value": "Value",
     "preview_label": "PREVIEW",
-    "hint_port": "Port {port} · CRC computed automatically",
+    "hint_crc": "CRC computed automatically",
     "hint_tx_disabled": "TX is disabled for this port",
-    "cancel": "Cancel",
-    "send_read": "Send read",
-    "send_write": "Send write"
+    "send_read": "Send read to port {port}",
+    "send_write": "Send write to port {port}"
   },
   "ru": {
     "title": "Отправить пакет",
@@ -464,11 +437,10 @@ const valueLabel = computed(() =>
     "label_count": "Количество",
     "label_value": "Значение",
     "preview_label": "PREVIEW",
-    "hint_port": "Порт {port} · CRC добавляется автоматически",
+    "hint_crc": "CRC добавляется автоматически",
     "hint_tx_disabled": "TX отключён для этого порта",
-    "cancel": "Отмена",
-    "send_read": "Отправить чтение",
-    "send_write": "Отправить запись"
+    "send_read": "Отправить чтение на порт {port}",
+    "send_write": "Отправить запись на порт {port}"
   },
   "kk": {
     "title": "Пакет жіберу",
@@ -481,11 +453,10 @@ const valueLabel = computed(() =>
     "label_count": "Саны",
     "label_value": "Мән",
     "preview_label": "PREVIEW",
-    "hint_port": "Порт {port} · CRC автоматты түрде есептеледі",
+    "hint_crc": "CRC автоматты түрде есептеледі",
     "hint_tx_disabled": "Бұл порт үшін TX өшірілген",
-    "cancel": "Бас тарту",
-    "send_read": "Оқуды жіберу",
-    "send_write": "Жазуды жіберу"
+    "send_read": "{port} портына оқуды жіберу",
+    "send_write": "{port} портына жазуды жіберу"
   },
   "it": {
     "title": "Invia pacchetto",
@@ -498,11 +469,10 @@ const valueLabel = computed(() =>
     "label_count": "Conteggio",
     "label_value": "Valore",
     "preview_label": "ANTEPRIMA",
-    "hint_port": "Porta {port} · CRC calcolato automaticamente",
+    "hint_crc": "CRC calcolato automaticamente",
     "hint_tx_disabled": "TX disabilitato per questa porta",
-    "cancel": "Annulla",
-    "send_read": "Invia lettura",
-    "send_write": "Invia scrittura"
+    "send_read": "Invia lettura alla porta {port}",
+    "send_write": "Invia scrittura alla porta {port}"
   },
   "de": {
     "title": "Paket senden",
@@ -515,11 +485,10 @@ const valueLabel = computed(() =>
     "label_count": "Anzahl",
     "label_value": "Wert",
     "preview_label": "VORSCHAU",
-    "hint_port": "Port {port} · CRC wird automatisch berechnet",
+    "hint_crc": "CRC wird automatisch berechnet",
     "hint_tx_disabled": "TX für diesen Port deaktiviert",
-    "cancel": "Abbrechen",
-    "send_read": "Lesen senden",
-    "send_write": "Schreiben senden"
+    "send_read": "Lesen an Port {port} senden",
+    "send_write": "Schreiben an Port {port} senden"
   }
 }
 </i18n>
