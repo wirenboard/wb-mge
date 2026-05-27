@@ -62,6 +62,7 @@ vi.mock('@/common/settings', () => ({
     initData: ref(null),
     data: ref(null),
     isChanged: () => false,
+    refresh: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 

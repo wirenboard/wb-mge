@@ -8,6 +8,7 @@
 #include "rs485_stats.h"
 #include "auth.h"
 #include "json_utils.h"
+#include "modbus_helpers.h"
 
 #include "esp_check.h"
 #include "esp_log.h"
@@ -17,6 +18,14 @@
 #include "freertos/semphr.h"
 
 #include <string.h>
+#include <stdio.h>
+
+/* Allow unit tests to access helper functions that are otherwise static */
+#ifdef __unittest_env__
+#define PORT_MANAGER_STATIC
+#else
+#define PORT_MANAGER_STATIC static
+#endif
 
 static const char *TAG = "port_manager";
 
@@ -329,6 +338,25 @@ esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled)
     return serial_set_tx_disabled(sd, disabled);
 }
 
+esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t len)
+{
+    if (port_index >= BRIDGES_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    serial_desc_t *sd = get_port_serial_desc(port_index);
+    if (!sd) {
+        ESP_LOGW(TAG, "Port[%u]: no serial_desc, cannot send raw bytes", port_index + 1);
+        return ESP_FAIL;
+    }
+    esp_err_t ret = serial_send(sd, (uint8_t *)data, len);
+    /* Feed transmitted bytes into the sniffer so they appear in the WS log.
+     * Only inject when TX was actually sent (not silently dropped by tx_disabled). */
+    if ((ret == ESP_OK) && (!sd->tx_disabled)) {
+        sniffer_inject_tx(port_index, data, len);
+    }
+    return ret;
+}
+
 esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
 {
     if (port_index >= BRIDGES_COUNT) {
@@ -414,6 +442,88 @@ bool port_manager_check_settings_changed(unsigned port_index)
 // HTTP handlers
 // ────────────────────────────────────────────────────────────────
 
+/* Decode hex string to bytes — returns byte count or -1 on invalid input */
+PORT_MANAGER_STATIC int hex_str_to_bytes(const char *hex, uint8_t *out, size_t out_max)
+{
+    size_t hex_len = strlen(hex);
+    if ((hex_len % 2) != 0 || (hex_len / 2) > out_max) {
+        return -1;
+    }
+    for (size_t i = 0; i < hex_len; i += 2) {
+        unsigned byte_val;
+        int chars_read = 0;
+        /* Use %n to verify that exactly 2 hex characters were consumed */
+        if (sscanf(hex + i, "%02x%n", &byte_val, &chars_read) != 1 || chars_read != 2) {
+            return -1;
+        }
+        out[i / 2] = (uint8_t)byte_val;
+    }
+    return (int)(hex_len / 2);
+}
+
+static esp_err_t port_send_handler(httpd_req_t *req, unsigned port_index)
+{
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
+    cJSON *req_json = json_utils_receive_json(req);
+    if (!req_json) {
+        return json_utils_send_error(req, "Invalid JSON");
+    }
+
+    cJSON *hex_item = cJSON_GetObjectItem(req_json, "hex");
+    if (!hex_item || !cJSON_IsString(hex_item)) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "Missing or invalid 'hex' field");
+    }
+
+    const char *hex_str = hex_item->valuestring;
+    size_t hex_len = strlen(hex_str);
+
+    /* Max 512 hex chars = 256 bytes = MODBUS_RTU_MAX_FRAME_LEN */
+    if ((hex_len % 2) != 0) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "Hex string length must be even");
+    }
+    if (hex_len > (MODBUS_RTU_MAX_FRAME_LEN * 2)) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "Hex string too long (max 512 hex chars / 256 bytes)");
+    }
+
+    uint8_t bytes[MODBUS_RTU_MAX_FRAME_LEN];
+    int byte_count = hex_str_to_bytes(hex_str, bytes, sizeof(bytes));
+    if (byte_count < 0) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "Invalid hex string");
+    }
+
+    esp_err_t ret = port_manager_send_raw(port_index, bytes, (size_t)byte_count);
+    if (ret != ESP_OK) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, esp_err_to_name(ret));
+    }
+
+    cJSON *resp = cJSON_CreateObject();
+    if (!resp) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "Failed to create response");
+    }
+    cJSON_AddNumberToObject(resp, "sent", byte_count);
+    json_utils_send_response(req, req_json, resp);
+    return ESP_OK;
+}
+
+static esp_err_t port1_send_handler(httpd_req_t *req)
+{
+    return port_send_handler(req, 0);
+}
+
+static esp_err_t port2_send_handler(httpd_req_t *req)
+{
+    return port_send_handler(req, 1);
+}
+
 static esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
 {
     if (!auth_middleware_check(req)) {
@@ -479,12 +589,28 @@ static const httpd_uri_t uri_port2_mode = {
     .handler = port2_set_mode_handler,
 };
 
+static const httpd_uri_t uri_port1_send = {
+    .uri     = "/ports/1/send",
+    .method  = HTTP_POST,
+    .handler = port1_send_handler,
+};
+
+static const httpd_uri_t uri_port2_send = {
+    .uri     = "/ports/2/send",
+    .method  = HTTP_POST,
+    .handler = port2_send_handler,
+};
+
 esp_err_t port_manager_register_handlers(httpd_handle_t server)
 {
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port1_mode),
                         TAG, "Failed to register POST /ports/1/mode");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port2_mode),
                         TAG, "Failed to register POST /ports/2/mode");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port1_send),
+                        TAG, "Failed to register POST /ports/1/send");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port2_send),
+                        TAG, "Failed to register POST /ports/2/send");
 
     ESP_LOGI(TAG, "HTTP handlers registered");
     return ESP_OK;

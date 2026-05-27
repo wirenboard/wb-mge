@@ -133,7 +133,25 @@ esp_err_t port_manager_register_handlers(httpd_handle_t server);
  */
 esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled);
 
+/**
+ * @brief Send raw bytes to an RS-485 port.
+ *
+ * Uses the same serial_desc regardless of port mode (SNIFFER, CACHE_BUS, TCP_BRIDGE).
+ * If port is disabled (no serial_desc) or serial_send fails, returns ESP_FAIL.
+ * If tx_disabled is set on the descriptor, serial_send silently drops data (returns ESP_OK).
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param data        Pointer to byte buffer.
+ * @param len         Number of bytes to send.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if port_index is out of range,
+ *         ESP_FAIL if no serial_desc or transmission fails.
+ */
+esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t len);
+
 #ifdef __unittest_env__
 void port_manager_reset_for_test(void);
+
+/* hex_str_to_bytes: exposed for unit testing */
+int hex_str_to_bytes(const char *hex, uint8_t *out, size_t out_max);
 #endif /* __unittest_env__ */
 

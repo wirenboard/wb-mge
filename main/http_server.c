@@ -17,7 +17,7 @@
 #include "esp_log.h"
 #include "setting_items.h"
 
-#define MAX_URI_HANDLERS                    30
+#define MAX_URI_HANDLERS                    32
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 

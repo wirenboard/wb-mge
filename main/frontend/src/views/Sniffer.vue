@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import PacketDecoder from '@/components/PacketDecoder.vue';
+import PacketSenderPopup from '@/components/PacketSenderPopup.vue';
 import CheckmarkIcon from '@/assets/checkmarkIcon.svg?component';
+import { useSettings } from '@/common/settings';
 import {
   type SniffRow,
   type ByteRole,
@@ -16,6 +18,14 @@ import {
 } from '@/utils/snifferUtils';
 
 const { t } = useI18n();
+
+const { data: settings, refresh: refreshSettings } = useSettings();
+const senderOpen = ref(false);
+
+const txDisabledForCurrentPort = computed(() => {
+  if (portFilter.value === '1') return settings.value?.rs485_1?.tx_disabled ?? false;
+  return settings.value?.rs485_2?.tx_disabled ?? false;
+});
 
 const rows = ref<SniffRow[]>([]);
 const running = ref(false);
@@ -111,6 +121,7 @@ function clearLogs() {
   lastTimestampUs = 0
 }
 
+onMounted(() => refreshSettings())
 onUnmounted(() => stopCapture())
 
 const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
@@ -241,6 +252,8 @@ function exportCsv() {
           >Port {{ p }}</button>
         </div>
         <span class="heading-sep" />
+        <Button variant="primary" @click="senderOpen = true" :disabled="txDisabledForCurrentPort">▶ {{ t('send_packet') }}</Button>
+        <span class="heading-sep" />
         <Button variant="outline" @click="exportCsv()" :disabled="filteredRows.length === 0">{{ t('export_csv') }}</Button>
         <span class="heading-sep" />
         <Button variant="outline" @click="clearLogs()">{{ t('clear') }}</Button>
@@ -250,7 +263,8 @@ function exportCsv() {
       </template>
     </Heading>
 
-    <!-- Main area: facet rail + log table -->
+    <!-- Main area: facet rail + log table (position: relative for popup anchor) -->
+    <div class="sniffer-content-wrap">
     <div class="sniffer-main">
       <!-- Facet rail -->
       <aside class="facet-rail">
@@ -369,6 +383,15 @@ function exportCsv() {
       <PacketDecoder v-if="sel" :packet="sel" />
       </div><!-- /sniffer-body -->
     </div><!-- /sniffer-main -->
+
+    <!-- Floating send packet popup — anchored to sniffer-content-wrap -->
+    <PacketSenderPopup
+      v-if="senderOpen"
+      :portNum="portFilter"
+      :txDisabled="txDisabledForCurrentPort"
+      @close="senderOpen = false"
+    />
+    </div><!-- /sniffer-content-wrap -->
   </Layout>
 </template>
 
@@ -439,6 +462,15 @@ function exportCsv() {
   background: var(--primary-color);
   border-color: var(--primary-color);
   color: #fff;
+}
+
+/* Wrapper providing the positioning context for the floating popup */
+.sniffer-content-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
 }
 
 /* Sniffer main layout */
@@ -790,7 +822,8 @@ function exportCsv() {
     "size": "Size",
     "raw_bytes": "Raw bytes",
     "export_csv": "Export CSV",
-    "hide_errors": "Hide errors"
+    "hide_errors": "Hide errors",
+    "send_packet": "Send packet"
   },
   "ru": {
     "title": "Sniffer",
@@ -813,7 +846,8 @@ function exportCsv() {
     "size": "Размер",
     "raw_bytes": "Сырые байты",
     "export_csv": "Экспорт CSV",
-    "hide_errors": "Скрыть ошибки"
+    "hide_errors": "Скрывать ошибки",
+    "send_packet": "Отправить пакет"
   },
   "kk": {
     "title": "Sniffer",
@@ -836,7 +870,8 @@ function exportCsv() {
     "size": "Өлшемі",
     "raw_bytes": "Шикі байттар",
     "export_csv": "CSV жүктеу",
-    "hide_errors": "Қателерді жасыру"
+    "hide_errors": "Қателерді жасыру",
+    "send_packet": "Пакет жіберу"
   },
   "it": {
     "title": "Sniffer",
@@ -859,7 +894,8 @@ function exportCsv() {
     "size": "Dimensione",
     "raw_bytes": "Byte grezzi",
     "export_csv": "Esporta CSV",
-    "hide_errors": "Nascondi errori"
+    "hide_errors": "Nascondi errori",
+    "send_packet": "Invia pacchetto"
   },
   "de": {
     "title": "Sniffer",
@@ -882,7 +918,8 @@ function exportCsv() {
     "size": "Größe",
     "raw_bytes": "Rohbytes",
     "export_csv": "CSV exportieren",
-    "hide_errors": "Fehler ausblenden"
+    "hide_errors": "Fehler ausblenden",
+    "send_packet": "Paket senden"
   }
 }
 </i18n>

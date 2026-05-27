@@ -56,4 +56,18 @@ void sniffer_detach(unsigned port_index);
 void sniffer_enable(unsigned port_index);
 void sniffer_disable(unsigned port_index);
 void sniffer_set_cache_active(bool active);
+
+/**
+ * @brief Feed externally-generated TX bytes into the sniffer pipeline.
+ *
+ * Called by port_manager_send_raw() to make transmitted packets visible
+ * in the sniffer WebSocket log. Has no effect if the sniffer is not
+ * enabled for the given port and no cache is active.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param data        Pointer to the transmitted bytes (the raw RTU frame).
+ * @param len         Number of bytes transmitted.
+ */
+void sniffer_inject_tx(unsigned port_index, const uint8_t *data, size_t len);
+
 esp_err_t sniffer_register_handlers(httpd_handle_t server);

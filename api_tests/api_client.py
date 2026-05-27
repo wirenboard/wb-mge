@@ -131,6 +131,14 @@ class WBMGEAPI:
             timeout=10
         )
 
+    def send_packet(self, port_num: int, hex_str: str):
+        """Send a raw RTU hex frame to an RS-485 port via POST /ports/{N}/send"""
+        return self.session.post(
+            f"{self.base_url}/ports/{port_num}/send",
+            json={"hex": hex_str},
+            timeout=10
+        )
+
     def get_wb_test(self):
         """Get WB test status"""
         return self.session.get(f"{self.base_url}/wb_test", timeout=10)

@@ -8,6 +8,11 @@ int mock_serial_deinit_called[BRIDGES_COUNT];
 int mock_serial_set_rx_timeout_called[BRIDGES_COUNT];
 serial_desc_t *mock_serial_deinit_desc[BRIDGES_COUNT];
 
+/* serial_send tracking */
+int mock_serial_send_called;
+uint8_t mock_serial_send_last_data[256]; /* MODBUS_RTU_MAX_FRAME_LEN = 256 */
+size_t mock_serial_send_last_len;
+
 serial_desc_t *serial_init(serial_config_t *serial_config,
                             serial_receive_handler_t serial_receive_handler)
 {
@@ -19,8 +24,11 @@ serial_desc_t *serial_init(serial_config_t *serial_config,
 esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 {
     (void)desc;
-    (void)data;
-    (void)len;
+    mock_serial_send_called++;
+    if (data && len > 0 && len <= 256) {
+        memcpy(mock_serial_send_last_data, data, len);
+    }
+    mock_serial_send_last_len = len;
     return ESP_OK;
 }
 
@@ -59,8 +67,9 @@ esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols)
 
 esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
 {
-    (void)desc;
-    (void)disabled;
+    if (desc) {
+        desc->tx_disabled = disabled;
+    }
     return ESP_OK;
 }
 
@@ -69,4 +78,7 @@ void mock_serial_reset(void)
     memset(mock_serial_deinit_called, 0, sizeof(mock_serial_deinit_called));
     memset(mock_serial_set_rx_timeout_called, 0, sizeof(mock_serial_set_rx_timeout_called));
     memset(mock_serial_deinit_desc, 0, sizeof(mock_serial_deinit_desc));
+    mock_serial_send_called = 0;
+    memset(mock_serial_send_last_data, 0, sizeof(mock_serial_send_last_data));
+    mock_serial_send_last_len = 0;
 }

@@ -17,6 +17,9 @@ extern int mock_sniffer_detach_called[BRIDGES_COUNT];
 extern int mock_sniffer_enable_called[BRIDGES_COUNT];
 extern bool mock_sniffer_set_cache_active_value;
 extern int mock_sniffer_set_cache_active_called;
+extern int mock_sniffer_inject_tx_called[BRIDGES_COUNT];
+extern uint8_t mock_sniffer_inject_tx_last_data[][256];
+extern size_t mock_sniffer_inject_tx_last_len[];
 void mock_sniffer_reset(void);
 
 /* cache_multimaster.c mock */
@@ -32,6 +35,9 @@ void mock_cache_modbus_server_reset(void);
 /* serial.c mock */
 extern int mock_serial_deinit_called[BRIDGES_COUNT];
 extern int mock_serial_set_rx_timeout_called[BRIDGES_COUNT];
+extern int mock_serial_send_called;
+extern uint8_t mock_serial_send_last_data[];
+extern size_t mock_serial_send_last_len;
 void mock_serial_reset(void);
 
 /* setting_items.c mock */
@@ -47,6 +53,13 @@ extern int mock_rs485_stats_init_called;
 extern int mock_rs485_stats_reset_called[BRIDGES_COUNT];
 void mock_rs485_stats_reset_all(void);
 
+/* json_utils.c mock */
+extern int mock_json_utils_send_error_called;
+extern const char *mock_json_utils_send_error_last_msg;
+extern int mock_json_utils_send_response_called;
+void mock_json_utils_reset(void);
+void mock_json_utils_inject_hex(const char *hex);
+
 /* ── setUp / tearDown ───────────────────────────────────────────────────── */
 
 void setUp(void)
@@ -59,6 +72,7 @@ void setUp(void)
     mock_serial_reset();
     mock_setting_items_reset();
     mock_rs485_stats_reset_all();
+    mock_json_utils_reset();
 }
 
 void tearDown(void)
@@ -330,6 +344,172 @@ void test_switch_from_tcp_bridge_to_disabled(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * 7. hex_str_to_bytes
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void test_hex_str_to_bytes_valid(void)
+{
+    uint8_t out[16];
+    int n = hex_str_to_bytes("0102FF", out, sizeof(out));
+    TEST_ASSERT_EQUAL(3, n);
+    TEST_ASSERT_EQUAL_HEX8(0x01, out[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x02, out[1]);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, out[2]);
+}
+
+void test_hex_str_to_bytes_odd_length(void)
+{
+    uint8_t out[16];
+    TEST_ASSERT_EQUAL(-1, hex_str_to_bytes("010", out, sizeof(out)));
+}
+
+void test_hex_str_to_bytes_non_hex(void)
+{
+    uint8_t out[16];
+    TEST_ASSERT_EQUAL(-1, hex_str_to_bytes("0G", out, sizeof(out)));
+}
+
+void test_hex_str_to_bytes_empty(void)
+{
+    uint8_t out[16];
+    TEST_ASSERT_EQUAL(0, hex_str_to_bytes("", out, sizeof(out)));
+}
+
+void test_hex_str_to_bytes_at_out_max(void)
+{
+    uint8_t out[3];
+    int n = hex_str_to_bytes("AABBCC", out, 3);
+    TEST_ASSERT_EQUAL(3, n);
+}
+
+void test_hex_str_to_bytes_exceeds_out_max(void)
+{
+    uint8_t out[2];
+    /* 3 bytes → 6 hex chars → exceeds out_max=2 */
+    TEST_ASSERT_EQUAL(-1, hex_str_to_bytes("AABBCC", out, 2));
+}
+
+void test_hex_str_to_bytes_uppercase_and_lowercase(void)
+{
+    uint8_t out_upper[2], out_lower[2];
+    hex_str_to_bytes("AABB", out_upper, sizeof(out_upper));
+    hex_str_to_bytes("aabb", out_lower, sizeof(out_lower));
+    TEST_ASSERT_EQUAL_HEX8(out_upper[0], out_lower[0]);
+    TEST_ASSERT_EQUAL_HEX8(out_upper[1], out_lower[1]);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 8. port_manager_send_raw
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void test_send_raw_invalid_port(void)
+{
+    uint8_t data[] = {0x01};
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, port_manager_send_raw(BRIDGES_COUNT, data, 1));
+    TEST_ASSERT_EQUAL(0, mock_serial_send_called);
+}
+
+void test_send_raw_disabled_port_no_serial_desc(void)
+{
+    /* Port stays DISABLED — no serial_desc, should return ESP_FAIL */
+    uint8_t data[] = {0x01};
+    TEST_ASSERT_EQUAL(ESP_FAIL, port_manager_send_raw(0, data, 1));
+    TEST_ASSERT_EQUAL(0, mock_serial_send_called);
+}
+
+void test_send_raw_sniffer_port_calls_serial_send(void)
+{
+    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    mock_serial_reset(); /* reset after set_mode to isolate */
+    mock_sniffer_reset();
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    esp_err_t ret = port_manager_send_raw(0, data, sizeof(data));
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL(1, mock_serial_send_called);
+    TEST_ASSERT_EQUAL(sizeof(data), mock_serial_send_last_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(data, mock_serial_send_last_data, sizeof(data));
+    TEST_ASSERT_EQUAL(1, mock_sniffer_inject_tx_called[0]);
+    TEST_ASSERT_EQUAL(sizeof(data), mock_sniffer_inject_tx_last_len[0]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(data, mock_sniffer_inject_tx_last_data[0], sizeof(data));
+}
+
+void test_send_raw_tx_disabled_no_sniffer_inject(void)
+{
+    /* Set up sniffer mode, then disable TX — inject must NOT be called */
+    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    port_manager_set_tx_disabled(0, true);
+    mock_serial_reset();
+    mock_sniffer_reset();
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    esp_err_t ret = port_manager_send_raw(0, data, sizeof(data));
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    /* serial_send was called (but silently dropped bytes inside the real serial layer) */
+    TEST_ASSERT_EQUAL(1, mock_serial_send_called);
+    /* sniffer_inject_tx must NOT have been called */
+    TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
+}
+
+void test_send_raw_tcp_bridge_port_calls_serial_send(void)
+{
+    port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
+    mock_serial_reset();
+
+    uint8_t data[] = {0xAA, 0xBB};
+    esp_err_t ret = port_manager_send_raw(0, data, sizeof(data));
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL(1, mock_serial_send_called);
+    TEST_ASSERT_EQUAL(2u, mock_serial_send_last_len);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 9. port_send_handler integration (via hex_str_to_bytes + port_manager_send_raw)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void test_port_send_handler_valid_hex(void)
+{
+    /* Inject a valid 8-byte FC03 request */
+    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    mock_serial_reset();
+    mock_json_utils_reset();
+
+    /* CRC of [01 03 00 00 00 02] = C4 0B (lo=0xC4, hi=0x0B) */
+    const char *hex = "010300000002C40B";
+    uint8_t decoded[8];
+    int n = hex_str_to_bytes(hex, decoded, sizeof(decoded));
+    TEST_ASSERT_EQUAL(8, n);
+    esp_err_t ret = port_manager_send_raw(0, decoded, (size_t)n);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL(1, mock_serial_send_called);
+    TEST_ASSERT_EQUAL(8u, mock_serial_send_last_len);
+    TEST_ASSERT_EQUAL_HEX8(0x01, mock_serial_send_last_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x03, mock_serial_send_last_data[1]);
+}
+
+void test_port_send_handler_odd_length_rejected(void)
+{
+    uint8_t out[16];
+    TEST_ASSERT_EQUAL(-1, hex_str_to_bytes("010", out, sizeof(out)));
+}
+
+void test_port_send_handler_nonhex_rejected(void)
+{
+    uint8_t out[16];
+    TEST_ASSERT_EQUAL(-1, hex_str_to_bytes("ZZZZ", out, sizeof(out)));
+}
+
+void test_port_send_handler_too_long_rejected(void)
+{
+    /* Build a hex string longer than out_max: 129 bytes = 258 hex chars; out_max=128 → -1 */
+    uint8_t out[128];
+    char hex[259];
+    for (int i = 0; i < 258; i++) hex[i] = 'A';
+    hex[258] = '\0';
+    TEST_ASSERT_EQUAL(-1, hex_str_to_bytes(hex, out, sizeof(out)));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Unity runner
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -369,6 +549,28 @@ int port_manager_test(void)
     /* 6 – mode switching sequences */
     RUN_TEST(test_switch_from_sniffer_to_tcp_bridge);
     RUN_TEST(test_switch_from_tcp_bridge_to_disabled);
+
+    /* 7 – hex_str_to_bytes */
+    RUN_TEST(test_hex_str_to_bytes_valid);
+    RUN_TEST(test_hex_str_to_bytes_odd_length);
+    RUN_TEST(test_hex_str_to_bytes_non_hex);
+    RUN_TEST(test_hex_str_to_bytes_empty);
+    RUN_TEST(test_hex_str_to_bytes_at_out_max);
+    RUN_TEST(test_hex_str_to_bytes_exceeds_out_max);
+    RUN_TEST(test_hex_str_to_bytes_uppercase_and_lowercase);
+
+    /* 8 – port_manager_send_raw */
+    RUN_TEST(test_send_raw_invalid_port);
+    RUN_TEST(test_send_raw_disabled_port_no_serial_desc);
+    RUN_TEST(test_send_raw_sniffer_port_calls_serial_send);
+    RUN_TEST(test_send_raw_tx_disabled_no_sniffer_inject);
+    RUN_TEST(test_send_raw_tcp_bridge_port_calls_serial_send);
+
+    /* 9 – port_send_handler integration */
+    RUN_TEST(test_port_send_handler_valid_hex);
+    RUN_TEST(test_port_send_handler_odd_length_rejected);
+    RUN_TEST(test_port_send_handler_nonhex_rejected);
+    RUN_TEST(test_port_send_handler_too_long_rejected);
 
     return UNITY_END();
 }
