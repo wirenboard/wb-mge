@@ -334,7 +334,7 @@ class _TcpReconnectServer(threading.Thread):
         self._server_sock = None
         self.port = None
         self._ready_event = threading.Event()
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._connection_events = []   # list[threading.Event] — one per accepted connection
         self._current_client = None
@@ -349,7 +349,7 @@ class _TcpReconnectServer(threading.Thread):
         self._server_sock.settimeout(0.5)
         self._ready_event.set()
 
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 client_sock, _ = self._server_sock.accept()
             except socket.timeout:
@@ -366,7 +366,7 @@ class _TcpReconnectServer(threading.Thread):
 
             client_sock.settimeout(0.5)
             # Echo loop for this client until told to stop or client disconnects
-            while not self._stop.is_set():
+            while not self._stop_event.is_set():
                 try:
                     data = client_sock.recv(256)
                     if not data:
@@ -417,7 +417,7 @@ class _TcpReconnectServer(threading.Thread):
 
     def stop(self) -> None:
         """Signal the server to stop."""
-        self._stop.set()
+        self._stop_event.set()
         if self._server_sock:
             try:
                 self._server_sock.close()
