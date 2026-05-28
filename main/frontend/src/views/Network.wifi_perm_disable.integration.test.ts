@@ -8,9 +8,10 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
-import { ref } from 'vue';
+import { ref, shallowRef } from 'vue';
 import { createI18n } from 'vue-i18n';
-import { createRouter, createMemoryHistory } from 'vue-router';
+import { createRouter, createMemoryHistory, matchedRouteKey } from 'vue-router';
+import { messages } from '@/i18n/messages';
 
 // ---------------------------------------------------------------------------
 // Mocks — hoisted before any component import by Vitest's vi.mock hoisting.
@@ -56,12 +57,17 @@ function makeRouter() {
         routes: [
             { path: '/', component: { template: '<div/>' } },
             { path: '/logout', component: { template: '<div/>' } },
+            { path: '/network', component: { template: '<div/>' } },
         ],
     });
 }
 
-/** Minimal i18n instance — returns the key itself for any missing translation. */
-const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+/**
+ * i18n instance with real messages and warn suppression to prevent fallback
+ * warnings when Network.vue looks up global keys (disabled, ap, sta, etc.)
+ * that live in the root scope rather than the component's <i18n> block.
+ */
+const i18n = createI18n({ legacy: false, locale: 'en', messages, missingWarn: false, fallbackWarn: false });
 
 // ---------------------------------------------------------------------------
 // Test suite
@@ -103,8 +109,16 @@ describe('NW-I-001: renders WiFi card when wifi_perm_disable is false', () => {
         } as never);
 
         const { default: Network } = await import('@/views/Network.vue');
+        const router = makeRouter();
+        await router.push('/network');
+        await router.isReady();
         const wrapper = mount(Network, {
-            global: { plugins: [i18n, makeRouter()] },
+            global: {
+                plugins: [i18n, router],
+                // Provide a mock matched route record so onBeforeRouteLeave()
+                // does not warn about missing <router-view> ancestor.
+                provide: { [matchedRouteKey as symbol]: shallowRef({ leaveGuards: new Set(), updateGuards: new Set() }) },
+            },
         });
         await flushPromises();
 
@@ -137,8 +151,16 @@ describe('NW-I-002: hides WiFi card when wifi_perm_disable is true', () => {
         } as never);
 
         const { default: Network } = await import('@/views/Network.vue');
+        const router = makeRouter();
+        await router.push('/network');
+        await router.isReady();
         const wrapper = mount(Network, {
-            global: { plugins: [i18n, makeRouter()] },
+            global: {
+                plugins: [i18n, router],
+                // Provide a mock matched route record so onBeforeRouteLeave()
+                // does not warn about missing <router-view> ancestor.
+                provide: { [matchedRouteKey as symbol]: shallowRef({ leaveGuards: new Set(), updateGuards: new Set() }) },
+            },
         });
         await flushPromises();
 
@@ -178,9 +200,15 @@ describe('NW-I-003: watch does not throw when wifi is undefined', () => {
         // propagate out of mount() or flushPromises(). Use errorHandler to capture them.
         const vueErrors: unknown[] = [];
 
+        const router = makeRouter();
+        await router.push('/network');
+        await router.isReady();
         const wrapper = mount(Network, {
             global: {
-                plugins: [i18n, makeRouter()],
+                plugins: [i18n, router],
+                // Provide a mock matched route record so onBeforeRouteLeave()
+                // does not warn about missing <router-view> ancestor.
+                provide: { [matchedRouteKey as symbol]: shallowRef({ leaveGuards: new Set(), updateGuards: new Set() }) },
                 config: {
                     errorHandler: (err: unknown) => {
                         vueErrors.push(err);
