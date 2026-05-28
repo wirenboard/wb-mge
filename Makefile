@@ -144,7 +144,7 @@ lint-c:
 	    test -n "$$NEWLIB_INCLUDE" || { echo "ERROR: xtensa-esp-elf newlib include dir not found under $$TOOLS_PATH (tried with and without /tools prefix)"; exit 1; } && \
 	    "$$IDF_PYTHON_ENV_PATH/bin/python3" scripts/clang-tidy/wb_clang_tidy.py \
 	        --build-dir build \
-	        --check-files-regex '.*/wb-mge/main/.*\.c' \
+	        --check-files-regex '$(CURDIR)/main/.*\.c' \
 	        --output-path $(CLANG_TIDY_OUT) \
 	        --log-path $(CLANG_TIDY_LOG) \
 	        --exit-code \
