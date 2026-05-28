@@ -34,7 +34,12 @@ const cacheMaxEntries = ref(0);
 const cacheEntries = ref(0);
 // Cache is considered enabled when AT LEAST ONE port is in cache_bus mode.
 // Derived reactively from the info ref polled globally every 5 s by App.vue.
+// Optimistic override for cacheEnabled: null = use real backend state,
+// boolean = use this value until the next info poll clears it
+const cacheEnabledOptimistic = ref<boolean | null>(null);
 const cacheEnabled = computed(() => {
+  // Return optimistic value immediately after a toggle request, before the next info poll
+  if (cacheEnabledOptimistic.value !== null) return cacheEnabledOptimistic.value;
   if (!info.value) return false;
   return info.value.rs485_1.port_mode === 'cache_bus' ||
          info.value.rs485_2.port_mode === 'cache_bus';
@@ -106,8 +111,10 @@ async function fetchEntries(): Promise<void> {
 async function toggleCaching(): Promise<void> {
   if (isMutating.value) return; // prevent concurrent calls
   isMutating.value = true;
+  const wasEnabled = cacheEnabled.value; // capture state before applying optimistic override
+  cacheEnabledOptimistic.value = !wasEnabled; // apply optimistic UI update immediately
   try {
-    if (cacheEnabled.value) {
+    if (wasEnabled) {
       // Disable: switch all ports currently in cache_bus back to disabled
       if (info.value?.rs485_1.port_mode === 'cache_bus') {
         await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'disabled' } });
@@ -134,7 +141,7 @@ async function toggleCaching(): Promise<void> {
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Action failed';
-    // cacheEnabled is derived from info — no manual resync needed
+    cacheEnabledOptimistic.value = null; // revert optimistic state on API failure
   } finally {
     isMutating.value = false;
   }
@@ -191,6 +198,15 @@ watch(() => info.value, (newInfo) => {
   valueTimeout.value = newInfo.cache_value_timeout_s ?? 60;
   portsInitialized = true;
 }, { immediate: true });
+
+// Clear the optimistic cacheEnabled override whenever the backend info refreshes,
+// but only when no mutation is in flight — otherwise the poll may arrive before
+// the ESP32 has applied the change, which would cause a UI flicker back to the old state
+watch(() => info.value, () => {
+  if (!isMutating.value) {
+    cacheEnabledOptimistic.value = null;
+  }
+});
 
 // Select a port for cache listening (radio semantics: only one port active at a time)
 function selectListenPort(port: 1 | 2): void {
