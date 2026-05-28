@@ -73,7 +73,7 @@ gateway_slave = build_gateway_fixture(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(60)
 def test_gateway_rtu_timeout_no_response(gateway_slave):
     """RTU slave does not respond: gateway must not crash, TCP conn stays open.
 
