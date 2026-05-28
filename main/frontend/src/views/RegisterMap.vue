@@ -14,7 +14,7 @@ import SearchIcon from '@/assets/searchIcon.svg?component';
 import CaretIcon from '@/assets/caretIcon.svg?component';
 import {
   type CacheEntry, type RegRow, type DeviceNode,
-  formatAgeUs, formatMemory, formatAge, typeName,
+  formatAgeUs, formatMemory, formatAge,
   resolvePortSelection,
   buildDevices, buildRegsByKey, buildExportPayload, filterDevices,
 } from '@/utils/registerMapUtils';

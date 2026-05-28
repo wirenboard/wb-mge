@@ -2,11 +2,10 @@
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { changeLang, languages, type Locale } from '@/i18n';
-import SaveIcon from '@/assets/save.svg?component';
 import { useAlerts } from '@/common/alert';
 import { useFirmware } from '@/common/firmware';
 import { useInfo } from '@/common/info';
-import { documentation, email, support, website, firmwareLatest, firmwareLatestVersion } from '@/common/links';
+import { firmwareLatest, firmwareLatestVersion } from '@/common/links';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
 import Switch from '@/components/Switch.vue';

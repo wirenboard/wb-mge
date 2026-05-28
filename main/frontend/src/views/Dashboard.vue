@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
-import { firmwareLatest, firmwareLatestVersion } from '@/common/links';
+import { firmwareLatestVersion } from '@/common/links';
 import { useRouter } from 'vue-router';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -15,7 +15,7 @@ import GearIcon from '@/assets/gearIcon.svg?component';
 
 const { t } = useI18n();
 const { info } = useInfo();
-const { data: settings, updateSettings } = useSettings();
+const { data: settings } = useSettings();
 const { uptime } = useUptime();
 const router = useRouter();
 

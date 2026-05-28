@@ -587,7 +587,7 @@ export function decodePacket(input: string | number[], direction: Direction = 'r
     const parsed = parseHex(input);
     if (parsed === null) return { type: 'parse_error', reason: 'invalid_hex', raw: input };
     bytes = parsed;
-  } else if (Array.isArray(input) || (input != null && typeof input === 'object')) {
+  } else if (Array.isArray(input) || (input !== null && typeof input === 'object')) {
     bytes = Array.from(input as number[]);
   } else {
     return { type: 'parse_error', reason: 'invalid_input', raw: String(input) };

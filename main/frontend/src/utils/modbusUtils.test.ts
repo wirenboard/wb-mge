@@ -7,7 +7,6 @@ import {
   buildWriteSingleRegister,
   buildWriteMultipleRegisters,
   buildWriteMultipleCoils,
-  parseModbusAddress,
   buildPreviewFrame,
   frameToPreviewParts,
   sendPacketToPort,
