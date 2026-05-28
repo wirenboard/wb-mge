@@ -9,8 +9,13 @@ module.exports = {
          jsx: true
       }
    },
-   extends: ['plugin:vue/vue3-recommended', 'plugin:@typescript-eslint/recommended'],
+   extends: [
+      'plugin:vue/vue3-recommended',
+      'plugin:@typescript-eslint/recommended',
+      'plugin:@intlify/vue-i18n/base',
+   ],
    rules: {
+      '@intlify/vue-i18n/no-missing-keys-in-other-locales': 'error',
       camelcase: 0,
       semi: 'off',
       indent: 'off',
