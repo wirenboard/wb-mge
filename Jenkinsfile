@@ -43,25 +43,45 @@ pipeline {
                 }
             }
         }
-        stage('Unit tests (frontend + C)') {
+        stage('Unit tests (C)') {
             steps {
                 script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make unittests test-frontend"'
+                    sh 'bash -c "source /opt/esp/idf/export.sh && make unittests"'
                 }
             }
             post {
                 always {
                     // Aggregate Unity stdout logs into a JUnit XML; run even on test failure
                     sh 'python3 scripts/unity_to_junit.py --output build/unittests_report.xml --logs unittests || true'
-                    junit testResults: 'build/unittests_report.xml,build/vitest_report.xml', allowEmptyResults: true
-                    archiveArtifacts artifacts: "build/unittests_report.xml,build/vitest_report.xml", allowEmptyArchive: true
+                    junit testResults: 'build/unittests_report.xml', allowEmptyResults: true
+                    archiveArtifacts artifacts: "build/unittests_report.xml", allowEmptyArchive: true
+                }
+            }
+        }
+        stage('Unit tests (frontend)') {
+            steps {
+                script {
+                    sh 'make test-frontend'
+                }
+            }
+            post {
+                always {
+                    junit testResults: 'build/vitest_report.xml', allowEmptyResults: true
+                    archiveArtifacts artifacts: "build/vitest_report.xml", allowEmptyArchive: true
+                }
+            }
+        }
+        stage('Build frontend') {
+            steps {
+                script {
+                    sh 'make build-frontend'
                 }
             }
         }
         stage('Build firmware') {
             steps {
                 script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make build-frontend build-idf-project"'
+                    sh 'bash -c "source /opt/esp/idf/export.sh && make build-idf-project"'
                     // copy binaries to separate 'result' directory because s3_uploader job searches for files there
                     sh 'mkdir -p result && cp release/*.bin result/'
                 }
