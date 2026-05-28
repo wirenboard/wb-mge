@@ -137,6 +137,13 @@ qemu-test: qemu-create-flash-image qemu-create-efuse-image
 	cd api_tests && $(PYTEST_PYTHON) -m pytest --qemu --qemu-skip-build \
 	    --junitxml=$(CURDIR)/build/qemu_test_report.xml $(PYTEST_ARGS)
 
+# Dry-run: collect and list QEMU API tests without running them or building firmware.
+# Usage:
+#   make qemu-collect-only                          — list all qemu-marked tests
+#   make qemu-collect-only PYTEST_ARGS="38_test_sniffer_slow_response.py"
+qemu-collect-only:
+	cd api_tests && $(PYTEST_PYTHON) -m pytest --collect-only -q $(PYTEST_ARGS)
+
 # Help target for QEMU
 qemu-help:
 	@echo "QEMU Targets:"
@@ -149,16 +156,18 @@ qemu-help:
 	@echo "  qemu-monitor            - Attach monitor to already-running QEMU (no build)"
 	@echo "  qemu-bin-path           - Print path to qemu-system-xtensa binary"
 	@echo "  qemu-test               - Build QEMU firmware, flash image, and run API pytest suite"
+	@echo "  qemu-collect-only       - List collected API tests without building or running"
 	@echo "  qemu-clean              - Remove build/ and sdkconfig.qemu_build"
 	@echo ""
 	@echo "Build:       make qemu-build"
 	@echo "Quick start: make qemu-web"
 	@echo "Run tests:   make qemu-test"
 	@echo "One test:    make qemu-test PYTEST_ARGS=\"-k test_auth\""
+	@echo "List tests:  make qemu-collect-only"
 
 qemu-clean:
 	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
 	@rm -rf build
 	@rm -f sdkconfig.qemu_build sdkconfig.qemu_build.old
 
-.PHONY: qemu-build qemu-apply-idf-patches build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-help qemu-clean
+.PHONY: qemu-build qemu-apply-idf-patches build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-collect-only qemu-help qemu-clean
