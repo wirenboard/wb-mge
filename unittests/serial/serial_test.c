@@ -26,11 +26,19 @@
 
 #define SERIAL_EVENT_WAIT_TIMEOUT_MS    50
 
+#define MOCK_RECEIVE_HANDLER_MAX_CALLS  8
+
+typedef struct {
+    size_t len;
+    uint8_t data[SERIAL_BUF_SIZE];
+} mock_receive_call_t;
+
 typedef struct {
     int called;
     serial_desc_t *desc;
-    uint8_t *data;
-    size_t len;
+    uint8_t *data;      // points to mock_receive_buffer — stores last call's data
+    size_t len;         // last call's length
+    mock_receive_call_t calls[MOCK_RECEIVE_HANDLER_MAX_CALLS]; // per-call history
 } mock_receive_handler_t;
 
 static uint8_t mock_receive_buffer[SERIAL_BUF_SIZE];
@@ -56,10 +64,15 @@ void tearDown(void)
 
 static void mock_receive_handler(serial_desc_t *desc, uint8_t *data, size_t len)
 {
+    int idx = mock_receive_handler_data.called;
     mock_receive_handler_data.called++;
     mock_receive_handler_data.desc = desc;
-    memcpy(mock_receive_handler_data.data, data, len);
-    mock_receive_handler_data.len = len;
+    memcpy(mock_receive_handler_data.data, data, len);  // last call (backward compat)
+    mock_receive_handler_data.len = len;                // last call (backward compat)
+    if (idx < MOCK_RECEIVE_HANDLER_MAX_CALLS) {         // record per-call history
+        mock_receive_handler_data.calls[idx].len = len;
+        memcpy(mock_receive_handler_data.calls[idx].data, data, len);
+    }
 }
 
 static void init_default_config(serial_config_t *config)
@@ -927,6 +940,19 @@ void test_serial_init_success_with_two_uart_data_events(void)
         20,
         "Receive handler should be called with correct data on last call"
     );
+
+    // Verify first call received event_1's 10 bytes
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        10,
+        mock_receive_handler_data.calls[0].len,
+        "First call: receive handler should have event_1's 10 bytes"
+    );
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        MOCK_DATA_FROM_UART_READ,
+        mock_receive_handler_data.calls[0].data,
+        10,
+        "First call: receive handler should have correct data"
+    );
 }
 
 // Тестируем получение трех событий UART_DATA со сброшенным и дважды с установленным флагом тайм-аута приема
@@ -982,6 +1008,32 @@ void test_serial_init_success_with_three_uart_data_events(void)
         mock_receive_handler_data.data,
         15,
         "Receive handler should be called with correct data on last call"
+    );
+
+    // Verify first call received event_1's 10 bytes
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        10,
+        mock_receive_handler_data.calls[0].len,
+        "First call: receive handler should have event_1's 10 bytes"
+    );
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        MOCK_DATA_FROM_UART_READ,
+        mock_receive_handler_data.calls[0].data,
+        10,
+        "First call: receive handler should have correct data"
+    );
+
+    // Verify second call received event_2's 20 bytes
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        20,
+        mock_receive_handler_data.calls[1].len,
+        "Second call: receive handler should have event_2's 20 bytes"
+    );
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        MOCK_DATA_FROM_UART_READ,
+        mock_receive_handler_data.calls[1].data,
+        20,
+        "Second call: receive handler should have correct data"
     );
 }
 
