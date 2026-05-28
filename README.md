@@ -16,6 +16,15 @@ Builds run on Jenkins at <https://jenkins.wirenboard.com/job/wirenboard/job/wb-m
 See [docs/jenkins_wb.md](docs/jenkins_wb.md) for API token setup and commands
 to query build status / logs from the shell.
 
+## Manual UI Test Procedures
+
+Manual UI verification scenarios. Each document contains step-by-step procedures with
+expected outcomes.
+
+- [docs/ui_smoke_test.md](docs/ui_smoke_test.md) — high-level visual smoke test of the
+  whole web UI: every menu page opens, buttons react, forms accept input, mobile
+  viewport works. Russian.
+
 ## Manual Build Instructions
 
 ### Prerequisites
