@@ -8,6 +8,8 @@ import PacketDecoder from '@/components/PacketDecoder.vue';
 import PacketSenderPopup from '@/components/PacketSenderPopup.vue';
 import CheckmarkIcon from '@/assets/checkmarkIcon.svg?component';
 import { useSettings } from '@/common/settings';
+import { useInfo } from '@/common/info';
+import { api } from '@/utils/api';
 import {
   type SniffRow,
   type ByteRole,
@@ -20,6 +22,7 @@ import {
 const { t } = useI18n();
 
 const { data: settings, refresh: refreshSettings } = useSettings();
+const { info, fetchInfo } = useInfo();
 const senderOpen = ref(false);
 
 const txDisabledForCurrentPort = computed(() => {
@@ -94,9 +97,52 @@ function connectWs() {
   };
 }
 
-function startCapture() {
-  clearLogs();
+/** Delay after switching port mode to allow firmware to complete serial port reinit. */
+const PORT_MODE_SWITCH_DELAY_MS = 500;
+
+async function startCapture() {
+  // Set running immediately to prevent concurrent calls while async steps execute.
+  // The button switches to "Stop" at once, so a second click calls stopCapture() instead.
   running.value = true;
+  // Clear logs immediately so the table is empty while async init steps execute.
+  clearLogs();
+
+  // Fetch fresh port mode info before deciding whether to switch — the cached
+  // info.value may be stale (polled every 5 s) or undefined (not yet loaded).
+  try {
+    await fetchInfo();
+  } catch {
+    // If the fetch fails, proceed with whatever is cached (graceful degradation)
+  }
+
+  // Guard: user may have clicked Stop while fetchInfo was in flight
+  if (!running.value) return;
+
+  if (info.value !== undefined) {
+    const portNum = parseInt(portFilter.value);
+    // Map port number to the corresponding rs485 key in the Info object
+    const rsKeyMap: Partial<Record<number, 'rs485_1' | 'rs485_2'>> = { 1: 'rs485_1', 2: 'rs485_2' };
+    const rsKey = rsKeyMap[portNum];
+    if (rsKey !== undefined) {
+      const currentMode = info.value[rsKey]?.port_mode;
+      // Auto-switch to sniffer only when the port is disabled — other modes ('sniffer',
+      // 'cache_bus') already produce sniffable data, and 'tcp_bridge' must not be
+      // disturbed silently.
+      if (currentMode === 'disabled') {
+        try {
+          await api<void>(`ports/${portNum}/mode`, { method: 'POST', json: { mode: 'sniffer' } });
+        } catch {
+          // If the mode switch fails, proceed anyway — WS connect will fail or produce no data
+        }
+        // Guard: user may have clicked Stop during the api call
+        if (!running.value) return;
+        // Wait for firmware to complete serial port reinit before connecting
+        await new Promise(resolve => setTimeout(resolve, PORT_MODE_SWITCH_DELAY_MS));
+        // Guard: user may have clicked Stop during the 500 ms reinit delay
+        if (!running.value) return;
+      }
+    }
+  }
   connectWs();
 }
 

@@ -45,7 +45,10 @@ class MockWS {
 // ---------------------------------------------------------------------------
 
 vi.mock('@/common/info', () => ({
-  useInfo: () => ({ info: ref(undefined) }),
+  useInfo: () => ({
+    info: ref(undefined),
+    fetchInfo: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 vi.mock('@/utils/api', () => ({
