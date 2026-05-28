@@ -125,10 +125,10 @@ async function startCapture() {
     const rsKey = rsKeyMap[portNum];
     if (rsKey !== undefined) {
       const currentMode = info.value[rsKey]?.port_mode;
-      // Auto-switch to sniffer only when the port is disabled — other modes ('sniffer',
-      // 'cache_bus') already produce sniffable data, and 'tcp_bridge' must not be
-      // disturbed silently.
-      if (currentMode === 'disabled') {
+      // Auto-switch to sniffer for any mode that cannot produce sniffable data directly.
+      // 'sniffer' and 'cache_bus' already have serial open in the right way; all other
+      // modes (including 'tcp_bridge' and 'disabled') need an explicit mode switch.
+      if (currentMode !== 'sniffer' && currentMode !== 'cache_bus') {
         try {
           await api<void>(`ports/${portNum}/mode`, { method: 'POST', json: { mode: 'sniffer' } });
         } catch {
