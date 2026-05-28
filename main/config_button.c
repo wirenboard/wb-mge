@@ -3,6 +3,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 
 #define CONFIG_BUTTON_GPIO                  GPIO_NUM_34
@@ -112,7 +113,7 @@ static void config_button_task(void *arg)
 
         TickType_t hold_time = sys_time - long_press_time_stamp;
         if (pending_long_press && (hold_time >= pdMS_TO_TICKS(config_btn_ctx.long_press_time))) { // Long press event
-            ESP_LOGI(TAG, "Button long press event, hold time: %lu ms", pdTICKS_TO_MS(hold_time));
+            ESP_LOGI(TAG, "Button long press event, hold time: %u ms", (unsigned)pdTICKS_TO_MS(hold_time));
             if (config_btn_ctx.long_press_callback) {
                 config_btn_ctx.long_press_callback(hold_time);
             }
