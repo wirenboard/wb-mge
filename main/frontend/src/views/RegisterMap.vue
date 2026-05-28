@@ -182,12 +182,10 @@ watch(() => info.value, (newInfo) => {
   if (portsInitialized) return; // skip subsequent polling updates
   listenPort1.value = newInfo.rs485_1.port_mode === 'cache_bus';
   listenPort2.value = newInfo.rs485_2.port_mode === 'cache_bus';
-  // Guard against double-true: if both ports read as cache_bus on first poll,
-  // default to port 1. The (F,F) case is intentionally left as-is — it reflects
-  // a genuine "neither port is in cache_bus mode" state from the device.
-  if (listenPort1.value && listenPort2.value) {
-    listenPort2.value = false;
-  }
+  // Enforce radio invariant: (T,T) → (T,F); (F,F) → (T,F) defaults to port 1.
+  const resolved = resolvePortSelection(listenPort1.value, listenPort2.value);
+  listenPort1.value = resolved.p1;
+  listenPort2.value = resolved.p2;
   cacheTcpPort.value = newInfo.cache_modbus_port ?? 504;
   tcpServeEnabled.value = newInfo.cache_modbus_server_enabled ?? true;
   valueTimeout.value = newInfo.cache_value_timeout_s ?? 60;

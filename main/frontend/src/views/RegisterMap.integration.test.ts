@@ -161,6 +161,11 @@ describe('RM-I-001: RegisterMap port-initialization guard', () => {
     vi.resetModules();
   });
 
+  afterEach(() => {
+    // Restore real timers after each test — scenario 4 uses vi.useFakeTimers().
+    vi.useRealTimers();
+  });
+
   it('scenario 1+2: first poll initialises fields; second poll does not overwrite them', async () => {
     // Dynamic import after resetModules ensures a fresh module instance.
     const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
@@ -236,6 +241,57 @@ describe('RM-I-001: RegisterMap port-initialization guard', () => {
     expect(portActive(wrapper, 2)).toBe(false);
 
     wrapper.unmount();
+  });
+
+  it('scenario 4: both ports disabled on first poll — port 1 icon defaults to active', async () => {
+    // Use fake timers so we can advance the 2000 ms pollInterval manually.
+    // This is needed to get loading=false after cacheEnabled becomes true in Phase 2.
+    vi.useFakeTimers();
+    try {
+      const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+      // Phase 1: both ports report 'disabled' (factory-reset state).
+      // The watch({ immediate: true }) in RegisterMap.vue fires with (F,F) and calls
+      // resolvePortSelection(false, false) → (true, false), setting listenPort1=true.
+      // portsInitialized is then set to true, locking subsequent poll updates out.
+      //
+      // This is the fix under test (RegisterMap.vue lines 185-188).  Without it,
+      // listenPort1 would stay false after this first poll.
+      infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+      const wrapper = mount(RegisterMap, {
+        global: { plugins: [i18n, makeRouter()] },
+      });
+      // Let the initial onMounted fetchEntries() settle (cacheEnabled=false → it returns
+      // early without setting loading=false; that is expected at this phase).
+      await vi.advanceTimersByTimeAsync(50);
+      await flushPromises();
+
+      // Phase 2: simulate the second info poll where port 1 is now 'cache_bus'.
+      // Because portsInitialized=true the watch does NOT overwrite listenPort1 —
+      // it keeps the value normalised in Phase 1 (true).
+      // cacheEnabled is a computed derived from info, so it becomes true here.
+      infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+      await flushPromises();
+
+      // Advance past the 2000 ms pollInterval so fetchEntries() is called while
+      // cacheEnabled=true.  fetchEntries() resolves immediately (api mock returns {d:[]})
+      // and sets loading=false, making the settings panel (v-else branch) render.
+      await vi.advanceTimersByTimeAsync(2000);
+      await flushPromises();
+
+      // Direct proof of the fix: portActive(1) reads the .rsp-port-tag button's
+      // 'active' CSS class, which reflects listenPort1.  It is true only if
+      // resolvePortSelection normalised (F,F)→(T,F) in Phase 1.
+      // Without the fix listenPort1 would be false here → this assertion would fail.
+      expect(portActive(wrapper, 1)).toBe(true);
+      // Port 2 must not be active — the (F,F)→(T,F) normalisation picks port 1 only.
+      expect(portActive(wrapper, 2)).toBe(false);
+
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
