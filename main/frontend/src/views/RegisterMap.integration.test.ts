@@ -28,8 +28,10 @@ const infoRef = ref<Info | undefined>(undefined);
 // Mocks — hoisted before any component import by Vitest's vi.mock hoisting.
 // ---------------------------------------------------------------------------
 
+const fetchInfoMock = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('@/common/info', () => ({
-  useInfo: () => ({ info: infoRef }),
+  useInfo: () => ({ info: infoRef, fetchInfo: fetchInfoMock }),
 }));
 
 vi.mock('@/utils/api', () => ({
@@ -158,6 +160,7 @@ describe('RM-I-001: RegisterMap port-initialization guard', () => {
   beforeEach(() => {
     // Reset info and module registry so each test gets a fresh portsInitialized = false.
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
   });
 
@@ -326,6 +329,7 @@ describe('RM-I-003: toggleCaching enable', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     // Restore the default mock implementation for each test (resetModules clears module
     // state but not mock implementations — reset to a known baseline).
@@ -375,6 +379,9 @@ describe('RM-I-003: toggleCaching enable', () => {
     // cache/json must be called (fetchEntries)
     expect(apiMock).toHaveBeenCalledWith('cache/json');
 
+    // fetchInfo must be called to refresh sidebar after toggle
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
   });
 
@@ -416,6 +423,9 @@ describe('RM-I-003: toggleCaching enable', () => {
     // cache/json must be called (fetchEntries)
     expect(apiMock).toHaveBeenCalledWith('cache/json');
 
+    // fetchInfo must be called to refresh sidebar after toggle
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
   });
 
@@ -455,6 +465,9 @@ describe('RM-I-003: toggleCaching enable', () => {
     // cache/json must be called (fetchEntries)
     expect(apiMock).toHaveBeenCalledWith('cache/json');
 
+    // fetchInfo must be called to refresh sidebar after toggle
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
   });
 });
@@ -473,6 +486,7 @@ describe('RM-I-04: toggleCaching — disable path', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -499,6 +513,9 @@ describe('RM-I-04: toggleCaching — disable path', () => {
     // ports/2/mode must NOT be called (port2 was already disabled)
     expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
 
+    // fetchInfo must be called to refresh sidebar after toggle
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
   });
 
@@ -518,6 +535,9 @@ describe('RM-I-04: toggleCaching — disable path', () => {
     // Both ports must be disabled
     expect(vi.mocked(api)).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'disabled' } });
     expect(vi.mocked(api)).toHaveBeenCalledWith('ports/2/mode', { method: 'POST', json: { mode: 'disabled' } });
+
+    // fetchInfo must be called to refresh sidebar after toggle
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
 
     wrapper.unmount();
   });
@@ -560,6 +580,7 @@ describe('RM-I-05: resetMap', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -590,6 +611,9 @@ describe('RM-I-05: resetMap', () => {
     const port2Calls = calls.filter((c: unknown[]) => c[0] === 'ports/2/mode');
     expect(port2Calls.length).toBe(0);
 
+    // fetchInfo must be called to refresh sidebar after reset
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
   });
 
@@ -614,6 +638,9 @@ describe('RM-I-05: resetMap', () => {
     expect(calls[2]).toEqual(['ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } }]);
     expect(calls[3]).toEqual(['ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } }]);
     expect(calls[4]).toEqual(['cache/json']);
+
+    // fetchInfo must be called to refresh sidebar after reset
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
 
     wrapper.unmount();
   });
@@ -680,6 +707,7 @@ describe('RM-I-06: saveSettings', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -719,6 +747,9 @@ describe('RM-I-06: saveSettings', () => {
     expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
     expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
 
+    // fetchInfo must be called to refresh sidebar after save
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
   });
 
@@ -744,6 +775,9 @@ describe('RM-I-06: saveSettings', () => {
 
     // settings POST must have been called with the new timeout
     expect(vi.mocked(api)).toHaveBeenCalledWith('settings', { method: 'POST', json: { cache_value_timeout_s: 30 } });
+
+    // fetchInfo must be called to refresh sidebar after save
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
 
     wrapper.unmount();
   });
@@ -898,6 +932,7 @@ describe('RM-I-07: downloadJsonExport', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -988,6 +1023,7 @@ describe('RM-I-08: expandAll / collapseAll / toggleDevice / toggleGroup', () => 
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1136,6 +1172,7 @@ describe('RM-I-09: cacheEnabled watcher — stats side-effect', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1241,6 +1278,7 @@ describe('RM-I-10: onUnmounted — interval/timer cleanup', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1320,6 +1358,7 @@ describe('RM-I-11: fetchEntries — error state', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1412,6 +1451,7 @@ describe('RM-I-12: searchFilter — filter devices by slave ID', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1480,6 +1520,7 @@ describe('RM-I-13: selectListenPort — clicking port-tag buttons', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1526,6 +1567,7 @@ describe('RM-I-14: Export CSV button — window.open call', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1580,6 +1622,7 @@ describe('RM-I-15: tcpServeEnabled toggle + save', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1643,6 +1686,7 @@ describe('RM-I-16: Stale indicator — .stale class and .stale-dot', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1716,6 +1760,7 @@ describe('RM-I-17: Stats DOM values from cache/status', () => {
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1790,6 +1835,7 @@ describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', 
 
   beforeEach(() => {
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
@@ -1922,6 +1968,7 @@ describe('RM-I-19: statsInterval not double-scheduled on cacheEnabled flicker', 
   beforeEach(() => {
     vi.useFakeTimers();
     infoRef.value = undefined;
+    fetchInfoMock.mockClear();
     vi.resetModules();
     vi.mocked(api).mockReset();
     vi.mocked(api).mockResolvedValue({ d: [] } as never);

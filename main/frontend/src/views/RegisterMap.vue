@@ -21,7 +21,7 @@ import {
 import { downloadFile } from '@/utils/downloadFile';
 
 const { t } = useI18n();
-const { info } = useInfo();
+const { info, fetchInfo } = useInfo();
 
 const rawEntries = ref<CacheEntry[]>([]);
 
@@ -144,6 +144,8 @@ async function toggleCaching(): Promise<void> {
     cacheEnabledOptimistic.value = null; // revert optimistic state on API failure
   } finally {
     isMutating.value = false;
+    // Refresh info immediately so the sidebar reflects the updated port mode.
+    fetchInfo('low').catch(() => {});
   }
 }
 
@@ -178,6 +180,8 @@ async function resetMap(): Promise<void> {
     // cacheEnabled is derived from info — no manual resync needed
   } finally {
     isMutating.value = false;
+    // Refresh info immediately so the sidebar reflects the updated port mode.
+    fetchInfo('low').catch(() => {});
   }
 }
 
@@ -246,6 +250,9 @@ async function saveSettings(): Promise<void> {
     settingsSaveStatus.value = 'saved';
   } catch {
     settingsSaveStatus.value = 'error';
+  } finally {
+    // Refresh info immediately so the sidebar reflects the updated port mode.
+    fetchInfo('low').catch(() => {});
   }
   saveStatusTimer = setTimeout(() => {
  settingsSaveStatus.value = 'idle';

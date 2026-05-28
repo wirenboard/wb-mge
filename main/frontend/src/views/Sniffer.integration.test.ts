@@ -213,6 +213,9 @@ describe('SNIF-I-001: WS reconnect timer cleanup on stopCapture', () => {
     // No new WebSocket should have been created after stop.
     expect(MockWS.constructCount).toBe(countBeforeStop);
 
+    // fetchInfo must be called to refresh sidebar after stopCapture
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
     // Drain any remaining timers after unmount to avoid leaking into subsequent tests.
     vi.runAllTimers();
@@ -256,6 +259,9 @@ describe('SNIF-I-001: WS reconnect timer cleanup on stopCapture', () => {
 
     // No new WebSocket should have been created after unmount.
     expect(MockWS.constructCount).toBe(countBeforeUnmount);
+
+    // fetchInfo must be called to refresh sidebar after stopCapture (triggered by unmount).
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
 
     // Drain remaining timers.
     vi.runAllTimers();
@@ -320,6 +326,9 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
     // WebSocket should have been created after the delay.
     expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
 
+    // fetchInfo must be called after the mode switch to refresh the sidebar.
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
     vi.runAllTimers();
     await flushPromises();
@@ -350,6 +359,9 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
 
     expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
 
+    // fetchInfo must be called after the mode switch to refresh the sidebar.
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
     wrapper.unmount();
     vi.runAllTimers();
     await flushPromises();
@@ -379,6 +391,9 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
     // WS should be created immediately (no 500ms delay).
     expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
 
+    // fetchInfo('low') must NOT be called — no mode switch occurred.
+    expect(fetchInfoMock).not.toHaveBeenCalledWith('low');
+
     wrapper.unmount();
     vi.runAllTimers();
     await flushPromises();
@@ -407,6 +422,9 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
 
     // WS should be created immediately (no 500ms delay).
     expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
+
+    // fetchInfo('low') must NOT be called — no mode switch occurred.
+    expect(fetchInfoMock).not.toHaveBeenCalledWith('low');
 
     wrapper.unmount();
     vi.runAllTimers();

@@ -140,6 +140,8 @@ async function startCapture() {
         await new Promise(resolve => setTimeout(resolve, PORT_MODE_SWITCH_DELAY_MS));
         // Guard: user may have clicked Stop during the 500 ms reinit delay
         if (!running.value) return;
+        // Refresh info immediately so the sidebar reflects the updated port mode.
+        fetchInfo('low').catch(() => {});
       }
     }
   }
@@ -149,13 +151,16 @@ async function startCapture() {
 function stopCapture() {
   // Clear any pending reconnect timer before closing the WebSocket.
   if (reconnectTimer !== null) {
- clearTimeout(reconnectTimer); reconnectTimer = null;
-}
+    clearTimeout(reconnectTimer); reconnectTimer = null;
+  }
   running.value = false;
   wsStatus.value = 'disconnected';
   sendPortStop(parseInt(portFilter.value));
   ws.value?.close();
   ws.value = null;
+  // Refresh info immediately so the sidebar reflects the updated port mode without
+  // waiting for the next polling cycle (which runs every 5 s).
+  fetchInfo('low').catch(() => {});
 }
 
 watch(portFilter, (newPort, oldPort) => {
