@@ -75,8 +75,10 @@ pipeline {
             }
             post {
                 always {
-                    // Archive QEMU log for debugging regardless of test outcome
-                    archiveArtifacts artifacts: "build/qemu_test.log", allowEmptyArchive: true
+                    // Publish JUnit results so failed tests appear in Jenkins "Tests" tab
+                    junit testResults: 'build/qemu_test_report.xml', allowEmptyResults: true
+                    // Archive QEMU log and JUnit XML for debugging regardless of test outcome
+                    archiveArtifacts artifacts: "build/qemu_test.log,build/qemu_test_report.xml", allowEmptyArchive: true
                 }
             }
         }

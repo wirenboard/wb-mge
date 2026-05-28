@@ -131,7 +131,8 @@ qemu-bin-path:
 # qemu-create-flash-image depends on build-idf-project-qemu, so the correct QEMU
 # firmware is always compiled (incremental) before packaging and running tests.
 qemu-test: qemu-create-flash-image qemu-create-efuse-image
-	cd api_tests && $(PYTEST_PYTHON) -m pytest --qemu --qemu-skip-build $(PYTEST_ARGS)
+	cd api_tests && $(PYTEST_PYTHON) -m pytest --qemu --qemu-skip-build \
+	    --junitxml=$(CURDIR)/build/qemu_test_report.xml $(PYTEST_ARGS)
 
 # Help target for QEMU
 qemu-help:
