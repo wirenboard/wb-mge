@@ -59,7 +59,7 @@ static void verify_task_created(void)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_data.called, "xTaskCreate should be called once");
 
-    // pvTaskCode проверяется внутри xTaskCreate()
+    // pvTaskCode is checked inside xTaskCreate()
 
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         "settings_update_task",
@@ -135,7 +135,7 @@ static void verify_task_deleted(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(NULL, mock_vTaskDelete_data.xTaskToDelete, "Task should delete itself (NULL)");
 }
 
-// Тестируем случай, когда никакие настройки не изменились
+// Test the case when no settings have changed
 void test_settings_update_no_changes(void)
 {
     LOG_MESSAGE();
@@ -150,7 +150,7 @@ void test_settings_update_no_changes(void)
     verify_updates(false, false, false, false, false, false);
 }
 
-// Тестируем обновление настроек мостов
+// Test update of bridge settings
 void test_settings_update_bridge_ports_changed(void)
 {
     LOG_MESSAGE();
@@ -180,7 +180,7 @@ void test_settings_update_bridge_ports_changed(void)
     }
 }
 
-// Тестируем обновление настроек mDNS
+// Test update of mDNS settings
 void test_settings_update_mdns_changed(void)
 {
     LOG_MESSAGE();
@@ -200,7 +200,7 @@ void test_settings_update_mdns_changed(void)
     verify_task_deleted();
 }
 
-// Тестируем обновление настроек HTTP сервера
+// Test update of HTTP server settings
 void test_settings_update_http_server_changed(void)
 {
     LOG_MESSAGE();
@@ -220,7 +220,7 @@ void test_settings_update_http_server_changed(void)
     verify_task_deleted();
 }
 
-// Тестируем обновление настроек Ethernet
+// Test update of Ethernet settings
 void test_settings_update_ethernet_changed(void)
 {
     LOG_MESSAGE();
@@ -240,7 +240,7 @@ void test_settings_update_ethernet_changed(void)
     verify_task_deleted();
 }
 
-// Тестируем обновление настроек WiFi
+// Test update of WiFi settings
 void test_settings_update_wifi_changed(void)
 {
     LOG_MESSAGE();
@@ -260,7 +260,7 @@ void test_settings_update_wifi_changed(void)
     verify_task_deleted();
 }
 
-// Тестируем обновление всех настроек одновременно
+// Test update of all settings simultaneously
 void test_settings_update_all_changed(void)
 {
     LOG_MESSAGE();
@@ -287,7 +287,7 @@ void test_settings_update_all_changed(void)
     verify_task_deleted();
 }
 
-// Тестируем создание задачи с ошибкой
+// Test task creation with failure
 void test_settings_update_task_creation_failure(void)
 {
     LOG_MESSAGE();
@@ -307,7 +307,7 @@ void test_settings_update_task_creation_failure(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelete_data.called, "vTaskDelete should not be called when task creation fails");
 }
 
-// Тестируем повторный запуск settings_update когда задача еще не завершилась
+// Test repeated settings_update call when the task has not yet finished
 void test_settings_update_task_already_running(void)
 {
     LOG_MESSAGE();

@@ -24,7 +24,7 @@ void tearDown(void)
 
 }
 
-// Тестируем успешную инициализацию sys_info
+// Test successful sys_info initialization
 void test_sys_info_init_success(void)
 {
     LOG_MESSAGE();
@@ -47,7 +47,7 @@ void test_sys_info_init_success(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
 }
 
-// Тестируем инициализацию sys_info при ошибке чтения MAC
+// Test sys_info initialization when MAC read fails
 void test_sys_info_init_mac_read_failure(void)
 {
     LOG_MESSAGE();
@@ -69,7 +69,7 @@ void test_sys_info_init_mac_read_failure(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
 }
 
-// Тестируем инициализацию sys_info при ошибке чтения eFuse
+// Test sys_info initialization when eFuse read fails
 void test_sys_info_init_efuse_read_failure(void)
 {
     LOG_MESSAGE();
@@ -95,7 +95,7 @@ void test_sys_info_init_efuse_read_failure(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
-// Тестируем инициализацию sys_info с пустой сигнатурой устройства
+// Test sys_info initialization with an empty device signature
 void test_sys_info_init_empty_device_signature(void)
 {
     LOG_MESSAGE();
@@ -117,7 +117,7 @@ void test_sys_info_init_empty_device_signature(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
-// Тестируем инициализацию sys_info с максимально длинной сигнатурой устройства
+// Test sys_info initialization with a maximum-length device signature
 void test_sys_info_init_long_device_signature(void)
 {
     LOG_MESSAGE();
@@ -144,7 +144,7 @@ void test_sys_info_init_long_device_signature(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
-// Тестируем инициализацию sys_info с обрезкой сигнатуры устройства
+// Test sys_info initialization with device signature truncation
 void test_sys_info_init_signature_truncation(void)
 {
     LOG_MESSAGE();

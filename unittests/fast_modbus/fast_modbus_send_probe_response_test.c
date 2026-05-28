@@ -54,7 +54,7 @@ void tearDown(void)
     free(test_request);
 }
 
-// Тестируем успешную отправку ответа на запрос Быстрого Modbus
+// Test successful sending of a Fast Modbus probe response
 void test_fast_modbus_send_probe_response_success(void)
 {
     LOG_MESSAGE();
@@ -97,7 +97,7 @@ void test_fast_modbus_send_probe_response_success(void)
     );
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другой код функции)
+// Test the case when the request is not a Fast Modbus probe request (different function code)
 void test_fast_modbus_send_probe_response_not_probe_function(void)
 {
     LOG_MESSAGE();
@@ -121,7 +121,7 @@ void test_fast_modbus_send_probe_response_not_probe_function(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другой Unit ID)
+// Test the case when the request is not a Fast Modbus probe request (different Unit ID)
 void test_fast_modbus_send_probe_response_not_probe_unit_id(void)
 {
     LOG_MESSAGE();
@@ -145,7 +145,7 @@ void test_fast_modbus_send_probe_response_not_probe_unit_id(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другая длина)
+// Test the case when the request is not a Fast Modbus probe request (different length)
 void test_fast_modbus_send_probe_response_not_probe_length(void)
 {
     LOG_MESSAGE();
@@ -169,7 +169,7 @@ void test_fast_modbus_send_probe_response_not_probe_length(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другая строка запроса)
+// Test the case when the request is not a Fast Modbus probe request (different request string)
 void test_fast_modbus_send_probe_response_not_probe_string(void)
 {
     LOG_MESSAGE();
@@ -193,7 +193,7 @@ void test_fast_modbus_send_probe_response_not_probe_string(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем случай, когда tcp_server_send возвращает ошибку
+// Test the case when tcp_server_send returns an error
 void test_fast_modbus_send_probe_response_send_fail(void)
 {
     LOG_MESSAGE();
@@ -221,7 +221,7 @@ void test_fast_modbus_send_probe_response_send_fail(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем случай, когда malloc возвращает NULL
+// Test the case when malloc returns NULL
 void test_fast_modbus_send_probe_response_malloc_fail(void)
 {
     LOG_MESSAGE();

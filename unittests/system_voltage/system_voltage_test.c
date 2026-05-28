@@ -77,7 +77,7 @@ static void verify_adc_read(void)
     TEST_ASSERT_EQUAL_MESSAGE(VOLTAGE_ADC_CHANNEL_NUM, mock_adc_oneshot_read_channel, "ADC channel mismatch");
 }
 
-// Тестируем случай успешной инициализации system_voltage_init с калибровкой
+// Test the successful initialization case of system_voltage_init with calibration
 void test_system_voltage_init_success_with_calibration(void)
 {
     LOG_MESSAGE();
@@ -92,7 +92,7 @@ void test_system_voltage_init_success_with_calibration(void)
     verify_calibration_config();
 }
 
-// Тестируем случай успешной инициализации system_voltage_init без калибровки
+// Test the successful initialization case of system_voltage_init without calibration
 void test_system_voltage_init_success_without_calibration(void)
 {
     LOG_MESSAGE();
@@ -109,7 +109,7 @@ void test_system_voltage_init_success_without_calibration(void)
     verify_calibration_config();
 }
 
-// Тестируем повторную инициализацию system_voltage_init
+// Test repeated initialization of system_voltage_init
 void test_system_voltage_init_already_initialized(void)
 {
     LOG_MESSAGE();
@@ -139,7 +139,7 @@ void test_system_voltage_init_already_initialized(void)
     );
 }
 
-// Тестируем ошибки инициализации system_voltage_init
+// Test initialization errors of system_voltage_init
 void test_system_voltage_init_adc_unit_init_failure(void)
 {
     LOG_MESSAGE();
@@ -186,7 +186,7 @@ void test_system_voltage_init_adc_channel_config_failure(void)
     );
 }
 
-// Тестируем успешное чтение напряжения с калибровкой
+// Test successful voltage reading with calibration
 void test_system_voltage_read_success_with_calibration(void)
 {
     LOG_MESSAGE();
@@ -211,7 +211,7 @@ void test_system_voltage_read_success_with_calibration(void)
     );
 }
 
-// Тестируем чтение напряжения без калибровки
+// Test voltage reading without calibration
 void test_system_voltage_read_success_without_calibration(void)
 {
     LOG_MESSAGE();
@@ -232,7 +232,7 @@ void test_system_voltage_read_success_without_calibration(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_adc_cali_raw_to_voltage_called, "Calibration should not be used when not initialized");
 }
 
-// Тестируем чтение напряжения с ошибкой калибровки
+// Test voltage reading with calibration failure fallback
 void test_system_voltage_read_calibration_failure_fallback(void)
 {
     LOG_MESSAGE();
@@ -259,7 +259,7 @@ void test_system_voltage_read_calibration_failure_fallback(void)
     );
 }
 
-// Тестируем чтение напряжения без инициализации
+// Test voltage reading without initialization
 void test_system_voltage_read_not_initialized(void)
 {
     LOG_MESSAGE();
@@ -273,7 +273,7 @@ void test_system_voltage_read_not_initialized(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_adc_cali_raw_to_voltage_called, "Calibration conversion should not be attempted");
 }
 
-// Тестируем чтение напряжения с ошибкой чтения ADC
+// Test voltage reading with ADC read failure
 void test_system_voltage_read_adc_read_failure(void)
 {
     LOG_MESSAGE();
@@ -294,7 +294,7 @@ void test_system_voltage_read_adc_read_failure(void)
     );
 }
 
-// Тестируем чтение напряжения с нулевым значением ADC
+// Test voltage reading with zero ADC value
 void test_system_voltage_read_zero_adc_value(void)
 {
     LOG_MESSAGE();

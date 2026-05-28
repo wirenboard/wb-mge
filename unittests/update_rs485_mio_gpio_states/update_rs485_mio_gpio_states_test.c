@@ -79,7 +79,7 @@ static void verify_rs485_function_not_called(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_rs485_bus_vout_on_off_called, "rs485_bus_vout_on_off should not be called");
 }
 
-// Тестируем update_rs485_control с включенными настройками
+// Test update_rs485_control with all settings enabled
 void test_update_rs485_control_all_enabled(void)
 {
     LOG_MESSAGE();
@@ -119,7 +119,7 @@ void test_update_rs485_control_all_enabled(void)
         "mio_control_io_bus_onoff should not be called");
 }
 
-// Тестируем update_rs485_control с выключенными настройками
+// Test update_rs485_control with all settings disabled
 void test_update_rs485_control_all_disabled(void)
 {
     LOG_MESSAGE();
@@ -143,7 +143,7 @@ void test_update_rs485_control_all_disabled(void)
         "mio_control_io_bus_onoff should not be called");
 }
 
-// Тестируем "бегущую единицу" - только одна настройка включена
+// Test "walking one" — only one setting enabled at a time
 void test_update_rs485_control_walking_one_failsafe_1(void)
 {
     LOG_MESSAGE();
@@ -239,7 +239,7 @@ void test_update_rs485_control_walking_one_vout(void)
     verify_rs485_vout_call(true);
 }
 
-// Тестируем "бегущий ноль" - только одна настройка выключена
+// Test "walking zero" — only one setting disabled at a time
 void test_update_rs485_control_walking_zero_failsafe_1(void)
 {
     LOG_MESSAGE();
@@ -335,7 +335,7 @@ void test_update_rs485_control_walking_zero_vout(void)
     verify_rs485_vout_call(false);
 }
 
-// Тестируем update_io_bus_control с включенной IO шиной
+// Test update_io_bus_control with IO bus enabled
 void test_update_io_bus_control_enabled(void)
 {
     LOG_MESSAGE();
@@ -356,7 +356,7 @@ void test_update_io_bus_control_enabled(void)
     verify_rs485_function_not_called();
 }
 
-// Тестируем update_io_bus_control с выключенной IO шиной
+// Test update_io_bus_control with IO bus disabled
 void test_update_io_bus_control_disabled(void)
 {
     LOG_MESSAGE();

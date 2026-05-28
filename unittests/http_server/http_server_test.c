@@ -40,7 +40,7 @@ void tearDown(void)
 
 }
 
-// Тестируем, что при инициализации HTTP сервера используется заданный порт, а также вызываются необходимые функции
+// Test that HTTP server initialization uses the configured port and calls all required functions
 void test_http_server_init_success(void)
 {
     LOG_MESSAGE();
@@ -82,7 +82,7 @@ void test_http_server_init_success(void)
     );
 }
 
-// Тестируем, что при задании порта 0 используется порт по умолчанию (80)
+// Test that port 0 falls back to the default port (80)
 void test_http_server_init_default_port_fallback(void)
 {
     LOG_MESSAGE();
@@ -106,7 +106,7 @@ void test_http_server_init_default_port_fallback(void)
     );
 }
 
-// Тестируем, что при неудачной инициализации WiFi модуля HTTP сервер также инициализируется неудачно
+// Test that HTTP server initialization fails when WiFi module initialization fails
 void test_http_server_init_wifi_scan_failure(void)
 {
     LOG_MESSAGE();
@@ -137,7 +137,7 @@ void test_http_server_init_wifi_scan_failure(void)
     );
 }
 
-// Тестируем, что при неудачной инициализации модуля аутентификации HTTP сервер также инициализируется неудачно
+// Test that HTTP server initialization fails when authentication module initialization fails
 void test_http_server_init_auth_failure(void)
 {
     LOG_MESSAGE();
@@ -168,7 +168,7 @@ void test_http_server_init_auth_failure(void)
     );
 }
 
-// Тестируем, что при неудачной инициализации модуля httpd_start HTTP сервер также инициализируется неудачно
+// Test that HTTP server initialization fails when httpd_start fails
 void test_http_server_init_httpd_start_failure(void)
 {
     LOG_MESSAGE();
@@ -205,7 +205,7 @@ void test_http_server_init_httpd_start_failure(void)
     );
 }
 
-// Тестируем установку конфигурационных параметров HTTP сервера при инициализации
+// Test that HTTP server configuration parameters are set correctly during initialization
 void test_http_server_config_parameters(void)
 {
     LOG_MESSAGE();
@@ -247,7 +247,7 @@ void test_http_server_config_parameters(void)
     );
 }
 
-// Тестируем регистрацию обработчиков URI при инициализации HTTP сервера
+// Test URI handler registration during HTTP server initialization
 void test_http_server_uri_handlers_registration(void)
 {
     LOG_MESSAGE();
@@ -317,7 +317,7 @@ void test_http_server_uri_handlers_registration(void)
     }
 }
 
-// Тестируем граничные значения портов при инициализации HTTP сервера
+// Test port edge cases during HTTP server initialization
 void test_http_server_port_edge_cases(void)
 {
     LOG_MESSAGE();
@@ -348,7 +348,7 @@ void test_http_server_port_edge_cases(void)
     }
 }
 
-// Тестируем множественные вызовы инициализации HTTP сервера
+// Test multiple HTTP server initialization calls
 void test_http_server_multiple_init_calls(void)
 {
     LOG_MESSAGE();
@@ -372,7 +372,7 @@ void test_http_server_multiple_init_calls(void)
     );
 }
 
-// Тестируем симуляцию HTTP запроса GET / -> index_html_get_handler
+// Test HTTP request simulation GET / -> index_html_get_handler
 void test_http_request_index_html(void)
 {
     LOG_MESSAGE();
@@ -412,7 +412,7 @@ void test_http_request_index_html(void)
                                  "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем симуляцию HTTP запроса GET /index.css -> index_css_get_handler
+// Test HTTP request simulation GET /index.css -> index_css_get_handler
 void test_http_request_index_css(void)
 {
     LOG_MESSAGE();
@@ -452,7 +452,7 @@ void test_http_request_index_css(void)
                                  "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем симуляцию HTTP запроса GET /index.js -> index_js_get_handler
+// Test HTTP request simulation GET /index.js -> index_js_get_handler
 void test_http_request_index_js(void)
 {
     LOG_MESSAGE();
@@ -492,7 +492,7 @@ void test_http_request_index_js(void)
                                  "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем симуляцию HTTP запроса GET /favicon.webp -> favicon_get_handler
+// Test HTTP request simulation GET /favicon.webp -> favicon_get_handler
 void test_http_request_favicon(void)
 {
     LOG_MESSAGE();
@@ -532,7 +532,7 @@ void test_http_request_favicon(void)
                                  "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем симуляцию HTTP запросов для всех внешних обработчиков
+// Test HTTP request simulation for all external handlers
 void test_http_request_external_handlers(void)
 {
     LOG_MESSAGE();

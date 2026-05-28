@@ -41,7 +41,7 @@ void validate_i2c_new_master_bus_config()
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_i2c_new_master_bus_data.bus_config.flags.enable_internal_pullup, "Internal pullup should be enabled");
 }
 
-// Валидация успешного запуска gpio_expander_init
+// Validate successful gpio_expander_init startup
 void validate_gpio_expander_init_success(esp_err_t result, esp_io_expander_handle_t handle)
 {
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "gpio_expander_init should return ESP_OK");
@@ -79,7 +79,7 @@ void validate_gpio_expander_init_success(esp_err_t result, esp_io_expander_handl
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
 }
 
-// Тестируем случай успешной инициализации gpio_expander_init
+// Test the successful initialization case of gpio_expander_init
 void test_gpio_expander_init_success(void)
 {
     LOG_MESSAGE();
@@ -92,7 +92,7 @@ void test_gpio_expander_init_success(void)
     validate_gpio_expander_init_success(result, handle);
 }
 
-// Тестируем повторную инициализацию gpio_expander_init
+// Test repeated initialization of gpio_expander_init
 void test_gpio_expander_init_reinit_success(void)
 {
     LOG_MESSAGE();
@@ -104,9 +104,9 @@ void test_gpio_expander_init_reinit_success(void)
 
     validate_gpio_expander_init_success(result, handle);
 
-    // Повторная инициализация должна вернуть ESP_OK
-    // но без повторных вызовов xSemaphoreCreateMutex, i2c_new_master_bus, esp_io_expander_new_i2c_tca95xx_16bit и esp_io_expander_print_state
-    // handle также не должен измениться
+    // Re-initialization must return ESP_OK
+    // but without repeated calls to xSemaphoreCreateMutex, i2c_new_master_bus, esp_io_expander_new_i2c_tca95xx_16bit and esp_io_expander_print_state
+    // handle must not change either
     esp_io_expander_handle_t bkp_handle = handle;
     result = gpio_expander_init(&handle);
 
@@ -123,7 +123,7 @@ void test_gpio_expander_init_reinit_success(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
 }
 
-// Тестируем инициализацию gpio_expander_init с NULL handle
+// Test gpio_expander_init with NULL handle
 void test_gpio_expander_init_null_handle(void)
 {
     LOG_MESSAGE();
@@ -132,11 +132,11 @@ void test_gpio_expander_init_null_handle(void)
 
     esp_err_t result = gpio_expander_init(NULL);
 
-    // Инициализация должна пройти как обычно за исключением того, что не будет возвращен hanlde
+    // Initialization should proceed as usual except that handle will not be returned
     validate_gpio_expander_init_success(result, MOCK_EXPANDER_HANDLE);
 }
 
-// Тестируем gpio_expander_init с ошибкой при создании мьютекса
+// Test gpio_expander_init with mutex creation failure
 void test_gpio_expander_init_mutex_failure(void)
 {
     LOG_MESSAGE();
@@ -161,7 +161,7 @@ void test_gpio_expander_init_mutex_failure(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
 }
 
-// Тестируем gpio_expander_init с ошибкой при создании I2C master bus
+// Test gpio_expander_init with I2C master bus creation failure
 void test_gpio_expander_init_i2c_bus_failure(void)
 {
     LOG_MESSAGE();
@@ -190,7 +190,7 @@ void test_gpio_expander_init_i2c_bus_failure(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
 }
 
-// Тестируем gpio_expander_init с ошибкой при создании GPIO expander object
+// Test gpio_expander_init with GPIO expander object creation failure
 void test_gpio_expander_init_expander_creation_failure(void)
 {
     LOG_MESSAGE();
@@ -234,7 +234,7 @@ void test_gpio_expander_init_expander_creation_failure(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
 }
 
-// Тестируем gpio_expander_init с ошибкой при печати состояния GPIO expander
+// Test gpio_expander_init with GPIO expander print state failure
 void test_gpio_expander_init_print_state_failure(void)
 {
     LOG_MESSAGE();
@@ -290,7 +290,7 @@ void test_gpio_expander_init_print_state_failure(void)
     );
 }
 
-// Валидация выполнения функции gpio_expander_set()
+// Validate execution of the gpio_expander_set() function
 void validate_gpio_expander_set_dir_run(uint32_t pin_num_mask, esp_io_expander_dir_t direction, bool validate_unnecessary_calls)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xSemaphoreTake_called, "xSemaphoreTake should be called once");
@@ -348,7 +348,7 @@ void validate_gpio_expander_set_dir_run(uint32_t pin_num_mask, esp_io_expander_d
     );
 }
 
-// Тестируем успешное выполнение gpio_expander_set_dir()
+// Test successful execution of gpio_expander_set_dir()
 void test_gpio_expander_set_dir_success(void)
 {
     LOG_MESSAGE();
@@ -386,7 +386,7 @@ void test_gpio_expander_set_dir_success(void)
     validate_gpio_expander_set_dir_run(pin_num_mask, direction, true);
 }
 
-// Тестируем gpio_expander_set_dir() при ошибке esp_io_expander_set_dir()
+// Test gpio_expander_set_dir() when esp_io_expander_set_dir() fails
 void test_gpio_expander_set_dir_fail(void)
 {
     LOG_MESSAGE();
@@ -411,7 +411,7 @@ void test_gpio_expander_set_dir_fail(void)
     validate_gpio_expander_set_dir_run(pin_num_mask, direction, true);
 }
 
-// Тестируем gpio_expander_set_dir() без инициализации модуля
+// Test gpio_expander_set_dir() without module initialization
 void test_gpio_expander_set_dir_not_initialized(void)
 {
     LOG_MESSAGE();
@@ -435,7 +435,7 @@ void test_gpio_expander_set_dir_not_initialized(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
 }
 
-// Валидация выполнения функции gpio_expander_set_level()
+// Validate execution of the gpio_expander_set_level() function
 void validate_gpio_expander_set_level_run(uint32_t pin_num_mask, uint8_t level, bool validate_unnecessary_calls)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xSemaphoreTake_called, "xSemaphoreTake should be called once");
@@ -493,7 +493,7 @@ void validate_gpio_expander_set_level_run(uint32_t pin_num_mask, uint8_t level, 
     );
 }
 
-// Тестируем успешное выполнение gpio_expander_set_level()
+// Test successful execution of gpio_expander_set_level()
 void test_gpio_expander_set_level_success(void)
 {
     LOG_MESSAGE();
@@ -531,7 +531,7 @@ void test_gpio_expander_set_level_success(void)
     validate_gpio_expander_set_level_run(pin_num_mask, level, true);
 }
 
-// Тестируем gpio_expander_set_level() при ошибке esp_io_expander_set_level()
+// Test gpio_expander_set_level() when esp_io_expander_set_level() fails
 void test_gpio_expander_set_level_fail(void)
 {
     LOG_MESSAGE();
@@ -556,7 +556,7 @@ void test_gpio_expander_set_level_fail(void)
     validate_gpio_expander_set_level_run(pin_num_mask, level, true);
 }
 
-// Тестируем gpio_expander_set_level() без инициализации модуля
+// Test gpio_expander_set_level() without module initialization
 void test_gpio_expander_set_level_not_initialized(void)
 {
     LOG_MESSAGE();
@@ -580,7 +580,7 @@ void test_gpio_expander_set_level_not_initialized(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
 }
 
-// Валидация выполнения функции gpio_expander_set_out_dir_and_level()
+// Validate execution of the gpio_expander_set_out_dir_and_level() function
 void validate_gpio_expander_set_out_dir_and_level_run(uint32_t pin_num_mask, uint8_t level)
 {
     validate_gpio_expander_set_dir_run(pin_num_mask, IO_EXPANDER_OUTPUT, false);
@@ -597,7 +597,7 @@ void validate_gpio_expander_set_out_dir_and_level_run(uint32_t pin_num_mask, uin
     );
 }
 
-// Тестируем успешное выполнение gpio_expander_set_out_dir_and_level()
+// Test successful execution of gpio_expander_set_out_dir_and_level()
 void test_gpio_expander_set_out_dir_and_level_success(void)
 {
     LOG_MESSAGE();
@@ -635,7 +635,7 @@ void test_gpio_expander_set_out_dir_and_level_success(void)
     validate_gpio_expander_set_out_dir_and_level_run(pin_num_mask, level);
 }
 
-// Тестируем gpio_expander_set_out_dir_and_level() с ошибкой esp_io_expander_set_dir()
+// Test gpio_expander_set_out_dir_and_level() with esp_io_expander_set_dir() failure
 void test_gpio_expander_set_out_dir_and_level_fail_set_dir(void)
 {
     LOG_MESSAGE();
@@ -660,7 +660,7 @@ void test_gpio_expander_set_out_dir_and_level_fail_set_dir(void)
     validate_gpio_expander_set_dir_run(pin_num_mask, level, true);
 }
 
-// Тестируем gpio_expander_set_out_dir_and_level() с ошибкой esp_io_expander_set_level()
+// Test gpio_expander_set_out_dir_and_level() with esp_io_expander_set_level() failure
 void test_gpio_expander_set_out_dir_and_level_fail_set_level(void)
 {
     LOG_MESSAGE();
@@ -685,7 +685,7 @@ void test_gpio_expander_set_out_dir_and_level_fail_set_level(void)
     validate_gpio_expander_set_out_dir_and_level_run(pin_num_mask, level);
 }
 
-// Тестируем gpio_expander_set_out_dir_and_level() без инициализации модуля
+// Test gpio_expander_set_out_dir_and_level() without module initialization
 void test_gpio_expander_set_out_dir_and_level_not_initialized(void)
 {
     LOG_MESSAGE();
@@ -709,7 +709,7 @@ void test_gpio_expander_set_out_dir_and_level_not_initialized(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
 }
 
-// Валидация выполнения функции gpio_expander_get_level()
+// Validate execution of the gpio_expander_get_level() function
 void validate_gpio_expander_get_level_run(uint32_t pin_num_mask)
 {
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_xSemaphoreTake_called, "xSemaphoreTake should be called once");
@@ -760,7 +760,7 @@ void validate_gpio_expander_get_level_run(uint32_t pin_num_mask)
     );
 }
 
-// Тестируем успешное выполнение gpio_expander_get_level()
+// Test successful execution of gpio_expander_get_level()
 void test_gpio_expander_get_level_success(void)
 {
     LOG_MESSAGE();
@@ -814,7 +814,7 @@ void test_gpio_expander_get_level_success(void)
     validate_gpio_expander_get_level_run(pin_num_mask);
 }
 
-// Тестируем gpio_expander_get_level() с ошибкой esp_io_expander_get_level()
+// Test gpio_expander_get_level() when esp_io_expander_get_level() fails
 void test_gpio_expander_get_level_fail(void)
 {
     LOG_MESSAGE();
@@ -844,7 +844,7 @@ void test_gpio_expander_get_level_fail(void)
     validate_gpio_expander_get_level_run(pin_num_mask);
 }
 
-// Тестируем gpio_expander_get_level() без инициализации модуля
+// Test gpio_expander_get_level() without module initialization
 void test_gpio_expander_get_level_not_initialized(void)
 {
     LOG_MESSAGE();

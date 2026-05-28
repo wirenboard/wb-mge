@@ -103,7 +103,7 @@ static void verify_setting_items_not_called(unsigned index)
 
 static_assert(sizeof(mock_modbus_tcp_t) == sizeof(mock_transparent_tcp_t), "Struct sizes do not match");
 
-// Структуры mock_modbus_tcp_t и mock_transparent_tcp_t идентичны, поэтому используем одну функцию для проверки обоих типов
+// Structures mock_modbus_tcp_t and mock_transparent_tcp_t are identical, so we use one function to verify both types
 static void verify_mode_tcp_init_port(unsigned index, void *mode_tcp_struct)
 {
     TEST_ASSERT_LESS_THAN_UINT_MESSAGE(BRIDGES_COUNT, index, "verify_mode_tcp_init_port called with invalid index");
@@ -273,7 +273,7 @@ static void verify_mode_tcp_deinit_port_calls(unsigned index, int expected_modbu
     );
 }
 
-// Тестируем bridge_init
+// Test bridge_init
 void test_bridge_init(void)
 {
     LOG_MESSAGE();
@@ -303,7 +303,7 @@ void test_bridge_init(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init в режиме Modbus TCP и разными настройками последовательного порта
+// Test bridge_port_init initialization in Modbus TCP mode with various serial port settings
 void test_bridge_port_init_server_modbus_tcp_various_settings_1(void)
 {
     LOG_MESSAGE();
@@ -399,7 +399,7 @@ void test_bridge_port_init_server_modbus_tcp_invalid_settings(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init в режиме Modbus TCP с ошибкой инициализации Modbus TCP порта
+// Test bridge_port_init initialization in Modbus TCP mode when modbus_tcp_init_port fails
 void test_bridge_port_init_modbus_tcp_mode_fail(void)
 {
     LOG_MESSAGE();
@@ -420,7 +420,7 @@ void test_bridge_port_init_modbus_tcp_mode_fail(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init в режиме прозрачного шлюза и разными настройками последовательного порта и режимами моста
+// Test bridge_port_init initialization in transparent gateway mode with various serial port settings and bridge modes
 void test_bridge_port_init_transparent_mode_various_settings_1(void)
 {
     LOG_MESSAGE();
@@ -532,7 +532,7 @@ void test_bridge_port_init_transparent_mode_invalid_settings(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init в режиме прозрачного шлюза с ошибкой инициализации прозрачного TCP порта
+// Test bridge_port_init initialization in transparent gateway mode when transparent_tcp_init_port fails
 void test_bridge_port_init_transparent_mode_fail(void)
 {
     LOG_MESSAGE();
@@ -553,7 +553,7 @@ void test_bridge_port_init_transparent_mode_fail(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init с ошибками чтения настроек
+// Test bridge_port_init initialization with setting read errors
 void test_bridge_port_init_setting_read_errors_1(void)
 {
     LOG_MESSAGE();
@@ -626,7 +626,7 @@ void test_bridge_port_init_setting_read_errors_4(void)
     }
 }
 
-// Тестируем повторную инициализацию bridge_port_init с разными режимами портов
+// Test repeated bridge_port_init initialization with different port modes
 void test_bridge_port_init_already_initialized(void)
 {
     LOG_MESSAGE();
@@ -669,7 +669,7 @@ void test_bridge_port_init_already_initialized(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init с отключенными портами
+// Test bridge_port_init initialization with disabled ports
 void test_bridge_port_init_disabled_ports(void)
 {
     LOG_MESSAGE();
@@ -688,7 +688,7 @@ void test_bridge_port_init_disabled_ports(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init, отключив порты в настройках
+// Test bridge_port_init initialization with ports disabled in settings
 void test_bridge_port_init_disabled_ports_in_settings(void)
 {
     LOG_MESSAGE();
@@ -709,7 +709,7 @@ void test_bridge_port_init_disabled_ports_in_settings(void)
     }
 }
 
-// Тестируем bridge_port_init и bridge_port_deinit с невалидным номером порта
+// Test bridge_port_init and bridge_port_deinit with an invalid port number
 void test_bridge_port_init_deinit_invalid_index(void)
 {
     LOG_MESSAGE();
@@ -727,7 +727,7 @@ void test_bridge_port_init_deinit_invalid_index(void)
     );
 }
 
-// Тестируем bridge_port_deinit с неинициализированными портами
+// Test bridge_port_deinit with uninitialized ports
 void test_bridge_port_deinit_not_initialized(void)
 {
     LOG_MESSAGE();
@@ -742,7 +742,7 @@ void test_bridge_port_deinit_not_initialized(void)
     }
 }
 
-// Тестируем успешную деинициализацию bridge_port_deinit
+// Test successful bridge_port_deinit deinitialization
 void test_bridge_port_deinit_success(void)
 {
     LOG_MESSAGE();
@@ -765,7 +765,7 @@ void test_bridge_port_deinit_success(void)
     }
 }
 
-// Тестируем функции bridge_disable_port и bridge_enable_port с невалидным индексом
+// Test bridge_disable_port and bridge_enable_port functions with an invalid index
 void test_bridge_disable_enable_port_invalid_index(void)
 {
     LOG_MESSAGE();
@@ -783,7 +783,7 @@ void test_bridge_disable_enable_port_invalid_index(void)
     );
 }
 
-// Тестируем функцию bridge_disable_port с инициализированным bridge_port_init
+// Test bridge_disable_port function with an initialized bridge_port_init
 void test_bridge_disable_port_initialized(void)
 {
     LOG_MESSAGE();
@@ -806,7 +806,7 @@ void test_bridge_disable_port_initialized(void)
     }
 }
 
-// Тестируем функцию bridge_enable_port с неинициализированным портом без запроса инициализации
+// Test bridge_enable_port function with an uninitialized port and no initialization request
 void test_bridge_enable_port_not_initialized_no_request(void)
 {
     LOG_MESSAGE();
@@ -822,7 +822,7 @@ void test_bridge_enable_port_not_initialized_no_request(void)
     }
 }
 
-// Тестируем функцию bridge_enable_port с неинициализированным портом, который был отключен до попытки инициализации
+// Test bridge_enable_port function with an uninitialized port that was disabled before initialization attempt
 void test_bridge_enable_port_disabled_during_init(void)
 {
     LOG_MESSAGE();
@@ -854,7 +854,7 @@ void test_bridge_enable_port_disabled_during_init(void)
     verify_mode_tcp_init_port(1, &mock_transparent_tcp[1]);
 }
 
-// Тестируем автоматическую инициализацию bridge_port_init после отключения и включения порта
+// Test automatic bridge_port_init initialization after disabling and re-enabling a port
 void test_bridge_port_init_after_switching(void)
 {
     LOG_MESSAGE();
@@ -890,7 +890,7 @@ void test_bridge_port_init_after_switching(void)
     }
 }
 
-// Тестируем tcp_server_active_connections с невалидным номером сервера
+// Test tcp_server_active_connections with an invalid server number
 void test_tcp_server_active_connections_invalid_server_num(void)
 {
     LOG_MESSAGE();
@@ -904,7 +904,7 @@ void test_tcp_server_active_connections_invalid_server_num(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "tcp_server_active_connections should return 0 for server_num >= TCP_SERVER_COUNT");
 }
 
-// Тестируем tcp_server_active_connections с отключенным портом
+// Test tcp_server_active_connections with a disabled port
 void test_tcp_server_active_connections_disabled_mode(void)
 {
     LOG_MESSAGE();
@@ -917,7 +917,7 @@ void test_tcp_server_active_connections_disabled_mode(void)
     }
 }
 
-// Тестируем tcp_server_active_connections с нулевым tcp_desc
+// Test tcp_server_active_connections with a NULL tcp_desc
 void test_tcp_server_active_connections_null_tcp_desc(void)
 {
     LOG_MESSAGE();
@@ -939,7 +939,7 @@ void test_tcp_server_active_connections_null_tcp_desc(void)
     }
 }
 
-// Тестируем tcp_server_active_connections с активными соединениями
+// Test tcp_server_active_connections with active connections
 void test_tcp_server_active_connections_exist(void)
 {
     LOG_MESSAGE();
@@ -966,7 +966,7 @@ void test_tcp_server_active_connections_exist(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed с невалидным индексом
+// Test bridge_port_check_settings_changed with an invalid index
 void test_bridge_port_check_settings_changed_invalid_index(void)
 {
     LOG_MESSAGE();
@@ -977,7 +977,7 @@ void test_bridge_port_check_settings_changed_invalid_index(void)
     TEST_ASSERT_FALSE_MESSAGE(result, "bridge_port_check_settings_changed should return false for invalid index");
 }
 
-// Тестируем bridge_port_check_settings_changed с ошибками чтения настроек
+// Test bridge_port_check_settings_changed with setting read errors
 void test_bridge_port_check_settings_changed_read_errors(void)
 {
     LOG_MESSAGE();
@@ -993,7 +993,7 @@ void test_bridge_port_check_settings_changed_read_errors(void)
     TEST_ASSERT_FALSE_MESSAGE(result, "bridge_port_check_settings_changed should return false when bridge config read fails");
 }
 
-// Тестируем bridge_port_check_settings_changed для неинициализированного порта с отключенным режимом
+// Test bridge_port_check_settings_changed for an uninitialized port with disabled mode
 void test_bridge_port_check_settings_changed_not_initialized_disabled(void)
 {
     LOG_MESSAGE();
@@ -1012,7 +1012,7 @@ void test_bridge_port_check_settings_changed_not_initialized_disabled(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для неинициализированного порта с включенным режимом
+// Test bridge_port_check_settings_changed for an uninitialized port with enabled mode
 void test_bridge_port_check_settings_changed_not_initialized_enabled(void)
 {
     LOG_MESSAGE();
@@ -1031,7 +1031,7 @@ void test_bridge_port_check_settings_changed_not_initialized_enabled(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта без изменений
+// Test bridge_port_check_settings_changed for an initialized port with no changes
 void test_bridge_port_check_settings_changed_initialized_no_changes(void)
 {
     LOG_MESSAGE();
@@ -1051,7 +1051,7 @@ void test_bridge_port_check_settings_changed_initialized_no_changes(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+// Test bridge_port_check_settings_changed for an initialized port with changes
 void test_bridge_port_check_settings_changed_initialized_changes_1(void)
 {
     LOG_MESSAGE();
@@ -1074,7 +1074,7 @@ void test_bridge_port_check_settings_changed_initialized_changes_1(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+// Test bridge_port_check_settings_changed for an initialized port with changes
 void test_bridge_port_check_settings_changed_initialized_changes_2(void)
 {
     LOG_MESSAGE();
@@ -1097,7 +1097,7 @@ void test_bridge_port_check_settings_changed_initialized_changes_2(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+// Test bridge_port_check_settings_changed for an initialized port with changes
 void test_bridge_port_check_settings_changed_initialized_changes_3(void)
 {
     LOG_MESSAGE();
@@ -1123,7 +1123,7 @@ void test_bridge_port_check_settings_changed_initialized_changes_3(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+// Test bridge_port_check_settings_changed for an initialized port with changes
 void test_bridge_port_check_settings_changed_initialized_changes_4(void)
 {
     LOG_MESSAGE();

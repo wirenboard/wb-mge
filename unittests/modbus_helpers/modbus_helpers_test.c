@@ -40,7 +40,7 @@ void tearDown(void)
 
 }
 
-// Тестируем функцию modbus_crc16
+// Test the modbus_crc16 function
 void test_modbus_crc16_null_buffer(void)
 {
     LOG_MESSAGE();
@@ -83,7 +83,7 @@ void test_modbus_crc16_single_byte(void)
     TEST_ASSERT_EQUAL_HEX16(0x00FF, modbus_crc16(&b, 1));
 }
 
-// Тестируем функцию modbus_rtu_check_request
+// Test the modbus_rtu_check_request function
 void test_modbus_rtu_check_request_null(void)
 {
     LOG_MESSAGE();
@@ -161,7 +161,7 @@ void test_modbus_rtu_check_request_valid(void)
     TEST_ASSERT_EQUAL(ESP_OK, modbus_rtu_check_request(buf, valid_rtu_request_len));
 }
 
-// Тестируем функцию modbus_rtu_check_response
+// Test the modbus_rtu_check_response function
 void test_modbus_rtu_check_response_null(void)
 {
     LOG_MESSAGE();
@@ -246,7 +246,7 @@ void test_modbus_rtu_check_response_valid_normal(void)
     TEST_ASSERT_EQUAL(ESP_OK, modbus_rtu_check_response(buf, valid_rtu_response_len, &req));
 }
 
-// Тестируем функцию modbus_tcp_check_request
+// Test the modbus_tcp_check_request function
 void test_modbus_tcp_check_request_null(void)
 {
     LOG_MESSAGE();
@@ -309,7 +309,7 @@ void test_modbus_tcp_check_request_valid(void)
     TEST_ASSERT_EQUAL(ESP_OK, modbus_tcp_check_request(valid_tcp_request, valid_tcp_request_len));
 }
 
-// Тестируем функцию modbus_rtu_from_tcp
+// Test the modbus_rtu_from_tcp function
 void test_modbus_rtu_from_tcp_null_args(void)
 {
     LOG_MESSAGE();
@@ -355,7 +355,7 @@ void test_modbus_rtu_from_tcp_valid(void)
     TEST_ASSERT_EQUAL_HEX8(0x48, out[7]);
 }
 
-// Тестируем функцию modbus_tcp_from_rtu
+// Test the modbus_tcp_from_rtu function
 void test_modbus_tcp_from_rtu_null_args(void)
 {
     LOG_MESSAGE();

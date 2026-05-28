@@ -34,7 +34,7 @@ void tearDown(void)
     }
 }
 
-// Тестируем успешное создание и удаление очереди пакетов
+// Test successful creation and deletion of a packet queue
 void test_packet_queue_create_success(void)
 {
     LOG_MESSAGE();
@@ -52,7 +52,7 @@ void test_packet_queue_create_success(void)
     );
 }
 
-// Тестируем неуспешное создание очереди пакетов
+// Test unsuccessful creation of a packet queue
 void test_packet_queue_create_failure(void)
 {
     LOG_MESSAGE();
@@ -67,7 +67,7 @@ void test_packet_queue_create_failure(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueCreate_data.called, "xQueueCreate should be called once");
 }
 
-// Тестируем успешное удаление очереди пакетов
+// Test successful deletion of a packet queue
 void test_packet_queue_delete_success(void)
 {
     LOG_MESSAGE();
@@ -94,7 +94,7 @@ void test_packet_queue_delete_success(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(test_handle, mock_vQueueDelete_data.handle, "vQueueDelete should be called with correct handle");
 }
 
-// Тестируем удаление очереди пакетов с NULL дескриптором
+// Test packet queue deletion with a NULL handle
 void test_packet_queue_delete_null_handle(void)
 {
     LOG_MESSAGE();
@@ -107,7 +107,7 @@ void test_packet_queue_delete_null_handle(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(NULL, mock_vQueueDelete_data.handle, "vQueueDelete should not be called for NULL handle");
 }
 
-// Тестируем очистку очереди пакетов с валидным дескриптором
+// Test packet queue clearing with a valid handle
 void test_packet_queue_clear_valid_handle(void)
 {
     LOG_MESSAGE();
@@ -149,7 +149,7 @@ void test_packet_queue_clear_valid_handle(void)
     TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr3), "Third allocated buffer should be freed");
 }
 
-// Тестируем очистку очереди пакетов с NULL дескриптором
+// Test packet queue clearing with a NULL handle
 void test_packet_queue_clear_null_handle(void)
 {
     LOG_MESSAGE();
@@ -161,7 +161,7 @@ void test_packet_queue_clear_null_handle(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueReceive_data.called, "xQueueReceive should not be called for NULL handle");
 }
 
-// Тестируем получение количества пакетов в очереди
+// Test getting the number of packets in the queue
 void test_packet_queue_count(void)
 {
     LOG_MESSAGE();
@@ -193,7 +193,7 @@ void test_packet_queue_count(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(NULL), "NULL handle should return 0");
 }
 
-// Тестируем успешное добавление пакета в очередь
+// Test successful push of a packet to the queue
 void test_packet_queue_push_success(void)
 {
     LOG_MESSAGE();
@@ -226,7 +226,7 @@ void test_packet_queue_push_success(void)
     );
 }
 
-// Тестируем добавление пакета в очередь с NULL дескриптором
+// Test pushing a packet to the queue with a NULL handle
 void test_packet_queue_push_null_handle(void)
 {
     LOG_MESSAGE();
@@ -243,7 +243,7 @@ void test_packet_queue_push_null_handle(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called");
 }
 
-// Тестируем добавление пакета в заполненную очередь
+// Test pushing a packet to a full queue
 void test_packet_queue_push_no_space(void)
 {
     LOG_MESSAGE();
@@ -272,7 +272,7 @@ void test_packet_queue_push_no_space(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_xQueueSend_data.called, "xQueueSend should be called only 2 times");
 }
 
-// Тестируем добавление пакета с ошибкой выделения памяти
+// Test pushing a packet with memory allocation failure
 void test_packet_queue_push_malloc_fail(void)
 {
     LOG_MESSAGE();
@@ -295,7 +295,7 @@ void test_packet_queue_push_malloc_fail(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called when malloc fails");
 }
 
-// Тестируем добавление пакета с ошибкой отправки в очередь
+// Test pushing a packet with queue send failure
 void test_packet_queue_push_queue_send_fail(void)
 {
     LOG_MESSAGE();
@@ -319,7 +319,7 @@ void test_packet_queue_push_queue_send_fail(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.ticks, "xQueueSend should be called with correct ticks");
 }
 
-// Тестируем успешное извлечение пакета из очереди
+// Test successful pop of a packet from the queue
 void test_packet_queue_pop_success(void)
 {
     LOG_MESSAGE();
@@ -347,7 +347,7 @@ void test_packet_queue_pop_success(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(g_test_handle), "Queue should be empty after pop");
 }
 
-// Тестируем извлечение пакета из очереди с NULL дескриптором
+// Test popping a packet from the queue with a NULL handle
 void test_packet_queue_pop_null_handle(void)
 {
     LOG_MESSAGE();
@@ -362,7 +362,7 @@ void test_packet_queue_pop_null_handle(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueReceive_data.called, "xQueueReceive should not be called");
 }
 
-// Тестируем извлечение пакета из пустой очереди
+// Test popping a packet from an empty queue
 void test_packet_queue_pop_empty_queue(void)
 {
     LOG_MESSAGE();
@@ -381,7 +381,7 @@ void test_packet_queue_pop_empty_queue(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueReceive_data.called, "xQueueReceive should be called once");
 }
 
-// Тестируем извлечение пакета с NULL указателем на буфер
+// Test popping a packet with a NULL buffer pointer
 void test_packet_queue_pop_null_buffer_ptr(void)
 {
     LOG_MESSAGE();
@@ -408,7 +408,7 @@ void test_packet_queue_pop_null_buffer_ptr(void)
     TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr), "The correct allocated buffer should be freed");
 }
 
-// Тестируем извлечение пакета с разным временем ожидания
+// Test popping a packet with various wait timeouts
 void test_packet_queue_pop_with_timeout(void)
 {
     LOG_MESSAGE();
@@ -442,7 +442,7 @@ void test_packet_queue_pop_with_timeout(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
 }
 
-// Тестируем успешное добавление пакета с client socket в очередь
+// Test successful push of a packet with client socket to the queue
 void test_packet_queue_push_with_client_success(void)
 {
     LOG_MESSAGE();
@@ -464,7 +464,7 @@ void test_packet_queue_push_with_client_success(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueSend_data.called, "xQueueSend should be called once");
 }
 
-// Тестируем добавление с NULL дескриптором очереди
+// Test push with a NULL queue handle
 void test_packet_queue_push_with_client_null_handle(void)
 {
     LOG_MESSAGE();
@@ -480,7 +480,7 @@ void test_packet_queue_push_with_client_null_handle(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called");
 }
 
-// Тестируем добавление при заполненной очереди
+// Test push when the queue is full
 void test_packet_queue_push_with_client_no_space(void)
 {
     LOG_MESSAGE();
@@ -503,7 +503,7 @@ void test_packet_queue_push_with_client_no_space(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result3, "Third push_with_client should fail when queue is full");
 }
 
-// Тестируем добавление с ошибкой выделения памяти
+// Test push with memory allocation failure
 void test_packet_queue_push_with_client_malloc_fail(void)
 {
     LOG_MESSAGE();
@@ -525,7 +525,7 @@ void test_packet_queue_push_with_client_malloc_fail(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called when malloc fails");
 }
 
-// Тестируем успешное извлечение пакета с client socket
+// Test successful pop of a packet with client socket
 void test_packet_queue_pop_with_client_success(void)
 {
     LOG_MESSAGE();
@@ -555,7 +555,7 @@ void test_packet_queue_pop_with_client_success(void)
     free(received_buf);
 }
 
-// Тестируем извлечение с NULL дескриптором очереди
+// Test pop with a NULL queue handle
 void test_packet_queue_pop_with_client_null_handle(void)
 {
     LOG_MESSAGE();
@@ -570,7 +570,7 @@ void test_packet_queue_pop_with_client_null_handle(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueReceive_data.called, "xQueueReceive should not be called");
 }
 
-// Тестируем извлечение с NULL указателем на client_sock — функция не должна падать
+// Test pop with a NULL client_sock pointer — function must not crash
 void test_packet_queue_pop_with_client_null_client_sock(void)
 {
     LOG_MESSAGE();
@@ -623,7 +623,7 @@ void test_packet_queue_pop_with_client_null_buffer_ptr(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(g_test_handle), "Queue should be empty after pop");
 }
 
-// Тестируем сохранение порядка FIFO для client_sock при двух пакетах
+// Test FIFO ordering preservation for client_sock with two packets
 void test_packet_queue_pop_with_client_preserves_sock(void)
 {
     LOG_MESSAGE();

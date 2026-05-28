@@ -8,7 +8,7 @@ typedef enum {
     RS485_2 = 2
 } rs485_port_t;
 
-// Сan only be called after gpio_expander_init()
+// Can only be called after gpio_expander_init()
 esp_err_t rs485_control_init(void);
 
 esp_err_t rs485_term_on_off(rs485_port_t port, bool on);

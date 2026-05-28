@@ -111,7 +111,7 @@ void tearDown(void)
 
 }
 
-// Тестируем инициализацию setting_items, write_str возвращает ошибку -> setting_items_init должен вернуть ошибку
+// Test setting_items initialization, write_str returns an error -> setting_items_init must return an error
 void test_setting_items_init_function(void)
 {
     LOG_MESSAGE();
@@ -121,7 +121,7 @@ void test_setting_items_init_function(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, setting_items_init(), "Initialization should fail when write_str returns error");
 }
 
-// Тестируем, что при инициализации и отсутствии ключей в хранилище записываются значения по умолчанию
+// Test that default values are written during initialization when keys are absent from storage
 void test_setting_items_init_with_storage(void)
 {
     LOG_MESSAGE();
@@ -183,7 +183,7 @@ void test_setting_items_init_with_storage(void)
     }
 }
 
-// Тестируем содержимое массива setting_items
+// Test the contents of the setting_items array
 void test_setting_items_array_contents(void)
 {
     LOG_MESSAGE();
@@ -218,7 +218,7 @@ void test_setting_items_array_contents(void)
     }
 }
 
-// Тестируем, что нужные валидаторы вызываются для соответствующих настроек
+// Test that the correct validators are called for the corresponding settings
 void test_authentication_validators(void)
 {
     LOG_MESSAGE();
@@ -399,7 +399,7 @@ void test_bridge_and_bool_validators(void)
     }
 }
 
-// Тестируем все ошибочные условия в функции setting_items_save
+// Test all error conditions in the setting_items_save function
 void test_setting_items_save_error_conditions(void)
 {
     LOG_MESSAGE();
@@ -508,7 +508,7 @@ void test_setting_items_save_error_conditions(void)
     TEST_ASSERT_TRUE_MESSAGE(mock_validate_hostname_called, "Validator should be called even when write fails");
 }
 
-// Тестируем успешное чтение настроек
+// Test successful reading of settings
 void test_setting_items_read_success(void)
 {
     LOG_MESSAGE();
@@ -535,7 +535,7 @@ void test_setting_items_read_success(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(test_value, read_buffer, "Should read back the exact saved value");
 }
 
-// Тестируем все ошибочные условия в функции setting_items_read
+// Test all error conditions in the setting_items_read function
 void test_setting_items_read_error_conditions(void)
 {
     LOG_MESSAGE();
@@ -585,7 +585,7 @@ void test_setting_items_read_error_conditions(void)
     );
 }
 
-// Тестируем функцию setting_items_get_key_at
+// Test the setting_items_get_key_at function
 void test_setting_items_get_key_at(void)
 {
     LOG_MESSAGE();
@@ -628,7 +628,7 @@ void test_setting_items_get_key_at(void)
     }
 }
 
-// Тестируем функцию setting_items_read_int
+// Test the setting_items_read_int function
 void test_setting_items_read_int(void)
 {
     LOG_MESSAGE();
@@ -660,7 +660,7 @@ void test_setting_items_read_int(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, read_value, "Should return 0 for non-numeric setting");
 }
 
-// Тестируем функцию setting_items_read_bool
+// Test the setting_items_read_bool function
 void test_setting_items_read_bool(void)
 {
     LOG_MESSAGE();
@@ -690,7 +690,7 @@ void test_setting_items_read_bool(void)
     TEST_ASSERT_TRUE_MESSAGE(read_value, "Should return default 485_term_1 value (true) from default_value");
 }
 
-// Тестируем функцию setting_items_save_int
+// Test the setting_items_save_int function
 void test_setting_items_save_int(void)
 {
     LOG_MESSAGE();
@@ -716,7 +716,7 @@ void test_setting_items_save_int(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(8080, read_value, "Should read back the same positive integer value");
 }
 
-// Тестируем функцию setting_items_save_bool
+// Test the setting_items_save_bool function
 void test_setting_items_save_bool(void)
 {
     LOG_MESSAGE();
@@ -749,7 +749,7 @@ void test_setting_items_save_bool(void)
     TEST_ASSERT_FALSE_MESSAGE(read_value, "Should read back false value");
 }
 
-// Тестируем функцию setting_items_get_default_value
+// Test the setting_items_get_default_value function
 void test_setting_items_get_default_value(void)
 {
     LOG_MESSAGE();
@@ -769,7 +769,7 @@ void test_setting_items_get_default_value(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE("WB-MGE", default_value, "Default value for hostname should match expected");
 }
 
-// Тестируем функцию setting_items_get_type
+// Test the setting_items_get_type function
 void test_setting_items_get_type(void)
 {
     LOG_MESSAGE();
@@ -799,7 +799,7 @@ void test_setting_items_get_type(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEM_TYPE_INT, type, "KEY_WEB_PORT should be INT type");
 }
 
-// Тестируем функцию setting_items_type_to_string
+// Test the setting_items_type_to_string function
 void test_setting_items_type_to_string(void)
 {
     LOG_MESSAGE();
@@ -839,8 +839,8 @@ void test_setting_items_type_to_string(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE("UNKNOWN", type_string, "Should return 'UNKNOWN' for negative type value");
 }
 
-// Тестируем get_dynamic_ap_pass_default и get_dynamic_hostname_default в случае, когда esp_read_mac возвращает ошибку,
-// а затем повторный вызов setting_items_init_with_storage
+// Test get_dynamic_ap_pass_default and get_dynamic_hostname_default when esp_read_mac returns an error,
+// then a repeated call to setting_items_init_with_storage
 void test_dynamic_defaults_generation_mac_error(void)
 {
     LOG_MESSAGE();
@@ -866,14 +866,14 @@ void test_dynamic_defaults_generation_mac_error(void)
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_read_mac_called, "esp_read_mac should be called twice");
 
-    // Повторный вызов get_dynamic_ap_pass_default и get_dynamic_hostname_default не должен вызывать esp_read_mac снова
+    // Repeated calls to get_dynamic_ap_pass_default and get_dynamic_hostname_default must not call esp_read_mac again
     rams_init();
     result = setting_items_init_with_storage(&test_storage);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_read_mac_called, "esp_read_mac should not be called again");
 }
 
-// Тестируем генерацию пароля на основе MAC-адреса, когда MAC-адрес короткий
+// Test MAC-address-based password generation when the MAC address is short
 void test_generate_mac_based_password_short_mac(void)
 {
     LOG_MESSAGE();
@@ -894,7 +894,7 @@ void test_generate_mac_based_password_short_mac(void)
     TEST_ASSERT_EQUAL_MESSAGE(10, strlen(buffer), "Generated password length should be 10");
 }
 
-// Тестируем функцию read_wifi_pass_from_efuse с разной длиной пароля в efuse
+// Test the read_wifi_pass_from_efuse function with various password lengths in efuse
 void test_read_wifi_pass_from_efuse_7_symbols(void)
 {
     LOG_MESSAGE();

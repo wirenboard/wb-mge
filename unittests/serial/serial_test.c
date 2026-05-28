@@ -492,7 +492,7 @@ static void verify_serial_init_calls(
     );
 }
 
-// Тестируем serial_init с NULL serial_config
+// Test serial_init with NULL serial_config
 void test_serial_init_null_config(void)
 {
     LOG_MESSAGE();
@@ -525,7 +525,7 @@ void test_serial_init_null_handler(void)
     serial_deinit(desc);
 }
 
-// Тестируем serial_init с ошибкой при выделении памяти для serial_desc_t
+// Test serial_init with memory allocation failure for serial_desc_t
 void test_serial_init_memory_allocation_failure(void)
 {
     LOG_MESSAGE();
@@ -544,7 +544,7 @@ void test_serial_init_memory_allocation_failure(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем serial_init с ошибкой создания xEventGroupCreate
+// Test serial_init with xEventGroupCreate failure
 void test_serial_init_event_group_create_failure(void)
 {
     LOG_MESSAGE();
@@ -570,7 +570,7 @@ void test_serial_init_event_group_create_failure(void)
     );
 }
 
-// Тестируем serial_init с ошибкой вызова uart_driver_install
+// Test serial_init with uart_driver_install call failure
 void test_serial_init_uart_driver_install_failure(void)
 {
     LOG_MESSAGE();
@@ -591,7 +591,7 @@ void test_serial_init_uart_driver_install_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой вызова uart_param_config
+// Test serial_init with uart_param_config call failure
 void test_serial_init_uart_param_config_failure(void)
 {
     LOG_MESSAGE();
@@ -613,7 +613,7 @@ void test_serial_init_uart_param_config_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой вызова uart_set_pin
+// Test serial_init with uart_set_pin call failure
 void test_serial_init_uart_set_pin_failure(void)
 {
     LOG_MESSAGE();
@@ -636,7 +636,7 @@ void test_serial_init_uart_set_pin_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой вызова uart_set_mode
+// Test serial_init with uart_set_mode call failure
 void test_serial_init_uart_set_mode_failure(void)
 {
     LOG_MESSAGE();
@@ -660,7 +660,7 @@ void test_serial_init_uart_set_mode_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой вызова uart_set_rx_timeout
+// Test serial_init with uart_set_rx_timeout call failure
 void test_serial_init_uart_set_rx_timeout_failure(void)
 {
     LOG_MESSAGE();
@@ -686,7 +686,7 @@ void test_serial_init_uart_set_rx_timeout_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой создания задачи
+// Test serial_init with task creation failure
 void test_serial_init_task_create_failure(void)
 {
     LOG_MESSAGE();
@@ -713,7 +713,7 @@ void test_serial_init_task_create_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем инициализацию serial_init без фактического запуска задачи
+// Test serial_init initialization without actual task execution
 void test_serial_init_success_no_task_execution(void)
 {
     LOG_MESSAGE();
@@ -740,8 +740,8 @@ void test_serial_init_success_no_task_execution(void)
     verify_malloc_tracking(1, 0);
 }
 
-// Тестируем инициализацию serial_init c запуском задачи и возникновением события EVENT_TASK_EXIT_REQ,
-// без получения данных по UART
+// Test serial_init initialization with task execution and EVENT_TASK_EXIT_REQ event,
+// without receiving any UART data
 void test_serial_init_success_with_task_execution_no_uart_event(void)
 {
     LOG_MESSAGE();
@@ -790,7 +790,7 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_DATA с установленным флагом тайм-аута приема
+// Test receiving UART_DATA event with receive timeout flag set
 void test_serial_init_success_with_uart_data_event_tout(void)
 {
     LOG_MESSAGE();
@@ -842,7 +842,7 @@ void test_serial_init_success_with_uart_data_event_tout(void)
     );
 }
 
-// Тестируем получение события UART_DATA со сброшенным флагом тайм-аута приема
+// Test receiving UART_DATA event with receive timeout flag cleared
 void test_serial_init_success_with_uart_data_event_no_tout(void)
 {
     LOG_MESSAGE();
@@ -887,7 +887,7 @@ void test_serial_init_success_with_uart_data_event_no_tout(void)
     );
 }
 
-// Тестируем получение двух событий UART_DATA со сброшенным и установленным флагом тайм-аута приема
+// Test receiving two UART_DATA events with timeout flag cleared and then set
 void test_serial_init_success_with_two_uart_data_events(void)
 {
     LOG_MESSAGE();
@@ -955,7 +955,7 @@ void test_serial_init_success_with_two_uart_data_events(void)
     );
 }
 
-// Тестируем получение трех событий UART_DATA со сброшенным и дважды с установленным флагом тайм-аута приема
+// Test receiving three UART_DATA events with timeout flag cleared and then set twice
 void test_serial_init_success_with_three_uart_data_events(void)
 {
     LOG_MESSAGE();
@@ -1038,7 +1038,7 @@ void test_serial_init_success_with_three_uart_data_events(void)
 }
 
 
-// Тестируем получение события UART_DATA с размером равным максимальному размеру буфера
+// Test receiving UART_DATA event with size equal to the maximum buffer size
 void test_serial_init_success_with_uart_data_event_buffer_max_size(void)
 {
     LOG_MESSAGE();
@@ -1081,7 +1081,7 @@ void test_serial_init_success_with_uart_data_event_buffer_max_size(void)
     );
 }
 
-// Тестируем получение события UART_DATA с размером больше буфера
+// Test receiving UART_DATA event with size larger than the buffer
 void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
 {
     LOG_MESSAGE();
@@ -1155,7 +1155,7 @@ void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_receive_handler_data.called, "Receive handler should be called once (for event_1 only)");
 }
 
-// Тестируем получение события UART_FIFO_OVF
+// Test receiving UART_FIFO_OVF event
 void test_serial_init_success_with_uart_fifo_ovf_event(void)
 {
     LOG_MESSAGE();
@@ -1185,7 +1185,7 @@ void test_serial_init_success_with_uart_fifo_ovf_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_BUFFER_FULL
+// Test receiving UART_BUFFER_FULL event
 void test_serial_init_success_with_uart_buffer_full_event(void)
 {
     LOG_MESSAGE();
@@ -1215,7 +1215,7 @@ void test_serial_init_success_with_uart_buffer_full_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_BREAK
+// Test receiving UART_BREAK event
 void test_serial_init_success_with_uart_break_event(void)
 {
     LOG_MESSAGE();
@@ -1244,7 +1244,7 @@ void test_serial_init_success_with_uart_break_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_PARITY_ERR
+// Test receiving UART_PARITY_ERR event
 void test_serial_init_success_with_uart_parity_err_event(void)
 {
     LOG_MESSAGE();
@@ -1273,7 +1273,7 @@ void test_serial_init_success_with_uart_parity_err_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_FRAME_ERR
+// Test receiving UART_FRAME_ERR event
 void test_serial_init_success_with_uart_frame_err_event(void)
 {
     LOG_MESSAGE();
@@ -1302,7 +1302,7 @@ void test_serial_init_success_with_uart_frame_err_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение неизвестного события
+// Test receiving an unknown event
 void test_serial_init_success_with_unknown_uart_event(void)
 {
     LOG_MESSAGE();
@@ -1331,7 +1331,7 @@ void test_serial_init_success_with_unknown_uart_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем успешную отправку serial_send
+// Test successful serial_send transmission
 void test_serial_send_success(void)
 {
     LOG_MESSAGE();
@@ -1356,7 +1356,7 @@ void test_serial_send_success(void)
     TEST_ASSERT_EQUAL_MESSAGE(bytes_to_send, mock_uart_write_bytes_data.size, "uart_write_bytes should be called with correct size");
 }
 
-// Тестируем serial_send с ошибкой записи
+// Test serial_send with a write error
 void test_serial_send_partial_write(void)
 {
     LOG_MESSAGE();
@@ -1380,7 +1380,7 @@ void test_serial_send_partial_write(void)
 }
 
 
-// Тестируем serial_wait_tx_done
+// Test serial_wait_tx_done
 void test_serial_wait_tx_done_success(void)
 {
     LOG_MESSAGE();
@@ -1403,7 +1403,7 @@ void test_serial_wait_tx_done_success(void)
     TEST_ASSERT_EQUAL_MESSAGE(timeout, mock_uart_wait_tx_done_data.ticks_to_wait, "uart_wait_tx_done should be called with correct timeout");
 }
 
-// Тестируем serial_wait_tx_done с ошибками
+// Test serial_wait_tx_done with errors
 void test_serial_wait_tx_done_errors(void)
 {
     LOG_MESSAGE();
@@ -1430,7 +1430,7 @@ void test_serial_wait_tx_done_errors(void)
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_uart_wait_tx_done_data.called, "uart_wait_tx_done should be called twice");
 }
 
-// Тестируем serial_deinit с NULL дескриптором
+// Test serial_deinit with NULL descriptor
 void test_serial_deinit_null_descriptor(void)
 {
     LOG_MESSAGE();
@@ -1447,7 +1447,7 @@ void test_serial_deinit_null_descriptor(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем serial_deinit с уже деинициализированным дескриптором (task_handle == NULL)
+// Test serial_deinit with an already deinitialized descriptor (task_handle == NULL)
 void test_serial_deinit_already_deinitialized_task(void)
 {
     LOG_MESSAGE();
@@ -1475,7 +1475,7 @@ void test_serial_deinit_already_deinitialized_task(void)
     verify_malloc_tracking(1, 0);
 }
 
-// Тестируем serial_deinit с уже деинициализированным дескриптором (event_group == NULL)
+// Test serial_deinit with an already deinitialized descriptor (event_group == NULL)
 void test_serial_deinit_already_deinitialized_event_group(void)
 {
     LOG_MESSAGE();
@@ -1503,7 +1503,7 @@ void test_serial_deinit_already_deinitialized_event_group(void)
     verify_malloc_tracking(1, 0);
 }
 
-// Тестируем serial_deinit успешно
+// Test serial_deinit successfully
 void test_serial_deinit_success(void)
 {
     LOG_MESSAGE();
@@ -1531,7 +1531,7 @@ void test_serial_deinit_success(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_deinit когда задача не завершается вовремя
+// Test serial_deinit when the task does not finish in time
 void test_serial_deinit_task_not_finished(void)
 {
     LOG_MESSAGE();

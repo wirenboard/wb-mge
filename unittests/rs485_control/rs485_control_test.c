@@ -131,7 +131,7 @@ void validate_rs485_control_init_run(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
 }
 
-// Тестируем успешную инициализацию rs485_control_init()
+// Test successful rs485_control_init() initialization
 void test_rs485_control_init_success(void)
 {
     LOG_MESSAGE();
@@ -146,7 +146,7 @@ void test_rs485_control_init_success(void)
     validate_rs485_control_init_run();
 }
 
-// Тестируем rs485_control_init() с ошибкой xSemaphoreCreateMutex()
+// Test rs485_control_init() with xSemaphoreCreateMutex() failure
 void test_rs485_control_init_mutex_fail(void)
 {
     LOG_MESSAGE();
@@ -171,7 +171,7 @@ void test_rs485_control_init_mutex_fail(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
 }
 
-// Тестируем rs485_control_init() с ошибкой gpio_expander_set_out_dir_and_level()
+// Test rs485_control_init() with gpio_expander_set_out_dir_and_level() failure
 void test_rs485_control_init_set_out_dir_and_level_fail(void)
 {
     LOG_MESSAGE();
@@ -188,7 +188,7 @@ void test_rs485_control_init_set_out_dir_and_level_fail(void)
     validate_rs485_control_init_run();
 }
 
-// Тестируем rs485_control_init() с ошибкой gpio_expander_set_level()
+// Test rs485_control_init() with gpio_expander_set_level() failure
 void test_rs485_control_init_set_level_fail(void)
 {
     LOG_MESSAGE();
@@ -205,7 +205,7 @@ void test_rs485_control_init_set_level_fail(void)
     validate_rs485_control_init_run();
 }
 
-// Тестируем повторный вызов rs485_control_init()
+// Test repeated rs485_control_init() call
 void test_rs485_control_init_repeat_call(void)
 {
     LOG_MESSAGE();
@@ -231,7 +231,7 @@ void test_rs485_control_init_repeat_call(void)
     validate_rs485_control_init_run();
 }
 
-// Валидация работы rs485_term_on_off() и rs485_pupd_on_off()
+// Validate the behavior of rs485_term_on_off() and rs485_pupd_on_off()
 void validate_rs485_term_pupd_on_off_run(uint32_t pin_num_mask, bool on)
 {
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_gpio_expander_set_level_data.called, "gpio_expander_set_level() should be called once");
@@ -257,7 +257,7 @@ void validate_rs485_term_pupd_on_off_run(uint32_t pin_num_mask, bool on)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
 }
 
-// Тестируем успешное выполнение rs485_term_on_off()
+// Test successful execution of rs485_term_on_off()
 void test_rs485_term_on_off_success(void)
 {
     LOG_MESSAGE();
@@ -290,7 +290,7 @@ void test_rs485_term_on_off_success(void)
     }
 }
 
-// Тестируем rs485_term_on_off() с ошибкой gpio_expander_set_level()
+// Test rs485_term_on_off() with gpio_expander_set_level() failure
 void test_rs485_term_on_off_set_level_fail(void)
 {
     LOG_MESSAGE();
@@ -324,7 +324,7 @@ void test_rs485_term_on_off_set_level_fail(void)
     }
 }
 
-// Валидация работы rs485_term_on_off() и rs485_pupd_on_off() с некорректным номером порта
+// Validate rs485_term_on_off() and rs485_pupd_on_off() behavior with an incorrect port number
 void validate_rs485_term_pupd_on_off_incorrect_port()
 {
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreCreateMutex_called, "xSemaphoreCreateMutex() should NOT be called");
@@ -339,7 +339,7 @@ void validate_rs485_term_pupd_on_off_incorrect_port()
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
 }
 
-// Тестируем rs485_term_on_off() с некорректным номером порта
+// Test rs485_term_on_off() with an incorrect port number
 void test_rs485_term_on_off_incorrect_port(void)
 {
     LOG_MESSAGE();
@@ -367,7 +367,7 @@ void test_rs485_term_on_off_incorrect_port(void)
     validate_rs485_term_pupd_on_off_incorrect_port();
 }
 
-// Тестируем успешное выполнение rs485_pupd_on_off()
+// Test successful execution of rs485_pupd_on_off()
 void test_rs485_pupd_on_off_success(void)
 {
     LOG_MESSAGE();
@@ -400,7 +400,7 @@ void test_rs485_pupd_on_off_success(void)
     }
 }
 
-// Тестируем rs485_pupd_on_off() с ошибкой gpio_expander_set_level()
+// Test rs485_pupd_on_off() with gpio_expander_set_level() failure
 void test_rs485_pupd_on_off_set_level_fail(void)
 {
     LOG_MESSAGE();
@@ -434,7 +434,7 @@ void test_rs485_pupd_on_off_set_level_fail(void)
     }
 }
 
-// Тестируем rs485_pupd_on_off() с некорректным номером порта
+// Test rs485_pupd_on_off() with an incorrect port number
 void test_rs485_pupd_on_off_incorrect_port(void)
 {
     LOG_MESSAGE();
@@ -462,7 +462,7 @@ void test_rs485_pupd_on_off_incorrect_port(void)
     validate_rs485_term_pupd_on_off_incorrect_port();
 }
 
-// Валидация выполнения rs485_bus_vout_on_off() и rs485_bus_vout_set_allowed()
+// Validate execution of rs485_bus_vout_on_off() and rs485_bus_vout_set_allowed()
 void validate_rs485_bus_vout_run(bool out_level)
 {
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xSemaphoreTake_called, "xSemaphoreTake() should be called once");
@@ -516,7 +516,7 @@ void validate_rs485_bus_vout_run(bool out_level)
     );
 }
 
-// Тестируем успешное выполнение rs485_bus_vout_on_off()
+// Test successful execution of rs485_bus_vout_on_off()
 void test_rs485_bus_vout_on_off_success(void)
 {
     LOG_MESSAGE();
@@ -553,7 +553,7 @@ void test_rs485_bus_vout_on_off_success(void)
     }
 }
 
-// Тестируем rs485_bus_vout_on_off() с ошибкой выполнения gpio_expander_set_level()
+// Test rs485_bus_vout_on_off() with gpio_expander_set_level() execution failure
 void test_rs485_bus_vout_on_off_fail(void)
 {
     LOG_MESSAGE();
@@ -592,7 +592,7 @@ void test_rs485_bus_vout_on_off_fail(void)
     }
 }
 
-// Валидация выполнения rs485_bus_vout_on_off() и rs485_bus_vout_set_allowed() без инициализации модуля
+// Validate rs485_bus_vout_on_off() and rs485_bus_vout_set_allowed() execution without module initialization
 void validate_rs485_bus_vout_no_init(void)
 {
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xSemaphoreTake_called, "xSemaphoreTake() should NOT be called");
@@ -608,7 +608,7 @@ void validate_rs485_bus_vout_no_init(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_gpio_expander_get_level_data.called, "gpio_expander_get_level() should NOT be called");
 }
 
-// Тестируем rs485_bus_vout_on_off() без инициализации модуля
+// Test rs485_bus_vout_on_off() without module initialization
 void test_rs485_bus_vout_on_off_no_init(void)
 {
     LOG_MESSAGE();
@@ -636,7 +636,7 @@ void test_rs485_bus_vout_on_off_no_init(void)
     validate_rs485_bus_vout_no_init();
 }
 
-// Тестируем успешное выполнение rs485_bus_vout_set_allowed()
+// Test successful execution of rs485_bus_vout_set_allowed()
 void test_rs485_bus_vout_set_allowed_success(void)
 {
     LOG_MESSAGE();
@@ -673,7 +673,7 @@ void test_rs485_bus_vout_set_allowed_success(void)
     }
 }
 
-// Тестируем rs485_bus_vout_set_allowed() с ошибкой выполнения gpio_expander_set_level()
+// Test rs485_bus_vout_set_allowed() with gpio_expander_set_level() execution failure
 void test_rs485_bus_vout_set_allowed_fail(void)
 {
     LOG_MESSAGE();
@@ -712,7 +712,7 @@ void test_rs485_bus_vout_set_allowed_fail(void)
     }
 }
 
-// Тестируем rs485_bus_vout_set_allowed() без инициализации модуля
+// Test rs485_bus_vout_set_allowed() without module initialization
 void test_rs485_bus_vout_set_allowed_no_init(void)
 {
     LOG_MESSAGE();
@@ -740,7 +740,7 @@ void test_rs485_bus_vout_set_allowed_no_init(void)
     validate_rs485_bus_vout_no_init();
 }
 
-// Тестируем значение enabled для Vout после инициализации
+// Test the enabled value for Vout after initialization
 void test_default_vout_enabled_value(void)
 {
     LOG_MESSAGE();
@@ -774,7 +774,7 @@ void test_default_vout_enabled_value(void)
     validate_rs485_bus_vout_run(false);
 }
 
-// Тестируем значение allowed для Vout после инициализации
+// Test the allowed value for Vout after initialization
 void test_default_vout_allowed_value(void)
 {
     LOG_MESSAGE();
