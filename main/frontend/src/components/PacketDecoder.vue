@@ -344,6 +344,13 @@ const chunks32 = computed<Chunk32[]>(() => {
   padding: 10px 14px;
 }
 
+@media (max-width: 680px) {
+  .pkt-body { flex-direction: column; }
+  .pkt-decoded { border-right: 0; border-bottom: 1px solid var(--border-color); }
+  .pkt-raw { width: 100%; }
+  .tree-key { min-width: 110px; }
+}
+
 .pkt-col-label {
   font-size: 10px;
   text-transform: uppercase;

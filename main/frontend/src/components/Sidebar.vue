@@ -79,9 +79,25 @@ watch(
       <div v-if="hostname" class="sidebar-hostname">{{ hostname }}</div>
     </div>
 
-    <MenuIcon class="sidebar-burger" @click="isShowMenu = !isShowMenu" />
+    <button
+      type="button"
+      class="sidebar-burger"
+      :aria-expanded="isShowMenu"
+      aria-controls="sidebar-nav"
+      :aria-label="t('toggle_menu')"
+      @click="isShowMenu = !isShowMenu"
+    >
+      <MenuIcon />
+    </button>
+
+    <div
+      v-if="isShowMenu"
+      class="sidebar-scrim"
+      @click="isShowMenu = false"
+    />
 
     <nav
+      id="sidebar-nav"
       :class="{
       'sidebar-navigation': true,
       'sidebar-navigationHide': !isShowMenu,
@@ -167,9 +183,11 @@ watch(
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-    height: auto;
+    height: 56px;
     border-right: none;
     border-bottom: 1px solid var(--border-sidebar);
+    position: relative;
+    z-index: 2;
   }
 }
 
@@ -222,12 +240,14 @@ watch(
 
   @media (max-width: 680px) {
     position: fixed;
-    height: calc(100dvh - 60px);
-    top: 60px;
-    width: 220px;
+    height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px));
+    top: 56px;
+    width: 240px;
     right: 0;
     background: var(--bg-sidebar);
-    padding: 12px 10px;
+    padding: 12px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+    z-index: 2;
+    border-left: 1px solid var(--border-sidebar);
   }
 }
 
@@ -283,18 +303,49 @@ watch(
 }
 
 .sidebar-burger {
-  width: 36px;
+  width: 44px;
+  height: 44px;
   margin-right: 6px;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
   fill: var(--text-on-dark);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 
   @media (min-width: 680px) {
     display: none;
   }
 }
 
-.sidebar-burger:hover {
+.sidebar-burger :deep(svg) {
+  width: 28px;
+  height: 28px;
+  fill: inherit;
+}
+
+.sidebar-burger:hover,
+.sidebar-burger:focus-visible {
   fill: var(--brand-on-dark);
+  outline: none;
+}
+
+.sidebar-scrim {
+  display: none;
+
+  @media (max-width: 680px) {
+    display: block;
+    position: fixed;
+    top: 56px;
+    right: 240px;
+    bottom: 0;
+    left: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 1;
+  }
 }
 
 .sidebar-links {
@@ -446,6 +497,7 @@ watch(
     "link_support": "Support",
     "link_buy": "Buy devices",
     "logout": "Logout",
+    "toggle_menu": "Toggle navigation menu",
     "mode": "Mode",
     "port_mode_disabled": "Disabled",
     "port_mode_tcp_bridge": "TCP bridge",
@@ -460,6 +512,7 @@ watch(
     "link_support": "Техподдержка",
     "link_buy": "Купить устройства",
     "logout": "Выйти",
+    "toggle_menu": "Открыть меню",
     "mode": "Режим",
     "port_mode_disabled": "Отключён",
     "port_mode_tcp_bridge": "TCP-мост",
@@ -474,6 +527,7 @@ watch(
     "link_support": "Қолдау",
     "link_buy": "Құрылғыларды сатып алу",
     "logout": "Шығу",
+    "toggle_menu": "Мәзірді ашу",
     "mode": "Режим",
     "port_mode_disabled": "Өшірілген",
     "port_mode_tcp_bridge": "TCP көпір",
@@ -488,6 +542,7 @@ watch(
     "link_support": "Supporto",
     "link_buy": "Acquista dispositivi",
     "logout": "Esci",
+    "toggle_menu": "Apri menu",
     "mode": "Modalità",
     "port_mode_disabled": "Disabilitato",
     "port_mode_tcp_bridge": "Bridge TCP",
@@ -502,6 +557,7 @@ watch(
     "link_support": "Support",
     "link_buy": "Geräte kaufen",
     "logout": "Abmelden",
+    "toggle_menu": "Menü öffnen",
     "mode": "Modus",
     "port_mode_disabled": "Deaktiviert",
     "port_mode_tcp_bridge": "TCP-Bridge",

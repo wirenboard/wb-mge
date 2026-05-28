@@ -770,6 +770,21 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+@media (max-width: 760px) {
+  .rm-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-block + .stat-block { border-left: 0; }
+  .stat-block:nth-child(n+3) { border-top: 1px solid var(--border-color); }
+  .stat-block:nth-child(2n) { border-left: 1px solid var(--border-color); }
+  /* Final block (MEMORY) spans both columns so it doesn't leave a phantom empty cell */
+  .stat-block:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    border-left: 0;
+  }
+  .stat-value,
+  .stat-sub,
+  .stat-entries { white-space: normal; overflow-wrap: anywhere; }
+}
+
 .stat-block {
   background: var(--bg-surface);
   padding: 10px 14px;
@@ -847,6 +862,10 @@ onUnmounted(() => {
   grid-template-columns: 1fr 360px;
   gap: 16px;
   align-items: start;
+}
+
+@media (max-width: 900px) {
+  .rm-cache-layout { grid-template-columns: 1fr; }
 }
 
 .rm-cache-content {
@@ -1084,6 +1103,16 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rm-map-title-wrap { min-width: 0; }
+
+@media (max-width: 560px) {
+  .rm-map-header { padding: 12px 14px; }
+  .rm-map-title-wrap { width: 100%; }
+  .rm-map-actions { width: 100%; }
+  .rm-search { flex: 1 1 100%; }
 }
 
 .rm-map-title {

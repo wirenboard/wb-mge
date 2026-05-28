@@ -235,31 +235,37 @@ function exportCsv() {
   <Layout>
     <Heading :title="t('title')" :crumbs="t('crumbs')">
       <template #default>
-        <div class="heading-stats">
-          <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
-          <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
-          <label v-if="errorCount > 0" class="hide-errors-toggle">
-            <input type="checkbox" v-model="hideErrors" />
-            {{ t('hide_errors') }}
-          </label>
+        <div class="sniffer-toolbar">
+          <div class="sniffer-toolbar-group toolbar-stats">
+            <div class="heading-stats">
+              <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
+              <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
+              <label v-if="errorCount > 0" class="hide-errors-toggle">
+                <input type="checkbox" v-model="hideErrors" />
+                {{ t('hide_errors') }}
+              </label>
+            </div>
+          </div>
+
+          <div class="sniffer-toolbar-group toolbar-capture">
+            <div class="filter-ports">
+              <button
+                v-for="p in portOptions" :key="p"
+                :class="['port-btn', { active: portFilter === p }]"
+                @click="portFilter = p"
+              >Port {{ p }}</button>
+            </div>
+            <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
+              {{ running ? t('stop') : t('start') }}
+            </Button>
+          </div>
+
+          <div class="sniffer-toolbar-group toolbar-data">
+            <Button variant="outline" @click="senderOpen = true" :disabled="txDisabledForCurrentPort">▶ {{ t('send_packet') }}</Button>
+            <Button variant="outline" @click="clearLogs()">{{ t('clear') }}</Button>
+            <Button variant="outline" @click="exportCsv()" :disabled="filteredRows.length === 0">{{ t('export_csv') }}</Button>
+          </div>
         </div>
-        <span class="heading-sep" />
-        <div class="filter-ports">
-          <button
-            v-for="p in portOptions" :key="p"
-            :class="['port-btn', { active: portFilter === p }]"
-            @click="portFilter = p"
-          >Port {{ p }}</button>
-        </div>
-        <span class="heading-sep" />
-        <Button variant="primary" @click="senderOpen = true" :disabled="txDisabledForCurrentPort">▶ {{ t('send_packet') }}</Button>
-        <span class="heading-sep" />
-        <Button variant="outline" @click="exportCsv()" :disabled="filteredRows.length === 0">{{ t('export_csv') }}</Button>
-        <span class="heading-sep" />
-        <Button variant="outline" @click="clearLogs()">{{ t('clear') }}</Button>
-        <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
-          {{ running ? t('stop') : t('start') }}
-        </Button>
       </template>
     </Heading>
 
@@ -396,9 +402,31 @@ function exportCsv() {
 </template>
 
 <style scoped>
-.heading-sep {
-  display: inline-block;
-  width: 24px;
+/* Grouped toolbar: stats | capture controls | data actions */
+.sniffer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  align-items: center;
+  width: 100%;
+}
+
+.sniffer-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.toolbar-stats { margin-right: auto; }
+
+@media (max-width: 560px) {
+  .sniffer-toolbar { gap: 8px; }
+  .toolbar-stats { margin-right: 0; width: 100%; }
+  .sniffer-toolbar-group { width: 100%; }
+  .toolbar-capture { justify-content: space-between; }
+  .toolbar-data { justify-content: flex-start; }
+  .toolbar-capture > button[class*="port"] { flex: 0 0 auto; }
 }
 
 /* Heading stats counter */
@@ -649,6 +677,15 @@ function exportCsv() {
 .sniffer-table-wrap {
   flex: 1;
   overflow: auto;
+  /* Right-edge fade hints there is content to scroll horizontally — only when overflowing */
+  background:
+    linear-gradient(to right, var(--bg-surface) 30%, rgba(255, 255, 255, 0)) left center,
+    linear-gradient(to right, rgba(255, 255, 255, 0), var(--bg-surface) 70%) right center,
+    radial-gradient(farthest-side at 0 50%, rgba(15, 23, 42, 0.10), rgba(0, 0, 0, 0)) left center,
+    radial-gradient(farthest-side at 100% 50%, rgba(15, 23, 42, 0.10), rgba(0, 0, 0, 0)) right center;
+  background-repeat: no-repeat;
+  background-size: 24px 100%, 24px 100%, 12px 100%, 12px 100%;
+  background-attachment: local, local, scroll, scroll;
 }
 
 /* Table */
@@ -795,6 +832,23 @@ function exportCsv() {
 @media (max-width: 680px) {
   .sniffer-main {
     flex-direction: column;
+  }
+  .facet-rail {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-color);
+    max-height: 220px;
+  }
+  /* Hide low-priority columns on mobile; horizontal scroll still works for the rest */
+  .sniffer-table th.col-id,
+  .sniffer-table td:nth-child(1),
+  .sniffer-table th.col-dt,
+  .sniffer-table td:nth-child(3),
+  .sniffer-table th.col-bytes,
+  .sniffer-table td:nth-child(8),
+  .sniffer-table th.col-crc,
+  .sniffer-table td:nth-child(9) {
+    display: none;
   }
 }
 </style>
