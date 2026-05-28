@@ -66,7 +66,6 @@ static int create_listen_socket(int port)
         if (bind(listen_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr)) != 0) {
             int e = errno;
             close(listen_sock);
-            listen_sock = -1;
             if (attempt + 1 < max_attempts) {
                 ESP_LOGW(TAG, "bind(port=%d) errno %d, retry %d/%d in 100ms",
                          port, e, attempt + 1, max_attempts);
@@ -81,7 +80,6 @@ static int create_listen_socket(int port)
         if (listen(listen_sock, 5) != 0) {
             int e = errno;
             close(listen_sock);
-            listen_sock = -1;
             if (attempt + 1 < max_attempts) {
                 ESP_LOGW(TAG, "listen(port=%d) errno %d, retry %d/%d in 100ms",
                          port, e, attempt + 1, max_attempts);

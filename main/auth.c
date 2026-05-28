@@ -91,7 +91,7 @@ static void save_session_buf(void)
 
 static void add_session_id(session_buffer_t *buffer, uint32_t session_id)
 {
-    ESP_LOGD(TAG, "Adding session ID: %lu", session_id);
+    ESP_LOGD(TAG, "Adding session ID: %" PRIu32, session_id);
     buffer->session_ids[buffer->current_index] = session_id;
     buffer->current_index = (buffer->current_index + 1) % MAX_SESSIONS;
     save_session_buf();
@@ -114,7 +114,7 @@ static inline void find_and_remove_session_id(uint32_t session_id)
             session_buffer.session_ids[i] = 0;
             defrag_session_buf();
             save_session_buf();
-            ESP_LOGD(TAG, "Session ID %lu removed", session_id);
+            ESP_LOGD(TAG, "Session ID %" PRIu32 " removed", session_id);
             break;
         }
     }
@@ -191,7 +191,7 @@ static uint32_t authorization(char *login_req, char *pass_req)
 
 static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, char *cookie_header)
 {
-    snprintf(cookie_header, COOKIE_MAX_LEN, "session_id=%lu; HttpOnly; SameSite=Strict; Path=/", session_id);
+    snprintf(cookie_header, COOKIE_MAX_LEN, "session_id=%" PRIu32 "; HttpOnly; SameSite=Strict; Path=/", session_id);
     ESP_LOGD(TAG, "Cookie header: %s", cookie_header);
     if (httpd_resp_set_hdr(req, "Set-Cookie", cookie_header) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set cookie header");
@@ -232,7 +232,7 @@ bool auth_middleware_check(httpd_req_t *req)
         valid = session_id_exists(session_id);
         session_unlock();
         if (!valid) {
-            ESP_LOGW(TAG, "Session ID %lu is not valid", session_id);
+            ESP_LOGW(TAG, "Session ID %" PRIu32 " is not valid", session_id);
         }
     } else {
         ESP_LOGW(TAG, "Session ID cookie not found");

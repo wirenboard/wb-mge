@@ -311,6 +311,22 @@ esp_err_t bridge_port_deinit(unsigned index)
 }
 
 
+static inline bool bridge_config_equal(const bridge_config_t *a, const bridge_config_t *b)
+{
+    return (a->serial_config.port_num == b->serial_config.port_num) &&
+           (a->serial_config.tx_pin == b->serial_config.tx_pin) &&
+           (a->serial_config.rx_pin == b->serial_config.rx_pin) &&
+           (a->serial_config.dir_pin == b->serial_config.dir_pin) &&
+           (a->serial_config.baudrate == b->serial_config.baudrate) &&
+           (a->serial_config.parity == b->serial_config.parity) &&
+           (a->serial_config.stopbits == b->serial_config.stopbits) &&
+           (a->serial_config.databits == b->serial_config.databits) &&
+           (a->bridge_mode == b->bridge_mode) &&
+           (a->bridge_ip == b->bridge_ip) &&
+           (a->bridge_port == b->bridge_port) &&
+           (a->bridge_mb == b->bridge_mb);
+}
+
 bool bridge_port_check_settings_changed(unsigned index)
 {
     if (index >= BRIDGES_COUNT) {
@@ -335,7 +351,7 @@ bool bridge_port_check_settings_changed(unsigned index)
         }
     }
 
-    if (memcmp(&bridge_current_cfg[index], &new_cfg, sizeof(new_cfg)) == 0) {
+    if (bridge_config_equal(&bridge_current_cfg[index], &new_cfg)) {
         return false;
     } else {
         return true;
