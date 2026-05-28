@@ -274,7 +274,7 @@ const updateInterface = () => {
               </template>
             </InfoRow>
             <InfoRow :label="t('reboot')">
-              <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot')">{{ t('restart') }}</Button>
+              <Button type="button" variant="danger" :disabled="loadedMethod === 'reboot'" @click="cmd('reboot', t('reboot_confirm'))">{{ t('restart') }}</Button>
             </InfoRow>
           </div>
         </section>
@@ -367,6 +367,7 @@ const updateInterface = () => {
     "firmware_updating": "Updating",
     "reboot": "Reboot",
     "restart": "Reboot device",
+    "reboot_confirm": "Are you sure you want to reboot the device?",
     "links": "Links",
     "documentation": "Documentation",
     "support": "Support",
@@ -412,6 +413,7 @@ const updateInterface = () => {
     "firmware_updating": "Обновление",
     "reboot": "Перезагрузка",
     "restart": "Перезагрузить",
+    "reboot_confirm": "Вы уверены, что хотите перезагрузить устройство?",
     "links": "Ссылки",
     "documentation": "Документация",
     "support": "Техподдержка",
@@ -457,6 +459,7 @@ const updateInterface = () => {
     "firmware_updating": "Жаңартылуда",
     "reboot": "Қайта жүктеу",
     "restart": "Құрылғыны қайта жүктеу",
+    "reboot_confirm": "Құрылғыны қайта жүктегіңіз келетініне сенімдісіз бе?",
     "links": "Сілтемелер",
     "documentation": "Құжаттама",
     "support": "Қолдау",
@@ -502,6 +505,7 @@ const updateInterface = () => {
     "firmware_updating": "Aggiornamento",
     "reboot": "Riavvia",
     "restart": "Riavvia dispositivo",
+    "reboot_confirm": "Sei sicuro di voler riavviare il dispositivo?",
     "links": "Link",
     "documentation": "Documentazione",
     "support": "Supporto",
@@ -547,6 +551,7 @@ const updateInterface = () => {
     "firmware_updating": "Wird aktualisiert",
     "reboot": "Neustart",
     "restart": "Gerät neu starten",
+    "reboot_confirm": "Möchten Sie das Gerät wirklich neu starten?",
     "links": "Links",
     "documentation": "Dokumentation",
     "support": "Support",
