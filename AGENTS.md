@@ -40,6 +40,7 @@ The `make qemu-test` target:
 - **Always build before delivering results to the user.** Run the build command above and confirm it succeeds before presenting any changes.
 - **Always run tests after every fix.** After each code change, run the relevant test suite and confirm all tests pass before proceeding. For backend (C) changes: `make unittests`. For frontend changes: `make test-frontend`.
 - **Always update documentation when renaming or changing build targets.** After any change to `Makefile` or `qemu.mk` (adding, removing, or renaming targets; changing dependencies), grep all `*.md` files for the old target names and update every occurrence. README.md, README_QEMU.md, AGENTS.md, and `bugs/*/README.md` all reference make targets by name.
+- **Fixing a bug: follow Red-Green-Refactor.** First write a test that reproduces the bug and confirm it fails (Red); then write the fix and confirm the test now passes (Green); then refactor while keeping the test green.
 
 ## Jenkins access
 
