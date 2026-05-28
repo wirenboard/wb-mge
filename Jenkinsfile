@@ -30,6 +30,13 @@ pipeline {
                 }
             }
         }
+        stage('Lint comments') {
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sh 'make lint-comments'
+                }
+            }
+        }
         stage('Unit tests (frontend + C)') {
             steps {
                 script {

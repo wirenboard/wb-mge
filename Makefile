@@ -151,6 +151,26 @@ lint-c:
 	        --clang-extra-args="-header-filter=.*/main/.* -config-file=$(CURDIR)/.clang-tidy -extra-arg-before=-isystem -extra-arg-before=$$NEWLIB_INCLUDE" \
 	        $(CURDIR)
 
+lint-comments:
+	@echo "Checking for Cyrillic characters in C/H comments..."
+	@if $(GREP) -rnP --include='*.c' --include='*.h' '//[^\n]*[\x{0400}-\x{04FF}]' main/ unittests/; then \
+	    echo "ERROR: Cyrillic characters found in C/H comments. All comments must be in English."; \
+	    exit 1; \
+	fi
+	@echo "OK: no Cyrillic characters in C/H"
+	@echo "Checking for Cyrillic characters in Python comments..."
+	@if $(GREP) -rnP --include='*.py' '#[^\n]*[\x{0400}-\x{04FF}]' api_tests/; then \
+	    echo "ERROR: Cyrillic characters found in Python comments. All comments must be in English."; \
+	    exit 1; \
+	fi
+	@echo "OK: no Cyrillic characters in Python"
+	@echo "Checking for Cyrillic characters in frontend comments..."
+	@if $(GREP) -rnP --include='*.ts' --include='*.vue' --include='*.js' '//[^\n]*[\x{0400}-\x{04FF}]' main/frontend/src/; then \
+	    echo "ERROR: Cyrillic characters found in frontend comments. All comments must be in English."; \
+	    exit 1; \
+	fi
+	@echo "OK: no Cyrillic characters in frontend"
+
 test-frontend:
 	@echo 'Running frontend tests'
 	@{ \
@@ -250,7 +270,7 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all test unittests lint-frontend lint-c test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
+.PHONY: all test unittests lint-frontend lint-c lint-comments test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk
