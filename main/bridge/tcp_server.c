@@ -179,6 +179,12 @@ static void receiver_task(void *pvParameters)
             // consumers (e.g. transparent_tcp) can send a reply to the last sender.
             desc->last_client_sock = client_sock;
             desc->receive_handler(desc, client_sock, (uint8_t *)rx_buffer, len);
+            // Check exit request after each received packet so deinit() can complete
+            // even when data flows continuously and recv() never times out with EAGAIN.
+            if (check_task_exit_req(desc)) {
+                ESP_LOGD(TAG, "Port %d: exit requested after data receive, closing receiver", desc->port);
+                break;
+            }
         }
     } while (len > 0);
 
