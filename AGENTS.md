@@ -35,12 +35,22 @@ The `make qemu-test` target:
 4. Runs pytest with `--qemu` flag
 5. Kills QEMU after tests complete
 
+## Collecting (listing) QEMU API tests without running them
+
+To verify that pytest can find and collect all tests in a file — without
+building firmware or launching QEMU — use:
+
+```bash
+make qemu-collect-only
+```
+
 ## Rules
 
 - **Always build before delivering results to the user.** Run the build command above and confirm it succeeds before presenting any changes.
 - **Always run tests after every fix.** After each code change, run the relevant test suite and confirm all tests pass before proceeding. For backend (C) changes: `make unittests`. For frontend changes: `make test-frontend`.
 - **Always update documentation when renaming or changing build targets.** After any change to `Makefile` or `qemu.mk` (adding, removing, or renaming targets; changing dependencies), grep all `*.md` files for the old target names and update every occurrence. README.md, README_QEMU.md, AGENTS.md, and `bugs/*/README.md` all reference make targets by name.
 - **Fixing a bug: follow Red-Green-Refactor.** First write a test that reproduces the bug and confirm it fails (Red); then write the fix and confirm the test now passes (Green); then refactor while keeping the test green.
+- **After writing new QEMU API tests, always verify collection.** Run `make qemu-collect-only PYTEST_ARGS="<filename>"` immediately after writing or modifying a test file to confirm pytest can collect the tests (no syntax errors, no import errors) before proceeding.
 
 ## Jenkins access
 
