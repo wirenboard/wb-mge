@@ -98,7 +98,8 @@ qemu-web: qemu-create-flash-image qemu-create-efuse-image
 	        $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
 	    else \
 	        echo "Found QEMU at: $$QEMU_BIN"; \
-	        echo "Starting QEMU with port forwarding: localhost:8080 -> ESP32:80, localhost:50504 -> ESP32:50504"; \
+	        echo "Starting QEMU with port forwarding: localhost:8080 -> ESP32:80, localhost:50502-50504 -> ESP32 TCP ports"; \
+	        echo "UART1 (RS485-1) exposed on localhost:5561, UART2 (RS485-2) on localhost:5562"; \
 	        echo "Press Ctrl-A x to exit QEMU"; \
 	        $$QEMU_BIN \
 	            -M esp32 \
@@ -107,9 +108,11 @@ qemu-web: qemu-create-flash-image qemu-create-efuse-image
 	            -drive file=build/qemu_efuse.bin,if=none,format=raw,id=efuse \
 	            -global driver=nvram.esp32.efuse,property=drive,value=efuse \
 	            -global driver=timer.esp32.timg,property=wdt_disable,value=true \
-	            -nic user,model=open_eth,hostfwd=tcp:127.0.0.1:8080-:80,hostfwd=tcp:127.0.0.1:50504-:50504 \
+	            -nic user,model=open_eth,hostfwd=tcp:127.0.0.1:8080-:80,hostfwd=tcp:127.0.0.1:50502-:50502,hostfwd=tcp:127.0.0.1:50503-:50503,hostfwd=tcp:127.0.0.1:50504-:50504 \
 	            -nographic \
-	            -serial mon:stdio || { \
+	            -serial mon:stdio \
+	            -serial tcp::5561,server,nowait \
+	            -serial tcp::5562,server,nowait || { \
 	                echo "Direct QEMU launch failed. Trying idf.py qemu monitor..."; \
 	                echo "Note: This method will not have port forwarding - you will need to find the ESP32 IP"; \
 	                $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
