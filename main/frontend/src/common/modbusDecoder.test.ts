@@ -371,7 +371,7 @@ describe('parse_error cases', () => {
     // Verify it decodes as fast_modbus with unknown_subcommand (not as modbus_rtu user_defined)
     const r = decodePacket('01 46 AA BB 00 00', 'request');
     expect(r.type).toBe('rtu_frame');
-    expect(r.payload.type).toBe('fast_modbus');  // intentional: any addr + FC=0x46 → FM
+    expect(r.payload.type).toBe('fast_modbus'); // intentional: any addr + FC=0x46 → FM
     expect((r.payload as any).payload.type).toBe('parse_error');
     expect((r.payload as any).payload.reason).toBe('unknown_subcommand');
   });
@@ -435,7 +435,7 @@ describe('raw field integrity', () => {
 // ============================================================
 describe('full trace packets 31-48', () => {
   const trace = [
-    { hex: 'FD 60 01 09 F0',       outerType: 'rtu_frame', innerType: 'scan_start' },
+    { hex: 'FD 60 01 09 F0', outerType: 'rtu_frame', innerType: 'scan_start' },
     { hex: 'FF FF FF FF FF FF FF FF FF FF', outerType: 'arbitration', innerType: null },
     { hex: 'FD 60 03 00 06 24 66 83 C4 61', outerType: 'rtu_frame', innerType: 'scan_response' },
     { hex: 'FD 60 08 00 06 24 66 03 00 C8 00 14 9D 24', outerType: 'rtu_frame', innerType: 'command_by_serial' },
@@ -443,11 +443,11 @@ describe('full trace packets 31-48', () => {
     { hex: 'FD 60 08 00 06 24 66 03 01 22 00 0C BD 26', outerType: 'rtu_frame', innerType: 'command_by_serial' },
     { hex: 'FD 60 09 00 06 24 66 03 18 00 6D 00 73 00 77 00 35 00 47 00 65 00 00 00 00 00 00 00 00 00 00 00 00 B2 04', outerType: 'rtu_frame', innerType: 'response_by_serial' },
     { hex: 'FD 60 08 00 06 24 66 03 00 6E 00 01 BC C8', outerType: 'rtu_frame', innerType: 'command_by_serial' },
-    { hex: 'FD 60 09 00 06 24 66 03 02 00 60 9E E5',   outerType: 'rtu_frame', innerType: 'response_by_serial' },
+    { hex: 'FD 60 09 00 06 24 66 03 02 00 60 9E E5', outerType: 'rtu_frame', innerType: 'response_by_serial' },
     { hex: 'FD 60 08 00 06 24 66 03 00 70 00 01 DC CE', outerType: 'rtu_frame', innerType: 'command_by_serial' },
-    { hex: 'FD 60 09 00 06 24 66 03 02 00 02 1F 0C',   outerType: 'rtu_frame', innerType: 'response_by_serial' },
+    { hex: 'FD 60 09 00 06 24 66 03 02 00 02 1F 0C', outerType: 'rtu_frame', innerType: 'response_by_serial' },
     { hex: 'FD 60 08 00 06 24 66 03 00 6F 00 01 ED 08', outerType: 'rtu_frame', innerType: 'command_by_serial' },
-    { hex: 'FD 60 09 00 06 24 66 03 02 00 00 9E CD',   outerType: 'rtu_frame', innerType: 'response_by_serial' },
+    { hex: 'FD 60 09 00 06 24 66 03 02 00 00 9E CD', outerType: 'rtu_frame', innerType: 'response_by_serial' },
     { hex: 'FD 60 08 00 06 24 66 03 00 FA 00 10 3D 28', outerType: 'rtu_frame', innerType: 'command_by_serial' },
     { hex: 'FD 60 09 00 06 24 66 03 20 00 34 00 2E 00 33 00 35 00 2E 00 35 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 66 19', outerType: 'rtu_frame', innerType: 'response_by_serial' },
     { hex: 'FD 60 02 49 F1', outerType: 'rtu_frame', innerType: 'scan_continue' },
@@ -474,7 +474,9 @@ describe('full trace packets 31-48', () => {
 // ============================================================
 
 // Helper: get standard modbus payload
-function pdu(r: ReturnType<typeof decodePacket>): any { return (r.payload as any).payload; }
+function pdu(r: ReturnType<typeof decodePacket>): any {
+ return (r.payload as any).payload;
+}
 
 describe('Standard RTU — FC 01 Read Coils', () => {
   it('request: slave 0x11, 19 coils from 0x0013', () => {
@@ -810,7 +812,7 @@ describe('Standard RTU — FC 18 Read FIFO Queue', () => {
     const r = decodePacket('01 18 00 06 00 02 01 B8 12 84 19 18', 'response');
     const p = pdu(r);
     expect(p.type).toBe('read_fifo_queue_response');
-    expect(p.byte_count).toBe(6);  // 2-byte field BE
+    expect(p.byte_count).toBe(6); // 2-byte field BE
     expect(p.fifo_count).toBe(2);
     expect(p.data).toBe('01B81284');
   });
@@ -836,11 +838,11 @@ describe('Standard RTU — FC 2B MEI', () => {
     expect(p.number_of_objects).toBe(3);
     expect(Array.isArray(p.objects)).toBeTruthy();
     expect(p.objects[0].id).toBe('00');
-    expect(p.objects[0].value).toBe('436F6D70616E');  // "Compan"
+    expect(p.objects[0].value).toBe('436F6D70616E'); // "Compan"
     expect(p.objects[1].id).toBe('01');
-    expect(p.objects[1].value).toBe('50726F64');      // "Prod"
+    expect(p.objects[1].value).toBe('50726F64'); // "Prod"
     expect(p.objects[2].id).toBe('02');
-    expect(p.objects[2].value).toBe('312E30');        // "1.0"
+    expect(p.objects[2].value).toBe('312E30'); // "1.0"
   });
 
   it('CANopen MEI 0x0D: opaque payload', () => {

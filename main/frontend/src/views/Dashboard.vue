@@ -56,12 +56,12 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">{{ t('ethernet') }}</div>
-              <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
+              <button class="card-edit-btn" :title="t('edit_settings')" @click="router.push('/network')">
                 <GearIcon />
               </button>
             </div>
-            <span class="pill ok" v-if="info!.ethernet.con_eth"><span class="dot" />{{ t('connected') }}</span>
-            <span class="pill muted" v-else>{{ t('not_connected') }}</span>
+            <span v-if="info!.ethernet.con_eth" class="pill ok"><span class="dot" />{{ t('connected') }}</span>
+            <span v-else class="pill muted">{{ t('not_connected') }}</span>
           </div>
           <div class="card-body">
             <InfoRow :label="t('ip')"><span class="mono">{{ getDisplayValue(info!.ethernet.ip) }}</span></InfoRow>
@@ -73,12 +73,12 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">{{ t('wifi') }}</div>
-              <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
+              <button class="card-edit-btn" :title="t('edit_settings')" @click="router.push('/network')">
                 <GearIcon />
               </button>
             </div>
-            <span class="pill ok" v-if="info!.wifi.enabled"><span class="dot" />{{ t('enabled') }}</span>
-            <span class="pill muted" v-else>{{ t('disabled') }}</span>
+            <span v-if="info!.wifi.enabled" class="pill ok"><span class="dot" />{{ t('enabled') }}</span>
+            <span v-else class="pill muted">{{ t('disabled') }}</span>
           </div>
           <div class="card-body">
             <InfoRow :label="t('status')">{{ getDisplayValue(info!.wifi.enabled) }}</InfoRow>
@@ -141,12 +141,12 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">RS-485 · Port 1</div>
-              <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
+              <button class="card-edit-btn" :title="t('edit_settings')" @click="router.push('/settings')">
                 <GearIcon />
               </button>
             </div>
-            <span class="pill ok" v-if="info!.rs485_1.is_busy"><span class="dot" />{{ t('active') }}</span>
-            <span class="pill muted" v-else>{{ t('inactive') }}</span>
+            <span v-if="info!.rs485_1.is_busy" class="pill ok"><span class="dot" />{{ t('active') }}</span>
+            <span v-else class="pill muted">{{ t('inactive') }}</span>
           </div>
           <div class="card-body">
             <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
@@ -157,12 +157,12 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">RS-485 · Port 2</div>
-              <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
+              <button class="card-edit-btn" :title="t('edit_settings')" @click="router.push('/settings')">
                 <GearIcon />
               </button>
             </div>
-            <span class="pill ok" v-if="info!.rs485_2.is_busy"><span class="dot" />{{ t('active') }}</span>
-            <span class="pill muted" v-else>{{ t('inactive') }}</span>
+            <span v-if="info!.rs485_2.is_busy" class="pill ok"><span class="dot" />{{ t('active') }}</span>
+            <span v-else class="pill muted">{{ t('inactive') }}</span>
           </div>
           <div class="card-body">
             <RsStatus title="RS-485 2" :info="info!.rs485_2" :settings="settings!.rs485_2" />

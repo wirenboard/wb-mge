@@ -78,12 +78,12 @@ async function fetchCacheStats(): Promise<void> {
       memory_bytes: number;
       max_entries: number;
     }>('cache/status');
-    cachePackets.value         = s.packets_processed;
+    cachePackets.value = s.packets_processed;
     cacheLastPacketAgeUs.value = s.last_packet_age_us;
-    cacheMapAgeUs.value        = s.map_age_us;
-    cacheMemoryBytes.value     = s.memory_bytes;
-    cacheMaxEntries.value      = s.max_entries;
-    cacheEntries.value         = s.entries;
+    cacheMapAgeUs.value = s.map_age_us;
+    cacheMemoryBytes.value = s.memory_bytes;
+    cacheMaxEntries.value = s.max_entries;
+    cacheEntries.value = s.entries;
   } catch {
     // Silently ignore fetch errors
   }
@@ -203,7 +203,9 @@ function selectListenPort(port: 1 | 2): void {
 // Apply per-port listen changes and update save status
 async function saveSettings(): Promise<void> {
   if (settingsSaveStatus.value === 'saving') return; // prevent concurrent calls
-  if (saveStatusTimer !== null) { clearTimeout(saveStatusTimer); saveStatusTimer = null; }
+  if (saveStatusTimer !== null) {
+ clearTimeout(saveStatusTimer); saveStatusTimer = null;
+}
   // Defensive: re-apply radio invariant before saving (guards against edge-case state corruption)
   const resolved = resolvePortSelection(listenPort1.value, listenPort2.value);
   listenPort1.value = resolved.p1;
@@ -231,7 +233,9 @@ async function saveSettings(): Promise<void> {
   } catch {
     settingsSaveStatus.value = 'error';
   }
-  saveStatusTimer = setTimeout(() => { settingsSaveStatus.value = 'idle'; }, 3000);
+  saveStatusTimer = setTimeout(() => {
+ settingsSaveStatus.value = 'idle';
+}, 3000);
 }
 
 // Open a URL in a new browser tab
@@ -310,19 +314,23 @@ const filteredDevices = computed((): DeviceNode[] => filterDevices(devices.value
 watch(cacheEnabled, (val, oldVal) => {
   if (val) {
     // Clear any stale interval from a previous enable cycle before starting a new one.
-    if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+    if (statsInterval) {
+ clearInterval(statsInterval); statsInterval = null;
+}
     fetchCacheStats(); // immediate fetch on enable
     statsInterval = setInterval(fetchCacheStats, 5000);
   } else {
-    if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+    if (statsInterval) {
+ clearInterval(statsInterval); statsInterval = null;
+}
     // Only reset stats when transitioning from a known-enabled state, not from undefined/initial
     if (oldVal === true) {
-      cachePackets.value         = 0;
+      cachePackets.value = 0;
       cacheLastPacketAgeUs.value = 0;
-      cacheMapAgeUs.value        = 0;
-      cacheMemoryBytes.value     = 0;
-      cacheMaxEntries.value      = 0;
-      cacheEntries.value         = 0;
+      cacheMapAgeUs.value = 0;
+      cacheMemoryBytes.value = 0;
+      cacheMaxEntries.value = 0;
+      cacheEntries.value = 0;
     }
   }
 }, { immediate: true });
@@ -543,7 +551,7 @@ onUnmounted(() => {
             <!-- Value timeout row -->
             <div class="rsp-row">
               <div class="rsp-control rsp-control--stacked">
-                <input type="number" class="rsp-input" data-testid="value-timeout" v-model.number="valueTimeout" min="0" max="86400" />
+                <input v-model.number="valueTimeout" type="number" class="rsp-input" data-testid="value-timeout" min="0" max="86400" />
                 <span class="rsp-unit">{{ t('seconds') }}</span>
               </div>
               <div class="rsp-row-info">
@@ -575,12 +583,16 @@ onUnmounted(() => {
                     type="button"
                     :class="['rsp-port-tag', { active: listenPort1 }]"
                     @click="selectListenPort(1)"
-                  >1</button>
+                  >
+1
+</button>
                   <button
                     type="button"
                     :class="['rsp-port-tag', { active: listenPort2 }]"
                     @click="selectListenPort(2)"
-                  >2</button>
+                  >
+2
+</button>
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">{{ t('listen_port_title') }}</div>
@@ -613,7 +625,7 @@ onUnmounted(() => {
             <!-- TCP serve toggle row -->
             <div class="rsp-row">
               <div class="rsp-control">
-                <Switch id="rsp-tcp-serve" v-model="tcpServeEnabled" :ariaLabel="t('tcp_serve_title')" />
+                <Switch id="rsp-tcp-serve" v-model="tcpServeEnabled" :aria-label="t('tcp_serve_title')" />
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">{{ t('tcp_serve_title') }}</div>
@@ -624,7 +636,7 @@ onUnmounted(() => {
             <!-- TCP port row -->
             <div class="rsp-row">
               <div class="rsp-control">
-                <input type="number" class="rsp-input" data-testid="cache-tcp-port" v-model.number="cacheTcpPort" min="1" max="65535" />
+                <input v-model.number="cacheTcpPort" type="number" class="rsp-input" data-testid="cache-tcp-port" min="1" max="65535" />
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">{{ t('tcp_port_title') }}</div>
@@ -638,7 +650,7 @@ onUnmounted(() => {
                 <template v-if="settingsSaveStatus === 'saved'">{{ t('saved') }}</template>
                 <template v-else-if="settingsSaveStatus === 'error'">{{ t('save_error') }}</template>
               </span>
-              <button class="rsp-btn-save" @click="saveSettings()" :disabled="settingsSaveStatus === 'saving'">
+              <button class="rsp-btn-save" :disabled="settingsSaveStatus === 'saving'" @click="saveSettings()">
                 {{ t('save_changes') }}
               </button>
             </div>

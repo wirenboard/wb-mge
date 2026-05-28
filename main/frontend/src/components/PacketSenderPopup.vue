@@ -1,30 +1,30 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { ref, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import {
   buildPreviewFrame,
   frameToPreviewParts,
   sendPacketToPort,
-} from '@/utils/modbusUtils'
+} from '@/utils/modbusUtils';
 
 const props = defineProps<{
-  portNum: string
-  txDisabled: boolean
-}>()
+  portNum: string;
+  txDisabled: boolean;
+}>();
 
 const emit = defineEmits<{
-  (e: 'close'): void
-}>()
+  (e: 'close'): void;
+}>();
 
-const { t } = useI18n()
+const { t } = useI18n();
 
-const mode = ref<'read' | 'write'>('read')
-const slaveId = ref('01')
-const fc = ref('03')
-const address = ref('0x0000')
-const value = ref('10')
-const sending = ref(false)
-const error = ref('')
+const mode = ref<'read' | 'write'>('read');
+const slaveId = ref('01');
+const fc = ref('03');
+const address = ref('0x0000');
+const value = ref('10');
+const sending = ref(false);
+const error = ref('');
 
 // Read mode FC options
 const readFcOptions = [
@@ -32,7 +32,7 @@ const readFcOptions = [
   { value: '02', label: 'FC02 — Read Discrete Inputs' },
   { value: '03', label: 'FC03 — Read Holding Registers' },
   { value: '04', label: 'FC04 — Read Input Registers' },
-]
+];
 
 // Write mode FC options
 const writeFcOptions = [
@@ -40,62 +40,62 @@ const writeFcOptions = [
   { value: '06', label: 'FC06 — Write Single Register' },
   { value: '0f', label: 'FC15 — Write Multiple Coils' },
   { value: '10', label: 'FC16 — Write Multiple Registers' },
-]
+];
 
-const fcOptions = computed(() => (mode.value === 'read' ? readFcOptions : writeFcOptions))
+const fcOptions = computed(() => (mode.value === 'read' ? readFcOptions : writeFcOptions));
 
 // Switch mode and reset fc to first option for that mode
 function setMode(m: 'read' | 'write') {
-  mode.value = m
-  fc.value = m === 'read' ? '03' : '06'
-  error.value = ''
+  mode.value = m;
+  fc.value = m === 'read' ? '03' : '06';
+  error.value = '';
 }
 
 // Build the current RTU frame based on inputs, or return null on bad input
 const previewBytes = computed((): Uint8Array | null =>
   buildPreviewFrame(slaveId.value, fc.value, address.value, value.value, mode.value)
-)
+);
 
 // Build a "preview" string: data bytes normal, last 2 bytes (CRC) in a wrapper span
 // Returns an array of { hex, isCrc } objects
 const previewParts = computed((): { hex: string; isCrc: boolean }[] => {
-  const bytes = previewBytes.value
-  if (!bytes) return []
-  return frameToPreviewParts(bytes)
-})
+  const bytes = previewBytes.value;
+  if (!bytes) return [];
+  return frameToPreviewParts(bytes);
+});
 
 async function handleSend() {
-  const bytes = previewBytes.value
-  if (!bytes) return
-  sending.value = true
-  error.value = ''
+  const bytes = previewBytes.value;
+  if (!bytes) return;
+  sending.value = true;
+  error.value = '';
   try {
     // Convert bytes to compact hex string (no spaces)
     const hex = Array.from(bytes)
       .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
-    await sendPacketToPort(props.portNum, hex)
-    emit('close')
+      .join('');
+    await sendPacketToPort(props.portNum, hex);
+    emit('close');
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : String(e)
+    error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    sending.value = false
+    sending.value = false;
   }
 }
 
 const sendDisabled = computed(() =>
   props.txDisabled || sending.value || previewBytes.value === null
-)
+);
 
 const sendLabel = computed(() =>
   mode.value === 'read'
     ? t('send_read', { port: props.portNum })
     : t('send_write', { port: props.portNum })
-)
+);
 
 const valueLabel = computed(() =>
   mode.value === 'read' ? t('label_count') : t('label_value')
-)
+);
 </script>
 
 <template>
@@ -105,7 +105,7 @@ const valueLabel = computed(() =>
       <span class="sniffer-sender-title">
         <span class="sniffer-sender-play">▶</span> {{ t('title') }}
       </span>
-      <button class="sniffer-sender-close" @click="emit('close')" :aria-label="t('close')">✕</button>
+      <button class="sniffer-sender-close" :aria-label="t('close')" @click="emit('close')">✕</button>
     </div>
 
     <!-- Read / Write segmented toggle -->
@@ -113,11 +113,15 @@ const valueLabel = computed(() =>
       <button
         :class="['sniffer-sender-seg-btn', { 'sniffer-sender-seg-btnActive': mode === 'read' }]"
         @click="setMode('read')"
-      >{{ t('mode_read') }}</button>
+      >
+{{ t('mode_read') }}
+</button>
       <button
         :class="['sniffer-sender-seg-btn', { 'sniffer-sender-seg-btnActive': mode === 'write' }]"
         @click="setMode('write')"
-      >{{ t('mode_write') }}</button>
+      >
+{{ t('mode_write') }}
+</button>
     </div>
 
     <!-- Form body -->
@@ -126,13 +130,13 @@ const valueLabel = computed(() =>
         <!-- Slave ID -->
         <div class="form-field">
           <label class="form-field-label">{{ t('label_slave_id') }}</label>
-          <input class="form-field-input" v-model="slaveId" />
+          <input v-model="slaveId" class="form-field-input" />
         </div>
 
         <!-- Function code -->
         <div class="form-field">
           <label class="form-field-label">{{ t('label_fc') }}</label>
-          <select class="form-field-input" v-model="fc">
+          <select v-model="fc" class="form-field-input">
             <option v-for="opt in fcOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
         </div>
@@ -140,13 +144,13 @@ const valueLabel = computed(() =>
         <!-- Address -->
         <div class="form-field">
           <label class="form-field-label">{{ t('label_address') }}</label>
-          <input class="form-field-input" v-model="address" />
+          <input v-model="address" class="form-field-input" />
         </div>
 
         <!-- Count / Value -->
         <div class="form-field">
           <label class="form-field-label">{{ valueLabel }}</label>
-          <input class="form-field-input" v-model="value" />
+          <input v-model="value" class="form-field-input" />
         </div>
       </div>
 
@@ -175,7 +179,9 @@ const valueLabel = computed(() =>
         class="sniffer-sender-foot-send"
         :disabled="sendDisabled"
         @click="handleSend"
-      >▶ {{ sendLabel }}</button>
+      >
+▶ {{ sendLabel }}
+</button>
       <!-- CRC hint or TX-disabled warning below the send button -->
       <span class="sniffer-sender-hint">
         <template v-if="txDisabled">{{ t('hint_tx_disabled') }}</template>

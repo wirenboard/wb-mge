@@ -181,8 +181,7 @@ const updateInterface = () => {
             <InfoRow :label="t('power')"><span class="mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</span></InfoRow>
           </div>
         </section>
-
-      </div>
+</div>
 
       <div class="stack">
         <!-- Web interface card moved to the top of the right column -->

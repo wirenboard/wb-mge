@@ -44,156 +44,158 @@ const selectedFcs = ref<Set<string>>(new Set());
 const hideErrors = ref(false);
 
 function getWsUrl(): string {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${location.host}/sniffer/ws`
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${location.host}/sniffer/ws`;
 }
 
 function sendPortStart(port: number) {
-  ws.value?.send(JSON.stringify({ cmd: 'start', port }))
+  ws.value?.send(JSON.stringify({ cmd: 'start', port }));
 }
 
 function sendPortStop(port: number) {
-  ws.value?.send(JSON.stringify({ cmd: 'stop', port }))
+  ws.value?.send(JSON.stringify({ cmd: 'stop', port }));
 }
 
 function connectWs() {
-  lastTimestampUs = 0
-  ws.value = new WebSocket(getWsUrl())
+  lastTimestampUs = 0;
+  ws.value = new WebSocket(getWsUrl());
   ws.value.onopen = () => {
-    wsStatus.value = 'connected'
-    sendPortStart(parseInt(portFilter.value))
-  }
+    wsStatus.value = 'connected';
+    sendPortStart(parseInt(portFilter.value));
+  };
   ws.value.onmessage = (ev) => {
     try {
-      const msg = JSON.parse(ev.data as string)
-      const { row, timestamp } = parsePacket(msg, lastTimestampUs)
+      const msg = JSON.parse(ev.data as string);
+      const { row, timestamp } = parsePacket(msg, lastTimestampUs);
       if (row) {
-        lastTimestampUs = timestamp
-        rows.value.push(row)
+        lastTimestampUs = timestamp;
+        rows.value.push(row);
         if (rows.value.length >= 1000) {
-          stopCapture()
-          return
+          stopCapture();
+          return;
         }
         nextTick(() => {
-          if (tableWrap.value) tableWrap.value.scrollTop = tableWrap.value.scrollHeight
-        })
+          if (tableWrap.value) tableWrap.value.scrollTop = tableWrap.value.scrollHeight;
+        });
       }
     } catch (e) {
-      console.warn('sniffer: failed to parse WS message', e)
+      console.warn('sniffer: failed to parse WS message', e);
     }
-  }
+  };
   ws.value.onclose = () => {
-    ws.value = null
+    ws.value = null;
     if (running.value) {
-      wsStatus.value = 'reconnecting'
+      wsStatus.value = 'reconnecting';
       // Capture the timer handle so it can be cleared in stopCapture() / onUnmounted().
-      reconnectTimer = setTimeout(connectWs, 2000)
+      reconnectTimer = setTimeout(connectWs, 2000);
     } else {
-      wsStatus.value = 'disconnected'
+      wsStatus.value = 'disconnected';
     }
-  }
+  };
 }
 
 function startCapture() {
-  clearLogs()
-  running.value = true
-  connectWs()
+  clearLogs();
+  running.value = true;
+  connectWs();
 }
 
 function stopCapture() {
   // Clear any pending reconnect timer before closing the WebSocket.
-  if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  running.value = false
-  wsStatus.value = 'disconnected'
-  sendPortStop(parseInt(portFilter.value))
-  ws.value?.close()
-  ws.value = null
+  if (reconnectTimer !== null) {
+ clearTimeout(reconnectTimer); reconnectTimer = null;
+}
+  running.value = false;
+  wsStatus.value = 'disconnected';
+  sendPortStop(parseInt(portFilter.value));
+  ws.value?.close();
+  ws.value = null;
 }
 
 watch(portFilter, (newPort, oldPort) => {
-  if (!running.value || ws.value === null || wsStatus.value !== 'connected') return
-  sendPortStop(parseInt(oldPort))
-  sendPortStart(parseInt(newPort))
-})
+  if (!running.value || ws.value === null || wsStatus.value !== 'connected') return;
+  sendPortStop(parseInt(oldPort));
+  sendPortStart(parseInt(newPort));
+});
 
 function clearLogs() {
-  rows.value = []
-  lastTimestampUs = 0
+  rows.value = [];
+  lastTimestampUs = 0;
 }
 
-onMounted(() => refreshSettings())
-onUnmounted(() => stopCapture())
+onMounted(() => refreshSettings());
+onUnmounted(() => stopCapture());
 
 const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
 
 function byteRoleStyle(role: ByteRole) {
   switch (role) {
-    case 'address':        return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' }
-    case 'fc':             return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' }
-    case 'subcommand':     return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' }
-    case 'serial':         return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' }
-    case 'crc':            return { color: 'var(--mb-hex-crc)' }
-    case 'data':           return { color: 'var(--mb-data)' }
-    case 'arbitration':    return { color: 'var(--text-muted)', fontWeight: '400' }
+    case 'address': return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' };
+    case 'fc': return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' };
+    case 'subcommand': return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' };
+    case 'serial': return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' };
+    case 'crc': return { color: 'var(--mb-hex-crc)' };
+    case 'data': return { color: 'var(--mb-data)' };
+    case 'arbitration': return { color: 'var(--text-muted)', fontWeight: '400' };
     // FM wrapper "not real" fields — same hue but paler background
-    case 'fm-addr':        return { color: '#fff', background: 'color-mix(in oklch, var(--mb-master) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' }
-    case 'fm-ext':         return { color: '#fff', background: 'color-mix(in oklch, var(--mb-hex-slot) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' }
-    case 'fm-subcommand':  return { color: '#fff', background: 'color-mix(in oklch, var(--mb-hex-slot) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' }
-    default:               return { color: 'var(--mb-data)' }
+    case 'fm-addr': return { color: '#fff', background: 'color-mix(in oklch, var(--mb-master) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' };
+    case 'fm-ext': return { color: '#fff', background: 'color-mix(in oklch, var(--mb-hex-slot) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' };
+    case 'fm-subcommand': return { color: '#fff', background: 'color-mix(in oklch, var(--mb-hex-slot) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' };
+    default: return { color: 'var(--mb-data)' };
   }
 }
 
 // Rows filtered by port only (for facet stats)
 const portRows = computed(() => {
-  const p = parseInt(portFilter.value)
-  return rows.value.filter(x => x.port === p)
-})
+  const p = parseInt(portFilter.value);
+  return rows.value.filter(x => x.port === p);
+});
 
 // Slave stats for facet rail — arbitration packets have no real slave address, skip them
 const slaveStats = computed(() => {
-  const counts: Record<string, number> = {}
+  const counts: Record<string, number> = {};
   for (const r of portRows.value) {
-    if (r.isArbitration) continue
-    counts[r.slave] = (counts[r.slave] ?? 0) + 1
+    if (r.isArbitration) continue;
+    counts[r.slave] = (counts[r.slave] ?? 0) + 1;
   }
-  return counts
-})
+  return counts;
+});
 
 const activeSlaves = computed(() =>
   Object.keys(slaveStats.value).sort((a, b) => slaveStats.value[b] - slaveStats.value[a])
-)
+);
 
 const maxSlaveCount = computed(() =>
   Math.max(1, ...Object.values(slaveStats.value))
-)
+);
 
 // FC stats for facet rail
 const fcStats = computed(() => {
-  const counts: Record<string, number> = {}
+  const counts: Record<string, number> = {};
   for (const r of portRows.value) {
-    counts[r.fc_code] = (counts[r.fc_code] ?? 0) + 1
+    counts[r.fc_code] = (counts[r.fc_code] ?? 0) + 1;
   }
-  return counts
-})
+  return counts;
+});
 
 const activeFcs = computed(() =>
   Object.keys(fcStats.value).sort((a, b) => fcStats.value[b] - fcStats.value[a])
-)
+);
 
 const maxFcCount = computed(() =>
   Math.max(1, ...Object.values(fcStats.value))
-)
+);
 
 function fcCodeNum(hexCode: string): number {
-  return parseInt(hexCode, 16)
+  return parseInt(hexCode, 16);
 }
 
 const filteredRows = computed(() => {
-  let r = portRows.value
-  if (hideErrors.value) r = r.filter(x => x.crc !== 'ERR')
-  if (selectedSlaves.value.size > 0) r = r.filter(x => selectedSlaves.value.has(x.slave))
-  if (selectedFcs.value.size > 0) r = r.filter(x => selectedFcs.value.has(x.fc_code))
-  return r
+  let r = portRows.value;
+  if (hideErrors.value) r = r.filter(x => x.crc !== 'ERR');
+  if (selectedSlaves.value.size > 0) r = r.filter(x => selectedSlaves.value.has(x.slave));
+  if (selectedFcs.value.size > 0) r = r.filter(x => selectedFcs.value.has(x.fc_code));
+  return r;
 });
 
 const sel = computed(() =>
@@ -205,8 +207,8 @@ function senderPillClass(sender: string) {
 }
 
 function exportCsv() {
-  const headers = ['#', 'Time', 'Δt', 'Sender', 'Slave', 'Function code', 'Payload (HEX)', 'Bytes', 'CRC']
-  const csvRows = [headers.join(',')]
+  const headers = ['#', 'Time', 'Δt', 'Sender', 'Slave', 'Function code', 'Payload (HEX)', 'Bytes', 'CRC'];
+  const csvRows = [headers.join(',')];
   for (const r of filteredRows.value) {
     const row = [
       r.id,
@@ -218,16 +220,16 @@ function exportCsv() {
       `"${r.pl}"`,
       r.bytes,
       r.crc,
-    ]
-    csvRows.push(row.join(','))
+    ];
+    csvRows.push(row.join(','));
   }
-  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `sniffer_port${portFilter.value}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `sniffer_port${portFilter.value}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 </script>
 
@@ -241,7 +243,7 @@ function exportCsv() {
               <span><b class="mono">{{ rows.length.toLocaleString() }}</b> {{ t('packets') }}</span>
               <span><b class="mono stat-err">{{ errorCount }}</b> {{ errorCount === 1 ? t('error') : t('errors') }}</span>
               <label v-if="errorCount > 0" class="hide-errors-toggle">
-                <input type="checkbox" v-model="hideErrors" />
+                <input v-model="hideErrors" type="checkbox" />
                 {{ t('hide_errors') }}
               </label>
             </div>
@@ -253,7 +255,9 @@ function exportCsv() {
                 v-for="p in portOptions" :key="p"
                 :class="['port-btn', { active: portFilter === p }]"
                 @click="portFilter = p"
-              >Port {{ p }}</button>
+              >
+Port {{ p }}
+</button>
             </div>
             <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
               {{ running ? t('stop') : t('start') }}
@@ -261,9 +265,9 @@ function exportCsv() {
           </div>
 
           <div class="sniffer-toolbar-group toolbar-data">
-            <Button variant="outline" @click="senderOpen = true" :disabled="txDisabledForCurrentPort">▶ {{ t('send_packet') }}</Button>
+            <Button variant="outline" :disabled="txDisabledForCurrentPort" @click="senderOpen = true">▶ {{ t('send_packet') }}</Button>
             <Button variant="outline" @click="clearLogs()">{{ t('clear') }}</Button>
-            <Button variant="outline" @click="exportCsv()" :disabled="filteredRows.length === 0">{{ t('export_csv') }}</Button>
+            <Button variant="outline" :disabled="filteredRows.length === 0" @click="exportCsv()">{{ t('export_csv') }}</Button>
           </div>
         </div>
       </template>
@@ -299,7 +303,7 @@ function exportCsv() {
               </span>
             </span>
             <span class="facet-count">{{ slaveStats[slave] }}</span>
-            <span class="facet-bar"><span :style="{ width: `${(slaveStats[slave] / maxSlaveCount) * 100}%` }"/></span>
+            <span class="facet-bar"><span :style="{ width: `${(slaveStats[slave] / maxSlaveCount) * 100}%` }" /></span>
           </button>
         </div>
 
@@ -328,14 +332,14 @@ function exportCsv() {
               </span>
             </span>
             <span class="facet-count">{{ fcStats[code] }}</span>
-            <span class="facet-bar"><span :style="{ width: `${(fcStats[code] / maxFcCount) * 100}%` }"/></span>
+            <span class="facet-bar"><span :style="{ width: `${(fcStats[code] / maxFcCount) * 100}%` }" /></span>
           </button>
         </div>
       </aside>
 
       <!-- Log table -->
       <div class="sniffer-body">
-      <div class="sniffer-table-wrap" ref="tableWrap">
+      <div ref="tableWrap" class="sniffer-table-wrap">
         <table class="sniffer-table">
           <thead>
             <tr>
@@ -393,8 +397,8 @@ function exportCsv() {
     <!-- Floating send packet popup — anchored to sniffer-content-wrap -->
     <PacketSenderPopup
       v-if="senderOpen"
-      :portNum="portFilter"
-      :txDisabled="txDisabledForCurrentPort"
+      :port-num="portFilter"
+      :tx-disabled="txDisabledForCurrentPort"
       @close="senderOpen = false"
     />
     </div><!-- /sniffer-content-wrap -->

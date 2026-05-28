@@ -55,8 +55,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
               </div>
             </form>
           </section>
-
-        </div>
+</div>
       </div>
     </div>
   </Layout>

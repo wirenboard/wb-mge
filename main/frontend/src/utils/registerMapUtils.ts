@@ -4,11 +4,17 @@
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
 // One entry from /cache/json
-export interface CacheEntry { s: number; t: 'h' | 'i' | 'c' | 'd'; a: number; v: number; age: number; }
+export interface CacheEntry {
+ s: number; t: 'h' | 'i' | 'c' | 'd'; a: number; v: number; age: number;
+}
 // One register row displayed in the table
-export interface RegRow { addr: number; val: string; updatedAge: number; stale: boolean; }
+export interface RegRow {
+ addr: number; val: string; updatedAge: number; stale: boolean;
+}
 // One device node in the tree
-export interface DeviceNode { id: number; groups: string[]; lastSeenAge: number; }
+export interface DeviceNode {
+ id: number; groups: string[]; lastSeenAge: number;
+}
 
 // ── Format helpers ────────────────────────────────────────────────────────────
 
@@ -34,7 +40,7 @@ export function formatMemory(bytes: number): string {
 
 // Format a duration in seconds as a human-readable string
 export function formatAge(seconds: number): string {
-  if (seconds >= 65535) return '>18h';  // saturated — value not updated for 18+ hours
+  if (seconds >= 65535) return '>18h'; // saturated — value not updated for 18+ hours
   if (seconds < 1) return '< 1 s';
   const floored = Math.floor(seconds * 10) / 10; // one decimal, no rounding up to 60
   if (floored < 60) return `${floored.toFixed(1)} s`;
@@ -56,9 +62,9 @@ export function typeName(t: string): string {
 // Enforce radio invariant for port selection: exactly one port must be selected.
 // If both are true → keep port 1; if both are false → fall back to port 1.
 export function resolvePortSelection(p1: boolean, p2: boolean): { p1: boolean; p2: boolean } {
-  if (p1 && p2) return { p1: true, p2: false };   // both true → keep port 1
-  if (!p1 && !p2) return { p1: true, p2: false };  // both false → fallback to port 1
-  return { p1, p2 };                                // normal case
+  if (p1 && p2) return { p1: true, p2: false }; // both true → keep port 1
+  if (!p1 && !p2) return { p1: true, p2: false }; // both false → fallback to port 1
+  return { p1, p2 }; // normal case
 }
 
 // ── Device list builder ───────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { decodePacket, parseHex, type DecodedPacket, type Direction } from '@/common/modbusDecoder'
+import { computed, ref } from 'vue';
+import { decodePacket, parseHex, type DecodedPacket, type Direction } from '@/common/modbusDecoder';
 import {
   type TreeRow,
   type EndiannessKey,
@@ -8,41 +8,43 @@ import {
   flattenNode,
   isPrintable,
   f32str,
-} from '@/utils/packetDecoderUtils'
-import { type SniffRow } from '@/utils/snifferUtils'
-import MagnifierIcon from '@/assets/magnifierIcon.svg?component'
+} from '@/utils/packetDecoderUtils';
+import { type SniffRow } from '@/utils/snifferUtils';
+import MagnifierIcon from '@/assets/magnifierIcon.svg?component';
 
 // ============================================================
 // Props
 // ============================================================
 
-const props = defineProps<{ packet: SniffRow }>()
+const props = defineProps<{ packet: SniffRow }>();
 
 // ============================================================
 // State
 // ============================================================
 
-const hoveredRange = ref<{ start: number; end: number } | null>(null)
-const activeEndianness = ref<EndiannessKey>('abcd')
-type BitMode = '16' | '32'
-const activeBitMode = ref<BitMode>('16')
-const showDataPopup = ref(false)
+const hoveredRange = ref<{ start: number; end: number } | null>(null);
+const activeEndianness = ref<EndiannessKey>('abcd');
+type BitMode = '16' | '32';
+const activeBitMode = ref<BitMode>('16');
+const showDataPopup = ref(false);
 
-function setEndianness(key: string) { activeEndianness.value = key as EndiannessKey }
+function setEndianness(key: string) {
+ activeEndianness.value = key as EndiannessKey;
+}
 
 const direction = computed<Direction>(() =>
   props.packet.sender === 'MASTER' ? 'request' : 'response'
-)
+);
 
-const rawBytes = computed<number[]>(() => parseHex(props.packet.pl) ?? [])
+const rawBytes = computed<number[]>(() => parseHex(props.packet.pl) ?? []);
 
 const decoded = computed<DecodedPacket>(() =>
   decodePacket(props.packet.pl, direction.value)
-)
+);
 
 const fullHex = computed<string>(() =>
   rawBytes.value.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('')
-)
+);
 
 // ============================================================
 // Tree — flatten decoded object into rows
@@ -56,38 +58,40 @@ const treeRows = computed<TreeRow[]>(() =>
     // pass undefined so flattenNode does not append a spurious "(N/A)" annotation.
     props.packet.crc !== 'N/A' ? props.packet.crc as 'OK' | 'ERR' : undefined
   )
-)
+);
 
 // ============================================================
 // Hover
 // ============================================================
 
 function onRowHover(start: number, end: number) {
-  hoveredRange.value = end > start ? { start, end } : null
+  hoveredRange.value = end > start ? { start, end } : null;
 }
-function onRowLeave() { hoveredRange.value = null }
+function onRowLeave() {
+ hoveredRange.value = null;
+}
 
 // ============================================================
 // Hex editor — 8 bytes per row
 // ============================================================
 
 function isByteHighlighted(i: number): boolean {
-  return hoveredRange.value !== null && i >= hoveredRange.value.start && i < hoveredRange.value.end
+  return hoveredRange.value !== null && i >= hoveredRange.value.start && i < hoveredRange.value.end;
 }
 
-const HEX_ROW = 8
+const HEX_ROW = 8;
 
 interface HexEditorRow {
   offset: string;
-  bytes: { hex: string; ascii: string; printable: boolean; index: number; }[];
+  bytes: { hex: string; ascii: string; printable: boolean; index: number }[];
   padCount: number;
 }
 
 const hexEditorRows = computed<HexEditorRow[]>(() => {
-  const b = rawBytes.value
-  const out: HexEditorRow[] = []
+  const b = rawBytes.value;
+  const out: HexEditorRow[] = [];
   for (let row = 0; row < b.length; row += HEX_ROW) {
-    const chunk = b.slice(row, row + HEX_ROW)
+    const chunk = b.slice(row, row + HEX_ROW);
     out.push({
       offset: row.toString(16).toUpperCase().padStart(4, '0'),
       bytes: chunk.map((byte, ci) => ({
@@ -97,10 +101,10 @@ const hexEditorRows = computed<HexEditorRow[]>(() => {
         index: row + ci,
       })),
       padCount: HEX_ROW - chunk.length,
-    })
+    });
   }
-  return out
-})
+  return out;
+});
 
 // ============================================================
 // Data interpretation popup
@@ -109,51 +113,53 @@ const hexEditorRows = computed<HexEditorRow[]>(() => {
 const leafData = computed<string | null>(() => {
   function findDeepest(obj: Record<string, unknown>): string | null {
     if (obj.payload && typeof obj.payload === 'object') {
-      const deeper = findDeepest(obj.payload as Record<string, unknown>)
-      if (deeper !== null) return deeper
+      const deeper = findDeepest(obj.payload as Record<string, unknown>);
+      if (deeper !== null) return deeper;
     }
     for (const k of ['data', 'write_data', 'events', 'additional_data']) {
-      const v = obj[k]
-      if (typeof v === 'string' && v.length >= 4) return v
+      const v = obj[k];
+      if (typeof v === 'string' && v.length >= 4) return v;
     }
-    return null
+    return null;
   }
-  return findDeepest(decoded.value as unknown as Record<string, unknown>)
-})
+  return findDeepest(decoded.value as unknown as Record<string, unknown>);
+});
 
 const leafBytes = computed<number[]>(() => {
-  const hex = leafData.value
-  if (!hex) return []
-  const out: number[] = []
-  for (let i = 0; i < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16))
-  return out
-})
+  const hex = leafData.value;
+  if (!hex) return [];
+  const out: number[] = [];
+  for (let i = 0; i < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+  return out;
+});
 
-const regs16 = computed<{ index: number; dec: number; int16: number; hex: string; }[]>(() => {
-  const b = leafBytes.value
-  const out = []
+const regs16 = computed<{ index: number; dec: number; int16: number; hex: string }[]>(() => {
+  const b = leafBytes.value;
+  const out = [];
   for (let i = 0; i + 1 < b.length; i += 2) {
-    const v = ((b[i] << 8) | b[i + 1]) >>> 0
+    const v = ((b[i] << 8) | b[i + 1]) >>> 0;
     // Interpret as signed Int16: if MSB is set, subtract 2^16
-    const s = v >= 0x8000 ? v - 0x10000 : v
-    out.push({ index: i / 2, dec: v, int16: s, hex: v.toString(16).toUpperCase().padStart(4, '0') })
+    const s = v >= 0x8000 ? v - 0x10000 : v;
+    out.push({ index: i / 2, dec: v, int16: s, hex: v.toString(16).toUpperCase().padStart(4, '0') });
   }
-  return out
-})
+  return out;
+});
 
-interface Chunk32 { offset: string; hex: string; uint32: number; int32: number; float32: string; }
+interface Chunk32 {
+ offset: string; hex: string; uint32: number; int32: number; float32: string;
+}
 
 const chunks32 = computed<Chunk32[]>(() => {
-  const b = leafBytes.value
-  const cfg = ENDIAN_CONFIGS[activeEndianness.value]
-  const out: Chunk32[] = []
+  const b = leafBytes.value;
+  const cfg = ENDIAN_CONFIGS[activeEndianness.value];
+  const out: Chunk32[] = [];
   for (let i = 0; i + 3 < b.length; i += 4) {
-    const u = cfg.fn(b, i)
-    const s = u >= 0x80000000 ? -(0x100000000 - u) : u
-    out.push({ offset: `${i}..${i+3}`, hex: '0x' + u.toString(16).toUpperCase().padStart(8, '0'), uint32: u, int32: s, float32: f32str(u) })
+    const u = cfg.fn(b, i);
+    const s = u >= 0x80000000 ? -(0x100000000 - u) : u;
+    out.push({ offset: `${i}..${i+3}`, hex: '0x' + u.toString(16).toUpperCase().padStart(8, '0'), uint32: u, int32: s, float32: f32str(u) });
   }
-  return out
-})
+  return out;
+});
 </script>
 
 <template>
@@ -269,7 +275,9 @@ const chunks32 = computed<Chunk32[]>(() => {
               :key="key"
               :class="['endian-tab', { active: activeEndianness === key }]"
               @click="setEndianness(key)"
-            >{{ cfg.label }} <span class="muted endian-tab-desc">{{ cfg.desc }}</span></button>
+            >
+{{ cfg.label }} <span class="muted endian-tab-desc">{{ cfg.desc }}</span>
+</button>
           </div>
           <table class="chunks32-table">
             <thead><tr><th>Bytes</th><th>Hex</th><th>UInt32</th><th>Int32</th><th>Float32</th></tr></thead>

@@ -1369,9 +1369,9 @@ describe('RM-I-12: searchFilter — filter devices by slave ID', () => {
       if (url === 'cache/json') {
         return {
           d: [
-            { s: 1,  t: 'h', a: 10, v: 1,   age: 1 },
-            { s: 2,  t: 'h', a: 10, v: 2,   age: 1 },
-            { s: 10, t: 'h', a: 10, v: 10,  age: 1 },
+            { s: 1, t: 'h', a: 10, v: 1, age: 1 },
+            { s: 2, t: 'h', a: 10, v: 2, age: 1 },
+            { s: 10, t: 'h', a: 10, v: 10, age: 1 },
           ],
         } as never;
       }
@@ -1600,7 +1600,7 @@ describe('RM-I-16: Stale indicator — .stale class and .stale-dot', () => {
       if (url === 'cache/json') {
         return {
           d: [
-            { s: 1, t: 'h', a: 10, v: 100, age: 5  }, // fresh: age 5 < timeout 10
+            { s: 1, t: 'h', a: 10, v: 100, age: 5 }, // fresh: age 5 < timeout 10
             { s: 1, t: 'h', a: 20, v: 200, age: 20 }, // stale: age 20 > timeout 10
           ],
         } as never;

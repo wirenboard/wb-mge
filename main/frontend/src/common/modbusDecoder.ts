@@ -42,28 +42,28 @@ export interface FastModbusPayload {
   type: 'fast_modbus';
   raw: string;
   ext_byte: string;
-  subcommand: string;  // hex byte of the subcommand (e.g. '03' for scan_response)
+  subcommand: string; // hex byte of the subcommand (e.g. '03' for scan_response)
   payload: FastModbusSubcommand | ParseError;
 }
 
 export interface ModbusRtuPayload {
   type: 'modbus_rtu';
   raw: string;
-  fc: string;   // hex FC byte, e.g. "03" — mirrors the fc field in the PDU for display at this layer
+  fc: string; // hex FC byte, e.g. "03" — mirrors the fc field in the PDU for display at this layer
   payload: PduResult | ParseError;
 }
 
 export type FastModbusSubcommand =
-  | { type: 'scan_start'; raw: string; }
-  | { type: 'scan_continue'; raw: string; }
-  | { type: 'scan_response'; raw: string; serial_number: string; modbus_address: string; }
-  | { type: 'scan_end'; raw: string; }
-  | { type: 'command_by_serial'; raw: string; serial_number: string; function_code: string; payload: PduResult | ParseError; }
-  | { type: 'response_by_serial'; raw: string; serial_number: string; function_code: string; payload: PduResult | ParseError; }
-  | { type: 'event_request'; raw: string; min_server_id: string; max_data_len: string; prev_server_id: string; prev_flag: string; }
-  | { type: 'event_transfer'; raw: string; flag: string; unacked_count: string; data_len: string; data: string; }
-  | { type: 'no_events'; raw: string; }
-  | { type: 'event_config'; raw: string; data_len: string; data: string; }
+  | { type: 'scan_start'; raw: string }
+  | { type: 'scan_continue'; raw: string }
+  | { type: 'scan_response'; raw: string; serial_number: string; modbus_address: string }
+  | { type: 'scan_end'; raw: string }
+  | { type: 'command_by_serial'; raw: string; serial_number: string; function_code: string; payload: PduResult | ParseError }
+  | { type: 'response_by_serial'; raw: string; serial_number: string; function_code: string; payload: PduResult | ParseError }
+  | { type: 'event_request'; raw: string; min_server_id: string; max_data_len: string; prev_server_id: string; prev_flag: string }
+  | { type: 'event_transfer'; raw: string; flag: string; unacked_count: string; data_len: string; data: string }
+  | { type: 'no_events'; raw: string }
+  | { type: 'event_config'; raw: string; data_len: string; data: string }
   | ParseError;
 
 export interface PduResult {
@@ -81,15 +81,15 @@ export type DecodedPacket = RtuFrame | Arbitration | ParseError;
  * 'address' / 'fc' / 'subcommand' = real protocol fields.
  */
 export type ByteRole =
-  | 'address'       // real slave address (std Modbus, or FM broadcast for non-nested FM cmds)
-  | 'fc'            // real function code (std Modbus inner FC inside FM nested command)
-  | 'subcommand'    // FM subcommand byte when it's a "real" leaf command (no nesting)
-  | 'serial'        // FM 4-byte serial number
-  | 'data'          // payload data bytes
-  | 'crc'           // CRC bytes
-  | 'arbitration'   // FM bus arbitration (all 0xFF)
-  | 'fm-addr'       // FM wrapper address (0xFD) — fake, present only when nested command exists
-  | 'fm-ext'        // FM ext_byte (0x60/0x46) — fake, present only when nested command exists
+  | 'address' // real slave address (std Modbus, or FM broadcast for non-nested FM cmds)
+  | 'fc' // real function code (std Modbus inner FC inside FM nested command)
+  | 'subcommand' // FM subcommand byte when it's a "real" leaf command (no nesting)
+  | 'serial' // FM 4-byte serial number
+  | 'data' // payload data bytes
+  | 'crc' // CRC bytes
+  | 'arbitration' // FM bus arbitration (all 0xFF)
+  | 'fm-addr' // FM wrapper address (0xFD) — fake, present only when nested command exists
+  | 'fm-ext' // FM ext_byte (0x60/0x46) — fake, present only when nested command exists
   | 'fm-subcommand' // FM subcommand byte when it wraps another command (command/response by serial)
   | 'unknown';
 
@@ -264,7 +264,7 @@ function decodeMei(bytes: number[], isResponse: boolean): PduResult | ParseError
     // response
     if (bytes.length < 7) return { type: 'parse_error', reason: 'pdu_too_short', raw };
     const numObjects = bytes[6];
-    const objects: { id: string; value: string; }[] = [];
+    const objects: { id: string; value: string }[] = [];
     let off = 7;
     for (let i = 0; i < numObjects && off + 1 < bytes.length; i++) {
       const objLen = bytes[off + 1];
@@ -638,7 +638,7 @@ export function decodePacket(input: string | number[], direction: Direction = 'r
   const payload: ModbusRtuPayload = {
     type: 'modbus_rtu',
     raw: toHex(pduBytes),
-    fc: toHex([pduBytes[0]]),  // FC byte is pduBytes[0] (same as bytes[1] — after the address byte)
+    fc: toHex([pduBytes[0]]), // FC byte is pduBytes[0] (same as bytes[1] — after the address byte)
     payload: decodePdu(pduBytes),
   };
 

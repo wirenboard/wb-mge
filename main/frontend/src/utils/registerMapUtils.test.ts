@@ -347,7 +347,7 @@ describe('buildRegsByKey', () => {
     // age=5 < age=100 → entry with age=5 (v=0xBBBB) is fresher → it wins
     const entries: CacheEntry[] = [
       { s: 1, t: 'h', a: 100, v: 0xAAAA, age: 100 }, // older
-      { s: 1, t: 'h', a: 100, v: 0xBBBB, age: 5 },   // fresher
+      { s: 1, t: 'h', a: 100, v: 0xBBBB, age: 5 }, // fresher
     ];
     const result = buildRegsByKey(entries, 60);
     expect(result['1|Holding']).toHaveLength(1);
@@ -426,8 +426,8 @@ describe('buildExportPayload', () => {
   it('dedup same slave+section+addr: keep entry with smaller age (fresher)', () => {
     // age=50 is older than age=10; entry with age=10 (v=222) wins
     const entries: CacheEntry[] = [
-      { s: 1, t: 'h', a: 10, v: 111, age: 50 },  // older
-      { s: 1, t: 'h', a: 10, v: 222, age: 10 },  // fresher
+      { s: 1, t: 'h', a: 10, v: 111, age: 50 }, // older
+      { s: 1, t: 'h', a: 10, v: 222, age: 10 }, // fresher
     ];
     const result = buildExportPayload(entries);
     expect(result.slaves['1'].holding_registers['10']).toBe(222);
@@ -437,7 +437,7 @@ describe('buildExportPayload', () => {
     // age=5 < age=100 → entry with age=5 (v=0xBBBB) is fresher → it wins
     const entries: CacheEntry[] = [
       { s: 1, t: 'h', a: 10, v: 0xAAAA, age: 100 }, // older
-      { s: 1, t: 'h', a: 10, v: 0xBBBB, age: 5 },   // fresher
+      { s: 1, t: 'h', a: 10, v: 0xBBBB, age: 5 }, // fresher
     ];
     const result = buildExportPayload(entries);
     expect(result.slaves['1'].holding_registers['10']).toBe(0xBBBB);
