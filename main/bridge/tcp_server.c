@@ -121,6 +121,14 @@ static int accept_connection(int listen_sock, struct sockaddr_in* source_addr)
     // It is necessary that data packets are not combined when sent and to increase the performance
     setsockopt(client_sock, IPPROTO_TCP, TCP_NODELAY, &no_delay_flag, sizeof(no_delay_flag));
 
+    // Add recv timeout so receiver_task can periodically check exit request.
+    // Without this, recv() blocks indefinitely when the peer holds the connection
+    // open and tcp_server_deinit() cannot complete (active_connections stays > 0).
+    struct timeval rcv_timeout = { .tv_sec = 0, .tv_usec = 100000 };  // 100 ms
+    if (setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &rcv_timeout, sizeof(rcv_timeout)) != 0) {
+        ESP_LOGE(TAG, "Failed to set SO_RCVTIMEO on client socket: errno %d", errno);
+    }
+
     return client_sock;
 }
 
@@ -148,6 +156,15 @@ static void receiver_task(void *pvParameters)
         len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
 
         if (len < 0) {
+            if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+                // Recv timed out (SO_RCVTIMEO): check if deinit requested exit
+                if (check_task_exit_req(desc)) {
+                    ESP_LOGD(TAG, "Port %d: exit requested, closing receiver", desc->port);
+                    break;
+                }
+                len = 1;   // Keep the do-while alive; retry recv()
+                continue;
+            }
             esp_log_level_t log_level = ESP_LOG_ERROR;
             if (check_task_exit_req(desc)) {
                 log_level = ESP_LOG_DEBUG;
