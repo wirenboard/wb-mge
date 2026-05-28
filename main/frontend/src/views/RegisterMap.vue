@@ -502,7 +502,7 @@ onUnmounted(() => {
                       class="caret"
                       :class="{ open: openDevices.has(dev.id) }"
                     />
-                    <span class="rm-slave mono">Slave 0x{{ dev.id.toString(16).padStart(2, '0').toUpperCase() }}</span>
+                    <span class="rm-slave mono">Slave {{ dev.id }} (0x{{ dev.id.toString(16).padStart(2, '0').toUpperCase() }})</span>
                     <span class="rm-meta">
                       <span class="rm-meta-item">
                           <span class="dim">{{ t('last') }}</span>
@@ -535,9 +535,9 @@ onUnmounted(() => {
                         <!-- Column headers -->
                         <div class="rm-reg-head">
                           <span>{{ t('col_addr') }}</span>
+                          <span>{{ t('col_addr_hex') }}</span>
                           <span>{{ t('col_value') }}</span>
                           <span>{{ t('col_last_update') }}</span>
-                          <span>{{ t('col_responses') }}</span>
                         </div>
                         <!-- One row per register -->
                         <div
@@ -547,12 +547,12 @@ onUnmounted(() => {
                           role="treeitem"
                         >
                           <span class="mono rm-reg-addr">{{ reg.addr }}</span>
+                          <span class="mono rm-reg-addr-hex">0x{{ reg.addr.toString(16).padStart(4, '0').toUpperCase() }}</span>
                           <span class="mono rm-reg-val">{{ reg.val }}</span>
                           <span class="mono rm-reg-upd">
                             <span v-if="reg.stale" class="stale-dot" :title="t('stale_dot_title')" />
                             {{ formatAge(reg.updatedAge) }} {{ t('ago') }}
                           </span>
-                          <span class="mono rm-reg-hits">—</span>
                         </div>
                       </div>
                     </div>
@@ -1409,7 +1409,7 @@ onUnmounted(() => {
 .rm-reg-head,
 .rm-row.lvl-reg {
   display: grid;
-  grid-template-columns: 70px minmax(100px, 1fr) 140px 110px;
+  grid-template-columns: 70px 90px minmax(100px, 1fr) 140px;
   align-items: center;
   gap: 12px;
   padding: 6px 16px 6px 88px;
@@ -1431,9 +1431,8 @@ onUnmounted(() => {
   cursor: default;
 }
 
-/* Align the value and responses header columns to match data cells */
-.rm-reg-head span:nth-child(2),
-.rm-reg-head span:nth-child(4) {
+/* Align the value header column to match data cells */
+.rm-reg-head span:nth-child(3) {
   text-align: right;
 }
 
@@ -1450,8 +1449,7 @@ onUnmounted(() => {
   background: color-mix(in oklch, var(--primary-color) 4%, var(--bg-surface-subtle));
 }
 
-.rm-row.lvl-reg.stale .rm-reg-val,
-.rm-row.lvl-reg.stale .rm-reg-hits {
+.rm-row.lvl-reg.stale .rm-reg-val {
   color: var(--text-muted);
 }
 
@@ -1461,13 +1459,12 @@ onUnmounted(() => {
   color: var(--text-color);
 }
 
-.rm-reg-hits {
-  text-align: right;
+.rm-reg-addr {
   color: var(--text-secondary);
 }
 
-.rm-reg-addr {
-  color: var(--text-secondary);
+.rm-reg-addr-hex {
+  color: var(--text-muted);
 }
 
 .rm-reg-upd {
@@ -1525,9 +1522,9 @@ onUnmounted(() => {
     "expand_all": "Expand all",
     "collapse": "Collapse",
     "col_addr": "Addr",
+    "col_addr_hex": "Addr (HEX)",
     "col_value": "Raw value",
     "col_last_update": "Last update",
-    "col_responses": "Responses",
     "stale_dot_title": "Older than value timeout",
     "ago": "ago",
     "last": "last",
@@ -1585,9 +1582,9 @@ onUnmounted(() => {
     "expand_all": "Развернуть всё",
     "collapse": "Свернуть",
     "col_addr": "Адрес",
+    "col_addr_hex": "Адрес (HEX)",
     "col_value": "Значение",
     "col_last_update": "Последнее обновление",
-    "col_responses": "Ответы",
     "stale_dot_title": "Старше таймаута значения",
     "ago": "назад",
     "last": "последний",
@@ -1645,9 +1642,9 @@ onUnmounted(() => {
     "expand_all": "Барлығын жайу",
     "collapse": "Жию",
     "col_addr": "Мекенжай",
+    "col_addr_hex": "Мекенжай (HEX)",
     "col_value": "Мән",
     "col_last_update": "Соңғы жаңарту",
-    "col_responses": "Жауаптар",
     "stale_dot_title": "Мән таймаутынан ескі",
     "ago": "бұрын",
     "last": "соңғы",
@@ -1705,9 +1702,9 @@ onUnmounted(() => {
     "expand_all": "Espandi tutto",
     "collapse": "Comprimi",
     "col_addr": "Indirizzo",
+    "col_addr_hex": "Ind. (HEX)",
     "col_value": "Valore raw",
     "col_last_update": "Ultimo agg.",
-    "col_responses": "Risposte",
     "stale_dot_title": "Più vecchio del timeout valore",
     "ago": "fa",
     "last": "ultimo",
@@ -1765,9 +1762,9 @@ onUnmounted(() => {
     "expand_all": "Alle erweitern",
     "collapse": "Einklappen",
     "col_addr": "Adresse",
+    "col_addr_hex": "Adr. (HEX)",
     "col_value": "Rohwert",
     "col_last_update": "Letztes Update",
-    "col_responses": "Antworten",
     "stale_dot_title": "Älter als Wert-Timeout",
     "ago": "her",
     "last": "zuletzt",

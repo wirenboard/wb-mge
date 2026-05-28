@@ -1487,14 +1487,14 @@ describe('RM-I-12: searchFilter — filter devices by slave ID', () => {
     await flushPromises();
     expect(wrapper.findAll('.rm-row.lvl-dev').length).toBe(1);
     // Verify it is slave 2 (hex: 0x02) that remains, not another node
-    expect(wrapper.find('.rm-row.lvl-dev .rm-slave').text()).toBe('Slave 0x02');
+    expect(wrapper.find('.rm-row.lvl-dev .rm-slave').text()).toBe('Slave 2 (0x02)');
 
     // C. Type "a" — only slave 10 matches (hex representation is "a")
     await wrapper.find('.rm-search input').setValue('a');
     await flushPromises();
     expect(wrapper.findAll('.rm-row.lvl-dev').length).toBe(1);
     // Verify it is slave 10 (hex: 0x0A) that remains, not another node
-    expect(wrapper.find('.rm-row.lvl-dev .rm-slave').text()).toBe('Slave 0x0A');
+    expect(wrapper.find('.rm-row.lvl-dev .rm-slave').text()).toBe('Slave 10 (0x0A)');
 
     // D. Clear query — all 3 visible again
     await wrapper.find('.rm-search input').setValue('');
@@ -1729,10 +1729,14 @@ describe('RM-I-16: Stale indicator — .stale class and .stale-dot', () => {
     // Row 0 = addr 10 (fresh) — must NOT have .stale class
     expect(regRows[0].classes()).not.toContain('stale');
     expect(regRows[0].find('.stale-dot').exists()).toBe(false);
+    // Verify hex address column renders correctly (addr 10 → "0x000A")
+    expect(regRows[0].find('.rm-reg-addr-hex').text()).toBe('0x000A');
 
     // Row 1 = addr 20 (stale) — must have .stale class and .stale-dot
     expect(regRows[1].classes()).toContain('stale');
     expect(regRows[1].find('.stale-dot').exists()).toBe(true);
+    // Verify hex address column for stale row (addr 20 → "0x0014")
+    expect(regRows[1].find('.rm-reg-addr-hex').text()).toBe('0x0014');
 
     wrapper.unmount();
   });
