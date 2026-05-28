@@ -45,6 +45,7 @@ static inline void session_unlock(void)
 // when reset reason is ESP_RST_SW (esp_restart() called)
 // Separate buffer is used to increase session search speed
 static RTC_NOINIT_ATTR uint32_t backup_session_ids[MAX_SESSIONS];
+static RTC_NOINIT_ATTR int backup_current_index;
 
 
 static void defrag_session_buf(void)
@@ -70,14 +71,20 @@ static void defrag_session_buf(void)
 static void load_session_buf(void)
 {
     memcpy(&session_buffer.session_ids[0], &backup_session_ids[0], sizeof(session_buffer.session_ids));
-    defrag_session_buf();
-    ESP_LOGD(TAG, "Session IDs was read from backup buffer");
+    // Validate restored index to guard against uninitialized RTC memory on first SW reboot
+    if ((backup_current_index >= 0) && (backup_current_index < MAX_SESSIONS)) {
+        session_buffer.current_index = backup_current_index;
+    } else {
+        session_buffer.current_index = 0;
+    }
+    ESP_LOGD(TAG, "Session IDs was read from backup buffer, current_index: %d", session_buffer.current_index);
 }
 
 
 static void save_session_buf(void)
 {
     memcpy(&backup_session_ids[0], &session_buffer.session_ids[0], sizeof(backup_session_ids));
+    backup_current_index = session_buffer.current_index;
     ESP_LOGD(TAG, "Session IDs was saved to backup buffer");
 }
 

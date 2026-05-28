@@ -11,6 +11,21 @@ from api_client import WBMGEAPI
 MAX_SESSIONS = 10
 
 
+def _wait_device_up(base_url: str, timeout: int = 60) -> bool:
+    """Poll until device responds to HTTP (without auth). Returns True if up within timeout."""
+    plain = requests.Session()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        try:
+            resp = plain.get(f"{base_url}/favicon.webp", timeout=5)
+            if resp.status_code in (200, 401, 403):
+                return True
+        except requests.exceptions.RequestException:
+            pass
+    return False
+
+
 @pytest.mark.timeout(120)
 def test_au01_session_preserved_after_sw_reboot(api):
     """AU-01: Session cookie persists after POST /cmd reboot (SW reset uses RTC_NOINIT)."""
@@ -40,17 +55,142 @@ def test_au01_session_preserved_after_sw_reboot(api):
 
     assert device_up, "Device did not come back up within 60 seconds after reboot"
 
-    # Re-authenticate the api fixture so subsequent tests still have a valid session
-    # (this creates a NEW session in api.session, but that is fine — old_sid was saved)
-    api.wait_for_ready(timeout=30)
-
-    # Verify the OLD session cookie still works (sessions survive SW reset via RTC_NOINIT)
+    # Verify the OLD session cookie still works (sessions survive SW reset via RTC_NOINIT).
+    # This check must happen BEFORE wait_for_ready() creates a new session, which could
+    # evict old_sid if the ring buffer is full.
     test_session = requests.Session()
     test_session.cookies.set("session_id", old_sid)
     resp = test_session.get(f"{base_url}/session", timeout=10)
     assert resp.status_code == 200, (
         f"Old session_id should be preserved after SW reboot, got {resp.status_code}"
     )
+
+    # Re-authenticate the api fixture so subsequent tests still have a valid session
+    # (this creates a NEW session in api.session, but that is fine — old_sid was saved)
+    api.wait_for_ready(timeout=30)
+
+
+@pytest.mark.timeout(180)
+def test_au05_full_buffer_preserved_after_sw_reboot(api):
+    """AU-05: All MAX_SESSIONS sessions survive SW reboot (full ring buffer)."""
+    base_url = api.base_url
+    sids = []
+
+    try:
+        # Fill the ring buffer exactly: create MAX_SESSIONS independent sessions.
+        # Prior sessions from earlier tests will be evicted if ring overflows — that is fine.
+        for i in range(MAX_SESSIONS):
+            time.sleep(0.3)
+            s = requests.Session()
+            resp = s.post(
+                f"{base_url}/auth",
+                json={"login": WBMGEAPI.DEFAULT_LOGIN, "pass": WBMGEAPI.DEFAULT_PASSWORD},
+                timeout=20,
+            )
+            assert resp.status_code == 200
+            assert resp.json().get("auth") is True, f"Login #{i} failed: {resp.json()}"
+            sid = s.cookies.get("session_id")
+            assert sid is not None, f"No session_id cookie in login #{i}"
+            sids.append(sid)
+            s.close()
+
+        # Trigger SW reboot
+        api.execute_command("reboot")
+
+        assert _wait_device_up(base_url, timeout=60), \
+            "Device did not come back up within 60 s after reboot"
+
+        # All MAX_SESSIONS sessions must survive SW reboot
+        for i, sid in enumerate(sids):
+            ts = requests.Session()
+            ts.cookies.set("session_id", sid)
+            resp = ts.get(f"{base_url}/session", timeout=10)
+            ts.close()
+            assert resp.status_code == 200, \
+                f"Session {i} (sid={sid}) was lost after SW reboot with full buffer"
+
+    finally:
+        # Log out all created sessions to keep ring buffer clean for subsequent tests
+        for sid in sids:
+            time.sleep(0.15)
+            try:
+                ls = requests.Session()
+                ls.cookies.set("session_id", sid)
+                ls.post(f"{base_url}/logout", timeout=10)
+                ls.close()
+            except requests.exceptions.RequestException:
+                pass
+        # Re-authenticate the api fixture
+        time.sleep(0.5)
+        resp = api.auth()
+        assert resp.status_code == 200 and resp.json().get("auth") is True, \
+            f"Re-auth after AU-05 failed: {resp.status_code} {resp.text}"
+
+
+@pytest.mark.timeout(180)
+def test_au06_ring_wrap_preserved_after_sw_reboot(api):
+    """AU-06: Ring-wrap sessions survive SW reboot; eviction happened before reboot stays evicted."""
+    base_url = api.base_url
+    sids = []  # sids[0] gets evicted before reboot; sids[1..MAX_SESSIONS] survive
+
+    try:
+        # Create MAX_SESSIONS+1 sessions. The 11th auth wraps the ring and evicts sids[0].
+        for i in range(MAX_SESSIONS + 1):
+            time.sleep(0.3)
+            s = requests.Session()
+            resp = s.post(
+                f"{base_url}/auth",
+                json={"login": WBMGEAPI.DEFAULT_LOGIN, "pass": WBMGEAPI.DEFAULT_PASSWORD},
+                timeout=20,
+            )
+            assert resp.status_code == 200
+            assert resp.json().get("auth") is True, f"Login #{i} failed: {resp.json()}"
+            sid = s.cookies.get("session_id")
+            assert sid is not None, f"No session_id cookie in login #{i}"
+            sids.append(sid)
+            s.close()
+
+        time.sleep(1)
+
+        # Verify sids[0] was already evicted before reboot (ring buffer wrap)
+        es = requests.Session()
+        es.cookies.set("session_id", sids[0])
+        resp = es.get(f"{base_url}/session", timeout=10)
+        es.close()
+        assert resp.status_code == 401, \
+            f"sids[0] should be evicted by ring wrap before reboot, got {resp.status_code}"
+
+        # Trigger SW reboot
+        api.execute_command("reboot")
+
+        assert _wait_device_up(base_url, timeout=60), \
+            "Device did not come back up within 60 s after reboot"
+
+        # Sessions 1..MAX_SESSIONS must all survive SW reboot
+        for i in range(1, MAX_SESSIONS + 1):
+            ts = requests.Session()
+            ts.cookies.set("session_id", sids[i])
+            resp = ts.get(f"{base_url}/session", timeout=10)
+            ts.close()
+            assert resp.status_code == 200, \
+                f"Session {i} (sid={sids[i]}) was lost after SW reboot"
+
+    finally:
+        # Log out surviving sessions (1..MAX_SESSIONS)
+        for sid in sids[1:]:
+            time.sleep(0.15)
+            try:
+                ls = requests.Session()
+                ls.cookies.set("session_id", sid)
+                ls.post(f"{base_url}/logout", timeout=10)
+                ls.close()
+            except requests.exceptions.RequestException:
+                pass
+        # Re-authenticate the api fixture
+        time.sleep(0.5)
+        resp = api.auth()
+        assert resp.status_code == 200 and resp.json().get("auth") is True, \
+            f"Re-auth after AU-06 failed: {resp.status_code} {resp.text}"
 
 
 def test_st01_hostname_validation(api):
