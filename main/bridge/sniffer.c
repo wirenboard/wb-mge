@@ -640,11 +640,16 @@ SNIFFER_STATIC void sniffer_ws_dispatch(sniff_packet_t *pkt)
 
     packet_counter++;
 
+    /* Timeout packets are no longer forwarded to the WebSocket client.
+     * The master request is already visible as a standalone packet (emitted
+     * immediately on receipt); an absent slave response is implicit from the
+     * lack of a following slave packet.  The timeout event is still used
+     * internally by cache_multimaster but carries no UI value. */
     if (pkt->is_timeout) {
-        format_timeout_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, pkt);
-    } else {
-        format_packet_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, pkt);
+        return;
     }
+
+    format_packet_json(json_buf, SNIFFER_JSON_BUF_SIZE, packet_counter, pkt);
 
     httpd_ws_frame_t ws_frame = {
         .type    = HTTPD_WS_TYPE_TEXT,

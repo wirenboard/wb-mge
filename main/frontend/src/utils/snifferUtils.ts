@@ -135,6 +135,10 @@ export function toggleSet(set: Set<string>, val: string): Set<string> {
 export function parsePacket(msg: any, prevTimestampUs: number): { row: SniffRow | null; timestamp: number } {
   if (typeof msg.id !== 'number') return { row: null, timestamp: prevTimestampUs };
 
+  // DEPRECATED: the firmware no longer sends {type:"timeout"} packets over WebSocket.
+  // Since master requests are now emitted immediately on receipt, the absence of a
+  // following slave packet is sufficient to infer a timeout. This branch is kept for
+  // backward compatibility with older firmware versions.
   if (msg.type === 'timeout') {
     const fcName = FC_NAMES[msg.function] ?? `FC${msg.function}`;
     const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase();

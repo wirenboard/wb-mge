@@ -9,7 +9,7 @@ TR-05  UART bytes are silently dropped when no TCP client is connected.
 TR-06  tx_disabled=True on port 2 prevents TCP→UART2 forwarding.
 TR-07  Port 2 last_writer routing.
 SN-01  Sniffer on port 2 emits packets with port==2.
-SN-02  Sniffer emits {type:"timeout"} when slave doesn't respond.
+SN-02  Master request is immediately visible; no {type:"timeout"} packet is sent when slave doesn't respond.
 SN-03  Broadcast packet (slave_id=0x00) is classified as master.
 SN-04  Fast Modbus packets are classified by subcmd (master vs slave).
 SN-05  Orphan response (no preceding request) is emitted as sender=="slave".
@@ -1036,12 +1036,15 @@ def test_sniffer_port2_packets_have_port2(api):
 @pytest.mark.qemu
 @pytest.mark.timeout(20)
 def test_sniffer_timeout_packet_when_slave_silent(api):
-    """When slave doesn't respond, sniffer emits a {type:'timeout'} packet.
+    """When slave doesn't respond, the master request is immediately visible and no timeout packet is sent.
 
-    Injects only an FC03 request with no response.  Sniffer buffers the
-    request and starts SNIFFER_RESP_TIMEOUT_MS timer; after it fires the
-    sniffer emits a timeout packet with slave_id and function matching the
-    injected request.
+    Injects only an FC03 request with no response.  The firmware now emits the
+    master packet immediately upon receipt (before any timeout timer fires) and
+    no longer forwards {type:"timeout"} events over WebSocket.
+
+    Expected outcome:
+    - At least one {type:"packet", sender:"master", slave_id:1, function:3} arrives
+    - No {type:"timeout"} packet arrives
     """
     resp = api.get_info()
     assert resp.status_code == 200
@@ -1058,7 +1061,7 @@ def test_sniffer_timeout_packet_when_slave_silent(api):
         ws, stop_ping, _ = _ws_connect(api, 1)
         time.sleep(0.2)  # allow WS to be fully ready
 
-        # Inject only a request — no response follows, so sniffer must time out
+        # Inject only a request — no response follows
         request_frame = build_fc03_request(slave=1, start_addr=0, reg_count=1)
         try:
             uart_sock = open_uart_socket(port=1)
@@ -1066,27 +1069,36 @@ def test_sniffer_timeout_packet_when_slave_silent(api):
         except OSError as exc:
             pytest.skip(f"UART1 chardev not reachable: {exc}")
 
-        # Collect timeout packets; give 3× the timeout for jitter
-        timeout_packets = _collect_packets(
+        # Collect all packets for 3× the sniffer timeout to let any potential
+        # timeout event arrive if the firmware incorrectly sends one.
+        all_packets = _collect_packets(
             ws,
             min_count=1,
             timeout_sec=3.0,
-            filter_fn=lambda p: p.get("type") == "timeout",
+            filter_fn=None,
         )
 
-        assert len(timeout_packets) >= 1, (
-            f"Expected >=1 timeout packet but got 0 within 3 s; "
-            f"SNIFFER_RESP_TIMEOUT_MS={SNIFFER_RESP_TIMEOUT_MS}"
+        # Firmware must emit the master request immediately
+        master_packets = [
+            p for p in all_packets
+            if p.get("type") == "packet"
+            and p.get("sender") == "master"
+            and p.get("slave_id") == 1
+            and p.get("function") == 3
+        ]
+        assert len(master_packets) >= 1, (
+            f"Expected >=1 master packet (slave_id=1, function=3) but got 0; "
+            f"all packets: {all_packets}"
         )
-        timeout_pkt = timeout_packets[0]
-        assert timeout_pkt.get("slave_id") == 1, (
-            f"Timeout packet slave_id mismatch: expected 1, got {timeout_pkt.get('slave_id')}"
+
+        # Firmware must NOT forward timeout events over WebSocket
+        timeout_packets = [p for p in all_packets if p.get("type") == "timeout"]
+        assert len(timeout_packets) == 0, (
+            f"Expected no timeout packets over WebSocket (firmware no longer sends them) "
+            f"but got: {timeout_packets}"
         )
-        assert timeout_pkt.get("function") == 3, (
-            f"Timeout packet function mismatch: expected 3, got {timeout_pkt.get('function')}"
-        )
-        print(f"✓ Sniffer emitted timeout packet: slave_id={timeout_pkt['slave_id']}, "
-              f"function={timeout_pkt['function']}")
+        print(f"✓ SN-02: master packet emitted immediately, no timeout packet sent over WebSocket; "
+              f"slave_id={master_packets[0]['slave_id']}, function={master_packets[0]['function']}")
 
     finally:
         if uart_sock:
