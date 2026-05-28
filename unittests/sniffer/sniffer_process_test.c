@@ -19,6 +19,14 @@
  * TC-16 CRC ERR in SNIFF_IDLE after sync — alternates master/slave
  * TC-18 Multi-master in RES_WAIT — second master request flushes buffered req
  * TC-19 Post-disable timer callback does not emit a packet (race condition guard)
+ * TC-20 Fast response: slave responds before timer fires → MASTER+SLAVE pair emitted
+ * TC-21 Response after timeout: timer fires first → timeout pkt, then orphan SLAVE pkt
+ * TC-22 No response at all: timer fires, slave never comes → exactly one timeout pkt
+ * TC-23 Multiple consecutive timeouts: master polls dead slave 3×, 3 timeout pkts
+ * TC-24 [DESIRED] Master request emitted immediately upon receipt (before slave responds)
+ * TC-25 [DESIRED] Timeout is a separate event emitted AFTER the master packet
+ * TC-26 [DESIRED] Slow response: 3 events — MASTER + TIMEOUT + orphan SLAVE
+ * TC-27 [DESIRED] Fast response: MASTER emitted immediately, SLAVE emitted on response
  */
 
 #include "unity.h"
@@ -118,22 +126,22 @@ void test_tc1_basic_modbus_rtu_request_response(void)
     /* Request: slave=0x83, func=0x03, valid CRC */
     uint8_t req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
 
+    /* Master is emitted immediately upon receipt */
     SEND0(req);
-    /* In RES_WAIT: nothing should be enqueued yet */
-    assert_queue_empty();
-
-    /* Response: same slave/func, valid CRC */
-    uint8_t res[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
-
-    SEND0(res);
-
-    /* Both packets should now be in the queue */
     sniff_packet_t pkt0 = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(pkt0.is_master, "pkt[0] must be MASTER (request)");
     TEST_ASSERT_TRUE_MESSAGE(pkt0.crc_valid, "pkt[0] must have valid CRC");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt0.slave_id, "pkt[0] slave_id must be 0x83");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt0.function, "pkt[0] function must be 0x03");
 
+    /* Slave has not arrived yet — queue must be empty */
+    assert_queue_empty();
+
+    /* Response: same slave/func, valid CRC */
+    uint8_t res[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
+
+    /* Only the slave response is emitted now */
+    SEND0(res);
     sniff_packet_t pkt1 = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(pkt1.is_master, "pkt[1] must be SLAVE (response)");
     TEST_ASSERT_TRUE_MESSAGE(pkt1.crc_valid, "pkt[1] must have valid CRC");
@@ -221,19 +229,20 @@ void test_tc3_normal_modbus_not_inverted_after_fm(void)
 
     /* Packet 4: normal Modbus request (valid CRC, non-broadcast, non-FM) */
     uint8_t p4[] = {0x83, 0x04, 0x00, 0x08, 0x00, 0x04, 0x6E, 0x29};
+    /* Master is emitted immediately upon receipt */
     SEND0(p4);
-    /* Goes to RES_WAIT — nothing enqueued yet */
-    assert_queue_empty();
-
-    /* Packet 5: normal Modbus response */
-    uint8_t p5[] = {0x83, 0x04, 0x08, 0x02, 0xE6, 0x00, 0x00, 0x00, 0x00, 0x01, 0x35, 0x41, 0xE7};
-    SEND0(p5);
-
     sniff_packet_t pkt4 = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(pkt4.is_master,
         "pkt4 must be MASTER (first in RTU pair after FM block)");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt4.slave_id, "pkt4 slave_id must be 0x83");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x04, pkt4.function, "pkt4 function must be 0x04");
+
+    /* Slave has not arrived yet — queue must be empty */
+    assert_queue_empty();
+
+    /* Packet 5: normal Modbus response — only the slave response is emitted */
+    uint8_t p5[] = {0x83, 0x04, 0x08, 0x02, 0xE6, 0x00, 0x00, 0x00, 0x00, 0x01, 0x35, 0x41, 0xE7};
+    SEND0(p5);
 
     sniff_packet_t pkt5 = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(pkt5.is_master,
@@ -255,14 +264,19 @@ void test_tc4_fd46_in_res_wait_phase_slip(void)
         "TC-4: FD 46 arrives in RES_WAIT (phase slip) — buffered req discarded");
     LOG_MESSAGE();
 
-    /* Packet 1: normal RTU request — goes to RES_WAIT, buffered */
+    /* Packet 1: normal RTU request — master emitted immediately, enters RES_WAIT */
     uint8_t p1[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
     SEND0(p1);
+    {
+        sniff_packet_t p1_pkt = dequeue_packet();
+        TEST_ASSERT_TRUE_MESSAGE(p1_pkt.is_master,
+            "TC-4 p1: request must be emitted as MASTER immediately");
+    }
     assert_queue_empty();
 
     /*
      * Packet 2: FM master arrives in RES_WAIT (subcmd=0x10, not slave).
-     * The buffered pkt1 is discarded; pkt2 is emitted as standalone MASTER.
+     * The first master was already emitted; pkt2 is emitted as standalone MASTER.
      */
     uint8_t p2[] = {0xFD, 0x46, 0x10, 0x00, 0x4F, 0x00, 0x00, 0xC9, 0x7D};
     SEND0(p2);
@@ -312,30 +326,31 @@ void test_tc5_all_ff_without_preceding_fd46(void)
 
     /*
      * Packet 1: 83 03 00 01 00 04 0B EB (valid CRC, FC03 request, len=8)
-     * classify_direction: FC03, len==8 → DIRECTION_REQUEST → goes to RES_WAIT.
-     * Nothing enqueued.
+     * classify_direction: FC03, len==8 → DIRECTION_REQUEST → master emitted immediately,
+     * then enters RES_WAIT.
      */
     uint8_t p1[] = {0x83, 0x03, 0x00, 0x01, 0x00, 0x04, 0x0B, 0xEB};
     SEND0(p1);
+    sniff_packet_t pkt1 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt1.is_master,
+        "pkt1 (request) must be MASTER (emitted immediately)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt1.crc_valid,
+        "pkt1 must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt1.slave_id, "pkt1 slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt1.function, "pkt1 function must be 0x03");
+
+    /* Slave has not arrived yet — queue must be empty */
     assert_queue_empty();
 
     /*
      * Packet 2: FF FF FF FF FF
      * In RES_WAIT: strip_arbitration → effective=data (all-FF not stripped), effective_len=5.
      * effective[0]=0xFF ≠ 0xFD → not FM → normal response path.
-     * req_pkt = buffered pkt1, is_master=true.
+     * Master was already emitted; only res_pkt (slave) is emitted now.
      * res_pkt = pkt2, is_master=false, crc_valid=false (CRC of FF FF FF ≠ FF FF).
      */
     uint8_t p2[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     SEND0(p2);
-
-    sniff_packet_t pkt1 = dequeue_packet();
-    TEST_ASSERT_TRUE_MESSAGE(pkt1.is_master,
-        "pkt1 (buffered request) must be MASTER");
-    TEST_ASSERT_TRUE_MESSAGE(pkt1.crc_valid,
-        "pkt1 must have valid CRC (it was buffered because CRC was valid)");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt1.slave_id, "pkt1 slave_id must be 0x83");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt1.function, "pkt1 function must be 0x03");
 
     sniff_packet_t pkt2 = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(pkt2.is_master,
@@ -376,12 +391,18 @@ void test_tc6_broadcast_does_not_start_res_wait(void)
 
     /*
      * Packet 2: 83 03 00 61 00 02 8B F7 — must be treated as a fresh request (IDLE → RES_WAIT),
-     * NOT as a response to the broadcast. Timer must start.
+     * NOT as a response to the broadcast. Master emitted immediately; timer must start.
      */
     int timer_start_before = mock_xTimerStart_called;
     uint8_t p2[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
     SEND0(p2);
-    /* Nothing enqueued — pkt2 is buffered in RES_WAIT */
+    /* Master is emitted immediately */
+    sniff_packet_t pkt2 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt2.is_master,
+        "TC-6 pkt2: request must be MASTER (emitted immediately)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt2.crc_valid,
+        "TC-6 pkt2: must have valid CRC");
+    /* Queue empty — only master was emitted, no slave yet */
     assert_queue_empty();
     /* Timer must have been started */
     TEST_ASSERT_EQUAL_MESSAGE(timer_start_before + 1, mock_xTimerStart_called,
@@ -411,15 +432,26 @@ void test_tc7_timeout_no_response(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
         "resp_timer_cb must have been registered by sniffer_init()");
 
-    /* Packet 1: 83 04 00 03 00 09 DE 2E — valid CRC, unicast → RES_WAIT */
+    /* Packet 1: 83 04 00 03 00 09 DE 2E — valid CRC, unicast.
+     * Master is emitted immediately upon receipt. */
     uint8_t p1[] = {0x83, 0x04, 0x00, 0x03, 0x00, 0x09, 0xDE, 0x2E};
     SEND0(p1);
+
+    /* Master packet emitted immediately */
+    sniff_packet_t master_pkt = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(master_pkt.is_master,  "TC-7: MASTER packet must be emitted immediately");
+    TEST_ASSERT_FALSE_MESSAGE(master_pkt.is_timeout, "TC-7: immediate packet must NOT be a timeout");
+    TEST_ASSERT_TRUE_MESSAGE(master_pkt.crc_valid,  "TC-7: immediate packet must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, master_pkt.slave_id, "TC-7: master slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x04, master_pkt.function, "TC-7: master function must be 0x04");
+
+    /* Timer has not fired yet — queue must be empty */
     assert_queue_empty();
 
     /* Simulate 200 ms elapsed by firing the timer callback manually */
     timer_cb(MOCK_TIMER_HANDLE);
 
-    /* A single timeout packet must have been enqueued */
+    /* A separate timeout packet must now be enqueued */
     sniff_packet_t pkt = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(pkt.is_timeout, "timeout packet must have is_timeout=true");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt.slave_id,
@@ -621,20 +653,10 @@ void test_tc10_orphan_fc04_response_at_startup(void)
 
     /*
      * Packet 2: normal FC03 request (8 bytes, CRC OK).
-     * len=8 → DIRECTION_REQUEST → buffered in RES_WAIT.
+     * len=8 → DIRECTION_REQUEST → master emitted immediately, enters RES_WAIT.
      */
     uint8_t pkt2[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
     SEND0(pkt2);
-    /* Still in RES_WAIT — nothing enqueued yet */
-    assert_queue_empty();
-
-    /*
-     * Packet 3: FC03 response (9 bytes, CRC OK).
-     * Both packets (request MASTER + response SLAVE) must be emitted.
-     */
-    uint8_t pkt3[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
-    SEND0(pkt3);
-
     sniff_packet_t p2 = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(p2.is_master,
         "TC-10 pkt2: FC03 request must be MASTER");
@@ -642,6 +664,16 @@ void test_tc10_orphan_fc04_response_at_startup(void)
         "TC-10 pkt2: crc_valid must be true");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p2.slave_id, "TC-10 pkt2: slave_id must be 0x83");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p2.function, "TC-10 pkt2: function must be 0x03");
+
+    /* Slave has not arrived yet — queue must be empty */
+    assert_queue_empty();
+
+    /*
+     * Packet 3: FC03 response (9 bytes, CRC OK).
+     * Only the slave response is emitted now.
+     */
+    uint8_t pkt3[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
+    SEND0(pkt3);
 
     sniff_packet_t p3 = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(p3.is_master,
@@ -700,30 +732,29 @@ void test_tc12_fc01_len8_treated_as_request(void)
     /*
      * Packet: addr=0x83, fc=0x01, start_addr=0x14B4, count=7, CRC=26 3C.
      * len=8, data[2]=0x14 (not 3) → DIRECTION_REQUEST (len==8 rule).
-     * Expected: buffered in RES_WAIT; nothing enqueued yet.
+     * Master is emitted immediately upon receipt.
      */
     uint8_t pkt_req[] = {0x83, 0x01, 0x14, 0xB4, 0x00, 0x07, 0x26, 0x3C};
     SEND0(pkt_req);
-    assert_queue_empty();
-
-    /*
-     * Response: addr=0x83, fc=0x01, bytecount=0x01, data=0x7F, CRC=38 10.
-     * len=6, 5+data[2]=5+1=6 → DIRECTION_RESPONSE (but this arrives in RES_WAIT,
-     * so it is unconditionally treated as a response).
-     * Both request (MASTER) and response (SLAVE) must be emitted.
-     */
-    uint8_t pkt_res[] = {0x83, 0x01, 0x01, 0x7F, 0x38, 0x10};
-    SEND0(pkt_res);
-
     sniff_packet_t p1 = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(p1.is_master,
-        "TC-12: buffered FC01 request must be MASTER");
+        "TC-12: FC01 request must be MASTER (emitted immediately)");
     TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,
         "TC-12: request crc_valid must be true");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id,
         "TC-12: request slave_id must be 0x83");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p1.function,
         "TC-12: request function must be 0x01");
+
+    /* Slave has not arrived yet — queue must be empty */
+    assert_queue_empty();
+
+    /*
+     * Response: addr=0x83, fc=0x01, bytecount=0x01, data=0x7F, CRC=38 10.
+     * Only the slave response is emitted now.
+     */
+    uint8_t pkt_res[] = {0x83, 0x01, 0x01, 0x7F, 0x38, 0x10};
+    SEND0(pkt_res);
 
     sniff_packet_t p2 = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(p2.is_master,
@@ -794,25 +825,25 @@ void test_tc14_fc05_direction_unknown_dropped(void)
 
     /*
      * Verify state is still SNIFF_IDLE: send a FC03 request (DIRECTION_REQUEST).
-     * It must be buffered (queue still empty), then after response both packets
-     * are emitted in the correct master/slave order.
+     * Master is emitted immediately; then after response only the slave is emitted.
      */
     uint8_t pkt_req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
     SEND0(pkt_req);
-    assert_queue_empty();
-
-    uint8_t pkt_res[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
-    SEND0(pkt_res);
-
     sniff_packet_t p1 = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(p1.is_master,
-        "TC-14: FC03 request after dropped FC05 must be MASTER");
+        "TC-14: FC03 request after dropped FC05 must be MASTER (emitted immediately)");
     TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,
         "TC-14: FC03 request crc_valid must be true");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id,
         "TC-14: FC03 request slave_id must be 0x83");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function,
         "TC-14: FC03 request function must be 0x03");
+
+    /* Slave has not arrived yet — queue must be empty */
+    assert_queue_empty();
+
+    uint8_t pkt_res[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
+    SEND0(pkt_res);
 
     sniff_packet_t p2 = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(p2.is_master,
@@ -865,12 +896,14 @@ void test_tc16_crc_err_after_sync_alternates_direction(void)
      */
     uint8_t req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
     uint8_t res[] = {0x83, 0x03, 0x04, 0x00, 0x03, 0x00, 0x1E, 0x28, 0x33};
+    /* Master is emitted immediately upon receipt */
     SEND0(req);
-    assert_queue_empty(); /* buffered in RES_WAIT */
-    SEND0(res);
-    /* Dequeue and discard both packets (synchronization complete) */
     sniff_packet_t p_req = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(p_req.is_master, "TC-16: setup req must be MASTER");
+    /* Slave has not arrived yet */
+    assert_queue_empty();
+    SEND0(res);
+    /* Dequeue and discard the slave response (synchronization complete) */
     sniff_packet_t p_res = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(p_res.is_master, "TC-16: setup res must be SLAVE");
     assert_queue_empty();
@@ -1050,48 +1083,45 @@ void test_tc18_multi_master_in_res_wait(void)
      */
     uint8_t resp_b[] = {0x01, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0xFA, 0x33};
 
-    /* Step 1: Master A request → RES_WAIT; nothing enqueued. */
+    /* Step 1: Master A request → emitted immediately, enters RES_WAIT. */
     SEND0(req_a);
-    assert_queue_empty();
-
-    /* Step 2: Master B request arrives in RES_WAIT.
-     * Expected: Master A's buffered request is emitted (1 packet).
-     *           Master B's request is buffered; timer is restarted. */
-    int timer_start_before = mock_xTimerStart_called;
-    SEND0(req_b);
-
-    /* Master A's buffered request must have been flushed to the queue. */
     sniff_packet_t p1 = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(p1.is_master,
-        "TC-18 p1: Master A's buffered request must be MASTER (is_master=true)");
+        "TC-18 p1: Master A request must be MASTER (emitted immediately)");
     TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,
-        "TC-18 p1: Master A's buffered request must have valid CRC");
+        "TC-18 p1: Master A request must have valid CRC");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id,
         "TC-18 p1: slave_id must be 0x83 (Master A target)");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function,
         "TC-18 p1: function must be FC03");
+    assert_queue_empty();
 
-    /* Master B's request must be buffered (not yet emitted). */
+    /* Step 2: Master B request arrives in RES_WAIT.
+     * Expected: Master B emitted immediately; timer restarted. */
+    int timer_start_before = mock_xTimerStart_called;
+    SEND0(req_b);
+
+    /* Master B must be emitted immediately. */
+    sniff_packet_t p2 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p2.is_master,
+        "TC-18 p2: Master B request must be MASTER (emitted immediately)");
+    TEST_ASSERT_TRUE_MESSAGE(p2.crc_valid,
+        "TC-18 p2: Master B request must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p2.slave_id,
+        "TC-18 p2: slave_id must be 0x01 (Master B target)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p2.function,
+        "TC-18 p2: function must be FC03");
+
+    /* Queue must be empty — no slave yet. */
     assert_queue_empty();
 
     /* Timer must have been restarted (xTimerStart called once more). */
     TEST_ASSERT_EQUAL_MESSAGE(timer_start_before + 1, mock_xTimerStart_called,
         "TC-18: xTimerStart must be called once to restart timer for Master B's request");
 
-    /* Step 3: Slave 0x01 responds → paired with Master B's buffered request.
-     * Expected: Master B's request + Slave 0x01 response emitted (2 packets).
+    /* Step 3: Slave 0x01 responds → only the slave response is emitted.
      *           State → SNIFF_IDLE. */
     SEND0(resp_b);
-
-    sniff_packet_t p2 = dequeue_packet();
-    TEST_ASSERT_TRUE_MESSAGE(p2.is_master,
-        "TC-18 p2: Master B's buffered request must be MASTER (is_master=true)");
-    TEST_ASSERT_TRUE_MESSAGE(p2.crc_valid,
-        "TC-18 p2: Master B's buffered request must have valid CRC (hardcoded true in DIRECTION_REQUEST branch)");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p2.slave_id,
-        "TC-18 p2: slave_id must be 0x01 (Master B target)");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p2.function,
-        "TC-18 p2: function must be FC03");
 
     sniff_packet_t p3 = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(p3.is_master,
@@ -1126,9 +1156,14 @@ void test_tc19_post_disable_timer_no_spurious_packet(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
         "resp_timer_cb must have been registered by sniffer_init()");
 
-    /* Send a request to port 0 → enters RES_WAIT, req_buf populated. */
+    /* Send a request to port 0 → master emitted immediately, enters RES_WAIT. */
     uint8_t req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
     SEND0(req);
+    {
+        sniff_packet_t master_pkt = dequeue_packet();
+        TEST_ASSERT_TRUE_MESSAGE(master_pkt.is_master,
+            "TC-19: master must be emitted immediately on request");
+    }
     assert_queue_empty();
 
     /* Disable the sniffer before the timer fires.
@@ -1140,6 +1175,389 @@ void test_tc19_post_disable_timer_no_spurious_packet(void)
     timer_cb(MOCK_TIMER_HANDLE);
 
     /* Queue must be empty — the guard must prevent the spurious timeout packet. */
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-20 — Fast response (response arrives before timer fires)
+ * ============================================================ */
+
+void test_tc20_fast_response_before_timer(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-20: Fast response — slave responds before timer fires");
+    LOG_MESSAGE();
+
+    /* Request: slave=0x01, FC=03, addr=0x0000, count=0x0002, valid CRC */
+    uint8_t req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /* Master is emitted immediately upon receipt, state enters RES_WAIT */
+    SEND0(req);
+    sniff_packet_t p0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p0.is_master, "TC-20 p0: must be MASTER (request)");
+    TEST_ASSERT_FALSE_MESSAGE(p0.is_timeout, "TC-20 p0: must not be a timeout");
+    TEST_ASSERT_TRUE_MESSAGE(p0.crc_valid, "TC-20 p0: must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p0.slave_id, "TC-20 p0: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p0.function, "TC-20 p0: function must be 0x03");
+
+    /* Slave has not arrived yet — queue must be empty */
+    assert_queue_empty();
+
+    /* Response: slave=0x01, FC=03, bytecount=4, data=0x0001 0x0002, valid CRC */
+    uint8_t resp[] = {0x01, 0x03, 0x04, 0x00, 0x01, 0x00, 0x02, 0x2A, 0x32};
+
+    /* Only the slave response is emitted */
+    SEND0(resp);
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p1.is_master, "TC-20 p1: must be SLAVE (response)");
+    TEST_ASSERT_FALSE_MESSAGE(p1.is_timeout, "TC-20 p1: must not be a timeout");
+    TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid, "TC-20 p1: must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p1.slave_id, "TC-20 p1: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function, "TC-20 p1: function must be 0x03");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-21 — Response exactly at timer boundary (timer fires, then response arrives)
+ * ============================================================ */
+
+void test_tc21_response_arrives_after_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-21: Response after timeout — timer fires first, slave arrives late");
+    LOG_MESSAGE();
+
+    /*
+     * Get the timer callback registered by sniffer_init().
+     * pvTimerGetTimerID is stubbed to always return 0, so callback acts on port 0.
+     */
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* Request: slave=0x01, FC=03, addr=0x0000, count=0x0002, valid CRC */
+    uint8_t req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /* Master is emitted immediately upon receipt, enters RES_WAIT */
+    SEND0(req);
+    sniff_packet_t master_pkt = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(master_pkt.is_master,   "TC-21: master must be emitted immediately");
+    TEST_ASSERT_FALSE_MESSAGE(master_pkt.is_timeout, "TC-21: immediate pkt must NOT be timeout");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, master_pkt.slave_id, "TC-21: master slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, master_pkt.function, "TC-21: master function must be 0x03");
+
+    /* Queue empty before timer fires */
+    assert_queue_empty();
+
+    /* Timer fires before slave responds → separate timeout packet emitted */
+    timer_cb(MOCK_TIMER_HANDLE);
+
+    /* Dequeue the timeout packet (carries the buffered request data) */
+    sniff_packet_t p0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p0.is_timeout, "TC-21 p0: must be a timeout packet");
+    TEST_ASSERT_TRUE_MESSAGE(p0.is_master, "TC-21 p0: timeout pkt must be MASTER");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p0.slave_id, "TC-21 p0: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p0.function, "TC-21 p0: function must be 0x03");
+
+    /* After the timeout, slave has not yet arrived — queue must be empty */
+    assert_queue_empty();
+
+    /* Response: slave=0x01, FC=03, bytecount=4, data=0x0001 0x0002, valid CRC.
+     * State is now SNIFF_IDLE, so this is an orphan response (DIRECTION_RESPONSE branch)
+     * and is emitted as a standalone SLAVE packet. */
+    uint8_t resp[] = {0x01, 0x03, 0x04, 0x00, 0x01, 0x00, 0x02, 0x2A, 0x32};
+    SEND0(resp);
+
+    /* Orphan slave response packet */
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p1.is_master, "TC-21 p1: orphan response must be SLAVE");
+    TEST_ASSERT_FALSE_MESSAGE(p1.is_timeout, "TC-21 p1: orphan response must not be a timeout");
+    TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid, "TC-21 p1: orphan response must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p1.slave_id, "TC-21 p1: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function, "TC-21 p1: function must be 0x03");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-22 — No response at all (timer fires, slave never arrives)
+ * ============================================================ */
+
+void test_tc22_no_response_at_all(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-22: No response at all — timer fires, slave never comes");
+    LOG_MESSAGE();
+
+    /*
+     * Get the timer callback registered by sniffer_init().
+     * pvTimerGetTimerID is stubbed to always return 0, so callback acts on port 0.
+     */
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* Request: slave=0x01, FC=03, addr=0x0000, count=0x0002, valid CRC */
+    uint8_t req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /* Master is emitted immediately upon receipt, enters RES_WAIT */
+    SEND0(req);
+    sniff_packet_t master_pkt = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(master_pkt.is_master,   "TC-22: master must be emitted immediately");
+    TEST_ASSERT_FALSE_MESSAGE(master_pkt.is_timeout, "TC-22: immediate pkt must NOT be timeout");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, master_pkt.slave_id, "TC-22: master slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, master_pkt.function, "TC-22: master function must be 0x03");
+
+    /* Queue empty before timer fires */
+    assert_queue_empty();
+
+    /* Timer fires → separate timeout packet emitted, state → SNIFF_IDLE */
+    timer_cb(MOCK_TIMER_HANDLE);
+
+    /* Exactly one timeout packet */
+    sniff_packet_t p0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p0.is_timeout, "TC-22 p0: must be a timeout packet");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p0.slave_id, "TC-22 p0: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p0.function, "TC-22 p0: function must be 0x03");
+
+    /* No slave response ever arrives — queue must remain empty */
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-23 — Multiple consecutive timeouts (master keeps polling a dead slave)
+ * ============================================================ */
+
+void test_tc23_multiple_consecutive_timeouts(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-23: Multiple consecutive timeouts — master polls dead slave 3 times");
+    LOG_MESSAGE();
+
+    /*
+     * Get the timer callback registered by sniffer_init().
+     * pvTimerGetTimerID is stubbed to always return 0, so callback acts on port 0.
+     */
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* Request: slave=0x01, FC=03, addr=0x0000, count=0x0002, valid CRC */
+    uint8_t req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /* Repeat the request→timeout cycle 3 times.
+     * Each iteration: req is sent in IDLE → master emitted immediately, enters RES_WAIT.
+     * Timer fires → separate timeout packet emitted.
+     * Dequeue both packets so the queue is empty before the next iteration. */
+    for (int i = 0; i < 3; i++) {
+        SEND0(req);
+
+        /* Master is emitted immediately */
+        sniff_packet_t master_pkt = dequeue_packet();
+        TEST_ASSERT_TRUE_MESSAGE(master_pkt.is_master,
+            "TC-23: each SEND0 must emit a MASTER packet immediately");
+        TEST_ASSERT_FALSE_MESSAGE(master_pkt.is_timeout,
+            "TC-23: immediate packet must NOT be a timeout");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, master_pkt.slave_id,
+            "TC-23: master slave_id must be 0x01");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, master_pkt.function,
+            "TC-23: master function must be 0x03");
+
+        /* Queue empty before timer fires */
+        assert_queue_empty();
+
+        timer_cb(MOCK_TIMER_HANDLE);
+
+        /* Separate timeout packet */
+        sniff_packet_t pkt = dequeue_packet();
+        TEST_ASSERT_TRUE_MESSAGE(pkt.is_timeout,
+            "TC-23: each timeout must be a separate timeout packet");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, pkt.slave_id,
+            "TC-23: slave_id must be 0x01");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt.function,
+            "TC-23: function must be 0x03");
+    }
+
+    /* All packets have been consumed — queue must now be empty */
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-24 — Master request emitted immediately upon receipt
+ *
+ * Verifies that sniffer_process() enqueues the master packet immediately
+ * when a DIRECTION_REQUEST packet arrives in SNIFF_IDLE state, without
+ * waiting for a slave response or timer expiry.
+ * ============================================================ */
+
+void test_tc24_master_emitted_immediately(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-24: Master request emitted immediately upon receipt");
+    LOG_MESSAGE();
+
+    /* FC03 request: slave=0x01, func=0x03, addr=0x0000, count=0x0002, valid CRC */
+    uint8_t req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /* Master packet must be enqueued immediately without waiting for
+     * the slave response or timer expiry. */
+    SEND0(req);
+    sniff_packet_t pkt = dequeue_packet();
+
+    TEST_ASSERT_TRUE_MESSAGE(pkt.is_master,    "TC-24: packet must be MASTER");
+    TEST_ASSERT_FALSE_MESSAGE(pkt.is_timeout,  "TC-24: packet must NOT be a timeout");
+    TEST_ASSERT_TRUE_MESSAGE(pkt.crc_valid,    "TC-24: packet must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, pkt.slave_id, "TC-24: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt.function, "TC-24: function must be 0x03");
+
+    /* Slave has not arrived yet and timer has not fired — queue must be empty */
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-25 — Timeout is a separate event emitted AFTER the master packet
+ *
+ * Verifies that when the response timer fires without a slave reply, a separate
+ * timeout packet is enqueued after the master packet that was already emitted
+ * immediately upon receipt of the request.
+ * ============================================================ */
+
+void test_tc25_timeout_is_separate_after_master(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-25: Timeout is a separate event emitted AFTER the master packet");
+    LOG_MESSAGE();
+
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* FC03 request: slave=0x01, func=0x03, addr=0x0000, count=0x0002, valid CRC */
+    uint8_t req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /* Step 1 — SEND0(req): master packet is emitted immediately upon receipt. */
+    SEND0(req);
+    sniff_packet_t p0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p0.is_master,   "TC-25 p0: must be MASTER");
+    TEST_ASSERT_FALSE_MESSAGE(p0.is_timeout, "TC-25 p0: must NOT be a timeout");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p0.slave_id, "TC-25 p0: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p0.function, "TC-25 p0: function must be 0x03");
+
+    /* Timer has not fired yet — only the master packet was emitted */
+    assert_queue_empty();
+
+    /* Step 2 — timer fires: desired behavior emits a SEPARATE timeout packet.
+     * The master was already emitted; this packet carries only the timeout flag. */
+    timer_cb(MOCK_TIMER_HANDLE);
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p1.is_timeout,  "TC-25 p1: must be a timeout packet");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p1.slave_id, "TC-25 p1: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function, "TC-25 p1: function must be 0x03");
+
+    /* Total: exactly 2 packets (master + timeout), no more */
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-26 — Slow response: 3 events — MASTER + TIMEOUT + orphan SLAVE
+ *
+ * Verifies that when the slave responds after the timer has already fired,
+ * three separate packets are produced: the master (emitted immediately),
+ * a timeout packet (emitted when the timer fires), and an orphan slave
+ * packet (emitted when the late response arrives).
+ * ============================================================ */
+
+void test_tc26_slow_response_three_events(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-26: Slow response — MASTER + TIMEOUT + orphan SLAVE");
+    LOG_MESSAGE();
+
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* FC03 request: slave=0x01, func=0x03, addr=0x0000, count=0x0002, valid CRC */
+    uint8_t req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /* Event 1 — master emitted immediately on request. */
+    SEND0(req);
+    sniff_packet_t p0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p0.is_master,   "TC-26 p0: must be MASTER");
+    TEST_ASSERT_FALSE_MESSAGE(p0.is_timeout, "TC-26 p0: must NOT be a timeout");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p0.slave_id, "TC-26 p0: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p0.function, "TC-26 p0: function must be 0x03");
+
+    /* Event 2 — timer fires before slave responds: separate timeout packet */
+    timer_cb(MOCK_TIMER_HANDLE);
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p1.is_timeout,  "TC-26 p1: must be a timeout packet");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p1.slave_id, "TC-26 p1: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function, "TC-26 p1: function must be 0x03");
+
+    /* Event 3 — slave arrives after timeout: emitted as orphan SLAVE packet.
+     * FC03 response: slave=0x01, bytecount=4, data=0x0001 0x0002, valid CRC */
+    uint8_t resp[] = {0x01, 0x03, 0x04, 0x00, 0x01, 0x00, 0x02, 0x2A, 0x32};
+    SEND0(resp);
+    sniff_packet_t p2 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p2.is_master,  "TC-26 p2: orphan response must be SLAVE");
+    TEST_ASSERT_FALSE_MESSAGE(p2.is_timeout, "TC-26 p2: orphan response must NOT be timeout");
+    TEST_ASSERT_TRUE_MESSAGE(p2.crc_valid,   "TC-26 p2: orphan response must have valid CRC");
+
+    /* Total: exactly 3 packets */
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-27 — Fast response: MASTER emitted immediately, SLAVE on response
+ *
+ * Verifies that when the slave responds before the timer fires, exactly two
+ * packets are produced: the master (emitted immediately upon receipt of the
+ * request) and the slave (emitted when the response arrives).
+ * ============================================================ */
+
+void test_tc27_fast_response_master_immediate_slave_on_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-27: Fast response — MASTER emitted immediately, SLAVE on response");
+    LOG_MESSAGE();
+
+    /* FC03 request: slave=0x01, func=0x03, addr=0x0000, count=0x0002, valid CRC */
+    uint8_t req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC4, 0x0B};
+
+    /* Step 1 — SEND0(req): master packet is emitted immediately upon receipt. */
+    SEND0(req);
+    sniff_packet_t p0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p0.is_master,   "TC-27 p0: must be MASTER");
+    TEST_ASSERT_FALSE_MESSAGE(p0.is_timeout, "TC-27 p0: must NOT be a timeout");
+    TEST_ASSERT_TRUE_MESSAGE(p0.crc_valid,   "TC-27 p0: must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p0.slave_id, "TC-27 p0: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p0.function, "TC-27 p0: function must be 0x03");
+
+    /* Slave has not arrived yet — queue must be empty */
+    assert_queue_empty();
+
+    /* Step 2 — slave responds in time (before timer fires): emitted as SLAVE packet.
+     * FC03 response: slave=0x01, bytecount=4, data=0x0001 0x0002, valid CRC */
+    uint8_t resp[] = {0x01, 0x03, 0x04, 0x00, 0x01, 0x00, 0x02, 0x2A, 0x32};
+    SEND0(resp);
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p1.is_master,  "TC-27 p1: must be SLAVE (response)");
+    TEST_ASSERT_FALSE_MESSAGE(p1.is_timeout, "TC-27 p1: must NOT be a timeout");
+    TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,   "TC-27 p1: must have valid CRC");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p1.slave_id, "TC-27 p1: slave_id must be 0x01");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p1.function, "TC-27 p1: function must be 0x03");
+
+    /* Total: exactly 2 packets (master + slave), no more */
     assert_queue_empty();
 }
 
@@ -1175,6 +1593,14 @@ int main(void)
     RUN_TEST(test_sniffer_set_cache_active_inactive_sets_proxy_timeout);
     RUN_TEST(test_tc18_multi_master_in_res_wait);
     RUN_TEST(test_tc19_post_disable_timer_no_spurious_packet);
+    RUN_TEST(test_tc20_fast_response_before_timer);
+    RUN_TEST(test_tc21_response_arrives_after_timeout);
+    RUN_TEST(test_tc22_no_response_at_all);
+    RUN_TEST(test_tc23_multiple_consecutive_timeouts);
+    RUN_TEST(test_tc24_master_emitted_immediately);
+    RUN_TEST(test_tc25_timeout_is_separate_after_master);
+    RUN_TEST(test_tc26_slow_response_three_events);
+    RUN_TEST(test_tc27_fast_response_master_immediate_slave_on_response);
 
     return UNITY_END();
 }

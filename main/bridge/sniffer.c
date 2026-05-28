@@ -440,11 +440,25 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
                 enqueue_req = true;
                 /* State stays SNIFF_IDLE */
             } else if (dir == DIRECTION_REQUEST) {
-                /* Unambiguously a master request — buffer it and wait for the response */
-                size_t copy_len = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
+                /* Emit master request immediately so it appears in the sniffer log right away. */
+                req_pkt.port         = (uint8_t)port_index;
+                req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
+                req_pkt.is_master    = true;
+                req_pkt.crc_valid    = true;
+                req_pkt.is_timeout   = false;
+                req_pkt.slave_id     = effective[0];
+                req_pkt.function     = effective[1];
+                size_t copy_len      = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
+                memcpy(req_pkt.data, effective, copy_len);
+                req_pkt.data_len     = (uint16_t)copy_len;
+                ctx->synchronized    = true;
+                ctx->last_was_master = true;
+                enqueue_req          = true;
+                /* Also buffer in req_buf so the timer and SNIFF_RES_WAIT branches can reference
+                 * slave_id/function for the timeout event. */
                 memcpy(ctx->req_buf, effective, copy_len);
                 ctx->req_len          = (uint16_t)copy_len;
-                ctx->req_timestamp_us = (uint64_t)esp_timer_get_time();
+                ctx->req_timestamp_us = req_pkt.timestamp_us;
                 ctx->state            = SNIFF_RES_WAIT;
                 should_start_timer    = true;
             } else {
@@ -454,20 +468,9 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
         }
     } else { /* SNIFF_RES_WAIT */
         if (effective_len < 4) {
-            /* Arbitration-only response (e.g. FF FF FF FF FF) — flush the
-             * buffered request so the state machine stays in phase. */
-            req_pkt.port         = (uint8_t)port_index;
-            req_pkt.timestamp_us = ctx->req_timestamp_us;
-            req_pkt.is_master    = true;
-            req_pkt.crc_valid    = true;
-            req_pkt.slave_id     = ctx->req_buf[0];
-            req_pkt.function     = ctx->req_buf[1];
-            memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
-            req_pkt.data_len     = ctx->req_len;
-            ctx->synchronized    = true;
-            ctx->last_was_master = true;
-            enqueue_req = true;
-
+            /* Arbitration-only response (e.g. FF FF FF FF FF).
+             * Master was already emitted immediately on receipt.
+             * Emit only the slave (arbitration) packet here. */
             res_pkt.port         = (uint8_t)port_index;
             res_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
             res_pkt.is_master    = false;
@@ -516,42 +519,32 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
          * (second master starting a transaction while we were waiting for a response). */
         pdu_direction_t dir2 = classify_direction(effective, effective_len);
         if (dir2 == DIRECTION_REQUEST) {
-            /* Second master: flush the pending buffered request as a standalone MASTER
-             * packet and start waiting for the response to the new request. */
+            /* First master was already emitted on receipt.
+             * Emit second master immediately and start waiting for its response. */
             req_pkt.port         = (uint8_t)port_index;
-            req_pkt.timestamp_us = ctx->req_timestamp_us;
+            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
             req_pkt.is_master    = true;
             req_pkt.crc_valid    = true;
-            req_pkt.slave_id     = ctx->req_buf[0];
-            req_pkt.function     = ctx->req_buf[1];
-            memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
-            req_pkt.data_len     = ctx->req_len;
+            req_pkt.is_timeout   = false;
+            req_pkt.slave_id     = effective[0];
+            req_pkt.function     = effective[1];
+            size_t new_cpy       = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
+            memcpy(req_pkt.data, effective, new_cpy);
+            req_pkt.data_len     = (uint16_t)new_cpy;
             ctx->synchronized    = true;
             ctx->last_was_master = true;
             enqueue_req          = true;
 
             /* Buffer the new request; restart timer; stay in SNIFF_RES_WAIT. */
-            size_t new_cpy        = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
             memcpy(ctx->req_buf, effective, new_cpy);
             ctx->req_len          = (uint16_t)new_cpy;
-            ctx->req_timestamp_us = (uint64_t)esp_timer_get_time();
+            ctx->req_timestamp_us = req_pkt.timestamp_us;
             should_start_timer    = true;
             /* ctx->state stays SNIFF_RES_WAIT */
         } else {
             /* Normal response (DIRECTION_RESPONSE or DIRECTION_UNKNOWN):
-             * pair the incoming packet with the buffered request. */
-            req_pkt.port         = (uint8_t)port_index;
-            req_pkt.timestamp_us = ctx->req_timestamp_us;
-            req_pkt.is_master    = true;
-            req_pkt.crc_valid    = true;
-            req_pkt.slave_id     = ctx->req_buf[0];
-            req_pkt.function     = ctx->req_buf[1];
-            memcpy(req_pkt.data, ctx->req_buf, ctx->req_len);
-            req_pkt.data_len     = ctx->req_len;
-            ctx->synchronized    = true;
-            ctx->last_was_master = true;
-            enqueue_req          = true;
-
+             * master was already emitted immediately on receipt.
+             * Emit only the slave response here. */
             res_pkt.port         = (uint8_t)port_index;
             res_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
             res_pkt.is_master    = false;
