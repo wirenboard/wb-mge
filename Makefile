@@ -159,19 +159,19 @@ lint-c:
 
 lint-comments:
 	@echo "Checking for Cyrillic characters in C/H comments..."
-	@if $(GREP) -rnP --include='*.c' --include='*.h' '//[^\n]*[\x{0400}-\x{04FF}]' main/ unittests/; then \
+	@if $(GREP) -rnP --include='*.c' --include='*.h' '//[^\n]*\p{Cyrillic}' main/ unittests/; then \
 	    echo "ERROR: Cyrillic characters found in C/H comments. All comments must be in English."; \
 	    exit 1; \
 	fi
 	@echo "OK: no Cyrillic characters in C/H"
 	@echo "Checking for Cyrillic characters in Python comments..."
-	@if $(GREP) -rnP --include='*.py' '#[^\n]*[\x{0400}-\x{04FF}]' api_tests/; then \
+	@if $(GREP) -rnP --include='*.py' '#[^\n]*\p{Cyrillic}' api_tests/; then \
 	    echo "ERROR: Cyrillic characters found in Python comments. All comments must be in English."; \
 	    exit 1; \
 	fi
 	@echo "OK: no Cyrillic characters in Python"
 	@echo "Checking for Cyrillic characters in frontend comments..."
-	@if $(GREP) -rnP --include='*.ts' --include='*.vue' --include='*.js' '//[^\n]*[\x{0400}-\x{04FF}]' main/frontend/src/; then \
+	@if $(GREP) -rnP --include='*.ts' --include='*.vue' --include='*.js' '//[^\n]*\p{Cyrillic}' main/frontend/src/; then \
 	    echo "ERROR: Cyrillic characters found in frontend comments. All comments must be in English."; \
 	    exit 1; \
 	fi
