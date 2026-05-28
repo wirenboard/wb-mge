@@ -58,8 +58,11 @@ RUN_%: %
 		echo "\n\n================= Running test $(TEST_NAME): $$test_name =================\n" && \
 		test_dir=$(BUILD_DIR)/$$test_name && \
 		test_bin=$$test_dir/$$test_name && \
+		log_file=$$test_dir/$$test_name.log && \
 		rm -f $$test_dir/*.gcda && \
-		$$test_bin && \
+		$$test_bin > $$log_file 2>&1; rc=$$?; \
+		cat $$log_file; \
+		if [ $$rc -ne 0 ]; then exit $$rc; fi; \
 		echo "\n================ Test $(TEST_NAME): $$test_name finished =================\n"; \
 	}
 

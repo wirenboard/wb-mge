@@ -29,6 +29,12 @@ pipeline {
                     sh 'bash -c "make lint-frontend"'
                 }
             }
+            post {
+                always {
+                    junit testResults: 'build/eslint_report.xml', allowEmptyResults: true
+                    archiveArtifacts artifacts: "build/eslint_report.xml", allowEmptyArchive: true
+                }
+            }
         }
         stage('Lint comments') {
             steps {
@@ -41,6 +47,14 @@ pipeline {
             steps {
                 script {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make unittests test-frontend"'
+                }
+            }
+            post {
+                always {
+                    // Aggregate Unity stdout logs into a JUnit XML; run even on test failure
+                    sh 'python3 scripts/unity_to_junit.py --output build/unittests_report.xml --logs unittests || true'
+                    junit testResults: 'build/unittests_report.xml,build/vitest_report.xml', allowEmptyResults: true
+                    archiveArtifacts artifacts: "build/unittests_report.xml,build/vitest_report.xml", allowEmptyArchive: true
                 }
             }
         }
@@ -63,6 +77,17 @@ pipeline {
                 // catchError keeps build UNSTABLE (yellow) on lint findings — QEMU/S3 still run
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make lint-c"'
+                }
+            }
+            post {
+                always {
+                    // wb_clang_tidy.py writes findings to /tmp/clang-tidy-out and logs to
+                    // /tmp/clang-tidy-log — copy into workspace so they survive as artifacts
+                    sh '''
+                        mkdir -p build/clang-tidy
+                        cp -r /tmp/clang-tidy-out /tmp/clang-tidy-log build/clang-tidy/ 2>/dev/null || true
+                    '''
+                    archiveArtifacts artifacts: "build/clang-tidy/**", allowEmptyArchive: true
                 }
             }
         }

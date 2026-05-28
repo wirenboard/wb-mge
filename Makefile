@@ -116,11 +116,17 @@ $(UNITTESTS_TARGETS):
 
 lint-frontend:
 	@echo 'Running frontend linter'
+	@mkdir -p $(CURDIR)/build
 	@{ \
-		set -e && \
 		cd main/frontend/ && \
-		npm install && \
-		npm run lint; \
+		npm install; \
+	}
+	@{ \
+		cd main/frontend/ && \
+		rc=0; \
+		npm run lint || rc=$$?; \
+		npx eslint src --ext .vue,.ts,.js --format junit --output-file $(CURDIR)/build/eslint_report.xml > /dev/null 2>&1 || true; \
+		exit $$rc; \
 	}
 
 # C linter. Requires build/compile_commands.json from a prior idf.py build
@@ -173,11 +179,12 @@ lint-comments:
 
 test-frontend:
 	@echo 'Running frontend tests'
+	@mkdir -p $(CURDIR)/build
 	@{ \
 		set -e && \
 		cd main/frontend/ && \
 		npm install && \
-		npm run test; \
+		npm run test -- --reporter=default --reporter=junit --outputFile.junit=$(CURDIR)/build/vitest_report.xml; \
 	}
 
 build-frontend:
