@@ -645,7 +645,8 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
 
     Uses payload = bytes([(i % 251) for i in range(1024)]) which cycles
     values 0..250, inserting 0x00 at indices 0, 251, 502, 753, 1004 (5 null bytes).
-    Payload is sent in 64-byte chunks to avoid UART RX buffer overflow.
+    Payload is sent in one shot; the firmware forwards UART data immediately
+    without waiting for idle timeout, so burst load does not cause RX overflow.
     """
     probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
     if probe is None:
@@ -664,12 +665,9 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
     tcp_sock.settimeout(5.0)
     try:
         tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
-        # Send payload in 64-byte chunks to avoid UART RX buffer overflow.
-        # The ESP32 UART driver ring buffer fills up if all 1024 bytes arrive at once.
-        chunk_size = 64
-        for offset in range(0, len(payload), chunk_size):
-            tcp_sock.sendall(payload[offset:offset + chunk_size])
-            time.sleep(0.05)  # allow firmware to drain UART RX before next chunk
+        # Send entire payload at once; firmware now forwards UART_DATA events immediately
+        # without buffering, so burst load no longer causes RX overflow.
+        tcp_sock.sendall(payload)
 
         received = _collect_echo(tcp_sock, len(payload), timeout=10.0)
 

@@ -61,10 +61,13 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             uart_read_bytes(desc->port_num, &buffer_ctx->data[buffer_ctx->data_len], event.size, portMAX_DELAY);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, &buffer_ctx->data[buffer_ctx->data_len], event.size, ESP_LOG_DEBUG);
             buffer_ctx->data_len += event.size;
-            if (event.timeout_flag) {
-                if (desc->receive_handler) {
-                    desc->receive_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
-                }
+            if (desc->receive_handler) {
+                // Transparent bridge: forward data immediately on every UART_DATA event.
+                // Waiting for idle timeout would allow the buffer to overflow under burst load.
+                desc->receive_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
+                buffer_ctx->data_len = 0;
+            } else if (event.timeout_flag) {
+                // Sniffer mode: accumulate bytes and deliver complete packet after idle timeout.
                 if (desc->sniff_handler) {
                     desc->sniff_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
                 }

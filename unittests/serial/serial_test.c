@@ -855,10 +855,22 @@ void test_serial_init_success_with_uart_data_event_no_tout(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
     verify_uart_read_bytes_args(1, size_to_read, portMAX_DELAY);
 
+    // receive_handler is called immediately on every UART_DATA event, regardless of timeout_flag
     TEST_ASSERT_EQUAL_MESSAGE(
-        0,
+        1,
         mock_receive_handler_data.called,
-        "Receive handler should not be called when the timeout_flag is not set"
+        "Receive handler must be called immediately on UART_DATA, regardless of timeout_flag"
+    );
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        size_to_read,
+        mock_receive_handler_data.len,
+        "Receive handler should be called with correct data length"
+    );
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        MOCK_DATA_FROM_UART_READ,
+        mock_receive_handler_data.data,
+        size_to_read,
+        "Receive handler should be called with correct data"
     );
 }
 
@@ -889,10 +901,11 @@ void test_serial_init_success_with_two_uart_data_events(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
     verify_uart_read_bytes_args(2, 20, portMAX_DELAY);  // Last (second) read length should be 20 bytes
 
+    // receive_handler is called once per UART_DATA event; buffer resets between calls
     TEST_ASSERT_EQUAL_MESSAGE(
-        1,
+        2,
         mock_receive_handler_data.called,
-        "Receive handler should be called once"
+        "Receive handler should be called once per UART_DATA event"
     );
 
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
@@ -901,21 +914,18 @@ void test_serial_init_success_with_two_uart_data_events(void)
         "Receive handler should be called with correct serial descriptor"
     );
 
+    // Last call receives only event_2's 20 bytes (buffer was reset after event_1)
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
-        30,
+        20,
         mock_receive_handler_data.len,
-        "Receive handler should be called with correct data length"
+        "Receive handler last call should have only the current event's bytes"
     );
 
-    char expected_data[30];
-    memcpy(expected_data, MOCK_DATA_FROM_UART_READ, 10);
-    memcpy(&expected_data[10], MOCK_DATA_FROM_UART_READ, 20);
-
     TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        expected_data,
+        MOCK_DATA_FROM_UART_READ,
         mock_receive_handler_data.data,
-        30,
-        "Receive handler should be called with correct data"
+        20,
+        "Receive handler should be called with correct data on last call"
     );
 }
 
@@ -947,10 +957,11 @@ void test_serial_init_success_with_three_uart_data_events(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
     verify_uart_read_bytes_args(3, 15, portMAX_DELAY);  // Last (third) read length should be 15 bytes
 
+    // receive_handler is called once per UART_DATA event
     TEST_ASSERT_EQUAL_MESSAGE(
-        2,
+        3,
         mock_receive_handler_data.called,
-        "Receive handler should be called once"
+        "Receive handler should be called once per UART_DATA event"
     );
 
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
@@ -959,17 +970,18 @@ void test_serial_init_success_with_three_uart_data_events(void)
         "Receive handler should be called with correct serial descriptor"
     );
 
+    // Last call receives only event_3's 15 bytes (buffer resets after each call)
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
         15,
         mock_receive_handler_data.len,
-        "Receive handler should be called with correct data length on second call"
+        "Receive handler last call should have only the current event's bytes"
     );
 
     TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
         MOCK_DATA_FROM_UART_READ,
         mock_receive_handler_data.data,
         15,
-        "Receive handler should be called with correct data on second call"
+        "Receive handler should be called with correct data on last call"
     );
 }
 
@@ -1047,7 +1059,11 @@ void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение двух событий UART_DATA с переполнением буфера на втором событии
+// Test: two UART_DATA events where the second event overflows the buffer.
+// Under the new behaviour, receive_handler fires immediately after event_1 and resets
+// data_len to 0. The old event_2 size (SERIAL_BUF_SIZE - 10 + 1 = 991) does NOT overflow
+// a freshly-reset buffer (991 < SERIAL_BUF_SIZE = 1000). To reliably hit the overflow path,
+// event_2 must exceed the full buffer capacity on its own: SERIAL_BUF_SIZE + 1.
 void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
 {
     LOG_MESSAGE();
@@ -1057,8 +1073,10 @@ void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
     serial_config_t config;
     init_default_config(&config);
 
+    // event_1: small, fits — receive_handler called immediately, buffer reset to 0
+    // event_2: larger than the full buffer — overflows even on a freshly-reset buffer
     uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
-    uart_event_t event_2 = {.type = UART_DATA, .size = SERIAL_BUF_SIZE - 10 + 1, .timeout_flag = true};
+    uart_event_t event_2 = {.type = UART_DATA, .size = SERIAL_BUF_SIZE + 1, .timeout_flag = true};
     void* events_arr[2] = {&event_1, &event_2};
     size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
     mock_xQueueReceive_data.pvBuffer_arr = events_arr;
@@ -1072,12 +1090,17 @@ void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-    verify_uart_read_bytes_args(1, 10, portMAX_DELAY);  // uart_read_bytes() should be called only once for first event
+
+    // event_1: uart_read_bytes called once (10 bytes), receive_handler called once
+    // event_2: overflow path — uart_read_bytes NOT called, flush+reset triggered
+    verify_uart_read_bytes_args(1, 10, portMAX_DELAY);
 
     verify_uart_flush_input_args(2);
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_xQueueReset_data.called, "xQueueReset should be called twice");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
+
+    // receive_handler is called once (for event_1); event_2 triggers overflow so no call
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_receive_handler_data.called, "Receive handler should be called once (for event_1 only)");
 }
 
 // Тестируем получение события UART_FIFO_OVF
