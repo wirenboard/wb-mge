@@ -61,7 +61,7 @@ def quick_connection_test(base_url):
 
 
 # Ports that QEMU reserves on the host (must match hostfwd arguments in qemu_process fixture).
-QEMU_HOST_PORTS = [8080, 50502, 50503, 50504, 5561, 5562]
+QEMU_HOST_PORTS = [8080, 8081, 50502, 50503, 50504, 5561, 5562]
 
 
 def _check_no_stale_qemu():
@@ -325,6 +325,7 @@ def qemu_process(request):
             "-global", "driver=timer.esp32.timg,property=wdt_disable,value=true",
             "-nic", ("user,model=open_eth,"
                      "hostfwd=tcp:127.0.0.1:8080-:80,"
+                     "hostfwd=tcp:127.0.0.1:8081-:8081,"
                      "hostfwd=tcp:127.0.0.1:50502-:502,"
                      "hostfwd=tcp:127.0.0.1:50503-:503,"
                      "hostfwd=tcp:127.0.0.1:50504-:50504"),
