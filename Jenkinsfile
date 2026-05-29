@@ -22,59 +22,63 @@ pipeline {
                 }
             }
         }
-        stage('Lint frontend (ESLint)') {
-            steps {
-                // catchError keeps build UNSTABLE (yellow) on lint failure — subsequent stages still run
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh 'bash -c "make lint-frontend"'
+        stage('Parallel checks') {
+            parallel {
+                stage('Lint frontend (ESLint)') {
+                    steps {
+                        // catchError keeps build UNSTABLE (yellow) on lint failure — subsequent stages still run
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            sh 'bash -c "make lint-frontend"'
+                        }
+                    }
+                    post {
+                        always {
+                            junit testResults: 'build/eslint_report.xml', allowEmptyResults: true
+                            archiveArtifacts artifacts: "build/eslint_report.xml", allowEmptyArchive: true
+                        }
+                    }
                 }
-            }
-            post {
-                always {
-                    junit testResults: 'build/eslint_report.xml', allowEmptyResults: true
-                    archiveArtifacts artifacts: "build/eslint_report.xml", allowEmptyArchive: true
+                stage('Lint comments') {
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            sh 'make lint-comments'
+                        }
+                    }
                 }
-            }
-        }
-        stage('Lint comments') {
-            steps {
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh 'make lint-comments'
+                stage('Unit tests (C)') {
+                    steps {
+                        script {
+                            sh 'bash -c "source /opt/esp/idf/export.sh && make -j unittests"'
+                        }
+                    }
+                    post {
+                        always {
+                            // Aggregate Unity stdout logs into a JUnit XML; run even on test failure
+                            sh 'python3 scripts/unity_to_junit.py --output build/unittests_report.xml --logs unittests || true'
+                            junit testResults: 'build/unittests_report.xml', allowEmptyResults: true
+                            archiveArtifacts artifacts: "build/unittests_report.xml", allowEmptyArchive: true
+                        }
+                    }
                 }
-            }
-        }
-        stage('Unit tests (C)') {
-            steps {
-                script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make unittests"'
+                stage('Unit tests (frontend)') {
+                    steps {
+                        script {
+                            sh 'make test-frontend'
+                        }
+                    }
+                    post {
+                        always {
+                            junit testResults: 'build/vitest_report.xml', allowEmptyResults: true
+                            archiveArtifacts artifacts: "build/vitest_report.xml", allowEmptyArchive: true
+                        }
+                    }
                 }
-            }
-            post {
-                always {
-                    // Aggregate Unity stdout logs into a JUnit XML; run even on test failure
-                    sh 'python3 scripts/unity_to_junit.py --output build/unittests_report.xml --logs unittests || true'
-                    junit testResults: 'build/unittests_report.xml', allowEmptyResults: true
-                    archiveArtifacts artifacts: "build/unittests_report.xml", allowEmptyArchive: true
-                }
-            }
-        }
-        stage('Unit tests (frontend)') {
-            steps {
-                script {
-                    sh 'make test-frontend'
-                }
-            }
-            post {
-                always {
-                    junit testResults: 'build/vitest_report.xml', allowEmptyResults: true
-                    archiveArtifacts artifacts: "build/vitest_report.xml", allowEmptyArchive: true
-                }
-            }
-        }
-        stage('Build frontend') {
-            steps {
-                script {
-                    sh 'make build-frontend'
+                stage('Build frontend') {
+                    steps {
+                        script {
+                            sh 'make build-frontend'
+                        }
+                    }
                 }
             }
         }
