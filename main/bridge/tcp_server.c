@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/atomic.h"
 #include "lwip/sockets.h"
 
 
@@ -200,7 +201,7 @@ static void receiver_task(void *pvParameters)
     // Log before decrementing so desc->port is accessed while desc is still valid.
     // deinit() waits for active_connections to reach 0 before freeing desc.
     ESP_LOGD(TAG, "Port %d receiver task finished", desc->port);
-    desc->active_connections--;
+    Atomic_Decrement_u32(&desc->active_connections);
     vTaskDelete(NULL);
 }
 
@@ -265,7 +266,7 @@ static void tcp_server_task(void *pvParameters)
         args->desc = desc;
         args->client_sock = client_sock;
 
-        desc->active_connections++;
+        Atomic_Increment_u32(&desc->active_connections);
 
         // Create a unique task name using the socket fd number
         char task_name[32];
@@ -276,7 +277,7 @@ static void tcp_server_task(void *pvParameters)
             ESP_LOGE(TAG, "Port %d: failed to create receiver_task, closing connection", desc->port);
             free(args);
             close(client_sock);
-            desc->active_connections--;
+            Atomic_Decrement_u32(&desc->active_connections);
         }
     }
 
@@ -447,6 +448,6 @@ void tcp_server_run_receiver_for_test(tcp_desc_t *desc, int client_sock)
 
     shutdown(client_sock, SHUT_RDWR);
     close(client_sock);
-    desc->active_connections--;
+    Atomic_Decrement_u32(&desc->active_connections);
 }
 #endif /* __unittest_env__ */

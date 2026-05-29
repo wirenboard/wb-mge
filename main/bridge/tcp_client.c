@@ -10,6 +10,7 @@
 #include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/atomic.h"
 
 
 #define KEEPALIVE_IDLE                  5
@@ -171,13 +172,16 @@ static void tcp_client_task(void *pvParameters)
             continue;
         }
 
-        desc->active_connections++;
+        Atomic_Increment_u32(&desc->active_connections);
 
         receive_data(desc);
         ESP_LOGW(TAG, "Disconnected from server: %s, port: %d", ip_str, desc->port);
         close_socket(desc->last_client_sock);
         desc->last_client_sock = -1;
         delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_RECONN_DELAY_MS));
+        // Reset to 0 rather than decrement: only one client task writes this field.
+        // Plain store is safe on ESP32: internal SRAM is shared (no per-core data cache),
+        // so the write is immediately visible to concurrent readers without a memory barrier.
         desc->active_connections = 0;
     }
 

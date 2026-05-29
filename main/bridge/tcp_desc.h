@@ -21,7 +21,7 @@ typedef struct tcp_desc_t {
     int port;
     tcp_receive_handler_t receive_handler;
     tcp_close_handler_t close_handler;      // optional, may be NULL
-    int active_connections;                 // per-server active connections, only for server mode
+    volatile uint32_t active_connections;   // per-server active connections, only for server mode; volatile uint32_t required by Atomic_Increment/Decrement_u32
     TaskHandle_t task_handle;
     EventGroupHandle_t event_group;
 } tcp_desc_t;

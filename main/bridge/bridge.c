@@ -76,7 +76,7 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
         return 0;
     }
 
-    return bridge_ctx[server_num].tcp_desc->active_connections;
+    return (int)bridge_ctx[server_num].tcp_desc->active_connections;
 }
 
 esp_err_t bridge_disable_port(unsigned index)
