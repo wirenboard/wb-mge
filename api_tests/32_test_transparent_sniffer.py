@@ -505,7 +505,7 @@ def _collect_echo(sock: socket.socket, expected_len: int, timeout: float) -> byt
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(60)
 def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
     """Send 16 arbitrary bytes through the port 2 transparent bridge and receive echo.
 

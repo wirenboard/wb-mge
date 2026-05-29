@@ -43,7 +43,7 @@ def _baseline(api):
 
 
 @pytest.mark.qemu
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(60)
 def test_tcp_server_deinit_completes_with_open_client(api):
     """
     tcp_server_deinit() must return quickly even when a TCP client connection

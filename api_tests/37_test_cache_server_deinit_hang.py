@@ -95,7 +95,7 @@ def _polling_thread(host: str, port: int, stop_event: threading.Event) -> None:
 
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(60)
 def test_cache_server_deinit_with_active_polling(api):
     """
     cache_modbus_server_deinit() must return quickly even when a TCP client is

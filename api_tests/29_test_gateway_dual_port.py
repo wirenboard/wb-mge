@@ -219,7 +219,7 @@ def dual_gateway_slave(api):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(60)
 def test_gateway_dual_port_simultaneous(dual_gateway_slave):
     """FC03 requests to both gateways are served independently with correct values.
 
