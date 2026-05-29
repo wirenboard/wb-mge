@@ -61,18 +61,21 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             uart_read_bytes(desc->port_num, &buffer_ctx->data[buffer_ctx->data_len], event.size, portMAX_DELAY);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, &buffer_ctx->data[buffer_ctx->data_len], event.size, ESP_LOG_DEBUG);
             buffer_ctx->data_len += event.size;
-            if (desc->receive_handler) {
-                // Transparent bridge: forward data immediately on every UART_DATA event.
-                // Waiting for idle timeout would allow the buffer to overflow under burst load.
+            if (desc->receive_handler && ((!desc->wait_for_idle) || event.timeout_flag)) {
+                // For transparent bridge (wait_for_idle=false): forward immediately on every UART_DATA.
+                // For Modbus gateway (wait_for_idle=true): forward only when idle timeout fires
+                // (complete RTU frame boundary detected — bus silent for >= RX_TOUT symbol periods).
                 desc->receive_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
                 buffer_ctx->data_len = 0;
-            } else if (event.timeout_flag) {
-                // Sniffer mode: accumulate bytes and deliver complete packet after idle timeout.
+            } else if ((!desc->receive_handler) && event.timeout_flag) {
+                // Sniffer mode: accumulate and deliver complete packet after idle timeout.
                 if (desc->sniff_handler) {
                     desc->sniff_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
                 }
                 buffer_ctx->data_len = 0;
             }
+            // If receive_handler is set with wait_for_idle=true and no timeout yet:
+            // keep accumulating bytes in buffer_ctx until the idle timeout fires.
             break;
         }
         case UART_FIFO_OVF:
@@ -223,6 +226,7 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
     desc->port_num = serial_config->port_num;
     desc->dir_pin = serial_config->dir_pin;
     desc->tx_disabled = false;
+    desc->wait_for_idle = false;   // default: forward immediately (transparent bridge behavior)
     desc->receive_handler = serial_receive_handler;
     desc->sniff_handler = NULL;
     desc->uart_queue = NULL;
@@ -364,3 +368,12 @@ esp_err_t serial_deinit(serial_desc_t *desc)
 
     return ESP_OK;
 }
+
+#ifdef __unittest_env__
+/* Test shim: run the uart_event_task inline so unit tests can verify event-handling
+ * logic after modifying desc fields (e.g. wait_for_idle) that affect task behaviour. */
+void serial_test_run_uart_event_task(serial_desc_t *desc)
+{
+    uart_event_task(desc);
+}
+#endif /* __unittest_env__ */

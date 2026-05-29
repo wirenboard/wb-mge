@@ -625,6 +625,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
         ctx->reasm_mutex = NULL;
         return ESP_FAIL;
     }
+    (*serial_desc)->wait_for_idle = true;  // Modbus gateway must assemble complete RTU frames before forwarding
 
     packet_queue_handle queue_handle = packet_queue_create(MODBUS_TCP_QUEUE_LEN);
     if (!queue_handle) {

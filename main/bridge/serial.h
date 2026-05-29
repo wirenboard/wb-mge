@@ -35,6 +35,7 @@ struct serial_desc_t {
     uart_port_t port_num;
     int dir_pin;            // Direction pin used for RS-485 half-duplex control
     bool tx_disabled;       // When true, serial_send() returns immediately without transmitting
+    bool wait_for_idle;     // When true, receive_handler is called only on idle timeout (Modbus RTU frame boundary)
     QueueHandle_t uart_queue;
     serial_receive_handler_t receive_handler;
     serial_receive_handler_t sniff_handler;
@@ -48,3 +49,9 @@ esp_err_t serial_wait_tx_done(serial_desc_t *desc, TickType_t timeout_ticks);
 esp_err_t serial_deinit(serial_desc_t *desc);
 esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols);
 esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled);
+
+#ifdef __unittest_env__
+/* Exposed for unit tests: run uart_event_task inline on the given descriptor.
+ * Allows tests to set desc->wait_for_idle before processing queued UART events. */
+void serial_test_run_uart_event_task(serial_desc_t *desc);
+#endif /* __unittest_env__ */

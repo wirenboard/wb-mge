@@ -842,7 +842,11 @@ void test_serial_init_success_with_uart_data_event_tout(void)
     );
 }
 
-// Test receiving UART_DATA event with receive timeout flag cleared
+// Test receiving UART_DATA event with receive timeout flag cleared:
+// bytes are accumulated but receive_handler must NOT be called until the idle timeout fires.
+// This only applies when wait_for_idle=true (Modbus gateway mode).
+// The test uses serial_test_run_uart_event_task() to allow setting wait_for_idle=true
+// on the descriptor BEFORE the task processes any queued UART events.
 void test_serial_init_success_with_uart_data_event_no_tout(void)
 {
     LOG_MESSAGE();
@@ -861,33 +865,35 @@ void test_serial_init_success_with_uart_data_event_no_tout(void)
     mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
     mock_xQueueReceive_data.array_len = 1;
 
-    mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
+    // Do NOT run the task inline: we need to set wait_for_idle=true before the task sees events.
+    mock_xTaskCreate_data.self_execution = false;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 1;   // EXIT_REQ fires after 1 loop iteration
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    // Enable Modbus gateway mode: handler only fires on idle timeout.
+    desc->wait_for_idle = true;
+
+    // Run the task now, after wait_for_idle has been configured.
+    serial_test_run_uart_event_task(desc);
+
     verify_uart_read_bytes_args(1, size_to_read, portMAX_DELAY);
 
-    // receive_handler is called immediately on every UART_DATA event, regardless of timeout_flag
+    // timeout_flag is NOT set and wait_for_idle=true: bytes are buffered, handler must NOT fire.
     TEST_ASSERT_EQUAL_MESSAGE(
-        1,
+        0,
         mock_receive_handler_data.called,
-        "Receive handler must be called immediately on UART_DATA, regardless of timeout_flag"
-    );
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(
-        size_to_read,
-        mock_receive_handler_data.len,
-        "Receive handler should be called with correct data length"
-    );
-    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        MOCK_DATA_FROM_UART_READ,
-        mock_receive_handler_data.data,
-        size_to_read,
-        "Receive handler should be called with correct data"
+        "Receive handler must NOT be called when timeout_flag is false (mid-frame RXFIFO_FULL)"
     );
 }
 
-// Test receiving two UART_DATA events with timeout flag cleared and then set
+// Test receiving two UART_DATA events: first without timeout (mid-frame fragment),
+// second with timeout (idle detected). Bytes accumulate across both events and
+// receive_handler is called exactly once, after the second event, with all 30 bytes.
+// Uses deferred task execution (wait_for_idle=true) to test Modbus RTU accumulation.
 void test_serial_init_success_with_two_uart_data_events(void)
 {
     LOG_MESSAGE();
@@ -905,20 +911,31 @@ void test_serial_init_success_with_two_uart_data_events(void)
     mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
     mock_xQueueReceive_data.array_len = 2;
 
-    mock_xTaskCreate_data.self_execution = true;
+    // Do NOT run the task inline: we need to set wait_for_idle=true before the task sees events.
+    // set_event_on_call=3: serial_init uses call 0, task loop uses calls 1 and 2 (events),
+    // then the empty-queue iteration uses call 3 (3>3? No wait — called becomes 4, 4>3 → exit).
+    mock_xTaskCreate_data.self_execution = false;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.set_event_on_call = 2;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
     mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    // Enable Modbus gateway mode: accumulate bytes until idle timeout fires.
+    desc->wait_for_idle = true;
+
+    // Run the task now, after wait_for_idle has been configured.
+    serial_test_run_uart_event_task(desc);
+
     verify_uart_read_bytes_args(2, 20, portMAX_DELAY);  // Last (second) read length should be 20 bytes
 
-    // receive_handler is called once per UART_DATA event; buffer resets between calls
+    // event_1 (no timeout, wait_for_idle=true): bytes buffered, handler NOT called.
+    // event_2 (timeout set): handler called ONCE with accumulated 30 bytes (10 + 20).
     TEST_ASSERT_EQUAL_MESSAGE(
-        2,
+        1,
         mock_receive_handler_data.called,
-        "Receive handler should be called once per UART_DATA event"
+        "Receive handler should be called once (only when timeout_flag is set)"
     );
 
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
@@ -927,35 +944,34 @@ void test_serial_init_success_with_two_uart_data_events(void)
         "Receive handler should be called with correct serial descriptor"
     );
 
-    // Last call receives only event_2's 20 bytes (buffer was reset after event_1)
+    // The single call delivers all accumulated bytes: event_1 (10) + event_2 (20) = 30.
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
-        20,
+        30,
         mock_receive_handler_data.len,
-        "Receive handler last call should have only the current event's bytes"
+        "Receive handler should receive all accumulated bytes from both events"
     );
 
+    // Verify actual data content:
+    //   read_1 (10 bytes at buf[0]): MOCK_DATA_FROM_UART_READ[0..9]  = "HELLO_WORL"
+    //   read_2 (20 bytes at buf[10]): MOCK_DATA_FROM_UART_READ[0..19] = "HELLO_WORLD_FROM_MGE"
+    //   combined (30 bytes): "HELLO_WORLHELLO_WORLD_FROM_MGE"
+    static const char expected_buf2[] = "HELLO_WORLHELLO_WORLD_FROM_MGE";
     TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        MOCK_DATA_FROM_UART_READ,
-        mock_receive_handler_data.data,
-        20,
-        "Receive handler should be called with correct data on last call"
-    );
-
-    // Verify first call received event_1's 10 bytes
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(
-        10,
-        mock_receive_handler_data.calls[0].len,
-        "First call: receive handler should have event_1's 10 bytes"
-    );
-    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        MOCK_DATA_FROM_UART_READ,
-        mock_receive_handler_data.calls[0].data,
-        10,
-        "First call: receive handler should have correct data"
+        expected_buf2,
+        (const char *)mock_receive_handler_data.calls[0].data,
+        30,
+        "Receive handler should be called with correct accumulated data from both events"
     );
 }
 
-// Test receiving three UART_DATA events with timeout flag cleared and then set twice
+// Test receiving three UART_DATA events: first without timeout (mid-frame fragment),
+// then two with timeout (each marks end of an RTU frame).
+// Expected behaviour:
+//   event_1 (no timeout): 10 bytes buffered, handler NOT called.
+//   event_2 (timeout):    10 + 20 = 30 bytes delivered → handler call #1, buffer reset.
+//   event_3 (timeout):    15 bytes delivered → handler call #2, buffer reset.
+// Total: 2 handler calls.
+// Uses deferred task execution (wait_for_idle=true) to test Modbus RTU accumulation.
 void test_serial_init_success_with_three_uart_data_events(void)
 {
     LOG_MESSAGE();
@@ -974,20 +990,30 @@ void test_serial_init_success_with_three_uart_data_events(void)
     mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
     mock_xQueueReceive_data.array_len = 3;
 
-    mock_xTaskCreate_data.self_execution = true;
+    // Do NOT run the task inline: we need to set wait_for_idle=true before the task sees events.
+    // set_event_on_call=4: serial_init uses call 0, task loop uses calls 1-3 (events),
+    // then the empty-queue iteration uses call 4 (called becomes 5, 5>4 → exit).
+    mock_xTaskCreate_data.self_execution = false;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 4;
     mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    // Enable Modbus gateway mode: accumulate bytes until idle timeout fires.
+    desc->wait_for_idle = true;
+
+    // Run the task now, after wait_for_idle has been configured.
+    serial_test_run_uart_event_task(desc);
+
     verify_uart_read_bytes_args(3, 15, portMAX_DELAY);  // Last (third) read length should be 15 bytes
 
-    // receive_handler is called once per UART_DATA event
+    // 2 handler calls: once for event_2 (with 30 accumulated bytes), once for event_3 (15 bytes).
     TEST_ASSERT_EQUAL_MESSAGE(
-        3,
+        2,
         mock_receive_handler_data.called,
-        "Receive handler should be called once per UART_DATA event"
+        "Receive handler should be called twice (once per timeout event)"
     );
 
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
@@ -996,44 +1022,45 @@ void test_serial_init_success_with_three_uart_data_events(void)
         "Receive handler should be called with correct serial descriptor"
     );
 
-    // Last call receives only event_3's 15 bytes (buffer resets after each call)
+    // Last call (event_3): 15 bytes only (buffer was reset after event_2's delivery).
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
         15,
         mock_receive_handler_data.len,
-        "Receive handler last call should have only the current event's bytes"
+        "Last handler call should deliver event_3's 15 bytes"
     );
 
-    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        MOCK_DATA_FROM_UART_READ,
-        mock_receive_handler_data.data,
-        15,
-        "Receive handler should be called with correct data on last call"
-    );
-
-    // Verify first call received event_1's 10 bytes
+    // First call (event_2): accumulated 10 (event_1) + 20 (event_2) = 30 bytes.
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
-        10,
+        30,
         mock_receive_handler_data.calls[0].len,
-        "First call: receive handler should have event_1's 10 bytes"
-    );
-    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        MOCK_DATA_FROM_UART_READ,
-        mock_receive_handler_data.calls[0].data,
-        10,
-        "First call: receive handler should have correct data"
+        "First call: receive handler should have accumulated 30 bytes (event_1 + event_2)"
     );
 
-    // Verify second call received event_2's 20 bytes
+    // Second call (event_3): 15 bytes.
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
-        20,
+        15,
         mock_receive_handler_data.calls[1].len,
-        "Second call: receive handler should have event_2's 20 bytes"
+        "Second call: receive handler should have event_3's 15 bytes"
     );
+
+    // Verify actual data content for both calls:
+    //   call #0: read_1(10 bytes at buf[0])="HELLO_WORL" + read_2(20 bytes at buf[10])="HELLO_WORLD_FROM_MGE"
+    //   combined (30 bytes): "HELLO_WORLHELLO_WORLD_FROM_MGE"
+    static const char expected_call0[] = "HELLO_WORLHELLO_WORLD_FROM_MGE";
     TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        MOCK_DATA_FROM_UART_READ,
-        mock_receive_handler_data.calls[1].data,
-        20,
-        "Second call: receive handler should have correct data"
+        expected_call0,
+        (const char *)mock_receive_handler_data.calls[0].data,
+        30,
+        "First handler call should contain accumulated data from event_1 + event_2"
+    );
+
+    //   call #1: read_3(15 bytes at fresh buf[0])=MOCK_DATA_FROM_UART_READ[0..14]="HELLO_WORLD_FRO"
+    static const char expected_call1[] = "HELLO_WORLD_FRO";
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        expected_call1,
+        (const char *)mock_receive_handler_data.calls[1].data,
+        15,
+        "Second handler call should contain event_3's 15 bytes of data"
     );
 }
 
@@ -1112,10 +1139,11 @@ void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
 }
 
 // Test: two UART_DATA events where the second event overflows the buffer.
-// Under the new behaviour, receive_handler fires immediately after event_1 and resets
-// data_len to 0. The old event_2 size (SERIAL_BUF_SIZE - 10 + 1 = 991) does NOT overflow
-// a freshly-reset buffer (991 < SERIAL_BUF_SIZE = 1000). To reliably hit the overflow path,
-// event_2 must exceed the full buffer capacity on its own: SERIAL_BUF_SIZE + 1.
+// event_1 (no timeout, wait_for_idle=true) — bytes are buffered, handler NOT called.
+// event_2 size (SERIAL_BUF_SIZE + 1) exceeds the full buffer size
+// so the overflow path fires: flush + reset, no read, handler NOT called.
+// Total handler calls: 0.
+// Uses deferred task execution (wait_for_idle=true) to test Modbus RTU accumulation.
 void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
 {
     LOG_MESSAGE();
@@ -1125,8 +1153,8 @@ void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
     serial_config_t config;
     init_default_config(&config);
 
-    // event_1: small, fits — receive_handler called immediately, buffer reset to 0
-    // event_2: larger than the full buffer — overflows even on a freshly-reset buffer
+    // event_1: small, no timeout — bytes accumulated in buffer (wait_for_idle=true), handler NOT called.
+    // event_2: larger than the full buffer — overflow triggers flush+reset, handler NOT called.
     uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
     uart_event_t event_2 = {.type = UART_DATA, .size = SERIAL_BUF_SIZE + 1, .timeout_flag = true};
     void* events_arr[2] = {&event_1, &event_2};
@@ -1135,24 +1163,31 @@ void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
     mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
     mock_xQueueReceive_data.array_len = 2;
 
-    mock_xTaskCreate_data.self_execution = true;
+    // Do NOT run the task inline: we need to set wait_for_idle=true before the task sees events.
+    mock_xTaskCreate_data.self_execution = false;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.set_event_on_call = 2;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
     mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
 
-    // event_1: uart_read_bytes called once (10 bytes), receive_handler called once
-    // event_2: overflow path — uart_read_bytes NOT called, flush+reset triggered
+    // Enable Modbus gateway mode: accumulate bytes until idle timeout fires.
+    desc->wait_for_idle = true;
+
+    // Run the task now, after wait_for_idle has been configured.
+    serial_test_run_uart_event_task(desc);
+
+    // event_1: uart_read_bytes called once (10 bytes), no handler call (no timeout, wait_for_idle=true).
+    // event_2: overflow path — uart_read_bytes NOT called, flush+reset triggered.
     verify_uart_read_bytes_args(1, 10, portMAX_DELAY);
 
     verify_uart_flush_input_args(2);
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_xQueueReset_data.called, "xQueueReset should be called twice");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
 
-    // receive_handler is called once (for event_1); event_2 triggers overflow so no call
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_receive_handler_data.called, "Receive handler should be called once (for event_1 only)");
+    // Neither event triggered the handler: event_1 buffered (wait_for_idle=true, no timeout), event_2 hit overflow.
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called (event_1 buffered, event_2 overflowed)");
 }
 
 // Test receiving UART_FIFO_OVF event
