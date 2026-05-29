@@ -17,6 +17,7 @@ AUX_SRC += mocks/settings_update.c
 AUX_SRC += mocks/settings_save_timer.c
 AUX_SRC += mocks/auth.c
 AUX_SRC += mocks/json_utils.c
+AUX_SRC += mocks/nv_storage.c
 AUX_SRC += $(IDF_PATH)/components/json/cJSON/cJSON.c
 AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c
 

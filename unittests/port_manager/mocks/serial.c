@@ -12,6 +12,8 @@ serial_desc_t *mock_serial_deinit_desc[BRIDGES_COUNT];
 int mock_serial_send_called;
 uint8_t mock_serial_send_last_data[256]; /* MODBUS_RTU_MAX_FRAME_LEN = 256 */
 size_t mock_serial_send_last_len;
+/* Return value the next serial_send() call(s) should yield. Default ESP_OK. */
+esp_err_t mock_serial_send_ret = ESP_OK;
 
 serial_desc_t *serial_init(serial_config_t *serial_config,
                             serial_receive_handler_t serial_receive_handler)
@@ -29,7 +31,7 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
         memcpy(mock_serial_send_last_data, data, len);
     }
     mock_serial_send_last_len = len;
-    return ESP_OK;
+    return mock_serial_send_ret;
 }
 
 esp_err_t serial_wait_tx_done(serial_desc_t *desc, TickType_t timeout_ticks)
@@ -81,4 +83,5 @@ void mock_serial_reset(void)
     mock_serial_send_called = 0;
     memset(mock_serial_send_last_data, 0, sizeof(mock_serial_send_last_data));
     mock_serial_send_last_len = 0;
+    mock_serial_send_ret = ESP_OK;
 }

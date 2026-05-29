@@ -457,6 +457,122 @@ void test_reinit_after_deinit(void)
 }
 
 // ---------------------------------------------------------------------------
+// Runtime callback tests: drive the registered serial/TCP handlers directly.
+// transparent_tcp registers static process_data_from_serial / process_data_from_tcp
+// callbacks via serial_init / tcp_server_init; the mocks capture those pointers so
+// the relay paths (which the init/deinit tests never exercise) can be driven here.
+// ---------------------------------------------------------------------------
+
+// Helper: init a server-mode port and return the registered handlers/descriptors.
+static void init_server_and_capture(serial_desc_t **out_serial_desc, tcp_desc_t **out_tcp_desc)
+{
+    serial_config_t cfg = make_serial_config();
+    serial_desc_t  *serial_desc = NULL;
+    tcp_desc_t     *tcp_desc    = NULL;
+
+    esp_err_t result = transparent_tcp_init_port(
+        0, &cfg, BRIDGE_MODE_SERVER, 502, 0, &serial_desc, &tcp_desc
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "init in server mode should return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(mock_serial_registered_handler, "serial handler must be captured");
+    TEST_ASSERT_NOT_NULL_MESSAGE(mock_tcp_server_registered_handler, "tcp handler must be captured");
+
+    if (out_serial_desc) *out_serial_desc = serial_desc;
+    if (out_tcp_desc)     *out_tcp_desc    = tcp_desc;
+}
+
+// ---------------------------------------------------------------------------
+// M3: serial -> TCP relay is gated by the TCP-connected check (line 81).
+// When connected, the packet is forwarded; when not connected, it is dropped.
+// ---------------------------------------------------------------------------
+void test_serial_to_tcp_forwarding_gated_by_connection(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test: serial->TCP relay forwards only when TCP is connected (M3 gate)");
+    LOG_MESSAGE();
+
+    serial_desc_t *serial_desc = NULL;
+    init_server_and_capture(&serial_desc, NULL);
+
+    uint8_t payload[4] = { 0x01, 0x03, 0x00, 0x0A };
+
+    // Connected: packet must be forwarded to TCP exactly once.
+    mock_tcp_server_calls.connected_ret = ESP_OK;
+    mock_serial_registered_handler(serial_desc, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.connected_called,
+        "tcp_server_connected must be queried when relaying serial data");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.send_called,
+        "packet must be forwarded to TCP when connection is up");
+    TEST_ASSERT_EQUAL_MESSAGE((int)sizeof(payload), (int)mock_tcp_server_calls.send_last_len,
+        "forwarded payload length must match");
+
+    // Not connected: packet must be dropped (no extra send).
+    mock_tcp_server_calls.connected_ret = ESP_FAIL;
+    mock_serial_registered_handler(serial_desc, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_tcp_server_calls.connected_called,
+        "tcp_server_connected must be queried again");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.send_called,
+        "packet must NOT be forwarded when TCP is not connected");
+}
+
+// ---------------------------------------------------------------------------
+// M2: TCP -> serial relay accepts client_sock == 0 as a valid fd (line 111).
+// The guard is `client_sock < 0`; fd 0 must be relayed, not rejected.
+// ---------------------------------------------------------------------------
+void test_tcp_to_serial_client_sock_zero_is_valid(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test: TCP->serial relay accepts client_sock==0 (M2 boundary)");
+    LOG_MESSAGE();
+
+    tcp_desc_t *tcp_desc = NULL;
+    init_server_and_capture(NULL, &tcp_desc);
+
+    uint8_t payload[3] = { 0xAA, 0xBB, 0xCC };
+
+    // client_sock == 0 is a valid descriptor and must be forwarded to serial.
+    mock_tcp_server_registered_handler(tcp_desc, 0, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.send_called,
+        "serial_send must be called for valid client_sock == 0");
+    TEST_ASSERT_EQUAL_MESSAGE((int)sizeof(payload), (int)mock_serial_calls.send_last_len,
+        "relayed payload length must match");
+
+    // A negative client_sock must be rejected (no serial_send).
+    mock_tcp_server_registered_handler(tcp_desc, -1, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.send_called,
+        "serial_send must NOT be called for negative client_sock");
+}
+
+// ---------------------------------------------------------------------------
+// M7: TCP -> serial relay forwards only when the context is initialized (line 106).
+// Positive direction: with an initialized context the packet must be relayed.
+// The mutant inverts `if (!ctx->initialized)` to `if (ctx->initialized)`, which
+// would early-return for an initialized context and drop the packet.
+// ---------------------------------------------------------------------------
+void test_tcp_to_serial_forwards_only_when_context_initialized(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test: TCP->serial relay forwards when context is initialized (M7)");
+    LOG_MESSAGE();
+
+    tcp_desc_t *tcp_desc = NULL;
+    init_server_and_capture(NULL, &tcp_desc);
+
+    uint8_t payload[3] = { 0x11, 0x22, 0x33 };
+
+    // Initialized context: packet is relayed to serial exactly once.
+    mock_tcp_server_registered_handler(tcp_desc, 5, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.send_called,
+        "serial_send must be called while context is initialized");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 int main(void)
@@ -477,6 +593,9 @@ int main(void)
     RUN_TEST(test_deinit_after_init_client);
     RUN_TEST(test_deinit_twice);
     RUN_TEST(test_reinit_after_deinit);
+    RUN_TEST(test_serial_to_tcp_forwarding_gated_by_connection);
+    RUN_TEST(test_tcp_to_serial_client_sock_zero_is_valid);
+    RUN_TEST(test_tcp_to_serial_forwards_only_when_context_initialized);
 
     return UNITY_END();
 }

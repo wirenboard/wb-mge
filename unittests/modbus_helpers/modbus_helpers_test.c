@@ -309,6 +309,22 @@ void test_modbus_tcp_check_request_valid(void)
     TEST_ASSERT_EQUAL(ESP_OK, modbus_tcp_check_request(valid_tcp_request, valid_tcp_request_len));
 }
 
+void test_modbus_tcp_check_request_declared_len_shorter_than_buffer(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_tcp_check_request - declared length shorter than buffer (trailing bytes)");
+    LOG_MESSAGE();
+
+    /* Valid MBAP (length=0x0006 -> req_packet_len=12) but buffer carries one extra trailing byte (13 total).
+     * The declared length is shorter than the actual buffer; this must be rejected. */
+    enum { buf_len = valid_tcp_request_len + 1 };
+    uint8_t buf[buf_len];
+    memcpy(buf, valid_tcp_request, valid_tcp_request_len);
+    buf[valid_tcp_request_len] = 0xAA;
+
+    TEST_ASSERT_EQUAL(ESP_FAIL, modbus_tcp_check_request(buf, buf_len));
+}
+
 // Test the modbus_rtu_from_tcp function
 void test_modbus_rtu_from_tcp_null_args(void)
 {
@@ -351,6 +367,24 @@ void test_modbus_rtu_from_tcp_valid(void)
     TEST_ASSERT_EQUAL_HEX8(valid_tcp_request[9], out[3]);
     TEST_ASSERT_EQUAL_HEX8(valid_tcp_request[10], out[4]);
     TEST_ASSERT_EQUAL_HEX8(valid_tcp_request[11], out[5]);
+    TEST_ASSERT_EQUAL_HEX8(0x58, out[6]);
+    TEST_ASSERT_EQUAL_HEX8(0x48, out[7]);
+}
+
+void test_modbus_rtu_from_tcp_exact_fit_out_buf(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test modbus_rtu_from_tcp - exact-fit output buffer (out_buf_size == rtu_len)");
+    LOG_MESSAGE();
+
+    /* rtu_len = swap16(length=0x0006) + CRC16(2) = 8. An out buffer of exactly 8 must succeed. */
+    uint8_t out[8];
+
+    const size_t rtu_len = modbus_rtu_from_tcp(valid_tcp_request, out, sizeof(out));
+
+    TEST_ASSERT_EQUAL_UINT32(8, rtu_len);
+    TEST_ASSERT_EQUAL_HEX8(valid_tcp_request[6], out[0]);
+    TEST_ASSERT_EQUAL_HEX8(valid_tcp_request[7], out[1]);
     TEST_ASSERT_EQUAL_HEX8(0x58, out[6]);
     TEST_ASSERT_EQUAL_HEX8(0x48, out[7]);
 }
@@ -519,10 +553,12 @@ int main(void)
     RUN_TEST(test_modbus_tcp_check_request_protocol_pid_mismatch);
     RUN_TEST(test_modbus_tcp_check_request_length_mismatch);
     RUN_TEST(test_modbus_tcp_check_request_valid);
+    RUN_TEST(test_modbus_tcp_check_request_declared_len_shorter_than_buffer);
 
     RUN_TEST(test_modbus_rtu_from_tcp_null_args);
     RUN_TEST(test_modbus_rtu_from_tcp_small_out_buf);
     RUN_TEST(test_modbus_rtu_from_tcp_valid);
+    RUN_TEST(test_modbus_rtu_from_tcp_exact_fit_out_buf);
 
     RUN_TEST(test_modbus_tcp_from_rtu_null_args);
     RUN_TEST(test_modbus_tcp_from_rtu_small_out_buf);

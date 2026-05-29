@@ -26,6 +26,7 @@ extern int  mock_accept_fail_count;
 extern int  mock_accept_errno;
 extern int  mock_close_call_count;
 extern int  mock_shutdown_call_count;
+extern int  mock_send_call_count;
 void mock_lwip_sockets_reset(void);
 
 /* ── Mock state from freertos mocks ────────────────────────────────────── */
@@ -365,6 +366,71 @@ void test_tcp_server_connected_null_desc(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Section 5: tcp_server_send()
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* tcp_server_send returns ESP_OK and calls send() once when send succeeds.
+ * Mutant inverts the error check (res < 0 → res > 0): a successful send
+ * (res == len > 0) would be misread as an error and return ESP_FAIL. */
+void test_tcp_server_send_success_returns_ok(void)
+{
+    tcp_desc_t desc = {0};
+    desc.active_connections = 1;
+    desc.port = 502;
+
+    uint8_t payload[4] = { 0x01, 0x02, 0x03, 0x04 };
+    esp_err_t ret = tcp_server_send(&desc, 10, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL(1, mock_send_call_count);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Section 6: last_client_sock tracking
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* After init, last_client_sock must be the -1 "no client" sentinel.
+ * Mutant initializes it to 0 (which calloc already provides), so a 0 value
+ * would be indistinguishable from a real socket fd 0. */
+void test_tcp_server_init_sets_no_client_sentinel(void)
+{
+    tcp_desc_t *desc = NULL;
+
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_EQUAL(-1, desc->last_client_sock);
+
+    free(desc);
+}
+
+/* On data receipt the receiver must record the real client socket in
+ * last_client_sock so consumers can reply to the last sender.  Mutant sets
+ * it to -1 instead of the real sock. */
+void test_receiver_records_last_client_sock_on_data(void)
+{
+    tcp_desc_t desc = {0};
+    desc.receive_handler = stub_receive_handler;
+    desc.close_handler = stub_close_handler;
+    desc.active_connections = 1;
+    desc.port = 502;
+    desc.last_client_sock = -1;
+
+    mock_recv_data[0] = 0xAB;
+    mock_recv_data_len = 1;
+
+    /* First recv returns 1 byte, second returns 0 (disconnect) */
+    mock_recv_return_values[0] = 1;
+    mock_recv_return_values[1] = 0;
+    mock_recv_return_count = 2;
+
+    tcp_server_run_receiver_for_test(&desc, 10);
+
+    TEST_ASSERT_EQUAL(1, g_receive_handler_called);
+    TEST_ASSERT_EQUAL(10, desc.last_client_sock);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Unity runner
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -393,6 +459,13 @@ int tcp_server_test(void)
     RUN_TEST(test_tcp_server_connected_no_connections);
     RUN_TEST(test_tcp_server_connected_with_connections);
     RUN_TEST(test_tcp_server_connected_null_desc);
+
+    /* Section 5 — tcp_server_send */
+    RUN_TEST(test_tcp_server_send_success_returns_ok);
+
+    /* Section 6 — last_client_sock tracking */
+    RUN_TEST(test_tcp_server_init_sets_no_client_sentinel);
+    RUN_TEST(test_receiver_records_last_client_sock_on_data);
 
     return UNITY_END();
 }

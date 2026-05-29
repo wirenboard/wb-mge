@@ -663,6 +663,35 @@ void test_packet_queue_pop_with_client_preserves_sock(void)
     free(buf2);
 }
 
+// Test that packet_queue_push stores the -1 client_sock sentinel (not 0),
+// observable by popping the same element via pop_with_client.
+void test_packet_queue_push_sets_client_sock_sentinel(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push - stores -1 client_sock sentinel");
+    LOG_MESSAGE();
+
+    const size_t max_len = 5;
+    g_test_handle = packet_queue_create(max_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
+
+    const uint8_t test_data[] = {0x01, 0x02, 0x03};
+    const size_t test_len = sizeof(test_data);
+
+    esp_err_t push_result = packet_queue_push(g_test_handle, test_data, test_len);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "Push should succeed");
+
+    uint8_t *received_buf = NULL;
+    int received_sock = 12345;  // poison value distinct from both -1 and 0
+    size_t result = packet_queue_pop_with_client(g_test_handle, &received_buf, 0, &received_sock);
+
+    TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "pop_with_client should return correct packet length");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, received_sock,
+        "packet_queue_push must default client_sock to -1 sentinel, not 0");
+
+    free(received_buf);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -700,6 +729,8 @@ int main(void)
     RUN_TEST(test_packet_queue_pop_with_client_null_client_sock);
     RUN_TEST(test_packet_queue_pop_with_client_null_buffer_ptr);
     RUN_TEST(test_packet_queue_pop_with_client_preserves_sock);
+
+    RUN_TEST(test_packet_queue_push_sets_client_sock_sentinel);
 
     return UNITY_END();
 }

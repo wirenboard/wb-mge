@@ -9,8 +9,19 @@ typedef struct {
     int connected_called;
     int deinit_called;
     bool init_should_fail;
+    // Controllable return value of tcp_server_connected (ESP_OK by default).
+    esp_err_t connected_ret;
+    // Observation of tcp_server_send (used to verify serial -> TCP relay).
+    int send_last_client_sock;
+    uint8_t *send_last_data;
+    size_t send_last_len;
 } mock_tcp_server_calls_t;
 
 extern mock_tcp_server_calls_t mock_tcp_server_calls;
+
+// Handler registered by tcp_server_init (transparent_tcp process_data_from_tcp callback).
+extern tcp_receive_handler_t mock_tcp_server_registered_handler;
+// Descriptor handed back from tcp_server_init, so a test can drive the captured handler.
+tcp_desc_t *mock_tcp_server_get_desc(void);
 
 void mock_tcp_server_reset(void);

@@ -97,6 +97,63 @@ void test_fast_modbus_send_probe_response_success(void)
     );
 }
 
+// Test that the response MBAP 'length' field equals unit_id + function + payload bytes
+void test_fast_modbus_send_probe_response_mbap_length(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test fast_modbus_send_probe_response - MBAP length field");
+    LOG_MESSAGE();
+
+    test_request_header->transaction_id = MODBUS_TCP_TRANSACTION_ID;
+    test_request_header->protocol_id = MODBUS_TCP_PROTOCOL_ID;
+    test_request_header->length = modbus_swap16(MODBUS_MGE_DETECT_LENGTH);
+    test_request_header->unit_id = MODBUS_MGE_DETECT_UID;
+    test_request_header->function = MODBUS_MGE_DETECT_FCODE;
+    memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
+
+    enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
+        test_ctx.index, test_ctx.tcp_desc, -1, test_request);
+
+    TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SUCCESS, result);
+    TEST_ASSERT_EQUAL_MESSAGE(1, tcp_server_send_mock.called, "tcp_server_send should be called once");
+
+    const uint16_t expected_mbap_length =
+        sizeof(((mb_tcp_header_t *)0)->unit_id) +
+        sizeof(((mb_tcp_header_t *)0)->function) +
+        (uint16_t)strlen(FAST_MODBUS_RESPONSE_STR);
+
+    mb_tcp_header_t *resp_header = (mb_tcp_header_t *)tcp_server_send_mock.last_data;
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(expected_mbap_length, modbus_swap16(resp_header->length),
+        "Response MBAP 'length' field must equal unit_id + function + payload bytes");
+}
+
+// Test that the response echoes the request unit_id and function fields
+void test_fast_modbus_send_probe_response_echoes_unit_id_and_function(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test fast_modbus_send_probe_response - echoes unit_id and function");
+    LOG_MESSAGE();
+
+    test_request_header->transaction_id = MODBUS_TCP_TRANSACTION_ID;
+    test_request_header->protocol_id = MODBUS_TCP_PROTOCOL_ID;
+    test_request_header->length = modbus_swap16(MODBUS_MGE_DETECT_LENGTH);
+    test_request_header->unit_id = MODBUS_MGE_DETECT_UID;
+    test_request_header->function = MODBUS_MGE_DETECT_FCODE;
+    memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
+
+    enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
+        test_ctx.index, test_ctx.tcp_desc, -1, test_request);
+
+    TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SUCCESS, result);
+    TEST_ASSERT_EQUAL_MESSAGE(1, tcp_server_send_mock.called, "tcp_server_send should be called once");
+
+    mb_tcp_header_t *resp_header = (mb_tcp_header_t *)tcp_server_send_mock.last_data;
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(MODBUS_MGE_DETECT_UID, resp_header->unit_id,
+        "Response unit_id must echo the request unit_id");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(MODBUS_MGE_DETECT_FCODE, resp_header->function,
+        "Response function must echo the request function");
+}
+
 // Test the case when the request is not a Fast Modbus probe request (different function code)
 void test_fast_modbus_send_probe_response_not_probe_function(void)
 {
@@ -252,6 +309,8 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_fast_modbus_send_probe_response_success);
+    RUN_TEST(test_fast_modbus_send_probe_response_mbap_length);
+    RUN_TEST(test_fast_modbus_send_probe_response_echoes_unit_id_and_function);
     RUN_TEST(test_fast_modbus_send_probe_response_not_probe_function);
     RUN_TEST(test_fast_modbus_send_probe_response_not_probe_unit_id);
     RUN_TEST(test_fast_modbus_send_probe_response_not_probe_length);

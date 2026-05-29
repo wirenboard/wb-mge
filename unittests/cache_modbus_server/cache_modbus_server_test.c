@@ -1575,6 +1575,51 @@ void test_reassembly_independent_sockets(void)
     TEST_ASSERT_EQUAL_INT(1, mock_tcp_send_called);
 }
 
+/* ---- CMS-U-042: oversized-frame boundary (flen == CACHE_MB_FRAME_MAX+1) --- */
+
+/* Verify the oversized-frame resync boundary. An 8-byte MBAP header that
+ * declares a total frame length of exactly CACHE_MB_FRAME_MAX+1 (301) must be
+ * rejected as oversized and trigger a resync (the buffer is dropped). A valid
+ * 12-byte frame delivered afterwards must then be dispatched normally.
+ *
+ * Mutation trap: if the oversized bound is widened from "> 300" to "> 301",
+ * the 301-byte declared frame is no longer dropped; its 8 garbage bytes stay
+ * buffered, the following valid frame is parsed against the stale header, and
+ * nothing is ever dispatched (0 sends instead of 1). */
+void test_reassembly_oversized_frame_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-042: TCP stream reassembly — oversized frame (flen==301) resync boundary");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x4321;
+    mock_setting_items_set_timeout(0);
+
+    /* 8-byte MBAP header declaring an oversized frame:
+     * frame_total_len = mbap_len + 6, so mbap_len = 295 (0x0127) -> flen = 301. */
+    uint8_t oversized_hdr[8];
+    oversized_hdr[0] = 0x00; oversized_hdr[1] = 0x50;  /* transaction id */
+    oversized_hdr[2] = 0x00; oversized_hdr[3] = 0x00;  /* protocol id = 0 */
+    oversized_hdr[4] = 0x01; oversized_hdr[5] = 0x27;  /* MBAP length = 295 -> flen = 301 */
+    oversized_hdr[6] = 0x01;                            /* unit id */
+    oversized_hdr[7] = MB_FC_READ_HOLDING_REGS;         /* function */
+
+    /* Oversized header: original drops it to resync; no response. */
+    cache_modbus_server_test_process(NULL, 30, oversized_hdr, sizeof(oversized_hdr));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_send_called,
+        "oversized frame (flen==301) must not produce a response");
+
+    /* A valid 12-byte frame must now be dispatched: after the resync the buffer
+     * is clean, so this frame completes and a single response is sent. */
+    uint8_t buf[12];
+    build_request(buf, 0x0051, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 30, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "valid frame after oversized resync must be dispatched (mutant leaves stale buffer -> 0)");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -1630,6 +1675,7 @@ int main(void)
     RUN_TEST(test_reassembly_coalesced_frames);
     RUN_TEST(test_reassembly_carryover);
     RUN_TEST(test_reassembly_independent_sockets);
+    RUN_TEST(test_reassembly_oversized_frame_boundary);
 
     return UNITY_END();
 }

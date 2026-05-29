@@ -59,6 +59,26 @@ void test_validate_ssid(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\x7Fssid"), "SSID with extended ASCII should be invalid");
 }
 
+// Test validate_ssid printable-range boundary characters (0x20 space, 0x7E '~')
+void test_validate_ssid_printable_range_boundaries(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_ssid - inclusive printable-range boundaries 0x20 and 0x7E");
+    LOG_MESSAGE();
+
+    // Inclusive lower bound: space (0x20) is the lowest allowed printable char
+    TEST_ASSERT_TRUE_MESSAGE(validate_ssid("my ssid"), "SSID with space (0x20) must be valid (inclusive lower bound)");
+    TEST_ASSERT_TRUE_MESSAGE(validate_ssid(" "), "Single space (0x20) must be valid (inclusive lower bound)");
+
+    // Inclusive upper bound: tilde (0x7E) is the highest allowed printable char
+    TEST_ASSERT_TRUE_MESSAGE(validate_ssid("wifi~ssid"), "SSID with tilde (0x7E) must be valid (inclusive upper bound)");
+    TEST_ASSERT_TRUE_MESSAGE(validate_ssid("~"), "Single tilde (0x7E) must be valid (inclusive upper bound)");
+
+    // Just outside the bounds must be rejected
+    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\x1Fssid"), "SSID with 0x1F (just below space) must be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\x7Fssid"), "SSID with 0x7F (just above tilde) must be invalid");
+}
+
 // Test validate_port function
 void test_validate_port(void)
 {
@@ -370,6 +390,7 @@ int main(void)
 
     RUN_TEST(test_validate_hostname);
     RUN_TEST(test_validate_ssid);
+    RUN_TEST(test_validate_ssid_printable_range_boundaries);
     RUN_TEST(test_validate_port);
     RUN_TEST(test_validate_baudrate);
     RUN_TEST(test_validate_stopbits);

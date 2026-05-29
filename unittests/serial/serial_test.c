@@ -1652,6 +1652,109 @@ void test_serial_set_rx_timeout_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
+// Test sniffer mode (receive_handler == NULL): the sniff_handler must be delivered
+// the accumulated packet ONLY when the idle timeout fires, never on a mid-frame
+// (timeout_flag == false) UART_DATA fragment.
+// Kills mutant M7: dropping "&& event.timeout_flag" from the sniffer branch would
+// make the sniff_handler fire on every UART_DATA event (including non-timeout ones).
+void test_serial_sniffer_delivers_only_on_idle_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial sniffer mode - sniff_handler fires only on idle timeout");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    // event_1: mid-frame fragment (no idle timeout) -> bytes buffered, sniff_handler NOT called.
+    // event_2: idle timeout -> sniff_handler called ONCE with all accumulated bytes.
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    void* events_arr[2] = {&event_1, &event_2};
+    size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 2;
+
+    // Do NOT run the task inline: we need to install sniff_handler before the task sees events.
+    mock_xTaskCreate_data.self_execution = false;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    // Sniffer mode: serial_init with NULL receive_handler.
+    serial_desc_t *desc = serial_init(&config, NULL);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed in sniffer mode (NULL handler)");
+
+    // Install the sniff_handler (reuse the receive-handler mock; same signature).
+    desc->sniff_handler = mock_receive_handler;
+
+    // Run the task now, after the sniff_handler has been configured.
+    serial_test_run_uart_event_task(desc);
+
+    verify_uart_read_bytes_args(2, 20, portMAX_DELAY);  // both events read (10 then 20)
+
+    // event_1 (no timeout): buffered, sniff_handler NOT called.
+    // event_2 (timeout): sniff_handler called exactly ONCE with all 30 accumulated bytes.
+    TEST_ASSERT_EQUAL_MESSAGE(
+        1,
+        mock_receive_handler_data.called,
+        "Sniff handler must fire ONCE, only on the idle-timeout event (not on the mid-frame fragment)"
+    );
+
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        desc,
+        mock_receive_handler_data.desc,
+        "Sniff handler should be called with correct serial descriptor"
+    );
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        30,
+        mock_receive_handler_data.len,
+        "Sniff handler should receive all accumulated bytes (event_1 + event_2)"
+    );
+}
+
+// Test serial_set_tx_disabled gates serial_send: when TX is disabled, serial_send
+// returns ESP_OK immediately WITHOUT calling uart_write_bytes; re-enabling restores it.
+// Kills mutant M8: inverting the "disabled == desc->tx_disabled" no-state-change guard
+// would prevent the state transition, so the disable/enable would not take effect.
+void test_serial_set_tx_disabled_gates_send(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled - gates serial_send transmission");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+
+    // Disable TX: this is a real state change (default tx_disabled == false).
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    // With TX disabled, serial_send returns ESP_OK but must NOT write to the UART.
+    err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should return ESP_OK when TX is disabled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must NOT be called while TX is disabled");
+
+    // Re-enable TX: another real state change.
+    err = serial_set_tx_disabled(desc, false);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(false) should return ESP_OK");
+
+    // Now serial_send must actually transmit.
+    err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should return ESP_OK after TX re-enabled");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must be called once after TX re-enabled");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1684,8 +1787,11 @@ int main(void)
     RUN_TEST(test_serial_init_success_with_uart_frame_err_event);
     RUN_TEST(test_serial_init_success_with_unknown_uart_event);
 
+    RUN_TEST(test_serial_sniffer_delivers_only_on_idle_timeout);
+
     RUN_TEST(test_serial_send_success);
     RUN_TEST(test_serial_send_partial_write);
+    RUN_TEST(test_serial_set_tx_disabled_gates_send);
 
     RUN_TEST(test_serial_wait_tx_done_success);
     RUN_TEST(test_serial_wait_tx_done_errors);

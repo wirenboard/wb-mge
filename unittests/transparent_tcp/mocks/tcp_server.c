@@ -8,21 +8,29 @@
 
 static tcp_desc_t mock_tcp_desc;
 mock_tcp_server_calls_t mock_tcp_server_calls = {0};
+tcp_receive_handler_t mock_tcp_server_registered_handler = 0;
+
+tcp_desc_t *mock_tcp_server_get_desc(void)
+{
+    return &mock_tcp_desc;
+}
 
 void mock_tcp_server_reset(void)
 {
     memset(&mock_tcp_server_calls, 0, sizeof(mock_tcp_server_calls));
     memset(&mock_tcp_desc, 0, sizeof(mock_tcp_desc));
+    mock_tcp_server_registered_handler = 0;
+    mock_tcp_server_calls.connected_ret = ESP_OK;  // default: connected
 }
 
 esp_err_t tcp_server_init(int port, tcp_receive_handler_t handler, tcp_desc_t **out_desc)
 {
     (void)port;
-    (void)handler;
     mock_tcp_server_calls.init_called++;
     if (mock_tcp_server_calls.init_should_fail) {
         return ESP_FAIL;
     }
+    mock_tcp_server_registered_handler = handler;
     *out_desc = &mock_tcp_desc;
     return ESP_OK;
 }
@@ -30,10 +38,10 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t handler, tcp_desc_t **
 esp_err_t tcp_server_send(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
 {
     (void)desc;
-    (void)client_sock;
-    (void)data;
-    (void)len;
     mock_tcp_server_calls.send_called++;
+    mock_tcp_server_calls.send_last_client_sock = client_sock;
+    mock_tcp_server_calls.send_last_data = data;
+    mock_tcp_server_calls.send_last_len = len;
     return ESP_OK;
 }
 
@@ -41,7 +49,7 @@ esp_err_t tcp_server_connected(tcp_desc_t *desc)
 {
     (void)desc;
     mock_tcp_server_calls.connected_called++;
-    return ESP_OK;
+    return mock_tcp_server_calls.connected_ret;
 }
 
 esp_err_t tcp_server_deinit(tcp_desc_t *desc)

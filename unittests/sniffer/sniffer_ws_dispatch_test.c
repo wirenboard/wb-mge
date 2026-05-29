@@ -27,6 +27,16 @@
 /* esp_http_server mock controls */
 #include "esp_http_server.h"
 
+/* cache_multimaster recording mock controls */
+extern bool     mock_cache_multimaster_enabled;
+extern void     mock_cache_multimaster_reset(void);
+extern int      mock_cache_multimaster_on_request_called;
+extern uint8_t  mock_cache_multimaster_on_request_last_port;
+extern uint8_t  mock_cache_multimaster_on_request_last_slave_id;
+extern uint8_t  mock_cache_multimaster_on_request_last_function;
+extern uint16_t mock_cache_multimaster_on_request_last_start_reg;
+extern uint16_t mock_cache_multimaster_on_request_last_count;
+
 /* ============================================================
  * Test fixtures
  * ============================================================ */
@@ -43,6 +53,7 @@ void setUp(void)
     mock_freertos_timers_reset();
     mock_serial_reset();
     mock_esp_http_server_reset();
+    mock_cache_multimaster_reset();
 
     memset(&s_desc0, 0, sizeof(s_desc0));
 
@@ -208,6 +219,33 @@ void test_ws_dispatch_send_failure_clears_client(void)
  * be tested synchronously without an OS-level hook. Correctness is guaranteed by the
  * conditional clear "if (ws_client_fd == fd)" guard verified by code inspection. */
 
+/* ============================================================
+ * TC-WS-7: cache enabled, 8-byte FC03 request → on_request fires (min len boundary)
+ * ============================================================ */
+
+void test_ws_dispatch_cache_request_min_len_8(void)
+{
+    mock_cache_multimaster_enabled = true;
+
+    sniff_packet_t pkt = make_packet();
+    pkt.port = 0; pkt.slave_id = 1; pkt.function = 0x03;
+    pkt.is_master = true; pkt.is_timeout = false; pkt.crc_valid = true;
+    pkt.data_len = 8;
+    pkt.data[0] = 1; pkt.data[1] = 0x03;
+    pkt.data[2] = 0x00; pkt.data[3] = 0x64;  /* start_reg = 100 */
+    pkt.data[4] = 0x00; pkt.data[5] = 0x0A;  /* count     = 10  */
+    pkt.data[6] = 0x00; pkt.data[7] = 0x00;
+
+    sniffer_ws_dispatch(&pkt);
+
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_on_request_called);
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_on_request_last_port);
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_on_request_last_slave_id);
+    TEST_ASSERT_EQUAL(0x03, mock_cache_multimaster_on_request_last_function);
+    TEST_ASSERT_EQUAL(100, mock_cache_multimaster_on_request_last_start_reg);
+    TEST_ASSERT_EQUAL(10, mock_cache_multimaster_on_request_last_count);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -218,6 +256,7 @@ int main(void)
     RUN_TEST(test_ws_dispatch_stale_fd_http_client_no_send);
     RUN_TEST(test_ws_dispatch_stale_fd_invalid_no_send);
     RUN_TEST(test_ws_dispatch_send_failure_clears_client);
+    RUN_TEST(test_ws_dispatch_cache_request_min_len_8);
 
     return UNITY_END();
 }

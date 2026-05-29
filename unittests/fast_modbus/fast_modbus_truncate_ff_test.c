@@ -169,6 +169,25 @@ void test_fast_modbus_truncate_ff_many_leading_ff(void)
     TEST_ASSERT_EQUAL(0x01, *data_ptr);
 }
 
+// Test that the loop stops at the logical len boundary even when 0xFF bytes follow in memory
+void test_fast_modbus_truncate_ff_all_ff_stops_at_len_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test fast_modbus_truncate_ff - stops at len boundary");
+    LOG_MESSAGE();
+
+    // Buffer holds 4 bytes; only the first 2 are within the logical length.
+    // Bytes [2] and [3] are 0xFF beyond len: the loop must NOT consume them.
+    uint8_t test_data[] = {0xFF, 0xFF, 0xFF, 0xFF};
+    uint8_t *data_ptr = test_data;
+    size_t len = 2;
+
+    size_t result_len = fast_modbus_truncate_ff(&data_ptr, len);
+
+    TEST_ASSERT_EQUAL(0, result_len);
+    TEST_ASSERT_EQUAL_PTR(&test_data[2], data_ptr);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -181,6 +200,7 @@ int main(void)
     RUN_TEST(test_fast_modbus_truncate_ff_mixed_pattern);
     RUN_TEST(test_fast_modbus_truncate_ff_real_modbus_example);
     RUN_TEST(test_fast_modbus_truncate_ff_many_leading_ff);
+    RUN_TEST(test_fast_modbus_truncate_ff_all_ff_stops_at_len_boundary);
 
     return UNITY_END();
 }

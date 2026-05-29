@@ -85,7 +85,7 @@ void voltage_monitor_reset_prot_engine(void)
 }
 #endif
 
-static bool sys_voltage_prot_engine(bool bounds_ok)
+VM_STATIC bool sys_voltage_prot_engine(bool bounds_ok)
 {
     if (!prot_engine_initialized) {
         prot_engine_prot_state = bounds_ok;

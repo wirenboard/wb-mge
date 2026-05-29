@@ -240,6 +240,65 @@ void test_successful_write_returns_success_true(void)
     cJSON_Delete(resp);
 }
 
+// When NVS rejects a write for an RS485 bridge-subgroup field, the response must
+// be success:false. This exercises the rs485_1.bridge.port save loop, which the
+// base-field test does not reach.
+void test_nvs_write_failure_on_rs485_bridge_setting_returns_success_false(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "NVS write failure on RS485 bridge setting → response success:false");
+    LOG_MESSAGE();
+
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON *bridge = cJSON_CreateObject();
+    cJSON_AddNumberToObject(bridge, "port", 502);
+    cJSON_AddItemToObject(rs485, "bridge", bridge);
+    cJSON_AddItemToObject(req, "rs485_1", rs485);
+
+    cJSON *resp = NULL;
+
+    mock_setting_items_save_error = ESP_ERR_NVS_NOT_ENOUGH_SPACE;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "settings_process_request_json must return ESP_OK so HTTP layer sends the error JSON");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "success field must be false when an RS485 bridge NVS write fails");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// A successful request must notify the rest of the system via settings_update().
+void test_successful_write_notifies_settings_update(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Successful request → settings_update() invoked exactly once");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_settings_update_call_count,
+        "Precondition: settings_update must not have been called yet");
+
+    cJSON *req = make_request_string("hostname", "my-device");
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "must return ESP_OK on success");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_settings_update_call_count,
+        "settings_update() must be called exactly once on the success path");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
 // ===================================================================
 // Tests for integer range validation (double-to-int cast safety)
 // ===================================================================
@@ -319,6 +378,31 @@ void test_integer_in_range_passes_validation(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
     TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
         "success field must be true for a valid integer");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// The upper INT bound is exclusive: exactly INT_MAX must pass validation and
+// reach the save path (the check must be strictly greater-than INT_MAX).
+void test_integer_exactly_INT_MAX_passes_validation(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Integer value exactly INT_MAX passes validation (upper bound is exclusive)");
+    LOG_MESSAGE();
+
+    cJSON *req = make_request_int("web_port", (double)INT_MAX);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "must return ESP_OK for an INT_MAX value");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "success must be true: exactly INT_MAX is in range");
+    TEST_ASSERT_GREATER_THAN_INT_MESSAGE(0, mock_setting_items_save_call_count,
+        "An in-range INT_MAX value must reach the NVS save path");
 
     cJSON_Delete(req);
     cJSON_Delete(resp);
@@ -494,6 +578,67 @@ void test_cache_server_no_op_when_already_running_and_enabled(void)
     cJSON_Delete(resp);
 }
 
+// When the cache server is enabled and the port changes, the server must be
+// restarted: deinit followed by init on the NEW port.
+void test_cache_server_restarted_on_port_change_when_enabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Cache server enabled, port changed → deinit+init on the new port");
+    LOG_MESSAGE();
+
+    mock_cache_modbus_server_set_running_port(502);
+    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
+    setting_items_save(KEY_CACHE_MODBUS_PORT, "502");
+
+    cJSON *req = make_request_int("cache_modbus_port", 503);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
+        "cache_modbus_server_deinit must be called exactly once when the port changes");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
+        "cache_modbus_server_init must be called exactly once when the port changes");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(503, mock_cache_modbus_server_init_last_port,
+        "cache_modbus_server_init must be called with the NEW port");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// When the cache server is enabled with a configured port of 0, init must fall
+// back to the default CACHE_MODBUS_SERVER_PORT.
+void test_cache_server_uses_default_port_when_configured_port_zero(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Cache server enabled with configured port 0 -> init called with default port");
+    LOG_MESSAGE();
+
+    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
+    setting_items_save(KEY_CACHE_MODBUS_PORT, "0");
+
+    cJSON *req = make_request_bool("cache_modbus_server_enabled", true);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
+        "cache_modbus_server_init must be called exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_MODBUS_SERVER_PORT, mock_cache_modbus_server_init_last_port,
+        "configured port 0 must fall back to CACHE_MODBUS_SERVER_PORT");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
 // -------------------------------------------------------------------
 // Test runner
 // -------------------------------------------------------------------
@@ -507,12 +652,15 @@ int main(void)
     RUN_TEST(test_nvs_write_failure_on_wifi_setting_returns_success_false);
     RUN_TEST(test_nvs_write_failure_on_ethernet_setting_returns_success_false);
     RUN_TEST(test_nvs_write_failure_on_rs485_setting_returns_success_false);
+    RUN_TEST(test_nvs_write_failure_on_rs485_bridge_setting_returns_success_false);
     RUN_TEST(test_successful_write_returns_success_true);
+    RUN_TEST(test_successful_write_notifies_settings_update);
 
     // Integer range validation
     RUN_TEST(test_integer_above_INT_MAX_rejected_in_validation);
     RUN_TEST(test_integer_below_INT_MIN_rejected_in_validation);
     RUN_TEST(test_integer_in_range_passes_validation);
+    RUN_TEST(test_integer_exactly_INT_MAX_passes_validation);
 
     // wifi_perm_disable NVS failure handling
     RUN_TEST(test_wifi_perm_disable_nvs_failure_returns_success_false);
@@ -522,6 +670,8 @@ int main(void)
     RUN_TEST(test_cache_server_started_when_enabled_and_not_running);
     RUN_TEST(test_cache_server_stopped_when_disabled_and_running);
     RUN_TEST(test_cache_server_no_op_when_already_running_and_enabled);
+    RUN_TEST(test_cache_server_restarted_on_port_change_when_enabled);
+    RUN_TEST(test_cache_server_uses_default_port_when_configured_port_zero);
 
     return UNITY_END();
 }

@@ -126,6 +126,23 @@ void test_bytes_to_hex_truncation(void)
     TEST_ASSERT_EQUAL_STRING("0102", out);
 }
 
+void test_bytes_to_hex_no_overflow_at_tight_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bytes_to_hex - tight boundary must not write past out_size (off-by-one)");
+    LOG_MESSAGE();
+
+    struct { char out[4]; char canary; } buf;
+    buf.canary = (char)0x7E;
+    memset(buf.out, (int)0xAA, sizeof(buf.out));
+
+    uint8_t data[] = {0x01, 0x02};
+    bytes_to_hex(data, 2, buf.out, sizeof(buf.out));
+
+    TEST_ASSERT_EQUAL_STRING("01", buf.out);
+    TEST_ASSERT_EQUAL_HEX8(0x7E, buf.canary);
+}
+
 /* ============================================================
  * crc_check tests
  * ============================================================ */
@@ -221,6 +238,16 @@ void test_crc_check_all_zeros_len4(void)
     /* CRC of [0x00, 0x00] is 0x4040 (lo=0x40, hi=0x40), not [0x00, 0x00] */
     uint8_t data[] = {0x00, 0x00, 0x00, 0x00};
     TEST_ASSERT_FALSE(crc_check(data, sizeof(data)));
+}
+
+void test_crc_check_valid_4byte_fc07(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test crc_check - minimal valid 4-byte RTU frame FC07 [01 07 41 E2]");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x07, 0x41, 0xE2};
+    TEST_ASSERT_TRUE(crc_check(data, sizeof(data)));
 }
 
 /* ============================================================
@@ -780,6 +807,16 @@ void test_classify_direction_fc02_ambiguous(void)
     TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
 }
 
+void test_classify_direction_fc04_odd_bytecount_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction FC04 - len=6, data[2]=1 (odd bytecount) -> DIRECTION_UNKNOWN");
+    LOG_MESSAGE();
+
+    uint8_t data[] = {0x01, 0x04, 0x01, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
+}
+
 /* FC07 — Read Exception Status */
 
 void test_classify_direction_fc07_request(void)
@@ -979,6 +1016,7 @@ int main(void)
     RUN_TEST(test_bytes_to_hex_all_ff);
     RUN_TEST(test_bytes_to_hex_buffer_exact_fit);
     RUN_TEST(test_bytes_to_hex_truncation);
+    RUN_TEST(test_bytes_to_hex_no_overflow_at_tight_boundary);
 
     /* crc_check tests */
     RUN_TEST(test_crc_check_len_0);
@@ -990,6 +1028,7 @@ int main(void)
     RUN_TEST(test_crc_check_valid_fm);
     RUN_TEST(test_crc_check_invalid_crc);
     RUN_TEST(test_crc_check_all_zeros_len4);
+    RUN_TEST(test_crc_check_valid_4byte_fc07);
 
     /* strip_arbitration tests */
     RUN_TEST(test_strip_arbitration_no_ff);
@@ -1036,6 +1075,7 @@ int main(void)
     RUN_TEST(test_classify_direction_fc02_request);
     RUN_TEST(test_classify_direction_fc02_response);
     RUN_TEST(test_classify_direction_fc02_ambiguous);
+    RUN_TEST(test_classify_direction_fc04_odd_bytecount_unknown);
 
     /* classify_direction tests — FC07 */
     RUN_TEST(test_classify_direction_fc07_request);

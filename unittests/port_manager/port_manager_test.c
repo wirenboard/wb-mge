@@ -38,6 +38,7 @@ extern int mock_serial_set_rx_timeout_called[BRIDGES_COUNT];
 extern int mock_serial_send_called;
 extern uint8_t mock_serial_send_last_data[];
 extern size_t mock_serial_send_last_len;
+extern esp_err_t mock_serial_send_ret;
 void mock_serial_reset(void);
 
 /* setting_items.c mock */
@@ -451,6 +452,25 @@ void test_send_raw_tx_disabled_no_sniffer_inject(void)
     TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
 }
 
+void test_send_raw_serial_send_failure_no_sniffer_inject(void)
+{
+    /* When serial_send() fails, the transmitted bytes were NOT actually sent,
+     * so sniffer_inject_tx must NOT be called (M7: inject gated by ret==ESP_OK). */
+    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    mock_serial_reset();
+    mock_sniffer_reset();
+    mock_serial_send_ret = ESP_FAIL;
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    esp_err_t ret = port_manager_send_raw(0, data, sizeof(data));
+    /* The failure must be propagated to the caller */
+    TEST_ASSERT_EQUAL(ESP_FAIL, ret);
+    /* serial_send was attempted */
+    TEST_ASSERT_EQUAL(1, mock_serial_send_called);
+    /* sniffer_inject_tx must NOT have been called because the send failed */
+    TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
+}
+
 void test_send_raw_tcp_bridge_port_calls_serial_send(void)
 {
     port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
@@ -564,6 +584,7 @@ int port_manager_test(void)
     RUN_TEST(test_send_raw_disabled_port_no_serial_desc);
     RUN_TEST(test_send_raw_sniffer_port_calls_serial_send);
     RUN_TEST(test_send_raw_tx_disabled_no_sniffer_inject);
+    RUN_TEST(test_send_raw_serial_send_failure_no_sniffer_inject);
     RUN_TEST(test_send_raw_tcp_bridge_port_calls_serial_send);
 
     /* 9 – port_send_handler integration */

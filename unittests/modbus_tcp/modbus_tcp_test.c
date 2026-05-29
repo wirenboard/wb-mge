@@ -651,6 +651,69 @@ void test_reasm_invalid_pid_dropped(void)
         "buffer must be empty after invalid-PID frame consumed/dropped");
 }
 
+/* ---- MBTCP-U-025: exact-header-size frame dispatched (MUT-10) ----------- */
+/* separate_and_push_requests guards each frame with (c->len - pos) >= sizeof
+ * (mb_tcp_header_t). A frame of exactly 8 bytes (== sizeof header, MBAP len=2)
+ * must satisfy the >= guard and be pushed. The mutant (> instead of >=) would
+ * skip the exact-size frame, leaving it unpushed and pending. */
+void test_push_exact_header_size_frame(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-025: exactly 8-byte (==sizeof header) complete frame -> pushed, 0 pending");
+    LOG_MESSAGE();
+
+    uint8_t buf[8];
+    buf[0] = 0x00; buf[1] = 0x05;   /* transaction id */
+    buf[2] = 0x00; buf[3] = 0x00;   /* protocol id = 0 */
+    buf[4] = 0x00; buf[5] = 0x02;   /* MBAP length = 2 -> total flen = 8 */
+    buf[6] = 0x01;                   /* unit id */
+    buf[7] = 0x03;                   /* FC03 */
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8u, modbus_tcp_test_frame_total_len(buf),
+        "MBAP length=2 must give flen=8");
+
+    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 110, buf, 8);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed, "8-byte complete frame must be pushed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count, "push_with_client called once");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8u, mock_pq_packets[0].len, "pushed frame length must be 8");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(110, mock_pq_packets[0].sock, "pushed frame must carry client sock 110");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 110),
+        "no bytes must remain pending");
+}
+
+/* ---- MBTCP-U-026: mbtcp_reasm_get full-table probe — no OOB scan (MUT-02) */
+/* mbtcp_reasm_get scans for (i = 0; i < MBTCP_REASM_MAX_CONNS; i++). With the
+ * table full of non-matching, non-free socks, a probe for an absent sock must
+ * return 0 (NULL) without reading past reasm[7]. The mutant (i <= MAX) reads
+ * reasm[8], which aliases reasm_mutex (NULL in tests -> low int == 0); probing
+ * sock=0 would then spuriously match that OOB slot and return 1. */
+void test_reasm_get_full_table_no_overrun(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-026: reasm_get sock=0 on full table -> 0 (no OOB scan past slot 7)");
+    LOG_MESSAGE();
+
+    /* Fill all 8 slots with non-zero socks (none == 0, none free). */
+    for (int i = 1; i <= 8; i++) {
+        int res = modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, res, "first 8 allocations must succeed");
+    }
+
+    /* Probe for sock 0: not present, no free slot -> must return 0. The mutant
+     * would read reasm[8] (aliasing the NULL reasm_mutex, low int == 0), match
+     * sock 0, and return 1. */
+    int result = modbus_tcp_test_reasm_get(TEST_CTX_IDX, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, result,
+        "reasm_get(0) on full table must return 0 (must not scan reasm[8])");
+
+    /* No new slot for sock 0 may have appeared within the valid table range. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 0),
+        "no slot for sock 0 must exist after rejected full-table probe");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -690,6 +753,9 @@ int main(void)
     RUN_TEST(test_one_pass_fallback_invalid_pid);
 
     RUN_TEST(test_reasm_invalid_pid_dropped);
+
+    RUN_TEST(test_push_exact_header_size_frame);
+    RUN_TEST(test_reasm_get_full_table_no_overrun);
 
     return UNITY_END();
 }

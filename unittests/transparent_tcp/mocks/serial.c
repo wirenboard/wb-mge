@@ -7,29 +7,37 @@
 
 static serial_desc_t mock_serial_desc;
 mock_serial_calls_t mock_serial_calls = {0};
+serial_receive_handler_t mock_serial_registered_handler = 0;
+
+serial_desc_t *mock_serial_get_desc(void)
+{
+    return &mock_serial_desc;
+}
 
 void mock_serial_reset(void)
 {
     memset(&mock_serial_calls, 0, sizeof(mock_serial_calls));
     memset(&mock_serial_desc, 0, sizeof(mock_serial_desc));
+    mock_serial_registered_handler = 0;
 }
 
 serial_desc_t *serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler)
 {
     (void)serial_config;
-    (void)serial_receive_handler;
     mock_serial_calls.init_called++;
     if (mock_serial_calls.init_should_fail) {
         return NULL;
     }
+    mock_serial_registered_handler = serial_receive_handler;
     return &mock_serial_desc;
 }
 
 esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 {
     (void)desc;
-    (void)data;
-    (void)len;
+    mock_serial_calls.send_called++;
+    mock_serial_calls.send_last_data = data;
+    mock_serial_calls.send_last_len = len;
     return ESP_OK;
 }
 

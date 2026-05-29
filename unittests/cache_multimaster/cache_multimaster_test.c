@@ -570,6 +570,64 @@ void test_cache_multimaster_on_request_oob_port(void)
     );
 }
 
+/* ---- CM-U-047: cache_multimaster_on_response() OOB port boundary --------- */
+void test_cache_multimaster_on_response_oob_port_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-047: on_response OOB port == BRIDGES_COUNT boundary");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+    TEST_ASSERT_TRUE_MESSAGE(cache_multimaster_is_enabled(), "cache must be enabled");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xTaskCreate_data.called, "aging task created once");
+
+    uint8_t data[] = { 5, 0x03, 4, 0x00, 0x01, 0x00, 0x02 };
+    cache_multimaster_on_response(BRIDGES_COUNT, 5, 3, data, sizeof(data), 0);
+
+    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_test_get_pending_valid(0), "OOB must not affect s_pending[0]");
+    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_test_get_pending_valid(1), "OOB must not affect s_pending[1]");
+
+    cache_multimaster_disable();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_vTaskDelete_data.called, "aging task deleted once");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE((TaskHandle_t)0xCCCCCCCC, mock_vTaskDelete_data.xTaskToDelete,
+        "s_age_task must be intact: on_response(port==BRIDGES_COUNT) must not write OOB");
+}
+
+/* ---- CM-U-048: on_response() minimum data_len boundary (data_len < 4) ----- */
+/* A 3-byte response (slave + FC + byte_count, no payload) must be rejected by
+ * the `data_len < 4` guard BEFORE the pending request is consumed. The slave_id
+ * and function deliberately MATCH the pending request, so the only thing that
+ * keeps the pending alive is the length guard. If the floor is lowered (e.g.
+ * `< 3`), the response is processed and the pending request is consumed. */
+void test_cache_multimaster_on_response_min_len_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-048: on_response data_len < 4 minimum-length guard");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Pending request that the short response would otherwise match */
+    cache_multimaster_on_request(0, 7, 3, 0, 1);
+    TEST_ASSERT_TRUE_MESSAGE(
+        cache_multimaster_test_get_pending_valid(0),
+        "Pending must be valid after on_request()"
+    );
+
+    /* 3-byte response: matching slave/FC, but below the 4-byte minimum */
+    uint8_t data[] = { 7, 0x03, 2 };
+    cache_multimaster_on_response(0, 7, 3, data, sizeof(data), 0);
+
+    /* Original rejects the too-short frame BEFORE consuming the pending request */
+    TEST_ASSERT_TRUE_MESSAGE(
+        cache_multimaster_test_get_pending_valid(0),
+        "Response shorter than 4 bytes must be rejected without consuming the pending request"
+    );
+}
+
 /* ---- CM-U-010: cache_multimaster_on_request() valid ---------------------- */
 
 /* Verify that cache_multimaster_on_request() stores a pending request and that
@@ -910,6 +968,52 @@ void test_cache_multimaster_on_response_fc01_count_overflow(void)
     r = cache_multimaster_lookup(11, 1, 2000, &val, 0);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
         "coil 2000 should be NOT_FOUND (count clamped to 2000, indices 0-1999 only)");
+}
+
+/* ---- CM-U-049: on_response() FC01 — coil count clamp boundary (2001) ----- */
+
+/* Verify the coil-count clamp uses `> 2000` (clamp to 2000), not `> 2001`.
+ * A pending request for exactly 2001 coils with a response that carries enough
+ * bytes (251) for all of them is the only input that distinguishes the two
+ * boundaries: the original clamps to 2000 (coil 2000 is NOT stored), whereas a
+ * `> 2001` mutant leaves count at 2001 and stores coil 2000. */
+void test_cache_multimaster_on_response_fc01_count_clamp_boundary_2001(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-049: on_response FC01 count clamp boundary (2001 -> 2000)");
+    LOG_MESSAGE();
+
+    /* Pre-condition: init + enable */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Request exactly 2001 coils starting at address 0 for slave 12 */
+    cache_multimaster_on_request(0, 12, 1, 0, 2001);
+
+    /* Response carries byte_count=251 (= ceil(2001/8)) so the bounds check
+     * passes for both the clamped (2000) and unclamped (2001) counts.
+     * data_len = 3 + 251 = 254. All coils = 1 (0xFF). */
+    uint8_t response_buf[254];
+    response_buf[0] = 12;    /* slave_id */
+    response_buf[1] = 0x01;  /* FC01 */
+    response_buf[2] = 251;   /* byte_count */
+    memset(response_buf + 3, 0xFF, 251);
+
+    cache_multimaster_on_response(0, 12, 1, response_buf, sizeof(response_buf), 0);
+
+    /* Coil 1999 (last valid after clamping to 2000) must be FOUND */
+    uint16_t val = 0xFFFF;
+    cache_lookup_result_t r = cache_multimaster_lookup(12, 1, 1999, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "coil 1999 should be FOUND (within the 2000-coil clamp)");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 1999 should be 1");
+
+    /* Coil 2000 must NOT be found: count must be clamped to 2000 (> 2000),
+     * so indices 0..1999 only. A `> 2001` mutant would store coil 2000. */
+    val = 0xFFFF;
+    r = cache_multimaster_lookup(12, 1, 2000, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "coil 2000 should be NOT_FOUND (count clamped to 2000, not 2001)");
 }
 
 /* ---- CM-U-017: on_response() FC02 — byte_count shorter than requested ---- */
@@ -2176,6 +2280,8 @@ int main(void)
     RUN_TEST(test_cache_multimaster_clear_null_mutex);
     RUN_TEST(test_cache_multimaster_clear_with_pool);
     RUN_TEST(test_cache_multimaster_on_request_oob_port);
+    RUN_TEST(test_cache_multimaster_on_response_oob_port_boundary);
+    RUN_TEST(test_cache_multimaster_on_response_min_len_boundary);
     RUN_TEST(test_cache_multimaster_on_request_valid);
     RUN_TEST(test_cache_multimaster_on_response_no_pending);
     RUN_TEST(test_cache_multimaster_on_response_fc03_correct);
@@ -2183,6 +2289,7 @@ int main(void)
     RUN_TEST(test_cache_multimaster_on_response_malformed_length);
     RUN_TEST(test_cache_multimaster_on_response_fc01_9_coils);
     RUN_TEST(test_cache_multimaster_on_response_fc01_count_overflow);
+    RUN_TEST(test_cache_multimaster_on_response_fc01_count_clamp_boundary_2001);
     RUN_TEST(test_cache_multimaster_on_response_fc02_byte_count_short);
     RUN_TEST(test_cache_multimaster_on_response_null_short_data);
     RUN_TEST(test_cache_multimaster_lookup_timeout_zero);

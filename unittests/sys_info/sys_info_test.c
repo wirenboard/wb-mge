@@ -204,6 +204,29 @@ void test_sys_info_init_psram_not_available(void)
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, sys_info.psram_size_kb, "psram_size_kb should be 0 when PSRAM is not available");
 }
 
+// Test that the signature buffer is zeroed before the eFuse read, so a failed
+// read leaves an empty signature even when the destination was pre-stained.
+void test_sys_info_init_signature_zeroed_on_efuse_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - signature buffer zeroed on eFuse read failure");
+    LOG_MESSAGE();
+
+    /* Pre-stain the destination buffer with non-zero garbage. The defensive
+       memset in get_device_signature must clear it before the (failing) read. */
+    memset(sys_info.device_signature, 'X', sizeof(sys_info.device_signature) - 1);
+    sys_info.device_signature[sizeof(sys_info.device_signature) - 1] = '\0';
+
+    mock_esp_efuse_read_block_return = ESP_FAIL;
+
+    esp_err_t result = sys_info_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK even when eFuse read fails");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(
+        "", sys_info.device_signature, "Signature buffer must be zeroed before read, leaving empty string on failure"
+    );
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -216,6 +239,7 @@ int main(void)
     RUN_TEST(test_sys_info_init_signature_truncation);
     RUN_TEST(test_sys_info_init_psram_available);
     RUN_TEST(test_sys_info_init_psram_not_available);
+    RUN_TEST(test_sys_info_init_signature_zeroed_on_efuse_failure);
 
     return UNITY_END();
 }

@@ -728,6 +728,121 @@ void test_tc25_boundary_257_bytes_garbage(void)
     TEST_ASSERT_FALSE_MESSAGE(frames[0].crc_valid, "TC-25: broken frame crc_valid must be false");
 }
 
+void test_tc26_fm_frame_exact_fit_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-26: FM frame (FD/0x46/0x03, 10b) exactly fills buffer — exact-fit boundary");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0xFD, 0x46, 0x03, 0x11,  /* FM header: slave=0xFD, FC=0x46, subcmd=0x03 */
+        0x10, 0xA1,              /* CRC16 of bytes[0..3] — valid 6-byte prefix (mutant trap) */
+        0xAA, 0xBB,              /* filler */
+        0x3E, 0xD3               /* CRC16 of bytes[0..7] — valid full 10-byte frame */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, n, "TC-26: expected exactly 1 frame (FM exact-fit)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(10, frames[0].len,
+        "TC-26: frame[0] len must be 10 (full FM frame), not a Level-3 mis-split");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-26: frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(buf, frames[0].data, "TC-26: frame[0] must start at buf[0]");
+}
+
+void test_tc26_exception_response_length_via_length_table(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-26: Modbus exception response (5b, fc|0x80) via Level-2 length table + FC06 req (8b)");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0x83, 0x86, 0xE1, 0x22, 0x00,                   /* exception response, 5 bytes */
+        0x83, 0x06, 0x00, 0x72, 0x00, 0x01, 0xF6, 0x33  /* FC06 request, 8 bytes */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "TC-26: expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[0].len,
+        "TC-26: exception frame length must be 5 (slave+fc|0x80+exc+2 CRC)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-26: frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "TC-26: frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "TC-26: frame[1] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(buf), frames[0].len + frames[1].len,
+        "TC-26: sum of frame lengths must equal buffer size");
+}
+
+void test_tc26_level3_scan_floor_4byte_frame(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-26: Level-3 scan floor — 4-byte frame (2 data + 2 CRC) + FC06 echo (8b)");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0x83, 0x99, 0xA0, 0xEA,                          /* minimal 4-byte RTU frame */
+        0x83, 0x06, 0x00, 0x72, 0x00, 0x01, 0xF6, 0x33   /* FC06 echo, 8 bytes */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "TC-26: expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(4, frames[0].len, "TC-26: frame[0] len must be 4 (scan floor)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-26: frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[1].len, "TC-26: frame[1] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "TC-26: frame[1] CRC must be valid");
+}
+
+void test_tc26_empty_buffer_fallback_crc_valid_false(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-26: empty buffer (len=0) — fallback frame crc_valid must be false");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = { 0x00 };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+    memset(frames, 0xFF, sizeof(frames));
+
+    int n = stream_split(buf, 0, 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, n, "TC-26: count==0 fallback must return exactly 1 frame");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0, frames[0].len, "TC-26: fallback frame len must be 0");
+    TEST_ASSERT_FALSE_MESSAGE(frames[0].crc_valid,
+        "TC-26: fallback frame crc_valid must be false (frame_crc_ok returns false for len<4)");
+}
+
+void test_tc26_level1_context_hint_fires_for_fc10_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-26: ambiguous FC10 req/resp — context_fc=0x10 must trigger Level-1 (8b resp)");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0x83, 0x10, 0x00, 0x01, 0x00, 0x02, 0x0E, 0x2A,   /* 8-byte response prefix, CRC OK */
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x67, 0xF7,         /* ...ends with request CRC */
+        0x83, 0x06, 0x00, 0x72, 0x00, 0x01, 0xF6, 0x33    /* FC06 echo, 8 bytes */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0x83, 0x10, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "TC-26: expected 2 frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[0].len,
+        "TC-26: Level-1 must pick the 8-byte FC10 response (mutant picks 23-byte request)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "TC-26: frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(23, frames[1].len, "TC-26: remainder must be the 23-byte broken tail");
+    TEST_ASSERT_FALSE_MESSAGE(frames[1].crc_valid, "TC-26: tail must be a broken frame");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -758,6 +873,11 @@ int main(void)
     RUN_TEST(test_tc23_oversized_garbage_emitted_as_broken_frame);
     RUN_TEST(test_tc24_valid_frame_then_garbage_tail);
     RUN_TEST(test_tc25_boundary_257_bytes_garbage);
+    RUN_TEST(test_tc26_fm_frame_exact_fit_boundary);
+    RUN_TEST(test_tc26_exception_response_length_via_length_table);
+    RUN_TEST(test_tc26_level3_scan_floor_4byte_frame);
+    RUN_TEST(test_tc26_empty_buffer_fallback_crc_valid_false);
+    RUN_TEST(test_tc26_level1_context_hint_fires_for_fc10_response);
 
     return UNITY_END();
 }

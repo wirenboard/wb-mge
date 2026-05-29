@@ -12,6 +12,7 @@
 #include <inttypes.h>
 
 void gpio_expander_test_reset(void);
+void gpio_expander_test_set_mutex_null(void);
 
 void setUp(void)
 {
@@ -433,6 +434,29 @@ void test_gpio_expander_set_dir_not_initialized(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_esp_io_expander_set_level_data.called, "esp_io_expander_set_level should NOT be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_esp_io_expander_get_level_data.called, "esp_io_expander_get_level should NOT be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_esp_io_expander_del_data.called, "esp_io_expander_del should NOT be called");
+}
+
+// Test gpio_expander_set_dir() with partial initialization (mutex NULL)
+void test_gpio_expander_set_dir_partial_init_mutex_null(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test gpio_expander_set_dir - partial init (mutex NULL)");
+    LOG_MESSAGE();
+
+    esp_io_expander_handle_t handle = NULL;
+    esp_err_t result = gpio_expander_init(&handle);
+    validate_gpio_expander_init_success(result, handle);
+
+    gpio_expander_test_set_mutex_null();
+    mock_esp_io_expander_reset();
+    mock_freertos_semaphore_reset();
+
+    result = gpio_expander_set_dir(0x43218765, IO_EXPANDER_INPUT);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, result, "should return ESP_FAIL when mutex is NULL");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphoreTake_called, "xSemaphoreTake should NOT be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_esp_io_expander_set_dir_data.called, "set_dir should NOT be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphoreGive_called, "xSemaphoreGive should NOT be called");
 }
 
 // Validate execution of the gpio_expander_set_level() function
@@ -888,6 +912,7 @@ int main(void)
     RUN_TEST(test_gpio_expander_set_dir_success);
     RUN_TEST(test_gpio_expander_set_dir_fail);
     RUN_TEST(test_gpio_expander_set_dir_not_initialized);
+    RUN_TEST(test_gpio_expander_set_dir_partial_init_mutex_null);
 
     RUN_TEST(test_gpio_expander_set_level_success);
     RUN_TEST(test_gpio_expander_set_level_fail);

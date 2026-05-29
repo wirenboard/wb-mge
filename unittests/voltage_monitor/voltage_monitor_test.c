@@ -1,11 +1,13 @@
 #include "unity.h"
 #include "console_log.h"
+#include "freertos/task.h"
 
 #include <stdbool.h>
 
 // Access non-static functions exported by VM_STATIC macro in unittest env
 float exp_filter(float cur_value, float new_value);
 bool check_sys_voltage_bounds(float sys_voltage, bool ok_state);
+bool sys_voltage_prot_engine(bool bounds_ok);
 
 /* Forward declaration for the prot_engine reset function exposed in __unittest_env__ */
 void voltage_monitor_reset_prot_engine(void);
@@ -174,6 +176,27 @@ void test_exp_filter_no_change_when_equal(void)
     TEST_ASSERT_EQUAL_FLOAT_MESSAGE(10.0f, result, "exp_filter should return the same value when cur equals new");
 }
 
+// ---------------------------------------------------------------------------
+// Tests for sys_voltage_prot_engine
+// ---------------------------------------------------------------------------
+
+// Out-of-bounds voltage must immediately drop protection to FAIL (false),
+// not leave it in OK state.
+void test_sys_voltage_prot_engine_bounds_fail_immediately_drops_to_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_voltage_prot_engine - bounds failure immediately drops protection to FAIL");
+    LOG_MESSAGE();
+
+    mock_set_tick_count(0);
+
+    bool first = sys_voltage_prot_engine(true);
+    TEST_ASSERT_TRUE_MESSAGE(first, "Engine should start in OK state when first reading is in-bounds");
+
+    bool after_fault = sys_voltage_prot_engine(false);
+    TEST_ASSERT_FALSE_MESSAGE(after_fault, "Out-of-bounds voltage must immediately drop protection to FAIL (false)");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -192,6 +215,8 @@ int main(void)
 
     RUN_TEST(test_exp_filter_moves_toward_new_value);
     RUN_TEST(test_exp_filter_no_change_when_equal);
+
+    RUN_TEST(test_sys_voltage_prot_engine_bounds_fail_immediately_drops_to_fail);
 
     return UNITY_END();
 }
