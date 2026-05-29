@@ -46,7 +46,7 @@ pipeline {
         stage('Unit tests (C)') {
             steps {
                 script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make unittests"'
+                    sh 'bash -c "source /opt/esp/idf/export.sh && make -j unittests"'
                 }
             }
             post {
