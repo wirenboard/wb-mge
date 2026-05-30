@@ -106,8 +106,8 @@ void setUp(void)
     sniffer_init();
     sniffer_attach(0, &s_desc0);
     sniffer_attach(1, &s_desc1);
-    sniffer_enable(0);
-    sniffer_enable(1);
+    sniffer_enable(0, SNIFF_REASON_DISPLAY);
+    sniffer_enable(1, SNIFF_REASON_DISPLAY);
 }
 
 void tearDown(void) {}
@@ -550,50 +550,44 @@ void test_tc9_scan_response_with_leading_ff(void)
 }
 
 /* ============================================================
- * TC-RX1 — sniffer_enable() switches RX timeout to SNIFFER value
+ * TC-RX1 — sniffer_enable() does NOT touch the RX timeout
+ * (RX timeout is owned by the transport mode, not the overlay)
  * ============================================================ */
-void test_rx_timeout_enable_sets_sniffer_value(void)
+void test_rx_timeout_enable_does_not_change_timeout(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "TC-RX1: sniffer_enable() must set RX timeout to SERIAL_RX_TOUT_SNIFFER");
+        "TC-RX1: sniffer_enable() must NOT call serial_set_rx_timeout");
     LOG_MESSAGE();
 
-    /* setUp already calls sniffer_enable(0), reset counters to test a fresh call */
+    /* setUp already calls sniffer_enable(0, SNIFF_REASON_DISPLAY), reset counters to test a fresh call */
     mock_serial_reset();
 
-    sniffer_disable(0);
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
     mock_serial_reset();
 
-    sniffer_enable(0);
+    sniffer_enable(0, SNIFF_REASON_DISPLAY);
 
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_set_rx_timeout_data.called,
-        "serial_set_rx_timeout must be called once on sniffer_enable");
-    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_RX_TOUT_SNIFFER, mock_serial_set_rx_timeout_data.tout_symbols,
-        "sniffer_enable must set timeout to SERIAL_RX_TOUT_SNIFFER");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(&s_desc0, mock_serial_set_rx_timeout_data.desc,
-        "serial_set_rx_timeout must be called with the correct serial descriptor");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
+        "sniffer_enable must NOT call serial_set_rx_timeout (timeout owned by transport mode)");
 }
 
 /* ============================================================
- * TC-RX2 — sniffer_disable() switches RX timeout to PROXY value
+ * TC-RX2 — sniffer_disable() does NOT touch the RX timeout
+ * (RX timeout is owned by the transport mode, not the overlay)
  * ============================================================ */
-void test_rx_timeout_disable_sets_proxy_value(void)
+void test_rx_timeout_disable_does_not_change_timeout(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "TC-RX2: sniffer_disable() must set RX timeout to SERIAL_RX_TOUT_PROXY");
+        "TC-RX2: sniffer_disable() must NOT call serial_set_rx_timeout");
     LOG_MESSAGE();
 
     mock_serial_reset();
-    sniffer_disable(0);
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
 
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_set_rx_timeout_data.called,
-        "serial_set_rx_timeout must be called once on sniffer_disable");
-    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_RX_TOUT_PROXY, mock_serial_set_rx_timeout_data.tout_symbols,
-        "sniffer_disable must set timeout to SERIAL_RX_TOUT_PROXY");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(&s_desc0, mock_serial_set_rx_timeout_data.desc,
-        "serial_set_rx_timeout must be called with the correct serial descriptor");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
+        "sniffer_disable must NOT call serial_set_rx_timeout (timeout owned by transport mode)");
 }
 
 /* ============================================================
@@ -609,11 +603,11 @@ void test_rx_timeout_not_called_after_detach(void)
     sniffer_detach(0);
     mock_serial_reset();
 
-    sniffer_enable(0);
+    sniffer_enable(0, SNIFF_REASON_DISPLAY);
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
         "serial_set_rx_timeout must NOT be called after sniffer_detach (enable)");
 
-    sniffer_disable(0);
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
         "serial_set_rx_timeout must NOT be called after sniffer_detach (disable)");
 }
@@ -994,61 +988,72 @@ void test_tc17_recursive_stream_split_two_frames(void)
 }
 
 /* ============================================================
- * TC-CA1 — sniffer_set_cache_active(true): sets SNIFFER RX timeout
+ * TC-CA1 — enabling the CACHE reason does NOT touch the RX timeout
+ * (RX timeout is owned by the transport mode, not the overlay)
  * ============================================================ */
 
-void test_sniffer_set_cache_active_sets_timeout(void)
+void test_cache_reason_does_not_change_timeout(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "TC-CA1: sniffer_set_cache_active(true) → serial_set_rx_timeout(SERIAL_RX_TOUT_SNIFFER)");
+        "TC-CA1: sniffer_enable(SNIFF_REASON_CACHE) must NOT call serial_set_rx_timeout");
     LOG_MESSAGE();
 
-    /*
-     * setUp has enabled both ports via sniffer_enable().
-     * sniffer_set_cache_active iterates only ports where enabled==false.
-     * Disable both ports so the function can act on them, then reset the mock
-     * counter before the call under test.
-     */
-    sniffer_disable(0);
-    sniffer_disable(1);
+    /* setUp enabled DISPLAY on both ports; clear it so CACHE is a fresh 0->1 edge. */
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
+    sniffer_disable(1, SNIFF_REASON_DISPLAY);
     mock_serial_reset();
 
-    sniffer_set_cache_active(true);
+    sniffer_enable(0, SNIFF_REASON_CACHE);
 
-    TEST_ASSERT_EQUAL_MESSAGE(2, mock_serial_set_rx_timeout_data.called,
-        "TC-CA1: serial_set_rx_timeout must be called for both ports");
-    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_RX_TOUT_SNIFFER,
-        mock_serial_set_rx_timeout_data.tout_symbols,
-        "TC-CA1: timeout must be SERIAL_RX_TOUT_SNIFFER when active=true");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
+        "TC-CA1: enabling a reason must NOT call serial_set_rx_timeout");
 }
 
 /* ============================================================
- * TC-CA2 — sniffer_set_cache_active(false): sets PROXY RX timeout
+ * TC-CA2 — clearing the last reason does NOT touch the RX timeout
+ * (RX timeout is owned by the transport mode, not the overlay)
  * ============================================================ */
 
-void test_sniffer_set_cache_active_inactive_sets_proxy_timeout(void)
+void test_clearing_last_reason_does_not_change_timeout(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "TC-CA2: sniffer_set_cache_active(false) → serial_set_rx_timeout(SERIAL_RX_TOUT_PROXY)");
+        "TC-CA2: disabling the last reason must NOT call serial_set_rx_timeout");
     LOG_MESSAGE();
 
-    /*
-     * Disable both ports so sniffer_set_cache_active can act on them.
-     * cache_multimaster_is_enabled() returns false by default in the mock.
-     */
-    sniffer_disable(0);
-    sniffer_disable(1);
+    /* Port 0 currently has DISPLAY (from setUp). Disabling it clears the last reason. */
+    mock_serial_reset();
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
+        "TC-CA2: clearing the last reason must NOT call serial_set_rx_timeout");
+}
+
+/* ============================================================
+ * TC-CA3 — overlapping reasons bitmask transitions never touch the RX timeout
+ * Exercises the reasons RMW across add/clear edges; the overlay must stay out
+ * of the RX timeout (owned by the transport mode) on every transition.
+ * ============================================================ */
+
+void test_overlapping_reasons_keep_timeout_untouched(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-CA3: overlapping DISPLAY+CACHE reason transitions must NOT touch the RX timeout");
+    LOG_MESSAGE();
+
     mock_serial_reset();
 
-    sniffer_set_cache_active(false);
+    /* Port 0 has DISPLAY from setUp. Add CACHE: bitmask now DISPLAY|CACHE. */
+    sniffer_enable(0, SNIFF_REASON_CACHE);
+    /* Clear DISPLAY: still CACHE active. */
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
+    /* Clear CACHE too: now the last reason clears. */
+    sniffer_disable(0, SNIFF_REASON_CACHE);
 
-    TEST_ASSERT_EQUAL_MESSAGE(2, mock_serial_set_rx_timeout_data.called,
-        "TC-CA2: serial_set_rx_timeout must be called for both ports");
-    TEST_ASSERT_EQUAL_MESSAGE(SERIAL_RX_TOUT_PROXY,
-        mock_serial_set_rx_timeout_data.tout_symbols,
-        "TC-CA2: timeout must be SERIAL_RX_TOUT_PROXY when active=false");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
+        "TC-CA3: no reason transition (add/clear/last-clear) may call serial_set_rx_timeout");
 }
 
 /* ============================================================
@@ -1168,7 +1173,7 @@ void test_tc19_post_disable_timer_no_spurious_packet(void)
 
     /* Disable the sniffer before the timer fires.
      * This clears req_len (Bug #3b fix) and sets enabled=false (Bug #3a guard). */
-    sniffer_disable(0);
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
 
     /* Simulate the timer firing anyway (race: callback was already queued
      * in the FreeRTOS timer service queue before xTimerStop was processed). */
@@ -1585,12 +1590,13 @@ int main(void)
     RUN_TEST(test_tc14_fc05_direction_unknown_dropped);
     RUN_TEST(test_tc15_crc_err_no_sync_dropped);
     RUN_TEST(test_tc16_crc_err_after_sync_alternates_direction);
-    RUN_TEST(test_rx_timeout_enable_sets_sniffer_value);
-    RUN_TEST(test_rx_timeout_disable_sets_proxy_value);
+    RUN_TEST(test_rx_timeout_enable_does_not_change_timeout);
+    RUN_TEST(test_rx_timeout_disable_does_not_change_timeout);
     RUN_TEST(test_rx_timeout_not_called_after_detach);
     RUN_TEST(test_tc17_recursive_stream_split_two_frames);
-    RUN_TEST(test_sniffer_set_cache_active_sets_timeout);
-    RUN_TEST(test_sniffer_set_cache_active_inactive_sets_proxy_timeout);
+    RUN_TEST(test_cache_reason_does_not_change_timeout);
+    RUN_TEST(test_clearing_last_reason_does_not_change_timeout);
+    RUN_TEST(test_overlapping_reasons_keep_timeout_untouched);
     RUN_TEST(test_tc18_multi_master_in_res_wait);
     RUN_TEST(test_tc19_post_disable_timer_no_spurious_packet);
     RUN_TEST(test_tc20_fast_response_before_timer);

@@ -63,7 +63,7 @@ typedef struct {
 
 typedef struct {
     sniff_state_t  state;
-    bool           enabled;
+    uint8_t        reasons;        /* bitmask of sniff_reason_t; sniffer runs when != 0 */
     uint8_t        req_buf[SNIFFER_MAX_PACKET_LEN];
     uint16_t       req_len;
     uint64_t       req_timestamp_us;
@@ -169,7 +169,7 @@ static void resp_timer_cb(TimerHandle_t timer)
     bool do_enqueue = false;
 
     taskENTER_CRITICAL(&sniff_mux);
-    if (ctx->req_len >= 2 && (ctx->enabled || cache_multimaster_is_enabled())) {
+    if (ctx->req_len >= 2 && ctx->reasons != 0) {
         pkt.port         = (uint8_t)port_index;
         pkt.timestamp_us = ctx->req_timestamp_us + (uint64_t)SNIFFER_RESP_TIMEOUT_MS * 1000ULL;
         pkt.is_master    = true;
@@ -319,8 +319,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
 {
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
-    /* Allow processing when sniffer display is enabled OR cache needs data */
-    if (!ctx->enabled && !cache_multimaster_is_enabled()) return;
+    /* Run only when at least one reason (display and/or cache) is active. */
+    if (ctx->reasons == 0) return;
     if (len < 4) return;
 
     /* Strip leading 0xFF arbitration bytes unconditionally.
@@ -596,9 +596,14 @@ SNIFFER_STATIC void sniffer_ws_dispatch(sniff_packet_t *pkt)
 {
     static char json_buf[SNIFFER_JSON_BUF_SIZE];
 
-    /* Feed packet to caching multimaster regardless of WS client connection state.
-     * Cache accumulates data even when no WS client is connected. */
-    if (cache_multimaster_is_enabled()) {
+    /* Feed packet to the caching multimaster regardless of WS client connection
+     * state, but only for ports whose CACHE reason is active. Cache accumulates
+     * data even when no WS client is connected. */
+    bool cache_reason;
+    taskENTER_CRITICAL(&sniff_mux);
+    cache_reason = (pkt->port < BRIDGES_COUNT) && (sniff_ctx[pkt->port].reasons & SNIFF_REASON_CACHE);
+    taskEXIT_CRITICAL(&sniff_mux);
+    if (cache_multimaster_is_enabled() && cache_reason) {
         if (pkt->is_master && !pkt->is_timeout &&
             (pkt->function == 0x01 || pkt->function == 0x02 ||
              pkt->function == 0x03 || pkt->function == 0x04) &&
@@ -743,8 +748,8 @@ SNIFFER_STATIC esp_err_t sniffer_ws_handler(httpd_req_t *req)
         bool enable = (strcmp(cmd->valuestring, "start") == 0);
         unsigned idx = port_name_to_index((unsigned)port->valuedouble);
         if (idx < BRIDGES_COUNT) {
-            if (enable) sniffer_enable(idx);
-            else        sniffer_disable(idx);
+            if (enable) sniffer_enable(idx, SNIFF_REASON_DISPLAY);
+            else        sniffer_disable(idx, SNIFF_REASON_DISPLAY);
         }
     }
 
@@ -759,9 +764,10 @@ static esp_err_t sniffer_status_handler(httpd_req_t *req)
     }
 
     char resp[64];
+    /* Report the user-facing "live sniffer running" state, i.e. the DISPLAY reason. */
     snprintf(resp, sizeof(resp), "{\"port_%u\":%s,\"port_%u\":%s}",
-        port_index_to_name(0), sniff_ctx[0].enabled ? "true" : "false",
-        port_index_to_name(1), sniff_ctx[1].enabled ? "true" : "false");
+        port_index_to_name(0), (sniff_ctx[0].reasons & SNIFF_REASON_DISPLAY) ? "true" : "false",
+        port_index_to_name(1), (sniff_ctx[1].reasons & SNIFF_REASON_DISPLAY) ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, (ssize_t)strlen(resp));
     return ESP_OK;
@@ -797,7 +803,7 @@ esp_err_t sniffer_init(void)
 
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         sniff_ctx[i].state           = SNIFF_IDLE;
-        sniff_ctx[i].enabled         = false;
+        sniff_ctx[i].reasons         = 0;
         sniff_ctx[i].synchronized    = false;
         sniff_ctx[i].last_was_master = false;
         sniff_ctx[i].port_index = i;
@@ -834,7 +840,9 @@ void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
 void sniffer_detach(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) return;
-    sniffer_disable(port_index);
+    /* Fully disable: clear all reasons so framing state and RX timeout are reset. */
+    sniffer_disable(port_index, SNIFF_REASON_DISPLAY);
+    sniffer_disable(port_index, SNIFF_REASON_CACHE);
     // Clear the callback pointer in the serial descriptor before releasing our reference,
     // to prevent the UART event task from calling a stale handler after detach.
     if (sniff_ctx[port_index].serial_desc) {
@@ -843,50 +851,55 @@ void sniffer_detach(unsigned port_index)
     sniff_ctx[port_index].serial_desc = NULL;
 }
 
-void sniffer_enable(unsigned port_index)
+void sniffer_enable(unsigned port_index, sniff_reason_t reason)
 {
     if (port_index >= BRIDGES_COUNT) return;
-    sniff_ctx[port_index].enabled = true;
-    if (sniff_ctx[port_index].serial_desc) {
-        esp_err_t err = serial_set_rx_timeout(sniff_ctx[port_index].serial_desc, SERIAL_RX_TOUT_SNIFFER);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Port %u: failed to set RX timeout to sniffer value: %s", port_index, esp_err_to_name(err));
-        }
-    }
-    ESP_LOGI(TAG, "Sniffer enabled on port %u", port_index);
+    sniff_ctx_t *ctx = &sniff_ctx[port_index];
+
+    /* The reasons bitmask is shared with other tasks (e.g. sniffer_ws_dispatch and
+     * sniffer_disable). Perform the read-modify-write under the spinlock so
+     * concurrent writers cannot lose a bit.
+     *
+     * The overlay does NOT touch the serial RX inter-character timeout: that is
+     * owned by the transport mode (set once at port init). The sniffer's frame
+     * splitting (stream_splitter) works regardless of the RX timeout. */
+    taskENTER_CRITICAL(&sniff_mux);
+    ctx->reasons = (uint8_t)(ctx->reasons | (uint8_t)reason);
+    taskEXIT_CRITICAL(&sniff_mux);
+
+    ESP_LOGI(TAG, "Sniffer reason 0x%02X enabled on port %u (reasons=0x%02X)",
+             (unsigned)reason, port_index, ctx->reasons);
 }
 
-void sniffer_disable(unsigned port_index)
+void sniffer_disable(unsigned port_index, sniff_reason_t reason)
 {
     if (port_index >= BRIDGES_COUNT) return;
-    sniff_ctx[port_index].enabled = false;
-    if (sniff_ctx[port_index].serial_desc) {
-        /* Restore RX timeout only if cache is not active (cache also needs the short timeout) */
-        if (!cache_multimaster_is_enabled()) {
-            esp_err_t err = serial_set_rx_timeout(sniff_ctx[port_index].serial_desc, SERIAL_RX_TOUT_PROXY);
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Port %u: failed to set RX timeout to proxy value: %s", port_index, esp_err_to_name(err));
-            }
-        }
-        /* else: leave timeout at SNIFFER value — cache still needs short inter-frame gaps */
-    }
-    xTimerStop(sniff_ctx[port_index].resp_timer, 0);
-    sniff_ctx[port_index].req_len = 0;   /* Prevent stale timer CB from emitting a packet */
-    sniff_ctx[port_index].state   = SNIFF_IDLE;
-    ESP_LOGI(TAG, "Sniffer disabled on port %u", port_index);
-}
+    sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
-void sniffer_set_cache_active(bool active)
-{
-    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        if (sniff_ctx[i].enabled) continue; /* sniffer already controls timeout */
-        if (sniff_ctx[i].serial_desc == NULL) continue;
-        uint8_t tout = active ? SERIAL_RX_TOUT_SNIFFER : SERIAL_RX_TOUT_PROXY;
-        esp_err_t err = serial_set_rx_timeout(sniff_ctx[i].serial_desc, tout);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Port %u: failed to set RX timeout for cache: %s", i, esp_err_to_name(err));
-        }
+    /* Perform the read-modify-write and non-zero -> 0 edge detection under the
+     * spinlock so concurrent writers cannot lose a bit. The framing-state reset is
+     * safe here (sniffer_process mutates these fields under sniff_mux too). */
+    taskENTER_CRITICAL(&sniff_mux);
+    uint8_t prev = ctx->reasons;
+    ctx->reasons = (uint8_t)(prev & ~(uint8_t)reason);
+    bool became_idle = (prev != 0) && (ctx->reasons == 0);
+    if (became_idle) {
+        ctx->req_len = 0;   /* Prevent stale timer CB from emitting a packet */
+        ctx->state   = SNIFF_IDLE;
     }
+    taskEXIT_CRITICAL(&sniff_mux);
+
+    if (!became_idle) {
+        /* Still running for another reason — keep framing state. */
+        ESP_LOGI(TAG, "Sniffer reason 0x%02X disabled on port %u (reasons=0x%02X)",
+                 (unsigned)reason, port_index, ctx->reasons);
+        return;
+    }
+    /* No reasons left — fully quiesce the pipeline. The RX timeout is owned by the
+     * transport mode and is intentionally left untouched. xTimerStop() is not
+     * spinlock-safe, so it runs after releasing the lock. */
+    xTimerStop(ctx->resp_timer, 0);
+    ESP_LOGI(TAG, "Sniffer fully disabled on port %u", port_index);
 }
 
 void sniffer_inject_tx(unsigned port_index, const uint8_t *data, size_t len)

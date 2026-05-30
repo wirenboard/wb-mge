@@ -14,8 +14,8 @@ SN-03  Broadcast packet (slave_id=0x00) is classified as master.
 SN-04  Fast Modbus packets are classified by subcmd (master vs slave).
 SN-05  Orphan response (no preceding request) is emitted as sender=="slave".
 SN-06  After WS disconnect without stop, firmware stays alive.
-GM-15  After switching from sniffer to tcp_bridge, data path works correctly.
-GM-16  Double mode switch tcp_bridge→sniffer→tcp_bridge works end-to-end.
+GM-15  After running the WS sniffer overlay on a tcp_bridge port and stopping it, the data path works correctly.
+GM-16  tcp_bridge round-trip works before, during, and after a WS sniffer overlay (transport stays tcp_bridge).
 """
 
 import json
@@ -991,8 +991,8 @@ def test_sniffer_port2_packets_have_port2(api):
     ws = None
     stop_ping = None
     try:
-        resp = api.set_port_mode(2, "sniffer")
-        assert resp.status_code == 200, f"Failed to set port 2 to sniffer: {resp.status_code}"
+        resp = api.set_port_mode(2, "passive")
+        assert resp.status_code == 200, f"Failed to set port 2 to passive: {resp.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=2, include_all_fc=False):
@@ -1054,8 +1054,8 @@ def test_sniffer_timeout_packet_when_slave_silent(api):
     stop_ping = None
     uart_sock = None
     try:
-        resp = api.set_port_mode(1, "sniffer")
-        assert resp.status_code == 200, f"Failed to set port 1 to sniffer: {resp.status_code}"
+        resp = api.set_port_mode(1, "passive")
+        assert resp.status_code == 200, f"Failed to set port 1 to passive: {resp.status_code}"
         time.sleep(0.5)
 
         ws, stop_ping, _ = _ws_connect(api, 1)
@@ -1141,8 +1141,8 @@ def test_sniffer_broadcast_classified_as_master(api):
     stop_ping = None
     uart_sock = None
     try:
-        resp = api.set_port_mode(1, "sniffer")
-        assert resp.status_code == 200, f"Failed to set port 1 to sniffer: {resp.status_code}"
+        resp = api.set_port_mode(1, "passive")
+        assert resp.status_code == 200, f"Failed to set port 1 to passive: {resp.status_code}"
         time.sleep(0.5)
 
         ws, stop_ping, _ = _ws_connect(api, 1)
@@ -1219,8 +1219,8 @@ def test_sniffer_fast_modbus_classification(api):
     stop_ping = None
     uart_sock = None
     try:
-        resp = api.set_port_mode(1, "sniffer")
-        assert resp.status_code == 200, f"Failed to set port 1 to sniffer: {resp.status_code}"
+        resp = api.set_port_mode(1, "passive")
+        assert resp.status_code == 200, f"Failed to set port 1 to passive: {resp.status_code}"
         time.sleep(0.5)
 
         ws, stop_ping, _ = _ws_connect(api, 1)
@@ -1326,8 +1326,8 @@ def test_sniffer_orphan_response(api):
     stop_ping = None
     uart_sock = None
     try:
-        resp = api.set_port_mode(1, "sniffer")
-        assert resp.status_code == 200, f"Failed to set port 1 to sniffer: {resp.status_code}"
+        resp = api.set_port_mode(1, "passive")
+        assert resp.status_code == 200, f"Failed to set port 1 to passive: {resp.status_code}"
         time.sleep(0.5)
 
         ws, stop_ping, _ = _ws_connect(api, 1)
@@ -1408,8 +1408,8 @@ def test_sniffer_ws_disconnect_firmware_stays_alive(api):
     ws = None
     stop_ping = None
     try:
-        resp = api.set_port_mode(1, "sniffer")
-        assert resp.status_code == 200, f"Failed to set port 1 to sniffer: {resp.status_code}"
+        resp = api.set_port_mode(1, "passive")
+        assert resp.status_code == 200, f"Failed to set port 1 to passive: {resp.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1, include_all_fc=False):
@@ -1471,13 +1471,18 @@ def test_sniffer_ws_disconnect_firmware_stays_alive(api):
 @pytest.mark.qemu
 @pytest.mark.timeout(40)
 def test_sniffer_to_tcp_bridge_data_path_restored(api):
-    """After switching from sniffer to tcp_bridge, data path works correctly.
+    """After running the WS sniffer overlay on a tcp_bridge port and stopping it,
+    the transparent data path still works.
+
+    In the new model the sniffer is a display overlay on top of tcp_bridge, not a
+    separate transport mode, so there is no sniffer→tcp_bridge mode switch — the
+    port stays in tcp_bridge throughout and the overlay is added/removed via WS.
 
     Steps:
     1. Save original port 1 settings.
     2. Apply bridge config (bridge_port=50504, mode=server, modbus=False).
-    3. Switch to sniffer mode; confirm ≥3 packets received via WS.
-    4. Switch port 1 to tcp_bridge mode.
+    3. Set port 1 to tcp_bridge; run the WS sniffer overlay and confirm ≥3 packets.
+    4. Stop the WS sniffer overlay (transport unchanged).
     5. Start UART echo thread + TCP client; verify 8-byte round-trip.
     6. Teardown: close all, restore settings.
     """
@@ -1510,10 +1515,12 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
         assert resp.json().get("success") is True
         time.sleep(0.3)
 
-        # Phase 1: sniffer mode — inject traffic and verify packets arrive
-        resp = api.set_port_mode(1, "sniffer")
-        assert resp.status_code == 200, f"Failed to set sniffer mode: {resp.status_code}"
-        time.sleep(0.5)
+        # Phase 1: tcp_bridge transport with the WS sniffer overlay — inject
+        # traffic and verify packets arrive.
+        resp = api.set_port_mode(1, "tcp_bridge")
+        assert resp.status_code == 200, f"Failed to set tcp_bridge mode: {resp.status_code}"
+        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
+        assert ready, "Port 50504 not ready after switching to tcp_bridge"
 
         probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
         if probe is None:
@@ -1524,10 +1531,11 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
             ws, stop_ping, _ = _ws_connect(api, 1)
             packets = _collect_packets(ws, min_count=3, timeout_sec=15)
             assert len(packets) >= 3, (
-                f"Expected >=3 packets in sniffer mode but got {len(packets)}"
+                f"Expected >=3 packets with the WS sniffer overlay but got {len(packets)}"
             )
 
-        # Stop sniffer — send stop command and close WS
+        # Stop the WS sniffer overlay — send stop command and close WS. The
+        # transport stays tcp_bridge.
         stop_ping.set()
         try:
             ws.send(json.dumps({"cmd": "stop", "port": 1}))
@@ -1540,11 +1548,9 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
         ws = None
         stop_ping = None
 
-        # Phase 2: switch to tcp_bridge mode
-        resp = api.set_port_mode(1, "tcp_bridge")
-        assert resp.status_code == 200, f"Failed to switch to tcp_bridge: {resp.status_code}"
+        # Phase 2: transport is already tcp_bridge; confirm the data path is ready.
         ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
-        assert ready, "Port 50504 not ready after switching from sniffer to tcp_bridge"
+        assert ready, "Port 50504 not ready after stopping the WS sniffer overlay"
 
         # Verify data path with echo round-trip
         echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
@@ -1604,12 +1610,16 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
 @pytest.mark.qemu
 @pytest.mark.timeout(60)
 def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
-    """Double mode switch tcp_bridge→sniffer→tcp_bridge works end-to-end.
+    """tcp_bridge round-trip works before, during, and after a WS sniffer overlay.
+
+    In the new model the sniffer is a display overlay on top of tcp_bridge, not a
+    separate transport mode, so the port stays in tcp_bridge throughout; the WS
+    sniffer overlay is added between the two round-trips and then removed.
 
     Phases:
     1. tcp_bridge: verify echo round-trip (8 bytes via UART1 + TCP client).
-    2. sniffer: inject traffic, verify ≥3 packets received.
-    3. tcp_bridge again: verify echo round-trip once more.
+    2. WS sniffer overlay (still tcp_bridge): inject traffic, verify ≥3 packets.
+    3. tcp_bridge: verify echo round-trip once more.
     """
     # Save original settings
     resp = api.get_settings()
@@ -1679,12 +1689,9 @@ def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
         echo_thread = None
 
         # ----------------------------------------------------------------
-        # Phase 2: sniffer — inject traffic and verify packets
+        # Phase 2: WS sniffer overlay (transport stays tcp_bridge) — inject
+        # traffic and verify packets
         # ----------------------------------------------------------------
-        resp = api.set_port_mode(1, "sniffer")
-        assert resp.status_code == 200, f"Phase 2: Failed to set sniffer: {resp.status_code}"
-        time.sleep(0.5)
-
         with PacketInjector(port=1, include_all_fc=False):
             ws, stop_ping, _ = _ws_connect(api, 1)
             packets = _collect_packets(ws, min_count=3, timeout_sec=15)
@@ -1703,15 +1710,13 @@ def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
             pass
         ws = None
         stop_ping = None
-        print(f"✓ Phase 2 (sniffer): {len(packets)} packets received")
+        print(f"✓ Phase 2 (WS sniffer overlay): {len(packets)} packets received")
 
         # ----------------------------------------------------------------
-        # Phase 3: tcp_bridge again — verify round-trip still works
+        # Phase 3: tcp_bridge round-trip still works after the overlay is gone
         # ----------------------------------------------------------------
-        resp = api.set_port_mode(1, "tcp_bridge")
-        assert resp.status_code == 200, f"Phase 3: Failed to set tcp_bridge: {resp.status_code}"
         ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
-        assert ready, "Phase 3: Port 50504 not ready after second tcp_bridge switch"
+        assert ready, "Phase 3: Port 50504 not ready after stopping the WS sniffer overlay"
 
         echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
         echo_thread.start()

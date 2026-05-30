@@ -11,22 +11,23 @@ typedef void *httpd_handle_t;
 #endif
 
 /**
- * @brief Mutually exclusive operating modes for each RS-485 port.
+ * @brief Transport operating mode for each RS-485 port.
+ *
+ * The transport mode is orthogonal to the sniffer and cache overlays: the
+ * sniffer (live WS display) and the cache overlay can be enabled additively
+ * on top of any non-disabled transport mode.
  *
  * PM_MODE_DISABLED   — serial port is not opened; port is fully inactive.
  * PM_MODE_TCP_BRIDGE — serial port is open; traffic is forwarded over TCP
  *                      (transparent or Modbus framing, driven by bridge settings).
- * PM_MODE_SNIFFER    — serial port is open; packets are parsed and streamed
- *                      to WebSocket clients via the sniffer module.
- * PM_MODE_CACHE_BUS  — serial port is open; packets are parsed and the latest
- *                      register values are kept in the in-memory cache
- *                      (cache_multimaster).
+ * PM_MODE_PASSIVE    — serial port is open, no TCP forwarding (passive listener).
+ *                      This is the serial-only base that the cache overlay and
+ *                      the live sniffer can attach to.
  */
 typedef enum {
     PM_MODE_DISABLED   = 0,
     PM_MODE_TCP_BRIDGE = 1,
-    PM_MODE_SNIFFER    = 2,
-    PM_MODE_CACHE_BUS  = 3,
+    PM_MODE_PASSIVE    = 2,
 } pm_mode_t;
 
 /**
@@ -67,10 +68,32 @@ pm_mode_t port_manager_get_mode(unsigned port_index);
  * @brief Convert a pm_mode_t value to its NVS/JSON string representation.
  *
  * @param mode  Mode value.
- * @return Pointer to a constant string ("disabled", "tcp_bridge", "sniffer",
- *         "cache_bus"), or "unknown" for unrecognised values.
+ * @return Pointer to a constant string ("disabled", "tcp_bridge", "passive"),
+ *         or "unknown" for unrecognised values.
  */
 const char *port_manager_mode_to_str(pm_mode_t mode);
+
+/**
+ * @brief Enable or disable the per-port cache overlay.
+ *
+ * The cache overlay is persisted (KEY_CACHE_EN_1/2) and is orthogonal to the
+ * transport mode: it survives transport-mode changes. When enabled and the
+ * port's serial is open, the sniffer is driven (via SNIFF_REASON_CACHE) to
+ * feed the global multimaster cache.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param enabled     True to enable the cache overlay, false to disable.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if port_index is out of range.
+ */
+esp_err_t port_manager_set_cache(unsigned port_index, bool enabled);
+
+/**
+ * @brief Return the persisted cache-overlay state for a port.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @return true if the cache overlay is enabled, false otherwise or if OOB.
+ */
+bool port_manager_get_cache(unsigned port_index);
 
 /**
  * @brief Re-apply settings for a port, re-reading mode and parameters from NVS.
@@ -136,7 +159,7 @@ esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled);
 /**
  * @brief Send raw bytes to an RS-485 port.
  *
- * Uses the same serial_desc regardless of port mode (SNIFFER, CACHE_BUS, TCP_BRIDGE).
+ * Uses the same serial_desc regardless of transport mode (PASSIVE, TCP_BRIDGE).
  * If port is disabled (no serial_desc) or serial_send fails, returns ESP_FAIL.
  * If tx_disabled is set on the descriptor, serial_send silently drops data (returns ESP_OK).
  *

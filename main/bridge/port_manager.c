@@ -31,12 +31,14 @@ static const char *TAG = "port_manager";
 
 // Per-port runtime context.
 typedef struct {
-    pm_mode_t       mode;               // Currently active mode.
-    serial_desc_t  *serial_desc;        // Non-NULL only for SNIFFER and CACHE_BUS modes.
+    pm_mode_t       mode;               // Currently active transport mode.
+    bool            cache_overlay;      // Persisted cache-overlay state for this port.
+                                        // Orthogonal to transport mode; survives mode changes.
+    serial_desc_t  *serial_desc;        // Non-NULL only for PASSIVE mode.
                                         // For TCP_BRIDGE the serial_desc lives inside bridge_ctx.
     serial_config_t serial_cfg_at_init; // Serial config snapshot taken at port init time,
                                         // used to detect serial parameter changes for
-                                        // SNIFFER and CACHE_BUS modes.
+                                        // PASSIVE mode.
     SemaphoreHandle_t init_mutex;       // Serialises port_init_mode/port_deinit_mode against
                                         // races between the HTTP set_mode handler and the
                                         // async settings_update_task (both can trigger a
@@ -68,6 +70,38 @@ static void pm_unlock(unsigned index)
     }
 }
 
+static SemaphoreHandle_t s_cache_decision_mutex; // lazily created; serialises global-cache lifetime decisions
+
+static void cache_decision_lock(void)
+{
+    if (s_cache_decision_mutex == NULL) s_cache_decision_mutex = xSemaphoreCreateMutex();
+    if (s_cache_decision_mutex) xSemaphoreTake(s_cache_decision_mutex, portMAX_DELAY);
+}
+static void cache_decision_unlock(void)
+{
+    if (s_cache_decision_mutex) xSemaphoreGive(s_cache_decision_mutex);
+}
+
+// Bring the global cache pool in line with persisted per-port intent.
+// The pool is enabled iff at least one port has its cache overlay set, and is
+// touched ONLY on a real have!=want transition — so a live pool is never wiped
+// by a redundant enable(), and never freed while another port still wants it.
+// Serialised so concurrent per-port operations cannot race the global decision.
+// Must NOT take any pm_lock (it only reads cache_overlay) to keep lock ordering
+// pm_lock→cache_decision_mutex and avoid deadlock.
+static void cache_sync_global(void)
+{
+    cache_decision_lock();
+    bool want = false;
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        if (pm_ctx[i].cache_overlay) { want = true; break; }
+    }
+    bool have = cache_multimaster_is_enabled();
+    if (want && !have)      cache_multimaster_enable();
+    else if (!want && have) cache_multimaster_disable();
+    cache_decision_unlock();
+}
+
 // ────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────
@@ -77,8 +111,7 @@ const char *port_manager_mode_to_str(pm_mode_t mode)
     switch (mode) {
     case PM_MODE_DISABLED:   return PORT_MODE_DISABLED_STR;
     case PM_MODE_TCP_BRIDGE: return PORT_MODE_TCP_BRIDGE_STR;
-    case PM_MODE_SNIFFER:    return PORT_MODE_SNIFFER_STR;
-    case PM_MODE_CACHE_BUS:  return PORT_MODE_CACHE_BUS_STR;
+    case PM_MODE_PASSIVE:    return PORT_MODE_PASSIVE_STR;
     default:                 return "unknown";
     }
 }
@@ -91,13 +124,20 @@ static pm_mode_t str_to_pm_mode(const char *str)
     if (strncmp(str, PORT_MODE_TCP_BRIDGE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
         return PM_MODE_TCP_BRIDGE;
     }
-    if (strncmp(str, PORT_MODE_SNIFFER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return PM_MODE_SNIFFER;
-    }
-    if (strncmp(str, PORT_MODE_CACHE_BUS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return PM_MODE_CACHE_BUS;
+    if (strncmp(str, PORT_MODE_PASSIVE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return PM_MODE_PASSIVE;
     }
     return PM_MODE_DISABLED;
+}
+
+// Return the NVS key for the per-port cache overlay setting (cache_en_1 / cache_en_2).
+static const char *cache_en_nvs_key(unsigned index)
+{
+    static const char *keys[BRIDGES_COUNT] = {KEY_CACHE_EN_1, KEY_CACHE_EN_2};
+    if (index >= BRIDGES_COUNT) {
+        return KEY_CACHE_EN_1;
+    }
+    return keys[index];
 }
 
 // Return the NVS key for the port mode setting (port_mode_1 / port_mode_2).
@@ -129,11 +169,32 @@ static serial_desc_t *get_port_serial_desc(unsigned index)
     switch (pm_ctx[index].mode) {
     case PM_MODE_TCP_BRIDGE:
         return bridge_get_serial_desc(index);
-    case PM_MODE_SNIFFER:
-    case PM_MODE_CACHE_BUS:
+    case PM_MODE_PASSIVE:
         return pm_ctx[index].serial_desc;
     default:
         return NULL;
+    }
+}
+
+// Migrate legacy stored port modes from deployed devices to the new model:
+//   "sniffer"   -> transport "passive", no cache.
+//   "cache_bus" -> transport "passive", cache overlay enabled.
+// Rewrites the stored value so the migration is one-shot. Sets pm_ctx[index].cache_overlay
+// when the legacy value implies the cache overlay. Must run before port_init_mode().
+static void migrate_legacy_port_mode(unsigned index)
+{
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    if (setting_items_read(port_mode_nvs_key(index), value) != ESP_OK) {
+        return;
+    }
+    if (strncmp(value, "sniffer", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        ESP_LOGW(TAG, "Port[%u]: migrating legacy mode 'sniffer' -> 'passive'", index + 1);
+        setting_items_save(port_mode_nvs_key(index), PORT_MODE_PASSIVE_STR);
+    } else if (strncmp(value, "cache_bus", SETTING_ITEM_MAX_STR_LEN) == 0) {
+        ESP_LOGW(TAG, "Port[%u]: migrating legacy mode 'cache_bus' -> 'passive' + cache overlay", index + 1);
+        setting_items_save(port_mode_nvs_key(index), PORT_MODE_PASSIVE_STR);
+        setting_items_save_bool(cache_en_nvs_key(index), true);
+        pm_ctx[index].cache_overlay = true;
     }
 }
 
@@ -160,6 +221,10 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
         {
             serial_desc_t *sd = bridge_get_serial_desc(index);
             if (sd) {
+                // RX timeout is owned by the transport mode. The TCP bridge uses the
+                // longer PROXY inter-frame timeout; the sniffer/cache overlay must not
+                // change it. serial_init() defaults to the short value, so set it here.
+                serial_set_rx_timeout(sd, SERIAL_RX_TOUT_PROXY);
                 sniffer_attach(index, sd);
             } else {
                 ESP_LOGW(TAG, "Port[%u]: TCP bridge has no serial_desc (inner bridge_mode may be disabled), sniffer not attached", index + 1);
@@ -167,31 +232,15 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
         }
         break;
 
-    case PM_MODE_SNIFFER:
-        // Open serial-only (no TCP layer).
+    case PM_MODE_PASSIVE:
+        // Open serial-only (no TCP layer). The sniffer is attached but NOT
+        // forced on — it only runs when a reason (WS display or cache) is set.
         ESP_RETURN_ON_ERROR(bridge_port_init_serial_only(index, &pm_ctx[index].serial_desc),
                             TAG, "Port[%u]: bridge_port_init_serial_only failed", index + 1);
-        // Tighter inter-character timeout for Modbus packet boundary detection.
+        // Passive listener: use the short sniffer inter-frame timeout for clean Modbus
+        // framing. RX timeout is owned by the transport mode, not the sniffer overlay.
         serial_set_rx_timeout(pm_ctx[index].serial_desc, SERIAL_RX_TOUT_SNIFFER);
         sniffer_attach(index, pm_ctx[index].serial_desc);
-        sniffer_enable(index);
-        // Save the serial config used at init so we can detect changes later.
-        bridge_read_serial_config(index, &pm_ctx[index].serial_cfg_at_init);
-        break;
-
-    case PM_MODE_CACHE_BUS:
-        // Open serial-only (no TCP layer).
-        ESP_RETURN_ON_ERROR(bridge_port_init_serial_only(index, &pm_ctx[index].serial_desc),
-                            TAG, "Port[%u]: bridge_port_init_serial_only failed", index + 1);
-        serial_set_rx_timeout(pm_ctx[index].serial_desc, SERIAL_RX_TOUT_SNIFFER);
-        sniffer_attach(index, pm_ctx[index].serial_desc);
-        sniffer_enable(index);
-        // NOTE: cache_multimaster is a global resource.  If both ports are in
-        // CACHE_BUS mode, enable() is called twice — this is intentional and
-        // idempotent.  However, disable() on deinit of one port will also
-        // disable the cache for the other port (current architectural limitation).
-        cache_multimaster_enable();
-        sniffer_set_cache_active(true);
         // Save the serial config used at init so we can detect changes later.
         bridge_read_serial_config(index, &pm_ctx[index].serial_cfg_at_init);
         break;
@@ -202,6 +251,15 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
     }
 
     pm_ctx[index].mode = mode;
+
+    // Re-apply the persisted cache overlay now that serial is (re)opened.
+    // The sniffer must already be attached (done above) before enabling the CACHE reason.
+    // Ensure the global pool matches persisted intent (allocates it if needed),
+    // then wire this port's serial data into it.
+    cache_sync_global();
+    if (pm_ctx[index].cache_overlay && get_port_serial_desc(index) != NULL) {
+        sniffer_enable(index, SNIFF_REASON_CACHE);
+    }
 
     // Apply tx_disabled setting immediately after serial init
     static const char * const tx_disabled_nvs_keys[BRIDGES_COUNT] = {
@@ -229,7 +287,8 @@ static void port_deinit_mode(unsigned index)
         break;
 
     case PM_MODE_TCP_BRIDGE:
-        // Detach sniffer before the serial port is destroyed to prevent use-after-free.
+        // Detach sniffer (clears all reasons incl. CACHE) before the serial port
+        // is destroyed to prevent use-after-free.
         sniffer_detach(index);
         bridge_port_deinit(index);
         // bridge_port_deinit() clears bridge_ctx[index].serial_desc internally.
@@ -237,35 +296,12 @@ static void port_deinit_mode(unsigned index)
         rs485_stats_reset(index);
         break;
 
-    case PM_MODE_SNIFFER:
-        // sniffer_detach() disables and clears the sniff_handler pointer.
+    case PM_MODE_PASSIVE:
+        // sniffer_detach() clears all reasons and the sniff_handler pointer.
         sniffer_detach(index);
         serial_deinit(pm_ctx[index].serial_desc);
         pm_ctx[index].serial_desc = NULL;
         memset(&pm_ctx[index].serial_cfg_at_init, 0, sizeof(pm_ctx[index].serial_cfg_at_init));
-        rs485_busy_monitor_reset(index);
-        rs485_stats_reset(index);
-        break;
-
-    case PM_MODE_CACHE_BUS:
-        sniffer_detach(index);
-        serial_deinit(pm_ctx[index].serial_desc);
-        pm_ctx[index].serial_desc = NULL;
-        memset(&pm_ctx[index].serial_cfg_at_init, 0, sizeof(pm_ctx[index].serial_cfg_at_init));
-        // Temporarily mark this port as disabled before counting active CACHE_BUS ports,
-        // so the count reflects the state after this deinit completes.
-        pm_ctx[index].mode = PM_MODE_DISABLED;
-        {
-            unsigned cache_bus_count = 0;
-            for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-                if (pm_ctx[i].mode == PM_MODE_CACHE_BUS) cache_bus_count++;
-            }
-            if (cache_bus_count == 0) {
-                // Last CACHE_BUS port: safe to disable the global cache.
-                cache_multimaster_disable();
-                sniffer_set_cache_active(false);
-            }
-        }
         rs485_busy_monitor_reset(index);
         rs485_stats_reset(index);
         break;
@@ -275,7 +311,14 @@ static void port_deinit_mode(unsigned index)
         break;
     }
 
+    // The cache overlay setting (pm_ctx[index].cache_overlay) is intentionally NOT
+    // cleared here: it must survive transport-mode changes.
     pm_ctx[index].mode = PM_MODE_DISABLED;
+
+    // The global cache pool is intentionally NOT freed here. cache_overlay is
+    // unchanged, so the pool (and its accumulated data) must persist across a
+    // transport re-init. sniffer_detach(index) above already cleared this port's
+    // CACHE reason, stopping data flow while serial is down — that is sufficient.
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -304,6 +347,10 @@ esp_err_t port_manager_init(void)
 
     // Bring up each port in the mode stored in NVS.
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        // Read the persisted cache overlay first; migration may also set it.
+        pm_ctx[i].cache_overlay = setting_items_read_bool(cache_en_nvs_key(i));
+        // Migrate legacy stored modes ("sniffer"/"cache_bus") before reading the mode.
+        migrate_legacy_port_mode(i);
         pm_mode_t mode = read_port_mode_from_nvs(i);
         esp_err_t ret = port_init_mode(i, mode);
         if (ret != ESP_OK) {
@@ -381,6 +428,42 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
     return init_ret;
 }
 
+bool port_manager_get_cache(unsigned port_index)
+{
+    if (port_index >= BRIDGES_COUNT) {
+        return false;
+    }
+    return pm_ctx[port_index].cache_overlay;
+}
+
+esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
+{
+    if (port_index >= BRIDGES_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    pm_lock(port_index);
+
+    pm_ctx[port_index].cache_overlay = enabled;
+    esp_err_t ret = setting_items_save_bool(cache_en_nvs_key(port_index), enabled);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Port[%u]: Failed to save cache overlay to NVS: %s",
+                 port_index + 1, esp_err_to_name(ret));
+        // Proceed anyway; live state still applied below.
+    }
+
+    // Update the global pool to match the new intent (serialised, wipe-safe).
+    cache_sync_global();
+    // Wire/unwire this port's live data flow if its serial port is open.
+    if (get_port_serial_desc(port_index) != NULL) {
+        if (enabled) sniffer_enable(port_index, SNIFF_REASON_CACHE);
+        else         sniffer_disable(port_index, SNIFF_REASON_CACHE);
+    }
+
+    pm_unlock(port_index);
+    return ESP_OK;
+}
+
 esp_err_t port_manager_apply_settings(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) {
@@ -421,11 +504,11 @@ bool port_manager_check_settings_changed(unsigned port_index)
         return bridge_port_check_settings_changed(port_index);
     }
 
-    // For SNIFFER and CACHE_BUS compare only the serial parameters.
+    // For PASSIVE compare only the serial parameters.
     // bridge_port_check_settings_changed() must NOT be used here because
-    // bridge_ctx[index].initialized is always false for these modes, which
+    // bridge_ctx[index].initialized is always false for this mode, which
     // causes that function to return incorrect results.
-    if (current_mode == PM_MODE_SNIFFER || current_mode == PM_MODE_CACHE_BUS) {
+    if (current_mode == PM_MODE_PASSIVE) {
         serial_config_t nvs_cfg = {0};
         // If reading fails, assume changed to trigger re-init.
         if (bridge_read_serial_config(port_index, &nvs_cfg) != ESP_OK) {
@@ -577,6 +660,48 @@ static esp_err_t port2_set_mode_handler(httpd_req_t *req)
     return port_set_mode_handler(req, 1);
 }
 
+static esp_err_t port_set_cache_handler(httpd_req_t *req, unsigned port_index)
+{
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
+    cJSON *req_json = json_utils_receive_json(req);
+    if (!req_json) {
+        return json_utils_send_error(req, "Invalid JSON");
+    }
+
+    cJSON *enabled_item = cJSON_GetObjectItem(req_json, "enabled");
+    if (!enabled_item || !cJSON_IsBool(enabled_item)) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, "Missing or invalid 'enabled' field");
+    }
+
+    bool enabled = cJSON_IsTrue(enabled_item);
+    esp_err_t ret = port_manager_set_cache(port_index, enabled);
+    if (ret != ESP_OK) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error(req, esp_err_to_name(ret));
+    }
+
+    cJSON *resp = cJSON_CreateObject();
+    if (resp) {
+        cJSON_AddBoolToObject(resp, "cache_enabled", enabled);
+    }
+    json_utils_send_response(req, req_json, resp);
+    return ESP_OK;
+}
+
+static esp_err_t port1_set_cache_handler(httpd_req_t *req)
+{
+    return port_set_cache_handler(req, 0);
+}
+
+static esp_err_t port2_set_cache_handler(httpd_req_t *req)
+{
+    return port_set_cache_handler(req, 1);
+}
+
 static const httpd_uri_t uri_port1_mode = {
     .uri     = "/ports/1/mode",
     .method  = HTTP_POST,
@@ -601,6 +726,18 @@ static const httpd_uri_t uri_port2_send = {
     .handler = port2_send_handler,
 };
 
+static const httpd_uri_t uri_port1_cache = {
+    .uri     = "/ports/1/cache",
+    .method  = HTTP_POST,
+    .handler = port1_set_cache_handler,
+};
+
+static const httpd_uri_t uri_port2_cache = {
+    .uri     = "/ports/2/cache",
+    .method  = HTTP_POST,
+    .handler = port2_set_cache_handler,
+};
+
 esp_err_t port_manager_register_handlers(httpd_handle_t server)
 {
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port1_mode),
@@ -611,6 +748,10 @@ esp_err_t port_manager_register_handlers(httpd_handle_t server)
                         TAG, "Failed to register POST /ports/1/send");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port2_send),
                         TAG, "Failed to register POST /ports/2/send");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port1_cache),
+                        TAG, "Failed to register POST /ports/1/cache");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri_port2_cache),
+                        TAG, "Failed to register POST /ports/2/cache");
 
     ESP_LOGI(TAG, "HTTP handlers registered");
     return ESP_OK;

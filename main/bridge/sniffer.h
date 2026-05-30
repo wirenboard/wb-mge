@@ -50,12 +50,22 @@ esp_err_t sniffer_ws_handler(struct httpd_req *req);
 int sniffer_test_get_ws_client_fd(void);
 #endif
 
+/**
+ * @brief Reasons that keep the sniffer pipeline running for a port.
+ *
+ * The sniffer is an additive overlay: it runs whenever at least one reason bit
+ * is set. Each reason is enabled/disabled independently by its owner.
+ */
+typedef enum {
+    SNIFF_REASON_DISPLAY = 1u << 0,  // a WS client wants live display
+    SNIFF_REASON_CACHE   = 1u << 1,  // the cache overlay wants data
+} sniff_reason_t;
+
 esp_err_t sniffer_init(void);
 void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc);
 void sniffer_detach(unsigned port_index);
-void sniffer_enable(unsigned port_index);
-void sniffer_disable(unsigned port_index);
-void sniffer_set_cache_active(bool active);
+void sniffer_enable(unsigned port_index, sniff_reason_t reason);
+void sniffer_disable(unsigned port_index, sniff_reason_t reason);
 
 /**
  * @brief Feed externally-generated TX bytes into the sniffer pipeline.

@@ -145,7 +145,7 @@ def test_tx_disabled_blocks_uart_transmission(api):
     # Read original state so it can be restored after the test
     info_resp = api.get_info()
     assert info_resp.status_code == 200, f"GET /info returned {info_resp.status_code}"
-    original_mode = info_resp.json().get("rs485_1", {}).get("port_mode", "sniffer")
+    original_mode = info_resp.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
     settings_resp = api.get_settings()
     assert settings_resp.status_code == 200, (

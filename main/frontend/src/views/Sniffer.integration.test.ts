@@ -5,11 +5,14 @@
  *   Scenario A: stopCapture() clears the pending reconnect timer so connectWs is not called again.
  *   Scenario B: onUnmounted clears the reconnect timer — no orphan WebSocket is created.
  *
- * SNIF-I-002 — startCapture auto-switch to sniffer mode:
- *   Scenario A: port in 'tcp_bridge' mode → auto-switch to sniffer triggered.
- *   Scenario B: port in 'disabled' mode → auto-switch to sniffer triggered (regression guard).
- *   Scenario C: port in 'sniffer' mode → NO auto-switch (api NOT called with ports/N/mode).
- *   Scenario D: port in 'cache_bus' mode → NO auto-switch.
+ * SNIF-I-002 — startCapture serial-open handling:
+ *   The live sniffer is a WebSocket display overlay; it only needs the serial port open.
+ *   Only the 'disabled' transport requires opening serial as 'passive'; all other transports
+ *   ('tcp_bridge', 'passive') already have serial open and must NOT be switched.
+ *   Scenario A: port in 'tcp_bridge' mode → NO switch (serial already open).
+ *   Scenario B: port in 'disabled' mode → switch to 'passive' triggered (regression guard).
+ *   Scenario C: port in 'passive' mode → NO switch.
+ *   Scenario D: port in 'tcp_bridge' mode with cache overlay → NO switch.
  *   Scenario E: fetchInfo throws, info stays undefined → connectWs is still called immediately.
  */
 
@@ -104,7 +107,12 @@ function makeRouter() {
 }
 
 /** Minimal Info object with only the fields startCapture() reads. */
-function makeInfo(rs485_1_mode: Info['rs485_1']['port_mode'], rs485_2_mode: Info['rs485_2']['port_mode']): Info {
+function makeInfo(
+  rs485_1_mode: Info['rs485_1']['port_mode'],
+  rs485_2_mode: Info['rs485_2']['port_mode'],
+  rs485_1_cache = false,
+  rs485_2_cache = false,
+): Info {
   return {
     device_name: '',
     serial_num: 0,
@@ -129,8 +137,8 @@ function makeInfo(rs485_1_mode: Info['rs485_1']['port_mode'], rs485_2_mode: Info
       ap_channel: 0,
       ap_mac: '',
     },
-    rs485_1: { is_busy: false, error_percentage: 0, server_connections_count: 0, port_mode: rs485_1_mode },
-    rs485_2: { is_busy: false, error_percentage: 0, server_connections_count: 0, port_mode: rs485_2_mode },
+    rs485_1: { is_busy: false, error_percentage: 0, server_connections_count: 0, port_mode: rs485_1_mode, cache_enabled: rs485_1_cache },
+    rs485_2: { is_busy: false, error_percentage: 0, server_connections_count: 0, port_mode: rs485_2_mode, cache_enabled: rs485_2_cache },
     cache_modbus_port: 0,
     cache_modbus_server_enabled: false,
     cache_value_timeout_s: 0,
@@ -297,81 +305,11 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
     vi.resetModules();
   });
 
-  it('scenario A: port in tcp_bridge mode → auto-switch to sniffer triggered', async () => {
+  it('scenario A: port in tcp_bridge mode → NO switch (serial already open)', async () => {
     const { default: Sniffer } = await import('@/views/Sniffer.vue');
 
-    // Port 1 is in tcp_bridge mode — should trigger auto-switch.
+    // Port 1 is in tcp_bridge mode — serial is already open, so no switch is needed.
     sharedInfoRef.value = makeInfo('tcp_bridge', 'disabled');
-
-    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
-    await flushPromises();
-
-    const captureBtn = wrapper.findAll('button').find((b) => b.text() === 'Start');
-    expect(captureBtn, 'Start button must be found').toBeDefined();
-
-    await captureBtn!.trigger('click');
-    // Allow the api call (mode switch) to complete.
-    await flushPromises();
-
-    // Verify that api was called with the mode-switch endpoint for port 1.
-    expect(vi.mocked(apiMock)).toHaveBeenCalledWith(
-      'ports/1/mode',
-      expect.objectContaining({ method: 'POST', json: { mode: 'sniffer' } }),
-    );
-
-    // Advance past the 500ms PORT_MODE_SWITCH_DELAY_MS so connectWs is called.
-    await vi.advanceTimersByTimeAsync(600);
-    await flushPromises();
-
-    // WebSocket should have been created after the delay.
-    expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
-
-    // fetchInfo must be called after the mode switch to refresh the sidebar.
-    expect(fetchInfoMock).toHaveBeenCalledWith('low');
-
-    wrapper.unmount();
-    vi.runAllTimers();
-    await flushPromises();
-  });
-
-  it('scenario B: port in disabled mode → auto-switch to sniffer triggered (regression guard)', async () => {
-    const { default: Sniffer } = await import('@/views/Sniffer.vue');
-
-    // Port 1 is disabled — should trigger auto-switch just as before the fix.
-    sharedInfoRef.value = makeInfo('disabled', 'disabled');
-
-    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
-    await flushPromises();
-
-    const captureBtn = wrapper.findAll('button').find((b) => b.text() === 'Start');
-    expect(captureBtn, 'Start button must be found').toBeDefined();
-
-    await captureBtn!.trigger('click');
-    await flushPromises();
-
-    expect(vi.mocked(apiMock)).toHaveBeenCalledWith(
-      'ports/1/mode',
-      expect.objectContaining({ method: 'POST', json: { mode: 'sniffer' } }),
-    );
-
-    await vi.advanceTimersByTimeAsync(600);
-    await flushPromises();
-
-    expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
-
-    // fetchInfo must be called after the mode switch to refresh the sidebar.
-    expect(fetchInfoMock).toHaveBeenCalledWith('low');
-
-    wrapper.unmount();
-    vi.runAllTimers();
-    await flushPromises();
-  });
-
-  it('scenario C: port in sniffer mode → NO auto-switch', async () => {
-    const { default: Sniffer } = await import('@/views/Sniffer.vue');
-
-    // Port 1 is already in sniffer mode — no switch needed.
-    sharedInfoRef.value = makeInfo('sniffer', 'disabled');
 
     const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
     await flushPromises();
@@ -399,11 +337,76 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
     await flushPromises();
   });
 
-  it('scenario D: port in cache_bus mode → NO auto-switch', async () => {
+  it('scenario B: port in disabled mode → switch to passive triggered (regression guard)', async () => {
     const { default: Sniffer } = await import('@/views/Sniffer.vue');
 
-    // Port 1 is in cache_bus mode — no switch needed.
-    sharedInfoRef.value = makeInfo('cache_bus', 'disabled');
+    // Port 1 is disabled — serial must be opened as 'passive' before connecting the WS.
+    sharedInfoRef.value = makeInfo('disabled', 'disabled');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    const captureBtn = wrapper.findAll('button').find((b) => b.text() === 'Start');
+    expect(captureBtn, 'Start button must be found').toBeDefined();
+
+    await captureBtn!.trigger('click');
+    await flushPromises();
+
+    expect(vi.mocked(apiMock)).toHaveBeenCalledWith(
+      'ports/1/mode',
+      expect.objectContaining({ method: 'POST', json: { mode: 'passive' } }),
+    );
+
+    await vi.advanceTimersByTimeAsync(600);
+    await flushPromises();
+
+    expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
+
+    // fetchInfo must be called after the mode switch to refresh the sidebar.
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+
+  it('scenario C: port in passive mode → NO switch', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    // Port 1 is already in passive mode — serial is open, no switch needed.
+    sharedInfoRef.value = makeInfo('passive', 'disabled');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    const captureBtn = wrapper.findAll('button').find((b) => b.text() === 'Start');
+    expect(captureBtn, 'Start button must be found').toBeDefined();
+
+    await captureBtn!.trigger('click');
+    await flushPromises();
+
+    // api should NOT have been called with a mode-switch endpoint.
+    const modeSwitchCalls = vi.mocked(apiMock).mock.calls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('/mode'),
+    );
+    expect(modeSwitchCalls).toHaveLength(0);
+
+    // WS should be created immediately (no 500ms delay).
+    expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
+
+    // fetchInfo('low') must NOT be called — no mode switch occurred.
+    expect(fetchInfoMock).not.toHaveBeenCalledWith('low');
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+
+  it('scenario D: port in tcp_bridge mode with cache overlay → NO switch', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    // Port 1 has the cache overlay on over a tcp_bridge transport — serial is open, no switch.
+    sharedInfoRef.value = makeInfo('tcp_bridge', 'disabled', true, false);
 
     const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
     await flushPromises();

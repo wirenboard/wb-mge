@@ -92,8 +92,9 @@ def test_uart_teardown_no_crash(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        # Enable sniffer and connect WS with aggressive PING to add jitter
-        r = api.set_port_mode(1, "sniffer")
+        # Open the serial port (passive) and connect the WS sniffer overlay with
+        # aggressive PING to add jitter
+        r = api.set_port_mode(1, "passive")
         assert r.status_code == 200
         time.sleep(0.3)
 
@@ -109,7 +110,7 @@ def test_uart_teardown_no_crash(api):
             # Each mode switch = serial_deinit -> uart_driver_delete (the dangerous path)
             r1 = api.set_port_mode(1, "tcp_bridge")
             time.sleep(TOGGLE_GAP)
-            r2 = api.set_port_mode(1, "sniffer")
+            r2 = api.set_port_mode(1, "passive")
             time.sleep(TOGGLE_GAP)
             if r1.status_code != 200 or r2.status_code != 200:
                 crashed_at = i

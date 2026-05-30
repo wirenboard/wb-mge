@@ -11,7 +11,6 @@ UNITTEST_DIR = ..
 TESTED_SRC += $(PROJ_DIR)/main/bridge/cache_multimaster.c
 
 # Auxiliary source files used in this test
-AUX_SRC += mocks/sniffer.c
 AUX_SRC += mocks/esp_http_server.c
 AUX_SRC += mocks/auth.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c

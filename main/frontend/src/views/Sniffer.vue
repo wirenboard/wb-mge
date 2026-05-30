@@ -125,12 +125,13 @@ async function startCapture() {
     const rsKey = rsKeyMap[portNum];
     if (rsKey !== undefined) {
       const currentMode = info.value[rsKey]?.port_mode;
-      // Auto-switch to sniffer for any mode that cannot produce sniffable data directly.
-      // 'sniffer' and 'cache_bus' already have serial open in the right way; all other
-      // modes (including 'tcp_bridge' and 'disabled') need an explicit mode switch.
-      if (currentMode !== 'sniffer' && currentMode !== 'cache_bus') {
+      // The live sniffer is a display overlay over the WebSocket; it only needs the
+      // serial port to be open. 'tcp_bridge' and 'passive' already have serial open,
+      // so do NOT switch them. Only 'disabled' needs the serial port opened — switch
+      // it to the 'passive' transport (serial open, no TCP) before connecting the WS.
+      if (currentMode === 'disabled') {
         try {
-          await api<void>(`ports/${portNum}/mode`, { method: 'POST', json: { mode: 'sniffer' } });
+          await api<void>(`ports/${portNum}/mode`, { method: 'POST', json: { mode: 'passive' } });
         } catch {
           // If the mode switch fails, proceed anyway — WS connect will fail or produce no data
         }

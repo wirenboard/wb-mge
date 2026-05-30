@@ -121,6 +121,8 @@ static cJSON *create_rs485_port_json(int port_num)
     unsigned port_index = (unsigned)(port_num - 1);  // convert 1-based port_num to 0-based index
     cJSON_AddStringToObject(rs485_port, "port_mode",
                             port_manager_mode_to_str(port_manager_get_mode(port_index)));
+    // Cache overlay is orthogonal to the transport mode; expose it separately.
+    cJSON_AddBoolToObject(rs485_port, "cache_enabled", port_manager_get_cache(port_index));
 
     return rs485_port;
 }

@@ -501,8 +501,7 @@ watch(
     "mode": "Mode",
     "port_mode_disabled": "Disabled",
     "port_mode_tcp_bridge": "TCP bridge",
-    "port_mode_sniffer": "Sniffer",
-    "port_mode_cache_bus": "Cache bus"
+    "port_mode_passive": "Passive listen"
   },
   "ru": {
     "group_overview": "Обзор",
@@ -516,8 +515,7 @@ watch(
     "mode": "Режим",
     "port_mode_disabled": "Отключён",
     "port_mode_tcp_bridge": "TCP-мост",
-    "port_mode_sniffer": "Сниффер",
-    "port_mode_cache_bus": "Кэш шины"
+    "port_mode_passive": "Пассивный (прослушка)"
   },
   "kk": {
     "group_overview": "Шолу",
@@ -531,8 +529,7 @@ watch(
     "mode": "Режим",
     "port_mode_disabled": "Өшірілген",
     "port_mode_tcp_bridge": "TCP көпір",
-    "port_mode_sniffer": "Sniffer",
-    "port_mode_cache_bus": "Кэш шина"
+    "port_mode_passive": "Пассивті тыңдау"
   },
   "it": {
     "group_overview": "Panoramica",
@@ -546,8 +543,7 @@ watch(
     "mode": "Modalità",
     "port_mode_disabled": "Disabilitato",
     "port_mode_tcp_bridge": "Bridge TCP",
-    "port_mode_sniffer": "Sniffer",
-    "port_mode_cache_bus": "Cache bus"
+    "port_mode_passive": "Ascolto passivo"
   },
   "de": {
     "group_overview": "Übersicht",
@@ -561,8 +557,7 @@ watch(
     "mode": "Modus",
     "port_mode_disabled": "Deaktiviert",
     "port_mode_tcp_bridge": "TCP-Bridge",
-    "port_mode_sniffer": "Sniffer",
-    "port_mode_cache_bus": "Cache-Bus"
+    "port_mode_passive": "Passives Mithören"
   }
 }
 </i18n>

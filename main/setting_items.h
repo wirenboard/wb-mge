@@ -97,6 +97,10 @@
 #define KEY_PORT_MODE1              "port_mode_1"
 #define KEY_PORT_MODE2              "port_mode_2"
 
+// Per-port cache overlay enable keys (persisted, orthogonal to transport mode)
+#define KEY_CACHE_EN_1              "cache_en_1"
+#define KEY_CACHE_EN_2              "cache_en_2"
+
 // Cache Modbus TCP server port NVS key (max 15 chars for ESP32 NVS)
 #define KEY_CACHE_MODBUS_PORT               "cache_mb_port"
 // Cache Modbus TCP server enable/disable NVS key (max 15 chars for ESP32 NVS)
@@ -104,11 +108,10 @@
 // Cache value timeout in seconds NVS key (max 15 chars for ESP32 NVS)
 #define KEY_CACHE_VALUE_TIMEOUT_S           "cache_val_tout"
 
-// Port manager mode string values
+// Port manager mode string values (transport-only)
 #define PORT_MODE_DISABLED_STR      "disabled"
 #define PORT_MODE_TCP_BRIDGE_STR    "tcp_bridge"
-#define PORT_MODE_SNIFFER_STR       "sniffer"
-#define PORT_MODE_CACHE_BUS_STR     "cache_bus"
+#define PORT_MODE_PASSIVE_STR       "passive"
 
 // Setting types - used for type checking and JSON mapping
 typedef enum {

@@ -137,6 +137,18 @@ class WBMGEAPI:
             timeout=30
         )
 
+    def set_port_cache(self, port_num, enabled):
+        """Enable/disable the per-port cache overlay via POST /ports/{port_num}/cache.
+
+        The cache overlay is orthogonal to the transport mode: it can be toggled
+        live without a port reinit, so a short timeout is sufficient.
+        """
+        return self.session.post(
+            f"{self.base_url}/ports/{port_num}/cache",
+            json={"enabled": enabled},
+            timeout=10
+        )
+
     def send_packet(self, port_num: int, hex_str: str):
         """Send a raw RTU hex frame to an RS-485 port via POST /ports/{N}/send"""
         return self.session.post(

@@ -59,7 +59,7 @@ void setUp(void)
 
     sniffer_init();
     sniffer_attach(0, &s_desc0);
-    sniffer_enable(0);
+    sniffer_enable(0, SNIFF_REASON_DISPLAY);
 }
 
 void tearDown(void) {}
@@ -226,6 +226,8 @@ void test_ws_dispatch_send_failure_clears_client(void)
 void test_ws_dispatch_cache_request_min_len_8(void)
 {
     mock_cache_multimaster_enabled = true;
+    /* The cache is fed only for ports whose CACHE reason is set. */
+    sniffer_enable(0, SNIFF_REASON_CACHE);
 
     sniff_packet_t pkt = make_packet();
     pkt.port = 0; pkt.slave_id = 1; pkt.function = 0x03;
@@ -246,6 +248,28 @@ void test_ws_dispatch_cache_request_min_len_8(void)
     TEST_ASSERT_EQUAL(10, mock_cache_multimaster_on_request_last_count);
 }
 
+/* ============================================================
+ * TC-WS-8: cache enabled globally but CACHE reason NOT set on the port → no feed
+ * ============================================================ */
+
+void test_ws_dispatch_cache_not_fed_without_reason(void)
+{
+    mock_cache_multimaster_enabled = true;
+    /* setUp only set DISPLAY on port 0; CACHE reason is absent. */
+
+    sniff_packet_t pkt = make_packet();
+    pkt.port = 0; pkt.slave_id = 1; pkt.function = 0x03;
+    pkt.is_master = true; pkt.is_timeout = false; pkt.crc_valid = true;
+    pkt.data_len = 8;
+    pkt.data[0] = 1; pkt.data[1] = 0x03;
+    pkt.data[2] = 0x00; pkt.data[3] = 0x64;
+    pkt.data[4] = 0x00; pkt.data[5] = 0x0A;
+
+    sniffer_ws_dispatch(&pkt);
+
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_on_request_called);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -257,6 +281,7 @@ int main(void)
     RUN_TEST(test_ws_dispatch_stale_fd_invalid_no_send);
     RUN_TEST(test_ws_dispatch_send_failure_clears_client);
     RUN_TEST(test_ws_dispatch_cache_request_min_len_8);
+    RUN_TEST(test_ws_dispatch_cache_not_fed_without_reason);
 
     return UNITY_END();
 }

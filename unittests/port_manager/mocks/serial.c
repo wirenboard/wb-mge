@@ -6,6 +6,8 @@
 /* Call tracking variables exposed for test assertions */
 int mock_serial_deinit_called[BRIDGES_COUNT];
 int mock_serial_set_rx_timeout_called[BRIDGES_COUNT];
+/* Last RX timeout value passed to serial_set_rx_timeout(), keyed by port index */
+uint8_t mock_serial_set_rx_timeout_value[BRIDGES_COUNT];
 serial_desc_t *mock_serial_deinit_desc[BRIDGES_COUNT];
 
 /* serial_send tracking */
@@ -60,10 +62,19 @@ esp_err_t serial_deinit(serial_desc_t *desc)
 
 esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols)
 {
-    (void)desc;
-    (void)tout_symbols;
-    /* Count globally; tests don't need per-port tracking here */
+    /* Map the descriptor pointer back to its port index (same scheme as
+     * serial_deinit) so tests can assert per-port count and value. Both PASSIVE
+     * and TCP_BRIDGE use &mock_serial_desc_instances[index] as the descriptor. */
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        if (desc == &mock_serial_desc_instances[i]) {
+            mock_serial_set_rx_timeout_called[i]++;
+            mock_serial_set_rx_timeout_value[i] = tout_symbols;
+            return ESP_OK;
+        }
+    }
+    /* Descriptor did not match any known instance — fall back to slot 0 */
     mock_serial_set_rx_timeout_called[0]++;
+    mock_serial_set_rx_timeout_value[0] = tout_symbols;
     return ESP_OK;
 }
 
@@ -79,6 +90,7 @@ void mock_serial_reset(void)
 {
     memset(mock_serial_deinit_called, 0, sizeof(mock_serial_deinit_called));
     memset(mock_serial_set_rx_timeout_called, 0, sizeof(mock_serial_set_rx_timeout_called));
+    memset(mock_serial_set_rx_timeout_value, 0, sizeof(mock_serial_set_rx_timeout_value));
     memset(mock_serial_deinit_desc, 0, sizeof(mock_serial_deinit_desc));
     mock_serial_send_called = 0;
     memset(mock_serial_send_last_data, 0, sizeof(mock_serial_send_last_data));

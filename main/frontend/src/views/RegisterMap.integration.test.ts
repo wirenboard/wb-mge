@@ -64,7 +64,16 @@ vi.mock('@unhead/vue', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Build a minimal Info object — only the fields consumed by the watch are set. */
+/**
+ * Build a minimal Info object — only the fields consumed by the watch are set.
+ *
+ * The orthogonal backend model splits the old per-port "mode" into a transport
+ * mode (`port_mode`) plus an independent cache overlay flag (`cache_enabled`).
+ * For backwards compatibility with existing scenarios, the legacy 'cache_bus'
+ * pseudo-mode is translated to the new model: the cache overlay is enabled and
+ * the transport is opened as 'passive' (serial open, no TCP). 'disabled' maps to
+ * the disabled transport with no cache overlay.
+ */
 function makeInfo(opts: {
   port1Mode: 'cache_bus' | 'disabled';
   port2Mode: 'cache_bus' | 'disabled';
@@ -72,6 +81,10 @@ function makeInfo(opts: {
   timeout: number;
   tcpServerEnabled?: boolean;
 }): Info {
+  const port1Transport = opts.port1Mode === 'cache_bus' ? 'passive' : 'disabled';
+  const port2Transport = opts.port2Mode === 'cache_bus' ? 'passive' : 'disabled';
+  const port1Cache = opts.port1Mode === 'cache_bus';
+  const port2Cache = opts.port2Mode === 'cache_bus';
   return {
     device_name: 'test',
     serial_num: 0,
@@ -100,13 +113,15 @@ function makeInfo(opts: {
       is_busy: false,
       error_percentage: 0,
       server_connections_count: 0,
-      port_mode: opts.port1Mode,
+      port_mode: port1Transport,
+      cache_enabled: port1Cache,
     },
     rs485_2: {
       is_busy: false,
       error_percentage: 0,
       server_connections_count: 0,
-      port_mode: opts.port2Mode,
+      port_mode: port2Transport,
+      cache_enabled: port2Cache,
     },
     cache_modbus_port: opts.tcpPort,
     cache_modbus_server_enabled: opts.tcpServerEnabled ?? true,
@@ -305,13 +320,15 @@ describe('RM-I-001: RegisterMap port-initialization guard', () => {
  * Integration test RM-I-003: RegisterMap toggleCaching — enable path.
  *
  * Verifies that clicking the "Enable caching" button (visible when cacheEnabled=false)
- * calls api('ports/N/mode', { method: 'POST', json: { mode: 'cache_bus' } }) for exactly
- * the ports selected in the Settings panel, and then triggers fetchEntries (api('cache/json')).
+ * enables the cache overlay via api('ports/N/cache', { method: 'POST', json: { enabled: true } })
+ * for exactly the ports selected in the Settings panel. Because the ports start as
+ * 'disabled', the transport is first opened via api('ports/N/mode', { json: { mode: 'passive' } }).
+ * After enabling, fetchEntries (api('cache/json')) is triggered.
  *
  * Three scenarios:
- *   A. listenPort1=true,  listenPort2=false → only ports/1/mode + cache/json
- *   B. listenPort1=false, listenPort2=true  → only ports/2/mode + cache/json
- *   C. listenPort1=false, listenPort2=false → ports/1/mode (default) + cache/json
+ *   A. listenPort1=true,  listenPort2=false → only ports/1 (passive + cache) + cache/json
+ *   B. listenPort1=false, listenPort2=true  → only ports/2 (passive + cache) + cache/json
+ *   C. listenPort1=false, listenPort2=false → ports/1 (default, passive + cache) + cache/json
  *
  * Setup strategy:
  *   - infoRef is set BEFORE mount so the immediate watch initialises listenPort1/listenPort2.
@@ -319,9 +336,9 @@ describe('RM-I-001: RegisterMap port-initialization guard', () => {
  *     infoRef changes no longer touch the listen-port refs.
  *   - infoRef is then mutated to have both ports 'disabled' so cacheEnabled becomes false,
  *     which renders the "Enable caching" button and puts toggleCaching() on the enable path.
- *   - The api mock is reconfigured so that the ports/N/mode POST call also updates infoRef
- *     to reflect 'cache_bus', making cacheEnabled true before fetchEntries() runs, which
- *     allows api('cache/json') to be invoked.
+ *   - The api mock is reconfigured so that the ports/N/cache POST call also updates infoRef
+ *     to reflect cache_enabled=true, making cacheEnabled true before fetchEntries() runs,
+ *     which allows api('cache/json') to be invoked.
  *   - api mock calls are cleared before the button click to isolate assertions.
  */
 describe('RM-I-003: toggleCaching enable', () => {
@@ -351,10 +368,10 @@ describe('RM-I-003: toggleCaching enable', () => {
     infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
     await flushPromises();
 
-    // Reconfigure the api mock: when ports/1/mode is POSTed, update infoRef to reflect
-    // the new mode so that cacheEnabled becomes true before fetchEntries() runs.
+    // Reconfigure the api mock: when ports/1/cache is POSTed, update infoRef to reflect
+    // cache_enabled=true so that cacheEnabled becomes true before fetchEntries() runs.
     vi.mocked(api).mockImplementation(async (url: string) => {
-      if (url === 'ports/1/mode') {
+      if (url === 'ports/1/cache') {
         infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
       }
       return { d: [] } as never;
@@ -370,11 +387,15 @@ describe('RM-I-003: toggleCaching enable', () => {
 
     const apiMock = vi.mocked(api);
 
-    // ports/1/mode must be called with mode: 'cache_bus'
-    expect(apiMock).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+    // ports/1/mode must first open the transport as 'passive' (port was disabled)
+    expect(apiMock).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'passive' } });
 
-    // ports/2/mode must NOT be called
+    // ports/1/cache must enable the cache overlay
+    expect(apiMock).toHaveBeenCalledWith('ports/1/cache', { method: 'POST', json: { enabled: true } });
+
+    // ports/2 must NOT be touched
     expect(apiMock).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
+    expect(apiMock).not.toHaveBeenCalledWith('ports/2/cache', expect.anything());
 
     // cache/json must be called (fetchEntries)
     expect(apiMock).toHaveBeenCalledWith('cache/json');
@@ -398,9 +419,9 @@ describe('RM-I-003: toggleCaching enable', () => {
     infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
     await flushPromises();
 
-    // Reconfigure mock: ports/2/mode POST updates infoRef so cacheEnabled turns true.
+    // Reconfigure mock: ports/2/cache POST updates infoRef so cacheEnabled turns true.
     vi.mocked(api).mockImplementation(async (url: string) => {
-      if (url === 'ports/2/mode') {
+      if (url === 'ports/2/cache') {
         infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'cache_bus', tcpPort: 504, timeout: 60 });
       }
       return { d: [] } as never;
@@ -414,11 +435,15 @@ describe('RM-I-003: toggleCaching enable', () => {
 
     const apiMock = vi.mocked(api);
 
-    // ports/1/mode must NOT be called
+    // ports/1 must NOT be touched
     expect(apiMock).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
+    expect(apiMock).not.toHaveBeenCalledWith('ports/1/cache', expect.anything());
 
-    // ports/2/mode must be called with mode: 'cache_bus'
-    expect(apiMock).toHaveBeenCalledWith('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+    // ports/2/mode must first open the transport as 'passive' (port was disabled)
+    expect(apiMock).toHaveBeenCalledWith('ports/2/mode', { method: 'POST', json: { mode: 'passive' } });
+
+    // ports/2/cache must enable the cache overlay
+    expect(apiMock).toHaveBeenCalledWith('ports/2/cache', { method: 'POST', json: { enabled: true } });
 
     // cache/json must be called (fetchEntries)
     expect(apiMock).toHaveBeenCalledWith('cache/json');
@@ -439,10 +464,10 @@ describe('RM-I-003: toggleCaching enable', () => {
     await flushPromises();
 
     // cacheEnabled is already false; no need to mutate infoRef again.
-    // Reconfigure mock: ports/1/mode POST updates infoRef so cacheEnabled turns true
+    // Reconfigure mock: ports/1/cache POST updates infoRef so cacheEnabled turns true
     // (default-port-1 fallback branch inside toggleCaching).
     vi.mocked(api).mockImplementation(async (url: string) => {
-      if (url === 'ports/1/mode') {
+      if (url === 'ports/1/cache') {
         infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
       }
       return { d: [] } as never;
@@ -456,11 +481,15 @@ describe('RM-I-003: toggleCaching enable', () => {
 
     const apiMock = vi.mocked(api);
 
-    // ports/1/mode must be called with mode: 'cache_bus' (default fallback)
-    expect(apiMock).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+    // ports/1/mode must first open the transport as 'passive' (default fallback, port disabled)
+    expect(apiMock).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'passive' } });
 
-    // ports/2/mode must NOT be called
+    // ports/1/cache must enable the cache overlay (default fallback)
+    expect(apiMock).toHaveBeenCalledWith('ports/1/cache', { method: 'POST', json: { enabled: true } });
+
+    // ports/2 must NOT be touched
     expect(apiMock).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
+    expect(apiMock).not.toHaveBeenCalledWith('ports/2/cache', expect.anything());
 
     // cache/json must be called (fetchEntries)
     expect(apiMock).toHaveBeenCalledWith('cache/json');
@@ -477,9 +506,10 @@ describe('RM-I-003: toggleCaching enable', () => {
 // ---------------------------------------------------------------------------
 /**
  * Verifies that clicking the caching toggle when cacheEnabled=true (disable path):
- *   A. calls ports/1/mode disabled only (port1 in cache_bus, port2 disabled)
- *   B. calls both ports/1 and ports/2 disabled (both in cache_bus)
+ *   A. calls ports/1/cache disabled only (port1 cache on, port2 off)
+ *   B. calls both ports/1/cache and ports/2/cache disabled (both cache on)
  *   C. sets error.value on API failure (rendered via .rm-error-wrap)
+ * The transport mode is never touched on the disable path.
  */
 describe('RM-I-04: toggleCaching — disable path', () => {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
@@ -492,7 +522,7 @@ describe('RM-I-04: toggleCaching — disable path', () => {
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
   });
 
-  it('scenario A: only port1 in cache_bus → only ports/1/mode disabled called', async () => {
+  it('scenario A: only port1 cache on → only ports/1/cache disable called', async () => {
     const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
 
     infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
@@ -507,10 +537,14 @@ describe('RM-I-04: toggleCaching — disable path', () => {
     await wrapper.find('.rm-caching-toggle').trigger('click');
     await flushPromises();
 
-    // ports/1/mode must be called with mode: 'disabled'
-    expect(vi.mocked(api)).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'disabled' } });
+    // ports/1/cache must be called with enabled: false
+    expect(vi.mocked(api)).toHaveBeenCalledWith('ports/1/cache', { method: 'POST', json: { enabled: false } });
 
-    // ports/2/mode must NOT be called (port2 was already disabled)
+    // ports/2/cache must NOT be called (port2 cache was already off)
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/2/cache', expect.anything());
+
+    // The transport mode must never be touched on disable
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
     expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
 
     // fetchInfo must be called to refresh sidebar after toggle
@@ -519,7 +553,7 @@ describe('RM-I-04: toggleCaching — disable path', () => {
     wrapper.unmount();
   });
 
-  it('scenario B: both ports in cache_bus → both ports/1 and ports/2 disabled', async () => {
+  it('scenario B: both ports cache on → both ports/1/cache and ports/2/cache disabled', async () => {
     const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
 
     infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'cache_bus', tcpPort: 504, timeout: 60 });
@@ -532,9 +566,13 @@ describe('RM-I-04: toggleCaching — disable path', () => {
     await wrapper.find('.rm-caching-toggle').trigger('click');
     await flushPromises();
 
-    // Both ports must be disabled
-    expect(vi.mocked(api)).toHaveBeenCalledWith('ports/1/mode', { method: 'POST', json: { mode: 'disabled' } });
-    expect(vi.mocked(api)).toHaveBeenCalledWith('ports/2/mode', { method: 'POST', json: { mode: 'disabled' } });
+    // Both ports' cache overlays must be disabled
+    expect(vi.mocked(api)).toHaveBeenCalledWith('ports/1/cache', { method: 'POST', json: { enabled: false } });
+    expect(vi.mocked(api)).toHaveBeenCalledWith('ports/2/cache', { method: 'POST', json: { enabled: false } });
+
+    // The transport mode must never be touched on disable
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
 
     // fetchInfo must be called to refresh sidebar after toggle
     expect(fetchInfoMock).toHaveBeenCalledWith('low');
@@ -602,14 +640,18 @@ describe('RM-I-05: resetMap', () => {
 
     const calls = vi.mocked(api).mock.calls;
 
-    // Verify order: disable port1, re-enable port1, then fetchEntries (cache/json)
-    expect(calls[0]).toEqual(['ports/1/mode', { method: 'POST', json: { mode: 'disabled' } }]);
-    expect(calls[1]).toEqual(['ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } }]);
+    // Verify order: cache off port1, cache on port1, then fetchEntries (cache/json)
+    expect(calls[0]).toEqual(['ports/1/cache', { method: 'POST', json: { enabled: false } }]);
+    expect(calls[1]).toEqual(['ports/1/cache', { method: 'POST', json: { enabled: true } }]);
     expect(calls[2]).toEqual(['cache/json']);
 
-    // ports/2/mode must NOT be called at all
-    const port2Calls = calls.filter((c: unknown[]) => c[0] === 'ports/2/mode');
+    // ports/2/cache must NOT be called at all
+    const port2Calls = calls.filter((c: unknown[]) => c[0] === 'ports/2/cache');
     expect(port2Calls.length).toBe(0);
+
+    // The transport mode must never be touched on reset
+    const modeCalls = calls.filter((c: unknown[]) => c[0] === 'ports/1/mode' || c[0] === 'ports/2/mode');
+    expect(modeCalls.length).toBe(0);
 
     // fetchInfo must be called to refresh sidebar after reset
     expect(fetchInfoMock).toHaveBeenCalledWith('low');
@@ -632,11 +674,11 @@ describe('RM-I-05: resetMap', () => {
 
     const calls = vi.mocked(api).mock.calls;
 
-    // Verify order: disable port1, disable port2, enable port1, enable port2, fetchEntries
-    expect(calls[0]).toEqual(['ports/1/mode', { method: 'POST', json: { mode: 'disabled' } }]);
-    expect(calls[1]).toEqual(['ports/2/mode', { method: 'POST', json: { mode: 'disabled' } }]);
-    expect(calls[2]).toEqual(['ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } }]);
-    expect(calls[3]).toEqual(['ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } }]);
+    // Verify order: cache off port1, cache off port2, cache on port1, cache on port2, fetchEntries
+    expect(calls[0]).toEqual(['ports/1/cache', { method: 'POST', json: { enabled: false } }]);
+    expect(calls[1]).toEqual(['ports/2/cache', { method: 'POST', json: { enabled: false } }]);
+    expect(calls[2]).toEqual(['ports/1/cache', { method: 'POST', json: { enabled: true } }]);
+    expect(calls[3]).toEqual(['ports/2/cache', { method: 'POST', json: { enabled: true } }]);
     expect(calls[4]).toEqual(['cache/json']);
 
     // fetchInfo must be called to refresh sidebar after reset
@@ -1656,9 +1698,11 @@ describe('RM-I-15: tcpServeEnabled toggle + save', () => {
       json: { cache_modbus_server_enabled: false },
     });
 
-    // Port mode must NOT be changed (port1 is cache_bus in both info and local state)
+    // Port mode/cache must NOT be changed (cache state matches the listen-port selection)
     expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
     expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/2/mode', expect.anything());
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/cache', expect.anything());
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/2/cache', expect.anything());
 
     wrapper.unmount();
   });
@@ -1831,8 +1875,8 @@ describe('RM-I-17: Stats DOM values from cache/status', () => {
  * Verifies that isMutating prevents a second toggleCaching() call from starting
  * while the first one is still in-flight.
  *
- * Test: make the ports/1/mode POST hang, double-click the toggle, resolve the
- * hanging promise, and verify that ports/1/mode was called exactly once.
+ * Test: make the ports/1/cache POST hang, double-click the toggle, resolve the
+ * hanging promise, and verify that ports/1/cache was called exactly once.
  */
 describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', () => {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
@@ -1845,21 +1889,21 @@ describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', 
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
   });
 
-  it('double-click on caching toggle issues only one ports/1/mode call', async () => {
+  it('double-click on caching toggle issues only one ports/1/cache call', async () => {
     const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
 
-    // Start with cacheEnabled=true (port1=cache_bus) so the toggle is on the disable path.
+    // Start with cacheEnabled=true (port1 cache on) so the toggle is on the disable path.
     infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
 
     const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
     await flushPromises();
 
-    // Make the ports/1/mode POST hang indefinitely to simulate an in-flight request.
+    // Make the ports/1/cache POST hang indefinitely to simulate an in-flight request.
     let resolveApiCall!: (v: unknown) => void;
     vi.mocked(api).mockImplementation(
       (url: string) =>
         new Promise((res) => {
-          if (url === 'ports/1/mode') {
+          if (url === 'ports/1/cache') {
             resolveApiCall = res;
           } else {
             res({ d: [] });
@@ -1882,9 +1926,9 @@ describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', 
     resolveApiCall({ d: [] });
     await flushPromises();
 
-    // Count only ports/1/mode calls — must be exactly 1.
+    // Count only ports/1/cache calls — must be exactly 1.
     const port1Calls = vi.mocked(api).mock.calls.filter(
-      (c: unknown[]) => c[0] === 'ports/1/mode',
+      (c: unknown[]) => c[0] === 'ports/1/cache',
     );
     expect(port1Calls.length).toBe(1);
 
@@ -1900,7 +1944,7 @@ describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', 
     const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
     await flushPromises();
 
-    // Track how many times ports/1/mode has been called.
+    // Track how many times ports/1/cache has been called.
     // The first call hangs (so the second button click arrives while the first resetMap is in-flight).
     // All subsequent calls resolve immediately.
     let port1CallCount = 0;
@@ -1908,17 +1952,17 @@ describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', 
     vi.mocked(api).mockImplementation(
       (url: string) =>
         new Promise((res) => {
-          if (url === 'ports/1/mode') {
+          if (url === 'ports/1/cache') {
             port1CallCount += 1;
             if (port1CallCount === 1) {
               // Hang the first call so the second click arrives before resetMap() finishes.
               resolveFirstPort1Call = res;
             } else {
-              // All subsequent ports/1/mode calls resolve immediately.
+              // All subsequent ports/1/cache calls resolve immediately.
               res({ d: [] });
             }
           } else {
-            // All non-ports/1/mode calls (cache/json, etc.) resolve immediately.
+            // All non-ports/1/cache calls (cache/json, etc.) resolve immediately.
             res({ d: [] });
           }
         }),
@@ -1936,16 +1980,16 @@ describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', 
     await wrapper.find('.rsp-btn-reset').trigger('click');
     await wrapper.vm.$nextTick();
 
-    // Resolve the hanging first ports/1/mode call so the single resetMap() can finish.
+    // Resolve the hanging first ports/1/cache call so the single resetMap() can finish.
     resolveFirstPort1Call({ d: [] });
     await flushPromises();
 
-    // Count only ports/1/mode calls.
-    // One resetMap() execution = 2 calls (disable then re-enable).
+    // Count only ports/1/cache calls.
+    // One resetMap() execution = 2 calls (cache off then cache on).
     // With the isMutating guard: ≤2 calls total.
     // Without the guard (two parallel executions): 4 calls total.
     const port1Calls = vi.mocked(api).mock.calls.filter(
-      (c: unknown[]) => c[0] === 'ports/1/mode',
+      (c: unknown[]) => c[0] === 'ports/1/cache',
     );
     expect(port1Calls.length).toBe(2);
 

@@ -27,6 +27,9 @@ const { t } = useI18n();
       </template>
     </template>
 
+    <!-- cache overlay status — independent of transport mode -->
+    <InfoRow :label="t('cache_label')">{{ info.cache_enabled ? t('cache_on') : t('cache_off') }}</InfoRow>
+
     <!-- always visible: bus activity status -->
     <InfoRow :label="t('status')">
       {{ info.is_busy ? t('active') : t('not_active') }}
@@ -44,8 +47,10 @@ const { t } = useI18n();
     "port_mode_label": "Operating mode",
     "port_mode_disabled": "Disabled",
     "port_mode_tcp_bridge": "TCP bridge",
-    "port_mode_sniffer": "Sniffer",
-    "port_mode_cache_bus": "Cache bus",
+    "port_mode_passive": "Passive listen",
+    "cache_label": "Cache",
+    "cache_on": "Enabled",
+    "cache_off": "Disabled",
     "modbus_mode": "Modbus mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
@@ -63,8 +68,10 @@ const { t } = useI18n();
     "port_mode_label": "Режим работы",
     "port_mode_disabled": "Отключён",
     "port_mode_tcp_bridge": "TCP-мост",
-    "port_mode_sniffer": "Сниффер",
-    "port_mode_cache_bus": "Кэш шины",
+    "port_mode_passive": "Пассивный (прослушка)",
+    "cache_label": "Кэш",
+    "cache_on": "Включён",
+    "cache_off": "Выключен",
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",
@@ -82,8 +89,10 @@ const { t } = useI18n();
     "port_mode_label": "Жұмыс режимі",
     "port_mode_disabled": "Өшірілген",
     "port_mode_tcp_bridge": "TCP көпір",
-    "port_mode_sniffer": "Sniffer",
-    "port_mode_cache_bus": "Кэш шина",
+    "port_mode_passive": "Пассивті тыңдау",
+    "cache_label": "Кэш",
+    "cache_on": "Қосулы",
+    "cache_off": "Өшірулі",
     "modbus_mode": "Режим",
     "bridge_mode": "Рөл",
     "bridge_modbus": "Modbus TCP",
@@ -101,8 +110,10 @@ const { t } = useI18n();
     "port_mode_label": "Modalità operativa",
     "port_mode_disabled": "Disabilitato",
     "port_mode_tcp_bridge": "Bridge TCP",
-    "port_mode_sniffer": "Sniffer",
-    "port_mode_cache_bus": "Cache bus",
+    "port_mode_passive": "Ascolto passivo",
+    "cache_label": "Cache",
+    "cache_on": "Abilitata",
+    "cache_off": "Disabilitata",
     "modbus_mode": "Modalità Modbus",
     "bridge_mode": "Modalità bridge",
     "bridge_modbus": "Modbus TCP",
@@ -120,8 +131,10 @@ const { t } = useI18n();
     "port_mode_label": "Betriebsmodus",
     "port_mode_disabled": "Deaktiviert",
     "port_mode_tcp_bridge": "TCP-Bridge",
-    "port_mode_sniffer": "Sniffer",
-    "port_mode_cache_bus": "Cache-Bus",
+    "port_mode_passive": "Passives Mithören",
+    "cache_label": "Cache",
+    "cache_on": "Aktiviert",
+    "cache_off": "Deaktiviert",
     "modbus_mode": "Modbus-Modus",
     "bridge_mode": "Bridge-Modus",
     "bridge_modbus": "Modbus TCP",

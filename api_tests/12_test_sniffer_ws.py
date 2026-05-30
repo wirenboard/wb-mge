@@ -38,7 +38,7 @@ def _baseline(api):
         }
     })
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
-    resp = api.set_port_mode(1, "tcp_bridge")    # start state; individual tests will switch to sniffer
+    resp = api.set_port_mode(1, "tcp_bridge")    # start state; individual tests will switch to passive for the WS sniffer overlay
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
 
 
@@ -60,10 +60,10 @@ def test_sniffer_websocket(api):
         original_port_mode = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
         print(f"  Port 1 original mode: {original_port_mode}")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
-        print("✓ Port 1 switched to sniffer mode")
+        print("✓ Port 1 switched to passive mode (serial open for the WS sniffer overlay)")
 
         with PacketInjector(port=1):
             ws_url = f"ws://{host}:{port}/sniffer/ws"
@@ -300,8 +300,8 @@ def test_sniffer_ws_packet_port_field_matches_started_port(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):
@@ -350,8 +350,8 @@ def test_sniffer_ws_id_monotonically_increasing(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):
@@ -401,8 +401,8 @@ def test_sniffer_ws_timestamp_positive_and_plausible(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):
@@ -457,8 +457,8 @@ def test_sniffer_ws_raw_field_is_hex_and_matches_size(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):
@@ -516,8 +516,8 @@ def test_sniffer_ws_stream_splitter_produces_separate_request_and_response(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):
@@ -595,8 +595,8 @@ def test_sniffer_ws_sender_alternates_master_slave(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):
@@ -665,8 +665,8 @@ def test_sniffer_ws_stop_command_stops_stream(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         injector = PacketInjector(port=1)
@@ -763,8 +763,8 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):
@@ -880,8 +880,8 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):
@@ -992,8 +992,8 @@ def test_sniffer_ws_cleanup_restores_port_mode(api):
         original_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
         print(f"  Original port 1 mode: {original_mode}")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         with PacketInjector(port=1):

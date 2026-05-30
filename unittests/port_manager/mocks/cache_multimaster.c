@@ -5,6 +5,8 @@
 int mock_cache_multimaster_init_called = 0;
 int mock_cache_multimaster_enable_called = 0;
 int mock_cache_multimaster_disable_called = 0;
+/* Reflects enable/disable so production guards (is_enabled) behave realistically */
+bool mock_cache_multimaster_enabled = false;
 
 esp_err_t cache_multimaster_init(void)
 {
@@ -15,16 +17,18 @@ esp_err_t cache_multimaster_init(void)
 void cache_multimaster_enable(void)
 {
     mock_cache_multimaster_enable_called++;
+    mock_cache_multimaster_enabled = true;
 }
 
 void cache_multimaster_disable(void)
 {
     mock_cache_multimaster_disable_called++;
+    mock_cache_multimaster_enabled = false;
 }
 
 bool cache_multimaster_is_enabled(void)
 {
-    return false;
+    return mock_cache_multimaster_enabled;
 }
 
 void cache_multimaster_clear(void)
@@ -76,4 +80,5 @@ void mock_cache_multimaster_reset(void)
     mock_cache_multimaster_init_called = 0;
     mock_cache_multimaster_enable_called = 0;
     mock_cache_multimaster_disable_called = 0;
+    mock_cache_multimaster_enabled = false;
 }

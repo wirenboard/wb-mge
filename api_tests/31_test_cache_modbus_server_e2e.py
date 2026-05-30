@@ -70,7 +70,7 @@ def _baseline(api: WBMGEAPI):
     })
     assert resp.status_code == 200, \
         f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
-    # Start in tcp_bridge so cache_server_e2e can switch to cache_bus cleanly.
+    # Start in tcp_bridge so cache_server_e2e can switch to passive + cache overlay cleanly.
     resp = api.set_port_mode(1, "tcp_bridge")
     assert resp.status_code == 200, \
         f"_baseline: set_port_mode tcp_bridge failed: {resp.status_code} {resp.text}"
@@ -89,7 +89,7 @@ def cache_server_e2e(api: WBMGEAPI):
       2. Save original rs485_1 port_mode and cache_modbus_port.
       3. Enable cache server, set port to 50504, set timeout to 60 s.
       4. Sleep 1 s to let the server rebind.
-      5. Switch port 1 to cache_bus mode.
+      5. Set port 1 to passive transport and enable the cache overlay.
       6. Inject specific FC01/FC02/FC03/FC04 traffic via UART port 1.
       7. Poll up to 30 s for cache entries to appear.
       8. Yield (host, 50504).
@@ -138,10 +138,14 @@ def cache_server_e2e(api: WBMGEAPI):
         # Wait for the server to rebind on the new port.
         time.sleep(1)
 
-        # Switch port 1 to cache_bus — this calls cache_multimaster_enable().
-        resp = api.set_port_mode(1, "cache_bus")
+        # Open serial (passive) and enable the cache overlay — this calls
+        # cache_multimaster_enable().
+        resp = api.set_port_mode(1, "passive")
         assert resp.status_code == 200, \
-            f"Failed to set port 1 to cache_bus: HTTP {resp.status_code}"
+            f"Failed to set port 1 to passive: HTTP {resp.status_code}"
+        resp = api.set_port_cache(1, True)
+        assert resp.status_code == 200, \
+            f"Failed to enable cache overlay on port 1: HTTP {resp.status_code}"
 
         # Inject all required traffic over a single shared UART socket.
         uart_sock = open_uart_socket(1)
@@ -182,6 +186,11 @@ def cache_server_e2e(api: WBMGEAPI):
             api.update_settings({"cache_modbus_port": original_modbus_port})
         except Exception as exc:
             restore_errors.append(f"Failed to restore cache_modbus_port: {exc}")
+
+        try:
+            api.set_port_cache(1, False)
+        except Exception as exc:
+            restore_errors.append(f"Failed to disable cache overlay on port 1: {exc}")
 
         try:
             api.set_port_mode(1, original_port_mode)
@@ -475,19 +484,19 @@ def test_cm07_cache_miss_returns_illegal_address(cache_server_e2e):
 
 @pytest.mark.timeout(60)
 def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
-    """When cache is disabled (port not in cache_bus mode), FC03 → exception 0x02.
+    """When the cache overlay is disabled, FC03 → exception 0x02.
 
-    This test runs LAST because it temporarily clears the cache by switching
-    port 1 to tcp_bridge.  It does NOT depend on cache_server_e2e.
+    This test runs LAST because it temporarily clears the cache by disabling the
+    cache overlay on port 1.  It does NOT depend on cache_server_e2e.
 
     Steps:
       1. Verify port 50504 is reachable (skip if not).
       2. Ensure cache_modbus_server_enabled=True and cache_modbus_port=50504.
-      3. Switch port 1 to tcp_bridge → calls cache_multimaster_disable() → s_cache_enabled=false.
-      4. Sleep 0.5 s for firmware to process the mode switch.
+      3. Disable the cache overlay on port 1 → calls cache_multimaster_disable() → s_cache_enabled=false.
+      4. Sleep 0.5 s for firmware to process the change.
       5. Connect to port 50504 (server still running).
       6. Send FC03: slave=1, addr=10, count=1 → assert exception 0x02.
-      7. Finally: switch port 1 back to cache_bus.
+      7. Finally: restore port 1 to the baseline transport.
     """
     host = urlparse(api.base_url).hostname or "localhost"
 
@@ -523,13 +532,13 @@ def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
         )
 
     try:
-        # Switch to tcp_bridge — this calls cache_multimaster_disable(), setting
-        # s_cache_enabled = false inside the firmware.
-        resp = api.set_port_mode(1, "tcp_bridge")
+        # Disable the cache overlay on port 1 — this calls cache_multimaster_disable(),
+        # setting s_cache_enabled = false inside the firmware.
+        resp = api.set_port_cache(1, False)
         assert resp.status_code == 200, \
-            f"CM-06: Failed to set port 1 to tcp_bridge: HTTP {resp.status_code}"
+            f"CM-06: Failed to disable cache overlay on port 1: HTTP {resp.status_code}"
 
-        # Allow firmware to process the mode change.
+        # Allow firmware to process the change.
         time.sleep(0.5)
 
         # Connect to the cache Modbus TCP server (it is still running).

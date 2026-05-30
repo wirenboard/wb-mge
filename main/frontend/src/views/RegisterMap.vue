@@ -32,7 +32,8 @@ const cacheMapAgeUs = ref(0);
 const cacheMemoryBytes = ref(0);
 const cacheMaxEntries = ref(0);
 const cacheEntries = ref(0);
-// Cache is considered enabled when AT LEAST ONE port is in cache_bus mode.
+// Cache is an independent per-port overlay (orthogonal to the transport mode).
+// It is considered enabled when AT LEAST ONE port has the cache overlay active.
 // Derived reactively from the info ref polled globally every 5 s by App.vue.
 // Optimistic override for cacheEnabled: null = use real backend state,
 // boolean = use this value until the next info poll clears it
@@ -41,8 +42,8 @@ const cacheEnabled = computed(() => {
   // Return optimistic value immediately after a toggle request, before the next info poll
   if (cacheEnabledOptimistic.value !== null) return cacheEnabledOptimistic.value;
   if (!info.value) return false;
-  return info.value.rs485_1.port_mode === 'cache_bus' ||
-         info.value.rs485_2.port_mode === 'cache_bus';
+  return info.value.rs485_1.cache_enabled ||
+         info.value.rs485_2.cache_enabled;
 });
 
 const loading = ref(true);
@@ -115,26 +116,35 @@ async function toggleCaching(): Promise<void> {
   cacheEnabledOptimistic.value = !wasEnabled; // apply optimistic UI update immediately
   try {
     if (wasEnabled) {
-      // Disable: switch all ports currently in cache_bus back to disabled
-      if (info.value?.rs485_1.port_mode === 'cache_bus') {
-        await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'disabled' } });
+      // Disable: turn off the cache overlay for every port that currently has it on.
+      // The transport mode is left untouched so the port keeps running.
+      if (info.value?.rs485_1.cache_enabled) {
+        await api<void>('ports/1/cache', { method: 'POST', json: { enabled: false } });
       }
-      if (info.value?.rs485_2.port_mode === 'cache_bus') {
-        await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'disabled' } });
+      if (info.value?.rs485_2.cache_enabled) {
+        await api<void>('ports/2/cache', { method: 'POST', json: { enabled: false } });
       }
       rawEntries.value = [];
       // cacheEnabled will update automatically on the next info poll
     } else {
-      // Enable: switch only the port selected in Settings panel (radio selection).
-      // Use local variables to avoid mutating UI state as a side-effect.
-      // If neither port is selected (edge case before first info poll), default to port 1.
+      // Enable: turn on the cache overlay only for the port selected in the Settings
+      // panel (radio selection). Use local variables to avoid mutating UI state as a
+      // side-effect. If neither port is selected (edge case before first info poll),
+      // default to port 1. The cache overlay does not change the transport mode, so we
+      // must first ensure serial is open: if the port is 'disabled', open it as 'passive'.
       const enablePort1 = listenPort1.value || (!listenPort1.value && !listenPort2.value);
       const enablePort2 = listenPort2.value;
       if (enablePort1) {
-        await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+        if (info.value?.rs485_1.port_mode === 'disabled') {
+          await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'passive' } });
+        }
+        await api<void>('ports/1/cache', { method: 'POST', json: { enabled: true } });
       }
       if (enablePort2) {
-        await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+        if (info.value?.rs485_2.port_mode === 'disabled') {
+          await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'passive' } });
+        }
+        await api<void>('ports/2/cache', { method: 'POST', json: { enabled: true } });
       }
       // Fetch entries immediately so the UI shows data without waiting for the next poll
       await fetchEntries();
@@ -151,25 +161,26 @@ async function toggleCaching(): Promise<void> {
 
 async function resetMap(): Promise<void> {
   // Abort if info is unavailable — port states cannot be determined
-  const port1WasActive = info.value?.rs485_1.port_mode === 'cache_bus';
-  const port2WasActive = info.value?.rs485_2.port_mode === 'cache_bus';
+  const port1WasActive = info.value?.rs485_1.cache_enabled ?? false;
+  const port2WasActive = info.value?.rs485_2.cache_enabled ?? false;
   if (!port1WasActive && !port2WasActive) return;
   if (isMutating.value) return; // prevent concurrent calls
   isMutating.value = true;
   try {
-    // Disable active ports to clear the cache
+    // Toggle the cache overlay off then on for the active ports to clear the map.
+    // The transport mode stays untouched throughout.
     if (port1WasActive) {
-      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'disabled' } });
+      await api<void>('ports/1/cache', { method: 'POST', json: { enabled: false } });
     }
     if (port2WasActive) {
-      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'disabled' } });
+      await api<void>('ports/2/cache', { method: 'POST', json: { enabled: false } });
     }
-    // Re-enable only the ports that were active
+    // Re-enable the cache overlay only on the ports that were active
     if (port1WasActive) {
-      await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+      await api<void>('ports/1/cache', { method: 'POST', json: { enabled: true } });
     }
     if (port2WasActive) {
-      await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'cache_bus' } });
+      await api<void>('ports/2/cache', { method: 'POST', json: { enabled: true } });
     }
     rawEntries.value = [];
     // Fetch entries immediately so the UI reflects the cleared state
@@ -180,7 +191,7 @@ async function resetMap(): Promise<void> {
     // cacheEnabled is derived from info — no manual resync needed
   } finally {
     isMutating.value = false;
-    // Refresh info immediately so the sidebar reflects the updated port mode.
+    // Refresh info immediately so the sidebar reflects the updated cache overlay state.
     fetchInfo('low').catch(() => {});
   }
 }
@@ -191,8 +202,8 @@ let portsInitialized = false;
 watch(() => info.value, (newInfo) => {
   if (!newInfo) return;
   if (portsInitialized) return; // skip subsequent polling updates
-  listenPort1.value = newInfo.rs485_1.port_mode === 'cache_bus';
-  listenPort2.value = newInfo.rs485_2.port_mode === 'cache_bus';
+  listenPort1.value = newInfo.rs485_1.cache_enabled;
+  listenPort2.value = newInfo.rs485_2.cache_enabled;
   // Enforce radio invariant: (T,T) → (T,F); (F,F) → (T,F) defaults to port 1.
   const resolved = resolvePortSelection(listenPort1.value, listenPort2.value);
   listenPort1.value = resolved.p1;
@@ -230,13 +241,20 @@ async function saveSettings(): Promise<void> {
   listenPort2.value = resolved.p2;
   settingsSaveStatus.value = 'saving';
   try {
-    const port1TargetMode = listenPort1.value ? 'cache_bus' : 'disabled';
-    const port2TargetMode = listenPort2.value ? 'cache_bus' : 'disabled';
-    if (info.value?.rs485_1.port_mode !== port1TargetMode) {
-      await api<void>('ports/1/mode', { method: 'POST', json: { mode: port1TargetMode } });
+    // Apply the cache overlay per port (orthogonal to transport mode). When enabling
+    // on a 'disabled' port we first open serial as 'passive'; when disabling we only
+    // turn off the overlay and leave the transport mode untouched.
+    if (info.value?.rs485_1.cache_enabled !== listenPort1.value) {
+      if (listenPort1.value && info.value?.rs485_1.port_mode === 'disabled') {
+        await api<void>('ports/1/mode', { method: 'POST', json: { mode: 'passive' } });
+      }
+      await api<void>('ports/1/cache', { method: 'POST', json: { enabled: listenPort1.value } });
     }
-    if (info.value?.rs485_2.port_mode !== port2TargetMode) {
-      await api<void>('ports/2/mode', { method: 'POST', json: { mode: port2TargetMode } });
+    if (info.value?.rs485_2.cache_enabled !== listenPort2.value) {
+      if (listenPort2.value && info.value?.rs485_2.port_mode === 'disabled') {
+        await api<void>('ports/2/mode', { method: 'POST', json: { mode: 'passive' } });
+      }
+      await api<void>('ports/2/cache', { method: 'POST', json: { enabled: listenPort2.value } });
     }
     if (info.value && cacheTcpPort.value !== info.value.cache_modbus_port) {
       await api<void>('settings', { method: 'POST', json: { cache_modbus_port: cacheTcpPort.value } });

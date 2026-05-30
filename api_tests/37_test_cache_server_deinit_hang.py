@@ -137,11 +137,15 @@ def test_cache_server_deinit_with_active_polling(api):
         # Step 3: wait for the cache TCP server to start accepting connections.
         time.sleep(1)
 
-        # Step 4: switch port 1 to cache_bus mode so the cache multimaster is
-        # active and the server has a client to interact with.
-        resp = api.set_port_mode(1, "cache_bus")
+        # Step 4: open serial (passive) and enable the cache overlay on port 1 so
+        # the cache multimaster is active and the server has a client to interact with.
+        resp = api.set_port_mode(1, "passive")
         assert resp.status_code == 200, (
-            f"set_port_mode(1, cache_bus) failed: {resp.status_code}"
+            f"set_port_mode(1, passive) failed: {resp.status_code}"
+        )
+        resp = api.set_port_cache(1, True)
+        assert resp.status_code == 200, (
+            f"set_port_cache(1, True) failed: {resp.status_code}"
         )
 
         # Make sure the server port is actually reachable before starting the
@@ -203,7 +207,11 @@ def test_cache_server_deinit_with_active_polling(api):
         if poll_thread is not None and poll_thread.is_alive():
             poll_thread.join(timeout=3.0)
 
-        # Disable port 1 before restoring settings.
+        # Disable the cache overlay and the port before restoring settings.
+        try:
+            api.set_port_cache(1, False)
+        except Exception:
+            pass
         try:
             api.set_port_mode(1, "disabled")
         except Exception:

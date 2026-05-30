@@ -112,8 +112,8 @@ def _run_sniffer_timing_test(api, delay_ms, collect_timeout_sec=5.0, min_count=1
     uart_sock = None
 
     try:
-        # Switch to sniffer mode
-        resp = api.set_port_mode(1, "sniffer")
+        # Open serial (passive transport) for the WS sniffer overlay
+        resp = api.set_port_mode(1, "passive")
         assert resp.status_code == 200, (
             f"Failed to set port 1 to sniffer: {resp.status_code}"
         )
@@ -384,8 +384,8 @@ def test_sniffer_master_emitted_immediately(api):
     uart_sock = None
 
     try:
-        # Switch to sniffer mode
-        resp = api.set_port_mode(1, "sniffer")
+        # Open serial (passive transport) for the WS sniffer overlay
+        resp = api.set_port_mode(1, "passive")
         assert resp.status_code == 200, (
             f"SN-SR-04: failed to set port 1 to sniffer: {resp.status_code}"
         )
@@ -474,8 +474,8 @@ def test_sniffer_no_response_master_then_timeout(api):
     uart_sock = None
 
     try:
-        # Switch to sniffer mode
-        resp = api.set_port_mode(1, "sniffer")
+        # Open serial (passive transport) for the WS sniffer overlay
+        resp = api.set_port_mode(1, "passive")
         assert resp.status_code == 200, (
             f"SN-SR-05: failed to set port 1 to sniffer: {resp.status_code}"
         )
@@ -579,8 +579,8 @@ def test_sniffer_slow_response_three_events(api):
     uart_sock = None
 
     try:
-        # Switch to sniffer mode
-        resp = api.set_port_mode(1, "sniffer")
+        # Open serial (passive transport) for the WS sniffer overlay
+        resp = api.set_port_mode(1, "passive")
         assert resp.status_code == 200, (
             f"SN-SR-06: failed to set port 1 to sniffer: {resp.status_code}"
         )
@@ -703,8 +703,8 @@ def test_sniffer_dead_slave_polled_twice(api):
     uart_sock = None
 
     try:
-        # Switch to sniffer mode
-        resp = api.set_port_mode(1, "sniffer")
+        # Open serial (passive transport) for the WS sniffer overlay
+        resp = api.set_port_mode(1, "passive")
         assert resp.status_code == 200, (
             f"SN-SR-07: failed to set port 1 to sniffer: {resp.status_code}"
         )

@@ -17,7 +17,7 @@
 #include "esp_log.h"
 #include "setting_items.h"
 
-#define MAX_URI_HANDLERS                    32
+#define MAX_URI_HANDLERS                    40          // Headroom for all endpoints (incl. per-port mode/send/cache handlers)
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 

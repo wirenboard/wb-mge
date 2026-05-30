@@ -29,11 +29,6 @@ esp_err_t cache_multimaster_test_status_handler(httpd_req_t *req);
 esp_err_t cache_multimaster_test_csv_handler(httpd_req_t *req);
 esp_err_t cache_multimaster_test_json_handler(httpd_req_t *req);
 
-/* Exposed by mocks/sniffer.c */
-extern int  mock_sniffer_set_cache_active_called;
-extern bool mock_sniffer_set_cache_active_last_value;
-void mock_sniffer_reset(void);
-
 /* ---- setUp / tearDown ---------------------------------------------------- */
 
 void setUp(void)
@@ -43,7 +38,6 @@ void setUp(void)
     mock_freertos_task_reset();
     reset_malloc_tracking();
     mock_esp_timer_reset();
-    mock_sniffer_reset();
     mock_http_reset();
 }
 
@@ -56,8 +50,7 @@ void tearDown(void)
 /* Verify that cache_multimaster_init() with a valid semaphore handle:
  *   - returns ESP_OK
  *   - calls xSemaphoreCreateMutex exactly once
- *   - leaves cache disabled (cache_multimaster_is_enabled() == false)
- *   - does NOT call sniffer_set_cache_active (init only creates the mutex) */
+ *   - leaves cache disabled (cache_multimaster_is_enabled() == false) */
 void test_cache_multimaster_init_happy_path(void)
 {
     LOG_MESSAGE();
@@ -89,21 +82,13 @@ void test_cache_multimaster_init_happy_path(void)
         cache_multimaster_is_enabled(),
         "cache_multimaster_is_enabled() should return false after init"
     );
-
-    /* Assert: sniffer_set_cache_active must NOT have been called during init */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        0,
-        mock_sniffer_set_cache_active_called,
-        "sniffer_set_cache_active should not be called during cache_multimaster_init"
-    );
 }
 
 /* ---- CM-U-002: cache_multimaster_init() OOM path ------------------------- */
 
 /* Verify that cache_multimaster_init() with a NULL semaphore handle:
  *   - returns ESP_ERR_NO_MEM
- *   - leaves cache disabled (cache_multimaster_is_enabled() == false)
- *   - does NOT call sniffer_set_cache_active */
+ *   - leaves cache disabled (cache_multimaster_is_enabled() == false) */
 void test_cache_multimaster_init_oom(void)
 {
     LOG_MESSAGE();
@@ -128,20 +113,12 @@ void test_cache_multimaster_init_oom(void)
         cache_multimaster_is_enabled(),
         "cache_multimaster_is_enabled() should return false after failed init"
     );
-
-    /* Assert: sniffer_set_cache_active must NOT have been called */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        0,
-        mock_sniffer_set_cache_active_called,
-        "sniffer_set_cache_active should not be called when init fails"
-    );
 }
 
 /* ---- CM-U-003: cache_multimaster_enable() happy path --------------------- */
 
 /* Verify that cache_multimaster_enable() after a successful init:
  *   - sets cache_multimaster_is_enabled() to true
- *   - calls sniffer_set_cache_active(true) exactly once
  *   - allocates the pool via test_malloc (1 alloc, 0 frees)
  *   - creates the aging task via xTaskCreate exactly once */
 void test_cache_multimaster_enable_happy_path(void)
@@ -167,17 +144,6 @@ void test_cache_multimaster_enable_happy_path(void)
         "cache_multimaster_is_enabled() should return true after enable()"
     );
 
-    /* Assert: sniffer called once with true */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        1,
-        mock_sniffer_set_cache_active_called,
-        "sniffer_set_cache_active should be called exactly once after enable()"
-    );
-    TEST_ASSERT_TRUE_MESSAGE(
-        mock_sniffer_set_cache_active_last_value,
-        "sniffer_set_cache_active should be called with true on enable()"
-    );
-
     /* Assert: pool was allocated exactly once via test_malloc, never freed */
     verify_malloc_tracking(1, 0);
 
@@ -200,7 +166,6 @@ void test_cache_multimaster_enable_happy_path(void)
 
 /* Verify that cache_multimaster_enable() when pool allocation fails:
  *   - leaves cache_multimaster_is_enabled() as false
- *   - does NOT call sniffer_set_cache_active
  *   - releases the mutex after taking it (give count == take count)
  *   - records no allocations */
 void test_cache_multimaster_enable_oom(void)
@@ -227,13 +192,6 @@ void test_cache_multimaster_enable_oom(void)
     TEST_ASSERT_FALSE_MESSAGE(
         cache_multimaster_is_enabled(),
         "cache_multimaster_is_enabled() should return false when pool allocation fails"
-    );
-
-    /* Assert: sniffer must NOT be activated when allocation fails */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        0,
-        mock_sniffer_set_cache_active_called,
-        "sniffer_set_cache_active should not be called when pool allocation fails"
     );
 
     /* Assert: mutex give count must equal take count (no mutex leak) */
@@ -337,7 +295,6 @@ void test_cache_multimaster_enable_twice(void)
 
 /* Verify that cache_multimaster_disable() after enable():
  *   - sets cache_multimaster_is_enabled() to false
- *   - calls sniffer_set_cache_active(false) exactly once
  *   - deletes the aging task via vTaskDelete exactly once
  *   - frees the pool (re-enable afterwards triggers a new xTaskCreate, call count == 2) */
 void test_cache_multimaster_disable(void)
@@ -354,9 +311,6 @@ void test_cache_multimaster_disable(void)
     TEST_ASSERT_TRUE_MESSAGE(cache_multimaster_is_enabled(),
         "Pre-condition: cache should be enabled before disable()");
 
-    /* Reset sniffer mock so that disable() calls are counted from zero */
-    mock_sniffer_reset();
-
     /* Act */
     cache_multimaster_disable();
 
@@ -364,17 +318,6 @@ void test_cache_multimaster_disable(void)
     TEST_ASSERT_FALSE_MESSAGE(
         cache_multimaster_is_enabled(),
         "cache_multimaster_is_enabled() should return false after disable()"
-    );
-
-    /* Assert: sniffer called once with false */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        1,
-        mock_sniffer_set_cache_active_called,
-        "sniffer_set_cache_active should be called exactly once after disable()"
-    );
-    TEST_ASSERT_FALSE_MESSAGE(
-        mock_sniffer_set_cache_active_last_value,
-        "sniffer_set_cache_active should be called with false on disable()"
     );
 
     /* Assert: aging task deleted exactly once */

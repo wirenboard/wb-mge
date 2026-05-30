@@ -80,13 +80,20 @@ def test_wb_test(api):
 
 
 def test_sniffer_status(api):
-    """Test GET /sniffer/status and verify it reflects port mode changes"""
+    """Test GET /sniffer/status and verify it reflects the live WS sniffer overlay.
+
+    The sniffer is now a display overlay driven by the WS start/stop commands, not
+    a port transport mode. The port just needs its serial open (passive transport)
+    so the overlay has something to sniff.
+    """
     info_response = api.get_info()
     assert info_response.status_code == 200
     info_data = info_response.json()
     original_port_1_mode = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
     print(f"  Port 1 original mode: {original_port_1_mode}")
 
+    ws = None
+    stop_ping = None
     try:
         response = api.get_sniffer_status()
         assert response.status_code == 200, \
@@ -98,30 +105,43 @@ def test_sniffer_status(api):
         assert isinstance(status["port_2"], bool), "Field 'port_2' must be a boolean"
         print(f"✓ GET /sniffer/status works, port_1={status['port_1']}, port_2={status['port_2']}")
 
-        response = api.set_port_mode(1, "sniffer")
+        # Open serial (passive transport) and activate the live sniffer overlay via WS.
+        response = api.set_port_mode(1, "passive")
         assert response.status_code == 200, \
-            f"POST /ports/1/mode sniffer expected 200, got {response.status_code}"
+            f"POST /ports/1/mode passive expected 200, got {response.status_code}"
+        time.sleep(0.5)
 
+        ws, stop_ping, _ = _ws_connect(api, 1)
         time.sleep(0.5)
         response = api.get_sniffer_status()
         assert response.status_code == 200
         status = response.json()
         assert status["port_1"] == True, \
-            f"After switching to sniffer mode, port_1 must be true, got {status['port_1']}"
-        print("✓ After sniffer mode: port_1=true")
+            f"After starting the WS sniffer overlay, port_1 must be true, got {status['port_1']}"
+        print("✓ After WS sniffer start: port_1=true")
 
-        response = api.set_port_mode(1, "disabled")
-        assert response.status_code == 200
-
+        # Stop the live sniffer overlay; the status must clear.
+        ws.send(json.dumps({"cmd": "stop", "port": 1}))
         time.sleep(0.5)
         response = api.get_sniffer_status()
         assert response.status_code == 200
         status = response.json()
         assert status["port_1"] == False, \
-            f"After switching to disabled mode, port_1 must be false, got {status['port_1']}"
-        print("✓ After disabled mode: port_1=false")
+            f"After stopping the WS sniffer overlay, port_1 must be false, got {status['port_1']}"
+        print("✓ After WS sniffer stop: port_1=false")
 
     finally:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
         try:
             api.set_port_mode(1, original_port_1_mode)
             print(f"✓ Port 1 mode restored to {original_port_1_mode}")
@@ -139,7 +159,7 @@ def test_port_modes(api):
     print(f"  Original modes: port_1={original_port_1_mode}, port_2={original_port_2_mode}")
 
     try:
-        for mode in ["disabled", "tcp_bridge", "sniffer", "cache_bus"]:
+        for mode in ["disabled", "tcp_bridge", "passive"]:
             response = api.set_port_mode(1, mode)
             assert response.status_code == 200, \
                 f"POST /ports/1/mode {mode} expected 200, got {response.status_code}"
@@ -154,7 +174,26 @@ def test_port_modes(api):
                 f"After setting mode={mode}, GET /info shows rs485_1.port_mode={actual_mode}"
             print(f"✓ Port 1 mode '{mode}' set and verified via /info")
 
-        for mode in ["cache_bus", "disabled"]:
+        # The cache is now an orthogonal overlay (POST /ports/N/cache), not a
+        # transport mode. Toggle it on port 1 (now passive) and verify /info.
+        response = api.set_port_cache(1, True)
+        assert response.status_code == 200, \
+            f"POST /ports/1/cache enabled=true expected 200, got {response.status_code}"
+        info_resp = api.get_info()
+        assert info_resp.status_code == 200
+        assert info_resp.json().get("rs485_1", {}).get("cache_enabled") is True, \
+            "After enabling the cache overlay, rs485_1.cache_enabled must be true"
+        print("✓ Port 1 cache overlay enabled and verified via /info")
+        response = api.set_port_cache(1, False)
+        assert response.status_code == 200, \
+            f"POST /ports/1/cache enabled=false expected 200, got {response.status_code}"
+        info_resp = api.get_info()
+        assert info_resp.status_code == 200
+        assert info_resp.json().get("rs485_1", {}).get("cache_enabled") is False, \
+            "After disabling the cache overlay, rs485_1.cache_enabled must be false"
+        print("✓ Port 1 cache overlay disabled and verified via /info")
+
+        for mode in ["passive", "disabled"]:
             response = api.set_port_mode(2, mode)
             assert response.status_code == 200, \
                 f"POST /ports/2/mode {mode} expected 200, got {response.status_code}"
@@ -167,6 +206,13 @@ def test_port_modes(api):
         assert response.status_code == 400, \
             f"POST /ports/1/mode 'invalid_mode' expected 400, got {response.status_code}"
         print("✓ Invalid mode value rejected with 400")
+
+        # The removed transport modes must now be rejected.
+        for removed in ["sniffer", "cache_bus"]:
+            response = api.set_port_mode(1, removed)
+            assert response.status_code == 400, \
+                f"POST /ports/1/mode '{removed}' (removed mode) expected 400, got {response.status_code}"
+        print("✓ Removed modes 'sniffer'/'cache_bus' rejected with 400")
 
         response = api.session.post(
             f"{api.base_url}/ports/3/mode",
@@ -198,7 +244,7 @@ def test_port_modes(api):
 
 def test_sniffer_status_response_shape_and_content_type(api):
     """GET /sniffer/status must return 200 with application/json and keys port_1/port_2."""
-    # Ensure both ports are not in sniffer mode before testing
+    # No live WS sniffer overlay is active in this test, so the status must read False.
     info = api.get_info()
     assert info.status_code == 200
     info_data = info.json()
@@ -209,13 +255,6 @@ def test_sniffer_status_response_shape_and_content_type(api):
     restored_port2 = False
 
     try:
-        if port1_mode == "sniffer":
-            api.set_port_mode(1, "tcp_bridge")
-            restored_port1 = True
-        if port2_mode == "sniffer":
-            api.set_port_mode(2, "tcp_bridge")
-            restored_port2 = True
-
         response = api.get_sniffer_status()
         assert response.status_code == 200, (
             f"Expected HTTP 200, got {response.status_code}"
@@ -262,8 +301,8 @@ def test_sniffer_status_reflects_start_command(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         ws, stop_ping, _ = _ws_connect(api, 1)
@@ -308,8 +347,8 @@ def test_sniffer_status_reflects_stop_command(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         ws, stop_ping, _ = _ws_connect(api, 1)
@@ -384,8 +423,8 @@ def test_sniffer_status_both_ports_independent(api):
         original_mode_2 = info_data.get("rs485_2", {}).get("port_mode", "tcp_bridge")
 
         # Set port 1 to sniffer and start it
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode for port 1: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode for port 1: {r.status_code}"
         time.sleep(0.3)
 
         ws1, stop_ping1, _ = _ws_connect(api, 1)
@@ -395,9 +434,9 @@ def test_sniffer_status_both_ports_independent(api):
         assert body.get("port_1") is True, f"Expected port_1==True, got {body}"
         assert body.get("port_2") is False, f"Expected port_2==False, got {body}"
 
-        r2 = api.set_port_mode(2, "sniffer")
+        r2 = api.set_port_mode(2, "passive")
         assert r2.status_code == 200, \
-            f"set_port_mode(2, 'sniffer') expected 200, got {r2.status_code}"
+            f"set_port_mode(2, 'passive') expected 200, got {r2.status_code}"
         time.sleep(0.3)
 
         ws2, stop_ping2, _ = _ws_connect(api, 2)

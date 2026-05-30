@@ -58,7 +58,7 @@ def test_stale_ws_fd_no_http_corruption(api):
         assert info.status_code == 200
         original_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
+        r = api.set_port_mode(1, "passive")
         assert r.status_code == 200
         time.sleep(0.3)
 

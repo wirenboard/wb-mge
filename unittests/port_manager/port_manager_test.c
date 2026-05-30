@@ -1,6 +1,7 @@
 #include "unity.h"
 
 #include "port_manager.h"
+#include "sniffer.h"
 #include "setting_items.h"
 #include "bridge_mock.h"
 
@@ -15,8 +16,10 @@ extern int mock_sniffer_init_called;
 extern int mock_sniffer_attach_called[BRIDGES_COUNT];
 extern int mock_sniffer_detach_called[BRIDGES_COUNT];
 extern int mock_sniffer_enable_called[BRIDGES_COUNT];
-extern bool mock_sniffer_set_cache_active_value;
-extern int mock_sniffer_set_cache_active_called;
+extern int mock_sniffer_disable_called[BRIDGES_COUNT];
+extern uint8_t mock_sniffer_reasons[BRIDGES_COUNT];
+extern uint8_t mock_sniffer_enable_last_reason[BRIDGES_COUNT];
+extern uint8_t mock_sniffer_disable_last_reason[BRIDGES_COUNT];
 extern int mock_sniffer_inject_tx_called[BRIDGES_COUNT];
 extern uint8_t mock_sniffer_inject_tx_last_data[][256];
 extern size_t mock_sniffer_inject_tx_last_len[];
@@ -26,7 +29,13 @@ void mock_sniffer_reset(void);
 extern int mock_cache_multimaster_init_called;
 extern int mock_cache_multimaster_enable_called;
 extern int mock_cache_multimaster_disable_called;
+extern bool mock_cache_multimaster_enabled;
 void mock_cache_multimaster_reset(void);
+
+/* setting_items.c mock helpers for migration tests */
+extern bool mock_cache_en[BRIDGES_COUNT];
+void mock_setting_items_set_port_mode(unsigned index, const char *value);
+const char *mock_setting_items_get_port_mode(unsigned index);
 
 /* cache_modbus_server.c mock */
 extern int mock_cache_modbus_server_init_called;
@@ -35,6 +44,7 @@ void mock_cache_modbus_server_reset(void);
 /* serial.c mock */
 extern int mock_serial_deinit_called[BRIDGES_COUNT];
 extern int mock_serial_set_rx_timeout_called[BRIDGES_COUNT];
+extern uint8_t mock_serial_set_rx_timeout_value[BRIDGES_COUNT];
 extern int mock_serial_send_called;
 extern uint8_t mock_serial_send_last_data[];
 extern size_t mock_serial_send_last_len;
@@ -94,14 +104,9 @@ void test_mode_to_str_tcp_bridge(void)
     TEST_ASSERT_EQUAL_STRING(PORT_MODE_TCP_BRIDGE_STR, port_manager_mode_to_str(PM_MODE_TCP_BRIDGE));
 }
 
-void test_mode_to_str_sniffer(void)
+void test_mode_to_str_passive(void)
 {
-    TEST_ASSERT_EQUAL_STRING(PORT_MODE_SNIFFER_STR, port_manager_mode_to_str(PM_MODE_SNIFFER));
-}
-
-void test_mode_to_str_cache_bus(void)
-{
-    TEST_ASSERT_EQUAL_STRING(PORT_MODE_CACHE_BUS_STR, port_manager_mode_to_str(PM_MODE_CACHE_BUS));
+    TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, port_manager_mode_to_str(PM_MODE_PASSIVE));
 }
 
 void test_mode_to_str_unknown(void)
@@ -128,9 +133,9 @@ void test_get_mode_invalid_index(void)
 
 void test_get_mode_after_set_mode(void)
 {
-    esp_err_t ret = port_manager_set_mode(0, PM_MODE_SNIFFER);
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_PASSIVE);
     TEST_ASSERT_EQUAL(ESP_OK, ret);
-    TEST_ASSERT_EQUAL(PM_MODE_SNIFFER, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -152,10 +157,10 @@ void test_set_mode_tcp_bridge_init_fail(void)
     TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_init_called);
 }
 
-void test_set_mode_sniffer_serial_fail(void)
+void test_set_mode_passive_serial_fail(void)
 {
     mock_bridge_port_init_serial_only_should_fail = true;
-    esp_err_t ret = port_manager_set_mode(0, PM_MODE_SNIFFER);
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_PASSIVE);
     TEST_ASSERT_NOT_EQUAL(ESP_OK, ret);
     TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_init_serial_only_called);
 }
@@ -185,39 +190,59 @@ void test_set_mode_tcp_bridge_success(void)
     TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_get_serial_desc_called);
     /* sniffer_attach called for port 0 */
     TEST_ASSERT_EQUAL(1, mock_sniffer_attach_called[0]);
-}
-
-void test_set_mode_sniffer_success(void)
-{
-    esp_err_t ret = port_manager_set_mode(0, PM_MODE_SNIFFER);
-    TEST_ASSERT_EQUAL(ESP_OK, ret);
-    TEST_ASSERT_EQUAL(PM_MODE_SNIFFER, port_manager_get_mode(0));
-    /* serial-only init called */
-    TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_init_serial_only_called);
-    /* sniffer attached and enabled */
-    TEST_ASSERT_EQUAL(1, mock_sniffer_attach_called[0]);
-    TEST_ASSERT_EQUAL(1, mock_sniffer_enable_called[0]);
-    /* rx timeout was set */
+    /* TCP bridge owns its RX timeout: port_init_mode sets the longer PROXY
+     * inter-frame timeout exactly once (transport-owned, not overlay). */
     TEST_ASSERT_EQUAL(1, mock_serial_set_rx_timeout_called[0]);
-    /* cache not enabled for sniffer mode */
-    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_enable_called);
+    TEST_ASSERT_EQUAL(SERIAL_RX_TOUT_PROXY, mock_serial_set_rx_timeout_value[0]);
 }
 
-void test_set_mode_cache_bus_success(void)
+void test_set_mode_passive_success(void)
 {
-    esp_err_t ret = port_manager_set_mode(0, PM_MODE_CACHE_BUS);
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_PASSIVE);
     TEST_ASSERT_EQUAL(ESP_OK, ret);
-    TEST_ASSERT_EQUAL(PM_MODE_CACHE_BUS, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
     /* serial-only init called */
     TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_init_serial_only_called);
-    /* sniffer attached and enabled */
+    /* sniffer attached but NOT enabled (no reason active yet) */
     TEST_ASSERT_EQUAL(1, mock_sniffer_attach_called[0]);
-    TEST_ASSERT_EQUAL(1, mock_sniffer_enable_called[0]);
-    /* cache enabled */
+    TEST_ASSERT_EQUAL(0, mock_sniffer_enable_called[0]);
+    /* cache not enabled without an overlay */
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_enable_called);
+    /* Passive listener owns the RX timeout: port_init_mode sets the short
+     * sniffer inter-frame timeout exactly once (transport-owned, not overlay). */
+    TEST_ASSERT_EQUAL(1, mock_serial_set_rx_timeout_called[0]);
+    TEST_ASSERT_EQUAL(SERIAL_RX_TOUT_SNIFFER, mock_serial_set_rx_timeout_value[0]);
+}
+
+void test_set_mode_passive_with_cache_overlay_enables_cache(void)
+{
+    /* The global pool now follows persisted INTENT (overlay), not serial state:
+     * setting the overlay enables the pool immediately (have:false→want:true),
+     * even before any port serial is open. */
+    esp_err_t ret = port_manager_set_cache(0, true);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
     TEST_ASSERT_EQUAL(1, mock_cache_multimaster_enable_called);
-    /* sniffer_set_cache_active(true) called */
-    TEST_ASSERT_EQUAL(true, mock_sniffer_set_cache_active_value);
-    TEST_ASSERT_EQUAL(1, mock_sniffer_set_cache_active_called);
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+
+    /* Now bring the port up in PASSIVE: the pool is already enabled (no redundant
+     * enable → no wipe), and the sniffer CACHE reason is wired in. */
+    ret = port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    /* No second enable() — the live pool must not be wiped by a redundant enable. */
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_enable_called);
+    TEST_ASSERT_EQUAL(1, mock_sniffer_enable_called[0]);
+    TEST_ASSERT_EQUAL(SNIFF_REASON_CACHE, mock_sniffer_enable_last_reason[0]);
+}
+
+void test_set_mode_tcp_bridge_with_cache_overlay_enables_cache(void)
+{
+    port_manager_set_cache(0, true);
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    /* TCP bridge with cache overlay also feeds the cache. */
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_enable_called);
+    TEST_ASSERT_EQUAL(SNIFF_REASON_CACHE, mock_sniffer_enable_last_reason[0]);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -244,9 +269,9 @@ void test_deinit_tcp_bridge(void)
     TEST_ASSERT_EQUAL(1, mock_rs485_stats_reset_called[0]);
 }
 
-void test_deinit_sniffer(void)
+void test_deinit_passive(void)
 {
-    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
 
     mock_bridge_reset();
     mock_sniffer_reset();
@@ -263,47 +288,122 @@ void test_deinit_sniffer(void)
     TEST_ASSERT_EQUAL(1, mock_rs485_stats_reset_called[0]);
 }
 
-void test_deinit_cache_bus_last_port(void)
+void test_deinit_cache_overlay_last_port(void)
 {
-    /* Only port 0 in CACHE_BUS — deinit should disable global cache */
-    port_manager_set_mode(0, PM_MODE_CACHE_BUS);
+    /* Pool lifetime now follows persisted intent, not transport state. Switching
+     * the sole caching port to DISABLED keeps its overlay set, so the pool (and
+     * its accumulated data) must be PRESERVED — disable() must NOT be called. */
+    port_manager_set_cache(0, true);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
 
     mock_cache_multimaster_reset();
+    mock_cache_multimaster_enabled = true; /* restore live state after counter reset */
     mock_sniffer_reset();
 
     port_manager_set_mode(0, PM_MODE_DISABLED);
 
-    /* Last CACHE_BUS port → cache_multimaster_disable must be called */
-    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_disable_called);
-    /* sniffer_set_cache_active(false) called */
-    TEST_ASSERT_EQUAL(false, mock_sniffer_set_cache_active_value);
-    TEST_ASSERT_EQUAL(1, mock_sniffer_set_cache_active_called);
+    /* Overlay still set → pool intent unchanged → no disable, pool stays alive. */
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_disable_called);
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+    /* The overlay setting itself must survive the transport-mode change. */
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
 }
 
-void test_deinit_cache_bus_not_last_port(void)
+void test_deinit_cache_overlay_not_last_port(void)
 {
-    /* Both ports in CACHE_BUS */
-    port_manager_set_mode(0, PM_MODE_CACHE_BUS);
-    port_manager_set_mode(1, PM_MODE_CACHE_BUS);
+    /* Both ports feed the cache. */
+    port_manager_set_cache(0, true);
+    port_manager_set_cache(1, true);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    port_manager_set_mode(1, PM_MODE_PASSIVE);
 
     mock_cache_multimaster_reset();
+    mock_cache_multimaster_enabled = true;
     mock_sniffer_reset();
 
-    /* Deinit only port 0 — port 1 still in CACHE_BUS */
+    /* Deinit only port 0 — port 1 still feeds the cache. */
     port_manager_set_mode(0, PM_MODE_DISABLED);
 
-    /* Not the last CACHE_BUS port → disable must NOT be called */
+    /* Not the last cache-feeding port → disable must NOT be called. */
     TEST_ASSERT_EQUAL(0, mock_cache_multimaster_disable_called);
+}
+
+void test_cache_overlay_survives_transport_change(void)
+{
+    /* Enable cache overlay on a PASSIVE port, then switch transport to TCP_BRIDGE. */
+    port_manager_set_cache(0, true);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
+
+    port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
+    /* Overlay persists and the cache is re-applied on the new transport. */
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+}
+
+void test_set_cache_invalid_port(void)
+{
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, port_manager_set_cache(BRIDGES_COUNT, true));
+}
+
+void test_set_cache_disable_clears_reason_and_disables_cache(void)
+{
+    port_manager_set_cache(0, true);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+
+    mock_sniffer_reset();
+    mock_cache_multimaster_reset();
+    mock_cache_multimaster_enabled = true;
+
+    /* Disabling the overlay on the only cache-feeding port disables the global cache. */
+    esp_err_t ret = port_manager_set_cache(0, false);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_FALSE(port_manager_get_cache(0));
+    TEST_ASSERT_EQUAL(1, mock_sniffer_disable_called[0]);
+    TEST_ASSERT_EQUAL(SNIFF_REASON_CACHE, mock_sniffer_disable_last_reason[0]);
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_disable_called);
+}
+
+void test_get_cache_invalid_port(void)
+{
+    TEST_ASSERT_FALSE(port_manager_get_cache(BRIDGES_COUNT));
+}
+
+/* Problem 2 regression: changing serial params on the SOLE caching port does a
+ * deinit+init on that port. While the overlay stays set, the global pool — and
+ * its accumulated data — must survive the re-init. disable() must NOT be called. */
+void test_apply_settings_preserves_cache_on_same_port_reinit(void)
+{
+    port_manager_set_cache(0, true);
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+
+    mock_cache_multimaster_reset();
+    mock_cache_multimaster_enabled = true; /* restore live state after counter reset */
+    mock_sniffer_reset();
+
+    /* Re-apply settings (same mode, only serial params would have changed). */
+    esp_err_t ret = port_manager_apply_settings(0);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+
+    /* Overlay unchanged → pool intent unchanged → no disable, no wipe. */
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_disable_called);
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_enable_called);
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * 6. Mode switching sequences
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-void test_switch_from_sniffer_to_tcp_bridge(void)
+void test_switch_from_passive_to_tcp_bridge(void)
 {
-    /* Start in SNIFFER */
-    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    /* Start in PASSIVE */
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
 
     /* Reset counts so only transition effects are measured */
     mock_bridge_reset();
@@ -322,6 +422,37 @@ void test_switch_from_sniffer_to_tcp_bridge(void)
     TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_init_called);
 
     TEST_ASSERT_EQUAL(PM_MODE_TCP_BRIDGE, port_manager_get_mode(0));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 6b. Legacy NVS migration
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void test_migrate_legacy_sniffer_to_passive(void)
+{
+    /* Simulate a deployed device that stored the legacy "sniffer" mode. */
+    mock_setting_items_set_port_mode(0, "sniffer");
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    /* Stored value rewritten to "passive"; transport is PASSIVE; no cache. */
+    TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, mock_setting_items_get_port_mode(0));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+    TEST_ASSERT_FALSE(port_manager_get_cache(0));
+}
+
+void test_migrate_legacy_cache_bus_to_passive_plus_cache(void)
+{
+    /* Simulate a deployed device that stored the legacy "cache_bus" mode. */
+    mock_setting_items_set_port_mode(0, "cache_bus");
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    /* Stored value rewritten to "passive"; transport is PASSIVE; cache overlay on. */
+    TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, mock_setting_items_get_port_mode(0));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
+    TEST_ASSERT_TRUE(mock_cache_en[0]); /* persisted */
 }
 
 void test_switch_from_tcp_bridge_to_disabled(void)
@@ -420,7 +551,7 @@ void test_send_raw_disabled_port_no_serial_desc(void)
 
 void test_send_raw_sniffer_port_calls_serial_send(void)
 {
-    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
     mock_serial_reset(); /* reset after set_mode to isolate */
     mock_sniffer_reset();
 
@@ -438,7 +569,7 @@ void test_send_raw_sniffer_port_calls_serial_send(void)
 void test_send_raw_tx_disabled_no_sniffer_inject(void)
 {
     /* Set up sniffer mode, then disable TX — inject must NOT be called */
-    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
     port_manager_set_tx_disabled(0, true);
     mock_serial_reset();
     mock_sniffer_reset();
@@ -456,7 +587,7 @@ void test_send_raw_serial_send_failure_no_sniffer_inject(void)
 {
     /* When serial_send() fails, the transmitted bytes were NOT actually sent,
      * so sniffer_inject_tx must NOT be called (M7: inject gated by ret==ESP_OK). */
-    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
     mock_serial_reset();
     mock_sniffer_reset();
     mock_serial_send_ret = ESP_FAIL;
@@ -490,7 +621,7 @@ void test_send_raw_tcp_bridge_port_calls_serial_send(void)
 void test_port_send_handler_valid_hex(void)
 {
     /* Inject a valid 8-byte FC03 request */
-    port_manager_set_mode(0, PM_MODE_SNIFFER);
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
     mock_serial_reset();
     mock_json_utils_reset();
 
@@ -540,8 +671,7 @@ int port_manager_test(void)
     /* 1 – mode_to_str */
     RUN_TEST(test_mode_to_str_disabled);
     RUN_TEST(test_mode_to_str_tcp_bridge);
-    RUN_TEST(test_mode_to_str_sniffer);
-    RUN_TEST(test_mode_to_str_cache_bus);
+    RUN_TEST(test_mode_to_str_passive);
     RUN_TEST(test_mode_to_str_unknown);
 
     /* 2 – get_mode */
@@ -552,23 +682,33 @@ int port_manager_test(void)
     /* 3 – set_mode error paths */
     RUN_TEST(test_set_mode_invalid_index);
     RUN_TEST(test_set_mode_tcp_bridge_init_fail);
-    RUN_TEST(test_set_mode_sniffer_serial_fail);
+    RUN_TEST(test_set_mode_passive_serial_fail);
 
-    /* 4 – port_init_mode for each mode */
+    /* 4 – port_init_mode for each mode + cache overlay */
     RUN_TEST(test_set_mode_disabled);
     RUN_TEST(test_set_mode_tcp_bridge_success);
-    RUN_TEST(test_set_mode_sniffer_success);
-    RUN_TEST(test_set_mode_cache_bus_success);
+    RUN_TEST(test_set_mode_passive_success);
+    RUN_TEST(test_set_mode_passive_with_cache_overlay_enables_cache);
+    RUN_TEST(test_set_mode_tcp_bridge_with_cache_overlay_enables_cache);
 
-    /* 5 – port_deinit_mode for each mode */
+    /* 5 – port_deinit_mode + cache overlay control */
     RUN_TEST(test_deinit_tcp_bridge);
-    RUN_TEST(test_deinit_sniffer);
-    RUN_TEST(test_deinit_cache_bus_last_port);
-    RUN_TEST(test_deinit_cache_bus_not_last_port);
+    RUN_TEST(test_deinit_passive);
+    RUN_TEST(test_deinit_cache_overlay_last_port);
+    RUN_TEST(test_deinit_cache_overlay_not_last_port);
+    RUN_TEST(test_cache_overlay_survives_transport_change);
+    RUN_TEST(test_set_cache_invalid_port);
+    RUN_TEST(test_set_cache_disable_clears_reason_and_disables_cache);
+    RUN_TEST(test_get_cache_invalid_port);
+    RUN_TEST(test_apply_settings_preserves_cache_on_same_port_reinit);
 
     /* 6 – mode switching sequences */
-    RUN_TEST(test_switch_from_sniffer_to_tcp_bridge);
+    RUN_TEST(test_switch_from_passive_to_tcp_bridge);
     RUN_TEST(test_switch_from_tcp_bridge_to_disabled);
+
+    /* 6b – legacy NVS migration */
+    RUN_TEST(test_migrate_legacy_sniffer_to_passive);
+    RUN_TEST(test_migrate_legacy_cache_bus_to_passive_plus_cache);
 
     /* 7 – hex_str_to_bytes */
     RUN_TEST(test_hex_str_to_bytes_valid);

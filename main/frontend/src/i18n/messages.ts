@@ -25,8 +25,7 @@ export const messages = {
     ssid: 'Network name (SSID)',
     port_mode_disabled: 'Disabled',
     port_mode_tcp_bridge: 'TCP bridge',
-    port_mode_sniffer: 'Sniffer',
-    port_mode_cache_bus: 'Cache bus',
+    port_mode_passive: 'Passive listen',
   },
   ru: {
     connection_error: 'Ошибка подключения',
@@ -54,8 +53,7 @@ export const messages = {
     ssid: 'Имя сети (SSID)',
     port_mode_disabled: 'Отключён',
     port_mode_tcp_bridge: 'TCP-мост',
-    port_mode_sniffer: 'Сниффер',
-    port_mode_cache_bus: 'Кэш шины',
+    port_mode_passive: 'Пассивный (прослушка)',
   },
   kk: {
     connection_error: 'Қосылым қатесі',
@@ -83,8 +81,7 @@ export const messages = {
     ssid: 'Желі атауы (SSID)',
     port_mode_disabled: 'Өшірілген',
     port_mode_tcp_bridge: 'TCP көпір',
-    port_mode_sniffer: 'Sniffer',
-    port_mode_cache_bus: 'Кэш шина',
+    port_mode_passive: 'Пассивті тыңдау',
   },
   it: {
     connection_error: 'Errore di connessione',
@@ -112,8 +109,7 @@ export const messages = {
     ssid: 'Nome rete (SSID)',
     port_mode_disabled: 'Disabilitato',
     port_mode_tcp_bridge: 'Bridge TCP',
-    port_mode_sniffer: 'Sniffer',
-    port_mode_cache_bus: 'Cache bus',
+    port_mode_passive: 'Ascolto passivo',
   },
   de: {
     connection_error: 'Verbindungsfehler',
@@ -141,7 +137,6 @@ export const messages = {
     ssid: 'Netzwerkname (SSID)',
     port_mode_disabled: 'Deaktiviert',
     port_mode_tcp_bridge: 'TCP-Bridge',
-    port_mode_sniffer: 'Sniffer',
-    port_mode_cache_bus: 'Cache-Bus',
+    port_mode_passive: 'Passives Mithören',
   }
 };

@@ -8,8 +8,12 @@ static char mock_port_mode[BRIDGES_COUNT][SETTING_ITEM_MAX_STR_LEN];
 bool mock_cache_server_enabled = false;
 int mock_cache_port = 0;
 
+/* Stored mock values for per-port cache overlay (cache_en_1 / cache_en_2) */
+bool mock_cache_en[BRIDGES_COUNT] = {false, false};
+
 /* Count how many times save was called (for diagnostics) */
 int mock_setting_items_save_called = 0;
+int mock_setting_items_save_bool_called = 0;
 
 static int index_from_port_mode_key(const char *key)
 {
@@ -20,6 +24,32 @@ static int index_from_port_mode_key(const char *key)
         return 1;
     }
     return -1;
+}
+
+static int index_from_cache_en_key(const char *key)
+{
+    if (strcmp(key, KEY_CACHE_EN_1) == 0) {
+        return 0;
+    }
+    if (strcmp(key, KEY_CACHE_EN_2) == 0) {
+        return 1;
+    }
+    return -1;
+}
+
+/* Test helper: directly set the stored port-mode string (e.g. legacy values). */
+void mock_setting_items_set_port_mode(unsigned index, const char *value)
+{
+    if (index >= BRIDGES_COUNT) return;
+    strncpy(mock_port_mode[index], value, SETTING_ITEM_MAX_STR_LEN - 1);
+    mock_port_mode[index][SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+}
+
+/* Test helper: read the stored port-mode string. */
+const char *mock_setting_items_get_port_mode(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) return "";
+    return mock_port_mode[index];
 }
 
 esp_err_t setting_items_read(const char *key, char *value)
@@ -50,6 +80,10 @@ bool setting_items_read_bool(const char *key)
     if (strcmp(key, KEY_CACHE_MODBUS_SERVER_ENABLED) == 0) {
         return mock_cache_server_enabled;
     }
+    int ci = index_from_cache_en_key(key);
+    if (ci >= 0) {
+        return mock_cache_en[ci];
+    }
     return false;
 }
 
@@ -64,7 +98,15 @@ int setting_items_read_int(const char *key)
 /* Stubs for functions not used by port_manager directly */
 esp_err_t setting_items_init(void)                                    { return ESP_OK; }
 esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *s) { (void)s; return ESP_OK; }
-esp_err_t setting_items_save_bool(const char *key, bool value)        { (void)key; (void)value; return ESP_OK; }
+esp_err_t setting_items_save_bool(const char *key, bool value)
+{
+    mock_setting_items_save_bool_called++;
+    int ci = index_from_cache_en_key(key);
+    if (ci >= 0) {
+        mock_cache_en[ci] = value;
+    }
+    return ESP_OK;
+}
 esp_err_t setting_items_save_int(const char *key, int value)          { (void)key; (void)value; return ESP_OK; }
 esp_err_t setting_items_set_defaults(bool only_uninitialized)         { (void)only_uninitialized; return ESP_OK; }
 size_t setting_items_get_count(void)                                  { return 0; }
@@ -83,5 +125,8 @@ void mock_setting_items_reset(void)
     }
     mock_cache_server_enabled = false;
     mock_cache_port = 0;
+    mock_cache_en[0] = false;
+    mock_cache_en[1] = false;
     mock_setting_items_save_called = 0;
+    mock_setting_items_save_bool_called = 0;
 }

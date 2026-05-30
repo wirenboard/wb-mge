@@ -30,7 +30,7 @@ from packet_injector import PacketInjector
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
-    resp = api.set_port_mode(1, "tcp_bridge")    # test will switch to sniffer; start from a known state
+    resp = api.set_port_mode(1, "tcp_bridge")    # test will switch to passive for the WS sniffer overlay; start from a known state
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
 
 
@@ -140,8 +140,8 @@ def test_ws_pong_race_no_corruption(api):
         assert info.status_code == 200
         original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "sniffer")
-        assert r.status_code == 200, f"Failed to set sniffer mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
         time.sleep(0.5)
 
         cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])

@@ -15,6 +15,8 @@ typedef struct cJSON {
 /* A cJSON item is a string if valuestring is non-NULL */
 #define cJSON_IsString(x) ((x) != NULL && (x)->valuestring != NULL)
 #define cJSON_IsNumber(x)  0
+#define cJSON_IsBool(x)    0
+#define cJSON_IsTrue(x)    0
 
 static inline cJSON *cJSON_Parse(const char *v)                          { (void)v; return 0; }
 cJSON *cJSON_GetObjectItem(cJSON *o, const char *k);
@@ -24,3 +26,5 @@ static inline cJSON *cJSON_AddStringToObject(cJSON *o, const char *n,
                                               const char *s)             { (void)o; (void)n; (void)s; return 0; }
 static inline cJSON *cJSON_AddNumberToObject(cJSON *o, const char *n,
                                               double v)                  { (void)o; (void)n; (void)v; return 0; }
+static inline cJSON *cJSON_AddBoolToObject(cJSON *o, const char *n,
+                                            int b)                       { (void)o; (void)n; (void)b; return 0; }

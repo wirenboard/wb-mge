@@ -20,7 +20,7 @@ def _baseline(api):
         "cache_value_timeout_s": 60,           # large enough so that entries do not expire
     })
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
-    resp = api.set_port_mode(1, "tcp_bridge")  # deterministic start; multimaster test will switch to cache_bus
+    resp = api.set_port_mode(1, "tcp_bridge")  # deterministic start; multimaster test will switch to passive + enable the cache overlay
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
 
 
@@ -217,10 +217,13 @@ def test_cache_multimaster(api):
         time.sleep(2)
         print(f"✓ cache_modbus_port changed to {QEMU_MODBUS_PORT}")
 
-        response = api.set_port_mode(1, "cache_bus")
+        response = api.set_port_mode(1, "passive")
         assert response.status_code == 200, \
             f"POST /ports/1/mode expected 200, got {response.status_code}"
-        print("✓ Port 1 switched to cache_bus mode")
+        response = api.set_port_cache(1, True)
+        assert response.status_code == 200, \
+            f"POST /ports/1/cache expected 200, got {response.status_code}"
+        print("✓ Port 1 set to passive transport with the cache overlay enabled")
 
         # The firmware no longer fabricates Modbus traffic on its own — pytest
         # drives the bus via POST /qemu/inject through PacketInjector so the
@@ -240,7 +243,7 @@ def test_cache_multimaster(api):
                 f"GET /cache/status expected 200, got {response.status_code}"
             status = response.json()
 
-            assert status.get("enabled"), "Cache not enabled after switching port to cache_bus"
+            assert status.get("enabled"), "Cache not enabled after enabling the cache overlay on port 1"
             assert status.get("entries", 0) > 0, "Cache did not populate within 30s"
 
             info_response = api.get_info()
@@ -335,6 +338,10 @@ def test_cache_multimaster(api):
 
     finally:
         restore_errors = []
+        try:
+            api.set_port_cache(1, False)
+        except Exception as exc:
+            restore_errors.append(f"Failed to disable cache overlay on port 1: {exc}")
         if original_port_mode is not None:
             try:
                 api.set_port_mode(1, original_port_mode)
@@ -365,8 +372,10 @@ def test_cache_json_fields(api):
         assert info_resp.status_code == 200
         original_port_mode = info_resp.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
 
-        r = api.set_port_mode(1, "cache_bus")
-        assert r.status_code == 200, f"Failed to set cache_bus mode: {r.status_code}"
+        r = api.set_port_mode(1, "passive")
+        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
+        r = api.set_port_cache(1, True)
+        assert r.status_code == 200, f"Failed to enable cache overlay: {r.status_code}"
 
         # Drive Modbus traffic via the QEMU inject endpoint while we wait for
         # the cache to populate.  Without an active injector the cache stays
@@ -424,6 +433,7 @@ def test_cache_json_fields(api):
             print(f"✓ All {len(entries)} cache entries have valid fields")
 
     finally:
+        api.set_port_cache(1, False)
         if original_port_mode is not None:
             api.set_port_mode(1, original_port_mode)
             print(f"✓ Port 1 mode restored to {original_port_mode}")

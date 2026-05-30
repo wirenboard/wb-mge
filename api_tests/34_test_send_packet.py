@@ -25,19 +25,20 @@ FC03_HEX = "01030000000AC5CD"
 
 @pytest.fixture(autouse=True)
 def sniffer_mode(api):
-    """Set port 1 to sniffer mode before each test, restore after."""
+    """Open port 1 serial (passive transport) before each test so the WS sniffer
+    overlay can observe sent packets; restore the original transport after."""
     original_mode = None
     try:
         info = api.get_info()
         if info.status_code == 200:
-            original_mode = info.json().get("rs485_1", {}).get("port_mode", "sniffer")
+            original_mode = info.json().get("rs485_1", {}).get("port_mode", "passive")
 
-        resp = api.set_port_mode(1, "sniffer")
-        assert resp.status_code == 200, f"Failed to set port 1 to sniffer: {resp.text}"
+        resp = api.set_port_mode(1, "passive")
+        assert resp.status_code == 200, f"Failed to set port 1 to passive: {resp.text}"
         time.sleep(0.5)
         yield
     finally:
-        if original_mode and original_mode != "sniffer":
+        if original_mode and original_mode != "passive":
             api.set_port_mode(1, original_mode)
 
 

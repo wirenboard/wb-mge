@@ -1,5 +1,4 @@
 #include "cache_multimaster.h"
-#include "sniffer.h"
 #include "bridge.h"
 #include "auth.h"
 
@@ -222,17 +221,15 @@ void cache_multimaster_enable(void)
     memset(s_pending, 0, sizeof(s_pending));
 
     s_cache_enabled = true;
-    sniffer_set_cache_active(true);
 
     ESP_LOGI(TAG, "Cache multimaster enabled");
 }
 
 void cache_multimaster_disable(void)
 {
-    /* Disable cache and sniffer first so no new data enters the pool while
-     * we are tearing down — s_cache_enabled is volatile, visible immediately. */
+    /* Disable cache first so no new data enters the pool while we are tearing
+     * down — s_cache_enabled is volatile, visible immediately. */
     s_cache_enabled = false;
-    sniffer_set_cache_active(false);
 
     /* Take the mutex before deleting the aging task to guarantee it is not
      * inside its critical section when deleted — prevents a mutex leak that

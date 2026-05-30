@@ -28,11 +28,11 @@ def _baseline(api):
         "cache_modbus_server_enabled": True,
         "cache_value_timeout_s": 60,
         "rs485_1": {
-            "tx_disabled": True,      # PacketInjector drives traffic via UART chardev in QEMU cache_bus mode
+            "tx_disabled": True,      # PacketInjector drives traffic via UART chardev in QEMU; cache overlay records it
         }
     })
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
-    # cache_modbus_port and port_mode=cache_bus are set by the module's own cache_tcp_server fixture
+    # cache_modbus_port, passive transport and the cache overlay are set by the module's own cache_tcp_server fixture
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ def cache_tcp_server(api: WBMGEAPI):
     Steps:
       1. Save current rs485_1 port_mode and cache_modbus_port.
       2. Switch cache_modbus_port to QEMU_CACHE_MODBUS_PORT.
-      3. Switch port 1 to cache_bus mode.
+      3. Set port 1 to passive transport and enable the cache overlay.
       4. Start PacketInjector to drive live traffic into the cache.
       5. Wait up to 30 s for at least one cache entry to appear.
       6. Yield (host, QEMU_CACHE_MODBUS_PORT).
@@ -133,10 +133,13 @@ def cache_tcp_server(api: WBMGEAPI):
         # Give the server time to rebind on the new port.
         time.sleep(1)
 
-        # Activate cache mode on port 1.
-        resp = api.set_port_mode(1, "cache_bus")
+        # Open serial (passive) and activate the cache overlay on port 1.
+        resp = api.set_port_mode(1, "passive")
         assert resp.status_code == 200, \
-            f"Failed to set port 1 to cache_bus: HTTP {resp.status_code}"
+            f"Failed to set port 1 to passive: HTTP {resp.status_code}"
+        resp = api.set_port_cache(1, True)
+        assert resp.status_code == 200, \
+            f"Failed to enable cache overlay on port 1: HTTP {resp.status_code}"
 
         # Start injecting Modbus RTU traffic so the cache has data to serve.
         inj.__enter__()
@@ -162,6 +165,11 @@ def cache_tcp_server(api: WBMGEAPI):
             api.update_settings({"cache_modbus_port": original_modbus_port})
         except Exception as exc:
             restore_errors.append(f"Failed to restore cache_modbus_port: {exc}")
+
+        try:
+            api.set_port_cache(1, False)
+        except Exception as exc:
+            restore_errors.append(f"Failed to disable cache overlay on port 1: {exc}")
 
         try:
             api.set_port_mode(1, original_port_mode)
