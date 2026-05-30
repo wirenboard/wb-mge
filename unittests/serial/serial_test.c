@@ -44,6 +44,19 @@ typedef struct {
 static uint8_t mock_receive_buffer[SERIAL_BUF_SIZE];
 mock_receive_handler_t mock_receive_handler_data = {0};
 
+/* A second, independent handler mock used to verify the additive sniffer feed.
+ * It mirrors mock_receive_handler_t but tracks its own call history so a test can
+ * assert that BOTH the bridge receive_handler AND the sniff_handler fired. */
+typedef struct {
+    int called;
+    serial_desc_t *desc;
+    size_t len;                 // last call's length
+    uint8_t data[SERIAL_BUF_SIZE];
+    mock_receive_call_t calls[MOCK_RECEIVE_HANDLER_MAX_CALLS];
+} mock_sniff_handler_t;
+
+static mock_sniff_handler_t mock_sniff_handler_data = {0};
+
 void setUp(void)
 {
     mock_uart_reset();
@@ -55,6 +68,8 @@ void setUp(void)
     memset(&mock_receive_handler_data, 0, sizeof(mock_receive_handler_data));
     memset(mock_receive_buffer, 0, sizeof(mock_receive_buffer));
     mock_receive_handler_data.data = mock_receive_buffer;
+
+    memset(&mock_sniff_handler_data, 0, sizeof(mock_sniff_handler_data));
 }
 
 void tearDown(void)
@@ -72,6 +87,24 @@ static void mock_receive_handler(serial_desc_t *desc, uint8_t *data, size_t len)
     if (idx < MOCK_RECEIVE_HANDLER_MAX_CALLS) {         // record per-call history
         mock_receive_handler_data.calls[idx].len = len;
         memcpy(mock_receive_handler_data.calls[idx].data, data, len);
+    }
+}
+
+/* Independent sniffer-handler mock — same signature as the receive handler. */
+static void mock_sniff_handler(serial_desc_t *desc, uint8_t *data, size_t len)
+{
+    int idx = mock_sniff_handler_data.called;
+    mock_sniff_handler_data.called++;
+    mock_sniff_handler_data.desc = desc;
+    mock_sniff_handler_data.len = len;
+    if (len <= sizeof(mock_sniff_handler_data.data)) {
+        memcpy(mock_sniff_handler_data.data, data, len);
+    }
+    if (idx < MOCK_RECEIVE_HANDLER_MAX_CALLS) {
+        mock_sniff_handler_data.calls[idx].len = len;
+        if (len <= sizeof(mock_sniff_handler_data.calls[idx].data)) {
+            memcpy(mock_sniff_handler_data.calls[idx].data, data, len);
+        }
     }
 }
 
@@ -767,7 +800,10 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     verify_xEventGroupSetBits_args(1, EVENT_TASK_FINISHED);
     verify_uart_flush_input_args(1);
     verify_xQueueReceive_args(4, desc->uart_queue, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
-    verify_malloc_tracking(2, 1);
+    // 3 allocations now: serial_desc_t + UART read buffer (dtmp) + sniffer accumulator
+    // (sniff_tmp). The two task-owned buffers are freed on task exit (2 frees); desc is
+    // freed by serial_deinit, which this test does not call.
+    verify_malloc_tracking(3, 2);
 
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
         sizeof(serial_desc_t),
@@ -782,6 +818,15 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     TEST_ASSERT_TRUE_MESSAGE(
         was_ptr_freed(allocated_ptrs[1].ptr),
         "UART read buffer should be freed on task exit"
+    );
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        SERIAL_BUF_SIZE,
+        allocated_ptrs[2].size,
+        "Memory size mismatch for sniffer accumulator allocation"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        was_ptr_freed(allocated_ptrs[2].ptr),
+        "Sniffer accumulator should be freed on task exit"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelete_data.called, "vTaskDelete should be called once");
@@ -1755,6 +1800,277 @@ void test_serial_set_tx_disabled_gates_send(void)
         "uart_write_bytes must be called once after TX re-enabled");
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Additive sniffer feed (part 2): the sniff_handler must observe RX traffic in
+// BOTH passive and tcp_bridge modes, via a dedicated accumulation buffer that is
+// independent of the bridge data path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: queue a sequence of UART_DATA events and run the event task inline,
+// after the caller has configured desc->receive_handler/sniff_handler/wait_for_idle.
+// set_event_on_call = n_events + 1 (serial_init consumes one EventGroupWaitBits call,
+// the task loop consumes one per event, then exits).
+static void run_events_inline(serial_desc_t *desc, uart_event_t **events,
+                              size_t *sizes, int n_events)
+{
+    mock_xQueueReceive_data.pvBuffer_arr = (void **)events;
+    mock_xQueueReceive_data.buffer_size_arr = sizes;
+    mock_xQueueReceive_data.array_len = n_events;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = n_events + 1;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+    serial_test_run_uart_event_task(desc);
+}
+
+// Modbus gateway (wait_for_idle=true) with a bridge receive_handler AND a sniffer:
+// a non-timeout fragment followed by an idle-timeout event delivers the WHOLE
+// accumulated frame to BOTH handlers exactly once.
+void test_serial_bridge_and_sniffer_both_fire_on_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test gateway bridge + sniffer: both fire once on idle timeout");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    uart_event_t *events[2] = {&event_1, &event_2};
+    size_t sizes[2] = {sizeof(event_1), sizeof(event_2)};
+
+    mock_xTaskCreate_data.self_execution = false;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+    desc->wait_for_idle = true;  // Modbus gateway
+
+    run_events_inline(desc, events, sizes, 2);
+
+    // Bridge handler: fired once on the timeout event with the full 30-byte frame.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_receive_handler_data.called,
+        "receive_handler must fire once on the idle-timeout event");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(30, mock_receive_handler_data.len,
+        "receive_handler must get the whole accumulated 30-byte frame");
+    // Sniffer: fired once with the same full frame, via its independent buffer.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "sniff_handler must ALSO fire once on the idle-timeout event (additive feed)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(30, mock_sniff_handler_data.len,
+        "sniff_handler must get the whole accumulated 30-byte frame");
+    TEST_ASSERT_EQUAL_PTR(desc, mock_sniff_handler_data.desc);
+}
+
+// Transparent bridge (wait_for_idle=false): the bridge receive_handler forwards
+// each chunk IMMEDIATELY (per UART_DATA event), while the sniffer accumulates and
+// delivers a single idle-delimited frame only on timeout_flag.
+void test_serial_transparent_bridge_per_chunk_sniffer_on_idle(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test transparent bridge: per-chunk forward + sniffer idle-frame");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    uart_event_t *events[2] = {&event_1, &event_2};
+    size_t sizes[2] = {sizeof(event_1), sizeof(event_2)};
+
+    mock_xTaskCreate_data.self_execution = false;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+    desc->wait_for_idle = false;  // transparent: forward each chunk immediately
+
+    run_events_inline(desc, events, sizes, 2);
+
+    // Bridge handler fired twice, once per chunk (10 then 20), unchanged behavior.
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_receive_handler_data.called,
+        "transparent bridge must forward each chunk immediately (2 calls)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(10, mock_receive_handler_data.calls[0].len,
+        "first chunk forwarded with 10 bytes");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(20, mock_receive_handler_data.calls[1].len,
+        "second chunk forwarded with 20 bytes");
+    // Sniffer fired ONCE, with the idle-delimited frame accumulated across chunks.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "sniffer must deliver a single idle-delimited frame on timeout");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(30, mock_sniff_handler_data.len,
+        "sniffer frame must be the full 30 bytes accumulated across both chunks");
+}
+
+// Passive (no bridge receive_handler): the sniffer still receives idle-delimited
+// frames and the bridge handler is never called. Guards R4.
+void test_serial_passive_sniffer_frame_no_bridge(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test passive: sniffer idle-frame, bridge handler never called");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    uart_event_t *events[2] = {&event_1, &event_2};
+    size_t sizes[2] = {sizeof(event_1), sizeof(event_2)};
+
+    mock_xTaskCreate_data.self_execution = false;
+    serial_desc_t *desc = serial_init(&config, NULL);  // passive: no receive_handler
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+
+    run_events_inline(desc, events, sizes, 2);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called,
+        "passive: bridge receive_handler must never be called");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "passive: sniffer must deliver one idle-delimited frame");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(30, mock_sniff_handler_data.len,
+        "passive: sniffer frame must be the full 30 bytes");
+}
+
+// Overflow guard: in transparent mode the bridge resets the main buffer every
+// event, but the sniffer accumulator grows until an idle timeout. If accumulation
+// would exceed SERIAL_BUF_SIZE the accumulator resets without corrupting memory,
+// and the next delivered frame stays bounded.
+void test_serial_sniff_accumulator_overflow_guard(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer accumulator overflow guard resets safely");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    // Each event is 600 bytes (<= SERIAL_BUF_SIZE so the main-buffer check passes
+    // because transparent mode resets data_len every event). The sniffer accumulator
+    // would reach 1200 on the second event (> 1000) → guard resets it to 0 first.
+    uart_event_t event_1 = {.type = UART_DATA, .size = 600, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 600, .timeout_flag = false};
+    uart_event_t event_3 = {.type = UART_DATA, .size = 600, .timeout_flag = true};
+    uart_event_t *events[3] = {&event_1, &event_2, &event_3};
+    size_t sizes[3] = {sizeof(event_1), sizeof(event_2), sizeof(event_3)};
+
+    mock_xTaskCreate_data.self_execution = false;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+    desc->wait_for_idle = false;  // transparent: data buffer reset every event
+
+    run_events_inline(desc, events, sizes, 3);
+
+    // Sniffer delivered exactly once (on the timeout) and the frame length never
+    // exceeded the buffer — the guard reset accumulation instead of overrunning.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "sniffer must deliver once on the timeout event");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(600, mock_sniff_handler_data.len,
+        "after overflow reset, the delivered frame is just the last 600-byte event");
+    TEST_ASSERT_TRUE_MESSAGE(mock_sniff_handler_data.len <= SERIAL_BUF_SIZE,
+        "sniffer frame length must never exceed the buffer size");
+}
+
+// TX visibility: a successful serial_send() feeds the transmitted bytes to the
+// sniff_handler (so the bridge's TCP->UART forwarding appears in the sniffer/cache).
+void test_serial_send_feeds_sniffer_when_enabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send feeds sniffer with TX bytes");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must be called");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "serial_send must feed the sniffer once with the TX bytes");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(data), mock_sniff_handler_data.len,
+        "sniffer must receive the full TX length");
+    TEST_ASSERT_EQUAL_HEX8_ARRAY_MESSAGE(data, mock_sniff_handler_data.data, sizeof(data),
+        "sniffer must receive the exact TX bytes");
+}
+
+// TX visibility gate: when TX is disabled the bytes never go on the wire, so the
+// sniffer must NOT be fed (R2).
+void test_serial_send_no_sniffer_feed_when_tx_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send does NOT feed sniffer when TX disabled");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+
+    TEST_ASSERT_EQUAL(ESP_OK, serial_set_tx_disabled(desc, true));
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send returns OK even when TX disabled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must NOT be called when TX disabled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniff_handler_data.called,
+        "sniffer must NOT be fed when TX is disabled (bytes never transmitted)");
+}
+
+// TX visibility gate: a partial/failed write was not fully transmitted, so the
+// sniffer must NOT be fed.
+void test_serial_send_no_sniffer_feed_on_partial_write(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send does NOT feed sniffer on partial write");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    mock_uart_write_bytes_data.return_value = 3;  // force a short write (< len)
+
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, err, "serial_send must report ESP_FAIL on short write");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniff_handler_data.called,
+        "sniffer must NOT be fed when the write did not fully transmit");
+}
+
+// serial_send must not crash when no sniff_handler is attached (e.g. disabled overlay).
+void test_serial_send_no_sniff_handler_ok(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send with no sniff_handler attached");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    // sniff_handler is NULL by default after serial_init.
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should succeed with no sniff_handler");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must still be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniff_handler_data.called,
+        "no sniff_handler attached → nothing fed");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1788,6 +2104,17 @@ int main(void)
     RUN_TEST(test_serial_init_success_with_unknown_uart_event);
 
     RUN_TEST(test_serial_sniffer_delivers_only_on_idle_timeout);
+
+    // Additive sniffer feed (part 2) — RX in bridge + passive modes:
+    RUN_TEST(test_serial_bridge_and_sniffer_both_fire_on_timeout);
+    RUN_TEST(test_serial_transparent_bridge_per_chunk_sniffer_on_idle);
+    RUN_TEST(test_serial_passive_sniffer_frame_no_bridge);
+    RUN_TEST(test_serial_sniff_accumulator_overflow_guard);
+    // Additive sniffer feed (part 2) — TX visibility via serial_send:
+    RUN_TEST(test_serial_send_feeds_sniffer_when_enabled);
+    RUN_TEST(test_serial_send_no_sniffer_feed_when_tx_disabled);
+    RUN_TEST(test_serial_send_no_sniffer_feed_on_partial_write);
+    RUN_TEST(test_serial_send_no_sniff_handler_ok);
 
     RUN_TEST(test_serial_send_success);
     RUN_TEST(test_serial_send_partial_write);

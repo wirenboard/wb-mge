@@ -561,14 +561,17 @@ void test_send_raw_sniffer_port_calls_serial_send(void)
     TEST_ASSERT_EQUAL(1, mock_serial_send_called);
     TEST_ASSERT_EQUAL(sizeof(data), mock_serial_send_last_len);
     TEST_ASSERT_EQUAL_HEX8_ARRAY(data, mock_serial_send_last_data, sizeof(data));
-    TEST_ASSERT_EQUAL(1, mock_sniffer_inject_tx_called[0]);
-    TEST_ASSERT_EQUAL(sizeof(data), mock_sniffer_inject_tx_last_len[0]);
-    TEST_ASSERT_EQUAL_HEX8_ARRAY(data, mock_sniffer_inject_tx_last_data[0], sizeof(data));
+    /* TX visibility for the sniffer is now fed inside serial_send() (verified in the
+     * serial unit suite), NOT re-injected here — so port_manager_send_raw must NOT
+     * call sniffer_inject_tx (R5: no double-feed). */
+    TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
 }
 
 void test_send_raw_tx_disabled_no_sniffer_inject(void)
 {
-    /* Set up sniffer mode, then disable TX — inject must NOT be called */
+    /* With TX disabled, send_raw still delegates to serial_send (which drops the bytes
+     * internally and, in the real serial layer, skips the TX sniffer feed). send_raw
+     * itself never calls sniffer_inject_tx — TX visibility moved into serial_send. */
     port_manager_set_mode(0, PM_MODE_PASSIVE);
     port_manager_set_tx_disabled(0, true);
     mock_serial_reset();
@@ -579,14 +582,15 @@ void test_send_raw_tx_disabled_no_sniffer_inject(void)
     TEST_ASSERT_EQUAL(ESP_OK, ret);
     /* serial_send was called (but silently dropped bytes inside the real serial layer) */
     TEST_ASSERT_EQUAL(1, mock_serial_send_called);
-    /* sniffer_inject_tx must NOT have been called */
+    /* sniffer_inject_tx must NOT have been called by port_manager */
     TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
 }
 
 void test_send_raw_serial_send_failure_no_sniffer_inject(void)
 {
-    /* When serial_send() fails, the transmitted bytes were NOT actually sent,
-     * so sniffer_inject_tx must NOT be called (M7: inject gated by ret==ESP_OK). */
+    /* When serial_send() fails the error is propagated to the caller. The TX sniffer
+     * feed lives inside serial_send (skipped on failure there); port_manager_send_raw
+     * never calls sniffer_inject_tx regardless of the serial_send result. */
     port_manager_set_mode(0, PM_MODE_PASSIVE);
     mock_serial_reset();
     mock_sniffer_reset();
@@ -598,7 +602,7 @@ void test_send_raw_serial_send_failure_no_sniffer_inject(void)
     TEST_ASSERT_EQUAL(ESP_FAIL, ret);
     /* serial_send was attempted */
     TEST_ASSERT_EQUAL(1, mock_serial_send_called);
-    /* sniffer_inject_tx must NOT have been called because the send failed */
+    /* sniffer_inject_tx must NOT have been called by port_manager */
     TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
 }
 

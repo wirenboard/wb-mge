@@ -8,7 +8,8 @@
 #define MESSAGE_BUFFER_SIZE                     300
 
 #define HTTPD_MAX_URI_LEN                       100
-#define MAX_URI_HANDLERS                        32
+// Mirror main/http_server.c (bumped 32 -> 40 for the per-port mode/send/cache handlers).
+#define MAX_URI_HANDLERS                        40
 
 #define STACK_SIZE                              (1024 * 6)
 #define MAX_OPEN_SOCKETS                        12

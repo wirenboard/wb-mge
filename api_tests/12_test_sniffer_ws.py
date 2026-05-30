@@ -778,18 +778,14 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
             ws.settimeout(15)
             ws.connect(ws_url, cookie=cookies)
 
-            stop_ping = threading.Event()
-
-            def _ping():
-                while not stop_ping.is_set():
-                    try:
-                        ws.ping()
-                    except Exception:
-                        break
-                    time.sleep(0.5)
-
-            ping_thread = threading.Thread(target=_ping, daemon=True)
-            ping_thread.start()
+            # NOTE: deliberately NO background ping thread during the malformed-message
+            # probe below. websocket-client's WebSocket is not thread-safe, and a
+            # concurrent ws.ping() makes the server emit pong frames that the probe's
+            # ws.recv() keeps consuming — recv() loops on those control frames so its
+            # 0.5s timeout never fires and the test hangs until pytest-timeout (an
+            # intermittent flake seen in soak run #21). The probe loop generates its
+            # own traffic (one send per iteration), so the firmware will not close the
+            # connection as idle within these few seconds.
 
             malformed_messages = [
                 "not json",
@@ -816,7 +812,7 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
                     pass
 
             # Reconnect with a fresh WebSocket so residual state doesn't interfere
-            stop_ping.set()
+            # (there is no first ping thread to stop — see the note above).
             try:
                 ws.close()
             except Exception:

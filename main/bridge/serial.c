@@ -40,8 +40,8 @@ static const char *TAG = "serial";
 
 
 typedef struct {
-    uint8_t *data;
-    size_t data_len;
+    uint8_t *data;        size_t data_len;       // bridge path (unchanged)
+    uint8_t *sniff_data;  size_t sniff_len;      // independent sniffer accumulator (additive overlay)
 } buffer_ctx_t;
 
 
@@ -55,27 +55,48 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
                 uart_flush_input(desc->port_num);
                 xQueueReset(desc->uart_queue);
                 buffer_ctx->data_len = 0;
+                buffer_ctx->sniff_len = 0;
                 break;
             }
             ESP_LOGD(TAG, "UART[%d] DATA: %zu, TIMEOUT: %u", desc->port_num, event.size, (unsigned)event.timeout_flag);
-            uart_read_bytes(desc->port_num, &buffer_ctx->data[buffer_ctx->data_len], event.size, portMAX_DELAY);
-            ESP_LOG_BUFFER_HEX_LEVEL(TAG, &buffer_ctx->data[buffer_ctx->data_len], event.size, ESP_LOG_DEBUG);
+            size_t old_len = buffer_ctx->data_len;
+            uart_read_bytes(desc->port_num, &buffer_ctx->data[old_len], event.size, portMAX_DELAY);
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG, &buffer_ctx->data[old_len], event.size, ESP_LOG_DEBUG);
             buffer_ctx->data_len += event.size;
+
+            // (A) Sniffer feed — additive overlay, independent of the bridge path.
+            // Accumulate every received byte into a dedicated buffer and deliver an
+            // idle-delimited frame on timeout_flag. This works identically in passive
+            // and tcp_bridge modes (transparent or Modbus gateway): the sniffer/cache
+            // observe RX traffic without ever altering the bytes/timing the bridge
+            // forwards. The recursive sniffer_process()/cache work it triggers is gated
+            // by the reasons bitmask, so an idle bridge with no overlay does no real work.
+            if (desc->sniff_handler && buffer_ctx->sniff_data) {
+                if (buffer_ctx->sniff_len + event.size > SERIAL_BUF_SIZE) {
+                    buffer_ctx->sniff_len = 0;  // overflow guard: drop the partial frame
+                }
+                memcpy(&buffer_ctx->sniff_data[buffer_ctx->sniff_len], &buffer_ctx->data[old_len], event.size);
+                buffer_ctx->sniff_len += event.size;
+                if (event.timeout_flag) {
+                    desc->sniff_handler(desc, buffer_ctx->sniff_data, buffer_ctx->sniff_len);
+                    buffer_ctx->sniff_len = 0;
+                }
+            }
+
+            // Bridge data path — behavior unchanged from before the additive sniffer feed.
             if (desc->receive_handler && ((!desc->wait_for_idle) || event.timeout_flag)) {
                 // For transparent bridge (wait_for_idle=false): forward immediately on every UART_DATA.
                 // For Modbus gateway (wait_for_idle=true): forward only when idle timeout fires
                 // (complete RTU frame boundary detected — bus silent for >= RX_TOUT symbol periods).
                 desc->receive_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
                 buffer_ctx->data_len = 0;
-            } else if ((!desc->receive_handler) && event.timeout_flag) {
-                // Sniffer mode: accumulate and deliver complete packet after idle timeout.
-                if (desc->sniff_handler) {
-                    desc->sniff_handler(desc, buffer_ctx->data, buffer_ctx->data_len);
-                }
+            } else if (!desc->receive_handler) {
+                // No bridge consumer (passive): the sniffer already consumed via (A);
+                // reset the main buffer every event so it cannot grow unbounded.
                 buffer_ctx->data_len = 0;
             }
             // If receive_handler is set with wait_for_idle=true and no timeout yet:
-            // keep accumulating bytes in buffer_ctx until the idle timeout fires.
+            // keep accumulating bytes in buffer_ctx->data until the idle timeout fires.
             break;
         }
         case UART_FIFO_OVF:
@@ -83,12 +104,14 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             uart_flush_input(desc->port_num);
             xQueueReset(desc->uart_queue);
             buffer_ctx->data_len = 0;
+            buffer_ctx->sniff_len = 0;
             break;
         case UART_BUFFER_FULL:
             ESP_LOGW(TAG, "UART[%d] ring buffer full", desc->port_num);
             uart_flush_input(desc->port_num);
             xQueueReset(desc->uart_queue);
             buffer_ctx->data_len = 0;
+            buffer_ctx->sniff_len = 0;
             break;
         case UART_BREAK:
             ESP_LOGD(TAG, "UART[%d] rx break", desc->port_num);
@@ -115,9 +138,12 @@ static void uart_event_task(void *pvParameters)
     ESP_LOGD(TAG, "UART[%d] event task started", desc->port_num);
 
     uint8_t *dtmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
+    uint8_t *sniff_tmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
     buffer_ctx_t buffer_ctx = {
         .data = dtmp,
-        .data_len = 0
+        .data_len = 0,
+        .sniff_data = sniff_tmp,
+        .sniff_len = 0
     };
 
     uart_flush_input(desc->port_num);
@@ -137,6 +163,7 @@ static void uart_event_task(void *pvParameters)
     }
 
     free(dtmp);
+    free(sniff_tmp);
     ESP_LOGI(TAG, "UART[%d] event task finished", desc->port_num);
     /* IMPORTANT: clear task_handle BEFORE signalling EVENT_TASK_FINISHED.
      * serial_deinit() blocks waiting on that bit and, on wake, may free(desc)
@@ -277,6 +304,16 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
     if (written != len) {
         ESP_LOGE(TAG, "Error sending data to serial port %d", desc->port_num);
         return ESP_FAIL;
+    }
+
+    // TX visibility for the sniffer/cache: the bytes we just put on the wire (e.g. the
+    // bridge forwarding a TCP client's request to the bus — the "master request" side).
+    // sniff_handler is the same per-port callback used for RX; sniffer_process() is
+    // internally sniff_mux-guarded, so calling it here (TCP server / HTTP task context)
+    // is safe and adds no lock-ordering hazard. Only reached when the data was actually
+    // transmitted (tx_disabled returns early above; partial writes return ESP_FAIL above).
+    if (desc->sniff_handler) {
+        desc->sniff_handler(desc, data, len);
     }
     return ESP_OK;
 }

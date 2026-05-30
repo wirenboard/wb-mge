@@ -395,13 +395,11 @@ esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t
         ESP_LOGW(TAG, "Port[%u]: no serial_desc, cannot send raw bytes", port_index + 1);
         return ESP_FAIL;
     }
-    esp_err_t ret = serial_send(sd, (uint8_t *)data, len);
-    /* Feed transmitted bytes into the sniffer so they appear in the WS log.
-     * Only inject when TX was actually sent (not silently dropped by tx_disabled). */
-    if ((ret == ESP_OK) && (!sd->tx_disabled)) {
-        sniffer_inject_tx(port_index, data, len);
-    }
-    return ret;
+    /* TX visibility for the sniffer/cache is now centralized in serial_send(): it feeds
+     * the per-port sniff_handler after a successful transmit (and skips it when TX is
+     * disabled or the write was partial). Injecting here too would double-count the
+     * transmitted frame (R5: a byte reaches the sniffer exactly once per direction). */
+    return serial_send(sd, (uint8_t *)data, len);
 }
 
 esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
