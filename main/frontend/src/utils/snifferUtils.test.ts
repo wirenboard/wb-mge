@@ -5,6 +5,8 @@ import {
   hexToPayloadString,
   toggleSet,
   parsePacket,
+  computeVirtualWindow,
+  trimToCap,
   type SniffRow,
 } from './snifferUtils';
 
@@ -266,5 +268,116 @@ describe('parsePacket', () => {
     // fc should be "FM Cmd (Read Holding Regs)" — subcmd name + inner FC name in parens
     expect(r.fc).toContain('FM Cmd');
     expect(r.fc).toContain('Read Holding Regs');
+  });
+});
+
+// ============================================================
+// computeVirtualWindow
+// ============================================================
+describe('computeVirtualWindow', () => {
+  it('top of list: scrollTop=0 → window starts at 0, full visibleCount, only bottom spacer', () => {
+    // visibleCount = ceil(290/29) + 10*2 = 10 + 20 = 30
+    const w = computeVirtualWindow(0, 290, 29, 1000, 10);
+    expect(w.visibleCount).toBe(30);
+    expect(w.startIndex).toBe(0);
+    expect(w.endIndex).toBe(30);
+    expect(w.padTop).toBe(0);
+    expect(w.padBottom).toBe((1000 - 30) * 29);
+  });
+
+  it('mid-list: scrollTop maps to row 100 → window backs off by overscan', () => {
+    // scrollTop=2900 → 2900/29 = 100; startIndex = 100 - overscan(10) = 90
+    const w = computeVirtualWindow(2900, 290, 29, 1000, 10);
+    expect(w.startIndex).toBe(90);
+    expect(w.endIndex).toBe(120); // 90 + visibleCount(30)
+  });
+
+  it('stale-large scrollTop after shrink: window is clamped to the last page (no blank gap)', () => {
+    // scrollTop is huge (stale from before the list shrank). visibleCount=30,
+    // maxStartIndex = max(0, 50-30) = 20, so startIndex clamps to 20 and the slice is non-empty.
+    const w = computeVirtualWindow(290000, 290, 29, 50, 10);
+    expect(w.visibleCount).toBe(30);
+    expect(w.startIndex).toBe(20);
+    expect(w.endIndex).toBe(50);
+    expect(w.endIndex).toBeGreaterThan(w.startIndex); // slice [20,50) is NON-EMPTY
+    expect(w.padTop).toBe(20 * 29);
+    expect(w.padBottom).toBe(0);
+  });
+
+  it('totalRows < visibleCount: all rows render, no spacers', () => {
+    const w = computeVirtualWindow(0, 290, 29, 5, 10);
+    expect(w.startIndex).toBe(0);
+    expect(w.endIndex).toBe(5);
+    expect(w.padTop).toBe(0);
+    expect(w.padBottom).toBe(0);
+  });
+
+  it('empty list: everything is zero', () => {
+    const w = computeVirtualWindow(0, 290, 29, 0, 10);
+    expect(w.startIndex).toBe(0);
+    expect(w.endIndex).toBe(0);
+    expect(w.padTop).toBe(0);
+    expect(w.padBottom).toBe(0);
+  });
+
+  it('rowHeight=0 guard: does not throw or produce NaN (uses safeRowHeight)', () => {
+    const w = computeVirtualWindow(100, 290, 0, 1000, 10);
+    expect(Number.isFinite(w.startIndex)).toBe(true);
+    expect(Number.isFinite(w.endIndex)).toBe(true);
+    expect(Number.isFinite(w.visibleCount)).toBe(true);
+    expect(Number.isFinite(w.padTop)).toBe(true);
+    expect(Number.isFinite(w.padBottom)).toBe(true);
+    // padTop/padBottom use the real (zero) rowHeight, so both are 0 here.
+    expect(w.padTop).toBe(0);
+    expect(w.padBottom).toBe(0);
+  });
+
+  it('invariant: padTop + slice*rowHeight + padBottom === totalRows*rowHeight (parametrized)', () => {
+    const cases: Array<[number, number, number, number, number]> = [
+      // [scrollTop, viewportH, rowHeight, totalRows, overscan]
+      [0, 290, 29, 1000, 10],
+      [2900, 290, 29, 1000, 10],
+      [290000, 290, 29, 50, 10],
+      [0, 290, 29, 5, 10],
+      [0, 290, 29, 0, 10],
+      [5000, 500, 20, 300, 5],
+      [123456, 768, 18, 9999, 8],
+    ];
+    for (const [scrollTop, viewportH, rowHeight, totalRows, overscan] of cases) {
+      const w = computeVirtualWindow(scrollTop, viewportH, rowHeight, totalRows, overscan);
+      const sliceHeight = (w.endIndex - w.startIndex) * rowHeight;
+      expect(w.padTop + sliceHeight + w.padBottom).toBe(totalRows * rowHeight);
+      expect(w.padBottom).toBeGreaterThanOrEqual(0);
+      expect(w.startIndex).toBeGreaterThanOrEqual(0);
+      expect(w.endIndex).toBeLessThanOrEqual(totalRows);
+    }
+  });
+});
+
+// ============================================================
+// trimToCap
+// ============================================================
+describe('trimToCap', () => {
+  it('within cap (length < cap): returns 0, array unchanged', () => {
+    const arr = [1, 2, 3];
+    const removed = trimToCap(arr, 6);
+    expect(removed).toBe(0);
+    expect(arr).toEqual([1, 2, 3]);
+  });
+
+  it('exactly at cap (length === cap): returns 0, array unchanged', () => {
+    const arr = [1, 2, 3, 4, 5, 6];
+    const removed = trimToCap(arr, 6);
+    expect(removed).toBe(0);
+    expect(arr).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('over cap: returns overflow, drops the OLDEST elements, length === cap', () => {
+    const arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const removed = trimToCap(arr, 6);
+    expect(removed).toBe(4);
+    expect(arr).toHaveLength(6);
+    // Oldest (1..4) dropped; the most recent six remain in order.
+    expect(arr).toEqual([5, 6, 7, 8, 9, 10]);
   });
 });

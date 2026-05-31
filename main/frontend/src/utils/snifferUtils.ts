@@ -119,6 +119,57 @@ export function toggleSet(set: Set<string>, val: string): Set<string> {
   return n;
 }
 
+export type VirtualWindow = {
+  startIndex: number;
+  endIndex: number;
+  visibleCount: number;
+  padTop: number;
+  padBottom: number;
+};
+
+/**
+ * Compute the virtual-scroll window: the [startIndex, endIndex) range of rows to render plus
+ * the top/bottom spacer heights (px). Pure and defensive: the start index is clamped to the
+ * last page so a stale scrollTop (e.g. after a filter change shrinks the list with no scroll
+ * event) can never push the window past the end and render an empty slice under an oversized
+ * top spacer (a blank gap). Invariant: padTop + (endIndex-startIndex)*rowHeight + padBottom
+ * === totalRows*rowHeight, and padBottom >= 0, startIndex >= 0, endIndex <= totalRows.
+ */
+export function computeVirtualWindow(
+  scrollTop: number,
+  viewportH: number,
+  rowHeight: number,
+  totalRows: number,
+  overscan: number,
+): VirtualWindow {
+  // Guard against a zero/negative rowHeight (never measured yet) to avoid divide-by-zero.
+  const safeRowHeight = rowHeight > 0 ? rowHeight : 1;
+  const visibleCount = Math.ceil(viewportH / safeRowHeight) + overscan * 2;
+  const maxStartIndex = Math.max(0, totalRows - visibleCount);
+  const startIndex = Math.min(
+    maxStartIndex,
+    Math.max(0, Math.floor(scrollTop / safeRowHeight) - overscan),
+  );
+  const endIndex = Math.min(totalRows, startIndex + visibleCount);
+  const padTop = startIndex * rowHeight;
+  const padBottom = Math.max(0, (totalRows - endIndex) * rowHeight);
+  return { startIndex, endIndex, visibleCount, padTop, padBottom };
+}
+
+/**
+ * Ring buffer: drop the oldest elements in place so the array length never exceeds `cap`.
+ * Mutates `arr` (splice in place to preserve Vue reactivity on the same ref) and returns the
+ * number of elements removed (0 if already within the cap).
+ */
+export function trimToCap<T>(arr: T[], cap: number): number {
+  const overflow = arr.length - cap;
+  if (overflow > 0) {
+    arr.splice(0, overflow);
+    return overflow;
+  }
+  return 0;
+}
+
 // ============================================================
 // parsePacket — pure, accepts prevTimestampUs and returns new timestamp
 // ============================================================

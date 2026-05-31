@@ -14,6 +14,11 @@
  *   Scenario C: port in 'passive' mode → NO switch.
  *   Scenario D: port in 'tcp_bridge' mode with cache overlay → NO switch.
  *   Scenario E: fetchInfo throws, info stays undefined → connectWs is still called immediately.
+ *
+ * SNIF-I-003 — virtualization windows the DOM:
+ *   When many packets are captured, ALL are kept in the in-memory rows array (the heading
+ *   shows the full count), but only a small window of rows is rendered as <tr class="sniff-row">.
+ *   A spacer row (tr.sniff-spacer) absorbs the height of the off-screen rows below the window.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -454,6 +459,90 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
 
     // connectWs must have been called despite fetchInfo throwing.
     expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SNIF-I-003: virtualization windows the DOM
+// ---------------------------------------------------------------------------
+
+describe('SNIF-I-003: virtualization windows the DOM', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    MockWS.instance = null;
+    MockWS.constructCount = 0;
+    sharedInfoRef.value = undefined;
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWS);
+    fetchInfoMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('keeps all packets in memory but renders only a windowed slice of rows', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Start capture so the WS is created and onmessage is wired up.
+    const captureBtn = wrapper.findAll('button').find((b) => b.text() === 'Start');
+    expect(captureBtn, 'Start button must be found').toBeDefined();
+    await captureBtn!.trigger('click');
+    await flushPromises();
+
+    const ws = MockWS.instance!;
+    expect(ws, 'WebSocket must have been created').not.toBeNull();
+    ws.onopen?.();
+    await wrapper.vm.$nextTick();
+
+    // Feed N=60 valid packet messages on the default port (1) so filteredRows includes them.
+    const N = 60;
+    for (let id = 1; id <= N; id += 1) {
+      const msg = {
+        id,
+        type: 'packet',
+        port: 1,
+        function: 3,
+        slave_id: 1,
+        sender: 'master',
+        crc_valid: true,
+        raw: '0103000A0002',
+        size: 6,
+        timestamp_us: 1000 * id,
+      };
+      ws.onmessage?.({ data: JSON.stringify(msg) });
+    }
+
+    // Ingestion is buffered in `pending` and flushed on requestAnimationFrame. happy-dom backs
+    // rAF with setImmediate, so drain ALL pending timers (rather than a fixed time advance) to
+    // deterministically run the flush, then drain microtasks for the resulting DOM update.
+    await vi.runAllTimersAsync();
+    await wrapper.vm.$nextTick();
+    await flushPromises();
+
+    // All packets are kept in memory: the heading counter (first <b> in .heading-stats) renders
+    // rows.length. Assert it exactly so the check cannot pass on an incidental "60" elsewhere.
+    expect(wrapper.find('.heading-stats b').text()).toBe(String(N));
+
+    // The DOM is windowed: only a small slice of rows is rendered, not all 60.
+    // In happy-dom clientHeight/offsetHeight are 0, so rowHeight stays the 29 fallback and
+    // viewportH=0 → visibleCount = OVERSCAN*2 = 20, so ~20 rows render (definitely < 60).
+    const rendered = wrapper.findAll('tr.sniff-row').length;
+    expect(rendered).toBeGreaterThan(0);
+    expect(rendered).toBeLessThan(N);
+
+    // A bottom spacer row exists because padBottom > 0 (off-screen rows below the window).
+    expect(wrapper.findAll('tr.sniff-spacer').length).toBeGreaterThanOrEqual(1);
 
     wrapper.unmount();
     vi.runAllTimers();

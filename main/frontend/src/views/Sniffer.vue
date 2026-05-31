@@ -17,6 +17,8 @@ import {
   SLAVE_NAMES,
   parsePacket,
   toggleSet,
+  computeVirtualWindow,
+  trimToCap,
 } from '@/utils/snifferUtils';
 
 const { t } = useI18n();
@@ -37,6 +39,16 @@ const ws = ref<WebSocket | null>(null);
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastTimestampUs = 0;
 const wsStatus = ref<'connected' | 'disconnected' | 'reconnecting'>('disconnected');
+
+// Virtualization / ring buffer constants and state.
+const MAX_ROWS = 50000; // ring buffer cap — oldest rows are dropped beyond this
+const ROW_HEIGHT_FALLBACK = 29; // fallback row height in px until a real row is measured
+const OVERSCAN = 10; // extra rows rendered above/below the viewport
+const rowHeight = ref(ROW_HEIGHT_FALLBACK); // measured at runtime
+const scrollTop = ref(0);
+const viewportH = ref(0);
+const autoScroll = ref(true); // follow-tail flag
+let resizeObserver: ResizeObserver | null = null;
 
 const tableWrap = ref<HTMLElement | null>(null);
 const selected = ref<number | null>(null);
@@ -59,6 +71,74 @@ function sendPortStop(port: number) {
   ws.value?.send(JSON.stringify({ cmd: 'stop', port }));
 }
 
+// Scroll handler — rAF-throttled so rapid scroll events do not spam reactive updates.
+let scrollRaf: number | null = null;
+function onScroll() {
+  if (scrollRaf !== null) return;
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = null;
+    const el = tableWrap.value;
+    if (!el) return;
+    scrollTop.value = el.scrollTop;
+    viewportH.value = el.clientHeight;
+    if (!rowMeasured) measureRowHeight();
+    // Follow-tail: re-enable auto-scroll only when the user is within ~2 rows of the bottom.
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    autoScroll.value = distanceFromBottom <= rowHeight.value * 2;
+  });
+}
+
+// Row height measurement: border-collapse makes a CSS-fixed height unreliable, so measure a
+// real data row once. All data rows are identical height (single line, nowrap, same font),
+// so measuring one is enough.
+let rowMeasured = false;
+function measureRowHeight() {
+  const el = tableWrap.value?.querySelector('tr.sniff-row') as HTMLElement | null;
+  if (el && el.offsetHeight > 0) {
+    rowHeight.value = el.offsetHeight;
+    rowMeasured = true;
+  }
+}
+
+// Batched ingestion: parsing stays in onmessage, but the reactive array mutation is
+// coalesced into a single rAF flush so high packet rates do not thrash Vue's reactivity.
+let pending: SniffRow[] = [];
+let flushRaf: number | null = null;
+function scheduleFlush() {
+  if (flushRaf !== null) return;
+  flushRaf = requestAnimationFrame(flushPending);
+}
+function flushPending() {
+  flushRaf = null;
+  if (pending.length === 0) return;
+  // Append buffered rows. Use a loop (not spread) so a large backlog — e.g. after the
+  // tab was backgrounded and rAF was paused — cannot overflow the call-stack arg limit.
+  for (const r of pending) rows.value.push(r);
+  pending = [];
+  // Ring buffer: drop the oldest rows once the cap is exceeded.
+  const overflow = trimToCap(rows.value, MAX_ROWS);
+  if (overflow > 0 && !autoScroll.value) {
+    // When the user has scrolled up (not following the tail), dropping the oldest rows shifts
+    // all remaining content up by overflow*rowHeight. Compensate the scroll position so the
+    // view stays anchored, and resync scrollTop.value with the DOM — otherwise the window
+    // would render the wrong slice until the next scroll event.
+    nextTick(() => {
+      const el = tableWrap.value;
+      if (el) {
+        el.scrollTop = Math.max(0, el.scrollTop - overflow * rowHeight.value);
+        scrollTop.value = el.scrollTop;
+      }
+    });
+  }
+  if (!rowMeasured) nextTick(measureRowHeight);
+  if (autoScroll.value) {
+    nextTick(() => {
+      const el = tableWrap.value;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }
+}
+
 function connectWs() {
   lastTimestampUs = 0;
   ws.value = new WebSocket(getWsUrl());
@@ -72,14 +152,8 @@ function connectWs() {
       const { row, timestamp } = parsePacket(msg, lastTimestampUs);
       if (row) {
         lastTimestampUs = timestamp;
-        rows.value.push(row);
-        if (rows.value.length >= 1000) {
-          stopCapture();
-          return;
-        }
-        nextTick(() => {
-          if (tableWrap.value) tableWrap.value.scrollTop = tableWrap.value.scrollHeight;
-        });
+        pending.push(row);
+        scheduleFlush();
       }
     } catch (e) {
       console.warn('sniffer: failed to parse WS message', e);
@@ -104,8 +178,10 @@ async function startCapture() {
   // Set running immediately to prevent concurrent calls while async steps execute.
   // The button switches to "Stop" at once, so a second click calls stopCapture() instead.
   running.value = true;
-  // Clear logs immediately so the table is empty while async init steps execute.
-  clearLogs();
+  // Keep previously captured packets and append new ones (no clear on start). Resume
+  // following the tail so incoming packets stream into view; the manual "Clear" button
+  // remains the way to reset the buffer.
+  autoScroll.value = true;
 
   // Fetch fresh port mode info before deciding whether to switch — the cached
   // info.value may be stale (polled every 5 s) or undefined (not yet loaded).
@@ -150,6 +226,12 @@ async function startCapture() {
 }
 
 function stopCapture() {
+  // Cancel the pending flush rAF and flush synchronously so the last buffered packets
+  // are not lost when capture stops.
+  if (flushRaf !== null) {
+    cancelAnimationFrame(flushRaf); flushRaf = null;
+  }
+  flushPending();
   // Clear any pending reconnect timer before closing the WebSocket.
   if (reconnectTimer !== null) {
     clearTimeout(reconnectTimer); reconnectTimer = null;
@@ -170,13 +252,57 @@ watch(portFilter, (newPort, oldPort) => {
   sendPortStart(parseInt(newPort));
 });
 
+// Keep the virtual-scroll state consistent when a filter/port change resizes filteredRows.
+// No scroll event fires on such changes, so scrollTop.value would otherwise stay stale and
+// desync from the DOM (the browser auto-clamps el.scrollTop to the new content height).
+// Re-read it on nextTick and recompute autoScroll with the same rule as onScroll().
+watch([portFilter, selectedSlaves, selectedFcs, hideErrors], () => {
+  nextTick(() => {
+    const el = tableWrap.value;
+    if (el === null) {
+      return;
+    }
+    scrollTop.value = el.scrollTop;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    autoScroll.value = distanceFromBottom <= rowHeight.value * 2;
+  });
+});
+
 function clearLogs() {
+  if (flushRaf !== null) {
+    cancelAnimationFrame(flushRaf); flushRaf = null;
+  }
+  pending = [];
   rows.value = [];
   lastTimestampUs = 0;
+  scrollTop.value = 0;
+  autoScroll.value = true;
+  if (tableWrap.value) tableWrap.value.scrollTop = 0;
 }
 
-onMounted(() => refreshSettings());
-onUnmounted(() => stopCapture());
+onMounted(() => {
+  refreshSettings();
+  const el = tableWrap.value;
+  if (el) {
+    viewportH.value = el.clientHeight;
+    // happy-dom (test env) has no ResizeObserver — guard so the integration tests do not throw.
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        if (tableWrap.value) viewportH.value = tableWrap.value.clientHeight;
+        measureRowHeight();
+      });
+      resizeObserver.observe(el);
+    }
+  }
+});
+onUnmounted(() => {
+  stopCapture();
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  if (scrollRaf !== null) {
+    cancelAnimationFrame(scrollRaf); scrollRaf = null;
+  }
+});
 
 const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
 
@@ -249,6 +375,18 @@ const filteredRows = computed(() => {
   if (selectedFcs.value.size > 0) r = r.filter(x => selectedFcs.value.has(x.fc_code));
   return r;
 });
+
+// Virtualization: render only the visible window of rows. We intentionally do NOT subtract
+// the sticky thead height from the index math — the OVERSCAN (10 rows ≈ 290px) absorbs the
+// ~35px header overlap, so there is never a blank gap.
+const virtualWindow = computed(() =>
+  computeVirtualWindow(scrollTop.value, viewportH.value, rowHeight.value, filteredRows.value.length, OVERSCAN),
+);
+const visibleRows = computed(() =>
+  filteredRows.value.slice(virtualWindow.value.startIndex, virtualWindow.value.endIndex),
+);
+const padTop = computed(() => virtualWindow.value.padTop);
+const padBottom = computed(() => virtualWindow.value.padBottom);
 
 const sel = computed(() =>
   selected.value !== null ? filteredRows.value.find(r => r.id === selected.value) ?? null : null
@@ -391,7 +529,7 @@ Port {{ p }}
 
       <!-- Log table -->
       <div class="sniffer-body">
-      <div ref="tableWrap" class="sniffer-table-wrap">
+      <div ref="tableWrap" class="sniffer-table-wrap" @scroll="onScroll">
         <table class="sniffer-table">
           <thead>
             <tr>
@@ -407,9 +545,10 @@ Port {{ p }}
             </tr>
           </thead>
           <tbody>
+            <tr v-if="padTop > 0" class="sniff-spacer" aria-hidden="true"><td :colspan="9" :style="{ height: padTop + 'px' }"></td></tr>
             <tr
-              v-for="r in filteredRows" :key="r.id"
-              :class="{ selected: selected === r.id, 'err-row': r.crc === 'ERR' && !r.isArbitration }"
+              v-for="r in visibleRows" :key="r.id"
+              :class="['sniff-row', { selected: selected === r.id, 'err-row': r.crc === 'ERR' && !r.isArbitration }]"
               @click="selected = r.id"
             >
               <td class="mono muted">{{ r.id }}</td>
@@ -437,6 +576,7 @@ Port {{ p }}
                 <span v-else class="crc-ok mono">OK</span>
               </td>
             </tr>
+            <tr v-if="padBottom > 0" class="sniff-spacer" aria-hidden="true"><td :colspan="9" :style="{ height: padBottom + 'px' }"></td></tr>
           </tbody>
         </table>
       </div>
@@ -800,6 +940,18 @@ Port {{ p }}
 
 .sniffer-table tbody tr.err-row.selected {
   background: color-mix(in oklch, var(--mb-err) 8%, var(--bg-surface));
+}
+
+/* Virtualization spacer rows: occupy the height of the off-screen rows above/below the window */
+.sniffer-table tbody tr.sniff-spacer {
+  cursor: default;
+}
+.sniffer-table tbody tr.sniff-spacer:hover {
+  background: transparent;
+}
+.sniffer-table tbody tr.sniff-spacer td {
+  padding: 0;
+  border: 0;
 }
 
 .col-id { width: 56px; }
