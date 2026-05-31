@@ -238,6 +238,46 @@ def test_port_modes(api):
             raise AssertionError("Port mode restore failed: " + "; ".join(restore_errors))
 
 
+def test_port_cache_invalid_body_returns_400(api):
+    """POST /ports/{n}/cache must reject malformed bodies with HTTP 400.
+
+    Drives the error branches of port_set_cache_handler that the happy-path
+    toggle in test_port_modes does not exercise: a non-bool 'enabled' value, a
+    body with no 'enabled' key, and a syntactically invalid JSON body. These are
+    pure error-path requests; none of them should change the port state.
+    """
+    # Non-bool 'enabled' (string instead of bool) -> 400.
+    response = api.session.post(
+        f"{api.base_url}/ports/1/cache", json={"enabled": "yes"}, timeout=10
+    )
+    assert response.status_code == 400, (
+        f"POST /ports/1/cache with string 'enabled' expected 400, "
+        f"got {response.status_code}: {response.text}"
+    )
+    print("✓ POST /ports/1/cache with string 'enabled' rejected with 400")
+
+    # Missing 'enabled' key entirely -> 400.
+    response = api.session.post(f"{api.base_url}/ports/1/cache", json={}, timeout=10)
+    assert response.status_code == 400, (
+        f"POST /ports/1/cache with no 'enabled' key expected 400, "
+        f"got {response.status_code}: {response.text}"
+    )
+    print("✓ POST /ports/1/cache with missing 'enabled' key rejected with 400")
+
+    # Invalid JSON body -> 400.
+    response = api.session.post(
+        f"{api.base_url}/ports/1/cache",
+        data="{not json",
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    assert response.status_code == 400, (
+        f"POST /ports/1/cache with invalid JSON body expected 400, "
+        f"got {response.status_code}: {response.text}"
+    )
+    print("✓ POST /ports/1/cache with invalid JSON body rejected with 400")
+
+
 # ---------------------------------------------------------------------------
 # Group 3: /sniffer/status endpoint
 # ---------------------------------------------------------------------------
