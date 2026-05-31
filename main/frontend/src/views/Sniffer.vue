@@ -16,6 +16,7 @@ import {
   FC_NAMES,
   SLAVE_NAMES,
   parsePacket,
+  updateWallOffsetMs,
   toggleSet,
   computeVirtualWindow,
   trimToCap,
@@ -38,6 +39,8 @@ const ws = ref<WebSocket | null>(null);
 // Timer handle for the WS reconnect delay — stored so it can be cleared in stopCapture().
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastTimestampUs = 0;
+// Wall-clock<->device-uptime offset (ms vs Unix epoch); null means "re-anchor on next packet".
+let wallOffsetMs: number | null = null;
 const wsStatus = ref<'connected' | 'disconnected' | 'reconnecting'>('disconnected');
 
 // Virtualization / ring buffer constants and state.
@@ -141,6 +144,8 @@ function flushPending() {
 
 function connectWs() {
   lastTimestampUs = 0;
+  // Re-anchor the wall-clock offset on every Start / WS (re)connect (immune to reboots/RTC drift).
+  wallOffsetMs = null;
   ws.value = new WebSocket(getWsUrl());
   ws.value.onopen = () => {
     wsStatus.value = 'connected';
@@ -149,7 +154,13 @@ function connectWs() {
   ws.value.onmessage = (ev) => {
     try {
       const msg = JSON.parse(ev.data as string);
-      const { row, timestamp } = parsePacket(msg, lastTimestampUs);
+      // A sniffer packet without a numeric timestamp is malformed; skip it so it
+      // cannot render a NaN / 1970-anchored Time cell with an unset offset.
+      if (typeof msg.timestamp_us !== 'number') return;
+      // Device rebooted mid-session (uptime went backwards) -> re-anchor.
+      if (msg.timestamp_us < lastTimestampUs) wallOffsetMs = null;
+      wallOffsetMs = updateWallOffsetMs(wallOffsetMs, msg.timestamp_us, Date.now());
+      const { row, timestamp } = parsePacket(msg, lastTimestampUs, wallOffsetMs);
       if (row) {
         lastTimestampUs = timestamp;
         pending.push(row);
@@ -275,6 +286,8 @@ function clearLogs() {
   pending = [];
   rows.value = [];
   lastTimestampUs = 0;
+  // Re-anchor the wall-clock offset on Clear so the next session re-syncs from scratch.
+  wallOffsetMs = null;
   scrollTop.value = 0;
   autoScroll.value = true;
   if (tableWrap.value) tableWrap.value.scrollTop = 0;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatTimestamp,
+  updateWallOffsetMs,
   formatDt,
   hexToPayloadString,
   toggleSet,
@@ -14,26 +15,63 @@ import {
 // formatTimestamp
 // ============================================================
 describe('formatTimestamp', () => {
-  it('returns string matching HH:MM:SS.mmm format for 0 µs', () => {
-    const result = formatTimestamp(0);
-    // 0 µs → 0 ms → epoch time in local timezone, just check format
+  // Determinism note: we build the anchor offset from LOCAL date components
+  // (new Date(y, m, d, ...).getTime()). Rendering reads back local components
+  // (getHours/etc.), so the round-trip is timezone-independent — no fixed TZ needed.
+  it('returns string matching HH:MM:SS.mmm format for 0 µs at the anchor', () => {
+    // offsetMs = epoch-ms anchor; 0 µs since boot → wall time == anchor.
+    const result = formatTimestamp(0, Date.now());
     expect(result).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
   });
 
-  it('formats a known timestamp correctly', () => {
-    // Build a known time: Jan 1, 2024, 12:34:56.789 in local time
-    const date = new Date(2024, 0, 1, 12, 34, 56, 789);
-    const us = date.getTime() * 1000;
-    const result = formatTimestamp(us);
+  it('renders the offset anchor exactly when us=0', () => {
+    // Build a known local time: Jan 1, 2024, 12:34:56.789.
+    const offsetMs = new Date(2024, 0, 1, 12, 34, 56, 789).getTime();
+    const result = formatTimestamp(0, offsetMs);
+    expect(result).toBe('12:34:56.789');
+  });
+
+  it('adds the device-uptime µs to the anchor (sub-second comes from the device)', () => {
+    // Anchor at 12:34:56.000, then +789 ms of device uptime → 12:34:56.789.
+    const offsetMs = new Date(2024, 0, 1, 12, 34, 56, 0).getTime();
+    const result = formatTimestamp(789_000, offsetMs);
     expect(result).toBe('12:34:56.789');
   });
 
   it('pads single-digit values with zeros', () => {
     // 01:02:03.004
-    const date = new Date(2024, 0, 1, 1, 2, 3, 4);
-    const us = date.getTime() * 1000;
-    const result = formatTimestamp(us);
+    const offsetMs = new Date(2024, 0, 1, 1, 2, 3, 4).getTime();
+    const result = formatTimestamp(0, offsetMs);
     expect(result).toBe('01:02:03.004');
+  });
+});
+
+// ============================================================
+// updateWallOffsetMs
+// ============================================================
+describe('updateWallOffsetMs', () => {
+  it('returns the candidate on the first call (prev=null) -> (re)anchor', () => {
+    // candidate = recvWallMs - deviceUs/1000 = 10000 - 5 = 9995
+    expect(updateWallOffsetMs(null, 5_000, 10_000)).toBe(9995);
+  });
+
+  it('a more-delayed packet does NOT raise the offset (min wins)', () => {
+    const prev = updateWallOffsetMs(null, 5_000, 10_000); // 9995
+    // Same device time but arrives 50 ms later -> candidate 10045, must keep 9995.
+    expect(updateWallOffsetMs(prev, 5_000, 10_050)).toBe(9995);
+  });
+
+  it('a less-delayed packet lowers the offset', () => {
+    const prev = updateWallOffsetMs(null, 5_000, 10_000); // 9995
+    // Same device time but arrives 30 ms earlier -> candidate 9965, must lower to 9965.
+    expect(updateWallOffsetMs(prev, 5_000, 9_970)).toBe(9965);
+  });
+
+  it('passing prev=null re-anchors, discarding the previous (lower) offset', () => {
+    const prev = updateWallOffsetMs(null, 5_000, 10_000); // 9995
+    expect(prev).toBe(9995);
+    // Re-anchor: candidate = 20000 - 5 = 19995, ignoring the old 9995.
+    expect(updateWallOffsetMs(null, 5_000, 20_000)).toBe(19995);
   });
 });
 
@@ -109,14 +147,18 @@ describe('toggleSet', () => {
 // parsePacket
 // ============================================================
 describe('parsePacket', () => {
+  // Fixed wall-clock offset for deterministic tests. None of the parsePacket assertions
+  // check the rendered `t` (wall-clock Time) string, so a constant 0 is sufficient here.
+  const OFFSET = 0;
+
   it('returns {row: null, timestamp: prevTimestampUs} for message without id', () => {
-    const result = parsePacket({ type: 'packet', raw: 'AABB' }, 12345);
+    const result = parsePacket({ type: 'packet', raw: 'AABB' }, 12345, OFFSET);
     expect(result.row).toBeNull();
     expect(result.timestamp).toBe(12345);
   });
 
   it('returns {row: null, timestamp: prevTimestampUs} for message with non-number id', () => {
-    const result = parsePacket({ id: 'abc', type: 'packet', raw: 'AABB' }, 99);
+    const result = parsePacket({ id: 'abc', type: 'packet', raw: 'AABB' }, 99, OFFSET);
     expect(result.row).toBeNull();
     expect(result.timestamp).toBe(99);
   });
@@ -130,7 +172,7 @@ describe('parsePacket', () => {
       function: 3,
       slave_id: 1,
     };
-    const { row, timestamp } = parsePacket(msg, 1000000);
+    const { row, timestamp } = parsePacket(msg, 1000000, OFFSET);
     expect(row).not.toBeNull();
     const r = row as SniffRow;
     expect(r.sender).toBe('TIMEOUT');
@@ -145,7 +187,7 @@ describe('parsePacket', () => {
 
   it('timeout row with prevTimestampUs=0 shows em-dash for dt', () => {
     const msg = { id: 1, port: 1, type: 'timeout', timestamp_us: 1000000, function: 3, slave_id: 1 };
-    const { row } = parsePacket(msg, 0);
+    const { row } = parsePacket(msg, 0, OFFSET);
     expect((row as SniffRow).dt).toBe('—');
   });
 
@@ -163,7 +205,7 @@ describe('parsePacket', () => {
       sender: 'slave',
       crc_valid: false,
     };
-    const { row, timestamp } = parsePacket(msg, 2000000);
+    const { row, timestamp } = parsePacket(msg, 2000000, OFFSET);
     expect(row).not.toBeNull();
     const r = row as SniffRow;
     expect(r.sender).toBe('SLAVE');
@@ -188,7 +230,7 @@ describe('parsePacket', () => {
       sender: 'master',
       crc_valid: true,
     };
-    const { row } = parsePacket(msg, 3000000);
+    const { row } = parsePacket(msg, 3000000, OFFSET);
     expect(row).not.toBeNull();
     const r = row as SniffRow;
     expect(r.sender).toBe('MASTER');
@@ -211,7 +253,7 @@ describe('parsePacket', () => {
       sender: 'master',
       crc_valid: false,
     };
-    const { row } = parsePacket(msg, 0);
+    const { row } = parsePacket(msg, 0, OFFSET);
     expect(row).not.toBeNull();
     expect((row as SniffRow).sender).toBe('ERR');
     expect((row as SniffRow).crc).toBe('ERR');
@@ -232,7 +274,7 @@ describe('parsePacket', () => {
       sender: 'master',
       crc_valid: true,
     };
-    const { row } = parsePacket(msg, 0);
+    const { row } = parsePacket(msg, 0, OFFSET);
     expect(row).not.toBeNull();
     const r = row as SniffRow;
     // subcmd byte = raw[4:6] = '01' → 'FM Scan Start'
@@ -241,7 +283,7 @@ describe('parsePacket', () => {
 
   it('returns {row: null} for unknown message type', () => {
     const msg = { id: 10, type: 'unknown', timestamp_us: 1000000 };
-    const { row, timestamp } = parsePacket(msg, 500000);
+    const { row, timestamp } = parsePacket(msg, 500000, OFFSET);
     expect(row).toBeNull();
     expect(timestamp).toBe(500000);
   });
@@ -262,7 +304,7 @@ describe('parsePacket', () => {
       sender: 'master',
       crc_valid: true,
     };
-    const { row } = parsePacket(msg, 0);
+    const { row } = parsePacket(msg, 0, OFFSET);
     expect(row).not.toBeNull();
     const r = row as SniffRow;
     // fc should be "FM Cmd (Read Holding Regs)" — subcmd name + inner FC name in parens

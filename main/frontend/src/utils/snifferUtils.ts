@@ -89,9 +89,20 @@ export const FC_TOOLTIPS: Record<number, string> = {
 // Pure utility functions
 // ============================================================
 
-/** Format a microsecond Unix timestamp as HH:MM:SS.mmm */
-export function formatTimestamp(us: number): string {
-  const ms = Math.floor(us / 1000);
+/** Update the wall-clock<->device-uptime offset (ms vs Unix epoch).
+ *  deviceUs = packet timestamp_us (µs since boot); recvWallMs = Date.now() at receipt.
+ *  Network jitter only delays arrival, so the MIN candidate is the best anchor.
+ *  Pass prevOffsetMs=null to (re)anchor. */
+export function updateWallOffsetMs(prevOffsetMs: number | null, deviceUs: number, recvWallMs: number): number {
+  const candidate = recvWallMs - deviceUs / 1000;
+  return prevOffsetMs === null ? candidate : Math.min(prevOffsetMs, candidate);
+}
+
+/** Format a device-uptime µs timestamp as real wall-clock HH:MM:SS.mmm (browser-local TZ).
+ *  offsetMs anchors device uptime to the Unix epoch; the sub-second part comes from the
+ *  device clock so packets arriving in a burst keep their true relative milliseconds. */
+export function formatTimestamp(us: number, offsetMs: number): string {
+  const ms = offsetMs + us / 1000;
   const d = new Date(ms);
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
@@ -180,10 +191,12 @@ export function trimToCap<T>(arr: T[], cap: number): number {
  * @param msg - Raw message object from WebSocket JSON.
  * @param prevTimestampUs - The timestamp of the previously received packet (microseconds).
  *   Pass 0 for the first packet so that the delta time displays as '—'.
+ * @param offsetMs - The wall-clock<->device-uptime offset (ms vs Unix epoch) used to render
+ *   the real wall-clock Time column. See updateWallOffsetMs / formatTimestamp.
  * @returns An object containing the parsed row (or null if the message is invalid)
  *   and the updated timestamp to carry forward as prevTimestampUs for the next call.
  */
-export function parsePacket(msg: any, prevTimestampUs: number): { row: SniffRow | null; timestamp: number } {
+export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number): { row: SniffRow | null; timestamp: number } {
   if (typeof msg.id !== 'number') return { row: null, timestamp: prevTimestampUs };
 
   // DEPRECATED: the firmware no longer sends {type:"timeout"} packets over WebSocket.
@@ -209,7 +222,7 @@ export function parsePacket(msg: any, prevTimestampUs: number): { row: SniffRow 
         bytes: 0,
         crc: 'ERR',
         isArbitration: false,
-        t: formatTimestamp(msg.timestamp_us),
+        t: formatTimestamp(msg.timestamp_us, offsetMs),
         dt,
         tooltip: `No response from slave 0x${slave} within timeout`,
       },
@@ -242,7 +255,7 @@ export function parsePacket(msg: any, prevTimestampUs: number): { row: SniffRow 
           bytes: msg.size,
           crc: 'N/A',
           isArbitration: true,
-          t: formatTimestamp(msg.timestamp_us),
+          t: formatTimestamp(msg.timestamp_us, offsetMs),
           dt,
           tooltip: 'Fast Modbus Bus Arbitration: devices simultaneously assert 0xFF bytes to resolve which one responds. No CRC — not a Modbus frame.',
         },
@@ -294,7 +307,7 @@ export function parsePacket(msg: any, prevTimestampUs: number): { row: SniffRow 
         bytes: msg.size,
         crc,
         isArbitration: false,
-        t: formatTimestamp(msg.timestamp_us),
+        t: formatTimestamp(msg.timestamp_us, offsetMs),
         dt,
         tooltip,
       },
