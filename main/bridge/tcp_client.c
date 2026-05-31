@@ -2,8 +2,10 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 
 #include "esp_log.h"
@@ -21,6 +23,8 @@
 #define TCP_CLIENT_TASK_PRIORITY        5
 #define TCP_CLIENT_FIRST_CONN_DELAY_MS  4000
 #define TCP_CLIENT_RECONN_DELAY_MS      1000
+#define TCP_CLIENT_CONNECT_TIMEOUT_MS   3000   // bounded connect timeout (was a blocking connect with no timeout)
+#define TCP_CLIENT_CONNECT_POLL_MS      200    // re-check the exit-request flag this often during connect
 
 #define EVENT_TASK_STARTED              BIT0
 #define EVENT_TASK_FINISHED             BIT1
@@ -88,7 +92,13 @@ static int create_socket(void)
 }
 
 
-static int connect_socket(int sock, uint32_t ip, int port)
+// Non-blocking connect with a bounded, abort-aware timeout.
+// A plain blocking connect() to an unreachable host blocks for the whole lwIP
+// connect timeout (many seconds). tcp_client_deinit() runs under the
+// port_manager lock and waits for this task to finish, so a stuck connect would
+// freeze settings/port-mode changes. By doing the connect in non-blocking mode
+// and polling the exit-request flag, deinit can abort the connect promptly.
+static int connect_socket(tcp_desc_t *desc, int sock, uint32_t ip, int port)
 {
     struct sockaddr_in dest_addr;
     dest_addr.sin_addr.s_addr = ip;
@@ -99,15 +109,81 @@ static int connect_socket(int sock, uint32_t ip, int port)
     inet_ntop(AF_INET, &dest_addr.sin_addr, ip_str, sizeof(ip_str));
     ESP_LOGI(TAG, "Connecting to %s, port: %d", ip_str, port);
 
+    // Switch to non-blocking mode so connect() returns immediately with EINPROGRESS
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0) {
+        // F_GETFL failed: a corrupt flags value would silently leave the socket
+        // blocking on restore, re-introducing the hang this code prevents
+        ESP_LOGW(TAG, "fcntl(F_GETFL) failed for %s, port: %d, errno: %d", ip_str, port, errno);
+        return -1;
+    }
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
     int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
 
-    if (err != 0) {
-        ESP_LOGW(TAG, "Socket unable to connect to %s, port: %d, errno: %d", ip_str, port, errno);
-    } else {
+    if (err == 0) {
+        // Connection completed immediately; restore blocking mode for recv()
+        fcntl(sock, F_SETFL, flags);
         ESP_LOGI(TAG, "Successfully connected to %s, port: %d", ip_str, port);
+        return 0;
     }
 
-    return err;
+    if (errno != EINPROGRESS) {
+        // Real immediate failure; caller closes the socket
+        ESP_LOGW(TAG, "Socket unable to connect to %s, port: %d, errno: %d", ip_str, port, errno);
+        return err;
+    }
+
+    // Connection is in progress: wait for it, polling the exit-request flag so
+    // deinit can abort within one poll interval. Caller closes the socket on any
+    // error/timeout/abort path; only restore blocking mode on success.
+    // Use a real-clock deadline so repeated EINTR interruptions cannot extend
+    // the wait beyond the configured timeout. TickType_t subtraction is
+    // wrap-safe under unsigned arithmetic.
+    TickType_t start_tick = xTaskGetTickCount();
+    while ((xTaskGetTickCount() - start_tick) < pdMS_TO_TICKS(TCP_CLIENT_CONNECT_TIMEOUT_MS)) {
+        if (check_task_exit_req(desc)) {
+            return -1;
+        }
+
+        fd_set writefds;
+        FD_ZERO(&writefds);
+        FD_SET(sock, &writefds);
+
+        struct timeval tv;
+        tv.tv_sec = TCP_CLIENT_CONNECT_POLL_MS / 1000;
+        tv.tv_usec = (TCP_CLIENT_CONNECT_POLL_MS % 1000) * 1000;
+
+        int sel = select(sock + 1, NULL, &writefds, NULL, &tv);
+        if (sel < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            ESP_LOGW(TAG, "Socket unable to connect to %s, port: %d, errno: %d", ip_str, port, errno);
+            return -1;
+        }
+
+        if (sel > 0 && FD_ISSET(sock, &writefds)) {
+            int so_err = 0;
+            socklen_t l = sizeof(so_err);
+            getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_err, &l);
+            if (so_err == 0) {
+                // Connection established; restore blocking mode for recv()
+                fcntl(sock, F_SETFL, flags);
+                ESP_LOGI(TAG, "Successfully connected to %s, port: %d", ip_str, port);
+                return 0;
+            }
+            errno = so_err;
+            ESP_LOGW(TAG, "Socket unable to connect to %s, port: %d, errno: %d", ip_str, port, errno);
+            return -1;
+        }
+
+        // select() returned 0: no event this interval, keep waiting until the
+        // real-clock deadline (re-checked by the loop condition)
+    }
+
+    ESP_LOGW(TAG, "Connect to %s, port: %d timed out after %d ms", ip_str, port, TCP_CLIENT_CONNECT_TIMEOUT_MS);
+    return -1;
 }
 
 
@@ -165,7 +241,7 @@ static void tcp_client_task(void *pvParameters)
             continue;
         }
 
-        if (connect_socket(desc->last_client_sock, desc->remote_ip, desc->port) != 0) {
+        if (connect_socket(desc, desc->last_client_sock, desc->remote_ip, desc->port) != 0) {
             close_socket(desc->last_client_sock);
             desc->last_client_sock = -1;
             delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_RECONN_DELAY_MS));
