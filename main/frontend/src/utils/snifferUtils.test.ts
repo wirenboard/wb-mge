@@ -4,11 +4,15 @@ import {
   updateWallOffsetMs,
   formatDt,
   hexToPayloadString,
+  getRowBytes,
+  getRowByteRoles,
   toggleSet,
   parsePacket,
   computeVirtualWindow,
   trimToCap,
+  rowMatchesFilter,
   type SniffRow,
+  type SniffFilter,
 } from './snifferUtils';
 
 // ============================================================
@@ -114,6 +118,38 @@ describe('hexToPayloadString', () => {
 
   it('spaces four bytes', () => {
     expect(hexToPayloadString('AABBCCDD')).toBe('AA BB CC DD');
+  });
+});
+
+// ============================================================
+// getRowBytes / getRowByteRoles
+// ============================================================
+describe('getRowBytes', () => {
+  it('splits a space-separated payload into byte strings', () => {
+    expect(getRowBytes('AA BB CC')).toEqual(['AA', 'BB', 'CC']);
+  });
+
+  it('returns an empty array for an empty payload', () => {
+    expect(getRowBytes('')).toEqual([]);
+  });
+});
+
+describe('getRowByteRoles', () => {
+  it('returns an empty array for an empty payload', () => {
+    expect(getRowByteRoles('', 'request')).toEqual([]);
+  });
+
+  it('assigns address/fc/data/crc roles for a standard Modbus frame', () => {
+    // FC03 read holding regs request: addr(1) fc(1) data(4) crc(2)
+    expect(getRowByteRoles('01 03 00 00 00 02 85 CA', 'request')).toEqual([
+      'address', 'fc', 'data', 'data', 'data', 'data', 'crc', 'crc',
+    ]);
+  });
+
+  it('marks an all-FF payload as arbitration regardless of direction', () => {
+    expect(getRowByteRoles('FF FF FF FF FF', 'response')).toEqual([
+      'arbitration', 'arbitration', 'arbitration', 'arbitration', 'arbitration',
+    ]);
   });
 });
 
@@ -400,26 +436,126 @@ describe('computeVirtualWindow', () => {
 // trimToCap
 // ============================================================
 describe('trimToCap', () => {
-  it('within cap (length < cap): returns 0, array unchanged', () => {
+  it('within cap (length < cap): returns [], array unchanged', () => {
     const arr = [1, 2, 3];
     const removed = trimToCap(arr, 6);
-    expect(removed).toBe(0);
+    expect(removed).toEqual([]);
     expect(arr).toEqual([1, 2, 3]);
   });
 
-  it('exactly at cap (length === cap): returns 0, array unchanged', () => {
+  it('exactly at cap (length === cap): returns [], array unchanged', () => {
     const arr = [1, 2, 3, 4, 5, 6];
     const removed = trimToCap(arr, 6);
-    expect(removed).toBe(0);
+    expect(removed).toEqual([]);
     expect(arr).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
-  it('over cap: returns overflow, drops the OLDEST elements, length === cap', () => {
+  it('over cap: returns the removed OLDEST elements, drops them, length === cap', () => {
     const arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     const removed = trimToCap(arr, 6);
-    expect(removed).toBe(4);
+    // The four oldest (1..4) are removed and returned in order.
+    expect(removed).toEqual([1, 2, 3, 4]);
+    expect(removed).toHaveLength(4);
     expect(arr).toHaveLength(6);
     // Oldest (1..4) dropped; the most recent six remain in order.
     expect(arr).toEqual([5, 6, 7, 8, 9, 10]);
+  });
+});
+
+// ============================================================
+// rowMatchesFilter
+// ============================================================
+describe('rowMatchesFilter', () => {
+  // Minimal SniffRow factory: only port/crc/slave/fc_code matter to the predicate; the rest
+  // are dummy values to satisfy the SniffRow type.
+  function makeRow(over: Partial<SniffRow>): SniffRow {
+    return {
+      id: 1,
+      port: 1,
+      timestamp_us: 0,
+      sender: 'MASTER',
+      slave: '01',
+      fc: 'Read Holding Regs',
+      fc_code: '03',
+      pl: '',
+      bytes: 0,
+      crc: 'OK',
+      isArbitration: false,
+      direction: 'request',
+      t: '',
+      dt: '',
+      tooltip: '',
+      ...over,
+    };
+  }
+
+  function makeFilter(over: Partial<SniffFilter> = {}): SniffFilter {
+    return {
+      port: 1,
+      hideErrors: false,
+      selectedSlaves: new Set(),
+      selectedFcs: new Set(),
+      ...over,
+    };
+  }
+
+  it('port mismatch → false', () => {
+    expect(rowMatchesFilter(makeRow({ port: 2 }), makeFilter({ port: 1 }))).toBe(false);
+  });
+
+  it('port match with empty facets → true', () => {
+    expect(rowMatchesFilter(makeRow({ port: 1 }), makeFilter({ port: 1 }))).toBe(true);
+  });
+
+  it('hideErrors=true drops crc=ERR but keeps crc=OK / crc=N/A', () => {
+    const f = makeFilter({ hideErrors: true });
+    expect(rowMatchesFilter(makeRow({ crc: 'ERR' }), f)).toBe(false);
+    expect(rowMatchesFilter(makeRow({ crc: 'OK' }), f)).toBe(true);
+    expect(rowMatchesFilter(makeRow({ crc: 'N/A' }), f)).toBe(true);
+  });
+
+  it('hideErrors=false keeps crc=ERR', () => {
+    expect(rowMatchesFilter(makeRow({ crc: 'ERR' }), makeFilter({ hideErrors: false }))).toBe(true);
+  });
+
+  it('selectedSlaves non-empty: keeps only matching slave', () => {
+    const f = makeFilter({ selectedSlaves: new Set(['01', '02']) });
+    expect(rowMatchesFilter(makeRow({ slave: '01' }), f)).toBe(true);
+    expect(rowMatchesFilter(makeRow({ slave: '03' }), f)).toBe(false);
+  });
+
+  it('selectedSlaves empty: no slave filtering', () => {
+    const f = makeFilter({ selectedSlaves: new Set() });
+    expect(rowMatchesFilter(makeRow({ slave: '07' }), f)).toBe(true);
+  });
+
+  it('selectedFcs non-empty: keeps only matching fc_code', () => {
+    const f = makeFilter({ selectedFcs: new Set(['03', '06']) });
+    expect(rowMatchesFilter(makeRow({ fc_code: '03' }), f)).toBe(true);
+    expect(rowMatchesFilter(makeRow({ fc_code: '10' }), f)).toBe(false);
+  });
+
+  it('selectedFcs empty: no FC filtering', () => {
+    const f = makeFilter({ selectedFcs: new Set() });
+    expect(rowMatchesFilter(makeRow({ fc_code: 'FF' }), f)).toBe(true);
+  });
+
+  it('combination: a row must pass ALL active conditions', () => {
+    const f = makeFilter({
+      port: 1,
+      hideErrors: true,
+      selectedSlaves: new Set(['01']),
+      selectedFcs: new Set(['03']),
+    });
+    // Right port + not-error + selected slave + selected FC → true.
+    expect(rowMatchesFilter(makeRow({ port: 1, crc: 'OK', slave: '01', fc_code: '03' }), f)).toBe(true);
+    // Flip the port → false.
+    expect(rowMatchesFilter(makeRow({ port: 2, crc: 'OK', slave: '01', fc_code: '03' }), f)).toBe(false);
+    // Flip to an error row → false.
+    expect(rowMatchesFilter(makeRow({ port: 1, crc: 'ERR', slave: '01', fc_code: '03' }), f)).toBe(false);
+    // Flip the slave → false.
+    expect(rowMatchesFilter(makeRow({ port: 1, crc: 'OK', slave: '02', fc_code: '03' }), f)).toBe(false);
+    // Flip the FC → false.
+    expect(rowMatchesFilter(makeRow({ port: 1, crc: 'OK', slave: '01', fc_code: '06' }), f)).toBe(false);
   });
 });

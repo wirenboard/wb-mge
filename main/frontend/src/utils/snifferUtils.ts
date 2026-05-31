@@ -15,11 +15,10 @@ export type SniffRow = {
   fc: string;
   fc_code: string;
   pl: string;
-  bytes_arr: string[];
-  byte_roles: ByteRole[];
   bytes: number;
   crc: 'OK' | 'ERR' | 'N/A';
   isArbitration: boolean;
+  direction: Direction;
   t: string;
   dt: string;
   tooltip: string;
@@ -118,9 +117,40 @@ export function formatDt(us: number, prevUs: number): string {
   return `+${diff} ms`;
 }
 
+export type SniffFilter = {
+  port: number;
+  hideErrors: boolean;
+  selectedSlaves: Set<string>;
+  selectedFcs: Set<string>;
+};
+
+/** True if a row passes the active sniffer filters: port + hide-errors + slave/FC facets. */
+export function rowMatchesFilter(row: SniffRow, f: SniffFilter): boolean {
+  if (row.port !== f.port) return false;
+  if (f.hideErrors && row.crc === 'ERR') return false;
+  if (f.selectedSlaves.size > 0 && !f.selectedSlaves.has(row.slave)) return false;
+  if (f.selectedFcs.size > 0 && !f.selectedFcs.has(row.fc_code)) return false;
+  return true;
+}
+
 /** Convert a compact hex string to a space-separated hex string (e.g. 'AABB' → 'AA BB') */
 export function hexToPayloadString(raw: string): string {
   return raw.match(/.{1,2}/g)?.join(' ') ?? raw;
+}
+
+/** Split a payload string ('AA BB CC') into its byte-string array. Empty payload → []. */
+export function getRowBytes(pl: string): string[] {
+  return pl ? pl.split(' ') : [];
+}
+
+/**
+ * Recompute per-byte semantic roles for a row's payload on demand. Empty payload → [].
+ * Deliberately NOT stored on every SniffRow (it ballooned per-row memory); only the rows
+ * currently visible in the virtual-scroll window need roles, and they are cheap to redo.
+ */
+export function getRowByteRoles(pl: string, direction: Direction): ByteRole[] {
+  if (!pl) return [];
+  return getByteRoles(decodePacket(pl, direction));
 }
 
 /** Toggle set membership: add val if absent, remove if present. Returns a new Set. */
@@ -170,15 +200,14 @@ export function computeVirtualWindow(
 /**
  * Ring buffer: drop the oldest elements in place so the array length never exceeds `cap`.
  * Mutates `arr` (splice in place to preserve Vue reactivity on the same ref) and returns the
- * number of elements removed (0 if already within the cap).
+ * removed elements (empty array if already within the cap) so callers can inspect what was dropped.
  */
-export function trimToCap<T>(arr: T[], cap: number): number {
+export function trimToCap<T>(arr: T[], cap: number): T[] {
   const overflow = arr.length - cap;
   if (overflow > 0) {
-    arr.splice(0, overflow);
-    return overflow;
+    return arr.splice(0, overflow);
   }
-  return 0;
+  return [];
 }
 
 // ============================================================
@@ -208,7 +237,7 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
     const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase();
     const dt = formatDt(msg.timestamp_us, prevTimestampUs);
     return {
-      row: {
+      row: Object.freeze({
         id: msg.id,
         port: msg.port,
         timestamp_us: msg.timestamp_us,
@@ -217,15 +246,14 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
         fc: fcName,
         fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
         pl: '',
-        bytes_arr: [],
-        byte_roles: [],
         bytes: 0,
         crc: 'ERR',
         isArbitration: false,
+        direction: 'request',
         t: formatTimestamp(msg.timestamp_us, offsetMs),
         dt,
         tooltip: `No response from slave 0x${slave} within timeout`,
-      },
+      }),
       timestamp: msg.timestamp_us,
     };
   }
@@ -238,10 +266,8 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
     const isArbitration = msg.raw && /^(FF)+$/i.test(msg.raw);
 
     if (isArbitration) {
-      const bytes_arr = hexToPayloadString(msg.raw).split(' ');
-      const decoded = decodePacket(pl, 'response');
       return {
-        row: {
+        row: Object.freeze({
           id: msg.id,
           port: msg.port,
           timestamp_us: msg.timestamp_us,
@@ -250,15 +276,14 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
           fc: 'FM Arbitration',
           fc_code: 'FF',
           pl,
-          bytes_arr,
-          byte_roles: getByteRoles(decoded),
           bytes: msg.size,
           crc: 'N/A',
           isArbitration: true,
+          direction: 'response',
           t: formatTimestamp(msg.timestamp_us, offsetMs),
           dt,
           tooltip: 'Fast Modbus Bus Arbitration: devices simultaneously assert 0xFF bytes to resolve which one responds. No CRC — not a Modbus frame.',
-        },
+        }),
         timestamp: msg.timestamp_us,
       };
     }
@@ -279,7 +304,6 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
       tooltip = FAST_MODBUS_TOOLTIPS[sub] ?? `Fast Modbus subcommand 0x${sub.toString(16).padStart(2, '0').toUpperCase()}`;
     }
 
-    const bytes_arr = hexToPayloadString(msg.raw).split(' ');
     const decoded = decodePacket(pl, direction);
 
     /* For FM Cmd (command/response_by_serial), append nested function name in parens */
@@ -293,7 +317,7 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
     }
 
     return {
-      row: {
+      row: Object.freeze({
         id: msg.id,
         port: msg.port,
         timestamp_us: msg.timestamp_us,
@@ -302,15 +326,14 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
         fc: fcDisplay,
         fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
         pl,
-        bytes_arr,
-        byte_roles: getByteRoles(decoded),
         bytes: msg.size,
         crc,
         isArbitration: false,
+        direction,
         t: formatTimestamp(msg.timestamp_us, offsetMs),
         dt,
         tooltip,
-      },
+      }),
       timestamp: msg.timestamp_us,
     };
   }

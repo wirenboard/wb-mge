@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, shallowRef, triggerRef, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -20,6 +20,9 @@ import {
   toggleSet,
   computeVirtualWindow,
   trimToCap,
+  rowMatchesFilter,
+  getRowBytes,
+  getRowByteRoles,
 } from '@/utils/snifferUtils';
 
 const { t } = useI18n();
@@ -33,7 +36,7 @@ const txDisabledForCurrentPort = computed(() => {
   return settings.value?.rs485_2?.tx_disabled ?? false;
 });
 
-const rows = ref<SniffRow[]>([]);
+const rows = shallowRef<SniffRow[]>([]);
 const running = ref(false);
 const ws = ref<WebSocket | null>(null);
 // Timer handle for the WS reconnect delay — stored so it can be cleared in stopCapture().
@@ -60,6 +63,10 @@ const portOptions = ['1', '2'];
 const selectedSlaves = ref<Set<string>>(new Set());
 const selectedFcs = ref<Set<string>>(new Set());
 const hideErrors = ref(false);
+
+// CRC-error count, maintained incrementally on ingest/trim instead of re-scanning the
+// whole rows array each frame. Reset in clearLogs(); adjusted in flushPending().
+const errorCount = ref(0);
 
 function getWsUrl(): string {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -114,24 +121,41 @@ function scheduleFlush() {
 function flushPending() {
   flushRaf = null;
   if (pending.length === 0) return;
-  // Append buffered rows. Use a loop (not spread) so a large backlog — e.g. after the
-  // tab was backgrounded and rAF was paused — cannot overflow the call-stack arg limit.
-  for (const r of pending) rows.value.push(r);
+  // Append buffered rows; track CRC-error rows added so errorCount stays accurate.
+  let addedErrors = 0;
+  for (const r of pending) {
+    rows.value.push(r);
+    if (r.crc === 'ERR') addedErrors++;
+  }
   pending = [];
-  // Ring buffer: drop the oldest rows once the cap is exceeded.
-  const overflow = trimToCap(rows.value, MAX_ROWS);
-  if (overflow > 0 && !autoScroll.value) {
+  // Ring buffer: drop the oldest rows once the cap is exceeded; trimToCap returns the
+  // dropped rows so we can subtract any CRC-error rows among them from the incremental count.
+  const dropped = trimToCap(rows.value, MAX_ROWS);
+  const removedErrors = dropped.reduce((n, r) => (r.crc === 'ERR' ? n + 1 : n), 0);
+  errorCount.value += addedErrors - removedErrors;
+  // shallowRef: in-place mutations are invisible to reactivity — notify dependents.
+  triggerRef(rows);
+  if (dropped.length > 0 && !autoScroll.value) {
     // When the user has scrolled up (not following the tail), dropping the oldest rows shifts
-    // all remaining content up by overflow*rowHeight. Compensate the scroll position so the
-    // view stays anchored, and resync scrollTop.value with the DOM — otherwise the window
-    // would render the wrong slice until the next scroll event.
-    nextTick(() => {
-      const el = tableWrap.value;
-      if (el) {
-        el.scrollTop = Math.max(0, el.scrollTop - overflow * rowHeight.value);
-        scrollTop.value = el.scrollTop;
-      }
-    });
+    // the rendered content up. The rendered viewport is built from filteredRows, so the scroll
+    // must shift by the number of dropped rows that PASS the current filter — NOT the raw count
+    // of dropped rows (which spans both ports and pre-filter data) — otherwise the anchor jumps.
+    const filter = {
+      port: parseInt(portFilter.value),
+      hideErrors: hideErrors.value,
+      selectedSlaves: selectedSlaves.value,
+      selectedFcs: selectedFcs.value,
+    };
+    const droppedVisible = dropped.reduce((n, r) => (rowMatchesFilter(r, filter) ? n + 1 : n), 0);
+    if (droppedVisible > 0) {
+      nextTick(() => {
+        const el = tableWrap.value;
+        if (el) {
+          el.scrollTop = Math.max(0, el.scrollTop - droppedVisible * rowHeight.value);
+          scrollTop.value = el.scrollTop;
+        }
+      });
+    }
   }
   if (!rowMeasured) nextTick(measureRowHeight);
   if (autoScroll.value) {
@@ -285,6 +309,7 @@ function clearLogs() {
   }
   pending = [];
   rows.value = [];
+  errorCount.value = 0;
   lastTimestampUs = 0;
   // Re-anchor the wall-clock offset on Clear so the next session re-syncs from scratch.
   wallOffsetMs = null;
@@ -316,8 +341,6 @@ onUnmounted(() => {
     cancelAnimationFrame(scrollRaf); scrollRaf = null;
   }
 });
-
-const errorCount = computed(() => rows.value.filter(x => x.crc === 'ERR').length);
 
 function byteRoleStyle(role: ByteRole) {
   switch (role) {
@@ -382,11 +405,21 @@ function fcCodeNum(hexCode: string): number {
 }
 
 const filteredRows = computed(() => {
-  let r = portRows.value;
-  if (hideErrors.value) r = r.filter(x => x.crc !== 'ERR');
-  if (selectedSlaves.value.size > 0) r = r.filter(x => selectedSlaves.value.has(x.slave));
-  if (selectedFcs.value.size > 0) r = r.filter(x => selectedFcs.value.has(x.fc_code));
-  return r;
+  // No facet filters active → portRows (already port-scoped and memoized for the facet stats)
+  // IS the result. Return it directly to avoid a second full-array scan + allocation each frame.
+  if (!hideErrors.value && selectedSlaves.value.size === 0 && selectedFcs.value.size === 0) {
+    return portRows.value;
+  }
+  // Facet filters active → filter the smaller, port-scoped portRows (not the full rows.value),
+  // reusing the same rowMatchesFilter predicate as the ring-buffer scroll compensation so the
+  // two stay in lockstep.
+  const filter = {
+    port: parseInt(portFilter.value),
+    hideErrors: hideErrors.value,
+    selectedSlaves: selectedSlaves.value,
+    selectedFcs: selectedFcs.value,
+  };
+  return portRows.value.filter(x => rowMatchesFilter(x, filter));
 });
 
 // Virtualization: render only the visible window of rows. We intentionally do NOT subtract
@@ -397,6 +430,17 @@ const virtualWindow = computed(() =>
 );
 const visibleRows = computed(() =>
   filteredRows.value.slice(virtualWindow.value.startIndex, virtualWindow.value.endIndex),
+);
+// Decode per-byte hex + semantic roles lazily, ONLY for rows in the visible virtual-scroll
+// window. These arrays are intentionally not stored on every SniffRow (huge memory cost);
+// ~visible rows are cheap to recompute each frame. Field names avoid clashing with the
+// existing numeric `bytes` (byte count) on SniffRow.
+const visibleCells = computed(() =>
+  visibleRows.value.map(r => ({
+    ...r,
+    hexBytes: getRowBytes(r.pl),
+    roles: getRowByteRoles(r.pl, r.direction),
+  })),
 );
 const padTop = computed(() => virtualWindow.value.padTop);
 const padBottom = computed(() => virtualWindow.value.padBottom);
@@ -560,7 +604,7 @@ Port {{ p }}
           <tbody>
             <tr v-if="padTop > 0" class="sniff-spacer" aria-hidden="true"><td :colspan="9" :style="{ height: padTop + 'px' }"></td></tr>
             <tr
-              v-for="r in visibleRows" :key="r.id"
+              v-for="r in visibleCells" :key="r.id"
               :class="['sniff-row', { selected: selected === r.id, 'err-row': r.crc === 'ERR' && !r.isArbitration }]"
               @click="selected = r.id"
             >
@@ -576,9 +620,9 @@ Port {{ p }}
               <td>
                 <span class="hex-payload">
                   <span
-                    v-for="(b, i) in r.bytes_arr" :key="i"
+                    v-for="(b, i) in r.hexBytes" :key="i"
                     class="hex-byte"
-                    :style="byteRoleStyle(r.byte_roles[i] ?? 'unknown')"
+                    :style="byteRoleStyle(r.roles[i] ?? 'unknown')"
                   >{{ b }}</span>
                 </span>
               </td>
