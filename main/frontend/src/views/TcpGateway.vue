@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, reactive, watch, type WritableComputedRef } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
+import { useInfo } from '@/common/info';
+import { useAlerts } from '@/common/alert';
+import { api } from '@/utils/api';
 import type { BridgeMode, RsSettings } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -9,9 +12,83 @@ import Info from '@/components/Info.vue';
 import InputNumber from '@/components/InputNumber.vue';
 import IpInput from '@/components/IpInput.vue';
 import Layout from '@/components/Layout.vue';
+import Switch from '@/components/Switch.vue';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
+const { info, fetchInfo } = useInfo();
+const { showAlert } = useAlerts();
+
+type PortKey = 'rs485_1' | 'rs485_2';
+
+// 1-based port number used by the backend ports/<N>/mode endpoint
+const portNumber: Record<PortKey, 1 | 2> = { rs485_1: 1, rs485_2: 2 };
+
+// Optimistic override for the enable toggle, per port: null = use the real backend
+// state from info, boolean = use this value until the next info poll clears it.
+const enabledOptimistic = reactive<Record<PortKey, boolean | null>>({
+  rs485_1: null,
+  rs485_2: null,
+});
+
+// In-flight guard per port: prevents concurrent/double-click toggles.
+const isToggling = reactive<Record<PortKey, boolean>>({
+  rs485_1: false,
+  rs485_2: false,
+});
+
+// The TCP gateway is considered ON for a port when its transport mode is 'tcp_bridge'.
+// Returns the optimistic override when set, otherwise derives from the polled info ref.
+const isEnabled = (portKey: PortKey): boolean => {
+  if (enabledOptimistic[portKey] !== null) return enabledOptimistic[portKey] as boolean;
+  return info.value?.[portKey].port_mode === 'tcp_bridge';
+};
+
+// True while a toggle request is in flight or info has not loaded yet.
+const isToggleDisabled = (portKey: PortKey): boolean =>
+  isToggling[portKey] || info.value === undefined;
+
+// Toggle the TCP gateway transport mode for a single port.
+// ON  -> open as 'tcp_bridge'.
+// OFF -> 'passive' when the cache overlay is active (keep serial open for the
+//        Register Map cache listener), otherwise 'disabled' (fully off).
+async function toggleEnabled(portKey: PortKey): Promise<void> {
+  if (isToggling[portKey]) return; // prevent concurrent calls
+  if (info.value === undefined) return; // cannot determine target state yet
+  isToggling[portKey] = true;
+  const wasEnabled = isEnabled(portKey); // capture state before applying optimistic override
+  enabledOptimistic[portKey] = !wasEnabled; // apply optimistic UI update immediately
+  const n = portNumber[portKey];
+  try {
+    if (wasEnabled) {
+      // Turning the gateway off: keep serial alive as 'passive' when the cache overlay
+      // is on, otherwise close the port fully with 'disabled'.
+      const cacheOn = info.value[portKey].cache_enabled;
+      const mode = cacheOn ? 'passive' : 'disabled';
+      await api<void>(`ports/${n}/mode`, { method: 'POST', json: { mode } });
+    } else {
+      await api<void>(`ports/${n}/mode`, { method: 'POST', json: { mode: 'tcp_bridge' } });
+    }
+  } catch {
+    enabledOptimistic[portKey] = null; // revert optimistic state on API failure
+    showAlert('connection_error');
+  } finally {
+    isToggling[portKey] = false;
+    // Refresh info immediately so the sidebar/state reflects the updated port mode.
+    fetchInfo('low').catch(() => {});
+  }
+}
+
+// Clear the optimistic override whenever the backend info refreshes, but only when no
+// toggle is in flight — otherwise the poll may arrive before the ESP32 has applied the
+// change, which would cause a UI flicker back to the old state.
+watch(() => info.value, () => {
+  (['rs485_1', 'rs485_2'] as const).forEach((portKey) => {
+    if (!isToggling[portKey]) {
+      enabledOptimistic[portKey] = null;
+    }
+  });
+});
 
 const bridgeModbus = computed(() => [
   { value: true, label: t('bridge_modbus') },
@@ -43,6 +120,24 @@ const onModeChange = (ev: Event, portKey: 'rs485_1' | 'rs485_2') => {
 
 const portSubs = ['port1_sub', 'port2_sub'];
 const portTitles = ['port_1', 'port_2'] as const;
+
+// Writable v-model bridges for the enable Switch, one stable computed per port. get returns
+// the current enabled state (optimistic override if set, else derived from info); set ignores
+// the incoming value and flips based on the current state via the toggle handler.
+const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
+  rs485_1: computed<boolean>({
+    get: () => isEnabled('rs485_1'),
+    set: () => {
+      toggleEnabled('rs485_1');
+    },
+  }),
+  rs485_2: computed<boolean>({
+    get: () => isEnabled('rs485_2'),
+    set: () => {
+      toggleEnabled('rs485_2');
+    },
+  }),
+};
 </script>
 
 <template>
@@ -67,6 +162,17 @@ const portTitles = ['port_1', 'port_2'] as const;
               </Button>
             </div>
             <div class="card-body">
+              <div class="field">
+                <label :for="`${portKey}-enabled`">{{ t('enabled') }}</label>
+                <div class="field-switch">
+                  <Switch
+                    :id="`${portKey}-enabled`"
+                    v-model="enabledModel[portKey].value"
+                    :aria-label="t('enabled')"
+                    :disabled="isToggleDisabled(portKey)"
+                  />
+                </div>
+              </div>
               <div class="field">
                 <label :for="`${portKey}-bridge_mb`">{{ t('modbus_mode') }}</label>
                 <select
@@ -112,10 +218,14 @@ const portTitles = ['port_1', 'port_2'] as const;
   </Layout>
 </template>
 
-<style>
+<style scoped>
 .tcpGateway-port {
   max-width: 85px;
   justify-self: end; /* align input to the right edge of the field grid column */
+}
+
+.field-switch {
+  justify-self: end; /* align the switch to the right edge of the field grid column */
 }
 </style>
 
@@ -128,6 +238,7 @@ const portTitles = ['port_1', 'port_2'] as const;
     "port2_sub": "Wired terminal · right + I/O bus",
     "port_1": "RS-485 · Port 1",
     "port_2": "RS-485 · Port 2",
+    "enabled": "Enabled",
     "modbus_mode": "Mode",
     "bridge_mode": "Bridge mode",
     "bridge_modbus": "Modbus TCP",
@@ -143,6 +254,7 @@ const portTitles = ['port_1', 'port_2'] as const;
     "port2_sub": "Правый клеммник + I/O bus",
     "port_1": "RS-485 · Порт 1",
     "port_2": "RS-485 · Порт 2",
+    "enabled": "Включён",
     "modbus_mode": "Режим",
     "bridge_mode": "Роль",
     "bridge_modbus": "Modbus TCP",
@@ -158,6 +270,7 @@ const portTitles = ['port_1', 'port_2'] as const;
     "port2_sub": "Сымды клемма · оң + I/O bus",
     "port_1": "RS-485 · Порт 1",
     "port_2": "RS-485 · Порт 2",
+    "enabled": "Қосулы",
     "modbus_mode": "Режим",
     "bridge_mode": "Рөл",
     "bridge_modbus": "Modbus TCP",
@@ -173,6 +286,7 @@ const portTitles = ['port_1', 'port_2'] as const;
     "port2_sub": "Morsettiera · destra + I/O bus",
     "port_1": "RS-485 · Porta 1",
     "port_2": "RS-485 · Porta 2",
+    "enabled": "Abilitato",
     "modbus_mode": "Modalità",
     "bridge_mode": "Modalità bridge",
     "bridge_modbus": "Modbus TCP",
@@ -188,6 +302,7 @@ const portTitles = ['port_1', 'port_2'] as const;
     "port2_sub": "Klemmenleiste · rechts + I/O bus",
     "port_1": "RS-485 · Port 1",
     "port_2": "RS-485 · Port 2",
+    "enabled": "Aktiviert",
     "modbus_mode": "Modus",
     "bridge_mode": "Bridge-Modus",
     "bridge_modbus": "Modbus TCP",
