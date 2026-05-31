@@ -742,6 +742,8 @@ describe('RM-I-05: resetMap', () => {
  *   C. status machine: idle → saving → saved → idle (after 3s timer)
  *   D. concurrent save is prevented (api called only once)
  *   E. api error → status becomes 'error', auto-resets after timer
+ *   F. per-port cache-overlay branch: enabling on a 'disabled' port posts mode 'passive'
+ *      THEN cache enabled; disabling posts only cache disabled (no mode call).
  */
 describe('RM-I-06: saveSettings', () => {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
@@ -955,6 +957,56 @@ describe('RM-I-06: saveSettings', () => {
 
     // Button still enabled after reset
     expect(saveBtn.attributes('disabled')).toBeUndefined();
+
+    wrapper.unmount();
+  });
+
+  it('scenario F: per-port overlay — enable on a disabled port posts mode passive THEN cache; disable posts only cache', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // First poll: port1 = cache_bus (cache ON, transport 'passive'), port2 = disabled
+    // (cache OFF, transport 'disabled'). cacheEnabled=true so the settings panel renders and
+    // the Save button is reachable. The watch initialises listenPort1=true, listenPort2=false.
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await vi.advanceTimersByTimeAsync(50);
+    await flushPromises();
+
+    // Select port 2 (radio): listenPort1 → false, listenPort2 → true. This makes BOTH ports
+    // differ from info: port1 (info cache ON → target OFF) and port2 (info cache OFF → target ON).
+    const portTags = wrapper.findAll('.rsp-port-tag');
+    expect(portTags.length).toBeGreaterThanOrEqual(2);
+    await portTags[1].trigger('click'); // click the "2" tag → selectListenPort(2)
+
+    vi.mocked(api).mockClear();
+
+    // Save: applies the per-port cache overlay for both changed ports.
+    await wrapper.find('.rsp-btn-save').trigger('click');
+    await flushPromises();
+    vi.advanceTimersByTime(3001);
+    await flushPromises();
+
+    const calls = vi.mocked(api).mock.calls.filter(
+      (c: unknown[]) => c[0] === 'ports/1/mode' || c[0] === 'ports/1/cache'
+        || c[0] === 'ports/2/mode' || c[0] === 'ports/2/cache',
+    );
+
+    // Positive enable branch (port 2 was 'disabled'): mode 'passive' BEFORE cache enabled.
+    const port2ModeIdx = calls.findIndex((c) => c[0] === 'ports/2/mode');
+    const port2CacheIdx = calls.findIndex((c) => c[0] === 'ports/2/cache');
+    expect(port2ModeIdx).toBeGreaterThanOrEqual(0);
+    expect(port2CacheIdx).toBeGreaterThanOrEqual(0);
+    expect(port2ModeIdx).toBeLessThan(port2CacheIdx); // mode passive POSTed first
+    expect(calls[port2ModeIdx]).toEqual(['ports/2/mode', { method: 'POST', json: { mode: 'passive' } }]);
+    expect(calls[port2CacheIdx]).toEqual(['ports/2/cache', { method: 'POST', json: { enabled: true } }]);
+
+    // Symmetric disable branch (port 1 cache was ON → target OFF): only cache disabled, NO mode.
+    expect(vi.mocked(api)).toHaveBeenCalledWith('ports/1/cache', { method: 'POST', json: { enabled: false } });
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
+
+    // fetchInfo must refresh the sidebar after save.
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
 
     wrapper.unmount();
   });

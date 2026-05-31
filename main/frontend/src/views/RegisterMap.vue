@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useInfo } from '@/common/info';
+import { useOptimisticToggle } from '@/common/useOptimisticToggle';
 import { api } from '@/utils/api';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -34,17 +35,16 @@ const cacheMaxEntries = ref(0);
 const cacheEntries = ref(0);
 // Cache is an independent per-port overlay (orthogonal to the transport mode).
 // It is considered enabled when AT LEAST ONE port has the cache overlay active.
-// Derived reactively from the info ref polled globally every 5 s by App.vue.
-// Optimistic override for cacheEnabled: null = use real backend state,
-// boolean = use this value until the next info poll clears it
-const cacheEnabledOptimistic = ref<boolean | null>(null);
-const cacheEnabled = computed(() => {
-  // Return optimistic value immediately after a toggle request, before the next info poll
-  if (cacheEnabledOptimistic.value !== null) return cacheEnabledOptimistic.value;
-  if (!info.value) return false;
-  return info.value.rs485_1.cache_enabled ||
-         info.value.rs485_2.cache_enabled;
+// The optimistic-toggle composable owns the override/in-flight/revert state machine shared
+// by toggleCaching() and resetMap(); cacheEnabled is its displayed value (override if set,
+// else derived from the info ref polled globally every 5 s by App.vue).
+const cacheToggle = useOptimisticToggle({
+  derive: () => !!(info.value && (info.value.rs485_1.cache_enabled || info.value.rs485_2.cache_enabled)),
+  onError: (e) => {
+    error.value = e instanceof Error ? e.message : 'Action failed';
+  },
 });
+const cacheEnabled = computed(() => cacheToggle.value.value);
 
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -62,8 +62,6 @@ const cacheTcpPort = ref(504);
 const tcpServeEnabled = ref(true);
 // Save-button status for the Settings panel
 const settingsSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
-// Guard flag that prevents concurrent toggleCaching() / resetMap() calls.
-const isMutating = ref(false);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let statsInterval: ReturnType<typeof setInterval> | null = null;
@@ -109,12 +107,10 @@ async function fetchEntries(): Promise<void> {
   }
 }
 
-async function toggleCaching(): Promise<void> {
-  if (isMutating.value) return; // prevent concurrent calls
-  isMutating.value = true;
-  const wasEnabled = cacheEnabled.value; // capture state before applying optimistic override
-  cacheEnabledOptimistic.value = !wasEnabled; // apply optimistic UI update immediately
-  try {
+function toggleCaching(): void {
+  // The composable owns the optimistic override, in-flight guard, revert-on-error
+  // (which sets error.value via onError) and the trailing fetchInfo('low').
+  cacheToggle.run(async (wasEnabled) => {
     if (wasEnabled) {
       // Disable: turn off the cache overlay for every port that currently has it on.
       // The transport mode is left untouched so the port keeps running.
@@ -149,24 +145,18 @@ async function toggleCaching(): Promise<void> {
       // Fetch entries immediately so the UI shows data without waiting for the next poll
       await fetchEntries();
     }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Action failed';
-    cacheEnabledOptimistic.value = null; // revert optimistic state on API failure
-  } finally {
-    isMutating.value = false;
-    // Refresh info immediately so the sidebar reflects the updated port mode.
-    fetchInfo('low').catch(() => {});
-  }
+  });
 }
 
-async function resetMap(): Promise<void> {
-  // Abort if info is unavailable — port states cannot be determined
+function resetMap(): void {
+  // Abort if neither port has the cache overlay active — nothing to reset.
   const port1WasActive = info.value?.rs485_1.cache_enabled ?? false;
   const port2WasActive = info.value?.rs485_2.cache_enabled ?? false;
   if (!port1WasActive && !port2WasActive) return;
-  if (isMutating.value) return; // prevent concurrent calls
-  isMutating.value = true;
-  try {
+  // applyOptimistic=false: the cache stays ON throughout (it toggles off→on), so we must NOT
+  // flip the displayed state. The composable still shares the in-flight guard with toggleCaching
+  // and surfaces errors via onError (error.value).
+  cacheToggle.run(async () => {
     // Toggle the cache overlay off then on for the active ports to clear the map.
     // The transport mode stays untouched throughout.
     if (port1WasActive) {
@@ -186,14 +176,7 @@ async function resetMap(): Promise<void> {
     // Fetch entries immediately so the UI reflects the cleared state
     await fetchEntries();
     // cacheEnabled will update automatically on the next info poll
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Reset failed';
-    // cacheEnabled is derived from info — no manual resync needed
-  } finally {
-    isMutating.value = false;
-    // Refresh info immediately so the sidebar reflects the updated cache overlay state.
-    fetchInfo('low').catch(() => {});
-  }
+  }, /* applyOptimistic */ false);
 }
 
 // Sync local port selection from info only on first load.
@@ -213,15 +196,6 @@ watch(() => info.value, (newInfo) => {
   valueTimeout.value = newInfo.cache_value_timeout_s ?? 60;
   portsInitialized = true;
 }, { immediate: true });
-
-// Clear the optimistic cacheEnabled override whenever the backend info refreshes,
-// but only when no mutation is in flight — otherwise the poll may arrive before
-// the ESP32 has applied the change, which would cause a UI flicker back to the old state
-watch(() => info.value, () => {
-  if (!isMutating.value) {
-    cacheEnabledOptimistic.value = null;
-  }
-});
 
 // Select a port for cache listening (radio semantics: only one port active at a time)
 function selectListenPort(port: 1 | 2): void {

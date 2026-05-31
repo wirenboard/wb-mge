@@ -27,6 +27,11 @@ import {
 
 const { t } = useI18n();
 
+// Ring-buffer cap. Optional prop so tests can inject a small cap to exercise the overflow +
+// scroll-compensation branch in flushPending(); vue-router passes no prop in production, so the
+// default of 50000 preserves the original behavior exactly.
+const props = withDefaults(defineProps<{ maxRows?: number }>(), { maxRows: 50000 });
+
 const { data: settings, refresh: refreshSettings } = useSettings();
 const { info, fetchInfo } = useInfo();
 const senderOpen = ref(false);
@@ -46,8 +51,8 @@ let lastTimestampUs = 0;
 let wallOffsetMs: number | null = null;
 const wsStatus = ref<'connected' | 'disconnected' | 'reconnecting'>('disconnected');
 
-// Virtualization / ring buffer constants and state.
-const MAX_ROWS = 50000; // ring buffer cap — oldest rows are dropped beyond this
+// Virtualization / ring buffer constants and state. The ring-buffer cap comes from props.maxRows
+// (default 50000) so the overflow branch is test-injectable without changing production behavior.
 const ROW_HEIGHT_FALLBACK = 29; // fallback row height in px until a real row is measured
 const OVERSCAN = 10; // extra rows rendered above/below the viewport
 const rowHeight = ref(ROW_HEIGHT_FALLBACK); // measured at runtime
@@ -130,7 +135,7 @@ function flushPending() {
   pending = [];
   // Ring buffer: drop the oldest rows once the cap is exceeded; trimToCap returns the
   // dropped rows so we can subtract any CRC-error rows among them from the incremental count.
-  const dropped = trimToCap(rows.value, MAX_ROWS);
+  const dropped = trimToCap(rows.value, props.maxRows);
   const removedErrors = dropped.reduce((n, r) => (r.crc === 'ERR' ? n + 1 : n), 0);
   errorCount.value += addedErrors - removedErrors;
   // shallowRef: in-place mutations are invisible to reactivity — notify dependents.

@@ -19,6 +19,11 @@
  *   When many packets are captured, ALL are kept in the in-memory rows array (the heading
  *   shows the full count), but only a small window of rows is rendered as <tr class="sniff-row">.
  *   A spacer row (tr.sniff-spacer) absorbs the height of the off-screen rows below the window.
+ *
+ * SNIF-I-004 — ring-buffer overflow scroll compensation:
+ *   When the ring buffer overflows while the user is scrolled up (autoScroll=false), the
+ *   dropped-oldest rows shift the rendered content up, so scrollTop is reduced by
+ *   droppedVisible*rowHeight (clamped at 0). Uses the test-only `maxRows` prop to force overflow.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -543,6 +548,149 @@ describe('SNIF-I-003: virtualization windows the DOM', () => {
 
     // A bottom spacer row exists because padBottom > 0 (off-screen rows below the window).
     expect(wrapper.findAll('tr.sniff-spacer').length).toBeGreaterThanOrEqual(1);
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SNIF-I-004: ring-buffer overflow scroll compensation
+// ---------------------------------------------------------------------------
+/**
+ * Exercises the flushPending() branch that runs ONLY when the ring buffer overflows AND the
+ * user is NOT following the tail (autoScroll=false): dropping the oldest rows shifts the
+ * rendered content up, so the scroll position is compensated by `droppedVisible * rowHeight`
+ * (the filter-aware count of dropped rows), clamped at 0.
+ *
+ * The production cap (50000) is impractical to reach in a test, so the component accepts an
+ * optional `maxRows` prop (default 50000, identical to the old MAX_ROWS constant) which we set
+ * to a small value here. In happy-dom layout is 0 (clientHeight/offsetHeight=0), so rowHeight
+ * stays the 29px fallback; we drive autoScroll=false directly and seed a positive scrollTop on
+ * the table-wrap element, then assert the compensation arithmetic actually ran.
+ */
+describe('SNIF-I-004: ring-buffer overflow scroll compensation', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    MockWS.instance = null;
+    MockWS.constructCount = 0;
+    sharedInfoRef.value = undefined;
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWS);
+    fetchInfoMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  /** Mount, start capture, open the WS, and return the live MockWS + the component vm. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function startCapture(wrapper: ReturnType<typeof mount>): Promise<{ ws: MockWS; vm: any }> {
+    const captureBtn = wrapper.findAll('button').find((b) => b.text() === 'Start');
+    expect(captureBtn, 'Start button must be found').toBeDefined();
+    await captureBtn!.trigger('click');
+    await flushPromises();
+    const ws = MockWS.instance!;
+    expect(ws, 'WebSocket must have been created').not.toBeNull();
+    ws.onopen?.();
+    await wrapper.vm.$nextTick();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { ws, vm: wrapper.vm as any };
+  }
+
+  /** Feed `count` valid port-1 packets through the WS onmessage handler. */
+  function feedPackets(ws: MockWS, count: number): void {
+    for (let id = 1; id <= count; id += 1) {
+      const msg = {
+        id,
+        type: 'packet',
+        port: 1,
+        function: 3,
+        slave_id: 1,
+        sender: 'master',
+        crc_valid: true,
+        raw: '0103000A0002',
+        size: 6,
+        timestamp_us: 1000 * id,
+      };
+      ws.onmessage?.({ data: JSON.stringify(msg) });
+    }
+  }
+
+  it('shifts scrollTop up by droppedVisible*rowHeight when the buffer overflows while scrolled up', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    // Small cap so feeding 8 packets overflows the 5-row ring buffer (3 dropped).
+    const wrapper = mount(Sniffer, { props: { maxRows: 5 }, global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    const { ws, vm } = await startCapture(wrapper);
+
+    // Drive the not-following-tail state: seed a positive scrollTop on the wrap element and
+    // force autoScroll=false (in happy-dom the onScroll distance math would otherwise re-pin it).
+    const el = vm.tableWrap as HTMLElement;
+    el.scrollTop = 1000;
+    vm.autoScroll = false;
+    await wrapper.vm.$nextTick();
+
+    // rowHeight is the 29px fallback in happy-dom (no layout). Capture it to assert the math.
+    const rowHeight = vm.rowHeight as number;
+    expect(rowHeight).toBeGreaterThan(0);
+
+    // Feed 8 port-1 packets → length 8 > cap 5 → 3 oldest dropped, all pass the port-1 filter.
+    feedPackets(ws, 8);
+
+    // Drain the rAF-backed flush, then the nextTick that applies the scroll compensation.
+    await vi.runAllTimersAsync();
+    await wrapper.vm.$nextTick();
+    await flushPromises();
+
+    // Ring buffer capped at maxRows: the heading counter renders rows.length, which is the
+    // TRIMMED buffer length (5), proving the 8→5 overflow trim ran.
+    expect(wrapper.find('.heading-stats b').text()).toBe('5');
+    const rendered = wrapper.findAll('tr.sniff-row').length;
+    expect(rendered).toBe(5); // only the 5 retained rows render
+
+    // The compensation branch ran: scrollTop dropped by droppedVisible(3) * rowHeight, clamped ≥ 0.
+    const expected = Math.max(0, 1000 - 3 * rowHeight);
+    expect(el.scrollTop).toBe(expected);
+    expect(vm.scrollTop).toBe(expected); // the reactive ref was synced to the DOM
+    expect(expected).toBeLessThan(1000); // it actually shifted up
+    expect(el.scrollTop).toBeGreaterThanOrEqual(0);
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+
+  it('clamps the compensated scrollTop at 0 (never negative)', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    const wrapper = mount(Sniffer, { props: { maxRows: 5 }, global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    const { ws, vm } = await startCapture(wrapper);
+
+    const el = vm.tableWrap as HTMLElement;
+    // Seed a tiny scrollTop so the shift (3 * 29 = 87) would go negative → must clamp to 0.
+    el.scrollTop = 10;
+    vm.autoScroll = false;
+    await wrapper.vm.$nextTick();
+
+    feedPackets(ws, 8);
+
+    await vi.runAllTimersAsync();
+    await wrapper.vm.$nextTick();
+    await flushPromises();
+
+    // 10 - 3*29 < 0 → clamped to 0.
+    expect(el.scrollTop).toBe(0);
+    expect(vm.scrollTop).toBe(0);
 
     wrapper.unmount();
     vi.runAllTimers();
