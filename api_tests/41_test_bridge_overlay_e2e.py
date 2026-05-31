@@ -30,7 +30,7 @@ import time
 
 import pytest
 
-from conftest import build_gateway_fixture, _poll_tcp_connect
+from conftest import build_gateway_fixture
 from modbus_helpers import make_mbap_request, send_and_receive, query_register_once
 from sniffer_helpers import _ws_connect, _collect_packets
 
@@ -40,7 +40,6 @@ from sniffer_helpers import _ws_connect, _collect_packets
 # ---------------------------------------------------------------------------
 GATEWAY_HOST = "127.0.0.1"
 GATEWAY_HOST_PORT = 50502               # QEMU hostfwd: guest 502  -> host 50502 (Modbus gateway)
-TRANSPARENT_PORT1_HOST_PORT = 50504     # QEMU hostfwd: guest 50504 -> host 50504 (transparent bridge)
 CACHE_MODBUS_HOST_PORT = 50504          # cache Modbus TCP server (guest 50504 -> host 50504)
 UART1_TCP_PORT = 5561                   # QEMU UART1 (RS485-1) chardev
 SLAVE_FAKE_VALUE = 0x1234               # value the mock RTU slave returns for every register
@@ -272,112 +271,10 @@ def test_bridge_cache_populates_and_reads_back(api, gateway_p1_modbus):
 
 
 # ===========================================================================
-# BO-03 — Regression (R3): transparent bridge with NO overlay forwards unchanged
+# Note: the transparent-bridge byte-for-byte round-trip regression (R3) that
+# formerly lived here as BO-03 has been removed. It is fully covered by step (b)
+# of test_transparent_bridge_cache_toggle_roundtrip_unchanged in
+# 42_test_sniffer_cache_overlays_e2e.py (cache DISABLED -> same byte-for-byte
+# round-trip with the same payload and UART echo setup), so re-running the
+# expensive QEMU UART-echo + TCP socket setup here added no coverage.
 # ===========================================================================
-
-class _UartEchoThread(threading.Thread):
-    """Connect to the UART1 chardev and echo every received byte back verbatim,
-    so a transparent-bridge TCP client sees its own bytes returned."""
-
-    def __init__(self, host, port):
-        super().__init__(daemon=True)
-        self.host = host
-        self.port = port
-        self.connected = False
-        self._stop = threading.Event()
-        self._sock = None
-
-    def run(self):
-        try:
-            self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._sock.settimeout(5.0)
-            self._sock.connect((self.host, self.port))
-            self.connected = True
-            self._sock.settimeout(0.3)
-        except OSError:
-            return
-        while not self._stop.is_set():
-            try:
-                chunk = self._sock.recv(256)
-                if not chunk:
-                    break
-                self._sock.sendall(chunk)
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-        try:
-            self._sock.close()
-        except OSError:
-            pass
-
-    def wait_connected(self, timeout=5.0):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self.connected:
-                return True
-            time.sleep(0.05)
-        return False
-
-    def stop(self):
-        self._stop.set()
-
-
-# A transparent tcp_bridge on port 1 (no Modbus, no overlay). Yields None.
-transparent_p1 = build_gateway_fixture(
-    port_num=1,
-    tcp_host_port=TRANSPARENT_PORT1_HOST_PORT,
-    uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=50504,
-    modbus=False,
-)
-
-
-@pytest.mark.qemu
-@pytest.mark.timeout(60)
-def test_transparent_bridge_no_overlay_roundtrip_unchanged(api, transparent_p1):
-    """R3 guard: with NO sniffer/cache overlay active, a transparent tcp_bridge still
-    forwards bytes byte-for-byte (the additive sniffer feed must not alter the data
-    path even though sniff_handler is attached with reasons==0)."""
-    # Confirm no overlay is active on the port.
-    resp = api.set_port_cache(1, False)
-    assert resp.status_code == 200
-
-    echo = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
-    sock = None
-    try:
-        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
-        assert ready, "transparent bridge port not ready"
-
-        echo.start()
-        assert echo.wait_connected(timeout=5.0), "echo thread could not connect to UART1"
-
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5.0)
-        sock.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
-
-        payload = bytes([0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD])
-        sock.sendall(payload)
-
-        received = b""
-        deadline = time.monotonic() + 5.0
-        while len(received) < len(payload) and time.monotonic() < deadline:
-            try:
-                chunk = sock.recv(64)
-                if not chunk:
-                    break
-                received += chunk
-            except socket.timeout:
-                break
-        assert received == payload, (
-            f"transparent round-trip altered bytes: sent={payload.hex()!r} got={received.hex()!r}"
-        )
-        print("✓ BO-03: transparent bridge with no overlay forwards bytes unchanged (R3)")
-    finally:
-        if sock is not None:
-            try:
-                sock.close()
-            except OSError:
-                pass
-        echo.stop()
-        echo.join(timeout=3.0)
