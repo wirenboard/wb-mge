@@ -74,12 +74,18 @@ static SemaphoreHandle_t s_cache_decision_mutex; // lazily created; serialises g
 
 static void cache_decision_lock(void)
 {
-    if (s_cache_decision_mutex == NULL) s_cache_decision_mutex = xSemaphoreCreateMutex();
-    if (s_cache_decision_mutex) xSemaphoreTake(s_cache_decision_mutex, portMAX_DELAY);
+    if (s_cache_decision_mutex == NULL) {
+        s_cache_decision_mutex = xSemaphoreCreateMutex();
+    }
+    if (s_cache_decision_mutex) {
+        xSemaphoreTake(s_cache_decision_mutex, portMAX_DELAY);
+    }
 }
 static void cache_decision_unlock(void)
 {
-    if (s_cache_decision_mutex) xSemaphoreGive(s_cache_decision_mutex);
+    if (s_cache_decision_mutex) {
+        xSemaphoreGive(s_cache_decision_mutex);
+    }
 }
 
 // Bring the global cache pool in line with persisted per-port intent.
@@ -97,8 +103,11 @@ static void cache_sync_global(void)
         if (pm_ctx[i].cache_overlay) { want = true; break; }
     }
     bool have = cache_multimaster_is_enabled();
-    if (want && !have)      cache_multimaster_enable();
-    else if (!want && have) cache_multimaster_disable();
+    if (want && !have) {
+        cache_multimaster_enable();
+    } else if (!want && have) {
+        cache_multimaster_disable();
+    }
     cache_decision_unlock();
 }
 
@@ -173,28 +182,6 @@ static serial_desc_t *get_port_serial_desc(unsigned index)
         return pm_ctx[index].serial_desc;
     default:
         return NULL;
-    }
-}
-
-// Migrate legacy stored port modes from deployed devices to the new model:
-//   "sniffer"   -> transport "passive", no cache.
-//   "cache_bus" -> transport "passive", cache overlay enabled.
-// Rewrites the stored value so the migration is one-shot. Sets pm_ctx[index].cache_overlay
-// when the legacy value implies the cache overlay. Must run before port_init_mode().
-static void migrate_legacy_port_mode(unsigned index)
-{
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    if (setting_items_read(port_mode_nvs_key(index), value) != ESP_OK) {
-        return;
-    }
-    if (strncmp(value, "sniffer", SETTING_ITEM_MAX_STR_LEN) == 0) {
-        ESP_LOGW(TAG, "Port[%u]: migrating legacy mode 'sniffer' -> 'passive'", index + 1);
-        setting_items_save(port_mode_nvs_key(index), PORT_MODE_PASSIVE_STR);
-    } else if (strncmp(value, "cache_bus", SETTING_ITEM_MAX_STR_LEN) == 0) {
-        ESP_LOGW(TAG, "Port[%u]: migrating legacy mode 'cache_bus' -> 'passive' + cache overlay", index + 1);
-        setting_items_save(port_mode_nvs_key(index), PORT_MODE_PASSIVE_STR);
-        setting_items_save_bool(cache_en_nvs_key(index), true);
-        pm_ctx[index].cache_overlay = true;
     }
 }
 
@@ -347,10 +334,8 @@ esp_err_t port_manager_init(void)
 
     // Bring up each port in the mode stored in NVS.
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        // Read the persisted cache overlay first; migration may also set it.
+        // Read the persisted cache overlay intent for this port.
         pm_ctx[i].cache_overlay = setting_items_read_bool(cache_en_nvs_key(i));
-        // Migrate legacy stored modes ("sniffer"/"cache_bus") before reading the mode.
-        migrate_legacy_port_mode(i);
         pm_mode_t mode = read_port_mode_from_nvs(i);
         esp_err_t ret = port_init_mode(i, mode);
         if (ret != ESP_OK) {
@@ -454,8 +439,11 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     cache_sync_global();
     // Wire/unwire this port's live data flow if its serial port is open.
     if (get_port_serial_desc(port_index) != NULL) {
-        if (enabled) sniffer_enable(port_index, SNIFF_REASON_CACHE);
-        else         sniffer_disable(port_index, SNIFF_REASON_CACHE);
+        if (enabled) {
+            sniffer_enable(port_index, SNIFF_REASON_CACHE);
+        } else {
+            sniffer_disable(port_index, SNIFF_REASON_CACHE);
+        }
     }
 
     pm_unlock(port_index);

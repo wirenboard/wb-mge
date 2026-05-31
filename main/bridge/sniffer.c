@@ -902,12 +902,6 @@ void sniffer_disable(unsigned port_index, sniff_reason_t reason)
     ESP_LOGI(TAG, "Sniffer fully disabled on port %u", port_index);
 }
 
-void sniffer_inject_tx(unsigned port_index, const uint8_t *data, size_t len)
-{
-    if (port_index >= BRIDGES_COUNT) return;
-    sniffer_process(port_index, data, len);
-}
-
 esp_err_t sniffer_register_handlers(httpd_handle_t server)
 {
     esp_err_t ret = httpd_register_uri_handler(server, &sniffer_ws_uri);

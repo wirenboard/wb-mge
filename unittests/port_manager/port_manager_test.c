@@ -20,9 +20,6 @@ extern int mock_sniffer_disable_called[BRIDGES_COUNT];
 extern uint8_t mock_sniffer_reasons[BRIDGES_COUNT];
 extern uint8_t mock_sniffer_enable_last_reason[BRIDGES_COUNT];
 extern uint8_t mock_sniffer_disable_last_reason[BRIDGES_COUNT];
-extern int mock_sniffer_inject_tx_called[BRIDGES_COUNT];
-extern uint8_t mock_sniffer_inject_tx_last_data[][256];
-extern size_t mock_sniffer_inject_tx_last_len[];
 void mock_sniffer_reset(void);
 
 /* cache_multimaster.c mock */
@@ -32,10 +29,8 @@ extern int mock_cache_multimaster_disable_called;
 extern bool mock_cache_multimaster_enabled;
 void mock_cache_multimaster_reset(void);
 
-/* setting_items.c mock helpers for migration tests */
-extern bool mock_cache_en[BRIDGES_COUNT];
+/* setting_items.c mock helper */
 void mock_setting_items_set_port_mode(unsigned index, const char *value);
-const char *mock_setting_items_get_port_mode(unsigned index);
 
 /* cache_modbus_server.c mock */
 extern int mock_cache_modbus_server_init_called;
@@ -48,7 +43,6 @@ extern uint8_t mock_serial_set_rx_timeout_value[BRIDGES_COUNT];
 extern int mock_serial_send_called;
 extern uint8_t mock_serial_send_last_data[];
 extern size_t mock_serial_send_last_len;
-extern esp_err_t mock_serial_send_ret;
 void mock_serial_reset(void);
 
 /* setting_items.c mock */
@@ -424,37 +418,6 @@ void test_switch_from_passive_to_tcp_bridge(void)
     TEST_ASSERT_EQUAL(PM_MODE_TCP_BRIDGE, port_manager_get_mode(0));
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * 6b. Legacy NVS migration
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-void test_migrate_legacy_sniffer_to_passive(void)
-{
-    /* Simulate a deployed device that stored the legacy "sniffer" mode. */
-    mock_setting_items_set_port_mode(0, "sniffer");
-
-    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
-
-    /* Stored value rewritten to "passive"; transport is PASSIVE; no cache. */
-    TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, mock_setting_items_get_port_mode(0));
-    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
-    TEST_ASSERT_FALSE(port_manager_get_cache(0));
-}
-
-void test_migrate_legacy_cache_bus_to_passive_plus_cache(void)
-{
-    /* Simulate a deployed device that stored the legacy "cache_bus" mode. */
-    mock_setting_items_set_port_mode(0, "cache_bus");
-
-    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
-
-    /* Stored value rewritten to "passive"; transport is PASSIVE; cache overlay on. */
-    TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, mock_setting_items_get_port_mode(0));
-    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
-    TEST_ASSERT_TRUE(port_manager_get_cache(0));
-    TEST_ASSERT_TRUE(mock_cache_en[0]); /* persisted */
-}
-
 void test_switch_from_tcp_bridge_to_disabled(void)
 {
     port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
@@ -561,49 +524,6 @@ void test_send_raw_sniffer_port_calls_serial_send(void)
     TEST_ASSERT_EQUAL(1, mock_serial_send_called);
     TEST_ASSERT_EQUAL(sizeof(data), mock_serial_send_last_len);
     TEST_ASSERT_EQUAL_HEX8_ARRAY(data, mock_serial_send_last_data, sizeof(data));
-    /* TX visibility for the sniffer is now fed inside serial_send() (verified in the
-     * serial unit suite), NOT re-injected here — so port_manager_send_raw must NOT
-     * call sniffer_inject_tx (R5: no double-feed). */
-    TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
-}
-
-void test_send_raw_tx_disabled_no_sniffer_inject(void)
-{
-    /* With TX disabled, send_raw still delegates to serial_send (which drops the bytes
-     * internally and, in the real serial layer, skips the TX sniffer feed). send_raw
-     * itself never calls sniffer_inject_tx — TX visibility moved into serial_send. */
-    port_manager_set_mode(0, PM_MODE_PASSIVE);
-    port_manager_set_tx_disabled(0, true);
-    mock_serial_reset();
-    mock_sniffer_reset();
-
-    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
-    esp_err_t ret = port_manager_send_raw(0, data, sizeof(data));
-    TEST_ASSERT_EQUAL(ESP_OK, ret);
-    /* serial_send was called (but silently dropped bytes inside the real serial layer) */
-    TEST_ASSERT_EQUAL(1, mock_serial_send_called);
-    /* sniffer_inject_tx must NOT have been called by port_manager */
-    TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
-}
-
-void test_send_raw_serial_send_failure_no_sniffer_inject(void)
-{
-    /* When serial_send() fails the error is propagated to the caller. The TX sniffer
-     * feed lives inside serial_send (skipped on failure there); port_manager_send_raw
-     * never calls sniffer_inject_tx regardless of the serial_send result. */
-    port_manager_set_mode(0, PM_MODE_PASSIVE);
-    mock_serial_reset();
-    mock_sniffer_reset();
-    mock_serial_send_ret = ESP_FAIL;
-
-    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
-    esp_err_t ret = port_manager_send_raw(0, data, sizeof(data));
-    /* The failure must be propagated to the caller */
-    TEST_ASSERT_EQUAL(ESP_FAIL, ret);
-    /* serial_send was attempted */
-    TEST_ASSERT_EQUAL(1, mock_serial_send_called);
-    /* sniffer_inject_tx must NOT have been called by port_manager */
-    TEST_ASSERT_EQUAL(0, mock_sniffer_inject_tx_called[0]);
 }
 
 void test_send_raw_tcp_bridge_port_calls_serial_send(void)
@@ -710,10 +630,6 @@ int port_manager_test(void)
     RUN_TEST(test_switch_from_passive_to_tcp_bridge);
     RUN_TEST(test_switch_from_tcp_bridge_to_disabled);
 
-    /* 6b – legacy NVS migration */
-    RUN_TEST(test_migrate_legacy_sniffer_to_passive);
-    RUN_TEST(test_migrate_legacy_cache_bus_to_passive_plus_cache);
-
     /* 7 – hex_str_to_bytes */
     RUN_TEST(test_hex_str_to_bytes_valid);
     RUN_TEST(test_hex_str_to_bytes_odd_length);
@@ -727,8 +643,6 @@ int port_manager_test(void)
     RUN_TEST(test_send_raw_invalid_port);
     RUN_TEST(test_send_raw_disabled_port_no_serial_desc);
     RUN_TEST(test_send_raw_sniffer_port_calls_serial_send);
-    RUN_TEST(test_send_raw_tx_disabled_no_sniffer_inject);
-    RUN_TEST(test_send_raw_serial_send_failure_no_sniffer_inject);
     RUN_TEST(test_send_raw_tcp_bridge_port_calls_serial_send);
 
     /* 9 – port_send_handler integration */
