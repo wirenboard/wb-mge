@@ -181,7 +181,7 @@ class _GatewayDriver(threading.Thread):
         self.interval = interval
         self.ok = 0
         self.errors = []
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()  # not "_stop": that shadows threading.Thread._stop() and breaks join()
         self._sock = None
 
     def run(self):
@@ -193,7 +193,7 @@ class _GatewayDriver(threading.Thread):
             self.errors.append(f"connect: {exc}")
             return
         tid = 1
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 req = make_mbap_request(tid, self.slave, self.fc, self.addr, self.count)
                 _t, _u, fc, _payload = send_and_receive(self._sock, req)
@@ -203,14 +203,14 @@ class _GatewayDriver(threading.Thread):
             except Exception as exc:  # noqa: BLE001 — surfaced via errors
                 self.errors.append(str(exc))
                 break
-            self._stop.wait(self.interval)
+            self._stop_event.wait(self.interval)
         try:
             self._sock.close()
         except OSError:
             pass
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
 
 
 class _GatewayConn:
@@ -296,7 +296,7 @@ class _UartEchoThread(threading.Thread):
         self.host = host
         self.port = port
         self.connected = False
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()  # not "_stop": that shadows threading.Thread._stop() and breaks join()
         self._sock = None
 
     def run(self):
@@ -308,7 +308,7 @@ class _UartEchoThread(threading.Thread):
             self._sock.settimeout(0.3)
         except OSError:
             return
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 chunk = self._sock.recv(256)
                 if not chunk:
@@ -332,7 +332,7 @@ class _UartEchoThread(threading.Thread):
         return False
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
 
 
 def _roundtrip_once(host, tcp_port, payload, timeout=5.0):
