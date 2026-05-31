@@ -40,8 +40,10 @@ static const char *TAG = "serial";
 
 
 typedef struct {
-    uint8_t *data;        size_t data_len;       // bridge path (unchanged)
-    uint8_t *sniff_data;  size_t sniff_len;      // independent sniffer accumulator (additive overlay)
+    uint8_t *data;        // bridge path buffer (unchanged)
+    size_t data_len;      // bridge path length
+    uint8_t *sniff_data;  // independent sniffer accumulator (additive overlay)
+    size_t sniff_len;     // sniffer accumulator length
 } buffer_ctx_t;
 
 
