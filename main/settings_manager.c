@@ -283,6 +283,45 @@ static bool validate_top_level_settings(cJSON *request_json)
     return true;
 }
 
+// Cross-field validation: the cache Modbus server port must not collide with either
+// RS-485 bridge gateway port. Two TCP services cannot listen on the same port; allowing
+// it leaves one unable to bind (listen() -> EADDRINUSE errno 112) and, under repeated
+// re-init without a reboot, a stuck listen socket that permanently occupies the port.
+// "Effective" value = the value in this request if present, otherwise the current NVS
+// value, so the check covers changing either side (or only one side) of the pair.
+static bool validate_port_collisions(cJSON *request_json)
+{
+    // A disabled cache Modbus server binds no socket, so its configured port cannot
+    // collide with a bridge gateway. Only an (effectively) enabled cache server can.
+    cJSON *en = cJSON_GetObjectItem(request_json, "cache_modbus_server_enabled");
+    bool cache_enabled = cJSON_IsBool(en) ? cJSON_IsTrue(en)
+                                          : setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
+    if (!cache_enabled) {
+        return true;
+    }
+
+    cJSON *cp = cJSON_GetObjectItem(request_json, "cache_modbus_port");
+    int cache_port = cJSON_IsNumber(cp) ? cp->valueint
+                                        : setting_items_read_int(KEY_CACHE_MODBUS_PORT);
+
+    const char *rs485_names[] = {"rs485_1", "rs485_2"};
+    const char *bridge_port_keys[] = {KEY_BRIDGE_PORT1, KEY_BRIDGE_PORT2};
+    for (int i = 0; i < 2; ++i) {
+        // The bridge gateway port lives at rs485_N.bridge.port in the request JSON.
+        cJSON *rs = cJSON_GetObjectItem(request_json, rs485_names[i]);
+        cJSON *bridge = (rs && cJSON_IsObject(rs)) ? cJSON_GetObjectItem(rs, "bridge") : NULL;
+        cJSON *bp = (bridge && cJSON_IsObject(bridge)) ? cJSON_GetObjectItem(bridge, "port") : NULL;
+        int bridge_port = cJSON_IsNumber(bp) ? bp->valueint
+                                             : setting_items_read_int(bridge_port_keys[i]);
+        if (cache_port == bridge_port) {
+            ESP_LOGW(TAG, "Validation: cache_modbus_port (%d) collides with %s bridge port (%d)",
+                     cache_port, rs485_names[i], bridge_port);
+            return false;
+        }
+    }
+    return true;
+}
+
 // Validate all RS485 port settings (base fields + bridge subgroup) in the request JSON.
 // Returns false on the first invalid field.
 static bool validate_rs485_settings(cJSON *request_json)
@@ -551,7 +590,8 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
                                  ARRAY_SIZE(wifi_mappings), NULL) ||
         !validate_group_settings(cJSON_GetObjectItem(request_json, "ethernet"), ethernet_mappings,
                                  ARRAY_SIZE(ethernet_mappings), NULL) ||
-        !validate_rs485_settings(request_json)) {
+        !validate_rs485_settings(request_json) ||
+        !validate_port_collisions(request_json)) {
         ESP_LOGE(TAG, "Settings validation failed — rejecting request");
         cJSON_AddBoolToObject(*response_json, "success", false);
         cJSON_AddStringToObject(*response_json, "error", "Invalid settings value");

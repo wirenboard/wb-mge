@@ -16,7 +16,11 @@ from packet_injector import PacketInjector
 def _baseline(api):
     resp = api.update_settings({
         "cache_modbus_server_enabled": True,   # tests expect the server to be enabled
-        "cache_modbus_port": 502,              # known value; multimaster test will change it to 50504
+        # Distinct from the RS-485 bridge gateway ports (502/503): the firmware now
+        # rejects a cache_modbus_port that collides with a bridge port, and sharing one
+        # leaves the cache server and the gateway fighting over the same TCP port across
+        # a long no-reboot run. 504 is the cache default; multimaster test changes it to 50504.
+        "cache_modbus_port": 504,
         "cache_value_timeout_s": 60,           # large enough so that entries do not expire
     })
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
@@ -437,3 +441,52 @@ def test_cache_json_fields(api):
         if original_port_mode is not None:
             api.set_port_mode(1, original_port_mode)
             print(f"✓ Port 1 mode restored to {original_port_mode}")
+
+
+def test_cache_bridge_port_collision_rejected(api):
+    """The firmware must reject any settings change that would put the cache Modbus
+    server and an RS-485 bridge gateway on the SAME TCP port, and must stay healthy
+    after the rejection. Regression for the cache(502)/bridge(502) collision that, in a
+    long no-reboot run, left one service unable to bind (listen() -> EADDRINUSE) and a
+    stuck listen socket. Reboots used to mask it by resetting cache_modbus_port to 504.
+    """
+    try:
+        # Known, non-colliding baseline: RS-485 port-1 bridge gateway on 1502, cache on 1504.
+        r = api.update_settings({"rs485_1": {"bridge": {"port": 1502}}, "cache_modbus_port": 1504})
+        assert r.status_code == 200 and r.json().get("success") is True, \
+            f"baseline setup failed: {r.status_code} {r.text}"
+
+        # 1) Setting cache_modbus_port to the bridge port must be rejected.
+        r = api.update_settings({"cache_modbus_port": 1502})
+        assert r.json().get("success") is False, \
+            "cache_modbus_port equal to the RS-485 bridge port must be rejected"
+
+        # 2) Setting the bridge port to the current cache port must be rejected.
+        r = api.update_settings({"rs485_1": {"bridge": {"port": 1504}}})
+        assert r.json().get("success") is False, \
+            "RS-485 bridge port equal to cache_modbus_port must be rejected"
+
+        # 3) Setting both to the same value in one request must be rejected.
+        r = api.update_settings({"rs485_1": {"bridge": {"port": 1600}}, "cache_modbus_port": 1600})
+        assert r.json().get("success") is False, \
+            "cache_modbus_port and bridge port set to the same value in one request must be rejected"
+
+        # 4) None of the rejected requests changed anything.
+        s = api.get_settings().json()
+        assert s.get("cache_modbus_port") == 1504, \
+            f"cache_modbus_port must be unchanged after rejections, got {s.get('cache_modbus_port')}"
+        assert s.get("rs485_1", {}).get("bridge", {}).get("port") == 1502, \
+            f"bridge port must be unchanged after rejections, got {s.get('rs485_1', {}).get('bridge', {}).get('port')}"
+
+        # 5) The device stays healthy after the rejected collisions.
+        assert api.get_info().status_code == 200, "device must stay healthy after rejected collisions"
+
+        # 6) A distinct, non-colliding change still works (positive control).
+        r = api.update_settings({"cache_modbus_port": 1505})
+        assert r.json().get("success") is True, "a non-colliding cache_modbus_port change must be accepted"
+
+        print("✓ Cache/bridge port collisions rejected; non-colliding change accepted; device healthy")
+    finally:
+        # Restore defaults in a collision-free order (bridge first, then cache).
+        api.update_settings({"rs485_1": {"bridge": {"port": 502}}})
+        api.update_settings({"cache_modbus_port": 504})

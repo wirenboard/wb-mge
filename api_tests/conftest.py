@@ -1,5 +1,6 @@
 """Pytest configuration and shared fixtures for WB-MGE API tests"""
 
+import os
 import signal
 import socket
 import subprocess
@@ -15,6 +16,53 @@ from rtu_slave_helpers import ModbusRtuSlaveThread
 PROJECT_ROOT = Path(__file__).parent.parent
 QEMU_READY_TIMEOUT = 120
 QEMU_READY_INTERVAL = 2
+
+# Test files that reboot/restart the device (which resets the heap). They are
+# deferred to the very end of the run by pytest_collection_modifyitems so the rest
+# of the suite executes as one continuous, no-reboot working session. That long
+# session is what 00_test_heap_session.py brackets to detect heap leaks.
+# A test may also opt in via @pytest.mark.reboot (module- or function-level).
+REBOOT_TEST_FILES = {
+    "14_test_reboot.py",
+    "22_test_ota.py",
+    "30_test_wifi_perm_disable.py",
+    "33_test_auth_settings.py",
+    "40_test_web_port.py",
+    "42_test_sniffer_cache_overlays_e2e.py",
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    """Order the run as:
+        [heap baseline] + [continuous no-reboot body] + [heap-final leak check] + [reboot tests]
+
+    Reboot tests are pushed to the end so the heap baseline/final pair brackets one
+    long, uninterrupted working session (a reboot would reset the heap and void the
+    leak comparison). Ordering is stable within each group, so the body keeps its
+    original numeric file order. No-op for partial selections that contain neither
+    heap marker (e.g. running a single test file).
+    """
+    def basename(item):
+        return os.path.basename(str(getattr(item, "fspath", "")))
+
+    def is_reboot(item):
+        return item.get_closest_marker("reboot") is not None or basename(item) in REBOOT_TEST_FILES
+
+    baseline, body, final, reboot = [], [], [], []
+    for it in items:
+        if it.get_closest_marker("heap_baseline"):
+            baseline.append(it)
+        elif it.get_closest_marker("heap_final"):
+            final.append(it)
+        elif is_reboot(it):
+            reboot.append(it)
+        else:
+            body.append(it)
+
+    # Only reorder when the heap-session bracket is actually present; otherwise leave
+    # the user's selection untouched (e.g. `pytest 14_test_reboot.py` alone).
+    if baseline or final:
+        items[:] = baseline + body + final + reboot
 
 
 def pytest_addoption(parser):
@@ -206,6 +254,20 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
             assert resp.status_code == 200, \
                 f"Failed to disable port {port_num}: {resp.status_code}"
             time.sleep(0.3)
+
+            # Step 3.5: free the target TCP port if the cache Modbus server holds it.
+            # A bridge gateway and the cache server cannot share a port (the firmware
+            # rejects such a config). In a long no-reboot run an earlier test may have
+            # left the cache server on this very port (50504 is the shared forwarded
+            # test port reused by both), so disable it before binding the bridge.
+            # Without a reboot to reset it, set_port_mode(tcp_bridge) would otherwise
+            # hit listen() EADDRINUSE / a rejected settings write.
+            if (original_settings.get("cache_modbus_server_enabled")
+                    and original_settings.get("cache_modbus_port") == bridge_port):
+                resp = api.update_settings({"cache_modbus_server_enabled": False})
+                assert resp.status_code == 200 and resp.json().get("success") is True, \
+                    f"Failed to free port {bridge_port} from the cache server: {resp.text}"
+                time.sleep(0.5)
 
             # Step 4: apply full RS-485 config with bridge sub-object
             port_settings = dict(original_settings.get(rs485_key, {}))

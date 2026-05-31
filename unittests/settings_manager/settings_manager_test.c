@@ -587,11 +587,14 @@ void test_cache_server_restarted_on_port_change_when_enabled(void)
         "Cache server enabled, port changed → deinit+init on the new port");
     LOG_MESSAGE();
 
-    mock_cache_modbus_server_set_running_port(502);
+    // Use ports distinct from the RS-485 bridge gateway defaults (502/503): the cache
+    // server cannot share a port with a bridge gateway (validate_port_collisions), so a
+    // port-change restart test must move between two non-bridge ports.
+    mock_cache_modbus_server_set_running_port(1502);
     setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
-    setting_items_save(KEY_CACHE_MODBUS_PORT, "502");
+    setting_items_save(KEY_CACHE_MODBUS_PORT, "1502");
 
-    cJSON *req = make_request_int("cache_modbus_port", 503);
+    cJSON *req = make_request_int("cache_modbus_port", 1503);
     cJSON *resp = NULL;
 
     esp_err_t ret = settings_process_request_json(req, &resp);
@@ -603,7 +606,7 @@ void test_cache_server_restarted_on_port_change_when_enabled(void)
         "cache_modbus_server_deinit must be called exactly once when the port changes");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
         "cache_modbus_server_init must be called exactly once when the port changes");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(503, mock_cache_modbus_server_init_last_port,
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1503, mock_cache_modbus_server_init_last_port,
         "cache_modbus_server_init must be called with the NEW port");
 
     cJSON_Delete(req);
@@ -634,6 +637,113 @@ void test_cache_server_uses_default_port_when_configured_port_zero(void)
         "cache_modbus_server_init must be called exactly once");
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_MODBUS_SERVER_PORT, mock_cache_modbus_server_init_last_port,
         "configured port 0 must fall back to CACHE_MODBUS_SERVER_PORT");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// -------------------------------------------------------------------
+// Port-collision validation (cache Modbus server vs RS-485 bridge gateway)
+// -------------------------------------------------------------------
+
+// cache_modbus_port equal to an RS-485 bridge port (taken from NVS) must be rejected:
+// the cache server and a bridge gateway cannot listen on the same TCP port.
+void test_cache_port_equal_bridge_port_from_nvs_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "cache_modbus_port == bridge_port_1 (from NVS) -> success:false");
+    LOG_MESSAGE();
+
+    // NVS defaults seeded by the mock: bridge_port_1 = 502.
+    cJSON *req = make_request_int("cache_modbus_port", 502);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "settings_process_request_json must return ESP_OK so HTTP layer sends the error JSON");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "cache_modbus_port equal to an RS-485 bridge gateway port must be rejected");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// cache_modbus_port and an RS-485 bridge port set to the SAME value in one request
+// must be rejected (the bridge port is taken from the request, not NVS).
+void test_cache_and_bridge_same_port_one_request_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "cache_modbus_port == rs485_1.bridge.port in one request -> success:false");
+    LOG_MESSAGE();
+
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON *bridge = cJSON_CreateObject();
+    cJSON_AddNumberToObject(bridge, "port", 1700);
+    cJSON_AddItemToObject(rs485, "bridge", bridge);
+    cJSON_AddItemToObject(req, "rs485_1", rs485);
+    cJSON_AddNumberToObject(req, "cache_modbus_port", 1700);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "settings_process_request_json must return ESP_OK so HTTP layer sends the error JSON");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "cache_modbus_port and a bridge port set to the same value in one request must be rejected");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// cache_modbus_port distinct from both RS-485 bridge ports must be accepted.
+void test_cache_port_distinct_from_bridge_accepted(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "cache_modbus_port distinct from bridge ports -> success:true");
+    LOG_MESSAGE();
+
+    // NVS defaults: bridge_port_1 = 502, bridge_port_2 = 503; 1234 collides with neither.
+    cJSON *req = make_request_int("cache_modbus_port", 1234);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "cache_modbus_port distinct from both bridge ports must be accepted");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// A disabled cache Modbus server binds nothing, so its port may equal a bridge port.
+void test_cache_port_equal_bridge_when_server_disabled_accepted(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "cache_modbus_port == bridge port but cache server disabled -> success:true");
+    LOG_MESSAGE();
+
+    // Disable the cache server; bridge_port_1 stays 502 (NVS default).
+    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "false");
+    cJSON *req = make_request_int("cache_modbus_port", 502);  // == bridge_port_1, but server off
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "cache_modbus_port may equal a bridge port when the cache server is disabled");
 
     cJSON_Delete(req);
     cJSON_Delete(resp);
@@ -672,6 +782,12 @@ int main(void)
     RUN_TEST(test_cache_server_no_op_when_already_running_and_enabled);
     RUN_TEST(test_cache_server_restarted_on_port_change_when_enabled);
     RUN_TEST(test_cache_server_uses_default_port_when_configured_port_zero);
+
+    // Port-collision validation (cache Modbus server vs RS-485 bridge gateway)
+    RUN_TEST(test_cache_port_equal_bridge_port_from_nvs_rejected);
+    RUN_TEST(test_cache_and_bridge_same_port_one_request_rejected);
+    RUN_TEST(test_cache_port_distinct_from_bridge_accepted);
+    RUN_TEST(test_cache_port_equal_bridge_when_server_disabled_accepted);
 
     return UNITY_END();
 }

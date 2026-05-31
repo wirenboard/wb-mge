@@ -123,19 +123,34 @@ class WBMGEAPI:
         """Get device hostname"""
         return self.session.get(f"{self.base_url}/hostname", timeout=10)
 
-    def set_port_mode(self, port_num, mode):
+    def set_port_mode(self, port_num, mode, settle_retries=2, settle_s=0.5):
         """Set port mode via POST /ports/{port_num}/mode
 
         30s timeout: a port-mode change runs serial+bridge deinit and reinit,
         which under host CPU contention (QEMU on a busy host) can take several
         seconds — especially when the listen socket from the previous mode is
         still being released by lwIP and create_listen_socket() retries.
+
+        Transient-ESP_FAIL retry: under sustained mode switching without a reboot
+        (the firmware's create_listen_socket retries bind() a few times at 100 ms
+        while the previous mode's TCP pcb is still being released by lwIP, then
+        gives up and the handler returns HTTP 400 {"error":"ESP_FAIL"}), wait and
+        retry to give lwIP more time to free the socket. Only this specific
+        transient failure is retried; a 200 or any other 400 (e.g. validation
+        errors on a bad mode string) is returned immediately and unchanged.
         """
-        return self.session.post(
-            f"{self.base_url}/ports/{port_num}/mode",
-            json={"mode": mode},
-            timeout=30
-        )
+        resp = None
+        for attempt in range(settle_retries + 1):
+            resp = self.session.post(
+                f"{self.base_url}/ports/{port_num}/mode",
+                json={"mode": mode},
+                timeout=30
+            )
+            if resp.status_code != 400 or "ESP_FAIL" not in resp.text:
+                return resp
+            if attempt < settle_retries:
+                time.sleep(settle_s)
+        return resp
 
     def set_port_cache(self, port_num, enabled):
         """Enable/disable the per-port cache overlay via POST /ports/{port_num}/cache.
