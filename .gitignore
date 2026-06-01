@@ -30,6 +30,7 @@ managed_components/
 
 # Coverage reports
 **/covr_report/
+*.gcov
 
 
 __pycache__
