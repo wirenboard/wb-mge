@@ -373,6 +373,117 @@ def test_self_unit_reboot_reason_plausible(api, gateway_slave):
 
 
 @pytest.mark.qemu
+def test_self_unit_ram_stack_diagnostics_kb(api, gateway_slave):
+    """FC04 121 voltage + 65504..65507 RAM/stack diagnostics at unit 0xFF are sane KB values.
+
+    This is the regression guard for the bytes->KB fix in mb_device.c: free/used
+    RAM used to be reported in BYTES, which saturated the u16 register at 0xFFFF
+    (~64 KB) on an ESP32 with hundreds of KB of internal RAM. The assertions below
+    (free_ram_kb > 64 and free_ram_kb < 0xFFFF) would FAIL if the values were still
+    byte-based, locking in the fix at the e2e level.
+    """
+    # 121 supply voltage (mV). The QEMU voltage source may be a mock, so keep
+    # this loose — just prove the register responds with a sane u16 value.
+    _tid, unit_id, resp_fc, payload = read_self_regs(
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 121, 1
+    )
+    assert not (resp_fc & 0x80), \
+        f"supply voltage read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
+    assert unit_id == SELF_UNIT_ID, \
+        f"echoed unit_id mismatch: expected 0x{SELF_UNIT_ID:02X}, got 0x{unit_id:02X}"
+    regs = regs_from_payload(payload)
+    assert len(regs) == 1, f"expected 1 voltage register, got {regs}"
+    mv = regs[0]
+    assert 0 <= mv <= 65535, f"supply voltage out of u16 range: {mv}"
+
+    # 65504..65507 RAM/stack diagnostics (contiguous block, all in KB).
+    _tid, unit_id, resp_fc, payload = read_self_regs(
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 65504, 4
+    )
+    assert not (resp_fc & 0x80), \
+        f"RAM/stack read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
+    assert unit_id == SELF_UNIT_ID, \
+        f"echoed unit_id mismatch: expected 0x{SELF_UNIT_ID:02X}, got 0x{unit_id:02X}"
+    regs = regs_from_payload(payload)
+    assert len(regs) == 4, f"expected 4 registers (65504..65507), got {regs}"
+    max_stack_kb, free_ram_kb, used_ram_kb, stack_size_kb = regs
+
+    # --- REGRESSION GUARD (bytes -> KB) --- #
+    # Free internal RAM on the ESP32 is well over 64 KB; a value <= 64 means the
+    # register is still byte-based (and a byte count would have saturated at 0xFFFF).
+    assert free_ram_kb > 64, (
+        f"free RAM reg 65505 = {free_ram_kb} (expected > 64 KB); "
+        "a value this small means RAM is still reported in BYTES, not KB"
+    )
+    # 0xFFFF is the saturated u16 byte value; a real KB reading must be below it.
+    assert free_ram_kb < 0xFFFF, (
+        f"free RAM reg 65505 = {free_ram_kb} == 0xFFFF (saturated); "
+        "a real KB reading must be below the u16 ceiling — looks byte-based"
+    )
+
+    # Plausibility for an ESP32 internal-RAM / task-stack budget.
+    assert used_ram_kb > 0, f"used RAM reg 65506 = {used_ram_kb} (expected > 0)"
+    assert used_ram_kb + free_ram_kb < 2000, (
+        f"used+free internal RAM = {used_ram_kb + free_ram_kb} KB exceeds the few "
+        "hundred KB of ESP32 internal RAM — looks byte-based"
+    )
+    assert 1 <= stack_size_kb <= 64, (
+        f"stack size reg 65507 = {stack_size_kb} KB out of plausible range 1..64"
+    )
+    assert max_stack_kb <= stack_size_kb, (
+        f"max used stack {max_stack_kb} KB exceeds total stack size {stack_size_kb} KB"
+    )
+    print("✓ self-unit RAM/stack KB: free=%d used=%d stack_size=%d max_used=%d voltage=%dmV"
+          % (free_ram_kb, used_ram_kb, stack_size_kb, max_stack_kb, mv))
+
+
+@pytest.mark.qemu
+def test_self_unit_stats_block(api, gateway_slave):
+    """FC04 336..342 statistics block at unit 0xFF responds with sane u16 values.
+
+    In gateway-only mode the multimaster cache is typically inactive, so the
+    counters may legitimately be 0. The point of this test is that the whole
+    contiguous block RESPONDS without an exception and the values are sane u16s
+    (devices_on_bus <= 247, cache timeout matches /settings when present).
+    """
+    _tid, unit_id, resp_fc, payload = read_self_regs(
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 336, 7
+    )
+    assert not (resp_fc & 0x80), \
+        f"stats block read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
+    assert unit_id == SELF_UNIT_ID, \
+        f"echoed unit_id mismatch: expected 0x{SELF_UNIT_ID:02X}, got 0x{unit_id:02X}"
+    regs = regs_from_payload(payload)
+    assert len(regs) == 7, f"expected 7 registers (336..342), got {regs}"
+    cache_timeout, pkt_hi, pkt_lo, age_hi, age_lo, devices, poll_ppm = regs
+
+    # u32 reconstructions (MSW-first). >= 0 is always true for a u16 combine —
+    # the real assertion here is "the registers responded without an exception".
+    packets = (pkt_hi << 16) | pkt_lo
+    age = (age_hi << 16) | age_lo
+    assert packets >= 0
+    assert age >= 0
+
+    assert 0 <= devices <= 247, (
+        f"devices_on_bus reg 341 = {devices} out of range 0..247 (Modbus slave addresses)"
+    )
+    assert cache_timeout < 0xFFFF, (
+        f"cache timeout reg 336 = {cache_timeout} == 0xFFFF — implausible for a u16 setting"
+    )
+
+    # Cross-check against /settings when the key is present.
+    cfg_timeout = api.get_settings().json().get("cache_value_timeout_s")
+    if cfg_timeout is not None:
+        assert cache_timeout == cfg_timeout, (
+            f"cache timeout reg 336 = {cache_timeout} != /settings "
+            f"cache_value_timeout_s = {cfg_timeout}"
+        )
+
+    print("✓ self-unit stats block 336-342: timeout=%d packets=%d last_pkt_age=%d devices=%d poll_ppm=%d"
+          % (cache_timeout, packets, age, devices, poll_ppm))
+
+
+@pytest.mark.qemu
 def test_self_unit_undefined_addr_exception(api, gateway_slave):
     """FC04 at an undefined address (500) at unit 0xFF -> exception 0x02."""
     _tid, unit_id, resp_fc, payload = read_self_regs(
