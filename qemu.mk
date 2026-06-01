@@ -177,6 +177,7 @@ qemu-coverage-report:
 	    --exclude 'main/coverage_dump\.c' \
 	    --txt $(COVERAGE_OUT_DIR)/summary.txt \
 	    --html-details $(COVERAGE_OUT_DIR)/index.html \
+	    --json $(COVERAGE_OUT_DIR)/qemu_covr.json \
 	    --print-summary \
 	    $(COVERAGE_FW_OBJDIR)
 	@echo ''

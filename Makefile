@@ -293,10 +293,47 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all test unittests lint-frontend lint-c lint-comments test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash
+.PHONY: all test unittests lint-frontend lint-c lint-comments test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash coverage-combined
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk
 
 # Include QEMU targets
 include qemu.mk
+
+#######################################
+# Combined coverage (unit tests + QEMU e2e)
+#######################################
+
+# Merge the host unit-test gcovr tracefiles with the QEMU e2e tracefile into one
+# report. The two datasets come from different compilers, so they are merged at the
+# gcovr JSON level (not raw .gcda). NOTE: line/function coverage merges as a true
+# union (covered by unit tests OR e2e); branch coverage is pooled across the two
+# compilers, not unioned, so treat combined branch numbers as indicative only.
+#
+# Prerequisites (run these first; this target only merges existing tracefiles):
+#   make coverage        # unit-test tracefiles  -> unittests/*/covr_report/**/*_covr.json
+#   make qemu-coverage   # e2e tracefile         -> build/qemu_coverage/qemu_covr.json
+COMBINED_COVERAGE_DIR  := build/combined_coverage
+QEMU_COVERAGE_JSON     := build/qemu_coverage/qemu_covr.json
+
+coverage-combined:
+	@test -f $(QEMU_COVERAGE_JSON) || { echo "ERROR: $(QEMU_COVERAGE_JSON) missing. Run 'make qemu-coverage' first."; exit 1; }
+	@UNIT_JSONS=$$($(FIND) unittests -path '*/covr_report/*' -name '*_covr.json'); \
+	    test -n "$$UNIT_JSONS" || { echo "ERROR: no unit-test tracefiles found. Run 'make coverage' first."; exit 1; }; \
+	    mkdir -p $(COMBINED_COVERAGE_DIR); \
+	    ADD_ARGS=""; for j in $$UNIT_JSONS; do ADD_ARGS="$$ADD_ARGS -a $$j"; done; \
+	    $(EIM_ACTIVATE) && gcovr --root $(CURDIR) \
+	        -a $(QEMU_COVERAGE_JSON) $$ADD_ARGS \
+	        --filter 'main/.*\.c' \
+	        --exclude 'main/frontend/.*' \
+	        --exclude 'main/coverage_dump\.c' \
+	        --txt $(COMBINED_COVERAGE_DIR)/summary.txt \
+	        --html-details $(COMBINED_COVERAGE_DIR)/index.html \
+	        --print-summary
+	@echo ''
+	@echo '============== COMBINED COVERAGE (unit tests + QEMU e2e) =============='
+	@cat $(COMBINED_COVERAGE_DIR)/summary.txt
+	@echo '======================================================================'
+	@echo 'HTML report: $(COMBINED_COVERAGE_DIR)/index.html'
+	@echo 'NOTE: line/function coverage is a union; branch coverage is pooled across compilers (indicative only).'

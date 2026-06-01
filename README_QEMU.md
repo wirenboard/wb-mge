@@ -121,6 +121,37 @@ Output: HTML report at `build/qemu_coverage/index.html`, text summary at
 You can regenerate the report from an existing stream without re-running QEMU:
 `make qemu-coverage-report`.
 
+## Combined coverage (`make coverage-combined`)
+
+`make coverage-combined` merges the host **unit-test** coverage with the QEMU
+**e2e** firmware coverage into a single report, so you can see which lines of the
+`main/` component are exercised by either layer.
+
+The two datasets come from different compilers (unit tests: host gcc/clang; QEMU
+firmware: xtensa-esp-elf gcc). Their raw `.gcno/.gcda` are version-incompatible
+and cannot be merged with `gcov-tool`; they are merged at the gcovr JSON-tracefile
+level instead.
+
+Three-step flow (the combined target only merges existing tracefiles — it does
+not re-run the suites):
+
+```bash
+make coverage           # unit-test tracefiles  -> unittests/*/covr_report/**/*_covr.json
+make qemu-coverage      # e2e tracefile         -> build/qemu_coverage/qemu_covr.json
+make coverage-combined  # merge -> build/combined_coverage/index.html
+```
+
+Output: HTML report at `build/combined_coverage/index.html`, text summary at
+`build/combined_coverage/summary.txt`.
+
+**Caveat:** line and function coverage merge as a true union (covered by the unit
+tests **or** the e2e suite). Branch coverage does **not** merge cleanly: the two
+compilers instrument branches differently on the same source line (different branch
+count and numbering), so gcovr cannot match them up — the per-line branches end up
+adding together instead of overlapping. The combined report is therefore
+authoritative for line/function coverage, while combined branch numbers are
+indicative only.
+
 ## 🌐 Web Interface Features
 
 Once running, access these endpoints:

@@ -37,6 +37,8 @@ The `make qemu-test` target:
 
 `make qemu-coverage` builds an instrumented firmware, runs the suite (reboot tests excluded), pulls `.gcda` over `GET /gcov`, and writes a branch-coverage report to `build/qemu_coverage/index.html`.
 
+`make coverage-combined` merges the host unit-test tracefiles (`make coverage`) with the QEMU e2e tracefile (`make qemu-coverage`) into one report at `build/combined_coverage/index.html` (merge-only; line/function coverage is a union, branch coverage is not comparable across the two compilers and is indicative only).
+
 ## Collecting (listing) QEMU API tests without running them
 
 To verify that pytest can find and collect all tests in a file — without
