@@ -2208,6 +2208,286 @@ void test_cache_json_handler_two_entries_comma(void)
     }
 }
 
+/* ---- CM-U-050: get_stats — NULL out pointer, no crash, no lock ----------- */
+
+/* Verify that cache_multimaster_get_stats(NULL):
+ *   - does not crash
+ *   - returns BEFORE taking the cache mutex (the `if (out == NULL) return;`
+ *     guard is the very first statement, ahead of the memset and the lock).
+ * The mutex take-counter must stay at 0: a regression that moved the NULL
+ * check after the lock would take (and on a real target, leak) the mutex. */
+void test_cache_multimaster_get_stats_null_out(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-050: get_stats NULL out — early return before lock");
+    LOG_MESSAGE();
+
+    /* Pre-condition: a fully initialised+enabled module so a NULL-check
+     * regression really would reach (and take) the mutex. */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    int take_before = mock_xSemaphoreTake_called;
+
+    /* Act: must not crash with a NULL output pointer */
+    cache_multimaster_get_stats(NULL);
+
+    /* The mutex must NOT have been taken: the NULL guard returns first */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        take_before,
+        mock_xSemaphoreTake_called,
+        "get_stats(NULL) must return before taking the cache mutex"
+    );
+}
+
+/* ---- CM-U-051: get_stats — module not initialised, zeroes output --------- */
+
+/* Verify that cache_multimaster_get_stats() with an uninitialised module
+ * (s_cache_mutex == NULL, s_pool == NULL after setUp's reset):
+ *   - zeroes all four output fields (proves the memset path runs), and
+ *   - does NOT take the cache mutex (NULL-mutex guard returns first).
+ * The output struct is pre-filled with a 0xAA sentinel so that "all zero"
+ * is a real observation, not the default. */
+void test_cache_multimaster_get_stats_not_initialized(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-051: get_stats not initialised — zeroes output, no lock");
+    LOG_MESSAGE();
+
+    /* setUp() called cache_multimaster_test_reset(): mutex and pool are NULL.
+     * Do NOT call init()/enable() here. */
+
+    cache_multimaster_stats_t stats;
+    memset(&stats, 0xAA, sizeof(stats)); /* non-zero sentinel */
+
+    int take_before = mock_xSemaphoreTake_called;
+
+    /* Act */
+    cache_multimaster_get_stats(&stats);
+
+    /* All four fields must be zeroed by the memset path */
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, stats.packets_processed,
+        "packets_processed must be 0 when module is not initialised");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, stats.last_packet_age_s,
+        "last_packet_age_s must be 0 when module is not initialised");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, stats.map_age_s,
+        "map_age_s must be 0 when module is not initialised");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, stats.devices_on_bus,
+        "devices_on_bus must be 0 when module is not initialised");
+
+    /* NULL-mutex guard returns before the lock */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        take_before,
+        mock_xSemaphoreTake_called,
+        "get_stats must not take the mutex when s_cache_mutex is NULL"
+    );
+}
+
+/* ---- CM-U-052: get_stats — enabled, empty pool --------------------------- */
+
+/* Verify that cache_multimaster_get_stats() right after init()+enable() with
+ * the clock held fixed reports a fully idle state: no devices, no packets,
+ * and both ages 0 (reading at the exact clock value enable() used for the
+ * reset timestamp, so now - reset_us == 0). */
+void test_cache_multimaster_get_stats_enabled_empty(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-052: get_stats enabled empty pool — all zero");
+    LOG_MESSAGE();
+
+    /* Fix the clock so enable() records s_reset_us == this value */
+    mock_esp_timer_get_time_value = 7000000; /* 7 s */
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Read at the same clock value: now - reset_us == 0 */
+    cache_multimaster_stats_t stats;
+    memset(&stats, 0xAA, sizeof(stats));
+    cache_multimaster_get_stats(&stats);
+
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, stats.devices_on_bus,
+        "Empty pool must report devices_on_bus == 0");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, stats.packets_processed,
+        "No responses stored: packets_processed == 0");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, stats.last_packet_age_s,
+        "No packet seen: last_packet_age_s == 0");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, stats.map_age_s,
+        "Read at the enable() clock value: map_age_s == 0");
+}
+
+/* ---- CM-U-053: get_stats — unique slave-id counting ---------------------- */
+
+/* Verify devices_on_bus counts DISTINCT slave_ids, not used pool entries.
+ * Seed:
+ *   - slave 200 at two different addresses (two used entries, ONE id) — this
+ *     duplicate is the load-bearing case: a "count used entries" bug would
+ *     report >=4 instead of 3,
+ *   - slave 0   (low bitmap edge: seen[0] bit 0),
+ *   - slave 255 (high bitmap edge: seen[31] bit 7).
+ * Four used entries, three distinct ids → devices_on_bus must be 3. */
+void test_cache_multimaster_get_stats_unique_slaves(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-053: get_stats unique slave-id counting (dup id, bitmap edges)");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* slave 200, FC03, address 10 */
+    cache_multimaster_on_request(0, 200, 3, 10, 1);
+    uint8_t d1[] = { 200, 0x03, 2, 0x00, 0x01 };
+    cache_multimaster_on_response(0, 200, 3, d1, sizeof(d1), 1000000);
+
+    /* slave 200 again, FC03, DIFFERENT address 20 — second used entry, same id */
+    cache_multimaster_on_request(0, 200, 3, 20, 1);
+    uint8_t d2[] = { 200, 0x03, 2, 0x00, 0x02 };
+    cache_multimaster_on_response(0, 200, 3, d2, sizeof(d2), 1000000);
+
+    /* slave 0 (low bitmap edge), FC03, address 0 */
+    cache_multimaster_on_request(0, 0, 3, 0, 1);
+    uint8_t d3[] = { 0, 0x03, 2, 0x00, 0x03 };
+    cache_multimaster_on_response(0, 0, 3, d3, sizeof(d3), 1000000);
+
+    /* slave 255 (high bitmap edge: seen[31] bit 7), FC03, address 0 */
+    cache_multimaster_on_request(0, 255, 3, 0, 1);
+    uint8_t d4[] = { 255, 0x03, 2, 0x00, 0x04 };
+    cache_multimaster_on_response(0, 255, 3, d4, sizeof(d4), 1000000);
+
+    /* Sanity: confirm all four entries are really stored (4 used pool slots) */
+    uint16_t v = 0;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(200, 3, 10, &v, 0), "slave 200 @10 must be stored");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(200, 3, 20, &v, 0), "slave 200 @20 must be stored");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(0, 3, 0, &v, 0), "slave 0 @0 must be stored");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(255, 3, 0, &v, 0), "slave 255 @0 must be stored");
+
+    cache_multimaster_stats_t stats;
+    memset(&stats, 0xAA, sizeof(stats));
+    cache_multimaster_get_stats(&stats);
+
+    /* 4 used entries but only 3 distinct ids (200, 0, 255) */
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(3, stats.devices_on_bus,
+        "devices_on_bus must count DISTINCT slave_ids (3), not used entries (4)");
+
+    /* Four successful on_response calls → four stored packets */
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4, stats.packets_processed,
+        "packets_processed must equal the number of successful on_response calls (4)");
+}
+
+/* ---- CM-U-054: get_stats — exact age math -------------------------------- */
+
+/* Verify the age arithmetic with values chosen so that the two ages are
+ * DIFFERENT integers and neither equals NOW/1e6:
+ *   - enable() at T0 = 1_000_000   → s_reset_us = 1_000_000
+ *   - on_response timestamp TP = 5_500_000 → s_last_packet_us = 5_500_000
+ *   - read at NOW = 12_750_000
+ *     map_age_s         = (12_750_000 - 1_000_000) / 1e6 = 11
+ *     last_packet_age_s = (12_750_000 - 5_500_000) / 1e6 = 7
+ *     NOW/1e6 = 12 (distinct from both)
+ * Catches a wrong divisor, swapped fields, wrong subtraction order, or a
+ * truncation mistake. */
+void test_cache_multimaster_get_stats_age_math(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-054: get_stats exact age math");
+    LOG_MESSAGE();
+
+    /* enable() at T0 sets s_reset_us = T0 */
+    mock_esp_timer_get_time_value = 1000000; /* T0 = 1 s */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* One response with explicit capture timestamp TP = 5.5 s */
+    cache_multimaster_on_request(0, 17, 3, 0, 1);
+    uint8_t d[] = { 17, 0x03, 2, 0x12, 0x34 };
+    cache_multimaster_on_response(0, 17, 3, d, sizeof(d), 5500000); /* TP */
+
+    /* Read the stats at NOW = 12.75 s */
+    mock_esp_timer_get_time_value = 12750000; /* NOW */
+
+    cache_multimaster_stats_t stats;
+    memset(&stats, 0xAA, sizeof(stats));
+    cache_multimaster_get_stats(&stats);
+
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(11, stats.map_age_s,
+        "map_age_s = (NOW - reset_us)/1e6 = (12.75-1.0)s = 11");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(7, stats.last_packet_age_s,
+        "last_packet_age_s = (NOW - last_pkt_us)/1e6 = (12.75-5.5)s = 7");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, stats.packets_processed,
+        "packets_processed must equal the single on_response call");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, stats.devices_on_bus,
+        "one distinct slave_id stored → devices_on_bus == 1");
+}
+
+/* ---- CM-U-055: get_stats — age guard branches ---------------------------- */
+
+/* Exercise both age guards (timestamp > 0 && now >= timestamp):
+ *  (a) now < last-packet timestamp → last_packet_age_s clamps to 0, while a
+ *      valid map_age_s is still computed in the same call (now >= reset_us).
+ *  (b) a fresh enable() with NO response leaves s_last_packet_us == 0, so even
+ *      with a large NOW the `timestamp > 0` guard forces last_packet_age_s == 0
+ *      WHILE map_age_s != 0 (reset_us > 0) — proving the two guards act
+ *      independently within a single get_stats() call. */
+void test_cache_multimaster_get_stats_age_guards(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-055: get_stats age guard branches");
+    LOG_MESSAGE();
+
+    /* --- Sub-test (a): now < last_pkt_us → last_packet_age_s == 0 --- */
+    mock_esp_timer_get_time_value = 1000000; /* enable at T0 = 1 s → reset_us = 1 s */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Store a response whose capture timestamp is in the "future" (8 s) */
+    cache_multimaster_on_request(0, 9, 3, 0, 1);
+    uint8_t d[] = { 9, 0x03, 2, 0x00, 0x07 };
+    cache_multimaster_on_response(0, 9, 3, d, sizeof(d), 8000000); /* last_pkt_us = 8 s */
+
+    /* Read at NOW = 3 s: now (3) < last_pkt_us (8) → last_packet_age_s guard fires.
+     * map: now (3) >= reset_us (1) → map_age_s = (3-1)/1e6 = 2. */
+    mock_esp_timer_get_time_value = 3000000;
+    cache_multimaster_stats_t a;
+    memset(&a, 0xAA, sizeof(a));
+    cache_multimaster_get_stats(&a);
+
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, a.last_packet_age_s,
+        "now < last_pkt_us must clamp last_packet_age_s to 0 (now >= timestamp guard)");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, a.map_age_s,
+        "map_age_s must still compute normally: (3-1)s == 2");
+
+    /* --- Sub-test (b): fresh enable, no response, last_pkt_us == 0 --- */
+    cache_multimaster_test_reset();
+    mock_freertos_semaphore_reset();
+    mock_freertos_task_reset();
+    reset_malloc_tracking();
+
+    mock_esp_timer_get_time_value = 1000000; /* enable at T0 = 1 s → reset_us = 1 s */
+    cache_multimaster_init();
+    cache_multimaster_enable();
+    /* No on_response → s_last_packet_us stays 0 */
+
+    /* Large NOW = 20 s: map_age_s = (20-1) = 19 (reset_us > 0),
+     * last_packet_age_s == 0 because the `timestamp > 0` guard rejects the
+     * zero last_pkt_us — both guards evaluated in the SAME call. */
+    mock_esp_timer_get_time_value = 20000000;
+    cache_multimaster_stats_t b;
+    memset(&b, 0xAA, sizeof(b));
+    cache_multimaster_get_stats(&b);
+
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, b.last_packet_age_s,
+        "last_pkt_us == 0 must keep last_packet_age_s at 0 (timestamp > 0 guard)");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(19, b.map_age_s,
+        "map_age_s must be non-zero in the same call: (20-1)s == 19 (guards independent)");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, b.packets_processed,
+        "no responses stored → packets_processed == 0");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -2263,6 +2543,12 @@ int main(void)
     RUN_TEST(test_cache_json_handler_one_entry);
     RUN_TEST(test_cache_json_handler_type_chars);
     RUN_TEST(test_cache_json_handler_two_entries_comma);
+    RUN_TEST(test_cache_multimaster_get_stats_null_out);
+    RUN_TEST(test_cache_multimaster_get_stats_not_initialized);
+    RUN_TEST(test_cache_multimaster_get_stats_enabled_empty);
+    RUN_TEST(test_cache_multimaster_get_stats_unique_slaves);
+    RUN_TEST(test_cache_multimaster_get_stats_age_math);
+    RUN_TEST(test_cache_multimaster_get_stats_age_guards);
 
     return UNITY_END();
 }

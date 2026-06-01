@@ -92,6 +92,25 @@ static void decode_string(const uint8_t *buf, uint16_t count, char *out)
     out[count * 2] = '\0';
 }
 
+/* Assemble a raw Modbus TCP request frame (MBAP header + PDU) into buf:
+ * tid_net is stored verbatim (network order); the PDU is [fc][start_hi][start_lo]
+ * [count_hi][count_lo]. Returns the full frame length (MBAP_LEN + 5 = 13). */
+static size_t make_req(uint8_t *buf, uint16_t tid_net, uint8_t unit_id, uint8_t fc,
+                       uint16_t start, uint16_t count)
+{
+    mb_tcp_header_t *h = (mb_tcp_header_t *)buf;
+    h->transaction_id = tid_net;
+    h->protocol_id    = 0x0000;
+    h->length         = modbus_swap16(6u); /* unit_id + fc + 4 PDU bytes */
+    h->unit_id        = unit_id;
+    h->function       = fc;
+    buf[MBAP_LEN + 0] = (uint8_t)(start >> 8);
+    buf[MBAP_LEN + 1] = (uint8_t)(start & 0xFFu);
+    buf[MBAP_LEN + 2] = (uint8_t)(count >> 8);
+    buf[MBAP_LEN + 3] = (uint8_t)(count & 0xFFu);
+    return MBAP_LEN + 5u;
+}
+
 /* ---- setUp / tearDown ---------------------------------------------------- */
 
 void setUp(void)
@@ -560,6 +579,336 @@ void test_is_self(void)
     TEST_ASSERT_FALSE(mb_device_is_self(0xFEu));
 }
 
+/* ====================================================================== */
+/* TASK B: mb_device_handle_self_request (validation + dispatch)          */
+/* ====================================================================== */
+
+/* Decode the MBAP length field (network order) from a response buffer. */
+static uint16_t resp_mbap_length(const uint8_t *buf)
+{
+    const mb_tcp_header_t *hdr = (const mb_tcp_header_t *)buf;
+    return modbus_swap16(hdr->length);
+}
+
+/* ---- MBDEV-U-017: bad FC 0x06 -> exception 0x86/0x01 --------------------- */
+
+/* FC06 (write single register) is unsupported -> ILLEGAL_FUNCTION exception. */
+void test_self_req_bad_fc_06(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-017: self-req bad FC 0x06 -> exception");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    uint16_t tid_net = 0x3412;
+    size_t req_len = make_req(req, tid_net, DEV_UNIT_ID, 0x06u, 104u, 2u);
+
+    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x86u, resp[7]);  /* fc | 0x80          */
+    TEST_ASSERT_EQUAL_HEX8(0x01u, resp[8]);  /* ILLEGAL_FUNCTION   */
+    TEST_ASSERT_EQUAL_UINT16(3u, resp_mbap_length(resp));
+    const mb_tcp_header_t *hdr = (const mb_tcp_header_t *)resp;
+    TEST_ASSERT_EQUAL_HEX16(tid_net, hdr->transaction_id); /* echoed verbatim */
+}
+
+/* ---- MBDEV-U-018: bad FC 0x01 -> exception 0x81/0x01 --------------------- */
+
+void test_self_req_bad_fc_01(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-018: self-req bad FC 0x01 -> exception");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x01u, 104u, 2u);
+
+    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x81u, resp[7]);  /* fc | 0x80        */
+    TEST_ASSERT_EQUAL_HEX8(0x01u, resp[8]);  /* ILLEGAL_FUNCTION */
+}
+
+/* ---- MBDEV-U-019: truncated request -> exception 0x03 -------------------- */
+
+/* req_len == MBAP + 3 (one PDU byte short) with a valid FC -> ILLEGAL_DATA_VALUE. */
+void test_self_req_truncated(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-019: self-req truncated PDU -> exception 0x03");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_HOLDING, 104u, 2u);
+    size_t req_len = MBAP_LEN + 3u; /* one byte short of the 4 PDU bytes */
+
+    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x83u, resp[7]);  /* FC03 | 0x80        */
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);  /* ILLEGAL_DATA_VALUE */
+}
+
+/* ---- MBDEV-U-020: count == 0 -> exception 0x03 --------------------------- */
+
+void test_self_req_count_zero(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-020: self-req count==0 -> exception 0x03");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_INPUT, 104u, 0u);
+
+    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);  /* ILLEGAL_DATA_VALUE */
+}
+
+/* ---- MBDEV-U-021: count == 126 -> exception 0x03 ------------------------- */
+
+void test_self_req_count_too_big(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-021: self-req count==126 -> exception 0x03");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_INPUT, 104u, 126u);
+
+    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);  /* ILLEGAL_DATA_VALUE */
+}
+
+/* ---- MBDEV-U-022: count == 125 passes the gate, address bad -> 0x02 ------ */
+
+/* count==125 is the max allowed: the quantity gate must PASS, then the builder
+ * hits an undefined register (106) and returns ILLEGAL_DATA_ADDRESS (0x02),
+ * NOT ILLEGAL_DATA_VALUE (0x03). This distinguishes the two failure causes. */
+void test_self_req_count_max_addr_bad(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-022: self-req count==125 gate passes, addr bad -> 0x02");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_INPUT, 104u, 125u);
+
+    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x02u, resp[8]);  /* ILLEGAL_DATA_ADDRESS (count was accepted) */
+}
+
+/* ---- MBDEV-U-023: valid FC04 read -> success ADU matches builder --------- */
+
+/* FC04 uptime @104 count 2: the success ADU must byte-for-byte equal what
+ * mb_device_build_read_response produces for the same inputs. */
+void test_self_req_valid_fc04(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-023: self-req valid FC04 -> success ADU");
+    LOG_MESSAGE();
+
+    mock_esp_timer_get_time_value = 5000000ULL; /* 5 seconds */
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    uint16_t tid_net = 0x3412;
+    size_t req_len = make_req(req, tid_net, DEV_UNIT_ID, FC_READ_INPUT, 104u, 2u);
+
+    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+
+    /* total = MBAP(8) + byte_count_field(1) + data(4) = 13 */
+    TEST_ASSERT_EQUAL_UINT(13u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x04u, resp[7]); /* FC04 echoed (no exception bit) */
+    TEST_ASSERT_EQUAL_HEX8(4u, resp[8]);    /* byte count                     */
+
+    /* Compare against the direct builder output for identical inputs. */
+    uint8_t ref[260];
+    uint8_t exc = 0xAA;
+    size_t rn = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, tid_net,
+                                              104u, 2u, 0u, ref, &exc);
+    TEST_ASSERT_EQUAL_UINT(rn, n);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(ref, resp, n);
+}
+
+/* ---- MBDEV-U-024: valid FC03 signature read -> success ADU --------------- */
+
+void test_self_req_valid_fc03(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-024: self-req valid FC03 -> success ADU");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_HOLDING, 290u, 6u);
+
+    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 12u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[7]); /* FC03 echoed   */
+    TEST_ASSERT_EQUAL_HEX8(12u, resp[8]);   /* byte count    */
+}
+
+/* ====================================================================== */
+/* TASK C: close measured coverage gaps                                   */
+/* ====================================================================== */
+
+/* ---- MBDEV-U-025: firmware git-info string registers (REG_GIT_BASE) ------ */
+
+/* The git-info string field (220..244, 25 regs) packs sys_info.firmware_git_info.
+ * Read enough regs to span the string and decode it; also read the full 25-reg
+ * field so the upper bound and trailing zero-pad are exercised. */
+void test_git_info_string(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-025: FC04 firmware git-info string");
+    LOG_MESSAGE();
+
+    strcpy(sys_info.firmware_git_info, "g1a2b3c4_main");
+
+    uint8_t buf[260];
+    uint8_t exc = 0xAA;
+
+    /* 13 chars -> 7 regs cover the string + pad */
+    const uint16_t count = 7u;
+    size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                             220u, count, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + (size_t)count * 2u, n);
+
+    char decoded[64] = {0};
+    decode_string(buf, count, decoded);
+    TEST_ASSERT_EQUAL_STRING("g1a2b3c4_main", decoded);
+
+    /* Full 25-reg field: upper bound + trailing zero pad. */
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                      220u, 25u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 50u, n);
+    char full[64] = {0};
+    decode_string(buf, 25u, full);
+    TEST_ASSERT_EQUAL_STRING("g1a2b3c4_main", full); /* trailing zeros stripped by NUL */
+}
+
+/* ---- MBDEV-U-026: reboot-reason mapping (remaining ESP_RST_* codes) ------ */
+
+/* Exercise every reboot-reason branch not covered by MBDEV-U-013:
+ * DEEPSLEEP->1, INT_WDT->2, WDT->3, SW->4, PANIC->4, EXT->6, UNKNOWN->0. */
+void test_reboot_reason_all(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-026: FC04 reboot reason (remaining codes)");
+    LOG_MESSAGE();
+
+    uint8_t buf[260];
+    uint8_t exc = 0xAA;
+
+    struct { esp_reset_reason_t in; uint16_t out; } cases[] = {
+        { ESP_RST_DEEPSLEEP, 1u }, /* WB_REBOOT_LPWR */
+        { ESP_RST_INT_WDT,   2u }, /* WB_REBOOT_WWDG */
+        { ESP_RST_WDT,       3u }, /* WB_REBOOT_IWDG */
+        { ESP_RST_SW,        4u }, /* WB_REBOOT_SFT  */
+        { ESP_RST_PANIC,     4u }, /* WB_REBOOT_SFT  */
+        { ESP_RST_EXT,       6u }, /* WB_REBOOT_PIN  */
+        { ESP_RST_UNKNOWN,   0u }, /* WB_REBOOT_NONE (default) */
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        mock_set_reset_reason(cases[i].in);
+        mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                      65508u, 1u, 0u, buf, &exc);
+        TEST_ASSERT_EQUAL_UINT16(cases[i].out, resp_reg(buf, 0));
+    }
+}
+
+/* ---- MBDEV-U-027: poll-freq edge cases (REG_POLL_FREQ_PPM = 342) --------- */
+
+/* (a) map_age_s == 0 -> else branch -> 0.
+ * (b) packets*60/map_age > 0xFFFF -> saturation clamp -> 0xFFFF. */
+void test_poll_freq_edges(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-027: FC04 poll-freq zero + saturation");
+    LOG_MESSAGE();
+
+    uint8_t buf[260];
+    uint8_t exc = 0xAA;
+
+    /* (a) map_age_s == 0 -> 0 (avoid divide-by-zero else branch). */
+    mock_cache_stats_set(1000u, 0u, 0u, 0u);
+    mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                  342u, 1u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT16(0u, resp_reg(buf, 0));
+
+    /* (b) packets*60/map_age = 1e6*60/1 = 6e7 > 0xFFFF -> clamps to 0xFFFF. */
+    mock_cache_stats_set(1000000u, 0u, 1u, 0u);
+    mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                  342u, 1u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_HEX16(0xFFFFu, resp_reg(buf, 0));
+}
+
+/* ---- MBDEV-U-028: firmware version with NO suffix ------------------------ */
+
+/* "4.5.6" has neither +wb nor -rc: SUFFIX reg (323) == 0, and the encoded
+ * suffix in the LE-low word low byte == 0x80 (suffix 0 -> enc 0+128). */
+void test_fw_numeric_no_suffix(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-028: FC04 firmware numeric (no suffix)");
+    LOG_MESSAGE();
+
+    strcpy(sys_info.firmware_ver, "4.5.6");
+
+    uint8_t buf[260];
+    uint8_t exc = 0xAA;
+
+    /* SUFFIX register (323) == 0 (no +wb / no -rc). */
+    mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                  323u, 1u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_HEX16(0x0000u, resp_reg(buf, 0));
+
+    /* LE low word (324): patch(0x06) in hi byte, enc(0+128 = 0x80) in lo byte. */
+    mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                  324u, 1u, 0u, buf, &exc);
+    uint16_t le_lo = resp_reg(buf, 0);
+    TEST_ASSERT_EQUAL_HEX8(0x80u, (uint8_t)(le_lo & 0xFFu)); /* encoded suffix */
+    TEST_ASSERT_EQUAL_HEX16(0x0680u, le_lo);
+}
+
+/* ---- MBDEV-U-029: pack_string_reg odd-length boundary -------------------- */
+
+/* firmware_ver="ABCDE" (length 5, odd). fwver field base is 250; register
+ * index 2 (@252) spans char[4]='E' (hi) and char[5] past end (lo=0) ->
+ * the register must read 0x4500 ('E' << 8). */
+void test_pack_string_odd_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-029: pack_string_reg odd-length boundary");
+    LOG_MESSAGE();
+
+    strcpy(sys_info.firmware_ver, "ABCDE");
+
+    uint8_t buf[260];
+    uint8_t exc = 0xAA;
+
+    /* fwver register @252 (index 2) -> chars[4],[5] = 'E', (none) -> 0x4500 */
+    mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                  252u, 1u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_HEX16(0x4500u, resp_reg(buf, 0));
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -582,6 +931,23 @@ int main(void)
     RUN_TEST(test_signature_string_fc03);
     RUN_TEST(test_error_paths);
     RUN_TEST(test_is_self);
+
+    /* TASK B: mb_device_handle_self_request */
+    RUN_TEST(test_self_req_bad_fc_06);
+    RUN_TEST(test_self_req_bad_fc_01);
+    RUN_TEST(test_self_req_truncated);
+    RUN_TEST(test_self_req_count_zero);
+    RUN_TEST(test_self_req_count_too_big);
+    RUN_TEST(test_self_req_count_max_addr_bad);
+    RUN_TEST(test_self_req_valid_fc04);
+    RUN_TEST(test_self_req_valid_fc03);
+
+    /* TASK C: coverage gaps */
+    RUN_TEST(test_git_info_string);
+    RUN_TEST(test_reboot_reason_all);
+    RUN_TEST(test_poll_freq_edges);
+    RUN_TEST(test_fw_numeric_no_suffix);
+    RUN_TEST(test_pack_string_odd_boundary);
 
     return UNITY_END();
 }

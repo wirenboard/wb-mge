@@ -435,12 +435,13 @@ def cache_server(api: WBMGEAPI):
             f"cache_server: failed to enable cache server: {resp.status_code} {resp.text}"
 
         # Wait for the server to start accepting on the forwarded port.
+        # A failure to open the port is a real defect (the cache server did not
+        # start), not a reason to skip — fail loudly instead of hiding the tests.
         ready = _poll_tcp_connect(host, QEMU_CACHE_MODBUS_PORT, timeout=10.0)
-        if not ready:
-            pytest.skip(
-                f"Cache Modbus TCP port {QEMU_CACHE_MODBUS_PORT} did not open on {host} "
-                "within 10 s — skipping cache-server self-unit tests"
-            )
+        assert ready, (
+            f"Cache Modbus TCP port {QEMU_CACHE_MODBUS_PORT} did not open on {host} "
+            "within 10 s — cache server failed to start"
+        )
 
         yield (host, QEMU_CACHE_MODBUS_PORT)
 

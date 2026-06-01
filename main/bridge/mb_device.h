@@ -25,3 +25,19 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
                                      uint16_t start_addr, uint16_t count,
                                      uint16_t task_stack_size_bytes,
                                      uint8_t *resp_buf, uint8_t *exc_out);
+
+/*
+ * Handle a Modbus TCP request addressed to the gateway itself (Unit ID 0xFF).
+ * Parses the request frame, validates function code / length / quantity, and
+ * builds EITHER a normal FC03/FC04 read response OR a Modbus exception ADU into
+ * resp_buf. Always produces a ready-to-send ADU (never returns 0).
+ *   req                  : full TCP frame starting at the MBAP header (>= header bytes).
+ *   req_len              : total length of req in bytes.
+ *   task_stack_size_bytes: total stack size of the calling task (for stack-usage
+ *                          registers; pass 0 if unknown).
+ *   resp_buf             : output buffer, at least 260 bytes.
+ * Returns the total wire length of the ADU written to resp_buf (always > 0).
+ */
+size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
+                                     uint16_t task_stack_size_bytes,
+                                     uint8_t *resp_buf);

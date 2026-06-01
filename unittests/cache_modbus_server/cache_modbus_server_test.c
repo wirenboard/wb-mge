@@ -47,6 +47,13 @@ extern int     mock_tcp_send_called;
 
 void mock_tcp_server_reset(void);
 
+/* ---- Mock state exposed by mocks/mb_device.c (self-unit 0xFF handler) ----- */
+
+extern int mock_mb_device_handle_called;
+
+void mock_mb_device_set_response(const uint8_t *buf, size_t len);
+void mock_mb_device_reset(void);
+
 /* ---- Forward declaration for build_request() helper ---------------------- */
 
 static void build_request(uint8_t *buf, uint16_t txid, uint8_t unit_id, uint8_t fc,
@@ -70,6 +77,7 @@ void setUp(void)
     mock_cache_multimaster_reset();
     mock_tcp_server_reset();
     mock_setting_items_reset();
+    mock_mb_device_reset();
 }
 
 void tearDown(void)
@@ -1620,6 +1628,91 @@ void test_reassembly_oversized_frame_boundary(void)
         "valid frame after oversized resync must be dispatched (mutant leaves stale buffer -> 0)");
 }
 
+/* ---- CMS-U-043: self unit (0xFF) served when cache DISABLED -------------- */
+
+/* Load-bearing test: a request addressed to the gateway itself (Unit ID 0xFF)
+ * must be served from the built-in device handler BEFORE the cache-enabled
+ * gate. With the cache disabled, a unit-0xFF FC04 request must NOT produce a
+ * cache exception (0x02); instead the verbatim ADU from mb_device_handle_self_
+ * request() must be sent. */
+void test_cache_modbus_server_self_unit_served_when_cache_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-043: self unit 0xFF served when cache DISABLED (before cache gate)");
+    LOG_MESSAGE();
+
+    /* Known success-shaped ADU returned by the self handler (11 bytes). */
+    const uint8_t known[11] = {
+        0x00, 0x01,  /* transaction id */
+        0x00, 0x00,  /* protocol id    */
+        0x00, 0x05,  /* length = 5     */
+        0xFF,        /* unit id 0xFF   */
+        0x04,        /* FC04           */
+        0x02,        /* byte count     */
+        0xAB, 0xCD,  /* one register   */
+    };
+    mock_mb_device_set_response(known, sizeof(known));
+
+    /* Cache disabled, same as CMS-U-007b. */
+    mock_cache_enabled = false;
+
+    uint8_t buf[12];
+    build_request(buf, 0x0001, 0xFF, MB_FC_READ_INPUT_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "self unit, cache disabled: send must be called once");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(known), mock_tcp_send_len,
+        "self unit: sent length must equal the self handler's ADU length");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, memcmp(mock_tcp_send_buf, known, sizeof(known)),
+        "self unit: ADU must be sent verbatim (NOT a cache exception 0x02)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_mb_device_handle_called,
+        "self unit: the self-device handler must be invoked exactly once");
+}
+
+/* ---- CMS-U-044: self unit (0xFF) forwarded verbatim, bypasses cache ------ */
+
+/* With the cache ENABLED, a unit-0xFF request must still be served by the
+ * self-device handler verbatim, and must NOT consult the register cache
+ * (cache_multimaster_lookup must not be called). */
+void test_cache_modbus_server_self_unit_bypasses_cache_lookup(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-044: self unit 0xFF forwarded verbatim and bypasses cache lookup");
+    LOG_MESSAGE();
+
+    const uint8_t known[11] = {
+        0x12, 0x34,  /* transaction id */
+        0x00, 0x00,  /* protocol id    */
+        0x00, 0x05,  /* length = 5     */
+        0xFF,        /* unit id 0xFF   */
+        0x03,        /* FC03           */
+        0x02,        /* byte count     */
+        0xBE, 0xEF,  /* one register   */
+    };
+    mock_mb_device_set_response(known, sizeof(known));
+
+    /* Cache ENABLED (default after reset). */
+    mock_cache_enabled = true;
+
+    uint8_t buf[12];
+    build_request(buf, 0x1234, 0xFF, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 1, buf, 12);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "self unit, cache enabled: send must be called once");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(known), mock_tcp_send_len,
+        "self unit: sent length must equal the self handler's ADU length");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, memcmp(mock_tcp_send_buf, known, sizeof(known)),
+        "self unit: ADU must be sent verbatim");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_mb_device_handle_called,
+        "self unit: the self-device handler must be invoked (not the cache path)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_lookup_call_count,
+        "self unit: cache lookup must NOT be consulted for unit 0xFF");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -1676,6 +1769,9 @@ int main(void)
     RUN_TEST(test_reassembly_carryover);
     RUN_TEST(test_reassembly_independent_sockets);
     RUN_TEST(test_reassembly_oversized_frame_boundary);
+
+    RUN_TEST(test_cache_modbus_server_self_unit_served_when_cache_disabled);
+    RUN_TEST(test_cache_modbus_server_self_unit_bypasses_cache_lookup);
 
     return UNITY_END();
 }

@@ -265,31 +265,9 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
         /* Cache server task runs inside tcp_server's receiver_task; its stack is
          * TCP_SERVER_TASK_STACK_SIZE (see bridge/tcp_server.c). */
         #define CACHE_SRV_TASK_STACK_BYTES 4096u
-        if (fc != MB_FC_READ_HOLDING_REGS && fc != MB_FC_READ_INPUT_REGS) {
-            send_exception(desc, client_sock, transaction_id, unit_id, fc, MB_EX_ILLEGAL_FUNCTION);
-            return;
-        }
-        if (len < sizeof(mb_tcp_header_t) + 4) {
-            send_exception(desc, client_sock, transaction_id, unit_id, fc, MB_EX_ILLEGAL_DATA_VALUE);
-            return;
-        }
-        const uint8_t *dpdu = data + sizeof(mb_tcp_header_t);
-        uint16_t d_start = ((uint16_t)dpdu[0] << 8) | dpdu[1];
-        uint16_t d_count = ((uint16_t)dpdu[2] << 8) | dpdu[3];
-        if (d_count == 0 || d_count > MB_MAX_REGISTERS) {
-            send_exception(desc, client_sock, transaction_id, unit_id, fc, MB_EX_ILLEGAL_DATA_VALUE);
-            return;
-        }
-        uint8_t dev_resp[512];
-        uint8_t dev_exc = MB_EX_ILLEGAL_ADDRESS;
-        size_t dev_len = mb_device_build_read_response(unit_id, fc, transaction_id,
-                                                       d_start, d_count,
-                                                       CACHE_SRV_TASK_STACK_BYTES,
-                                                       dev_resp, &dev_exc);
-        if (dev_len == 0) {
-            send_exception(desc, client_sock, transaction_id, unit_id, fc, dev_exc);
-            return;
-        }
+        uint8_t dev_resp[260];
+        size_t dev_len = mb_device_handle_self_request(data, len,
+                                                       CACHE_SRV_TASK_STACK_BYTES, dev_resp);
         tcp_server_send(desc, client_sock, dev_resp, dev_len);
         return;
     }

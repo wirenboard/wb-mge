@@ -31,6 +31,10 @@
 #define MB_DEV_FC_READ_HOLDING_REGS  0x03
 #define MB_DEV_FC_READ_INPUT_REGS    0x04
 
+/* ---- Modbus limits ------------------------------------------------------- */
+
+#define MB_DEV_MAX_REGISTERS         125u  /* max registers per FC03/FC04 read */
+
 /* ---- Input register address map (FC04) ----------------------------------- */
 
 #define REG_UPTIME_HI         104u  /* 0x0068 */
@@ -389,4 +393,50 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
     resp_hdr->length = modbus_swap16(pdu_len);
 
     return sizeof(mb_tcp_header_t) + 1u + (size_t)byte_count;
+}
+
+/* Build a Modbus exception ADU into buf and return its total wire length. */
+static size_t build_exception_adu(uint8_t *buf, uint16_t tid_net, uint8_t unit_id,
+                                  uint8_t fc, uint8_t exc)
+{
+    mb_tcp_header_t *h = (mb_tcp_header_t *)buf;
+    h->transaction_id = tid_net;          /* echoed verbatim (network order) */
+    h->protocol_id    = 0x0000;
+    h->length         = modbus_swap16(3); /* unit_id + (fc|0x80) + exc code  */
+    h->unit_id        = unit_id;
+    h->function       = (uint8_t)(fc | 0x80u);
+    buf[sizeof(mb_tcp_header_t)] = exc;
+    return sizeof(mb_tcp_header_t) + 1u;
+}
+
+size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
+                                     uint16_t task_stack_size_bytes,
+                                     uint8_t *resp_buf)
+{
+    const mb_tcp_header_t *req_hdr = (const mb_tcp_header_t *)req;
+    uint16_t tid     = req_hdr->transaction_id; /* network byte order, echoed verbatim */
+    uint8_t  unit_id = req_hdr->unit_id;
+    uint8_t  fc      = req_hdr->function;
+
+    if (fc != MB_DEV_FC_READ_HOLDING_REGS && fc != MB_DEV_FC_READ_INPUT_REGS) {
+        return build_exception_adu(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_FUNCTION);
+    }
+    if (req_len < sizeof(mb_tcp_header_t) + 4u) {
+        return build_exception_adu(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+    }
+
+    const uint8_t *pdu = req + sizeof(mb_tcp_header_t);
+    uint16_t start = ((uint16_t)pdu[0] << 8) | pdu[1];
+    uint16_t count = ((uint16_t)pdu[2] << 8) | pdu[3];
+    if (count < 1u || count > MB_DEV_MAX_REGISTERS) {
+        return build_exception_adu(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+    }
+
+    uint8_t exc = MB_DEV_EX_ILLEGAL_ADDRESS;
+    size_t rlen = mb_device_build_read_response(unit_id, fc, tid, start, count,
+                                                task_stack_size_bytes, resp_buf, &exc);
+    if (rlen == 0) {
+        return build_exception_adu(resp_buf, tid, unit_id, fc, exc);
+    }
+    return rlen;
 }
