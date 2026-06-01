@@ -42,13 +42,6 @@ def pytest_collection_modifyitems(config, items):
     original numeric file order. No-op for partial selections that contain neither
     heap marker (e.g. running a single test file).
     """
-    # Disabled: the per-file reboot fixture (reboot_before_module) now resets the
-    # device before every test module, so the long, uninterrupted no-reboot session
-    # that this reordering was built to support no longer exists. With per-file
-    # reboots the heap-session bracket is moot and deferring reboot tests to the end
-    # is counterproductive, so this hook is a no-op. Body kept below for easy restore.
-    return
-
     def basename(item):
         return os.path.basename(str(getattr(item, "fspath", "")))
 
@@ -464,22 +457,3 @@ def api(request):
     assert response.json()["auth"] == True, "Initial authentication failed"
 
     return client
-
-
-@pytest.fixture(scope="module", autouse=True)
-def reboot_before_module(api):
-    """Reboot the device before every test FILE so each module starts from a
-    fresh device state. Replaces the long no-reboot session: it clears
-    accumulated sockets / stuck port modes / cumulative QEMU slowness that were
-    causing late files (31/32/35) to exceed their per-test timeouts in CI."""
-    try:
-        api.execute_command("reboot")
-    except Exception:
-        # The connection drops while the device reboots — expected.
-        pass
-    try:
-        # CI QEMU boots slowly (PSRAM test): allow a generous window.
-        api.wait_for_ready(timeout=QEMU_READY_TIMEOUT, interval=QEMU_READY_INTERVAL)
-    except TimeoutError:
-        pytest.fail("Device did not come back online after the pre-module reboot")
-    yield
