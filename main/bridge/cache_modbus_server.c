@@ -1,5 +1,6 @@
 #include "cache_modbus_server.h"
 #include "cache_multimaster.h"
+#include "mb_device.h"
 #include "modbus_helpers.h"
 #include "tcp_server.h"
 #include "tcp_desc.h"
@@ -257,6 +258,41 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
     uint16_t transaction_id = req_hdr.transaction_id; /* keep in network order */
     uint8_t  unit_id        = req_hdr.unit_id;
     uint8_t  fc             = req_hdr.function;
+
+    /* Requests addressed to the gateway itself (Unit ID 0xFF) are served from the
+     * built-in device-info register map, independently of the cache state. */
+    if (mb_device_is_self(unit_id)) {
+        /* Cache server task runs inside tcp_server's receiver_task; its stack is
+         * TCP_SERVER_TASK_STACK_SIZE (see bridge/tcp_server.c). */
+        #define CACHE_SRV_TASK_STACK_BYTES 4096u
+        if (fc != MB_FC_READ_HOLDING_REGS && fc != MB_FC_READ_INPUT_REGS) {
+            send_exception(desc, client_sock, transaction_id, unit_id, fc, MB_EX_ILLEGAL_FUNCTION);
+            return;
+        }
+        if (len < sizeof(mb_tcp_header_t) + 4) {
+            send_exception(desc, client_sock, transaction_id, unit_id, fc, MB_EX_ILLEGAL_DATA_VALUE);
+            return;
+        }
+        const uint8_t *dpdu = data + sizeof(mb_tcp_header_t);
+        uint16_t d_start = ((uint16_t)dpdu[0] << 8) | dpdu[1];
+        uint16_t d_count = ((uint16_t)dpdu[2] << 8) | dpdu[3];
+        if (d_count == 0 || d_count > MB_MAX_REGISTERS) {
+            send_exception(desc, client_sock, transaction_id, unit_id, fc, MB_EX_ILLEGAL_DATA_VALUE);
+            return;
+        }
+        uint8_t dev_resp[512];
+        uint8_t dev_exc = MB_EX_ILLEGAL_ADDRESS;
+        size_t dev_len = mb_device_build_read_response(unit_id, fc, transaction_id,
+                                                       d_start, d_count,
+                                                       CACHE_SRV_TASK_STACK_BYTES,
+                                                       dev_resp, &dev_exc);
+        if (dev_len == 0) {
+            send_exception(desc, client_sock, transaction_id, unit_id, fc, dev_exc);
+            return;
+        }
+        tcp_server_send(desc, client_sock, dev_resp, dev_len);
+        return;
+    }
 
     /* ---- 4. Check that the cache is enabled -------------------------------- */
     if (!cache_multimaster_is_enabled()) {

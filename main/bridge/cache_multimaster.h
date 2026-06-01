@@ -139,3 +139,25 @@ typedef enum {
 cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t function_code,
                                                uint16_t address, uint16_t *value_out,
                                                uint16_t value_timeout_s);
+
+/**
+ * @brief Aggregate cache statistics snapshot.
+ */
+typedef struct {
+    uint32_t packets_processed;   /* total response packets stored since last cache reset */
+    uint32_t last_packet_age_s;   /* seconds since last stored packet (0 if none)          */
+    uint32_t map_age_s;           /* seconds since last cache enable/clear (0 if none)      */
+    uint16_t devices_on_bus;      /* count of unique slave_ids currently in the pool        */
+} cache_multimaster_stats_t;
+
+/**
+ * @brief Read an aggregate snapshot of the cache statistics.
+ *
+ * Mirrors the logic in cache_status_handler(): counts unique slave_ids and
+ * reads the packet/reset timestamps under the cache mutex, then computes ages
+ * relative to the current time. Returns all-zero when the cache module is not
+ * initialized (mutex or pool NULL).
+ *
+ * @param out Output snapshot; ignored if NULL.
+ */
+void cache_multimaster_get_stats(cache_multimaster_stats_t *out);

@@ -6,6 +6,7 @@
 #include "modbus_helpers.h"
 #include "rs485_stats.h"
 #include "fast_modbus.h"
+#include "mb_device.h"
 #include "freertos/semphr.h"
 #include <stddef.h>
 
@@ -486,6 +487,65 @@ static bool wait_rtu_send_receive(mb_tcp_task_ctx_t* ctx)
 }
 
 
+// Build and send a Modbus TCP exception ADU (MBAP header + [fc|0x80][exception]).
+// transaction_id_net is in network byte order and echoed verbatim.
+static void send_tcp_exception(tcp_desc_t *desc, int client_sock,
+                               uint16_t transaction_id_net, uint8_t unit_id,
+                               uint8_t fc, uint8_t exception)
+{
+    uint8_t buf[sizeof(mb_tcp_header_t) + 1]; /* header + 1 byte exception */
+    mb_tcp_header_t *hdr = (mb_tcp_header_t *)buf;
+
+    hdr->transaction_id = transaction_id_net;       /* already network byte order */
+    hdr->protocol_id    = 0x0000;
+    hdr->length         = modbus_swap16(3);         /* unit_id + FC|0x80 + code   */
+    hdr->unit_id        = unit_id;
+    hdr->function       = (uint8_t)(fc | 0x80u);
+
+    buf[sizeof(mb_tcp_header_t)] = exception;
+
+    tcp_server_send(desc, client_sock, buf, sizeof(buf));
+}
+
+// Answer a request addressed to the gateway itself (Unit ID 0xFF) from the
+// built-in device-info register map, without forwarding to RS485.
+static void handle_self_device_request(mb_tcp_task_ctx_t *ctx, int client_sock,
+                                       uint8_t *tcp_req_buf, size_t tcp_req_len)
+{
+    mb_tcp_header_t *h = (mb_tcp_header_t *)tcp_req_buf;
+    uint16_t tid = h->transaction_id;  /* network byte order */
+    uint8_t  uid = h->unit_id;
+    uint8_t  fc  = h->function;
+
+    if (fc != 0x03 && fc != 0x04) {
+        send_tcp_exception(ctx->tcp_desc, client_sock, tid, uid, fc, 0x01);
+        return;
+    }
+    if (tcp_req_len < sizeof(mb_tcp_header_t) + 4) {
+        send_tcp_exception(ctx->tcp_desc, client_sock, tid, uid, fc, 0x03);
+        return;
+    }
+
+    const uint8_t *pdu = tcp_req_buf + sizeof(mb_tcp_header_t);
+    uint16_t start = ((uint16_t)pdu[0] << 8) | pdu[1];
+    uint16_t count = ((uint16_t)pdu[2] << 8) | pdu[3];
+    if (count < 1 || count > 125) {
+        send_tcp_exception(ctx->tcp_desc, client_sock, tid, uid, fc, 0x03);
+        return;
+    }
+
+    uint8_t resp[260];
+    uint8_t exc = 0x02;
+    size_t rlen = mb_device_build_read_response(uid, fc, tid, start, count,
+                                                MODBUS_TCP_TASK_STACK_SIZE, resp, &exc);
+    if (rlen == 0) {
+        send_tcp_exception(ctx->tcp_desc, client_sock, tid, uid, fc, exc);
+        return;
+    }
+    tcp_server_send(ctx->tcp_desc, client_sock, resp, rlen);
+}
+
+
 // Task for Modbus TCP server mode operation
 static void modbus_tcp_server_task(void *arg)
 {
@@ -516,6 +576,14 @@ static void modbus_tcp_server_task(void *arg)
             ctx->index + 1, ctx->tcp_desc, client_sock, tcp_req_buf
         );
         if (probe_result != FAST_MODBUS_NOT_PROBE) {
+            free(tcp_req_buf);
+            continue;
+        }
+
+        /* Requests addressed to the gateway itself (Unit ID 0xFF) are answered locally
+         * from the built-in device-info register map, not forwarded to RS485. */
+        if (mb_device_is_self(((mb_tcp_header_t*)tcp_req_buf)->unit_id)) {
+            handle_self_device_request(ctx, client_sock, tcp_req_buf, tcp_req_len);
             free(tcp_req_buf);
             continue;
         }

@@ -16,6 +16,7 @@ AUX_SRC += mocks/tcp_server.c
 AUX_SRC += mocks/rs485_stats.c
 AUX_SRC += mocks/fast_modbus.c
 AUX_SRC += mocks/serial.c
+AUX_SRC += mocks/mb_device.c
 AUX_SRC += $(PROJ_DIR)/main/bridge/modbus_helpers.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/event_groups.c

@@ -445,6 +445,56 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
     return result;
 }
 
+/* ---- Aggregate stats accessor -------------------------------------------- */
+
+void cache_multimaster_get_stats(cache_multimaster_stats_t *out)
+{
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+
+    if (s_cache_mutex == NULL || s_pool == NULL) {
+        return;
+    }
+
+    int      slaves      = 0;
+    uint32_t packets     = 0;
+    uint64_t last_pkt_us = 0;
+    uint64_t reset_us    = 0;
+
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+
+    /* Single pass: count unique slave IDs. Reading the stats counters under the
+     * same lock prevents torn 64-bit reads of s_last_packet_us / s_reset_us on
+     * Xtensa (64-bit volatile is NOT atomically readable without a mutex). */
+    uint8_t seen[32] = {0};
+    if (s_pool != NULL) {
+        for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+            if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
+            uint8_t sid = s_pool[i].slave_id;
+            if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
+                seen[sid >> 3] |= (1u << (sid & 7));
+                slaves++;
+            }
+        }
+    }
+    packets     = s_packets_processed;
+    last_pkt_us = s_last_packet_us;
+    reset_us    = s_reset_us;
+
+    xSemaphoreGive(s_cache_mutex);
+
+    uint64_t now_us          = esp_timer_get_time();
+    uint64_t last_pkt_age_us = (last_pkt_us > 0 && now_us >= last_pkt_us)
+                               ? (now_us - last_pkt_us) : 0;
+    uint64_t map_age_us      = (reset_us > 0 && now_us >= reset_us)
+                               ? (now_us - reset_us) : 0;
+
+    out->packets_processed = packets;
+    out->last_packet_age_s = (uint32_t)(last_pkt_age_us / 1000000u);
+    out->map_age_s         = (uint32_t)(map_age_us / 1000000u);
+    out->devices_on_bus    = (uint16_t)slaves;
+}
+
 /* ---- HTTP handlers ------------------------------------------------------- */
 
 /* TODO: /cache/status still reflects cache_multimaster internal state.

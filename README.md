@@ -10,6 +10,65 @@ Two modes are available for each port:
  - Modbus TCP — for Modbus devices only
  - Transparent gateway — suitable for any protocols running over RS-485.
 
+## Device Register Map (Unit ID 255)
+
+The gateway itself answers Modbus polls on its own address **Unit ID 255 (0xFF)** — per the
+Modbus Messaging Implementation Guide this address is reserved for the TCP gateway itself.
+It works in both **Modbus TCP** and **Cache TCP** modes, regardless of cache state (in Modbus
+TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (input) and
+**FC03** (holding) are supported.
+
+### Input registers (FC04, read-only)
+
+| Address (dec) | Address (hex) | Regs | Type   | Description                                                         |
+|---------------|---------------|------|--------|---------------------------------------------------------------------|
+| 104–105       | 0x0068–0x0069 | 2    | u32    | Uptime since boot, seconds                                          |
+| 121           | 0x0079        | 1    | u16    | Current supply voltage, mV                                          |
+| 200–219       | 0x00C8–0x00DB | 20   | string | Device model                                                        |
+| 220–244       | 0x00DC–0x00F4 | 25   | string | Commit hash and branch the firmware was built from                  |
+| 250–265       | 0x00FA–0x0109 | 16   | string | Firmware version (string)                                           |
+| 266–269       | 0x010A–0x010D | 4    | u64    | Serial number extension                                             |
+| 270–271       | 0x010E–0x010F | 2    | u32    | Serial number                                                       |
+| 320           | 0x0140        | 1    | u16    | Firmware version: MAJOR                                             |
+| 321           | 0x0141        | 1    | u16    | Firmware version: MINOR                                             |
+| 322           | 0x0142        | 1    | u16    | Firmware version: PATCH                                             |
+| 323           | 0x0143        | 1    | s16    | Firmware version: SUFFIX (+N for `+wbN`, −N for `-rcN`, 0 if none)  |
+| 324–325       | 0x0144–0x0145 | 2    | u32    | Numeric firmware version (little-endian word order: 324 = low word) |
+| 326–327       | 0x0146–0x0147 | 2    | u32    | Numeric firmware version (big-endian word order: 326 = high word)   |
+| 336           | 0x0150        | 1    | u16    | Cache value timeout, seconds                                        |
+| 337–338       | 0x0151–0x0152 | 2    | u32    | Packets processed (since last cache reset)                          |
+| 339–340       | 0x0153–0x0154 | 2    | u32    | Seconds since the last packet on the bus                            |
+| 341           | 0x0155        | 1    | u16    | Devices currently on the bus (unique slave_ids in cache)            |
+| 342           | 0x0156        | 1    | u16    | Average bus poll rate, polls/min                                    |
+| 65504         | 0xFFE0        | 1    | u16    | Maximum used stack, KB (0 = stack corrupted / unknown)              |
+| 65505         | 0xFFE1        | 1    | u16    | Free RAM, KB                                                        |
+| 65506         | 0xFFE2        | 1    | u16    | Used RAM, KB                                                        |
+| 65507         | 0xFFE3        | 1    | u16    | Stack size, KB                                                      |
+| 65508         | 0xFFE4        | 1    | u16    | Last MCU reboot reason                                              |
+
+### Holding registers (FC03, read-only)
+
+| Address (dec) | Address (hex) | Regs | Type   | Description        |
+|---------------|---------------|------|--------|--------------------|
+| 290–301       | 0x0122–0x012D | 12   | string | Firmware signature |
+
+### Register map notes
+
+- **Strings**: 2 characters per register, high byte = first character; the tail is zero-padded.
+- **Multi-register integers** (except 324–325) use big-endian word order — the most significant
+  word is at the lower register address.
+- **Numeric version** is computed per the Wiren Board rule
+  ([wiki](https://wiki.wirenboard.com/wiki/Modbus-hardware-version)):
+  `if (SUFFIX >= 0) enc = SUFFIX + 128; else enc = -1 - SUFFIX;`
+  `VERSION = (MAJOR << 24) | (MINOR << 16) | (PATCH << 8) | enc`.
+- **Reboot reason** (65508): 1 — LPWR (brownout / wake from sleep), 2 — WWDG (interrupt
+  watchdog), 3 — IWDG (task / generic watchdog), 4 — SFT (software reset / panic), 5 — POR
+  (power-on), 6 — PIN (external reset), 0 — unknown. Mapped from `esp_reset_reason()`.
+- **Bus statistics** (336–342) come from the multimaster cache; with the cache inactive these
+  fields read as 0.
+- Reading a range where at least one address is undefined returns exception **0x02** (illegal
+  data address); a function other than FC03/FC04 returns exception **0x01** (illegal function).
+
 ## CI
 
 Builds run on Jenkins at <https://jenkins.wirenboard.com/job/wirenboard/job/wb-mge/>.
