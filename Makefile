@@ -80,6 +80,22 @@ DEFS += TARGET_PROJECT_NAME=$(TARGET)
 DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 
 #######################################
+# Coverage instrumentation (opt-in)
+#######################################
+
+# COVERAGE=1 instruments the main component with gcov (--coverage): emits .gcno at
+# compile time and .gcda at runtime. Off by default; increases flash/RAM footprint,
+# so it must not ship in release firmware.
+#
+# The value is passed to EVERY firmware build as an explicit CMake cache value
+# (-DCOVERAGE=0/1) on purpose: idf.py -D writes a CACHE variable that persists in
+# build/CMakeCache.txt, so always re-asserting the current value resets it. Without
+# this, a prior `COVERAGE=1` build would silently leak instrumentation (and the
+# test-only /gcov endpoint) into the next normal build until a fullclean.
+COVERAGE ?= 0
+DEFS += COVERAGE=$(COVERAGE)
+
+#######################################
 # Release file name
 #######################################
 

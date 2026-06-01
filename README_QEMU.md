@@ -91,9 +91,35 @@ make qemu-web                # Compile firmware + create images, then run QEMU w
 make qemu-run                # Compile firmware + create images, then run QEMU basic mode
 make qemu-monitor            # Connect monitor to already-running QEMU (no build at all)
 make qemu-test               # Compile firmware + create images, then run pytest suite
+make qemu-coverage           # Build instrumented firmware, run tests (no reboot), pull /gcov, build coverage report
 make qemu-bin-path           # Print path to qemu-system-xtensa binary
 make qemu-clean              # Remove build/ and sdkconfig.qemu_build
 ```
+
+## Firmware code coverage (`make qemu-coverage`)
+
+`make qemu-coverage` builds an end-to-end branch-coverage report for the `main/`
+component, showing which branches the e2e API suite exercised in QEMU.
+
+What it does:
+
+1. Builds the QEMU firmware with gcov instrumentation (`COVERAGE=1` → `--coverage
+   -fprofile-info-section` + `COVERAGE_BUILD`), which exposes an unauthenticated
+   `GET /gcov` endpoint (registered only in coverage builds).
+2. Runs the e2e API suite. The reboot tests (`14_test_reboot.py`,
+   `22_test_ota.py`, `30_test_wifi_perm_disable.py`, `33_test_auth_settings.py`,
+   `40_test_web_port.py`, `42_test_sniffer_cache_overlays_e2e.py`) are
+   **excluded**, because a reboot zeroes the in-RAM gcov counters.
+3. After the session (before QEMU shuts down), pytest pulls `GET /gcov` and saves
+   the streamed `.gcda` data to `build/coverage.stream`.
+4. The `qemu-coverage-report` step reconstructs the `.gcda` files with
+   `xtensa-esp-elf-gcov-tool merge-stream` and runs `gcovr` to produce the report.
+
+Output: HTML report at `build/qemu_coverage/index.html`, text summary at
+`build/qemu_coverage/summary.txt`.
+
+You can regenerate the report from an existing stream without re-running QEMU:
+`make qemu-coverage-report`.
 
 ## 🌐 Web Interface Features
 

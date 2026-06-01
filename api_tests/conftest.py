@@ -48,6 +48,16 @@ def pytest_collection_modifyitems(config, items):
     def is_reboot(item):
         return item.get_closest_marker("reboot") is not None or basename(item) in REBOOT_TEST_FILES
 
+    # --without-reboot (used by the coverage run): drop every reboot test up front.
+    # A reboot zeroes the in-RAM gcov counters, so reboot tests must not run before
+    # the end-of-session /gcov dump. is_reboot() is the single source of truth
+    # (REBOOT_TEST_FILES + @pytest.mark.reboot) — nothing to mirror in the Makefile.
+    if config.getoption("--without-reboot", default=False):
+        deselected = [it for it in items if is_reboot(it)]
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+            items[:] = [it for it in items if not is_reboot(it)]
+
     baseline, body, final, reboot = [], [], [], []
     for it in items:
         if it.get_closest_marker("heap_baseline"):
@@ -71,6 +81,11 @@ def pytest_addoption(parser):
                      help="Launch QEMU before tests, kill after")
     parser.addoption("--qemu-skip-build", action="store_true", default=False,
                      help="Skip 'make qemu-flash-image' (use existing build)")
+    parser.addoption("--coverage-dump", default=None,
+                     help="After the test session, GET /gcov and save the coverage stream to this path")
+    parser.addoption("--without-reboot", action="store_true", default=False,
+                     help="Deselect tests that reboot/restart the device "
+                          "(by @pytest.mark.reboot or REBOOT_TEST_FILES)")
 
 
 def quick_connection_test(base_url):
@@ -414,6 +429,18 @@ def qemu_process(request):
 
     # --- Yield to tests ---
     yield proc
+
+    # --- Optional: pull firmware coverage data before shutting QEMU down ---
+    dump_path = request.config.getoption("--coverage-dump")
+    if dump_path:
+        try:
+            resp = requests.get(f"{base_url}/gcov", timeout=30, stream=True)
+            with open(dump_path, "wb") as fh:
+                for chunk in resp.iter_content(8192):
+                    fh.write(chunk)
+            print(f"Coverage stream saved: {dump_path} ({os.path.getsize(dump_path)} bytes)")
+        except Exception as exc:
+            print(f"Coverage dump failed: {exc}")
 
     # --- Teardown ---
     if proc.poll() is None:

@@ -137,6 +137,54 @@ qemu-test: qemu-create-flash-image qemu-create-efuse-image
 	cd api_tests && $(PYTEST_PYTHON) -m pytest --qemu --qemu-skip-build \
 	    --junitxml=$(CURDIR)/build/qemu_test_report.xml $(PYTEST_ARGS)
 
+# End-to-end firmware coverage in QEMU: build the instrumented firmware, run the
+# API test suite (reboot tests excluded via pytest's --without-reboot — a reboot
+# zeroes the in-RAM gcov counters), pull .gcda over HTTP (GET /gcov), and build an
+# HTML + text report.
+
+# Coverage report locations.
+COVERAGE_STREAM    := $(CURDIR)/build/coverage.stream
+COVERAGE_OUT_DIR   := build/qemu_coverage
+# Firmware .gcda/.gcno live together in this single object dir. Scoping gcovr to it
+# avoids stale host unit-test artifacts under unittests/*/build (built with a
+# different gcc/gcov version that the xtensa gcov cannot parse).
+COVERAGE_FW_OBJDIR := build/esp-idf/main/CMakeFiles/__idf_main.dir
+
+qemu-coverage:
+	$(MAKE) qemu-test COVERAGE=1 \
+	    PYTEST_ARGS="--coverage-dump=$(COVERAGE_STREAM) --without-reboot $(PYTEST_ARGS)"
+	@$(MAKE) qemu-coverage-report
+
+# Reconstruct .gcda from the on-target coverage stream and build the report.
+# Can be re-run standalone against an existing build/coverage.stream (no QEMU run).
+# EIM_ACTIVATE puts the matching xtensa gcov / gcov-tool and gcovr on PATH.
+qemu-coverage-report:
+	@test -s $(COVERAGE_STREAM) || { echo "ERROR: $(COVERAGE_STREAM) is missing or empty"; exit 1; }
+	@echo 'Reconstructing .gcda files from coverage stream...'
+	@# Drop any previous .gcda first: merge-stream ADDS to existing counters, so
+	@# re-running without this would double-count. The stream holds the full counts.
+	@$(FIND) $(COVERAGE_FW_OBJDIR) -name '*.gcda' -delete 2>/dev/null || true
+	@$(EIM_ACTIVATE) && xtensa-esp-elf-gcov-tool merge-stream $(COVERAGE_STREAM)
+	@mkdir -p $(COVERAGE_OUT_DIR)
+	@echo 'Generating coverage report with gcovr...'
+	@# --gcov-ignore-parse-errors negative_hits.warn_once_per_file: xtensa gcov can emit
+	@# a negative hit count (GCC bug 68080); clamp to 0 instead of aborting the report.
+	@$(EIM_ACTIVATE) && gcovr --root $(CURDIR) \
+	    --gcov-executable xtensa-esp-elf-gcov \
+	    --gcov-ignore-parse-errors negative_hits.warn_once_per_file \
+	    --filter 'main/.*\.c' \
+	    --exclude 'main/frontend/.*' \
+	    --exclude 'main/coverage_dump\.c' \
+	    --txt $(COVERAGE_OUT_DIR)/summary.txt \
+	    --html-details $(COVERAGE_OUT_DIR)/index.html \
+	    --print-summary \
+	    $(COVERAGE_FW_OBJDIR)
+	@echo ''
+	@echo '==================== COVERAGE SUMMARY ===================='
+	@cat $(COVERAGE_OUT_DIR)/summary.txt
+	@echo '=========================================================='
+	@echo 'HTML report: $(COVERAGE_OUT_DIR)/index.html'
+
 # Dry-run: collect and list QEMU API tests without running them or building firmware.
 # Usage:
 #   make qemu-collect-only                          — list all qemu-marked tests
@@ -156,6 +204,8 @@ qemu-help:
 	@echo "  qemu-monitor            - Attach monitor to already-running QEMU (no build)"
 	@echo "  qemu-bin-path           - Print path to qemu-system-xtensa binary"
 	@echo "  qemu-test               - Build QEMU firmware, flash image, and run API pytest suite"
+	@echo "  qemu-coverage           - Build instrumented firmware, run tests (no reboot), pull /gcov, build coverage report"
+	@echo "  qemu-coverage-report    - Rebuild the coverage report from an existing build/coverage.stream (no QEMU run)"
 	@echo "  qemu-collect-only       - List collected API tests without building or running"
 	@echo "  qemu-clean              - Remove build/ and sdkconfig.qemu_build"
 	@echo ""
@@ -170,4 +220,4 @@ qemu-clean:
 	@rm -rf build
 	@rm -f sdkconfig.qemu_build sdkconfig.qemu_build.old
 
-.PHONY: qemu-build qemu-apply-idf-patches build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-collect-only qemu-help qemu-clean
+.PHONY: qemu-build qemu-apply-idf-patches build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-web qemu-bin-path qemu-test qemu-coverage qemu-coverage-report qemu-collect-only qemu-help qemu-clean

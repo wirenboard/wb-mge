@@ -35,6 +35,8 @@ The `make qemu-test` target:
 4. Runs pytest with `--qemu` flag
 5. Kills QEMU after tests complete
 
+`make qemu-coverage` builds an instrumented firmware, runs the suite (reboot tests excluded), pulls `.gcda` over `GET /gcov`, and writes a branch-coverage report to `build/qemu_coverage/index.html`.
+
 ## Collecting (listing) QEMU API tests without running them
 
 To verify that pytest can find and collect all tests in a file — without

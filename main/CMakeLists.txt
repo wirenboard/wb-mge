@@ -34,6 +34,7 @@ set(COMPONENT_SRCS "main.c"
                    "settings_save_timer.c"
                    "debug_log.c"
                    "wb_test.c"
+                   "coverage_dump.c"
                    "update_rs485_mio_gpio_states.c")
 
 # Conditionally add files based on build type
@@ -80,3 +81,30 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
 )
 
 target_link_libraries(${COMPONENT_TARGET} "-u wb_app_desc")
+
+# Optional gcov coverage instrumentation for the application code (this component only).
+# Enable with: idf.py -DCOVERAGE=1 build  (or `make build-idf-project COVERAGE=1`); off by default.
+# Adds --coverage (-fprofile-arcs -ftest-coverage): emits .gcno at compile time and .gcda at
+# runtime. It increases flash/RAM footprint, so it must NOT be part of release firmware.
+if(COVERAGE)
+    message(STATUS "Coverage instrumentation ENABLED for main component (--coverage)")
+    target_compile_options(${COMPONENT_TARGET} PRIVATE --coverage -fprofile-info-section)
+    target_compile_definitions(${COMPONENT_TARGET} PRIVATE COVERAGE_BUILD=1)
+    # Plain signature here to match the existing target_link_libraries() call above
+    # (CMake forbids mixing plain and keyword signatures on the same target).
+    target_link_libraries(${COMPONENT_TARGET} "--coverage")
+    # coverage.ld holds an `INSERT AFTER .flash.rodata` for the .gcov_info section.
+    # GNU ld only resolves the INSERT anchor when the augmenting script appears on the
+    # link line BEFORE the script that defines the anchor (esp_system's sections.ld).
+    # target_linker_script() on this component would emit -T coverage.ld AFTER sections.ld
+    # (main links after esp_system) and ld would fail with ".flash.rodata not found for
+    # insert". Register it as a build-level LINK_OPTION instead: build-level options are
+    # applied to the project ELF before the per-component (esp_system) link options, so
+    # -T coverage.ld lands ahead of -T sections.ld on the command line.
+    # Pass "-T" and the script as two separate options: a single "-T coverage.ld" token
+    # reaches ld as one argument with a leading space and fails to open.
+    idf_build_set_property(LINK_OPTIONS "-L${CMAKE_CURRENT_SOURCE_DIR}" APPEND)
+    idf_build_set_property(LINK_OPTIONS "-T" APPEND)
+    idf_build_set_property(LINK_OPTIONS "coverage.ld" APPEND)
+    set_property(TARGET ${COMPONENT_TARGET} APPEND PROPERTY INTERFACE_LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/coverage.ld")
+endif()
