@@ -23,6 +23,7 @@
 #define TCP_CLIENT_TASK_PRIORITY        5
 #define TCP_CLIENT_FIRST_CONN_DELAY_MS  4000
 #define TCP_CLIENT_RECONN_DELAY_MS      1000
+#define TCP_CLIENT_MAX_RECONN_DELAY_MS  30000  // exponential-backoff ceiling for retries to an unreachable host
 #define TCP_CLIENT_CONNECT_TIMEOUT_MS   3000   // bounded connect timeout (was a blocking connect with no timeout)
 #define TCP_CLIENT_CONNECT_POLL_MS      200    // re-check the exit-request flag this often during connect
 
@@ -231,6 +232,8 @@ static void tcp_client_task(void *pvParameters)
     // Small delay for network to become ready before connecting to server
     delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_FIRST_CONN_DELAY_MS));
 
+    int reconnect_delay_ms = TCP_CLIENT_RECONN_DELAY_MS;  // grows on consecutive connect failures (exponential backoff)
+
     while (1) {
         if (check_task_exit_req(desc)) {
             break;
@@ -244,17 +247,22 @@ static void tcp_client_task(void *pvParameters)
         if (connect_socket(desc, desc->last_client_sock, desc->remote_ip, desc->port) != 0) {
             close_socket(desc->last_client_sock);
             desc->last_client_sock = -1;
-            delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_RECONN_DELAY_MS));
+            delay_until_exit_req(desc, pdMS_TO_TICKS(reconnect_delay_ms));
+            // Exponential backoff: double the delay after each consecutive failure, capped at the ceiling,
+            // so an unreachable host is retried ever more slowly instead of being hammered every few seconds.
+            reconnect_delay_ms *= 2;
+            if (reconnect_delay_ms > TCP_CLIENT_MAX_RECONN_DELAY_MS) { reconnect_delay_ms = TCP_CLIENT_MAX_RECONN_DELAY_MS; }
             continue;
         }
 
         Atomic_Increment_u32(&desc->active_connections);
+        reconnect_delay_ms = TCP_CLIENT_RECONN_DELAY_MS;  // connection succeeded — reset backoff
 
         receive_data(desc);
         ESP_LOGW(TAG, "Disconnected from server: %s, port: %d", ip_str, desc->port);
         close_socket(desc->last_client_sock);
         desc->last_client_sock = -1;
-        delay_until_exit_req(desc, pdMS_TO_TICKS(TCP_CLIENT_RECONN_DELAY_MS));
+        delay_until_exit_req(desc, pdMS_TO_TICKS(reconnect_delay_ms));
         // Reset to 0 rather than decrement: only one client task writes this field.
         // Plain store is safe on ESP32: internal SRAM is shared (no per-core data cache),
         // so the write is immediately visible to concurrent readers without a memory barrier.
