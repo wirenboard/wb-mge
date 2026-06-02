@@ -56,7 +56,11 @@ esp_err_t port_manager_init(void);
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @param mode        Target mode.
- * @return ESP_OK on success, ESP_ERR_INVALID_ARG if port_index is out of range.
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         the init error if the new mode failed to initialise (the previous mode
+ *         is rolled back); or the NVS save error if the mode initialised live
+ *         but could not be persisted — in that case the mode is applied now but
+ *         not persisted (persist-6).
  */
 esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode);
 
@@ -87,7 +91,9 @@ const char *port_manager_mode_to_str(pm_mode_t mode);
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @param enabled     True to enable the cache overlay, false to disable.
- * @return ESP_OK on success, ESP_ERR_INVALID_ARG if port_index is out of range.
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         or the NVS save error if the overlay was applied live but could not be
+ *         persisted — the live state is applied but not persisted (persist-6).
  */
 esp_err_t port_manager_set_cache(unsigned port_index, bool enabled);
 

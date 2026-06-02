@@ -445,13 +445,18 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
         // port_manager_check_settings_changed() would report a permanent
         // mismatch, making settings_update_task re-apply (and re-fail) on every
         // subsequent settings write.
-        esp_err_t ret = setting_items_save(port_mode_nvs_key(port_index),
-                                           port_manager_mode_to_str(mode));
-        if (ret != ESP_OK) {
+        esp_err_t save_ret = setting_items_save(port_mode_nvs_key(port_index),
+                                                port_manager_mode_to_str(mode));
+        if (save_ret != ESP_OK) {
             ESP_LOGE(TAG, "Port[%u]: Failed to save port mode to NVS: %s",
-                     port_index + 1, esp_err_to_name(ret));
-            // Init succeeded but persistence failed: mode is lost on reboot but
-            // works now. Runtime and NVS reconcile on the next settings cycle.
+                     port_index + 1, esp_err_to_name(save_ret));
+            // Init succeeded but persistence failed: the mode is live now, but
+            // NVS still holds the old mode. The next settings cycle will see the
+            // mismatch (check_settings_changed) and apply_settings() will revert
+            // the live mode back to the persisted one — and a reboot would do the
+            // same. Surface the failure to the caller instead of reporting
+            // success (persist-6); the REST handler maps it to an API error.
+            init_ret = save_ret;
         }
     } else {
         // Init of the requested mode failed. NVS still holds prev_mode, so it
@@ -498,7 +503,8 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Port[%u]: Failed to save cache overlay to NVS: %s",
                  port_index + 1, esp_err_to_name(ret));
-        // Proceed anyway; live state still applied below.
+        // The live overlay is still applied below, but a reboot would silently
+        // revert it. The failure is surfaced via the return value (persist-6).
     }
 
     // Update the global pool to match the new intent (serialised, wipe-safe).
@@ -513,7 +519,9 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     }
 
     pm_unlock(port_index);
-    return ESP_OK;
+    // Return the persistence result: live state was applied regardless, but the
+    // caller must know if the change will not survive a reboot (persist-6).
+    return ret;
 }
 
 esp_err_t port_manager_apply_settings(unsigned port_index)

@@ -51,6 +51,8 @@ void mock_serial_reset(void);
 extern bool mock_cache_server_enabled;
 extern int mock_cache_port;
 extern int mock_setting_items_save_called;
+extern bool mock_setting_items_save_should_fail;
+extern bool mock_setting_items_save_bool_should_fail;
 void mock_setting_items_reset(void);
 
 /* rs485_stats.c mock */
@@ -460,6 +462,37 @@ void test_get_cache_invalid_port(void)
     TEST_ASSERT_FALSE(port_manager_get_cache(BRIDGES_COUNT));
 }
 
+/* persist-6: if the NVS write fails, set_cache must NOT report success — the
+ * live overlay is applied but a reboot would silently revert it, so the caller
+ * has to know. */
+void test_set_cache_persist_failure_surfaced(void)
+{
+    mock_setting_items_save_bool_should_fail = true;
+
+    esp_err_t ret = port_manager_set_cache(0, true);
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, ret,
+        "set_cache must surface the NVS write failure, not report success (persist-6)");
+    /* The live overlay is still applied despite the persistence failure. */
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the live cache overlay must still be applied even when persistence failed");
+}
+
+/* persist-6: if the NVS write fails, set_mode must NOT report success even
+ * though the mode initialised live. */
+void test_set_mode_persist_failure_surfaced(void)
+{
+    mock_setting_items_save_should_fail = true;
+
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_PASSIVE);
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, ret,
+        "set_mode must surface the NVS write failure, not report success (persist-6)");
+    /* The mode initialised live despite the persistence failure. */
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "the mode must still be live even when persistence failed");
+}
+
 /* Problem 2 regression: changing serial params on the SOLE caching port does a
  * deinit+init on that port. While the overlay stays set, the global pool — and
  * its accumulated data — must survive the re-init. disable() must NOT be called. */
@@ -722,6 +755,8 @@ int port_manager_test(void)
     RUN_TEST(test_set_cache_invalid_port);
     RUN_TEST(test_set_cache_disable_clears_reason_and_disables_cache);
     RUN_TEST(test_get_cache_invalid_port);
+    RUN_TEST(test_set_cache_persist_failure_surfaced);
+    RUN_TEST(test_set_mode_persist_failure_surfaced);
     RUN_TEST(test_apply_settings_preserves_cache_on_same_port_reinit);
 
     /* 6 – mode switching sequences */

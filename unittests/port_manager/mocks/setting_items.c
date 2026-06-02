@@ -15,6 +15,11 @@ bool mock_cache_en[BRIDGES_COUNT] = {false, false};
 int mock_setting_items_save_called = 0;
 int mock_setting_items_save_bool_called = 0;
 
+/* When set, the corresponding save returns an error (persist-6 tests). The
+ * stored value is NOT updated, mimicking an NVS write failure. */
+bool mock_setting_items_save_should_fail = false;
+bool mock_setting_items_save_bool_should_fail = false;
+
 static int index_from_port_mode_key(const char *key)
 {
     if (strcmp(key, KEY_PORT_MODE1) == 0) {
@@ -67,6 +72,9 @@ esp_err_t setting_items_read(const char *key, char *value)
 esp_err_t setting_items_save(const char *key, const char *value)
 {
     mock_setting_items_save_called++;
+    if (mock_setting_items_save_should_fail) {
+        return ESP_FAIL;  /* NVS write failed: stored value left unchanged */
+    }
     int idx = index_from_port_mode_key(key);
     if (idx >= 0) {
         strncpy(mock_port_mode[idx], value, SETTING_ITEM_MAX_STR_LEN - 1);
@@ -101,6 +109,9 @@ esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *s) { (v
 esp_err_t setting_items_save_bool(const char *key, bool value)
 {
     mock_setting_items_save_bool_called++;
+    if (mock_setting_items_save_bool_should_fail) {
+        return ESP_FAIL;  /* NVS write failed: stored value left unchanged */
+    }
     int ci = index_from_cache_en_key(key);
     if (ci >= 0) {
         mock_cache_en[ci] = value;
@@ -129,4 +140,6 @@ void mock_setting_items_reset(void)
     mock_cache_en[1] = false;
     mock_setting_items_save_called = 0;
     mock_setting_items_save_bool_called = 0;
+    mock_setting_items_save_should_fail = false;
+    mock_setting_items_save_bool_should_fail = false;
 }
