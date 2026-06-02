@@ -332,19 +332,32 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
     strip_arbitration(data, len, &effective, &effective_len);
 
     /* When the effective buffer is longer than a single minimum-size Modbus frame
-     * (4 bytes req + 4 bytes resp = 8 bytes minimum for two back-to-back frames),
-     * its CRC is invalid (meaning it is not a single valid frame), and it is not
-     * an FM arbitration or FM broadcast packet, attempt to split it into individual
-     * frames and process each one separately. */
-    bool is_fm = (effective[0] == 0xFD &&
-                  (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2));
+     * (4 bytes req + 4 bytes resp = 8 bytes minimum for two back-to-back frames)
+     * and its CRC is invalid as a whole (meaning it is not one single valid frame),
+     * attempt to split it into individual frames and process each one separately.
+     * This now applies even when the buffer begins with a Fast Modbus header.
+     *
+     * Rationale: a complete Fast Modbus exchange (master request + 0xFF arbitration
+     * + slave response, e.g. "FD 46 10 .." / "FF FF FF FF FF" / "FD 46 12 ..") can be
+     * captured as a single idle-delimited blob. This is especially common in
+     * transparent repeater mode, where bytes are forwarded with no enforced
+     * inter-frame gap, so the whole transaction arrives as one chunk. stream_split()
+     * understands Fast Modbus frame lengths (fm_expected_len) and recovers each
+     * embedded sub-frame.
+     *
+     * A genuine SINGLE Fast Modbus frame is never harmed: if its CRC is valid it is
+     * excluded here by the !crc_check(...) guard; if it is one truly-corrupted frame,
+     * the splitter returns nframes == 1 and we fall through to the normal path below.
+     *
+     * is_arb still excludes pure 0xFF arbitration noise: there is no embedded frame
+     * to split out of it. */
     bool is_arb = (effective[0] == 0xFF);
 
     /* NOTE: the recursive calls below must happen BEFORE taskENTER_CRITICAL.
      * Moving this block inside the critical section would cause a spinlock
      * deadlock because each recursive sniffer_process() call acquires the
      * same portMUX. */
-    if (effective_len > 8 && !crc_check(effective, effective_len) && !is_fm && !is_arb) {
+    if (effective_len > 8 && !crc_check(effective, effective_len) && !is_arb) {
         stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
         int nframes = stream_split(effective, effective_len,
                                    ctx->req_len >= 2 ? ctx->req_buf[0] : 0,
