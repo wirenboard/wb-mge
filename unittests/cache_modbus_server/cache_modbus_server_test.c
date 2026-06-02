@@ -67,6 +67,7 @@ static void build_request(uint8_t *buf, uint16_t txid, uint8_t unit_id, uint8_t 
 #define MB_FC_READ_INPUT_REGS       0x04u
 
 #define MB_EX_ILLEGAL_ADDRESS    0x02u
+#define MB_EX_ILLEGAL_DATA_VALUE 0x03u
 #define MB_EX_GW_TARGET_FAILED   0x0Bu
 
 /* ---- setUp / tearDown ---------------------------------------------------- */
@@ -498,6 +499,114 @@ void test_build_coil_response_stale(void)
     TEST_ASSERT_EQUAL_size_t(0, len);
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_GW_TARGET_FAILED, exception_code,
         "exception_code must be 0x0B for coil STALE");
+}
+
+/* ---- CMS-U-005d: partial multi-register block yields no frame ------------ */
+
+/* served-data-3 / cache-lookup-2: a SCADA block read (FC03 start=100 count=11)
+ * that spans beyond the polled sub-range — registers 100..108 cached, 109 not —
+ * cannot be answered with a partial Modbus frame (the protocol fixes the
+ * response to exactly `count` registers). The builder must therefore fail the
+ * WHOLE block with exception 0x02 and emit NO bytes — no partial/leaked valid
+ * data. It must also stop at the first missing register (not scan the rest). */
+void test_build_register_response_partial_block_no_leak(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-005d: partial block (9 found + gap) -> 0x02, no partial frame");
+    LOG_MESSAGE();
+
+    /* 100..108 FOUND, 109 NOT_FOUND (index 9 of the 11-register block) */
+    mock_lookup_arr_count = 10;
+    for (int i = 0; i < 9; i++) {
+        mock_lookup_results[i]    = CACHE_LOOKUP_FOUND;
+        mock_lookup_values_arr[i] = (uint16_t)(0x1000 + i);
+    }
+    mock_lookup_results[9]    = CACHE_LOOKUP_NOT_FOUND;
+    mock_lookup_values_arr[9] = 0;
+
+    uint8_t resp_buf[512];
+    memset(resp_buf, 0xEE, sizeof(resp_buf));
+    uint8_t exception_code = 0xFF;
+
+    size_t len = cache_modbus_server_build_register_response(
+        1, MB_FC_READ_HOLDING_REGS, htons(7), 100, 11, 0, resp_buf, &exception_code);
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0, len,
+        "incomplete block must yield no frame — valid registers must NOT leak as a partial response");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_ADDRESS, exception_code,
+        "exception 0x02 on the first missing register of the block");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(10, mock_lookup_call_count,
+        "builder must stop at the first missing register (10th lookup), not scan the whole block");
+}
+
+/* ---- CMS-U-006d: single stale register in the middle fails the block ----- */
+
+/* Symmetric to CMS-U-005d: one stale register mid-block makes the whole FC03
+ * block fail with 0x0B (GW target failed). Documents the "blink" behavior where
+ * a block alternates between data and 0x0B as one register ages past timeout. */
+void test_build_register_response_mid_block_stale(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-006d: mid-block STALE -> 0x0B for whole block");
+    LOG_MESSAGE();
+
+    mock_lookup_arr_count = 4;
+    mock_lookup_results[0] = CACHE_LOOKUP_FOUND; mock_lookup_values_arr[0] = 0x1111;
+    mock_lookup_results[1] = CACHE_LOOKUP_FOUND; mock_lookup_values_arr[1] = 0x2222;
+    mock_lookup_results[2] = CACHE_LOOKUP_STALE; mock_lookup_values_arr[2] = 0x3333;
+    mock_lookup_results[3] = CACHE_LOOKUP_FOUND; mock_lookup_values_arr[3] = 0x4444;
+
+    uint8_t resp_buf[512];
+    uint8_t exception_code = 0xFF;
+
+    size_t len = cache_modbus_server_build_register_response(
+        1, MB_FC_READ_HOLDING_REGS, htons(7), 100, 4, 5, resp_buf, &exception_code);
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0, len, "a mid-block stale register fails the whole block");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_GW_TARGET_FAILED, exception_code,
+        "exception 0x0B when a register in the block is stale");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, mock_lookup_call_count,
+        "builder stops at the stale register (3rd lookup)");
+}
+
+/* ---- CMS-U-005e: builder is self-safe against out-of-range count --------- */
+
+/* Defensive guard: the builders are public and their resp_buf/byte_count
+ * contract only holds for a protocol-legal count. count==0 or count beyond the
+ * Modbus per-request maximum (125 regs / 2000 coils) must yield exception 0x03
+ * (ILLEGAL_DATA_VALUE) and no frame, independent of the caller's own check. */
+void test_build_response_count_guard(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-005e: builder count guard (0 / over-max) -> 0x03");
+    LOG_MESSAGE();
+
+    uint8_t resp_buf[512];
+    uint8_t ex;
+
+    /* registers: count == 0 */
+    ex = 0xFF;
+    TEST_ASSERT_EQUAL_size_t(0, cache_modbus_server_build_register_response(
+        1, MB_FC_READ_HOLDING_REGS, htons(1), 0, 0, 0, resp_buf, &ex));
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_DATA_VALUE, ex, "reg count==0 -> 0x03");
+
+    /* registers: count == 126 (> 125) — would overflow uint8_t byte_count */
+    ex = 0xFF;
+    TEST_ASSERT_EQUAL_size_t(0, cache_modbus_server_build_register_response(
+        1, MB_FC_READ_HOLDING_REGS, htons(1), 0, 126, 0, resp_buf, &ex));
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_DATA_VALUE, ex, "reg count>125 -> 0x03");
+
+    /* coils: count == 0 */
+    ex = 0xFF;
+    TEST_ASSERT_EQUAL_size_t(0, cache_modbus_server_build_coil_response(
+        1, MB_FC_READ_COILS, htons(1), 0, 0, 0, resp_buf, &ex));
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_DATA_VALUE, ex, "coil count==0 -> 0x03");
+
+    /* coils: count == 2001 (> 2000) */
+    ex = 0xFF;
+    TEST_ASSERT_EQUAL_size_t(0, cache_modbus_server_build_coil_response(
+        1, MB_FC_READ_COILS, htons(1), 0, 2001, 0, resp_buf, &ex));
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_DATA_VALUE, ex, "coil count>2000 -> 0x03");
 }
 
 /* ---- CMS-U-010: MBAP length field correctness for various counts --------- */
@@ -1732,6 +1841,9 @@ int main(void)
     RUN_TEST(test_build_register_response_not_found);
     RUN_TEST(test_build_register_response_second_not_found);
     RUN_TEST(test_build_register_response_stale);
+    RUN_TEST(test_build_register_response_partial_block_no_leak);
+    RUN_TEST(test_build_register_response_mid_block_stale);
+    RUN_TEST(test_build_response_count_guard);
     RUN_TEST(test_build_coil_response_not_found);
     RUN_TEST(test_build_coil_response_stale);
 

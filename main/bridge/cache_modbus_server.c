@@ -110,6 +110,15 @@ size_t cache_modbus_server_build_register_response(
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
 
+    /* Defensive count guard: this is a public function whose resp_buf size
+     * contract (and the uint8_t byte_count below) only holds for a protocol-legal
+     * count. The caller validates count, but guard here too so the builder is
+     * self-safe and byte_count = count*2 can never overflow a uint8_t. */
+    if (count == 0 || count > MB_MAX_REGISTERS) {
+        *exception_code_out = MB_EX_ILLEGAL_DATA_VALUE;
+        return 0;
+    }
+
     /* Reject requests where the address range overflows the 16-bit address space.
      * Per Modbus spec: start_addr + count must not exceed 0x10000. */
     if ((uint32_t)start_addr + (uint32_t)count > 0x10000u) {
@@ -180,6 +189,14 @@ size_t cache_modbus_server_build_coil_response(
     resp_hdr->protocol_id    = 0x0000;
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
+
+    /* Defensive count guard — see build_register_response. Keeps the builder
+     * self-safe (coil_bytes = ceil(count/8) cannot overflow a uint8_t and the
+     * payload fits resp_buf) regardless of the caller's own validation. */
+    if (count == 0 || count > MB_MAX_COILS) {
+        *exception_code_out = MB_EX_ILLEGAL_DATA_VALUE;
+        return 0;
+    }
 
     /* Reject requests where the address range overflows the 16-bit address space.
      * Per Modbus spec: start_addr + count must not exceed 0x10000. */
