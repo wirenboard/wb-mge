@@ -2762,6 +2762,48 @@ void test_cache_multimaster_clear_pending_oob_port(void)
         "OOB clear_pending must not invalidate a valid port's pending");
 }
 
+/* ---- CM-U-063: coil response must not write coils beyond the request ----- */
+
+/* coil-clamp (audit cache-lookup-4): the audit hypothesised that an FC01
+ * response with a byte_count larger than the requested coil count would inflate
+ * the write to byte_count*8 coils (phantom coils 8..15 the master never asked
+ * for). This test pins the actual behavior: `count` comes from the request and
+ * is only ever clamped DOWN (by byte_count when short, by 2000, by the address
+ * wrap), never inflated. A 1-coil request with a 2-byte response must write
+ * exactly ONE coil; coils 8..15 must NOT appear in the cache. (If this ever
+ * fails, the coil branch regressed to writing byte_count*8 coils.) */
+void test_cache_multimaster_on_response_fc01_no_phantom_coils(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-063: coil response writes only the requested coils (no phantom)");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Master requests exactly ONE coil at address 0. */
+    cache_multimaster_on_request(0, 5, 1, 0, 1);
+
+    /* Slave replies with byte_count=2: coil 0 set, plus byte 1 = 0xFF (would be
+     * coils 8..15 if the count were inflated to byte_count*8 = 16). */
+    uint8_t resp[] = { 5, 0x01, 2, 0x01, 0xFF };
+    cache_multimaster_on_response(0, 5, 1, resp, sizeof(resp), 0);
+
+    uint16_t val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(5, 1, 0, &val, 0), "the one requested coil must be cached");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 0 value (bit0 set)");
+
+    /* Coils the master never requested must NOT be in the cache. */
+    val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 1, 8, &val, 0), "coil 8 must NOT be written (no phantom coils)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 1, 15, &val, 0), "coil 15 must NOT be written (no phantom coils)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 1, 1, &val, 0), "coil 1 must NOT be written (only 1 coil requested)");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -2830,6 +2872,7 @@ int main(void)
     RUN_TEST(test_cache_multimaster_enable_age_task_fail_aborts);
     RUN_TEST(test_cache_multimaster_clear_pending_blocks_stale_match);
     RUN_TEST(test_cache_multimaster_clear_pending_oob_port);
+    RUN_TEST(test_cache_multimaster_on_response_fc01_no_phantom_coils);
 
     return UNITY_END();
 }
