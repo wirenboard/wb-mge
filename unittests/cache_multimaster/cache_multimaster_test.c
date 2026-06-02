@@ -24,6 +24,10 @@ bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_cod
                                            uint16_t address, uint16_t age_s_val);
 void cache_multimaster_test_tick_age(void);
 uint32_t cache_multimaster_test_get_entries_dropped(void);
+void cache_multimaster_test_bump_generation(void);
+
+/* Mid-stream chunk hook exposed by the esp_http_server mock (cache-concurrency-1) */
+extern void (*mock_http_chunk_hook)(int chunk_index);
 
 /* HTTP handler shims — test-only wrappers around the static handlers */
 esp_err_t cache_multimaster_test_status_handler(httpd_req_t *req);
@@ -2806,6 +2810,100 @@ void test_cache_multimaster_on_response_fc01_no_phantom_coils(void)
         cache_multimaster_lookup(5, 1, 1, &val, 0), "coil 1 must NOT be written (only 1 coil requested)");
 }
 
+/* ---- CM-U-064: JSON stream aborts on a mid-stream pool generation change -- */
+
+/* Hook: on the 2nd data chunk (the first cache entry — the JSON header is chunk
+ * #1), bump the pool generation, simulating a concurrent clear()/disable()+
+ * enable() landing exactly while the handler has released the mutex. */
+static void chunk_hook_bump_gen_on_second(int chunk_index)
+{
+    if (chunk_index == 2) {
+        cache_multimaster_test_bump_generation();
+    }
+}
+
+/* cache-concurrency-1: cache_json_handler() releases the mutex between chunks.
+ * If the pool is wholesale-changed (clear / disable+enable) in that window, the
+ * handler must abort the stream rather than continue iterating into a swapped or
+ * wiped pool and emit a torn snapshot. With the generation guard, a mid-stream
+ * change stops the stream after the already-sent entries and closes the JSON
+ * cleanly; without it, the loop would keep emitting later entries from a
+ * different generation. */
+void test_cache_json_handler_aborts_on_generation_change(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-064: JSON stream aborts on mid-stream pool generation change");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Three entries at distinct addresses → three data chunks if not aborted. */
+    cache_multimaster_on_request(0, 11, 3, 0, 1);
+    uint8_t d1[] = { 11, 0x03, 2, 0x11, 0x11 };
+    cache_multimaster_on_response(0, 11, 3, d1, sizeof(d1), 0);
+    cache_multimaster_on_request(0, 22, 3, 1, 1);
+    uint8_t d2[] = { 22, 0x03, 2, 0x22, 0x22 };
+    cache_multimaster_on_response(0, 22, 3, d2, sizeof(d2), 0);
+    cache_multimaster_on_request(0, 33, 3, 2, 1);
+    uint8_t d3[] = { 33, 0x03, 2, 0x33, 0x33 };
+    cache_multimaster_on_response(0, 33, 3, d3, sizeof(d3), 0);
+
+    /* Inject a generation bump after the first entry is sent. */
+    mock_http_chunk_hook = chunk_hook_bump_gen_on_second;
+
+    httpd_req_t req = {0};
+    esp_err_t ret = cache_multimaster_test_json_handler(&req);
+    TEST_ASSERT_EQUAL_INT(ESP_OK, ret);
+
+    /* The response must be a cleanly closed JSON object... */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "]}"),
+        "aborted JSON stream must still close the array/object");
+    /* ...and must NOT contain the later entries emitted from after the change:
+     * the loop stopped at the generation boundary. */
+    TEST_ASSERT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"s\":33"),
+        "no entry after the mid-stream generation change may be emitted (torn snapshot)");
+}
+
+/* ---- CM-U-065: CSV stream aborts on a mid-stream pool generation change --- */
+
+/* CSV counterpart of CM-U-064: cache_csv_handler() uses the same
+ * release-mutex-between-chunks pattern, so it must also abort on a mid-stream
+ * pool generation change rather than emit rows from a different generation. */
+void test_cache_csv_handler_aborts_on_generation_change(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-065: CSV stream aborts on mid-stream pool generation change");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    cache_multimaster_on_request(0, 11, 3, 0, 1);
+    uint8_t d1[] = { 11, 0x03, 2, 0x11, 0x11 };
+    cache_multimaster_on_response(0, 11, 3, d1, sizeof(d1), 0);
+    cache_multimaster_on_request(0, 22, 3, 1, 1);
+    uint8_t d2[] = { 22, 0x03, 2, 0x22, 0x22 };
+    cache_multimaster_on_response(0, 22, 3, d2, sizeof(d2), 0);
+    cache_multimaster_on_request(0, 33, 3, 2, 1);
+    uint8_t d3[] = { 33, 0x03, 2, 0x33, 0x33 };
+    cache_multimaster_on_response(0, 33, 3, d3, sizeof(d3), 0);
+
+    /* Bump generation after the CSV header (chunk #1) + first data row (chunk #2). */
+    mock_http_chunk_hook = chunk_hook_bump_gen_on_second;
+
+    httpd_req_t req = {0};
+    esp_err_t ret = cache_multimaster_test_csv_handler(&req);
+    TEST_ASSERT_EQUAL_INT(ESP_OK, ret);
+
+    /* The CSV header and the first row are present, but no row emitted after the
+     * mid-stream generation change. */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "slave_id,type,address,value,age_s"),
+        "CSV header must be present");
+    TEST_ASSERT_NULL_MESSAGE(strstr(mock_http_resp_buf, "33,holding"),
+        "no row after the mid-stream generation change may be emitted (torn snapshot)");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -2875,6 +2973,8 @@ int main(void)
     RUN_TEST(test_cache_multimaster_clear_pending_blocks_stale_match);
     RUN_TEST(test_cache_multimaster_clear_pending_oob_port);
     RUN_TEST(test_cache_multimaster_on_response_fc01_no_phantom_coils);
+    RUN_TEST(test_cache_json_handler_aborts_on_generation_change);
+    RUN_TEST(test_cache_csv_handler_aborts_on_generation_change);
 
     return UNITY_END();
 }

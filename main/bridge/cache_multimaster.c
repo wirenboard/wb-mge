@@ -72,6 +72,12 @@ static volatile uint32_t s_packets_processed = 0; /* total response packets stor
 static volatile uint64_t s_last_packet_us    = 0; /* esp_timer_get_time() of last stored response  */
 static volatile uint64_t s_reset_us          = 0; /* esp_timer_get_time() at last enable/clear      */
 static volatile uint32_t s_entries_dropped   = 0; /* values dropped because the pool was full        */
+/* Bumped under s_cache_mutex on every wholesale pool change (enable alloc/clear,
+ * clear() wipe, disable() free). The chunked CSV/JSON handlers release the mutex
+ * between chunks; they capture this generation and abort the stream if it
+ * changes mid-iteration, so a concurrent disable+enable (pool reallocated) or
+ * clear() can never make them emit a torn/mixed snapshot (cache-concurrency-1). */
+static volatile uint32_t s_pool_generation   = 0;
 
 /* ---- Internal helpers ---------------------------------------------------- */
 
@@ -195,6 +201,7 @@ void cache_multimaster_enable(void)
 
     /* Clear pool (whether freshly allocated or reused after a repeated enable) */
     memset(s_pool, 0, CACHE_MAX_ENTRIES * sizeof(cache_entry_t));
+    s_pool_generation++;  /* pool (re)initialised — invalidate any in-flight stream */
 
     /* Reset stats atomically with pool clear under the mutex.
      * s_reset_us / s_last_packet_us are uint64_t and NOT atomically
@@ -224,6 +231,7 @@ void cache_multimaster_enable(void)
             free(s_pool);
 #endif
             s_pool = NULL;
+            s_pool_generation++;  /* pool freed on rollback — keep the invariant */
             xSemaphoreGive(s_cache_mutex);
             s_cache_enabled = false;
             return;
@@ -272,6 +280,7 @@ void cache_multimaster_disable(void)
         free(s_pool);
 #endif
         s_pool = NULL;
+        s_pool_generation++;  /* pool freed — invalidate any in-flight stream */
         xSemaphoreGive(s_cache_mutex);
     }
     ESP_LOGI(TAG, "Cache multimaster disabled");
@@ -289,6 +298,7 @@ void cache_multimaster_clear(void)
     /* Only zero if the pool is allocated; do NOT free — that is done by disable(). */
     if (s_pool != NULL) {
         memset(s_pool, 0, CACHE_MAX_ENTRIES * sizeof(cache_entry_t));
+        s_pool_generation++;  /* contents wiped — invalidate any in-flight stream */
     }
     /* Reset all stats atomically with pool clear while the mutex is held,
      * so cache_status_handler() never observes a zeroed pool with a stale
@@ -691,6 +701,11 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+    /* Snapshot the pool generation: if it changes while we are streaming (a
+     * concurrent clear()/disable()+enable()), abort to avoid a torn snapshot
+     * (cache-concurrency-1). */
+    uint32_t gen = s_pool_generation;
+
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         const cache_entry_t *e = &s_pool[i];
         if (!(e->type & CACHE_USED_BIT)) continue;
@@ -727,8 +742,10 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
             return ret;
         }
 
-        if (s_pool == NULL) {
-            /* Pool was freed by disable() while we were sending — stop iteration */
+        if (s_pool == NULL || s_pool_generation != gen) {
+            /* Pool was freed by disable() or wholesale-changed (clear()/
+             * disable+enable) while we were sending — stop iteration rather than
+             * emit a torn snapshot (cache-concurrency-1). */
             xSemaphoreGive(s_cache_mutex);
             httpd_resp_send_chunk(req, NULL, 0);
             return ESP_OK;
@@ -789,6 +806,11 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+    /* Snapshot the pool generation: abort cleanly if it changes mid-stream
+     * (concurrent clear()/disable()+enable()) to avoid a torn snapshot
+     * (cache-concurrency-1). */
+    uint32_t gen = s_pool_generation;
+
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         const cache_entry_t *e = &s_pool[i];
         if (!(e->type & CACHE_USED_BIT)) continue;
@@ -832,8 +854,10 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
             return ret;
         }
 
-        if (s_pool == NULL) {
-            /* Pool was freed by disable() while we were sending — close data array and object */
+        if (s_pool == NULL || s_pool_generation != gen) {
+            /* Pool was freed by disable() or wholesale-changed (clear()/
+             * disable+enable) while we were sending — close the array/object and
+             * stop rather than emit a torn snapshot (cache-concurrency-1). */
             xSemaphoreGive(s_cache_mutex);
             httpd_resp_send_chunk(req, "]}", 2);
             httpd_resp_send_chunk(req, NULL, 0);
@@ -908,6 +932,7 @@ void cache_multimaster_test_reset(void)
     s_last_packet_us    = 0;
     s_reset_us          = 0;
     s_entries_dropped   = 0;
+    s_pool_generation   = 0;
 }
 
 /* Returns the count of values dropped because the pool was full since the last
@@ -915,6 +940,15 @@ void cache_multimaster_test_reset(void)
 uint32_t cache_multimaster_test_get_entries_dropped(void)
 {
     return s_entries_dropped;
+}
+
+/* Bump the pool generation WITHOUT touching the pool — lets a test simulate a
+ * concurrent clear()/disable()+enable() landing exactly while a chunked handler
+ * has released the mutex, isolating the generation-abort path (cache-concurrency-1)
+ * from the side effect of the pool being zeroed. Used in unit tests only. */
+void cache_multimaster_test_bump_generation(void)
+{
+    s_pool_generation++;
 }
 
 /* Returns the value of s_pending[port].valid for assertion in unit tests.
