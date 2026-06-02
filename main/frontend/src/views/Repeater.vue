@@ -6,7 +6,7 @@ import { useInfo } from '@/common/info';
 import { useAlerts } from '@/common/alert';
 import { useOptimisticToggle } from '@/common/useOptimisticToggle';
 import { api } from '@/utils/api';
-import { avgBytesPerSec as computeAvgBytesPerSec, groupBytes, formatUptime, lineParams } from '@/views/repeaterFormat';
+import { avgBytesPerSec as computeAvgBytesPerSec, groupBytes, formatBytes, formatUptime, lineParams } from '@/views/repeaterFormat';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 
@@ -53,6 +53,11 @@ const uptimeS = computed<number>(() => info.value?.repeater?.uptime_s ?? 0);
 
 // Average throughput (B/s) over the active uptime, rounded to 1 decimal. Computed client-side.
 const avgBytesPerSec = computed<number>(() => computeAvgBytesPerSec(forwardBytes.value, reverseBytes.value, uptimeS.value));
+
+// Human-readable, auto-scaled (B/KB/MB/GB) views of the live byte counters.
+const forwardFmt = computed(() => formatBytes(forwardBytes.value));
+const reverseFmt = computed(() => formatBytes(reverseBytes.value));
+const avgFmt = computed(() => formatBytes(avgBytesPerSec.value));
 
 const port1Line = computed<string>(() => lineParams(savedSettings.value?.rs485_1));
 const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2));
@@ -106,7 +111,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
               <div class="rep-port-title">{{ t('port_1') }}</div>
               <dl class="rep-port-stats">
                 <dt>{{ t('dropped_bytes') }}</dt>
-                <dd><span class="mono v-err">{{ groupBytes(dropped1) }}</span></dd>
+                <dd><span class="mono v-err rep-num">{{ groupBytes(dropped1) }}</span></dd>
               </dl>
             </div>
           </div>
@@ -117,7 +122,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
               <span class="rep-flow-tag">TX</span>
               <span class="rep-flow-tag">RX</span>
               <div class="rep-arrow rep-arrow-right">
-                <span class="rep-arrow-value mono">{{ groupBytes(forwardBytes) }} <em>B</em></span>
+                <span class="rep-arrow-value mono"><span class="rep-num">{{ forwardFmt.value }}</span> <em>{{ forwardFmt.unit }}</em></span>
               </div>
             </div>
 
@@ -132,7 +137,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
               <span class="rep-toggle-label">{{ isEnabled ? t('enabled') : t('disabled') }}</span>
               <div v-if="isEnabled" class="rep-toggle-meta">
                 <div><span>{{ t('uptime') }}</span><b class="mono">{{ formatUptime(uptimeS) }}</b></div>
-                <div><span>{{ t('avg') }}</span><b class="mono">{{ avgBytesPerSec }} <em>B/s</em></b></div>
+                <div><span>{{ t('avg') }}</span><b class="mono"><span class="rep-num">{{ avgFmt.value }}</span> <em>{{ avgFmt.unit }}/s</em></b></div>
               </div>
               <span class="rep-toggle-hint">{{ isEnabled ? t('click_to_disable') : t('click_to_enable') }}</span>
             </button>
@@ -141,7 +146,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
               <span class="rep-flow-tag">RX</span>
               <span class="rep-flow-tag">TX</span>
               <div class="rep-arrow rep-arrow-left">
-                <span class="rep-arrow-value mono">{{ groupBytes(reverseBytes) }} <em>B</em></span>
+                <span class="rep-arrow-value mono"><span class="rep-num">{{ reverseFmt.value }}</span> <em>{{ reverseFmt.unit }}</em></span>
               </div>
             </div>
           </div>
@@ -156,7 +161,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
               <div class="rep-port-title">{{ t('port_2') }}</div>
               <dl class="rep-port-stats">
                 <dt>{{ t('dropped_bytes') }}</dt>
-                <dd><span class="mono v-err">{{ groupBytes(dropped2) }}</span></dd>
+                <dd><span class="mono v-err rep-num">{{ groupBytes(dropped2) }}</span></dd>
               </dl>
             </div>
           </div>
@@ -416,6 +421,14 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
   font-style: normal;
   font-weight: 500;
   color: var(--text-muted);
+}
+
+/* Tighten the no-break-space thousands separators (U+00A0) inside grouped
+   numbers. Monospace renders the space glyph at full cell width, so negative
+   word-spacing pulls the digit triples closer. Affects only the separator
+   spaces, never the digits or the unit (which sits outside .rep-num). */
+.rep-num {
+  word-spacing: -0.3em;
 }
 
 /* The big enable/disable toggle button */

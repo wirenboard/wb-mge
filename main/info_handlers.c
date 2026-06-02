@@ -344,11 +344,11 @@ esp_err_t info_get_handler(httpd_req_t *req)
     cJSON *repeater_json = cJSON_CreateObject();
     if (repeater_json) {
         cJSON_AddBoolToObject(repeater_json, "active", rep.active);
-        cJSON_AddNumberToObject(repeater_json, "uptime_s", rep.uptime_s);
-        cJSON_AddNumberToObject(repeater_json, "bytes_1to2", rep.bytes_1to2);
-        cJSON_AddNumberToObject(repeater_json, "bytes_2to1", rep.bytes_2to1);
-        cJSON_AddNumberToObject(repeater_json, "dropped_1", rep.dropped_1);
-        cJSON_AddNumberToObject(repeater_json, "dropped_2", rep.dropped_2);
+        cJSON_AddNumberToObject(repeater_json, "uptime_s", (double)rep.uptime_s);
+        cJSON_AddNumberToObject(repeater_json, "bytes_1to2", (double)rep.bytes_1to2);
+        cJSON_AddNumberToObject(repeater_json, "bytes_2to1", (double)rep.bytes_2to1);
+        cJSON_AddNumberToObject(repeater_json, "dropped_1", (double)rep.dropped_1);
+        cJSON_AddNumberToObject(repeater_json, "dropped_2", (double)rep.dropped_2);
         cJSON_AddItemToObject(response_json, "repeater", repeater_json);
     }
 

@@ -300,12 +300,13 @@ describe('REP-I-004: stats render', () => {
     const wrapper = mount(Repeater, { global: { plugins: [i18n, makeRouter()] } });
     await flushPromises();
 
-    // Normalize any kind of whitespace (the byte counts use a thin space U+2009 as the
-    // thousands separator) to a single regular space so the assertions are separator-agnostic.
+    // Normalize any kind of whitespace (the space between value and unit, and the U+00A0
+    // no-break thousands separator) to a single regular space so the assertions are robust.
     const text = wrapper.text().replace(/\s+/g, ' ');
-    // Forward and reverse byte counts grouped with a thousands separator.
-    expect(text).toContain('18 472');
-    expect(text).toContain('12 345');
+    // Forward and reverse byte counts are auto-scaled to a binary (1024) unit:
+    // 18472 B -> 18.0 KB, 12345 B -> 12.1 KB.
+    expect(text).toContain('18.0 KB');
+    expect(text).toContain('12.1 KB');
     // Per-port dropped bytes (the dt label and dd value render as adjacent elements, so the
     // collapsed text concatenates them with no separating space: dropped_1=3, dropped_2=7).
     expect(text).toContain('Dropped bytes3');

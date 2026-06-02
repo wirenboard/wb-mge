@@ -2,7 +2,7 @@
 #include "bridge.h"            // BRIDGES_COUNT
 #include "rs485_stats.h"       // rs485_busy_monitor_update_activity
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"     // xTaskGetTickCount, pdTICKS_TO_MS
+#include "esp_timer.h"         // esp_timer_get_time (64-bit monotonic microseconds since boot)
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include <string.h>
@@ -12,10 +12,10 @@ static const char *TAG = "repeater";
 typedef struct { serial_desc_t *serial_desc; } repeater_ctx_t;
 
 static repeater_ctx_t s_ctx[BRIDGES_COUNT];
-static uint32_t s_bytes[BRIDGES_COUNT];   // s_bytes[i] = bytes forwarded FROM port i to its peer
-static uint32_t s_dropped[BRIDGES_COUNT]; // s_dropped[i] = bytes received on port i that could not be forwarded
+static uint64_t s_bytes[BRIDGES_COUNT];   // s_bytes[i] = bytes forwarded FROM port i to its peer
+static uint64_t s_dropped[BRIDGES_COUNT]; // s_dropped[i] = bytes received on port i that could not be forwarded
 static unsigned s_active_count;           // number of ports currently in repeater mode
-static TickType_t s_active_since;          // tick when forwarding became active (s_active_count 0->1)
+static int64_t  s_active_since_us;         // esp_timer_get_time() snapshot when forwarding became active (s_active_count 0->1)
 
 // Repeater-global mutex guarding the per-port serial_desc pointers and the shared
 // counters/active accounting. It exists so a port's UART task can read its peer's
@@ -42,7 +42,7 @@ static void repeater_unlock(void)
     }
 }
 
-#define REPEATER_MS_PER_SEC     1000U
+#define REPEATER_US_PER_SEC     1000000U
 
 void repeater_init(void)
 {
@@ -84,11 +84,11 @@ static void repeater_rx_handler(serial_desc_t *desc, uint8_t *data, size_t len)
     repeater_lock();
     serial_desc_t *peer_desc = s_ctx[peer].serial_desc;
     if (peer_desc != NULL && serial_send(peer_desc, data, len) == ESP_OK) {
-        s_bytes[index] += (uint32_t)len;
+        s_bytes[index] += (uint64_t)len;
         rs485_busy_monitor_update_activity(peer);          // TX forwarded to peer
     } else {
         // Peer not in repeater mode (NULL) or the send failed: bytes cannot be forwarded.
-        s_dropped[index] += (uint32_t)len;
+        s_dropped[index] += (uint64_t)len;
     }
     repeater_unlock();
 }
@@ -120,7 +120,7 @@ esp_err_t repeater_init_port(unsigned index, serial_config_t *config, serial_des
     if (s_active_count == 0) {
         memset(s_bytes, 0, sizeof(s_bytes));
         memset(s_dropped, 0, sizeof(s_dropped));
-        s_active_since = xTaskGetTickCount();
+        s_active_since_us = esp_timer_get_time();
     }
     s_ctx[index].serial_desc = desc;
     *serial_desc_out = desc;
@@ -173,7 +173,7 @@ void repeater_get_stats(repeater_stats_t *out)
     out->dropped_2  = s_dropped[1];
     out->active     = (s_active_count >= BRIDGES_COUNT);
     out->uptime_s   = (s_active_count > 0)
-                      ? (uint32_t)(pdTICKS_TO_MS(xTaskGetTickCount() - s_active_since) / REPEATER_MS_PER_SEC)
+                      ? (uint64_t)((esp_timer_get_time() - s_active_since_us) / REPEATER_US_PER_SEC)
                       : 0;
     repeater_unlock();
 }
@@ -185,7 +185,7 @@ void repeater_reset_for_test(void)
     memset(s_bytes, 0, sizeof(s_bytes));
     memset(s_dropped, 0, sizeof(s_dropped));
     s_active_count = 0;
-    s_active_since = 0;
+    s_active_since_us = 0;
     s_lock = NULL;   // R1: reset so each test starts with no global lock (deterministic mutex-create count)
 }
 #endif

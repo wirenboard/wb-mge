@@ -15,6 +15,7 @@ AUX_SRC += mocks/serial.c
 AUX_SRC += mocks/rs485_stats.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/task.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
+AUX_SRC += $(UNITTEST_DIR)/mocks/esp_timer.c
 AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 
 # Include directories

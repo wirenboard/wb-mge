@@ -6,11 +6,11 @@
 
 // Aggregated live statistics for the serial<->serial repeater.
 typedef struct {
-    uint32_t bytes_1to2;   // bytes forwarded Port 1 RX -> Port 2 TX
-    uint32_t bytes_2to1;   // bytes forwarded Port 2 RX -> Port 1 TX
-    uint32_t dropped_1;    // bytes received on Port 1 that could not be forwarded
-    uint32_t dropped_2;    // bytes received on Port 2 that could not be forwarded
-    uint32_t uptime_s;     // seconds since the repeater started forwarding (0 if inactive)
+    uint64_t bytes_1to2;   // bytes forwarded Port 1 RX -> Port 2 TX (64-bit: no practical overflow)
+    uint64_t bytes_2to1;   // bytes forwarded Port 2 RX -> Port 1 TX (64-bit: no practical overflow)
+    uint64_t dropped_1;    // bytes received on Port 1 that could not be forwarded (64-bit)
+    uint64_t dropped_2;    // bytes received on Port 2 that could not be forwarded (64-bit)
+    uint64_t uptime_s;     // seconds since the repeater started forwarding (0 if inactive, 64-bit: no practical overflow)
     bool     active;       // true when BOTH ports are running in repeater mode
 } repeater_stats_t;
 

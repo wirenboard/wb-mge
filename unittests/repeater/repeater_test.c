@@ -10,8 +10,9 @@
 #include "mock_serial.h"
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"   // mock_set_tick_count, mock_freertos_task_reset
+#include "freertos/task.h"   // mock_freertos_task_reset (FreeRTOS task mock)
 #include "freertos/semphr.h" // mock semaphore symbols (mutex-create / give call seq)
+#include "esp_timer.h"       // mock esp_timer_get_time (controls uptime)
 
 #include <string.h>
 
@@ -53,6 +54,7 @@ void setUp(void)
     mock_serial_reset();
     mock_freertos_task_reset();
     mock_freertos_semaphore_reset();
+    mock_esp_timer_reset();
 }
 
 void tearDown(void)
@@ -81,10 +83,10 @@ void test_forward_port0_to_port1(void)
 
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(sizeof(payload), st.bytes_1to2);
-    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_2to1);
-    TEST_ASSERT_EQUAL_UINT32(0, st.dropped_1);
-    TEST_ASSERT_EQUAL_UINT32(0, st.dropped_2);
+    TEST_ASSERT_EQUAL_UINT64(sizeof(payload), st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_2to1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.dropped_1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.dropped_2);
 }
 
 // ---------------------------------------------------------------------------
@@ -103,8 +105,8 @@ void test_forward_port1_to_port0(void)
 
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(sizeof(payload), st.bytes_2to1);
-    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(sizeof(payload), st.bytes_2to1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_1to2);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,8 +127,8 @@ void test_drop_when_peer_not_inited(void)
 
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_1to2);
-    TEST_ASSERT_EQUAL_UINT32(sizeof(payload), st.dropped_1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(sizeof(payload), st.dropped_1);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,8 +148,8 @@ void test_drop_when_peer_send_fails(void)
 
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_1to2);
-    TEST_ASSERT_EQUAL_UINT32(sizeof(payload), st.dropped_1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(sizeof(payload), st.dropped_1);
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +216,7 @@ void test_counters_reset_on_fresh_session(void)
 
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(sizeof(payload), st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(sizeof(payload), st.bytes_1to2);
 
     // Tear both ports down -> active_count back to 0.
     repeater_deinit_port(0);
@@ -227,8 +229,8 @@ void test_counters_reset_on_fresh_session(void)
     repeater_init_port(0, &cfg0, &nd0);
 
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_1to2);
-    TEST_ASSERT_EQUAL_UINT32(0, st.dropped_1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(0, st.dropped_1);
 }
 
 // ---------------------------------------------------------------------------
@@ -236,24 +238,23 @@ void test_counters_reset_on_fresh_session(void)
 // ---------------------------------------------------------------------------
 void test_uptime_tracks_elapsed_time(void)
 {
-    // Start the session at tick 0.
-    mock_set_tick_count(0);
+    // Start the session with esp_timer at 0 us; the session captures this snapshot.
+    mock_esp_timer_get_time_value = 0;
     serial_config_t cfg0 = make_serial_config();
     serial_desc_t *d0 = NULL;
     repeater_init_port(0, &cfg0, &d0);
 
-    // pdTICKS_TO_MS(ticks) = ticks * 1000 / CONFIG_FREERTOS_HZ (500) = ticks * 2 ms.
-    // 1500 ticks -> 3000 ms -> 3 s.
-    mock_set_tick_count(1500);
+    // Advance esp_timer to 3,000,000 us. uptime_s = (now - start) / 1,000,000 = 3 s.
+    mock_esp_timer_get_time_value = 3000000;
 
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(3, st.uptime_s);
+    TEST_ASSERT_EQUAL_UINT64(3, st.uptime_s);
 
     // After all ports are down, uptime reports 0.
     repeater_deinit_port(0);
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(0, st.uptime_s);
+    TEST_ASSERT_EQUAL_UINT64(0, st.uptime_s);
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +282,7 @@ void test_init_serial_fail(void)
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
     TEST_ASSERT_FALSE(st.active);
-    TEST_ASSERT_EQUAL_UINT32(0, st.uptime_s);
+    TEST_ASSERT_EQUAL_UINT64(0, st.uptime_s);
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +305,7 @@ void test_init_creates_mutex_once(void)
 // ---------------------------------------------------------------------------
 void test_double_init_same_port_is_idempotent(void)
 {
-    mock_set_tick_count(0);
+    mock_esp_timer_get_time_value = 0;
     serial_config_t cfg0 = make_serial_config();
     serial_config_t cfg1 = make_serial_config();
     serial_desc_t *d0a = NULL, *d0b = NULL, *d1 = NULL;
@@ -320,16 +321,16 @@ void test_double_init_same_port_is_idempotent(void)
     TEST_ASSERT_EQUAL(2, mock_serial_calls.init_called);   // no third serial_init
 
     // active_count must not have been double-counted: one deinit per port returns it
-    // to 0, so active is false and uptime is forced to 0 even though ticks advanced.
+    // to 0, so active is false and uptime is forced to 0 even though time advanced.
     // (If port 0 had been double-counted, count would still be 1 here → uptime > 0.)
-    mock_set_tick_count(1000);
+    mock_esp_timer_get_time_value = 1000000;
     TEST_ASSERT_EQUAL(ESP_OK, repeater_deinit_port(0));
     TEST_ASSERT_EQUAL(ESP_OK, repeater_deinit_port(1));
 
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
     TEST_ASSERT_FALSE(st.active);
-    TEST_ASSERT_EQUAL_UINT32(0, st.uptime_s);
+    TEST_ASSERT_EQUAL_UINT64(0, st.uptime_s);
 }
 
 // ---------------------------------------------------------------------------
@@ -349,10 +350,10 @@ void test_rx_handler_unknown_desc_ignored(void)
     TEST_ASSERT_EQUAL(0, mock_serial_calls.send_called);
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_1to2);
-    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_2to1);
-    TEST_ASSERT_EQUAL_UINT32(0, st.dropped_1);
-    TEST_ASSERT_EQUAL_UINT32(0, st.dropped_2);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_2to1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.dropped_1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.dropped_2);
 }
 
 // ---------------------------------------------------------------------------

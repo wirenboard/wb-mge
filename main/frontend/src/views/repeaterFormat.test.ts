@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { RsSettings } from '@/common/types';
-import { avgBytesPerSec, groupBytes, formatUptime, lineParams } from '@/views/repeaterFormat';
+import { avgBytesPerSec, groupBytes, formatBytes, formatUptime, lineParams } from '@/views/repeaterFormat';
 
 // Build a full RsSettings with a configurable parity; other fields are fixed.
 function makeRs(parity: RsSettings['parity']): RsSettings {
@@ -26,8 +26,8 @@ function makeRs(parity: RsSettings['parity']): RsSettings {
   };
 }
 
-// Normalize any whitespace (incl. U+2009 thin space) to a single regular space so the
-// groupBytes assertions are separator-agnostic.
+// Normalize any whitespace (incl. the U+00A0 no-break space used as the thousands
+// separator) to a single regular space so the groupBytes assertions are separator-agnostic.
 const norm = (s: string) => s.replace(/\s/g, ' ');
 
 describe('avgBytesPerSec', () => {
@@ -90,6 +90,46 @@ describe('groupBytes', () => {
 
   it('groups negative values', () => {
     expect(norm(groupBytes(-1234))).toBe('-1 234');
+  });
+});
+
+describe('formatBytes', () => {
+  it('leaves a small byte count unscaled', () => {
+    expect(formatBytes(512)).toEqual({ value: '512', unit: 'B' });
+  });
+
+  it('formats zero', () => {
+    expect(formatBytes(0)).toEqual({ value: '0', unit: 'B' });
+  });
+
+  it('groups the largest in-range byte value with a no-break space', () => {
+    const r = formatBytes(1023);
+    expect(r.unit).toBe('B');
+    expect(norm(r.value)).toBe('1 023');
+  });
+
+  it('scales exactly 1024 to KB', () => {
+    expect(formatBytes(1024)).toEqual({ value: '1.00', unit: 'KB' });
+  });
+
+  it('scales 2048 to KB', () => {
+    expect(formatBytes(2048)).toEqual({ value: '2.00', unit: 'KB' });
+  });
+
+  it('scales into MB', () => {
+    expect(formatBytes(11240325)).toEqual({ value: '10.7', unit: 'MB' });
+  });
+
+  it('scales 1024^3 to GB', () => {
+    expect(formatBytes(1073741824)).toEqual({ value: '1.00', unit: 'GB' });
+  });
+
+  it('keeps one decimal for a fractional byte rate', () => {
+    expect(formatBytes(534.5)).toEqual({ value: '534.5', unit: 'B' });
+  });
+
+  it('preserves the sign for negative values', () => {
+    expect(formatBytes(-2048)).toEqual({ value: '-2.00', unit: 'KB' });
   });
 });
 

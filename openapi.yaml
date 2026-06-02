@@ -264,22 +264,27 @@ paths:
                         description: "True when BOTH ports are running in repeater mode"
                       uptime_s:
                         type: integer
+                        format: int64
                         minimum: 0
                         description: "Seconds since the repeater started forwarding (0 if inactive)"
                       bytes_1to2:
                         type: integer
+                        format: int64
                         minimum: 0
                         description: "Bytes forwarded Port 1 RX -> Port 2 TX"
                       bytes_2to1:
                         type: integer
+                        format: int64
                         minimum: 0
                         description: "Bytes forwarded Port 2 RX -> Port 1 TX"
                       dropped_1:
                         type: integer
+                        format: int64
                         minimum: 0
                         description: "Bytes received on Port 1 that could not be forwarded"
                       dropped_2:
                         type: integer
+                        format: int64
                         minimum: 0
                         description: "Bytes received on Port 2 that could not be forwarded"
         '400':
