@@ -2658,6 +2658,50 @@ void test_cache_multimaster_pool_full_drop_counter_and_status(void)
         "status JSON must still report a full pool of 4096 entries");
 }
 
+/* ---- CM-U-060: age-task creation failure aborts enable ------------------- */
+
+/* mem-exhaust-2: if xTaskCreate(cache_age_task) fails, age_s never increments,
+ * so the lookup staleness check can never fire and stale values would be served
+ * as fresh forever. enable() must therefore roll back: free the pool, leave the
+ * cache disabled (callers fall back to live polling) and not leak the pool. */
+void test_cache_multimaster_enable_age_task_fail_aborts(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-060: age-task creation failure aborts enable");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, cache_multimaster_init());
+
+    /* Force the aging-task creation to fail */
+    mock_xTaskCreate_data.should_fail = true;
+
+    cache_multimaster_enable();
+
+    /* Cache must stay disabled — never run without an aging task */
+    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_is_enabled(),
+        "enable() must not enable the cache when the aging task cannot be created");
+
+    /* xTaskCreate was attempted exactly once */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xTaskCreate_data.called,
+        "aging task creation must have been attempted once");
+
+    /* The pool must have been allocated and then freed — no leak */
+    verify_malloc_tracking(1, 1);
+
+    /* Mutex balanced — no leak on the rollback path */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(mock_xSemaphoreTake_called, mock_xSemaphoreGive_called,
+        "Mutex give count must equal take count on the abort path");
+
+    /* Cache is inert: a would-be response stores nothing (pool freed) */
+    cache_multimaster_on_request(0, 1, 3, 0, 1);
+    uint8_t data[] = { 1, 0x03, 2, 0xAB, 0xCD };
+    cache_multimaster_on_response(0, 1, 3, data, sizeof(data), 0);
+    uint16_t val = 0;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(1, 3, 0, &val, 0),
+        "no data may be cached after an aborted enable");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -2723,6 +2767,7 @@ int main(void)
     RUN_TEST(test_cache_multimaster_on_response_fc01_addr_wrap_no_poison);
     RUN_TEST(test_cache_multimaster_on_response_addr_wrap_exact_boundary);
     RUN_TEST(test_cache_multimaster_pool_full_drop_counter_and_status);
+    RUN_TEST(test_cache_multimaster_enable_age_task_fail_aborts);
 
     return UNITY_END();
 }

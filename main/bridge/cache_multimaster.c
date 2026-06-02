@@ -211,8 +211,22 @@ void cache_multimaster_enable(void)
         BaseType_t rc = xTaskCreate(cache_age_task, "cache_age", 2048,
                                     NULL, tskIDLE_PRIORITY + 1, &s_age_task);
         if (rc != pdPASS) {
-            ESP_LOGE(TAG, "Failed to create cache_age_task (err %d) — age_s will not increment", rc);
+            /* Without the aging task age_s never increments, so the lookup
+             * staleness check (age_s > timeout) can never fire and stale values
+             * would be served as fresh forever (mem-exhaust-2). Refuse to enable
+             * a cache that cannot expire its data: roll back the pool allocation
+             * and leave the cache disabled so callers fall back to live polling. */
+            ESP_LOGE(TAG, "Failed to create cache_age_task (err %d) — aborting cache enable", rc);
             s_age_task = NULL; /* xTaskCreate does not clear the handle on failure */
+#ifdef __unittest_env__
+            test_free(s_pool);
+#else
+            free(s_pool);
+#endif
+            s_pool = NULL;
+            xSemaphoreGive(s_cache_mutex);
+            s_cache_enabled = false;
+            return;
         }
     }
 
