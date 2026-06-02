@@ -14,6 +14,9 @@
 /* Test shim: exposes the static process_data_from_tcp() for unit tests */
 void cache_modbus_server_test_process(tcp_desc_t *desc, int client_sock,
                                        uint8_t *data, size_t len);
+/* Test shims for the reassembly-slot lifecycle (cache-mb-framing-2) */
+void     cache_modbus_server_test_close(int client_sock);
+uint32_t cache_modbus_server_test_get_slot_exhausted(void);
 
 /* ---- Mock state variables exposed by mocks/cache_multimaster.c ----------- */
 
@@ -1904,6 +1907,93 @@ void test_reassembly_oversized_header_split_then_resync(void)
         "valid frame after a split oversized header must be dispatched via resync");
 }
 
+/* ---- CMS-U-048: 9th connection has no reassembly slot (bypass observable) - */
+
+/* cache-mb-framing-2 / mem-exhaust-4: only CACHE_MB_MAX_CONNS (8) reassembly
+ * slots exist. A 9th simultaneous connection gets no slot, so its data is
+ * processed best-effort WITHOUT stream reassembly: a complete frame in one
+ * recv still works, but a frame split across recvs is NOT reassembled. The
+ * condition must be observable via the slot-exhausted counter (not silent). */
+void test_reassembly_ninth_connection_bypass(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-048: 9th connection bypasses reassembly (observable, split frame lost)");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x2468;
+    mock_setting_items_set_timeout(0);
+
+    /* Occupy all 8 slots: each socket 1..8 gets a partial (first 6 bytes). */
+    uint8_t half[12];   /* build_request writes 12 bytes; only the first 6 are sent */
+    build_request(half, 0x0001, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    for (int sock = 1; sock <= 8; sock++) {
+        cache_modbus_server_test_process(NULL, sock, half, 6);
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_send_called,
+        "8 partial frames must not produce any response yet");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, cache_modbus_server_test_get_slot_exhausted(),
+        "8 connections must each get a slot — no exhaustion yet");
+
+    /* 9th connection, split frame: neither half is reassembled -> no response,
+     * and the slot-exhausted counter rises so the bypass is observable. */
+    uint8_t full[12];
+    build_request(full, 0x0009, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 9, full, 6);      /* first half */
+    cache_modbus_server_test_process(NULL, 9, full + 6, 6);  /* second half */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_send_called,
+        "split frame on the 9th connection is NOT reassembled -> no response");
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(1, cache_modbus_server_test_get_slot_exhausted(),
+        "9th connection must register slot exhaustion (observable, not silent)");
+
+    /* But a COMPLETE frame in one recv on the 9th connection is still served
+     * best-effort (single-frame processing path). */
+    cache_modbus_server_test_process(NULL, 9, full, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "a complete single-recv frame on the 9th connection is still served");
+}
+
+/* ---- CMS-U-049: close hook frees the slot so a reused fd starts clean ----- */
+
+/* Verifies the close-hook LIFECYCLE that PREVENTS the non-race reused-fd
+ * carry-over (cache-mb-framing-2): when a socket closes, on_conn_close() frees
+ * its slot, so a later connection reusing the same fd gets a clean (len==0)
+ * slot. This is the happy-path mechanism, not the bug itself — the actual
+ * stale-carry-over hazard is purely the race where the close hook has not yet
+ * run when the fd is reused (concurrency-3, out of scope here: not reproducible
+ * in this single-threaded host harness with no-op mutex mocks). A test that
+ * deliberately skipped the close would only stage an artificial carry-over, not
+ * the race, so it is intentionally omitted. */
+void test_reassembly_reused_fd_clean_after_close(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-049: close hook frees slot -> reused fd starts clean");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x1357;
+    mock_setting_items_set_timeout(0);
+
+    /* fd 5 receives a partial frame (first 6 bytes), then the connection closes. */
+    uint8_t half[12];   /* build_request writes 12 bytes; only the first 6 are sent */
+    build_request(half, 0x0010, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 5, half, 6);
+    TEST_ASSERT_EQUAL_INT(0, mock_tcp_send_called);
+
+    cache_modbus_server_test_close(5);   /* receiver task releases the slot */
+
+    /* fd 5 is reused by a fresh connection that sends a complete frame. Without
+     * the close having freed the slot, the stale 6 bytes would be prepended and
+     * misparse; with it, the new frame is served cleanly. */
+    uint8_t full[12];
+    build_request(full, 0x0011, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 5, full, 12);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "reused fd must start from a clean slot after the close hook ran");
+}
+
 /* ---- CMS-U-043: self unit (0xFF) served when cache DISABLED -------------- */
 
 /* Load-bearing test: a request addressed to the gateway itself (Unit ID 0xFF)
@@ -2053,6 +2143,8 @@ int main(void)
     RUN_TEST(test_reassembly_bogus_middle_frame_preserves_tail);
     RUN_TEST(test_reassembly_nonzero_protocol_id_skipped);
     RUN_TEST(test_reassembly_oversized_header_split_then_resync);
+    RUN_TEST(test_reassembly_ninth_connection_bypass);
+    RUN_TEST(test_reassembly_reused_fd_clean_after_close);
 
     RUN_TEST(test_cache_modbus_server_self_unit_served_when_cache_disabled);
     RUN_TEST(test_cache_modbus_server_self_unit_bypasses_cache_lookup);

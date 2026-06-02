@@ -397,6 +397,17 @@ typedef struct {
 static conn_reasm_t      s_reasm[CACHE_MB_MAX_CONNS];
 static SemaphoreHandle_t s_reasm_mutex = NULL;   /* guards slot alloc/free only */
 
+/* Count of recv() CALLBACKS (not connections) that found no free reassembly
+ * slot — i.e. more than CACHE_MB_MAX_CONNS simultaneous connections. Such recvs
+ * fall back to best-effort single-frame processing with NO stream reassembly,
+ * so a frame split across recvs on the 9th+ connection is mishandled
+ * (cache-mb-framing-2). Exposed so the condition is observable rather than
+ * silent. Best-effort: incremented with a plain ++ outside s_reasm_mutex, so it
+ * may slightly undercount under concurrent exhaustion — it is a diagnostic
+ * signal, not an exact metric. One active 9th connection bumps it once per
+ * recv, not once per connection. */
+static volatile uint32_t s_reasm_slot_exhausted = 0;
+
 /* Find (or allocate) the reassembly slot for a socket. */
 static conn_reasm_t *reasm_get(int sock)
 {
@@ -442,7 +453,14 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
 {
     conn_reasm_t *c = reasm_get(client_sock);
     if (c == NULL) {
-        /* Table full — best effort: process the buffer as a single frame. */
+        /* No free reassembly slot (> CACHE_MB_MAX_CONNS simultaneous
+         * connections). Best effort: process the buffer as a single frame —
+         * a complete frame in one recv() still works, but a frame split across
+         * recvs on this connection is NOT reassembled. Count it so slot
+         * exhaustion is observable instead of silent (cache-mb-framing-2). */
+        s_reasm_slot_exhausted++;
+        ESP_LOGW(TAG, "sock=%d: no reassembly slot (>%d conns), processing without reassembly",
+                 client_sock, CACHE_MB_MAX_CONNS);
         process_one_frame(desc, client_sock, data, len);
         return;
     }
@@ -547,6 +565,7 @@ esp_err_t cache_modbus_server_init(int port)
         s_reasm[i].sock = -1;
         s_reasm[i].len  = 0;
     }
+    s_reasm_slot_exhausted = 0;
     if (s_reasm_mutex == NULL) {
         s_reasm_mutex = xSemaphoreCreateMutex();
     }
@@ -583,6 +602,13 @@ void cache_modbus_server_test_process(tcp_desc_t *desc, int client_sock,
     process_data_from_tcp(desc, client_sock, data, len);
 }
 
+/* Thin shim exposing the connection-close hook for unit tests, so tests can
+ * model the receiver task releasing a reassembly slot on disconnect. */
+void cache_modbus_server_test_close(int client_sock)
+{
+    on_conn_close(NULL, client_sock);
+}
+
 void cache_modbus_server_test_reset(void)
 {
     for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
@@ -592,5 +618,12 @@ void cache_modbus_server_test_reset(void)
     s_reasm_mutex = NULL;
     s_tcp_desc    = NULL;
     s_port        = 0;
+    s_reasm_slot_exhausted = 0;
+}
+
+/* Number of recv callbacks that found no free reassembly slot since reset. */
+uint32_t cache_modbus_server_test_get_slot_exhausted(void)
+{
+    return s_reasm_slot_exhausted;
 }
 #endif /* __unittest_env__ */
