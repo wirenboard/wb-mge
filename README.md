@@ -23,6 +23,18 @@ On top of either mode, each port can additionally enable:
  - **Sniffer** — captures RS-485 traffic in both directions, decodes Modbus frames and streams
    them to the web UI over WebSocket for diagnostics.
 
+Separately, both ports together can run as a:
+
+ - **Repeater** — a transparent serial-to-serial passthrough that links the two RS-485 ports
+   directly to each other instead of to the network: bytes received on Port 1 are forwarded to
+   Port 2 and vice versa, as-is, without frame parsing. It is used to extend the RS-485 line and
+   restore signal integrity. The mode activates only when **both** ports are switched to repeater
+   mode; the *Repeater* page of the web UI shows live forwarding statistics — bytes forwarded in
+   each direction, dropped bytes per port, uptime and average throughput (the raw counters are
+   also exposed under the `repeater` object of `GET /info`). **Warning:** while the repeater is
+   active, the two segments behave as if they were electrically connected — if a master is present
+   on both sides, the buses collide and communication fails.
+
 ## Device Register Map (Unit ID 255)
 
 The gateway itself answers Modbus polls on its own address **Unit ID 255 (0xFF)** — per the
