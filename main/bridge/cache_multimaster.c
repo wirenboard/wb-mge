@@ -230,11 +230,12 @@ void cache_multimaster_enable(void)
         }
     }
 
-    xSemaphoreGive(s_cache_mutex);
-
-    /* Reset pending request state for all ports — only written from sniffer_ws_task,
-     * so no mutex needed, but must be cleared before re-activating the sniffer. */
+    /* Reset pending request state for all ports before re-activating the
+     * sniffer. Done under the mutex because on_request/on_response access
+     * s_pending from the sniffer task (corr-5). */
     memset(s_pending, 0, sizeof(s_pending));
+
+    xSemaphoreGive(s_cache_mutex);
 
     s_cache_enabled = true;
 
@@ -296,9 +297,11 @@ void cache_multimaster_clear(void)
     s_last_packet_us    = 0;
     s_reset_us          = esp_timer_get_time();
     s_entries_dropped   = 0;
-    xSemaphoreGive(s_cache_mutex);
-    /* s_pending is only written from sniffer_ws_task; clear outside the mutex */
+    /* Reset pending requests under the mutex: on_request/on_response read and
+     * write s_pending from the sniffer task, so this cross-task reset must be
+     * serialised with them (corr-5). */
     memset(s_pending, 0, sizeof(s_pending));
+    xSemaphoreGive(s_cache_mutex);
     ESP_LOGI(TAG, "Cache cleared");
 }
 
@@ -307,21 +310,28 @@ void cache_multimaster_on_request(uint8_t port, uint8_t slave_id, uint8_t functi
 {
     if (port >= BRIDGES_COUNT) return;
 
-    /* No mutex needed: s_pending is only written here and read in on_response,
-     * both called from the same sniffer_ws_task context.                       */
+    /* s_pending is written here and in on_response from the sniffer task, but
+     * ALSO reset (memset) by enable()/clear() running on the httpd/settings
+     * task — so the single-writer assumption does not hold and these accesses
+     * must be serialised under s_cache_mutex to avoid a torn read in
+     * on_response on a dual-core SMP device (corr-5). */
+    if (s_cache_mutex != NULL) xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
     s_pending[port].valid     = true;
     s_pending[port].slave_id  = slave_id;
     s_pending[port].function  = function;
     s_pending[port].start_reg = start_reg;
     s_pending[port].count     = count;
+    if (s_cache_mutex != NULL) xSemaphoreGive(s_cache_mutex);
 }
 
 void cache_multimaster_clear_pending(uint8_t port)
 {
     if (port >= BRIDGES_COUNT) return;
-    /* Same single-writer context as on_request/on_response (sniffer_ws_task),
-     * so no mutex is needed for this flag write. */
+    /* Serialise with the other s_pending writers (enable()/clear() reset it from
+     * a different task) — see on_request (corr-5). */
+    if (s_cache_mutex != NULL) xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
     s_pending[port].valid = false;
+    if (s_cache_mutex != NULL) xSemaphoreGive(s_cache_mutex);
 }
 
 void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t function,
@@ -331,17 +341,25 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
     if (port >= BRIDGES_COUNT) return;
     if (data == NULL || data_len < 4) return;
 
-    /* Verify there is a matching pending request */
-    if (!s_pending[port].valid ||
-        s_pending[port].slave_id != slave_id ||
-        s_pending[port].function != function) {
-        s_pending[port].valid = false;
-        return;
+    /* Read and consume the pending request under s_cache_mutex: s_pending is
+     * also reset by enable()/clear() on another task, so reading these fields
+     * unlocked could observe a torn state (corr-5). Copy the needed fields to
+     * locals so the heavier pool work below runs without holding the lock here. */
+    bool     match      = false;
+    uint16_t start_addr = 0;
+    uint16_t count      = 0;
+    if (s_cache_mutex != NULL) xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    if (s_pending[port].valid &&
+        s_pending[port].slave_id == slave_id &&
+        s_pending[port].function == function) {
+        match      = true;
+        start_addr = s_pending[port].start_reg;
+        count      = s_pending[port].count;
     }
+    s_pending[port].valid = false; /* consume / reject the pending request */
+    if (s_cache_mutex != NULL) xSemaphoreGive(s_cache_mutex);
 
-    uint16_t start_addr = s_pending[port].start_reg;
-    uint16_t count      = s_pending[port].count;
-    s_pending[port].valid = false; /* consume the pending request */
+    if (!match) return;
 
     /* data layout: [0]=slave_id [1]=FC [2]=byte_count [3..N]=data */
     uint8_t byte_count = data[2];
@@ -882,6 +900,8 @@ void cache_multimaster_test_reset(void)
     s_pool              = NULL;
     s_cache_enabled     = false;
     s_cache_mutex       = NULL;
+    /* s_pending reset here is intentionally unlocked: the host test harness is
+     * single-threaded (not the corr-5 cross-task path). */
     memset(s_pending, 0, sizeof(s_pending));
     s_age_task          = NULL;
     s_packets_processed = 0;

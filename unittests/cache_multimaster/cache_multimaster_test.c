@@ -800,11 +800,13 @@ void test_cache_multimaster_on_response_malformed_length(void)
 
     cache_multimaster_on_response(0, 9, 3, data, sizeof(data), 0);
 
-    /* The mutex must NOT have been taken (early exit before the mutex section) */
+    /* The mutex is taken exactly ONCE — for the pending read/consume, which is
+     * now serialised with enable()/clear() (corr-5) — but the pool-work section
+     * is NOT entered: the bounds check returns before it. */
     TEST_ASSERT_EQUAL_INT_MESSAGE(
-        take_before,
+        take_before + 1,
         mock_xSemaphoreTake_called,
-        "mutex must not be taken when data_len is too short"
+        "mutex taken once for the pending consume, not for pool work, on a too-short response"
     );
 
     /* Pending must be consumed (set to false) even on early return:
