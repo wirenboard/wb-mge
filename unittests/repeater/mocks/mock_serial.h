@@ -11,6 +11,7 @@
 typedef struct {
     int init_called;
     int deinit_called;
+    unsigned deinit_call_seq;   // call_sequence id captured in serial_deinit() (R2: lock-order assertion)
     bool init_should_fail;
     // serial_send observation (per most-recent call).
     int send_called;

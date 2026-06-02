@@ -11,6 +11,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"   // mock_set_tick_count, mock_freertos_task_reset
+#include "freertos/semphr.h" // mock semaphore symbols (mutex-create / give call seq)
 
 #include <string.h>
 
@@ -51,6 +52,7 @@ void setUp(void)
     repeater_reset_for_test();
     mock_serial_reset();
     mock_freertos_task_reset();
+    mock_freertos_semaphore_reset();
 }
 
 void tearDown(void)
@@ -283,6 +285,94 @@ void test_init_serial_fail(void)
 }
 
 // ---------------------------------------------------------------------------
+// U-R1: repeater_init() creates the global lock exactly once
+// ---------------------------------------------------------------------------
+void test_init_creates_mutex_once(void)
+{
+    // R1 lets s_lock start NULL each test. First init creates the lock; a second
+    // init must NOT recreate it (guards the s_lock==NULL check — its removal would
+    // leak the mutex and drop protection of live ports).
+    repeater_init();
+    TEST_ASSERT_EQUAL(1, mock_xSemaphoreCreateMutex_called);
+    repeater_init();
+    TEST_ASSERT_EQUAL(1, mock_xSemaphoreCreateMutex_called);
+}
+
+// ---------------------------------------------------------------------------
+// U-R2: re-initing the same port is idempotent (same desc, no new serial, no
+// double-count of active_count)
+// ---------------------------------------------------------------------------
+void test_double_init_same_port_is_idempotent(void)
+{
+    mock_set_tick_count(0);
+    serial_config_t cfg0 = make_serial_config();
+    serial_config_t cfg1 = make_serial_config();
+    serial_desc_t *d0a = NULL, *d0b = NULL, *d1 = NULL;
+
+    TEST_ASSERT_EQUAL(ESP_OK, repeater_init_port(0, &cfg0, &d0a));
+    TEST_ASSERT_EQUAL(ESP_OK, repeater_init_port(1, &cfg1, &d1));
+    TEST_ASSERT_EQUAL(2, mock_serial_calls.init_called);   // one serial_init per distinct port
+
+    // Re-init port 0: must hand back the SAME descriptor and NOT open a new serial.
+    serial_config_t cfg0b = make_serial_config();
+    TEST_ASSERT_EQUAL(ESP_OK, repeater_init_port(0, &cfg0b, &d0b));
+    TEST_ASSERT_EQUAL_PTR(d0a, d0b);
+    TEST_ASSERT_EQUAL(2, mock_serial_calls.init_called);   // no third serial_init
+
+    // active_count must not have been double-counted: one deinit per port returns it
+    // to 0, so active is false and uptime is forced to 0 even though ticks advanced.
+    // (If port 0 had been double-counted, count would still be 1 here → uptime > 0.)
+    mock_set_tick_count(1000);
+    TEST_ASSERT_EQUAL(ESP_OK, repeater_deinit_port(0));
+    TEST_ASSERT_EQUAL(ESP_OK, repeater_deinit_port(1));
+
+    repeater_stats_t st = {0};
+    repeater_get_stats(&st);
+    TEST_ASSERT_FALSE(st.active);
+    TEST_ASSERT_EQUAL_UINT32(0, st.uptime_s);
+}
+
+// ---------------------------------------------------------------------------
+// U-R3: an unknown descriptor in the rx handler is dropped early, no side effects
+// ---------------------------------------------------------------------------
+void test_rx_handler_unknown_desc_ignored(void)
+{
+    serial_config_t cfg0 = make_serial_config();
+    serial_desc_t *d0 = NULL;
+    TEST_ASSERT_EQUAL(ESP_OK, repeater_init_port(0, &cfg0, &d0));
+
+    serial_desc_t bogus;   // a descriptor never registered with the repeater
+    uint8_t payload[] = {0x11, 0x22, 0x33};
+    mock_serial_registered_handler(&bogus, payload, sizeof(payload));
+
+    // Unknown desc → early return: nothing forwarded, no counter touched.
+    TEST_ASSERT_EQUAL(0, mock_serial_calls.send_called);
+    repeater_stats_t st = {0};
+    repeater_get_stats(&st);
+    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT32(0, st.bytes_2to1);
+    TEST_ASSERT_EQUAL_UINT32(0, st.dropped_1);
+    TEST_ASSERT_EQUAL_UINT32(0, st.dropped_2);
+}
+
+// ---------------------------------------------------------------------------
+// U-R4: serial_deinit() runs AFTER xSemaphoreGive() (lock-order invariant)
+// ---------------------------------------------------------------------------
+void test_deinit_serial_deinit_runs_after_unlock(void)
+{
+    serial_desc_t *d0 = NULL, *d1 = NULL;
+    init_both_ports(&d0, &d1);
+
+    TEST_ASSERT_EQUAL(ESP_OK, repeater_deinit_port(0));
+
+    // serial_deinit() must be invoked only after the lock was released; if it were
+    // moved back inside the critical section it would deadlock against the UART task
+    // waiting on s_lock inside repeater_rx_handler().
+    TEST_ASSERT_EQUAL(1, mock_serial_calls.deinit_called);
+    TEST_ASSERT_TRUE(mock_serial_calls.deinit_call_seq > mock_xSemaphoreGive_call_seq);
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 int main(void)
@@ -299,6 +389,10 @@ int main(void)
     RUN_TEST(test_uptime_tracks_elapsed_time);
     RUN_TEST(test_init_invalid_args);
     RUN_TEST(test_init_serial_fail);
+    RUN_TEST(test_init_creates_mutex_once);
+    RUN_TEST(test_double_init_same_port_is_idempotent);
+    RUN_TEST(test_rx_handler_unknown_desc_ignored);
+    RUN_TEST(test_deinit_serial_deinit_runs_after_unlock);
 
     return UNITY_END();
 }

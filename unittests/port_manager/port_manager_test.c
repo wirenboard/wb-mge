@@ -305,6 +305,116 @@ void test_switch_passive_repeater_disabled(void)
     TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].deinit_called);
 }
 
+/* U-P1: repeater survives reboot — NVS "repeater" is reverse-parsed at init. */
+void test_init_brings_up_repeater_from_nvs(void)
+{
+    // NVS persisted "repeater" for port 1 → on boot the port comes up as REPEATER.
+    mock_setting_items_set_port_mode(0, PORT_MODE_REPEATER_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+    TEST_ASSERT_EQUAL(PM_MODE_REPEATER, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].init_called);
+}
+
+void test_init_unknown_nvs_mode_falls_back_to_disabled(void)
+{
+    // Garbage NVS value → DISABLED; repeater must NOT be started.
+    mock_setting_items_set_port_mode(0, "bogus_mode");
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+    TEST_ASSERT_EQUAL(PM_MODE_DISABLED, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL(0, mock_repeater_calls[0].init_called);
+}
+
+/* U-P5: transitions into/out of repeater from a non-passive mode. */
+void test_switch_tcp_bridge_repeater_passive(void)
+{
+    /* tcp_bridge -> repeater */
+    port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
+    mock_bridge_reset(); mock_sniffer_reset(); mock_serial_reset(); mock_repeater_reset();
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_REPEATER));
+    TEST_ASSERT_EQUAL(PM_MODE_REPEATER, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL(1, mock_sniffer_detach_called[0]);                  /* tcp_bridge deinit */
+    TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_deinit_called); /* tcp_bridge deinit */
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].init_called);            /* repeater init */
+    TEST_ASSERT_EQUAL(1, mock_sniffer_attach_called[0]);
+    TEST_ASSERT_EQUAL(1, mock_serial_set_rx_timeout_called[0]);
+    TEST_ASSERT_EQUAL(SERIAL_RX_TOUT_PROXY, mock_serial_set_rx_timeout_value[0]);
+
+    /* repeater -> passive */
+    mock_bridge_reset(); mock_sniffer_reset(); mock_serial_reset(); mock_repeater_reset();
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_PASSIVE));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL(1, mock_sniffer_detach_called[0]);                          /* repeater deinit */
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].deinit_called);                   /* via repeater_deinit_port, NOT serial_deinit */
+    TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_init_serial_only_called); /* passive init */
+    TEST_ASSERT_EQUAL(1, mock_serial_set_rx_timeout_called[0]);
+    TEST_ASSERT_EQUAL(SERIAL_RX_TOUT_SNIFFER, mock_serial_set_rx_timeout_value[0]);
+}
+
+/* U-P6: a repeated set_mode(REPEATER) is exactly one deinit->init cycle. */
+void test_repeated_set_mode_repeater_single_cycle(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_REPEATER));
+    mock_repeater_reset();
+
+    /* A second set_mode(REPEATER) is exactly one deinit->init cycle, never a double init. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_REPEATER));
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].deinit_called);
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].init_called);
+}
+
+/* U-P4: repeater teardown resets RS-485 stats. */
+void test_repeater_teardown_resets_rs485_stats(void)
+{
+    port_manager_set_mode(0, PM_MODE_REPEATER);
+    mock_sniffer_reset(); mock_repeater_reset(); mock_rs485_stats_reset_all();
+
+    port_manager_set_mode(0, PM_MODE_DISABLED);
+
+    TEST_ASSERT_EQUAL(1, mock_sniffer_detach_called[0]);
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].deinit_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_busy_monitor_reset_called[0]);
+    TEST_ASSERT_EQUAL(1, mock_rs485_stats_reset_called[0]);
+}
+
+/* U-P3: get_port_serial_desc(REPEATER) wired through port_manager_send_raw. */
+void test_send_raw_repeater_port_calls_serial_send(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_REPEATER));
+    mock_serial_reset();   /* isolate the send */
+    uint8_t data[] = {0x01, 0x02, 0x03, 0x04};
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_send_raw(0, data, sizeof(data)));
+    TEST_ASSERT_EQUAL(1, mock_serial_send_called);
+    TEST_ASSERT_EQUAL(sizeof(data), mock_serial_send_last_len);
+}
+
+/* U-P2: check_settings_changed(REPEATER) — mode sub-branch. */
+void test_check_settings_changed_repeater_mode_branch(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_REPEATER));
+    /* NVS mode now matches runtime → no change. */
+    TEST_ASSERT_FALSE(port_manager_check_settings_changed(0));
+    /* NVS mode changed to passive → change detected (mode sub-branch). */
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_TRUE(port_manager_check_settings_changed(0));
+}
+
+/* U-P2: check_settings_changed(REPEATER) — serial-params sub-branch (via R3). */
+void test_check_settings_changed_repeater_serial_params(void)
+{
+    /* Inject config A, bring up REPEATER (snapshot = A). */
+    serial_config_t cfgA; memset(&cfgA, 0, sizeof(cfgA)); cfgA.baudrate = 9600;
+    mock_bridge_set_serial_config(0, &cfgA);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_REPEATER));
+    TEST_ASSERT_FALSE(port_manager_check_settings_changed(0));   /* same config → no change */
+
+    /* NVS serial params now differ → change detected (serial-params sub-branch). */
+    serial_config_t cfgB = cfgA; cfgB.baudrate = 115200;
+    mock_bridge_set_serial_config(0, &cfgB);
+    TEST_ASSERT_TRUE(port_manager_check_settings_changed(0));
+}
+
 void test_set_mode_passive_with_cache_overlay_enables_cache(void)
 {
     /* The global pool now follows persisted INTENT (overlay), not serial state:
@@ -743,6 +853,15 @@ int port_manager_test(void)
     RUN_TEST(test_set_mode_tcp_bridge_success);
     RUN_TEST(test_set_mode_passive_success);
     RUN_TEST(test_set_mode_repeater_success);
+    /* U-P1/U-P2/U-P3/U-P4/U-P5/U-P6 — repeater integration */
+    RUN_TEST(test_init_brings_up_repeater_from_nvs);
+    RUN_TEST(test_init_unknown_nvs_mode_falls_back_to_disabled);
+    RUN_TEST(test_switch_tcp_bridge_repeater_passive);
+    RUN_TEST(test_repeated_set_mode_repeater_single_cycle);
+    RUN_TEST(test_repeater_teardown_resets_rs485_stats);
+    RUN_TEST(test_send_raw_repeater_port_calls_serial_send);
+    RUN_TEST(test_check_settings_changed_repeater_mode_branch);
+    RUN_TEST(test_check_settings_changed_repeater_serial_params);
     RUN_TEST(test_set_mode_passive_with_cache_overlay_enables_cache);
     RUN_TEST(test_set_mode_tcp_bridge_with_cache_overlay_enables_cache);
 

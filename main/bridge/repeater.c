@@ -186,5 +186,6 @@ void repeater_reset_for_test(void)
     memset(s_dropped, 0, sizeof(s_dropped));
     s_active_count = 0;
     s_active_since = 0;
+    s_lock = NULL;   // R1: reset so each test starts with no global lock (deterministic mutex-create count)
 }
 #endif

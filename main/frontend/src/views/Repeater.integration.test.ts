@@ -342,3 +342,30 @@ describe('REP-I-005: missing repeater object', () => {
     wrapper!.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// REP-I-006: toggle error path — a rejected api() reverts the optimistic state
+// ---------------------------------------------------------------------------
+describe('REP-I-006: toggle error path', () => {
+  it('a rejected api() reverts the toggle and raises the connection alert', async () => {
+    const { default: Repeater } = await import('@/views/Repeater.vue');
+
+    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled' });
+    const wrapper = mount(Repeater, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // The toggle attempt fails at the API layer.
+    vi.mocked(api).mockRejectedValue(new Error('connection refused'));
+
+    await toggleButton(wrapper).trigger('click');
+    await flushPromises();
+
+    // onError wiring fired with the connection_error key...
+    expect(showAlertMock).toHaveBeenCalledWith('connection_error');
+    // ...and the optimistic ON state reverted back to OFF.
+    expect(toggleButton(wrapper).classes()).toContain('off');
+    expect(toggleButton(wrapper).attributes('aria-pressed')).toBe('false');
+
+    wrapper.unmount();
+  });
+});

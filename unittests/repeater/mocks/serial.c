@@ -5,6 +5,7 @@
 
 #include "serial.h"
 #include "mock_serial.h"
+#include "call_sequence.h"
 #include <string.h>
 
 // One descriptor per port; index = order of serial_init() calls.
@@ -66,6 +67,7 @@ esp_err_t serial_deinit(serial_desc_t *desc)
 {
     (void)desc;
     mock_serial_calls.deinit_called++;
+    mock_serial_calls.deinit_call_seq = call_sequence_get_call_id();
     return ESP_OK;
 }
 

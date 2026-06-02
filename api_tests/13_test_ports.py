@@ -535,3 +535,31 @@ def test_sniffer_status_post_method_rejected(api):
         f"Expected HTTP 405 for POST /sniffer/status, got {response.status_code}"
     )
     print("✓ POST /sniffer/status returns 405")
+
+
+def test_info_repeater_object_shape(api):
+    """C-1: GET /info must expose a well-formed 'repeater' object.
+
+    Validates the info_handlers.c repeater block against the openapi.yaml schema:
+    the object is present, all six keys exist, 'active' is a bool, and the five
+    counters/uptime are non-negative ints. Catches a dropped/renamed field or a
+    type drift (e.g. a counter serialized as a string) between firmware and API.
+    """
+    resp = api.get_info()
+    assert resp.status_code == 200, f"GET /info expected 200, got {resp.status_code}"
+    data = resp.json()
+    assert "repeater" in data, f"'repeater' object missing from /info: keys={list(data.keys())}"
+    rep = data["repeater"]
+    assert isinstance(rep, dict), f"'repeater' must be an object, got {type(rep)}"
+
+    assert "active" in rep, f"'active' missing from repeater: {rep}"
+    assert isinstance(rep["active"], bool), f"'active' must be bool, got {type(rep['active'])}"
+
+    for key in ("uptime_s", "bytes_1to2", "bytes_2to1", "dropped_1", "dropped_2"):
+        assert key in rep, f"'{key}' missing from repeater: {rep}"
+        val = rep[key]
+        # In Python bool is a subclass of int — reject bools explicitly for the counters.
+        assert isinstance(val, int) and not isinstance(val, bool), \
+            f"'{key}' must be an integer, got {type(val)}: {val!r}"
+        assert val >= 0, f"'{key}' must be >= 0, got {val}"
+    print("✓ /info.repeater shape validated (6 keys, correct types)")

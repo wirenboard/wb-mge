@@ -14,6 +14,10 @@ bool mock_bridge_port_init_serial_only_should_fail = false;
 serial_desc_t mock_serial_desc_instances[BRIDGES_COUNT];
 serial_desc_t *mock_bridge_serial_desc[BRIDGES_COUNT];
 
+/* R3: per-port serial_config returned by bridge_read_serial_config(). Defaults to
+ * all-zero, which preserves the prior behavior (the function used to zero the config). */
+static serial_config_t mock_bridge_serial_cfg[BRIDGES_COUNT];
+
 esp_err_t bridge_port_init(unsigned index)
 {
     TEST_ASSERT_LESS_THAN_UINT_MESSAGE(BRIDGES_COUNT, index, "bridge_port_init: invalid index");
@@ -59,8 +63,15 @@ esp_err_t bridge_read_serial_config(unsigned index, serial_config_t *config)
         return ESP_ERR_INVALID_ARG;
     }
     mock_bridge_calls[index].bridge_read_serial_config_called++;
-    memset(config, 0, sizeof(*config));
+    memcpy(config, &mock_bridge_serial_cfg[index], sizeof(*config));
     return ESP_OK;
+}
+
+void mock_bridge_set_serial_config(unsigned index, const serial_config_t *cfg)
+{
+    if ((index < BRIDGES_COUNT) && cfg) {
+        memcpy(&mock_bridge_serial_cfg[index], cfg, sizeof(serial_config_t));
+    }
 }
 
 bool bridge_port_check_settings_changed(unsigned index)
@@ -98,6 +109,9 @@ void mock_bridge_reset(void)
     mock_bridge_port_init_should_fail = false;
     mock_bridge_port_init_serial_only_should_fail = false;
     memset(mock_serial_desc_instances, 0, sizeof(mock_serial_desc_instances));
+    /* R3: each test starts with a zeroed (default) injected config, preserving the
+     * equal/zeroed-config behavior the existing tests rely on. */
+    memset(mock_bridge_serial_cfg, 0, sizeof(mock_bridge_serial_cfg));
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         mock_bridge_serial_desc[i] = &mock_serial_desc_instances[i];
     }

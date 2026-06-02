@@ -22,3 +22,7 @@ extern serial_desc_t *mock_bridge_serial_desc[BRIDGES_COUNT];
 extern serial_desc_t mock_serial_desc_instances[BRIDGES_COUNT];
 
 void mock_bridge_reset(void);
+
+/* R3: inject the serial_config that bridge_read_serial_config() returns for a port,
+ * so a test can make the init-time snapshot and the later check see different values. */
+void mock_bridge_set_serial_config(unsigned index, const serial_config_t *cfg);
