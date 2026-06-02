@@ -27,6 +27,10 @@ uint8_t mock_cache_multimaster_on_response_last_function = 0;
 uint16_t mock_cache_multimaster_on_response_last_data_len = 0;
 uint64_t mock_cache_multimaster_on_response_last_timestamp_us = 0;
 
+/* ---- Recording state: clear_pending (corr-7) ---- */
+int     mock_cache_multimaster_clear_pending_called    = 0;
+uint8_t mock_cache_multimaster_clear_pending_last_port = 0;
+
 void mock_cache_multimaster_reset(void)
 {
     mock_cache_multimaster_enabled = false;
@@ -44,6 +48,9 @@ void mock_cache_multimaster_reset(void)
     mock_cache_multimaster_on_response_last_function = 0;
     mock_cache_multimaster_on_response_last_data_len = 0;
     mock_cache_multimaster_on_response_last_timestamp_us = 0;
+
+    mock_cache_multimaster_clear_pending_called    = 0;
+    mock_cache_multimaster_clear_pending_last_port = 0;
 }
 
 bool cache_multimaster_is_enabled(void)
@@ -73,4 +80,10 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
     mock_cache_multimaster_on_response_last_function = function;
     mock_cache_multimaster_on_response_last_data_len = data_len;
     mock_cache_multimaster_on_response_last_timestamp_us = timestamp_us;
+}
+
+void cache_multimaster_clear_pending(uint8_t port)
+{
+    mock_cache_multimaster_clear_pending_called++;
+    mock_cache_multimaster_clear_pending_last_port = port;
 }

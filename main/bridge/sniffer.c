@@ -618,6 +618,17 @@ SNIFFER_STATIC void sniffer_ws_dispatch(sniff_packet_t *pkt)
                    pkt->crc_valid && pkt->data_len >= 5) {
             cache_multimaster_on_response(pkt->port, pkt->slave_id, pkt->function,
                                           pkt->data, pkt->data_len, pkt->timestamp_us);
+        } else {
+            /* Any other bus event ended the current transaction without a
+             * cacheable response: a bus timeout, an exception reply (function
+             * has the 0x80 error bit), a malformed/short slave frame, or a
+             * non-read master request (e.g. an FC06/FC16 write). None of these
+             * reach on_response(), so clear the pending request to stop it from
+             * being matched against a later, unrelated response of the same
+             * slave+FC (corr-7). On a half-duplex RS-485 bus nothing arrives
+             * between a captured request and its response, so this never
+             * spuriously clears a pending that is still awaiting its reply. */
+            cache_multimaster_clear_pending(pkt->port);
         }
     }
 

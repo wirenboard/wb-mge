@@ -316,6 +316,14 @@ void cache_multimaster_on_request(uint8_t port, uint8_t slave_id, uint8_t functi
     s_pending[port].count     = count;
 }
 
+void cache_multimaster_clear_pending(uint8_t port)
+{
+    if (port >= BRIDGES_COUNT) return;
+    /* Same single-writer context as on_request/on_response (sniffer_ws_task),
+     * so no mutex is needed for this flag write. */
+    s_pending[port].valid = false;
+}
+
 void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t function,
                                    const uint8_t *data, uint16_t data_len,
                                    uint64_t timestamp_us)

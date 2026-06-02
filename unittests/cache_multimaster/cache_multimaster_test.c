@@ -2702,6 +2702,66 @@ void test_cache_multimaster_enable_age_task_fail_aborts(void)
         "no data may be cached after an aborted enable");
 }
 
+/* ---- CM-U-061: clear_pending stops stale request matching a later response - */
+
+/* corr-7: after a request whose transaction ends WITHOUT a cacheable response
+ * (exception reply / bus timeout), the sniffer calls cache_multimaster_clear_pending().
+ * Without it, the pending request lingers and a later, unrelated response of the
+ * same slave+FC (whose own request was missed on the shared bus) would be bound
+ * to the stale start address, corrupting the cache. */
+void test_cache_multimaster_clear_pending_blocks_stale_match(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-061: clear_pending blocks stale request->response match");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Master asks slave 1 for regs 100..101. */
+    cache_multimaster_on_request(0, 1, 3, 100, 2);
+    TEST_ASSERT_TRUE_MESSAGE(cache_multimaster_test_get_pending_valid(0),
+        "pending must be valid right after on_request");
+
+    /* The slave replies with an exception (or times out): the sniffer clears
+     * the pending request because no cacheable response was produced. */
+    cache_multimaster_clear_pending(0);
+    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_test_get_pending_valid(0),
+        "clear_pending must invalidate the pending request");
+
+    /* Later a genuine FC03 response from slave 1 arrives (its own request was
+     * missed on the bus). With the pending cleared it must NOT be bound to the
+     * stale start=100 — nothing may be cached at 100/101. */
+    uint8_t resp[] = { 1, 0x03, 4, 0xAA, 0xAA, 0xBB, 0xBB };
+    cache_multimaster_on_response(0, 1, 3, resp, sizeof(resp), 0);
+
+    uint16_t val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(1, 3, 100, &val, 0),
+        "addr 100 must NOT be poisoned by a response bound to a cleared pending (corr-7)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(1, 3, 101, &val, 0),
+        "addr 101 must NOT be poisoned (corr-7)");
+}
+
+/* ---- CM-U-062: clear_pending OOB port is a no-op ------------------------- */
+void test_cache_multimaster_clear_pending_oob_port(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-062: clear_pending OOB port no-op");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    cache_multimaster_on_request(0, 1, 3, 100, 2);
+    /* OOB port must not touch valid port-0 pending. */
+    cache_multimaster_clear_pending(BRIDGES_COUNT);
+    cache_multimaster_clear_pending(255);
+    TEST_ASSERT_TRUE_MESSAGE(cache_multimaster_test_get_pending_valid(0),
+        "OOB clear_pending must not invalidate a valid port's pending");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -2768,6 +2828,8 @@ int main(void)
     RUN_TEST(test_cache_multimaster_on_response_addr_wrap_exact_boundary);
     RUN_TEST(test_cache_multimaster_pool_full_drop_counter_and_status);
     RUN_TEST(test_cache_multimaster_enable_age_task_fail_aborts);
+    RUN_TEST(test_cache_multimaster_clear_pending_blocks_stale_match);
+    RUN_TEST(test_cache_multimaster_clear_pending_oob_port);
 
     return UNITY_END();
 }

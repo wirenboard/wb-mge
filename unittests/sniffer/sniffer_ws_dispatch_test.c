@@ -36,6 +36,9 @@ extern uint8_t  mock_cache_multimaster_on_request_last_slave_id;
 extern uint8_t  mock_cache_multimaster_on_request_last_function;
 extern uint16_t mock_cache_multimaster_on_request_last_start_reg;
 extern uint16_t mock_cache_multimaster_on_request_last_count;
+extern int      mock_cache_multimaster_on_response_called;
+extern int      mock_cache_multimaster_clear_pending_called;
+extern uint8_t  mock_cache_multimaster_clear_pending_last_port;
 
 /* ============================================================
  * Test fixtures
@@ -270,6 +273,101 @@ void test_ws_dispatch_cache_not_fed_without_reason(void)
     TEST_ASSERT_EQUAL(0, mock_cache_multimaster_on_request_called);
 }
 
+/* ============================================================
+ * TC-WS-9: exception reply clears the pending request (corr-7)
+ * ============================================================ */
+
+void test_ws_dispatch_exception_clears_pending(void)
+{
+    mock_cache_multimaster_enabled = true;
+    sniffer_enable(0, SNIFF_REASON_CACHE);
+
+    /* Slave exception reply: function 0x83 (0x80 | FC03), not a cacheable FC. */
+    sniff_packet_t pkt = make_packet();
+    pkt.port = 0; pkt.slave_id = 1; pkt.function = 0x83;
+    pkt.is_master = false; pkt.is_timeout = false; pkt.crc_valid = true;
+    pkt.data_len = 5;
+    pkt.data[0] = 1; pkt.data[1] = 0x83; pkt.data[2] = 0x02;
+
+    sniffer_ws_dispatch(&pkt);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_clear_pending_called,
+        "an exception reply must clear the pending request (corr-7)");
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_clear_pending_last_port);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_on_response_called,
+        "an exception reply must NOT be treated as a cacheable response");
+}
+
+/* ============================================================
+ * TC-WS-10: a bus timeout clears the pending request (corr-7)
+ * ============================================================ */
+
+void test_ws_dispatch_timeout_clears_pending(void)
+{
+    mock_cache_multimaster_enabled = true;
+    sniffer_enable(0, SNIFF_REASON_CACHE);
+
+    sniff_packet_t pkt = make_packet();
+    pkt.port = 0; pkt.slave_id = 1; pkt.function = 0x03;
+    pkt.is_master = false; pkt.is_timeout = true; pkt.crc_valid = false;
+    pkt.data_len = 0;
+
+    sniffer_ws_dispatch(&pkt);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_clear_pending_called,
+        "a bus timeout must clear the pending request (corr-7)");
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_on_response_called);
+}
+
+/* ============================================================
+ * TC-WS-11: a valid response stores data and does NOT clear pending
+ * ============================================================ */
+
+void test_ws_dispatch_valid_response_no_clear(void)
+{
+    mock_cache_multimaster_enabled = true;
+    sniffer_enable(0, SNIFF_REASON_CACHE);
+
+    sniff_packet_t pkt = make_packet();
+    pkt.port = 0; pkt.slave_id = 1; pkt.function = 0x03;
+    pkt.is_master = false; pkt.is_timeout = false; pkt.crc_valid = true;
+    pkt.data_len = 7;
+    pkt.data[0] = 1; pkt.data[1] = 0x03; pkt.data[2] = 0x04;
+    pkt.data[3] = 0xAA; pkt.data[4] = 0xBB; pkt.data[5] = 0xCC; pkt.data[6] = 0xDD;
+
+    sniffer_ws_dispatch(&pkt);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_on_response_called,
+        "a valid response must be fed to on_response");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_clear_pending_called,
+        "a valid response must NOT clear the pending request");
+}
+
+/* ============================================================
+ * TC-WS-12: a master write-request (FC16) clears pending too (corr-7)
+ * ============================================================ */
+
+void test_ws_dispatch_master_write_clears_pending(void)
+{
+    mock_cache_multimaster_enabled = true;
+    sniffer_enable(0, SNIFF_REASON_CACHE);
+
+    /* Master FC16 (write multiple registers): is_master, valid CRC, but not a
+     * cacheable read FC. It must clear any pending read, not leave it stale. */
+    sniff_packet_t pkt = make_packet();
+    pkt.port = 0; pkt.slave_id = 1; pkt.function = 0x10;  /* FC16 */
+    pkt.is_master = true; pkt.is_timeout = false; pkt.crc_valid = true;
+    pkt.data_len = 9;
+    pkt.data[0] = 1; pkt.data[1] = 0x10;
+
+    sniffer_ws_dispatch(&pkt);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_clear_pending_called,
+        "a non-read master request (FC16 write) must clear the pending read (corr-7)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_on_request_called,
+        "FC16 is not a cacheable read request");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -282,6 +380,10 @@ int main(void)
     RUN_TEST(test_ws_dispatch_send_failure_clears_client);
     RUN_TEST(test_ws_dispatch_cache_request_min_len_8);
     RUN_TEST(test_ws_dispatch_cache_not_fed_without_reason);
+    RUN_TEST(test_ws_dispatch_exception_clears_pending);
+    RUN_TEST(test_ws_dispatch_timeout_clears_pending);
+    RUN_TEST(test_ws_dispatch_valid_response_no_clear);
+    RUN_TEST(test_ws_dispatch_master_write_clears_pending);
 
     return UNITY_END();
 }

@@ -86,6 +86,21 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
                                    uint64_t timestamp_us);
 
 /**
+ * @brief Invalidate the pending request for a port without storing anything.
+ *
+ * Must be called from sniffer_ws_task when a transaction ends WITHOUT a
+ * cacheable response — a bus timeout, an exception reply (function code has the
+ * 0x80 error bit) or a malformed slave frame. Those events never reach
+ * cache_multimaster_on_response(), so without this call the pending request
+ * would linger and a later, unrelated response of the same slave+FC (e.g. one
+ * whose own request was missed on the shared bus) would be bound to this stale
+ * request's start address, corrupting the cache (corr-7).
+ *
+ * @param port 0-based RS-485 port index.
+ */
+void cache_multimaster_clear_pending(uint8_t port);
+
+/**
  * @brief Register the cache HTTP URI handlers with the given server instance.
  *
  * Registers three endpoints:
