@@ -536,7 +536,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
     "click_to_disable": "Click to disable",
     "click_to_enable": "Click to enable",
     "uptime": "Uptime",
-    "avg": "Avg",
+    "avg": "Average speed",
     "dropped_bytes": "Dropped bytes"
   },
   "ru": {
@@ -553,7 +553,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
     "click_to_disable": "Нажмите, чтобы отключить",
     "click_to_enable": "Нажмите, чтобы включить",
     "uptime": "Время работы",
-    "avg": "Средн.",
+    "avg": "Средняя скорость",
     "dropped_bytes": "Потеряно байт"
   },
   "kk": {
@@ -570,7 +570,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
     "click_to_disable": "Өшіру үшін басыңыз",
     "click_to_enable": "Қосу үшін басыңыз",
     "uptime": "Жұмыс уақыты",
-    "avg": "Орташа",
+    "avg": "Орташа жылдамдық",
     "dropped_bytes": "Жоғалған байт"
   },
   "it": {
@@ -587,7 +587,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
     "click_to_disable": "Fai clic per disabilitare",
     "click_to_enable": "Fai clic per abilitare",
     "uptime": "Tempo attivo",
-    "avg": "Media",
+    "avg": "Velocità media",
     "dropped_bytes": "Byte persi"
   },
   "de": {
@@ -604,7 +604,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
     "click_to_disable": "Zum Deaktivieren klicken",
     "click_to_enable": "Zum Aktivieren klicken",
     "uptime": "Laufzeit",
-    "avg": "Durchschn.",
+    "avg": "Mittlere Geschwindigkeit",
     "dropped_bytes": "Verworfene Bytes"
   }
 }
