@@ -139,7 +139,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
 
           <!-- Center: arrows + toggle -->
           <div class="rep-center">
-            <div class="rep-flow">
+            <div class="rep-flow rep-flow-fwd">
               <span class="rep-flow-tag">TX</span>
               <span class="rep-flow-tag">RX</span>
               <div class="rep-arrow rep-arrow-right">
@@ -163,7 +163,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
               <span class="rep-toggle-hint">{{ isEnabled ? t('click_to_disable') : t('click_to_enable') }}</span>
             </button>
 
-            <div class="rep-flow">
+            <div class="rep-flow rep-flow-rev">
               <span class="rep-flow-tag">RX</span>
               <span class="rep-flow-tag">TX</span>
               <div class="rep-arrow rep-arrow-left">
@@ -288,13 +288,26 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
 }
 
 .rep-port-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: clamp(30px, 3.4vw, 44px);
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   color: var(--text-color);
 }
 
+/* Port titles are tinted by the port tone (Port 1 blue, Port 2 orange). */
+.rep-port-info .rep-port-title {
+  color: var(--info);
+}
+
+.rep-port-warn .rep-port-title {
+  color: var(--warn);
+}
+
 .rep-port-stats {
-  margin: 0;
+  /* Push the stats to the bottom so the big title sits up top. */
+  margin-top: auto;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 4px 12px;
@@ -339,25 +352,49 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
   letter-spacing: 0.08em;
   color: var(--text-muted);
   font-family: var(--font-mono);
+  /* Sit above the connecting line so the value/arrowhead read cleanly. */
+  position: relative;
+  z-index: 1;
 }
 
+/* End-labels take the direction tone. */
+.rep-flow-fwd .rep-flow-tag {
+  color: var(--primary-color);
+}
+
+.rep-flow-rev .rep-flow-tag {
+  color: var(--info);
+}
+
+/*
+ * The arrow renders as a thin colored line that spans between the TX/RX
+ * end-labels, with the byte value centered on top. A surface-colored gap
+ * behind the value makes the line read as passing behind the number.
+ */
 .rep-arrow {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 24px;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 12px;
-  min-width: 110px;
-  border-radius: 999px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
 }
 
-/* Directional triangle marker on the side the data flows toward */
+/* The connecting line itself. */
+.rep-arrow::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: currentcolor;
+}
+
+/* Arrowhead (triangle) at the destination end. */
 .rep-arrow::after {
   content: '';
   position: absolute;
@@ -369,25 +406,41 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
 }
 
 .rep-arrow-right::after {
-  right: -4px;
+  right: -1px;
   transform: translateY(-50%);
-  border-left: 7px solid var(--border-strong);
+  border-left: 8px solid currentcolor;
 }
 
 .rep-arrow-left::after {
-  left: -4px;
+  left: -1px;
   transform: translateY(-50%);
-  border-right: 7px solid var(--border-strong);
+  border-right: 8px solid currentcolor;
+}
+
+/* Direction tone drives the line, arrowhead, and number color via currentcolor. */
+.rep-flow-fwd .rep-arrow {
+  color: var(--primary-color);
+}
+
+.rep-flow-rev .rep-arrow {
+  color: var(--info);
 }
 
 .rep-arrow-value {
+  position: relative;
+  z-index: 1;
   font-size: 12px;
-  color: var(--text-color);
+  font-weight: 600;
+  color: currentcolor;
   white-space: nowrap;
+  /* Interrupt the line behind the value. */
+  background: var(--bg-surface);
+  padding: 0 8px;
 }
 
 .rep-arrow-value em {
   font-style: normal;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -415,18 +468,24 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
 }
 
 .rep-toggle.on {
-  background: color-mix(in oklch, var(--primary-color) 10%, var(--bg-surface));
-  border-color: var(--primary-color);
+  /* Soft green box for the enabled state. */
+  background: var(--brand-soft);
+  border-color: var(--brand-soft-border);
   color: var(--primary-color);
 }
 
 .rep-toggle.on:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--primary-color) 16%, var(--bg-surface));
+  /* Explicit background so the global button:hover green can't override it. */
+  background: color-mix(in oklch, var(--primary-color) 14%, var(--bg-surface));
+  border-color: var(--primary-color);
 }
 
 .rep-toggle.off:hover:not(:disabled) {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
+  /* Neutral light hover for the disabled state; explicit background defeats the
+     global button:hover:not(:disabled) dark-green fill (no green tint here). */
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-strong);
+  color: var(--text-color);
 }
 
 .rep-toggle-label {
