@@ -40,12 +40,39 @@ set(COMPONENT_SRCS "main.c"
 
 # Conditionally add files based on build type
 if($ENV{CONFIG_ETH_USE_OPENETH})
-    # QEMU build - add QEMU-specific files only
+    # QEMU build - run the REAL hardware-logic modules against the virtual IO bus
+    # (virtual_io_qemu.c provides the gpio_expander.h symbols backed by a RAM shadow;
+    # do NOT compile the real gpio_expander.c here). voltage_monitor stays excluded.
     set(CONDITIONAL_SRCS
         "qemu/ethernet_qemu.c"
         "qemu/wifi_qemu_mock.c"
-        "qemu/hardware_mocks_qemu.c")
+        "qemu/hardware_mocks_qemu.c"
+        "qemu/virtual_io_qemu.c"
+        "qemu/gpio_shim_qemu.c"
+        "indication/indication.c"
+        "indication/leds_control.c"
+        "rs485_control.c"
+        "mio_control.c"
+        "config_button.c")
     message(STATUS "Building for QEMU - including QEMU-specific files only")
+
+    # QEMU-only: transparently intercept the real ESP-IDF GPIO/UART API via the
+    # linker so the SAME firmware code drives both real and emulated pins. Each
+    # --wrap=NAME redirects calls to __wrap_NAME (defined in gpio_shim_qemu.c)
+    # while __real_NAME still reaches the original IDF implementation. These are
+    # build-level LINK_OPTIONS applied ONLY in this QEMU branch (the hardware
+    # build below is untouched). One option per wrapped function.
+    # Guarded against the early component-requirements expansion pass, where
+    # idf_build_set_property() is not yet defined (this file is also include()d
+    # in script mode to collect REQUIRES).
+    if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+        idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=gpio_config" APPEND)
+        idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=gpio_set_direction" APPEND)
+        idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=gpio_reset_pin" APPEND)
+        idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=gpio_set_level" APPEND)
+        idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=gpio_get_level" APPEND)
+        idf_build_set_property(LINK_OPTIONS "-Wl,--wrap=uart_set_pin" APPEND)
+    endif()
 else()
     # Hardware build - add hardware-specific files only
     set(CONDITIONAL_SRCS

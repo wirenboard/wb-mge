@@ -79,6 +79,93 @@ CONFIG_ETH_USE_OPENETH=y                  # Enable OpenEth for QEMU
 - **IP Address:** Assigned via DHCP (typically 10.0.2.15)
 - **Port Forwarding:** localhost:8080 forwards to ESP32 port 80
 
+## IO state bus (UDP 5570)
+
+In the QEMU build the real hardware-logic modules (indication / leds_control /
+rs485_control / mio_control / config_button) run against a virtual (RAM-backed)
+GPIO expander and virtual native GPIO. Pin-state changes are mirrored to the host
+over a UDP side-channel on **port 5570**, and the host can inject the config-button
+input. (Hardware builds are unaffected.)
+
+### Message format
+Each datagram is exactly **5 ASCII bytes**: `<T><NN>/<L>` (an optional trailing
+`\n` is tolerated). Parsing is positional.
+
+- `T` — `E` = expander pin, `G` = native ESP32 GPIO level, `D` = native GPIO
+  direction, `V` = native GPIO direction violation.
+- `NN` — zero-padded 2-digit number (expander `00`..`15`; native `04`, `15`, `34`).
+- `/` — literal separator, always at index 3.
+- `X` (index 4) — for `E`/`G` the RAW physical pin level (`0`/`1`, including LED
+  inversion, exactly as written); for `D` the direction (`1` OUTPUT, `0` INPUT);
+  for `V` the violation cause (`0` host wrote an OUTPUT pin, `1` firmware wrote an
+  INPUT pin, `2` either side operated an UNCONFIGURED pin).
+
+### Expander pin map (`E00`..`E15`)
+| Pin | Signal |
+|-----|--------|
+| E00 | RS485-1 terminator |
+| E01 | RS485-2 terminator |
+| E02 | RS485-1 fail-safe pull-up |
+| E03 | RS485-2 fail-safe pull-up |
+| E04 | WiFi LED (inverted: raw 0 = LED on) |
+| E05 | Ethernet LED (inverted: raw 0 = LED on) |
+| E06 | RS485 bus VOut |
+| E07 | Status LED |
+| E08 | MIO (IO bus) disable/reset |
+
+Only pins 0–8 are wired, but all 16 bits are tracked and emitted.
+
+### Native GPIO
+- `G04` / `G15` — RS485-1 / RS485-2 direction (DE). Only the software-driven
+  `tx_disabled` state is observable here (`0` = TX disabled, `1` = TX enabled);
+  per-frame automatic DE toggling via UART RTS is **not** emulated by QEMU.
+- `G34` — config button input. Send `G34/0` to **press** (raw LOW), `G34/1` to
+  **release** (raw HIGH). Default is released.
+
+### Native GPIO direction model (`D` / `V` records)
+
+A native pin's direction is **derived from the firmware's real ESP-IDF GPIO
+config** — there are **no hardcoded defaults**. The QEMU build links with
+`-Wl,--wrap=` for `gpio_config`, `gpio_set_direction`, `gpio_reset_pin`,
+`gpio_set_level`, `gpio_get_level` and `uart_set_pin` (see
+`main/qemu/gpio_shim_qemu.c`): the SAME firmware code configures both real and
+emulated pins, and the wrap shim mirrors each call into the virtual model so the
+two stay in sync automatically. Direction is read from the mode bits:
+output-capable → `OUTPUT`, else input-capable → `INPUT`, else (`GPIO_MODE_DISABLE`)
+→ `UNCONFIGURED`. A pin stays `UNCONFIGURED` (and emits no `D`/`G` records) until
+the firmware actually configures it. Expander (`E`) pins have no direction model.
+
+In practice the firmware's own config produces:
+
+| Pin | Direction (from real config) | Set by |
+|-----|------------------------------|--------|
+| `D04` (G04 RS485-1 DE) | `1` OUTPUT | `serial.c` `uart_set_pin(...rts=G04...)` |
+| `D15` (G15 RS485-2 DE) | `1` OUTPUT | `serial.c` `uart_set_pin(...rts=G15...)` |
+| `D34` (G34 config button) | `0` INPUT | `config_button.c` `gpio_config(GPIO_MODE_INPUT)` |
+
+`D<NN>/<d>` records are emitted on a direction change and in the full dump
+(`d=1` OUTPUT, `d=0` INPUT), only for pins currently configured. The model
+enforces three rules **non-fatally**:
+
+- Host writes a `G` record for an **OUTPUT** pin → violation `V<NN>/0`, write
+  **rejected** (level unchanged).
+- Firmware drives an **INPUT** pin → violation `V<NN>/1`, write **rejected**.
+- Either side operates an **UNCONFIGURED** pin → violation `V<NN>/2`, write
+  **rejected**.
+
+A violation logs an `ESP_LOGE`, emits the `V` record and leaves the level alone;
+it never aborts/crashes QEMU. Host tests treat any `V` record as a failure.
+
+### Direction & peer learning (important)
+QEMU usermode networking only NATs host→guest, so the firmware must learn the
+host's address before it can send. **The host must send at least one datagram
+first** (e.g. `G34/1`); the firmware learns the source address and starts
+emitting state changes back to it. On the first datagram from a (new) peer the
+firmware immediately sends a full state dump: all 16 expander `E` records, plus
+`D<NN>` (direction) and `G<NN>` (level) for every native pin the firmware has
+actually configured as INPUT or OUTPUT (driven by the real gpio config — there
+is no hardcoded pin list). The ~1 Hz status-LED blink keeps the NAT mapping warm.
+
 ## 🛠️ Make Targets Reference
 
 ```bash

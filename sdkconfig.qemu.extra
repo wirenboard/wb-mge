@@ -27,3 +27,15 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions_qemu.csv"
 # Without this the signature stays empty and the OTA handler rejects any
 # upload with "Device signature is empty, OTA not allowed".
 CONFIG_EFUSE_VIRTUAL=y
+
+# Disable the esp_io_expander component's GPIO-API wrapper for the QEMU build.
+# That component otherwise links its own (non-weak) __wrap_gpio_config /
+# __wrap_gpio_set_level / __wrap_gpio_get_level / __wrap_gpio_set_direction /
+# __wrap_gpio_reset_pin AND adds the matching -Wl,--wrap options, which would
+# collide with the QEMU GPIO shim (main/qemu/gpio_shim_qemu.c) that transparently
+# mirrors the firmware's real GPIO/UART calls into the virtual native model.
+# The QEMU build never routes GPIO calls through the esp_io_expander wrapper (the
+# virtual expander in virtual_io_qemu.c implements gpio_expander.h directly), so
+# disabling the wrapper here is safe and frees the __wrap_gpio_* symbols for the
+# shim. The hardware build is unaffected (its sdkconfig keeps the default =y).
+CONFIG_IO_EXPANDER_ENABLE_GPIO_API_WRAPPER=n

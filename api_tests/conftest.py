@@ -405,7 +405,8 @@ def qemu_process(request):
                      "hostfwd=tcp:127.0.0.1:8081-:8081,"
                      "hostfwd=tcp:127.0.0.1:50502-:502,"
                      "hostfwd=tcp:127.0.0.1:50503-:503,"
-                     "hostfwd=tcp:127.0.0.1:50504-:50504"),
+                     "hostfwd=tcp:127.0.0.1:50504-:50504,"
+                     "hostfwd=udp:127.0.0.1:5570-:5570"),  # IO state bus (UDP)
             "-nographic",
             "-serial", "mon:stdio",
             "-serial", "tcp::5561,server,nowait",  # UART1 (RS485-1) exposed as TCP on port 5561

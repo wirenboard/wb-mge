@@ -14,17 +14,21 @@
 #include "settings_update.h"
 #include "debug_log.h"
 
+// Hardware-logic headers: needed by both builds. In QEMU these resolve to the
+// virtual IO bus (gpio_expander.h symbols come from virtual_io_qemu.c).
+#include "rs485_control.h"
+#include "mio_control.h"
+#include "update_rs485_mio_gpio_states.h"
+#include "indication.h"
+#include "gpio_expander.h"
+
 // QEMU build conditional includes
 #if (QEMU_BUILD)
     #include "wifi_qemu_mock.h"
+    #include "virtual_io_qemu.h"
 #else
     #include "esp_io_expander_tca95xx_16bit.h"
     #include "driver/gpio.h"
-    #include "rs485_control.h"
-    #include "mio_control.h"
-    #include "update_rs485_mio_gpio_states.h"
-    #include "indication.h"
-    #include "gpio_expander.h"
 #endif
 
 
@@ -38,26 +42,28 @@
 static const char *TAG = "main";
 
 
+// Available in both builds: config button + factory reset only touch
+// setting_items/settings_update/indication, all of which run in QEMU too.
+static void factory_reset(void)
+{
+    ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
+    ESP_ERROR_CHECK(setting_items_set_defaults(false));
+
+    ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
+    ESP_LOGI(TAG, "Device will continue running with default configuration.");
+}
+
+// Button long press callback for factory reset
+static void config_button_longpress_callback(unsigned press_time_ms)
+{
+    ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
+    indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+    factory_reset();
+    settings_update();
+}
+
 #if (!QEMU_BUILD)
-    static void factory_reset(void)
-    {
-        ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
-        ESP_ERROR_CHECK(setting_items_set_defaults(false));
-
-        ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
-        ESP_LOGI(TAG, "Device will continue running with default configuration.");
-    }
-
-    // Button long press callback for factory reset
-    static void config_button_longpress_callback(unsigned press_time_ms)
-    {
-        ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
-        indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
-        factory_reset();
-        settings_update();
-    }
-
-    // System voltage monitoring event
+    // System voltage monitoring event (voltage_monitor is excluded from QEMU).
     static void sys_voltage_event_callback(float voltage, bool is_ok)
     {
         rs485_bus_vout_set_allowed(is_ok);
@@ -103,13 +109,14 @@ void app_main(void)
 {
     debug_log_init();
 
-    #if (!QEMU_BUILD)
-        // Initialize GPIO expander before voltage monitoring
-        // to reset all GPIOs to safe state anyway
-        gpio_expander_init(NULL);
-        rs485_control_init();
-        mio_control_init();
+    // Initialize GPIO expander before voltage monitoring
+    // to reset all GPIOs to safe state anyway.
+    // In QEMU these resolve to the virtual IO bus (RAM-backed expander).
+    gpio_expander_init(NULL);
+    rs485_control_init();
+    mio_control_init();
 
+    #if (!QEMU_BUILD)
         ESP_ERROR_CHECK(voltage_monitor_init(sys_voltage_event_callback));
         float voltage = voltage_monitor_get_sys_voltage();
         if (!voltage_monitor_sys_voltage_is_ok()) {
@@ -124,22 +131,24 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
 
-    #if (!QEMU_BUILD)
-        update_io_bus_control();
-    #endif // QEMU_BUILD
+    update_io_bus_control();
 
     print_setting_items();
 
     ESP_ERROR_CHECK(network_init());
     ESP_ERROR_CHECK(http_server_init());
 
-    #if (!QEMU_BUILD)
-        update_rs485_control();
-        indication_init();
-        indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
-        config_button_init();
-        config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
+    #if (QEMU_BUILD)
+        // Bring up the virtual IO state bus after the network is up and BEFORE
+        // indication/button init, so the bus is ready to capture LED task activity.
+        virtual_io_init();
     #endif // QEMU_BUILD
+
+    update_rs485_control();
+    indication_init();
+    indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
+    config_button_init();
+    config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 

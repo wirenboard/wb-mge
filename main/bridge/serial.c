@@ -353,19 +353,18 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
         return ESP_OK; // no state change needed
     }
     if (disabled) {
-#if !QEMU_BUILD
-        // Detach dir_pin from UART control and force LOW (RS-485 TX disabled)
+        // Detach dir_pin from UART control and force LOW (RS-485 TX disabled).
+        // In QEMU the wrap shim mirrors these IDF calls onto the virtual native
+        // GPIO so the host can observe the software-driven tx_disabled state.
         gpio_reset_pin(desc->dir_pin);
         gpio_set_direction(desc->dir_pin, GPIO_MODE_OUTPUT);
         gpio_set_level(desc->dir_pin, 0);
-#endif
         desc->tx_disabled = true;
         ESP_LOGI(TAG, "UART[%d] TX physically disabled (dir_pin=%d forced LOW)", desc->port_num, desc->dir_pin);
     } else {
-#if !QEMU_BUILD
-        // Re-attach dir_pin to UART for automatic half-duplex direction control
+        // Re-attach dir_pin to UART for automatic half-duplex direction control.
+        // The wrap shim mirrors this back to OUTPUT on the virtual native GPIO.
         uart_set_pin(desc->port_num, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, desc->dir_pin, UART_PIN_NO_CHANGE);
-#endif
         desc->tx_disabled = false;
         ESP_LOGI(TAG, "UART[%d] TX re-enabled (dir_pin=%d restored to UART)", desc->port_num, desc->dir_pin);
     }
