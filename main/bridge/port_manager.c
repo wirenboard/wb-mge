@@ -430,18 +430,49 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
 
     pm_lock(port_index);
 
+    // Remember the current (presumed-working) mode so we can roll back if the
+    // new mode fails to initialise.
+    pm_mode_t prev_mode = pm_ctx[port_index].mode;
+
     port_deinit_mode(port_index);
 
-    // Persist the new mode.
-    esp_err_t ret = setting_items_save(port_mode_nvs_key(port_index),
-                                       port_manager_mode_to_str(mode));
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Port[%u]: Failed to save port mode to NVS: %s",
-                 port_index + 1, esp_err_to_name(ret));
-        // Proceed with init anyway; mode is lost on reboot but at least works now.
+    esp_err_t init_ret = port_init_mode(port_index, mode);
+
+    if (init_ret == ESP_OK) {
+        // Persist the new mode ONLY after a successful init (persist-2). If we
+        // persisted before init and init failed, NVS would diverge from the
+        // runtime mode (port_init_mode leaves it DISABLED on failure) and
+        // port_manager_check_settings_changed() would report a permanent
+        // mismatch, making settings_update_task re-apply (and re-fail) on every
+        // subsequent settings write.
+        esp_err_t ret = setting_items_save(port_mode_nvs_key(port_index),
+                                           port_manager_mode_to_str(mode));
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Port[%u]: Failed to save port mode to NVS: %s",
+                     port_index + 1, esp_err_to_name(ret));
+            // Init succeeded but persistence failed: mode is lost on reboot but
+            // works now. Runtime and NVS reconcile on the next settings cycle.
+        }
+    } else {
+        // Init of the requested mode failed. NVS still holds prev_mode, so it
+        // stays consistent. Roll the runtime back to prev_mode immediately so
+        // the port is not left DISABLED until the next settings cycle.
+        ESP_LOGW(TAG, "Port[%u]: init of '%s' failed (%s); rolling back to '%s'",
+                 port_index + 1, port_manager_mode_to_str(mode),
+                 esp_err_to_name(init_ret), port_manager_mode_to_str(prev_mode));
+        if (prev_mode != PM_MODE_DISABLED) {
+            esp_err_t rb = port_init_mode(port_index, prev_mode);
+            if (rb != ESP_OK) {
+                // The previous mode also failed to re-init (e.g. its resources
+                // are genuinely unavailable). Leave the port DISABLED; NVS still
+                // holds prev_mode, so the next apply will retry it.
+                ESP_LOGE(TAG, "Port[%u]: rollback to '%s' also failed (%s)",
+                         port_index + 1, port_manager_mode_to_str(prev_mode),
+                         esp_err_to_name(rb));
+            }
+        }
     }
 
-    esp_err_t init_ret = port_init_mode(port_index, mode);
     pm_unlock(port_index);
     return init_ret;
 }

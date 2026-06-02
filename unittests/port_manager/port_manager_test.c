@@ -32,6 +32,7 @@ void mock_cache_multimaster_reset(void);
 
 /* setting_items.c mock helper */
 void mock_setting_items_set_port_mode(unsigned index, const char *value);
+const char *mock_setting_items_get_port_mode(unsigned index);
 
 /* cache_modbus_server.c mock */
 extern int mock_cache_modbus_server_init_called;
@@ -158,6 +159,47 @@ void test_set_mode_tcp_bridge_init_fail(void)
     TEST_ASSERT_NOT_EQUAL(ESP_OK, ret);
     /* bridge_port_init must have been called */
     TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_init_called);
+
+    /* persist-2: a failed init must NOT have persisted the new mode to NVS.
+     * Initial NVS mode is "disabled"; it must stay "disabled", runtime must be
+     * DISABLED, and there must be NO settings mismatch (otherwise
+     * settings_update_task would re-apply and re-fail on every settings POST). */
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_DISABLED_STR,
+        mock_setting_items_get_port_mode(0),
+        "failed set_mode must not persist the new mode to NVS");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_setting_items_save_called,
+        "failed set_mode must not call setting_items_save at all");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "runtime mode must remain DISABLED after a failed init");
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_check_settings_changed(0),
+        "NVS and runtime must agree after a failed set_mode (no permanent re-apply loop)");
+}
+
+/* persist-2: failing a mode change FROM a working mode must not corrupt NVS.
+ * NVS keeps the previous (working) mode so the next apply converges back to it. */
+void test_set_mode_init_fail_keeps_previous_nvs_mode(void)
+{
+    /* Start from a working PASSIVE mode (NVS = passive, runtime = PASSIVE). */
+    esp_err_t ok = port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, ok);
+    TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, mock_setting_items_get_port_mode(0));
+
+    /* Now attempt a switch to TCP_BRIDGE that fails at init. */
+    mock_bridge_port_init_should_fail = true;
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
+    TEST_ASSERT_NOT_EQUAL(ESP_OK, ret);
+
+    /* NVS must still hold the previous working mode, not the failed target. */
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_PASSIVE_STR,
+        mock_setting_items_get_port_mode(0),
+        "failed switch must leave the previous mode in NVS");
+
+    /* And the runtime must self-heal back to the previous working mode
+     * immediately (rollback), not be left DISABLED, so NVS and runtime agree. */
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "failed switch must roll the runtime back to the previous working mode");
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_check_settings_changed(0),
+        "after rollback NVS and runtime must agree (no re-apply loop)");
 }
 
 void test_set_mode_passive_serial_fail(void)
@@ -660,6 +702,7 @@ int port_manager_test(void)
     /* 3 – set_mode error paths */
     RUN_TEST(test_set_mode_invalid_index);
     RUN_TEST(test_set_mode_tcp_bridge_init_fail);
+    RUN_TEST(test_set_mode_init_fail_keeps_previous_nvs_mode);
     RUN_TEST(test_set_mode_passive_serial_fail);
 
     /* 4 – port_init_mode for each mode + cache overlay */
