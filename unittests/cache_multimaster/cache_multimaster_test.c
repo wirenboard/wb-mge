@@ -23,6 +23,7 @@ bool cache_multimaster_test_get_pending_valid(uint8_t port);
 bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_code,
                                            uint16_t address, uint16_t age_s_val);
 void cache_multimaster_test_tick_age(void);
+uint32_t cache_multimaster_test_get_entries_dropped(void);
 
 /* HTTP handler shims — test-only wrappers around the static handlers */
 esp_err_t cache_multimaster_test_status_handler(httpd_req_t *req);
@@ -1331,6 +1332,14 @@ void test_cache_multimaster_pool_full_no_crash(void)
         "Over-capacity entry (slave 2) must be NOT_FOUND when pool is full"
     );
 
+    /* The drop must not be silent: the dropped-values counter must reflect it
+     * (mem-exhaust-1). One register could not be stored → counter == 1. */
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+        1,
+        cache_multimaster_test_get_entries_dropped(),
+        "Pool-full drop must increment entries_dropped counter (not silent)"
+    );
+
     /* Existing entries must be unaffected: slave 1, addr 0 must still be FOUND */
     val = 0;
     r = cache_multimaster_lookup(1, 3, 0, &val, 0);
@@ -2607,6 +2616,48 @@ void test_cache_multimaster_on_response_addr_wrap_exact_boundary(void)
         cache_multimaster_lookup(9, 3, 0x0000, &val, 0), "0x0000 untouched at exact boundary");
 }
 
+/* ---- CM-U-059: pool-full drop is observable (counter + status JSON) ------ */
+
+/* mem-exhaust-1: once the 4096-entry pool is full, further unique tuples are
+ * dropped. This must not be silent — the entries_dropped counter must count
+ * every dropped value and /cache/status must expose it. Here a single
+ * multi-register response that does not fit at all bumps the counter by the
+ * full register count. */
+void test_cache_multimaster_pool_full_drop_counter_and_status(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-059: pool-full drop counter + status JSON");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Fill all 4096 slots (slave 1, FC03, addr 0..4095). */
+    uint8_t fill[5] = { 1, 0x03, 2, 0x00, 0x01 };
+    for (uint16_t addr = 0; addr < 4096; addr++) {
+        cache_multimaster_on_request(0, 1, 3, addr, 1);
+        cache_multimaster_on_response(0, 1, 3, fill, sizeof(fill), 0);
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, cache_multimaster_test_get_entries_dropped(),
+        "No drops while the pool still had room");
+
+    /* New slave 5, 3 registers — none fit: counter must rise by exactly 3. */
+    cache_multimaster_on_request(0, 5, 3, 0, 3);
+    uint8_t resp[] = { 5, 0x03, 6, 0x00, 0x0A, 0x00, 0x0B, 0x00, 0x0C };
+    cache_multimaster_on_response(0, 5, 3, resp, sizeof(resp), 0);
+
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(3, cache_multimaster_test_get_entries_dropped(),
+        "All 3 unfit registers must be counted as dropped");
+
+    /* And the condition must surface in /cache/status JSON. */
+    httpd_req_t req = {0};
+    TEST_ASSERT_EQUAL_INT(ESP_OK, cache_multimaster_test_status_handler(&req));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"entries_dropped\":3"),
+        "status JSON must report entries_dropped:3");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "\"entries\":4096"),
+        "status JSON must still report a full pool of 4096 entries");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -2671,6 +2722,7 @@ int main(void)
     RUN_TEST(test_cache_multimaster_on_response_fc03_addr_wrap_no_poison);
     RUN_TEST(test_cache_multimaster_on_response_fc01_addr_wrap_no_poison);
     RUN_TEST(test_cache_multimaster_on_response_addr_wrap_exact_boundary);
+    RUN_TEST(test_cache_multimaster_pool_full_drop_counter_and_status);
 
     return UNITY_END();
 }

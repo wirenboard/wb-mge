@@ -71,6 +71,7 @@ static TaskHandle_t      s_age_task      = NULL; /* handle for cache_age_task, N
 static volatile uint32_t s_packets_processed = 0; /* total response packets stored since last clear */
 static volatile uint64_t s_last_packet_us    = 0; /* esp_timer_get_time() of last stored response  */
 static volatile uint64_t s_reset_us          = 0; /* esp_timer_get_time() at last enable/clear      */
+static volatile uint32_t s_entries_dropped   = 0; /* values dropped because the pool was full        */
 
 /* ---- Internal helpers ---------------------------------------------------- */
 
@@ -202,6 +203,7 @@ void cache_multimaster_enable(void)
     s_reset_us          = esp_timer_get_time();
     s_packets_processed = 0;
     s_last_packet_us    = 0;
+    s_entries_dropped   = 0;
 
     /* Start the aging task under the mutex to prevent concurrent enables from
      * creating duplicate tasks (TOCTOU on s_age_task == NULL check). */
@@ -279,6 +281,7 @@ void cache_multimaster_clear(void)
     s_packets_processed = 0;
     s_last_packet_us    = 0;
     s_reset_us          = esp_timer_get_time();
+    s_entries_dropped   = 0;
     xSemaphoreGive(s_cache_mutex);
     /* s_pending is only written from sniffer_ws_task; clear outside the mutex */
     memset(s_pending, 0, sizeof(s_pending));
@@ -352,7 +355,17 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             uint16_t value = ((uint16_t)data[3 + i * 2] << 8) | data[3 + i * 2 + 1];
             cache_entry_t *e = find_or_alloc_entry(slave_id, type_value, addr);
             if (e == NULL) {
-                ESP_LOGW(TAG, "Pool full, dropping entry");
+                /* find_or_alloc_entry returns NULL both when the pool is full
+                 * and when s_pool was freed by a concurrent disable(). Only the
+                 * former is a genuine pool-full drop worth counting; guard on
+                 * s_pool so a disable() race does not inflate the counter. The
+                 * remaining registers of this response cannot be cached — count
+                 * every dropped value so the condition is observable via
+                 * /cache/status instead of being silently lost (mem-exhaust-1). */
+                if (s_pool != NULL) {
+                    s_entries_dropped += (uint32_t)(count - i);
+                    ESP_LOGW(TAG, "Pool full, dropping %u entries", (unsigned)(count - i));
+                }
                 break;
             }
             e->value  = value;
@@ -401,7 +414,11 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             uint16_t value = (data[3 + i / 8] >> (i % 8)) & 1u;
             cache_entry_t *e = find_or_alloc_entry(slave_id, type_value, addr);
             if (e == NULL) {
-                ESP_LOGW(TAG, "Pool full, dropping coil entry");
+                /* Pool full — see register branch (mem-exhaust-1). */
+                if (s_pool != NULL) {
+                    s_entries_dropped += (uint32_t)(count - i);
+                    ESP_LOGW(TAG, "Pool full, dropping %u coil entries", (unsigned)(count - i));
+                }
                 break;
             }
             e->value  = value;
@@ -529,6 +546,7 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
     int      entries      = 0;
     int      slaves       = 0;
     uint32_t packets      = 0;
+    uint32_t dropped      = 0;
     uint64_t last_pkt_us  = 0;
     uint64_t reset_us     = 0;
 
@@ -552,6 +570,7 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
             }
         }
         packets     = s_packets_processed;
+        dropped     = s_entries_dropped;
         last_pkt_us = s_last_packet_us;
         reset_us    = s_reset_us;
 
@@ -565,7 +584,8 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
                                ? (now_us - reset_us) : 0;
     uint32_t memory_bytes    = (uint32_t)entries * (uint32_t)sizeof(cache_entry_t);
 
-    /* Build response — 256 bytes: worst case ~196 bytes (two uint64_t fields at 20 digits each) */
+    /* Build response — 256 bytes: worst case ~248 bytes (two uint64_t fields at
+     * 20 digits each plus the uint32_t counters); snprintf is bounded regardless. */
     char resp[256];
     snprintf(resp, sizeof(resp),
              "{\"enabled\":%s"
@@ -573,6 +593,7 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
              ",\"max_entries\":%d"
              ",\"slaves\":%d"
              ",\"packets_processed\":%" PRIu32
+             ",\"entries_dropped\":%" PRIu32
              ",\"last_packet_age_us\":%" PRIu64
              ",\"map_age_us\":%" PRIu64
              ",\"memory_bytes\":%" PRIu32
@@ -582,6 +603,7 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
              CACHE_MAX_ENTRIES,
              slaves,
              packets,
+             dropped,
              last_pkt_age_us,
              map_age_us,
              memory_bytes);
@@ -843,6 +865,14 @@ void cache_multimaster_test_reset(void)
     s_packets_processed = 0;
     s_last_packet_us    = 0;
     s_reset_us          = 0;
+    s_entries_dropped   = 0;
+}
+
+/* Returns the count of values dropped because the pool was full since the last
+ * enable()/clear(). Used in unit tests only. */
+uint32_t cache_multimaster_test_get_entries_dropped(void)
+{
+    return s_entries_dropped;
 }
 
 /* Returns the value of s_pending[port].valid for assertion in unit tests.
