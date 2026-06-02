@@ -23,11 +23,15 @@ typedef void *httpd_handle_t;
  * PM_MODE_PASSIVE    — serial port is open, no TCP forwarding (passive listener).
  *                      This is the serial-only base that the cache overlay and
  *                      the live sniffer can attach to.
+ * PM_MODE_REPEATER   — serial port is open and raw bytes are transparently
+ *                      forwarded to the other RS-485 port (and vice-versa) to
+ *                      extend the line / restore signal integrity.
  */
 typedef enum {
     PM_MODE_DISABLED   = 0,
     PM_MODE_TCP_BRIDGE = 1,
     PM_MODE_PASSIVE    = 2,
+    PM_MODE_REPEATER   = 3,
 } pm_mode_t;
 
 /**

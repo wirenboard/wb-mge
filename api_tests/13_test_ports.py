@@ -159,7 +159,7 @@ def test_port_modes(api):
     print(f"  Original modes: port_1={original_port_1_mode}, port_2={original_port_2_mode}")
 
     try:
-        for mode in ["disabled", "tcp_bridge", "passive"]:
+        for mode in ["disabled", "tcp_bridge", "passive", "repeater"]:
             response = api.set_port_mode(1, mode)
             assert response.status_code == 200, \
                 f"POST /ports/1/mode {mode} expected 200, got {response.status_code}"

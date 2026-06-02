@@ -4,6 +4,7 @@
 #include "setting_items.h"
 #include "bridge.h"
 #include "bridge/port_manager.h"
+#include "bridge/repeater.h"
 #include "bridge/cache_modbus_server.h"
 #include "wifi_apsta.h"
 #include "config.h"
@@ -335,6 +336,20 @@ esp_err_t info_get_handler(httpd_req_t *req)
         }
 
         cJSON_Delete(rs485_json);
+    }
+
+    // Serial<->serial repeater statistics (top-level "repeater" object).
+    repeater_stats_t rep = {0};
+    repeater_get_stats(&rep);
+    cJSON *repeater_json = cJSON_CreateObject();
+    if (repeater_json) {
+        cJSON_AddBoolToObject(repeater_json, "active", rep.active);
+        cJSON_AddNumberToObject(repeater_json, "uptime_s", rep.uptime_s);
+        cJSON_AddNumberToObject(repeater_json, "bytes_1to2", rep.bytes_1to2);
+        cJSON_AddNumberToObject(repeater_json, "bytes_2to1", rep.bytes_2to1);
+        cJSON_AddNumberToObject(repeater_json, "dropped_1", rep.dropped_1);
+        cJSON_AddNumberToObject(repeater_json, "dropped_2", rep.dropped_2);
+        cJSON_AddItemToObject(response_json, "repeater", repeater_json);
     }
 
     // Report the configured port from NVS, not the runtime state.

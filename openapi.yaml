@@ -255,6 +255,33 @@ paths:
                     $ref: '#/components/schemas/RS485Status'
                   rs485_2:
                     $ref: '#/components/schemas/RS485Status'
+                  repeater:
+                    type: object
+                    description: "Serial<->serial repeater statistics (Port 1 <-> Port 2 raw byte forwarding)"
+                    properties:
+                      active:
+                        type: boolean
+                        description: "True when BOTH ports are running in repeater mode"
+                      uptime_s:
+                        type: integer
+                        minimum: 0
+                        description: "Seconds since the repeater started forwarding (0 if inactive)"
+                      bytes_1to2:
+                        type: integer
+                        minimum: 0
+                        description: "Bytes forwarded Port 1 RX -> Port 2 TX"
+                      bytes_2to1:
+                        type: integer
+                        minimum: 0
+                        description: "Bytes forwarded Port 2 RX -> Port 1 TX"
+                      dropped_1:
+                        type: integer
+                        minimum: 0
+                        description: "Bytes received on Port 1 that could not be forwarded"
+                      dropped_2:
+                        type: integer
+                        minimum: 0
+                        description: "Bytes received on Port 2 that could not be forwarded"
         '400':
           description: Bad request
           content:
@@ -907,10 +934,10 @@ paths:
               properties:
                 mode:
                   type: string
-                  enum: ["disabled", "tcp_bridge", "sniffer", "cache_bus"]
+                  enum: ["disabled", "tcp_bridge", "passive", "repeater"]
               required: [mode]
             example:
-              mode: "sniffer"
+              mode: "repeater"
       responses:
         '200':
           description: Port mode updated successfully
@@ -921,9 +948,9 @@ paths:
                 properties:
                   mode:
                     type: string
-                    enum: ["disabled", "tcp_bridge", "sniffer", "cache_bus"]
+                    enum: ["disabled", "tcp_bridge", "passive", "repeater"]
               example:
-                mode: "sniffer"
+                mode: "repeater"
         '400':
           description: Bad request
           content:
@@ -966,7 +993,7 @@ components:
           maximum: 10
         port_mode:
           type: string
-          enum: ["disabled", "tcp_bridge", "sniffer", "cache_bus"]
+          enum: ["disabled", "tcp_bridge", "passive", "repeater"]
           description: "Current operating mode of the RS-485 port"
 
     RS485Settings:

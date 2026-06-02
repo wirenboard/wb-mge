@@ -1,5 +1,6 @@
 #include "port_manager.h"
 #include "bridge.h"
+#include "repeater.h"
 #include "sniffer.h"
 #include "cache_multimaster.h"
 #include "cache_modbus_server.h"
@@ -121,6 +122,7 @@ const char *port_manager_mode_to_str(pm_mode_t mode)
     case PM_MODE_DISABLED:   return PORT_MODE_DISABLED_STR;
     case PM_MODE_TCP_BRIDGE: return PORT_MODE_TCP_BRIDGE_STR;
     case PM_MODE_PASSIVE:    return PORT_MODE_PASSIVE_STR;
+    case PM_MODE_REPEATER:   return PORT_MODE_REPEATER_STR;
     default:                 return "unknown";
     }
 }
@@ -135,6 +137,9 @@ static pm_mode_t str_to_pm_mode(const char *str)
     }
     if (strncmp(str, PORT_MODE_PASSIVE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
         return PM_MODE_PASSIVE;
+    }
+    if (strncmp(str, PORT_MODE_REPEATER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return PM_MODE_REPEATER;
     }
     return PM_MODE_DISABLED;
 }
@@ -179,6 +184,8 @@ static serial_desc_t *get_port_serial_desc(unsigned index)
     case PM_MODE_TCP_BRIDGE:
         return bridge_get_serial_desc(index);
     case PM_MODE_PASSIVE:
+        return pm_ctx[index].serial_desc;
+    case PM_MODE_REPEATER:
         return pm_ctx[index].serial_desc;
     default:
         return NULL;
@@ -231,6 +238,21 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
         // Save the serial config used at init so we can detect changes later.
         bridge_read_serial_config(index, &pm_ctx[index].serial_cfg_at_init);
         break;
+
+    case PM_MODE_REPEATER: {
+        serial_config_t cfg = {0};
+        ESP_RETURN_ON_ERROR(bridge_read_serial_config(index, &cfg),
+                            TAG, "Port[%u]: Failed to read serial config", index + 1);
+        ESP_RETURN_ON_ERROR(repeater_init_port(index, &cfg, &pm_ctx[index].serial_desc),
+                            TAG, "Port[%u]: repeater_init_port failed", index + 1);
+        // Transparent low-latency passthrough: use the PROXY inter-frame RX timeout.
+        serial_set_rx_timeout(pm_ctx[index].serial_desc, SERIAL_RX_TOUT_PROXY);
+        // Attach the sniffer/cache overlay (orthogonal), same as PASSIVE/TCP_BRIDGE.
+        sniffer_attach(index, pm_ctx[index].serial_desc);
+        // Snapshot serial config to detect later parameter changes.
+        bridge_read_serial_config(index, &pm_ctx[index].serial_cfg_at_init);
+        break;
+    }
 
     default:
         ESP_LOGE(TAG, "Port[%u]: Unknown mode %d", index + 1, (int)mode);
@@ -293,6 +315,15 @@ static void port_deinit_mode(unsigned index)
         rs485_stats_reset(index);
         break;
 
+    case PM_MODE_REPEATER:
+        sniffer_detach(index);
+        repeater_deinit_port(index);
+        pm_ctx[index].serial_desc = NULL;
+        memset(&pm_ctx[index].serial_cfg_at_init, 0, sizeof(pm_ctx[index].serial_cfg_at_init));
+        rs485_busy_monitor_reset(index);
+        rs485_stats_reset(index);
+        break;
+
     default:
         ESP_LOGW(TAG, "Port[%u]: Unknown mode %d during deinit — skipping", index + 1, (int)mode);
         break;
@@ -317,6 +348,10 @@ esp_err_t port_manager_init(void)
     // Initialise shared RS-485 infrastructure (previously done inside bridge_init()).
     rs485_busy_monitor_init();
     rs485_stats_init();
+
+    // Create the repeater-global mutex before any port can enter repeater mode,
+    // so the cross-port data path is protected from the first init onward.
+    repeater_init();
 
     // Initialise global subsystems once.
     ESP_RETURN_ON_ERROR(sniffer_init(), TAG, "sniffer_init failed");
@@ -490,11 +525,11 @@ bool port_manager_check_settings_changed(unsigned port_index)
         return bridge_port_check_settings_changed(port_index);
     }
 
-    // For PASSIVE compare only the serial parameters.
+    // For PASSIVE and REPEATER compare only the serial parameters.
     // bridge_port_check_settings_changed() must NOT be used here because
-    // bridge_ctx[index].initialized is always false for this mode, which
+    // bridge_ctx[index].initialized is always false for these modes, which
     // causes that function to return incorrect results.
-    if (current_mode == PM_MODE_PASSIVE) {
+    if (current_mode == PM_MODE_PASSIVE || current_mode == PM_MODE_REPEATER) {
         serial_config_t nvs_cfg = {0};
         // If reading fails, assume changed to trigger re-init.
         if (bridge_read_serial_config(port_index, &nvs_cfg) != ESP_OK) {

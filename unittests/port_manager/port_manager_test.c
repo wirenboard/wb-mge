@@ -4,6 +4,7 @@
 #include "sniffer.h"
 #include "setting_items.h"
 #include "bridge_mock.h"
+#include "repeater_mock.h"
 
 #include <string.h>
 
@@ -65,6 +66,8 @@ extern int mock_json_utils_send_response_called;
 void mock_json_utils_reset(void);
 void mock_json_utils_inject_hex(const char *hex);
 
+/* repeater.c mock state is declared in repeater_mock.h */
+
 /* ── setUp / tearDown ───────────────────────────────────────────────────── */
 
 void setUp(void)
@@ -78,6 +81,7 @@ void setUp(void)
     mock_setting_items_reset();
     mock_rs485_stats_reset_all();
     mock_json_utils_reset();
+    mock_repeater_reset();
 }
 
 void tearDown(void)
@@ -101,6 +105,11 @@ void test_mode_to_str_tcp_bridge(void)
 void test_mode_to_str_passive(void)
 {
     TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, port_manager_mode_to_str(PM_MODE_PASSIVE));
+}
+
+void test_mode_to_str_repeater(void)
+{
+    TEST_ASSERT_EQUAL_STRING(PORT_MODE_REPEATER_STR, port_manager_mode_to_str(PM_MODE_REPEATER));
 }
 
 void test_mode_to_str_unknown(void)
@@ -206,6 +215,50 @@ void test_set_mode_passive_success(void)
      * sniffer inter-frame timeout exactly once (transport-owned, not overlay). */
     TEST_ASSERT_EQUAL(1, mock_serial_set_rx_timeout_called[0]);
     TEST_ASSERT_EQUAL(SERIAL_RX_TOUT_SNIFFER, mock_serial_set_rx_timeout_value[0]);
+}
+
+void test_set_mode_repeater_success(void)
+{
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_REPEATER);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL(PM_MODE_REPEATER, port_manager_get_mode(0));
+    /* repeater_init_port called for this port */
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].init_called);
+    /* sniffer attached (orthogonal overlay), same as PASSIVE/TCP_BRIDGE */
+    TEST_ASSERT_EQUAL(1, mock_sniffer_attach_called[0]);
+    /* Repeater owns the RX timeout: it sets the PROXY inter-frame timeout once. */
+    TEST_ASSERT_EQUAL(1, mock_serial_set_rx_timeout_called[0]);
+    TEST_ASSERT_EQUAL(SERIAL_RX_TOUT_PROXY, mock_serial_set_rx_timeout_value[0]);
+}
+
+void test_switch_passive_repeater_disabled(void)
+{
+    /* passive -> repeater -> disabled */
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+
+    mock_bridge_reset();
+    mock_sniffer_reset();
+    mock_serial_reset();
+    mock_repeater_reset();
+
+    /* Switch PASSIVE -> REPEATER: deinit passive (sniffer_detach + serial_deinit),
+     * then init repeater. */
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_REPEATER);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL(PM_MODE_REPEATER, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL(1, mock_sniffer_detach_called[0]);   /* passive deinit */
+    TEST_ASSERT_EQUAL(1, mock_serial_deinit_called[0]);    /* passive deinit */
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].init_called);
+
+    mock_sniffer_reset();
+    mock_repeater_reset();
+
+    /* Switch REPEATER -> DISABLED: deinit repeater (sniffer_detach + repeater_deinit). */
+    ret = port_manager_set_mode(0, PM_MODE_DISABLED);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL(PM_MODE_DISABLED, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL(1, mock_sniffer_detach_called[0]);
+    TEST_ASSERT_EQUAL(1, mock_repeater_calls[0].deinit_called);
 }
 
 void test_set_mode_passive_with_cache_overlay_enables_cache(void)
@@ -596,6 +649,7 @@ int port_manager_test(void)
     RUN_TEST(test_mode_to_str_disabled);
     RUN_TEST(test_mode_to_str_tcp_bridge);
     RUN_TEST(test_mode_to_str_passive);
+    RUN_TEST(test_mode_to_str_repeater);
     RUN_TEST(test_mode_to_str_unknown);
 
     /* 2 – get_mode */
@@ -612,6 +666,7 @@ int port_manager_test(void)
     RUN_TEST(test_set_mode_disabled);
     RUN_TEST(test_set_mode_tcp_bridge_success);
     RUN_TEST(test_set_mode_passive_success);
+    RUN_TEST(test_set_mode_repeater_success);
     RUN_TEST(test_set_mode_passive_with_cache_overlay_enables_cache);
     RUN_TEST(test_set_mode_tcp_bridge_with_cache_overlay_enables_cache);
 
@@ -629,6 +684,7 @@ int port_manager_test(void)
     /* 6 – mode switching sequences */
     RUN_TEST(test_switch_from_passive_to_tcp_bridge);
     RUN_TEST(test_switch_from_tcp_bridge_to_disabled);
+    RUN_TEST(test_switch_passive_repeater_disabled);
 
     /* 7 – hex_str_to_bytes */
     RUN_TEST(test_hex_str_to_bytes_valid);

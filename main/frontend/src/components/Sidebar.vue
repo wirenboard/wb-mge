@@ -17,6 +17,7 @@ import CpuIcon from '@/assets/cpuIcon.svg?component';
 import ActivityIcon from '@/assets/activityIcon.svg?component';
 import PlugIcon from '@/assets/plugIcon.svg?component';
 import GridSidebarIcon from '@/assets/gridSidebarIcon.svg?component';
+import RepeatIcon from '@/assets/repeatIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
@@ -31,6 +32,7 @@ const MENU_ICONS: Record<string, Component> = {
   activity: ActivityIcon,
   plug: PlugIcon,
   grid: GridSidebarIcon,
+  repeat: RepeatIcon,
 };
 
 // Helper: returns the icon component for a given menuIcon key
@@ -501,7 +503,8 @@ watch(
     "mode": "Mode",
     "port_mode_disabled": "Disabled",
     "port_mode_tcp_bridge": "TCP bridge",
-    "port_mode_passive": "Passive listen"
+    "port_mode_passive": "Passive listen",
+    "port_mode_repeater": "Repeater"
   },
   "ru": {
     "group_overview": "Обзор",
@@ -515,7 +518,8 @@ watch(
     "mode": "Режим",
     "port_mode_disabled": "Отключён",
     "port_mode_tcp_bridge": "TCP-мост",
-    "port_mode_passive": "Пассивный (прослушка)"
+    "port_mode_passive": "Пассивный (прослушка)",
+    "port_mode_repeater": "Повторитель"
   },
   "kk": {
     "group_overview": "Шолу",
@@ -529,7 +533,8 @@ watch(
     "mode": "Режим",
     "port_mode_disabled": "Өшірілген",
     "port_mode_tcp_bridge": "TCP көпір",
-    "port_mode_passive": "Пассивті тыңдау"
+    "port_mode_passive": "Пассивті тыңдау",
+    "port_mode_repeater": "Қайталағыш"
   },
   "it": {
     "group_overview": "Panoramica",
@@ -543,7 +548,8 @@ watch(
     "mode": "Modalità",
     "port_mode_disabled": "Disabilitato",
     "port_mode_tcp_bridge": "Bridge TCP",
-    "port_mode_passive": "Ascolto passivo"
+    "port_mode_passive": "Ascolto passivo",
+    "port_mode_repeater": "Ripetitore"
   },
   "de": {
     "group_overview": "Übersicht",
@@ -557,7 +563,8 @@ watch(
     "mode": "Modus",
     "port_mode_disabled": "Deaktiviert",
     "port_mode_tcp_bridge": "TCP-Bridge",
-    "port_mode_passive": "Passives Mithören"
+    "port_mode_passive": "Passives Mithören",
+    "port_mode_repeater": "Repeater"
   }
 }
 </i18n>

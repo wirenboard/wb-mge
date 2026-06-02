@@ -112,6 +112,7 @@
 #define PORT_MODE_DISABLED_STR      "disabled"
 #define PORT_MODE_TCP_BRIDGE_STR    "tcp_bridge"
 #define PORT_MODE_PASSIVE_STR       "passive"
+#define PORT_MODE_REPEATER_STR      "repeater"
 
 // Setting types - used for type checking and JSON mapping
 typedef enum {

@@ -18,7 +18,7 @@ export interface Uptime {
   seconds: number;
 }
 
-export type PortMode = 'disabled' | 'tcp_bridge' | 'passive';
+export type PortMode = 'disabled' | 'tcp_bridge' | 'passive' | 'repeater';
 
 export interface RsStatus {
   is_busy: boolean;
@@ -26,6 +26,22 @@ export interface RsStatus {
   server_connections_count: number;
   port_mode: PortMode;
   cache_enabled: boolean;
+}
+
+// Live stats for the transparent RS-485 repeater (Port 1 <-> Port 2 passthrough).
+export interface RepeaterStats {
+  // true when both ports are in repeater mode
+  active: boolean;
+  // seconds since forwarding became active (0 if inactive)
+  uptime_s: number;
+  // bytes forwarded Port 1 -> Port 2 (the TX->RX / forward arrow)
+  bytes_1to2: number;
+  // bytes forwarded Port 2 -> Port 1 (the RX<-TX / reverse arrow)
+  bytes_2to1: number;
+  // bytes dropped on Port 1
+  dropped_1: number;
+  // bytes dropped on Port 2
+  dropped_2: number;
 }
 
 export interface Info {
@@ -62,6 +78,7 @@ export interface Info {
   };
   rs485_1: RsStatus;
   rs485_2: RsStatus;
+  repeater?: RepeaterStats; // optional: older firmware may omit it
   cache_modbus_port: number;
   cache_modbus_server_enabled: boolean;
   cache_value_timeout_s: number;
