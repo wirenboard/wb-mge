@@ -63,10 +63,14 @@ def test_wifi_led_present(api):
     full dump and holds a valid level (0 or 1), proving leds_control wired it.
     """
     with IoBus() as bus:
+        assert "E04" in bus.state, (
+            f"WiFi LED (E04) missing from the dump; leds_control did not wire "
+            f"it. Available pins: {sorted(bus.state)}"
+        )
         level = bus.get("E04")
         assert level in (0, 1), (
-            f"WiFi LED (E04) expected present with level 0 or 1 in the dump, "
-            f"got {level!r}. Available pins: {sorted(bus.state)}"
+            f"WiFi LED (E04) present but holds an invalid level {level!r}; "
+            f"expected 0 or 1. Available pins: {sorted(bus.state)}"
         )
 
 

@@ -87,6 +87,18 @@ static struct {
     .peer_known = false,
 };
 
+// Build the 5-byte wire record (no I/O). 'V' carries a multi-valued cause (0..7);
+// E/G/D are 0/1 only. Layout matches api_tests/io_bus_helpers.py: type@0, NN@1..2,
+// '/'@3 (SEP_INDEX), level@4 (LEVEL_INDEX), total 5 (RECORD_LEN).
+static void encode_record(char type, int num, int value, char *out)
+{
+    out[0] = type;
+    out[1] = (char)('0' + ((num / 10) % 10));
+    out[2] = (char)('0' + (num % 10));
+    out[3] = '/';
+    out[4] = (type == 'V') ? (char)('0' + (value & 0x7)) : (value ? '1' : '0');
+}
+
 // Build the 5-byte record and send it to the learned peer. Caller MUST hold the
 // mutex. Silently drops if no peer is known or the socket is invalid.
 static void send_record_locked(char type, int num, int value)
@@ -96,12 +108,7 @@ static void send_record_locked(char type, int num, int value)
     }
 
     char buf[VIRTUAL_IO_RECORD_LEN];
-    buf[0] = type;
-    buf[1] = (char)('0' + ((num / 10) % 10));
-    buf[2] = (char)('0' + (num % 10));
-    buf[3] = '/';
-    // 'V' carries a multi-valued cause code (0/1/2); E/G/D are 0/1 only.
-    buf[4] = (type == 'V') ? (char)('0' + (value & 0x7)) : (value ? '1' : '0');
+    encode_record(type, num, value, buf);
 
     sendto(s_ctx.sock, buf, sizeof(buf), 0,
            (struct sockaddr *)&s_ctx.peer, sizeof(s_ctx.peer));
@@ -371,35 +378,50 @@ static void virtual_io_native_apply_from_host(int gpio_num, int level)
     xSemaphoreGive(s_ctx.mutex);
 }
 
-// Parse one received datagram and apply it to the virtual shadow.
-// Native 'G' records are routed through the host apply path; 'E' records drive
-// the virtual expander. Malformed datagrams are ignored.
-static void handle_rx_record(const char *buf, int len)
+// Validate one received datagram and decode (type,num,value). Returns true if the
+// record is well-formed for RX: optional single trailing '\n', exact 5-byte body,
+// type 'E' or 'G' (D/V are TX-only and rejected on RX), 2-digit number, '/' at
+// index 3, level strictly '0'/'1'. Mirrors api_tests/io_bus_helpers.py IoBus._parse.
+static bool parse_record(const char *buf, int len, char *type_out, int *num_out, int *value_out)
 {
     // Tolerate an optional trailing '\n'.
     if ((len == VIRTUAL_IO_RECORD_LEN + 1) && (buf[VIRTUAL_IO_RECORD_LEN] == '\n')) {
         len = VIRTUAL_IO_RECORD_LEN;
     }
     if (len != VIRTUAL_IO_RECORD_LEN) {
-        return;
+        return false;
     }
 
     char type = buf[0];
     if ((type != 'E') && (type != 'G')) {
-        return;
+        return false;
     }
     if ((buf[1] < '0') || (buf[1] > '9') || (buf[2] < '0') || (buf[2] > '9')) {
-        return;
+        return false;
     }
     if (buf[3] != '/') {
-        return;
+        return false;
     }
     if ((buf[4] != '0') && (buf[4] != '1')) {
-        return;
+        return false;
     }
 
-    int num = (buf[1] - '0') * 10 + (buf[2] - '0');
-    int level = (buf[4] - '0');
+    *type_out = type;
+    *num_out = (buf[1] - '0') * 10 + (buf[2] - '0');
+    *value_out = (buf[4] - '0');
+    return true;
+}
+
+// Parse one received datagram and apply it to the virtual shadow.
+// Native 'G' records are routed through the host apply path; 'E' records drive
+// the virtual expander. Malformed datagrams are ignored.
+static void handle_rx_record(const char *buf, int len)
+{
+    char type;
+    int num, level;
+    if (!parse_record(buf, len, &type, &num, &level)) {
+        return;
+    }
 
     if (type == 'G') {
         // Host-driven native GPIO write. Goes through the HOST apply path: the

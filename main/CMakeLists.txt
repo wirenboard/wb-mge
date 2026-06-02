@@ -49,6 +49,7 @@ if($ENV{CONFIG_ETH_USE_OPENETH})
         "qemu/hardware_mocks_qemu.c"
         "qemu/virtual_io_qemu.c"
         "qemu/gpio_shim_qemu.c"
+        "qemu/gpio_dir_map.c"
         "indication/indication.c"
         "indication/leds_control.c"
         "rs485_control.c"

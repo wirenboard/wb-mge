@@ -60,6 +60,7 @@ static mock_sniff_handler_t mock_sniff_handler_data = {0};
 void setUp(void)
 {
     mock_uart_reset();
+    mock_gpio_reset();
     mock_freertos_event_groups_reset();
     mock_freertos_task_reset();
     mock_freertos_queue_reset();
@@ -1800,6 +1801,154 @@ void test_serial_set_tx_disabled_gates_send(void)
         "uart_write_bytes must be called once after TX re-enabled");
 }
 
+// Test serial_set_tx_disabled(true) drives the exact GPIO park sequence on dir_pin:
+// gpio_reset_pin -> gpio_set_direction(OUTPUT) -> gpio_set_level(0), in that order.
+void test_serial_set_tx_disabled_disable_gpio_sequence(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled(true) - GPIO park sequence");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    // serial_init itself calls uart/gpio; clear that noise before the assertion.
+    mock_gpio_reset();
+
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_gpio_reset_pin_data.called,
+        "gpio_reset_pin must be called exactly once");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_gpio_reset_pin_data.gpio_num,
+        "gpio_reset_pin must be called on dir_pin (GPIO_NUM_4)");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_gpio_set_direction_data.called,
+        "gpio_set_direction must be called exactly once");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_gpio_set_direction_data.gpio_num,
+        "gpio_set_direction must be called on dir_pin (GPIO_NUM_4)");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_MODE_OUTPUT, mock_gpio_set_direction_data.mode,
+        "gpio_set_direction must set OUTPUT mode");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_gpio_set_level_data.called,
+        "gpio_set_level must be called exactly once");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_gpio_set_level_data.gpio_num,
+        "gpio_set_level must be called on dir_pin (GPIO_NUM_4)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.level,
+        "gpio_set_level must force the dir_pin LOW (0)");
+
+    // Order: reset_pin -> set_direction -> set_level.
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_gpio_reset_pin_data.call_seq < mock_gpio_set_direction_data.call_seq,
+        "gpio_reset_pin must precede gpio_set_direction");
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_gpio_set_direction_data.call_seq < mock_gpio_set_level_data.call_seq,
+        "gpio_set_direction must precede gpio_set_level");
+}
+
+// Test serial_set_tx_disabled(false) re-attaches dir_pin to the UART via uart_set_pin
+// and must NOT touch the GPIO park path (no gpio_reset_pin/set_direction/set_level).
+void test_serial_set_tx_disabled_enable_no_gpio_park(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled(false) - re-enable without GPIO park");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    // Move to the disabled state first (real state change).
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    // Clear noise from serial_init + the disable step right before the re-enable.
+    mock_gpio_reset();
+    mock_uart_reset();
+
+    err = serial_set_tx_disabled(desc, false);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(false) should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_pin_data.called,
+        "uart_set_pin must be called exactly once to restore dir_pin to the UART");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_uart_set_pin_data.dir_pin,
+        "uart_set_pin must restore the dir_pin (rts) to GPIO_NUM_4");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_PIN_NO_CHANGE, mock_uart_set_pin_data.tx_pin,
+        "uart_set_pin tx_pin must be UART_PIN_NO_CHANGE");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_PIN_NO_CHANGE, mock_uart_set_pin_data.rx_pin,
+        "uart_set_pin rx_pin must be UART_PIN_NO_CHANGE");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_PIN_NO_CHANGE, mock_uart_set_pin_data.cts_pin,
+        "uart_set_pin cts_pin must be UART_PIN_NO_CHANGE");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_reset_pin_data.called,
+        "re-enable must NOT call gpio_reset_pin");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_direction_data.called,
+        "re-enable must NOT call gpio_set_direction");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
+        "re-enable must NOT call gpio_set_level");
+}
+
+// Test serial_set_tx_disabled(true) when already disabled is idempotent: it takes the
+// early return and must NOT re-park the dir_pin (no spurious bus glitch).
+void test_serial_set_tx_disabled_idempotent_disable(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled(true) - idempotent re-disable");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    // First disable: real state change.
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    // Clear noise, then disable AGAIN (already disabled -> early return).
+    mock_gpio_reset();
+    err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "redundant serial_set_tx_disabled(true) should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_reset_pin_data.called,
+        "redundant disable must NOT call gpio_reset_pin");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_direction_data.called,
+        "redundant disable must NOT call gpio_set_direction");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
+        "redundant disable must NOT call gpio_set_level");
+}
+
+// Test serial_set_tx_disabled with a NULL descriptor returns ESP_ERR_INVALID_ARG and
+// touches no GPIO.
+void test_serial_set_tx_disabled_null_desc(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled - NULL descriptor");
+    LOG_MESSAGE();
+
+    mock_gpio_reset();
+
+    esp_err_t err = serial_set_tx_disabled(NULL, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, err,
+        "serial_set_tx_disabled(NULL) should return ESP_ERR_INVALID_ARG");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_reset_pin_data.called,
+        "NULL descriptor must NOT call gpio_reset_pin");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_direction_data.called,
+        "NULL descriptor must NOT call gpio_set_direction");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
+        "NULL descriptor must NOT call gpio_set_level");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Additive sniffer feed (part 2): the sniff_handler must observe RX traffic in
 // BOTH passive and tcp_bridge modes, via a dedicated accumulation buffer that is
@@ -2119,6 +2268,10 @@ int main(void)
     RUN_TEST(test_serial_send_success);
     RUN_TEST(test_serial_send_partial_write);
     RUN_TEST(test_serial_set_tx_disabled_gates_send);
+    RUN_TEST(test_serial_set_tx_disabled_disable_gpio_sequence);
+    RUN_TEST(test_serial_set_tx_disabled_enable_no_gpio_park);
+    RUN_TEST(test_serial_set_tx_disabled_idempotent_disable);
+    RUN_TEST(test_serial_set_tx_disabled_null_desc);
 
     RUN_TEST(test_serial_wait_tx_done_success);
     RUN_TEST(test_serial_wait_tx_done_errors);

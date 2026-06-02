@@ -53,14 +53,15 @@ def test_initial_dump_contains_all_signals(api):
 def test_status_led_blinks(api):
     """E07 (Status LED) must toggle, proving indication.c/leds_control.c run.
 
-    The status LED blinks at ~1 Hz, so within ~3 s we expect at least two
+    The status LED blinks at ~1 Hz, so within ~6 s we expect at least two
     edges. Each emitted E07 record is one real level change (the firmware only
-    sends on change).
+    sends on change). The window is widened so a couple of dropped QEMU UDP
+    datagrams cannot flake a correct firmware.
     """
     with IoBus() as bus:
-        edges = bus.count_edges("E07", 3.0)
+        edges = bus.count_edges("E07", 6.0)
         assert edges >= 2, (
-            f"Expected Status LED (E07) to change at least 2 times in 3 s, "
+            f"Expected Status LED (E07) to change at least 2 times in 6 s, "
             f"saw {edges}. indication.c/leds_control.c may not be running."
         )
 

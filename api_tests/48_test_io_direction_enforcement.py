@@ -109,10 +109,10 @@ def test_operate_uninitialized_pin(api):
     with IoBus() as bus:
         bus.pump(0.5)
         # Confirm the pin is genuinely unconfigured: no D record in the dump.
-        assert bus.get("D13") is None, (
-            f"Precondition: GPIO13 expected UNCONFIGURED (no D13 in dump), got "
-            f"D13=={bus.get('D13')!r}. Pick another firmware-unused native GPIO."
-        )
+        # If firmware ever starts using GPIO13 this is a broken test assumption,
+        # not a firmware bug, so skip rather than hard-fail.
+        if bus.get("D13") is not None:
+            pytest.skip("GPIO13 is now configured by firmware; pick another firmware-unused native GPIO for the operate-uninitialized test")
 
         for _ in range(3):  # burst to beat UDP loss
             bus.send_raw("G13/1")

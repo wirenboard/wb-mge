@@ -26,6 +26,7 @@
 #include "hal/gpio_types.h"
 
 #include "virtual_io_qemu.h"
+#include "gpio_dir_map.h"
 
 // Originals provided by the linker (--wrap). Same signatures as the IDF funcs.
 esp_err_t __real_gpio_config(const gpio_config_t *pGPIOConfig);
@@ -35,19 +36,6 @@ esp_err_t __real_gpio_set_level(gpio_num_t gpio_num, uint32_t level);
 int       __real_gpio_get_level(gpio_num_t gpio_num);
 esp_err_t __real_uart_set_pin(uart_port_t uart_num, int tx_io_num, int rx_io_num,
                               int rts_io_num, int cts_io_num);
-
-// Map an ESP-IDF gpio mode to the virtual model's direction state. Output takes
-// precedence (INPUT_OUTPUT is firmware-driven), then input, else unconfigured.
-static vio_dir_state_t dir_from_mode(gpio_mode_t mode)
-{
-    if (mode & GPIO_MODE_DEF_OUTPUT) {
-        return VIO_DIR_OUTPUT;
-    }
-    if (mode & GPIO_MODE_DEF_INPUT) {
-        return VIO_DIR_INPUT;
-    }
-    return VIO_DIR_UNCONFIGURED; // GPIO_MODE_DISABLE
-}
 
 esp_err_t __wrap_gpio_config(const gpio_config_t *pGPIOConfig)
 {
