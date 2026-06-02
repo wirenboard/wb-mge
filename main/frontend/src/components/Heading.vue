@@ -30,7 +30,9 @@ watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostnam
     <div class="heading-container">
       <div>
         <h1 class="heading-title">{{ title }}</h1>
-        <div v-if="crumbs" class="heading-crumbs">{{ crumbs }}</div>
+        <div v-if="$slots.crumbs || crumbs" class="heading-crumbs">
+          <slot name="crumbs">{{ crumbs }}</slot>
+        </div>
       </div>
     </div>
 

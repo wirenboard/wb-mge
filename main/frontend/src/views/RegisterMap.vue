@@ -8,6 +8,7 @@ import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import Switch from '@/components/Switch.vue';
+import DeviceRegisterMapPopup from '@/components/DeviceRegisterMapPopup.vue';
 import GridIcon from '@/assets/gridIcon.svg?component';
 import SpinnerIcon from '@/assets/spinnerIcon.svg?component';
 import ErrorCircleIcon from '@/assets/errorCircleIcon.svg?component';
@@ -62,6 +63,8 @@ const cacheTcpPort = ref(504);
 const tcpServeEnabled = ref(true);
 // Save-button status for the Settings panel
 const settingsSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+// Controls the device own-address (Unit ID 255) register-map popup visibility
+const showDeviceRegMap = ref(false);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let statsInterval: ReturnType<typeof setInterval> | null = null;
@@ -373,7 +376,10 @@ onUnmounted(() => {
 
 <template>
   <Layout>
-    <Heading :title="t('title')" :crumbs="t('crumbs')">
+    <Heading :title="t('title')">
+      <template #crumbs>
+        {{ t('crumbs') }} · <button type="button" class="rm-crumbs-link" @click="showDeviceRegMap = true">{{ t('device_regmap_link') }}</button>
+      </template>
       <template #default>
         <div class="rm-header-controls">
           <!-- CACHING ON/OFF block -->
@@ -671,6 +677,9 @@ onUnmounted(() => {
         </div>
       </template>
     </div>
+
+    <!-- Device own-address (Unit ID 255) register-map popup -->
+    <DeviceRegisterMapPopup v-if="showDeviceRegMap" @close="showDeviceRegMap = false" />
   </Layout>
 </template>
 
@@ -680,6 +689,30 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+/* Inline hyperlink appended to the page crumbs; opens the device register-map popup.
+   Resets the global <button> styling (green pill background, fixed height, focus ring)
+   so it reads as plain inline link text. :hover/:focus must restate background:none with
+   matching specificity, otherwise the global `button:hover` rule repaints the green pill. */
+.rm-crumbs-link {
+  display: inline;
+  height: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--primary-color);
+  cursor: pointer;
+}
+.rm-crumbs-link:hover:not(:disabled) {
+  background: none;
+  border: none;
+  color: var(--primary-color-hover);
+  text-decoration: underline;
+}
+.rm-crumbs-link:focus {
+  box-shadow: none;
 }
 
 /* CACHING toggle block */
@@ -1543,6 +1576,7 @@ onUnmounted(() => {
     "tcp_serve_desc": "Reply to TCP Modbus reads from cache without round-tripping the bus.",
     "tcp_port_title": "TCP port",
     "tcp_port_desc": "Port the gateway listens on for TCP Modbus clients.",
+    "device_regmap_link": "info registers available",
     "saved": "Saved",
     "save_error": "Error saving",
     "save_changes": "Save changes"
@@ -1603,6 +1637,7 @@ onUnmounted(() => {
     "tcp_serve_desc": "Отвечать на запросы TCP Modbus из кэша без обращения к шине.",
     "tcp_port_title": "TCP-порт",
     "tcp_port_desc": "Порт, на котором шлюз принимает подключения TCP Modbus клиентов.",
+    "device_regmap_link": "доступны регистры информации",
     "saved": "Сохранено",
     "save_error": "Ошибка сохранения",
     "save_changes": "Сохранить изменения"
@@ -1663,6 +1698,7 @@ onUnmounted(() => {
     "tcp_serve_desc": "TCP Modbus сұрауларына шинаға бармай кэштен жауап беру.",
     "tcp_port_title": "TCP порты",
     "tcp_port_desc": "Шлюздің TCP Modbus клиенттерін қабылдайтын порты.",
+    "device_regmap_link": "ақпарат регистрлері қолжетімді",
     "saved": "Сақталды",
     "save_error": "Сақтау қатесі",
     "save_changes": "Өзгерістерді сақтау"
@@ -1723,6 +1759,7 @@ onUnmounted(() => {
     "tcp_serve_desc": "Rispondi alle letture TCP Modbus dalla cache senza accedere al bus.",
     "tcp_port_title": "Porta TCP",
     "tcp_port_desc": "Porta su cui il gateway ascolta i client TCP Modbus.",
+    "device_regmap_link": "registri info disponibili",
     "saved": "Salvato",
     "save_error": "Errore salvataggio",
     "save_changes": "Salva modifiche"
@@ -1783,6 +1820,7 @@ onUnmounted(() => {
     "tcp_serve_desc": "TCP-Modbus-Leseanfragen aus dem Cache beantworten, ohne den Bus zu nutzen.",
     "tcp_port_title": "TCP-Port",
     "tcp_port_desc": "Port, auf dem das Gateway auf TCP-Modbus-Clients wartet.",
+    "device_regmap_link": "Info-Register verfügbar",
     "saved": "Gespeichert",
     "save_error": "Speicherfehler",
     "save_changes": "Änderungen speichern"
