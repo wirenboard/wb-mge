@@ -491,6 +491,27 @@ static void on_conn_close(tcp_desc_t *desc, int client_sock)
 
 esp_err_t cache_modbus_server_init(int port)
 {
+    /* Idempotency guard (persist-1): a second init without an intervening
+     * deinit would overwrite s_tcp_desc and orphan the first descriptor, its
+     * acceptor task and listen socket (an unrecoverable leak — deinit only
+     * frees the latest). This can happen at boot: the HTTP server is up before
+     * port_manager_init(), so a POST /settings can call init(port) first and
+     * port_manager_init() then calls it again. Make init idempotent. */
+    if (s_tcp_desc != NULL) {
+        if (port == s_port) {
+            ESP_LOGD(TAG, "cache Modbus server already running on port %d — init is a no-op", port);
+            return ESP_OK;
+        }
+        /* Port changed: tear down the running instance first so it is not
+         * leaked, then fall through to start on the new port. */
+        ESP_LOGW(TAG, "cache Modbus server re-init: port %d -> %d, restarting", s_port, port);
+        esp_err_t de = cache_modbus_server_deinit();
+        if (de != ESP_OK) {
+            ESP_LOGE(TAG, "cache Modbus server re-init: deinit failed (%d), aborting", de);
+            return de;
+        }
+    }
+
     ESP_LOGI(TAG, "Starting cache Modbus TCP server on port %d", port);
 
     /* Init per-connection reassembly state (bug 07 fix). */
@@ -541,5 +562,7 @@ void cache_modbus_server_test_reset(void)
         s_reasm[i].len  = 0;
     }
     s_reasm_mutex = NULL;
+    s_tcp_desc    = NULL;
+    s_port        = 0;
 }
 #endif /* __unittest_env__ */

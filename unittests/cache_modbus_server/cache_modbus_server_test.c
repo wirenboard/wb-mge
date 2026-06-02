@@ -44,8 +44,17 @@ void mock_setting_items_reset(void);
 extern uint8_t mock_tcp_send_buf[];
 extern size_t  mock_tcp_send_len;
 extern int     mock_tcp_send_called;
+extern int     mock_tcp_server_init_called;
+extern int     mock_tcp_server_deinit_called;
+extern int     mock_tcp_server_last_port;
 
 void mock_tcp_server_reset(void);
+
+/* Public API exercised by the persist-1 idempotency tests — declared here to
+ * avoid pulling the full public header's includes into the host test. */
+esp_err_t cache_modbus_server_init(int port);
+esp_err_t cache_modbus_server_deinit(void);
+int       cache_modbus_server_get_port(void);
 
 /* ---- Mock state exposed by mocks/mb_device.c (self-unit 0xFF handler) ----- */
 
@@ -607,6 +616,59 @@ void test_build_response_count_guard(void)
     TEST_ASSERT_EQUAL_size_t(0, cache_modbus_server_build_coil_response(
         1, MB_FC_READ_COILS, htons(1), 0, 2001, 0, resp_buf, &ex));
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(MB_EX_ILLEGAL_DATA_VALUE, ex, "coil count>2000 -> 0x03");
+}
+
+/* ---- CMS-U-INIT-1: init is idempotent on repeated same-port calls -------- */
+
+/* persist-1: a second cache_modbus_server_init() with the same port and no
+ * intervening deinit must NOT call tcp_server_init() again — doing so would
+ * overwrite s_tcp_desc and orphan the first descriptor, acceptor task and
+ * listen socket (deinit only frees the latest). */
+void test_cache_modbus_server_init_idempotent_same_port(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-INIT-1: double init same port is a no-op (no leak)");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, cache_modbus_server_init(502));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_server_init_called,
+        "first init must create the tcp server once");
+    TEST_ASSERT_EQUAL_INT(502, cache_modbus_server_get_port());
+
+    /* Second init, same port — must be a no-op at the tcp layer */
+    TEST_ASSERT_EQUAL_INT(ESP_OK, cache_modbus_server_init(502));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_server_init_called,
+        "second same-port init must NOT re-create the tcp server (orphan leak)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_server_deinit_called,
+        "same-port re-init must not tear down the running instance");
+    TEST_ASSERT_EQUAL_INT(502, cache_modbus_server_get_port());
+
+    cache_modbus_server_deinit();
+}
+
+/* ---- CMS-U-INIT-2: init on a different port restarts cleanly ------------- */
+
+/* If init is called again with a different port, the running instance must be
+ * torn down (deinit) before the new one starts — again to avoid leaking the
+ * old descriptor/task/socket. */
+void test_cache_modbus_server_init_port_change_restarts(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CMS-U-INIT-2: re-init on new port deinits old first");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, cache_modbus_server_init(502));
+    TEST_ASSERT_EQUAL_INT(1, mock_tcp_server_init_called);
+
+    /* Different port: must deinit the old, then init the new */
+    TEST_ASSERT_EQUAL_INT(ESP_OK, cache_modbus_server_init(1502));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_server_deinit_called,
+        "port change must deinit the old instance before re-init");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_tcp_server_init_called,
+        "port change must start a new tcp server");
+    TEST_ASSERT_EQUAL_INT(1502, cache_modbus_server_get_port());
+
+    cache_modbus_server_deinit();
 }
 
 /* ---- CMS-U-010: MBAP length field correctness for various counts --------- */
@@ -1844,6 +1906,8 @@ int main(void)
     RUN_TEST(test_build_register_response_partial_block_no_leak);
     RUN_TEST(test_build_register_response_mid_block_stale);
     RUN_TEST(test_build_response_count_guard);
+    RUN_TEST(test_cache_modbus_server_init_idempotent_same_port);
+    RUN_TEST(test_cache_modbus_server_init_port_change_restarts);
     RUN_TEST(test_build_coil_response_not_found);
     RUN_TEST(test_build_coil_response_stale);
 
