@@ -7,8 +7,21 @@ WB-MGE is designed to connect devices with RS-485 interface and WBIO I/O side mo
 
 Two modes are available for each port:
 
- - Modbus TCP — for Modbus devices only
- - Transparent gateway — suitable for any protocols running over RS-485.
+ - **Modbus TCP** — for Modbus devices only: a full **Modbus TCP ↔ Modbus RTU** converter.
+   Toward the network the gateway acts as a Modbus TCP server, and on the RS-485 bus as a Modbus
+   RTU master: it strips the MBAP header from the TCP request, builds an RTU frame (appends the
+   CRC), polls the device and wraps the RTU reply back into Modbus TCP.
+ - **Transparent gateway** — suitable for any protocols running over RS-485; bytes are forwarded
+   as-is, without frame parsing. It can run as a TCP **server** (waits for incoming connections)
+   or a TCP **client** (connects out to a remote `ip:port`).
+
+On top of either mode, each port can additionally enable:
+
+ - **Cache (Cache TCP)** — passively tracks the Modbus traffic on the bus, stores the latest
+   register and coil values and serves them over a dedicated Modbus TCP server without
+   re-polling the devices (a "from cache" reply). Also exposed via `GET /cache/json` and `/cache/csv`.
+ - **Sniffer** — captures RS-485 traffic in both directions, decodes Modbus frames and streams
+   them to the web UI over WebSocket for diagnostics.
 
 ## Device Register Map (Unit ID 255)
 
