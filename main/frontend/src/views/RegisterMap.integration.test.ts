@@ -826,6 +826,32 @@ describe('RM-I-06: saveSettings', () => {
     wrapper.unmount();
   });
 
+  it('scenario B2: valueTimeout above max → settings POST clamps to 65535', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await vi.advanceTimersByTimeAsync(50);
+    await flushPromises();
+
+    // Enter a value above the firmware limit (65535 s)
+    const timeoutInput = wrapper.find('[data-testid="value-timeout"]');
+    await timeoutInput.setValue(70000);
+
+    vi.mocked(api).mockClear();
+
+    await wrapper.find('.rsp-btn-save').trigger('click');
+    await flushPromises();
+    vi.advanceTimersByTime(3001);
+    await flushPromises();
+
+    // POST must carry the clamped value, not the raw 70000
+    expect(vi.mocked(api)).toHaveBeenCalledWith('settings', { method: 'POST', json: { cache_value_timeout_s: 65535 } });
+
+    wrapper.unmount();
+  });
+
   it('scenario C: save status machine idle → saving → saved → idle after 3s', async () => {
     const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
 

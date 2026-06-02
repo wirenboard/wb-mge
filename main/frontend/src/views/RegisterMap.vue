@@ -50,6 +50,9 @@ const cacheEnabled = computed(() => cacheToggle.value.value);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const valueTimeout = ref(60);
+// Backend validate_timeout() accepts only 0..65535 s (0 = disabled; 65535 s ≈ 18 h
+// is the uint16 max). Keep the UI input and saved value within that range.
+const MAX_VALUE_TIMEOUT_S = 65535;
 const openDevices = ref<Set<number>>(new Set());
 const openGroups = ref<Set<string>>(new Set());
 const searchFilter = ref('');
@@ -239,8 +242,15 @@ async function saveSettings(): Promise<void> {
     if (info.value && tcpServeEnabled.value !== info.value.cache_modbus_server_enabled) {
       await api<void>('settings', { method: 'POST', json: { cache_modbus_server_enabled: tcpServeEnabled.value } });
     }
-    if (info.value && valueTimeout.value !== info.value.cache_value_timeout_s) {
-      await api<void>('settings', { method: 'POST', json: { cache_value_timeout_s: valueTimeout.value } });
+    // Clamp to the firmware-accepted range before saving; out-of-range values would
+    // otherwise be rejected by the backend and the setting silently dropped.
+    // Non-finite input (e.g. a cleared field) collapses to 0 (timeout disabled).
+    const clampedTimeout = Number.isFinite(valueTimeout.value)
+      ? Math.min(MAX_VALUE_TIMEOUT_S, Math.max(0, Math.round(valueTimeout.value)))
+      : 0;
+    valueTimeout.value = clampedTimeout; // reflect the clamped value back in the UI
+    if (info.value && clampedTimeout !== info.value.cache_value_timeout_s) {
+      await api<void>('settings', { method: 'POST', json: { cache_value_timeout_s: clampedTimeout } });
     }
     settingsSaveStatus.value = 'saved';
   } catch {
@@ -570,12 +580,13 @@ onUnmounted(() => {
             <!-- Value timeout row -->
             <div class="rsp-row">
               <div class="rsp-control rsp-control--stacked">
-                <input v-model.number="valueTimeout" type="number" class="rsp-input" data-testid="value-timeout" min="0" max="86400" />
+                <input v-model.number="valueTimeout" type="number" class="rsp-input" data-testid="value-timeout" min="0" :max="MAX_VALUE_TIMEOUT_S" />
                 <span class="rsp-unit">{{ t('seconds') }}</span>
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">{{ t('value_timeout_title') }}</div>
                 <div class="rsp-row-desc">{{ t('value_timeout_desc') }}</div>
+                <div class="rsp-row-desc">{{ t('value_timeout_hint') }}</div>
               </div>
             </div>
 
@@ -1560,6 +1571,7 @@ onUnmounted(() => {
     "value_timeout_title": "Value timeout",
     "seconds": "seconds",
     "value_timeout_desc": "If a register's last update is older than this, the gateway returns Modbus error 0x0B instead of the cached value. Set to 0 to disable the timeout (always serve cached values).",
+    "value_timeout_hint": "Maximum 65535 s (≈18 h).",
     "reset_map_title": "Reset map",
     "reset_btn": "↺ Reset",
     "reset_map_desc": "Drops every observed register from RAM. Map will rebuild from new traffic.",
@@ -1621,6 +1633,7 @@ onUnmounted(() => {
     "value_timeout_title": "Таймаут значения",
     "seconds": "секунд",
     "value_timeout_desc": "Если последнее обновление регистра старше этого значения, шлюз вернёт Modbus 0x0B вместо значения. Установите 0, чтобы отключить (всегда отдавать кэшированные значения).",
+    "value_timeout_hint": "Максимум 65535 с (≈18 ч).",
     "reset_map_title": "Сброс карты",
     "reset_btn": "↺ Сброс",
     "reset_map_desc": "Удаляет все наблюдавшиеся регистры из ОЗУ. Карта будет перестроена из нового трафика.",
@@ -1682,6 +1695,7 @@ onUnmounted(() => {
     "value_timeout_title": "Мән таймауты",
     "seconds": "секунд",
     "value_timeout_desc": "Тіркеудің соңғы жаңартуы осы мәннен ескі болса, шлюз кэштелген мән орнына Modbus 0x0B қатесін қайтарады. Таймаутты өшіру үшін 0 орнатыңыз.",
+    "value_timeout_hint": "Ең көбі 65535 с (≈18 сағ).",
     "reset_map_title": "Картаны қалпына келтіру",
     "reset_btn": "↺ Қалпына келтіру",
     "reset_map_desc": "Барлық байқалған тіркеулерді ЖЖҚ-дан жояды. Карта жаңа трафиктен қалпына келтіріледі.",
@@ -1743,6 +1757,7 @@ onUnmounted(() => {
     "value_timeout_title": "Timeout valore",
     "seconds": "secondi",
     "value_timeout_desc": "Se l'ultimo aggiornamento di un registro è più vecchio di questo valore, il gateway restituisce l'errore Modbus 0x0B invece del valore in cache. Imposta 0 per disabilitare il timeout.",
+    "value_timeout_hint": "Massimo 65535 s (≈18 h).",
     "reset_map_title": "Azzera mappa",
     "reset_btn": "↺ Azzera",
     "reset_map_desc": "Rimuove tutti i registri osservati dalla RAM. La mappa verrà ricostruita dal nuovo traffico.",
@@ -1804,6 +1819,7 @@ onUnmounted(() => {
     "value_timeout_title": "Wert-Timeout",
     "seconds": "Sekunden",
     "value_timeout_desc": "Wenn das letzte Update eines Registers älter als dieser Wert ist, gibt das Gateway den Modbus-Fehler 0x0B zurück. 0 setzen, um das Timeout zu deaktivieren.",
+    "value_timeout_hint": "Maximal 65535 s (≈18 h).",
     "reset_map_title": "Karte zurücksetzen",
     "reset_btn": "↺ Zurücksetzen",
     "reset_map_desc": "Entfernt alle beobachteten Register aus dem RAM. Die Karte wird aus neuem Verkehr neu aufgebaut.",
