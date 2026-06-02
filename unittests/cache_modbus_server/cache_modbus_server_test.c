@@ -1799,6 +1799,111 @@ void test_reassembly_oversized_frame_boundary(void)
         "valid frame after oversized resync must be dispatched (mutant leaves stale buffer -> 0)");
 }
 
+/* ---- CMS-U-045: bogus middle frame must not drop trailing valid frame ---- */
+
+/* cache-mb-framing-1/4: three ADUs coalesced in one recv —
+ * [valid FC03][8-byte header with length=1 -> flen=7 < 8][valid FC03].
+ * The previous reassembler dispatched frame 1, then on the bogus length did
+ * `pos = c->len` and discarded the rest of the buffer, losing the trailing
+ * valid frame (only 1 send). With byte-resync + protocol_id check, both valid
+ * frames must be dispatched (2 sends) and the bogus one skipped. */
+void test_reassembly_bogus_middle_frame_preserves_tail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-045: bogus middle frame must not drop trailing valid frame");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x1234;
+    mock_setting_items_set_timeout(0);
+
+    uint8_t buf[32];
+    build_request(buf, 0x0001, 1, MB_FC_READ_HOLDING_REGS, 0, 1);   /* [0..11] valid */
+
+    /* [12..19] bogus header: protocol_id 0, but MBAP length = 1 -> flen = 7 < 8 */
+    buf[12] = 0x00; buf[13] = 0x02;   /* transaction id */
+    buf[14] = 0x00; buf[15] = 0x00;   /* protocol id = 0 */
+    buf[16] = 0x00; buf[17] = 0x01;   /* MBAP length = 1 -> flen = 7 (bogus) */
+    buf[18] = 0x01;                    /* unit id */
+    buf[19] = MB_FC_READ_HOLDING_REGS; /* function */
+
+    build_request(buf + 20, 0x0021, 1, MB_FC_READ_HOLDING_REGS, 1, 1); /* [20..31] valid */
+
+    cache_modbus_server_test_process(NULL, 13, buf, sizeof(buf));
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_tcp_send_called,
+        "both valid frames must be dispatched; the bogus middle frame must not drop the tail");
+}
+
+/* ---- CMS-U-046: foreign protocol_id frame is skipped, not dispatched ----- */
+
+/* A frame with a non-zero protocol_id is not Modbus TCP. It must be resynced
+ * past (not dispatched), while a valid frame behind it is still served. */
+void test_reassembly_nonzero_protocol_id_skipped(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-046: non-zero protocol_id frame skipped, trailing valid frame served");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x5555;
+    mock_setting_items_set_timeout(0);
+
+    uint8_t buf[24];
+    /* [0..11] header with protocol_id != 0 (length plausible) */
+    build_request(buf, 0x0003, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    buf[2] = 0x00; buf[3] = 0x01;   /* protocol_id = 1 -> foreign */
+
+    build_request(buf + 12, 0x0004, 1, MB_FC_READ_HOLDING_REGS, 0, 1); /* [12..23] valid */
+
+    cache_modbus_server_test_process(NULL, 14, buf, sizeof(buf));
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "foreign protocol_id frame must be skipped; only the valid frame is served");
+}
+
+/* ---- CMS-U-047: oversized header split across two recv()s then resync ---- */
+
+/* Stale-byte carry-over across a recv() boundary: an oversized MBAP header
+ * (flen=301) is delivered in two 4-byte recv()s; the bogus header's leftover
+ * bytes survive into the buffer, and a valid frame delivered afterwards must
+ * still be found via resync and dispatched (1 send). Locks the property that
+ * the local `resyncing` flag being reset each call is safe because the scan
+ * re-derives desync state from pos=0. */
+void test_reassembly_oversized_header_split_then_resync(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-047: oversized header split across two recv()s, then valid frame resync");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x6789;
+    mock_setting_items_set_timeout(0);
+
+    uint8_t oversized_hdr[8];
+    oversized_hdr[0] = 0x00; oversized_hdr[1] = 0x60;  /* transaction id */
+    oversized_hdr[2] = 0x00; oversized_hdr[3] = 0x00;  /* protocol id = 0 */
+    oversized_hdr[4] = 0x01; oversized_hdr[5] = 0x27;  /* MBAP length = 295 -> flen = 301 */
+    oversized_hdr[6] = 0x01;                            /* unit id */
+    oversized_hdr[7] = MB_FC_READ_HOLDING_REGS;         /* function */
+
+    /* Deliver the oversized header in two 4-byte halves. */
+    cache_modbus_server_test_process(NULL, 31, oversized_hdr, 4);
+    cache_modbus_server_test_process(NULL, 31, oversized_hdr + 4, 4);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_send_called,
+        "split oversized header alone must not produce a response");
+
+    /* Now a valid frame: resync must skip the stale bytes and dispatch it. */
+    uint8_t buf[12];
+    build_request(buf, 0x0061, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 31, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "valid frame after a split oversized header must be dispatched via resync");
+}
+
 /* ---- CMS-U-043: self unit (0xFF) served when cache DISABLED -------------- */
 
 /* Load-bearing test: a request addressed to the gateway itself (Unit ID 0xFF)
@@ -1945,6 +2050,9 @@ int main(void)
     RUN_TEST(test_reassembly_carryover);
     RUN_TEST(test_reassembly_independent_sockets);
     RUN_TEST(test_reassembly_oversized_frame_boundary);
+    RUN_TEST(test_reassembly_bogus_middle_frame_preserves_tail);
+    RUN_TEST(test_reassembly_nonzero_protocol_id_skipped);
+    RUN_TEST(test_reassembly_oversized_header_split_then_resync);
 
     RUN_TEST(test_cache_modbus_server_self_unit_served_when_cache_disabled);
     RUN_TEST(test_cache_modbus_server_self_unit_bypasses_cache_lookup);

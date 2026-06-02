@@ -456,17 +456,45 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
         c->len += chunk;
         off    += chunk;
 
-        /* Dispatch every complete frame currently buffered. */
-        size_t pos = 0;
+        /* Dispatch every complete frame currently buffered.
+         *
+         * cache-mb-framing-1/4: on a bogus MBAP header the previous code did
+         * `pos = c->len` — discarding the ENTIRE buffer, including any valid
+         * frame coalesced behind the bad one in the same recv(). Instead we
+         * resync one byte at a time. Modbus TCP has no sync marker, so to avoid
+         * misparsing garbage we (a) require protocol_id == 0 (the audit noted it
+         * was never checked) and (b) while resyncing, trust ONLY a fully
+         * buffered valid frame to re-establish alignment — an incomplete
+         * candidate during resync may just be garbage that happens to look like
+         * a header, so we keep scanning rather than stalling on it. */
+        /* `resyncing` is intentionally local to this call: the scan always
+         * restarts at pos=0, so each recv() re-derives the desync state from
+         * the buffer contents — no cross-recv state needs to persist. */
+        size_t pos       = 0;
+        bool   resyncing = false;
         while ((c->len - pos) >= sizeof(mb_tcp_header_t)) {
-            size_t flen = frame_total_len(c->buf + pos);
-            if ((flen < sizeof(mb_tcp_header_t)) || (flen > CACHE_MB_FRAME_MAX)) {
-                pos = c->len;   /* bogus length -> drop to resync */
-                break;
+            const uint8_t *h     = c->buf + pos;
+            uint16_t       proto = ((uint16_t)h[2] << 8) | h[3];
+            size_t         flen  = frame_total_len(h);
+            bool header_ok = (proto == 0u) &&
+                             (flen >= sizeof(mb_tcp_header_t)) &&
+                             (flen <= CACHE_MB_FRAME_MAX);
+            if (!header_ok) {
+                pos      += 1;      /* bad header: resync by one byte */
+                resyncing = true;
+                continue;
             }
-            if ((c->len - pos) < flen) { break; }   /* frame not complete yet */
+            if ((c->len - pos) < flen) {
+                /* Valid-looking header but the frame is not fully buffered. */
+                if (resyncing) {
+                    pos += 1;       /* unverified during resync — keep scanning */
+                    continue;
+                }
+                break;              /* legitimate carry-over of a partial frame */
+            }
             process_one_frame(desc, client_sock, c->buf + pos, flen);
-            pos += flen;
+            pos      += flen;
+            resyncing = false;      /* a complete frame re-establishes alignment */
         }
         if (pos > 0) {
             memmove(c->buf, c->buf + pos, c->len - pos);
