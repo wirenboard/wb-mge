@@ -330,6 +330,15 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
 
         if (max_regs < count) count = max_regs;
 
+        /* Clamp so (start_addr + count) does not wrap past the 16-bit address
+         * space. Without this a response read near 0xFFFF (e.g. start 0xFFFE,
+         * count 4) would compute addr = 0xFFFE, 0xFFFF, 0x0000, 0x0001 and the
+         * wrapped low addresses would poison unrelated registers of the same
+         * slave (cache-lookup-1). Only the in-range portion is stored. */
+        if ((uint32_t)start_addr + count > 0x10000u) {
+            count = (uint16_t)(0x10000u - start_addr);
+        }
+
         /* Bounds check: need at least 3 + 2*count bytes */
         if (((uint32_t)3 + (uint32_t)count * 2u) > (uint32_t)data_len) {
             ESP_LOGW(TAG, "Port %u slave %u FC%02X: response too short",
@@ -370,6 +379,13 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
 
         /* Clamp count if the response carries fewer bytes than requested */
         if ((uint32_t)byte_count < bytes_needed) count = (uint16_t)((uint32_t)byte_count * 8u);
+
+        /* Clamp so (start_addr + count) does not wrap past the 16-bit address
+         * space — same rationale as the register branch (cache-lookup-1): a
+         * coil read near 0xFFFF must not poison low coils via wrap-around. */
+        if ((uint32_t)start_addr + count > 0x10000u) {
+            count = (uint16_t)(0x10000u - start_addr);
+        }
 
         /* Recalculate after clamping, then bounds check */
         bytes_needed = (count + 7u) / 8u;

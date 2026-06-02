@@ -2488,6 +2488,125 @@ void test_cache_multimaster_get_stats_age_guards(void)
         "no responses stored → packets_processed == 0");
 }
 
+/* ---- CM-U-056: FC03 address wrap must not poison low addresses ----------- */
+
+/* Regression for cache-lookup-1 / corr-3: a response whose
+ * (start_addr + count) crosses the 16-bit address boundary must NOT write
+ * wrapped-around low addresses. on_request(0,5,3,0xFFFE,4) with a 4-register
+ * response would, without a wrap guard, compute addr = 0xFFFE, 0xFFFF,
+ * 0x0000, 0x0001 — the last two poisoning unrelated low registers of the
+ * same slave. Only the two in-range addresses (0xFFFE, 0xFFFF) may be stored. */
+void test_cache_multimaster_on_response_fc03_addr_wrap_no_poison(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-056: FC03 address wrap must not poison low addresses");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    cache_multimaster_on_request(0, 5, 3, 0xFFFE, 4);
+    uint8_t data[] = {
+        5, 0x03, 8,
+        0xAA, 0xAA,   /* addr 0xFFFE */
+        0xBB, 0xBB,   /* addr 0xFFFF */
+        0xCC, 0xCC,   /* would wrap to addr 0x0000 */
+        0xDD, 0xDD    /* would wrap to addr 0x0001 */
+    };
+    cache_multimaster_on_response(0, 5, 3, data, sizeof(data), 0);
+
+    uint16_t val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(5, 3, 0xFFFE, &val, 0),
+        "in-range addr 0xFFFE must be stored");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xAAAA, val, "addr 0xFFFE value");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(5, 3, 0xFFFF, &val, 0),
+        "in-range addr 0xFFFF must be stored");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xBBBB, val, "addr 0xFFFF value");
+
+    val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 3, 0x0000, &val, 0),
+        "addr 0x0000 must NOT be poisoned by 16-bit wrap");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 3, 0x0001, &val, 0),
+        "addr 0x0001 must NOT be poisoned by 16-bit wrap");
+}
+
+/* ---- CM-U-057: FC01 coil address wrap must not poison low coils ---------- */
+
+/* Coil-branch counterpart of CM-U-056. on_request(0,6,1,0xFFFF,4) with a
+ * 1-byte coil response would compute addr = 0xFFFF, 0x0000, 0x0001, 0x0002;
+ * only 0xFFFF is in range. The low coils must not be written. */
+void test_cache_multimaster_on_response_fc01_addr_wrap_no_poison(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-057: FC01 coil address wrap must not poison low coils");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    cache_multimaster_on_request(0, 6, 1, 0xFFFF, 4);
+    uint8_t data[] = {
+        6, 0x01, 1,
+        0x0F          /* coils: bit0..bit3 set */
+    };
+    cache_multimaster_on_response(0, 6, 1, data, sizeof(data), 0);
+
+    uint16_t val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(6, 1, 0xFFFF, &val, 0),
+        "in-range coil 0xFFFF must be stored");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 0xFFFF value (bit0 set)");
+
+    val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(6, 1, 0x0000, &val, 0),
+        "coil 0x0000 must NOT be poisoned by 16-bit wrap");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(6, 1, 0x0001, &val, 0),
+        "coil 0x0001 must NOT be poisoned by 16-bit wrap");
+}
+
+/* ---- CM-U-058: exact 16-bit boundary must NOT be clamped ----------------- */
+
+/* Strict ">" boundary check: a response that ends exactly at 0xFFFF
+ * (start 0xFFFC + 4 regs == 0x10000) must store all four registers and must
+ * NOT trigger the wrap clamp. Likewise start 0xFFFF count 1 stores 0xFFFF. */
+void test_cache_multimaster_on_response_addr_wrap_exact_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-058: exact 16-bit boundary not clamped");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* start 0xFFFC, count 4 -> addresses 0xFFFC..0xFFFF, sum == 0x10000 (allowed) */
+    cache_multimaster_on_request(0, 9, 3, 0xFFFC, 4);
+    uint8_t data[] = {
+        9, 0x03, 8,
+        0x00, 0x11,   /* 0xFFFC */
+        0x00, 0x22,   /* 0xFFFD */
+        0x00, 0x33,   /* 0xFFFE */
+        0x00, 0x44    /* 0xFFFF */
+    };
+    cache_multimaster_on_response(0, 9, 3, data, sizeof(data), 0);
+
+    uint16_t val = 0;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(9, 3, 0xFFFC, &val, 0), "0xFFFC stored");
+    TEST_ASSERT_EQUAL_UINT16(0x0011, val);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(9, 3, 0xFFFF, &val, 0), "0xFFFF stored (exact boundary, no clamp)");
+    TEST_ASSERT_EQUAL_UINT16(0x0044, val);
+    /* and no low-address poisoning */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(9, 3, 0x0000, &val, 0), "0x0000 untouched at exact boundary");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -2549,6 +2668,9 @@ int main(void)
     RUN_TEST(test_cache_multimaster_get_stats_unique_slaves);
     RUN_TEST(test_cache_multimaster_get_stats_age_math);
     RUN_TEST(test_cache_multimaster_get_stats_age_guards);
+    RUN_TEST(test_cache_multimaster_on_response_fc03_addr_wrap_no_poison);
+    RUN_TEST(test_cache_multimaster_on_response_fc01_addr_wrap_no_poison);
+    RUN_TEST(test_cache_multimaster_on_response_addr_wrap_exact_boundary);
 
     return UNITY_END();
 }
