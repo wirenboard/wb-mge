@@ -61,18 +61,32 @@ def _read_dir_pin(pin, expected_level):
         return reached, bus.get(pin)
 
 
-def _check_dir_pin_follows_tx_disabled(api, settings_key, pin):
+def _check_dir_pin_follows_tx_disabled(api, settings_key, pin, port_num):
     """Flip tx_disabled True/False for one port and assert its direction pin tracks it.
 
     tx_disabled=True  -> pin parked LOW (0)
     tx_disabled=False -> pin idle HIGH (1, TX enabled)
-    The original value is restored in finally.
+
+    Before toggling, forces tcp_bridge mode and settles so the DE-pin read does
+    not race the disabled->active reinit transient (gpio_reset_pin Pullup->HIGH).
+    Both the original tx_disabled value and the original port mode are restored
+    in finally.
     """
     resp = api.get_settings()
     assert resp.status_code == 200, f"GET /settings returned {resp.status_code}"
     original = resp.json()[settings_key]["tx_disabled"]
 
+    # Save original port mode so it can be restored later.
+    info_resp = api.get_info()
+    assert info_resp.status_code == 200, f"GET /info returned {info_resp.status_code}"
+    original_mode = info_resp.json().get(settings_key, {}).get("port_mode", "tcp_bridge")
+
     try:
+        # Force an active transport and let the disabled->active reinit transient
+        # (gpio_reset_pin Pullup->HIGH) fully settle BEFORE reading the DE pin.
+        api.set_port_mode(port_num, "tcp_bridge")
+        time.sleep(1.0)  # let the disabled->active reinit (gpio_reset_pin transient) settle
+
         # tx_disabled=True -> direction pin LOW
         resp = api.update_settings({settings_key: {"tx_disabled": True}})
         assert resp.status_code == 200, (
@@ -96,16 +110,17 @@ def _check_dir_pin_follows_tx_disabled(api, settings_key, pin):
         )
     finally:
         api.update_settings({settings_key: {"tx_disabled": original}})
+        api.set_port_mode(port_num, original_mode)
 
 
 def test_dir_pin_follows_tx_disabled_port1(api):
     """rs485_1.tx_disabled must drive G04: True->0, False->1."""
-    _check_dir_pin_follows_tx_disabled(api, "rs485_1", "G04")
+    _check_dir_pin_follows_tx_disabled(api, "rs485_1", "G04", 1)
 
 
 def test_dir_pin_follows_tx_disabled_port2(api):
     """rs485_2.tx_disabled must drive G15: True->0, False->1."""
-    _check_dir_pin_follows_tx_disabled(api, "rs485_2", "G15")
+    _check_dir_pin_follows_tx_disabled(api, "rs485_2", "G15", 2)
 
 
 def test_dir_pin_parked_blocks_uart(api):
