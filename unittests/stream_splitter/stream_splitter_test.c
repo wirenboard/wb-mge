@@ -843,6 +843,50 @@ void test_tc26_level1_context_hint_fires_for_fc10_response(void)
     TEST_ASSERT_FALSE_MESSAGE(frames[1].crc_valid, "TC-26: tail must be a broken frame");
 }
 
+/* FM bus-arbitration run must be emitted as its OWN separate frame, between the
+ * FM Event Request and the FM No-Events response — not lumped together with the
+ * response. The 19-byte blob:
+ *   FD 46 10 00 4F 00 00 C9 7D | FF FF FF FF FF | FD 46 12 52 5D
+ * must split into exactly THREE frames:
+ *   frame[0]: FD 46 10 00 4F 00 00 C9 7D  (len 9, crc_valid=true)  — FM Event Request
+ *   frame[1]: FF FF FF FF FF              (len 5, crc_valid=false) — arbitration run
+ *   frame[2]: FD 46 12 52 5D              (len 5, crc_valid=true)  — FM No-Events */
+void test_fm_arbitration_run_emitted_as_separate_frame(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FM arbitration run (FF*5) must be emitted as its own frame between request and response");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0xFD,0x46,0x10,0x00,0x4F,0x00,0x00,0xC9,0x7D,  /* FM Event Request, valid CRC */
+        0xFF,0xFF,0xFF,0xFF,0xFF,                       /* FM bus arbitration run     */
+        0xFD,0x46,0x12,0x52,0x5D                        /* FM No-Events, valid CRC     */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, n, "expected 3 frames (request, arbitration, response)");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(9, frames[0].len, "frame[0] len must be 9 (FM Event Request)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(buf, frames[0].data, "frame[0] must start at buf[0]");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[1].len, "frame[1] len must be 5 (arbitration run)");
+    TEST_ASSERT_FALSE_MESSAGE(frames[1].crc_valid, "frame[1] (arbitration) CRC must be invalid");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(buf + 9, frames[1].data, "frame[1] must start at buf[9]");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, frames[1].data[0], "frame[1] data[0] must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, frames[1].data[1], "frame[1] data[1] must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, frames[1].data[2], "frame[1] data[2] must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, frames[1].data[3], "frame[1] data[3] must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, frames[1].data[4], "frame[1] data[4] must be 0xFF");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[2].len, "frame[2] len must be 5 (FM No-Events)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[2].crc_valid, "frame[2] CRC must be valid");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(buf + 14, frames[2].data, "frame[2] must start at buf[14]");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -878,6 +922,7 @@ int main(void)
     RUN_TEST(test_tc26_level3_scan_floor_4byte_frame);
     RUN_TEST(test_tc26_empty_buffer_fallback_crc_valid_false);
     RUN_TEST(test_tc26_level1_context_hint_fires_for_fc10_response);
+    RUN_TEST(test_fm_arbitration_run_emitted_as_separate_frame);
 
     return UNITY_END();
 }

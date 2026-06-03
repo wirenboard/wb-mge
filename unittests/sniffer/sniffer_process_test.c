@@ -1000,15 +1000,17 @@ void test_tc28_merged_fm_event_transaction_split(void)
      *   Request      (9 bytes, valid CRC): FD 46 10 00 4F 00 00 C9 7D
      *                                       (master FM Event Request, subcmd 0x10)
      *   Arbitration  (5 bytes):            FF FF FF FF FF
-     *                                       (legitimate Fast Modbus arbitration bytes)
+     *                                       (Fast Modbus bus-arbitration run)
      *   Response     (5 bytes, valid CRC): FD 46 12 52 5D
      *                                       (slave "No Events" response, subcmd 0x12)
      *
-     * Desired behavior: the sniffer must split this blob into TWO packets — a MASTER
-     * request and a SLAVE response — both with valid CRC, dropping the 0xFF arbitration
-     * bytes in between.
-     *   pkt[0]: is_master=true,  crc_valid=true, slave_id=0xFD, function=0x46
-     *   pkt[1]: is_master=false, crc_valid=true, slave_id=0xFD, function=0x46
+     * Desired behavior (matches what the sniffer shows with the repeater OFF — three
+     * rows MASTER / "FM Arbitration" / SLAVE): the sniffer must split this blob into
+     * THREE packets — a MASTER request, the 0xFF arbitration run as its OWN packet, and
+     * a SLAVE response — surfacing the arbitration instead of stripping/hiding it.
+     *   pkt[0]: is_master=true,  crc_valid=true,  slave_id=0xFD, function=0x46 (request)
+     *   pkt[1]: is_master=false, crc_valid=false, slave_id=0xFF, function=0xFF (arbitration)
+     *   pkt[2]: is_master=false, crc_valid=true,  slave_id=0xFD, function=0x46 (response)
      */
     uint8_t buf[] = {
         0xFD, 0x46, 0x10, 0x00, 0x4F, 0x00, 0x00, 0xC9, 0x7D,
@@ -1030,13 +1032,35 @@ void test_tc28_merged_fm_event_transaction_split(void)
 
     sniff_packet_t pkt1 = dequeue_packet();
     TEST_ASSERT_FALSE_MESSAGE(pkt1.is_master,
-        "TC-28 pkt[1]: No-Events response must be SLAVE (is_master=false)");
-    TEST_ASSERT_TRUE_MESSAGE(pkt1.crc_valid,
-        "TC-28 pkt[1]: crc_valid must be true");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFD, pkt1.slave_id,
-        "TC-28 pkt[1]: slave_id must be 0xFD");
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x46, pkt1.function,
-        "TC-28 pkt[1]: function must be 0x46");
+        "TC-28 pkt[1]: arbitration run must NOT be MASTER (is_master=false)");
+    TEST_ASSERT_FALSE_MESSAGE(pkt1.crc_valid,
+        "TC-28 pkt[1]: arbitration run must have crc_valid=false");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.slave_id,
+        "TC-28 pkt[1]: arbitration slave_id must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.function,
+        "TC-28 pkt[1]: arbitration function must be 0xFF");
+    TEST_ASSERT_EQUAL_MESSAGE(5, pkt1.data_len,
+        "TC-28 pkt[1]: arbitration data_len must be 5");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.data[0],
+        "TC-28 pkt[1]: arbitration data[0] must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.data[1],
+        "TC-28 pkt[1]: arbitration data[1] must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.data[2],
+        "TC-28 pkt[1]: arbitration data[2] must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.data[3],
+        "TC-28 pkt[1]: arbitration data[3] must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.data[4],
+        "TC-28 pkt[1]: arbitration data[4] must be 0xFF");
+
+    sniff_packet_t pkt2 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(pkt2.is_master,
+        "TC-28 pkt[2]: No-Events response must be SLAVE (is_master=false)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt2.crc_valid,
+        "TC-28 pkt[2]: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFD, pkt2.slave_id,
+        "TC-28 pkt[2]: slave_id must be 0xFD");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x46, pkt2.function,
+        "TC-28 pkt[2]: function must be 0x46");
 
     assert_queue_empty();
 }

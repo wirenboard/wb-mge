@@ -201,9 +201,29 @@ int stream_split(const uint8_t *buf, size_t len,
             }
         }
 
-        /* No valid frame boundary found: emit the remainder as a broken frame
-         * and stop processing. */
+        /* No valid frame boundary found at this position. */
         if (frame_len == 0) {
+            /* A run of 0xFF bytes here is Fast Modbus bus-arbitration filler:
+             * 0xFF is never a valid Modbus slave address, so no real frame
+             * starts with it. Emit the run as its own frame (no CRC) so the
+             * arbitration stays visible as a distinct packet instead of being
+             * merged into — and then stripped from — the following frame, then
+             * keep parsing the bytes after it (e.g. a slave response that
+             * immediately follows the arbitration in a gap-less capture). */
+            if (rem[0] == 0xFF) {
+                size_t run = 0;
+                while (run < rem_len && rem[run] == 0xFF) {
+                    run++;
+                }
+                out_frames[count].data      = rem;
+                out_frames[count].len       = run;
+                out_frames[count].crc_valid = false;
+                count++;
+                pos += run;
+                continue;
+            }
+
+            /* Otherwise emit the remainder as a single broken frame and stop. */
             out_frames[count].data      = rem;
             out_frames[count].len       = rem_len;
             out_frames[count].crc_valid = false;
