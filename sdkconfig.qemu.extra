@@ -39,3 +39,11 @@ CONFIG_EFUSE_VIRTUAL=y
 # disabling the wrapper here is safe and frees the __wrap_gpio_* symbols for the
 # shim. The hardware build is unaffected (its sdkconfig keeps the default =y).
 CONFIG_IO_EXPANDER_ENABLE_GPIO_API_WRAPPER=n
+
+# Do not initialize the Task Watchdog Timer for the QEMU build.
+# Under emulation the idle tasks are not scheduled with hardware-like timing,
+# so the TWDT (enabled with INIT=y in sdkconfig.qemu.minimal) eventually trips
+# and aborts the firmware mid-run, making the QEMU test suite fail.
+# Disabling only the auto-init keeps the TWDT subsystem compiled in
+# (CONFIG_ESP_TASK_WDT_EN stays =y) but prevents the spurious resets.
+CONFIG_ESP_TASK_WDT_INIT=n
