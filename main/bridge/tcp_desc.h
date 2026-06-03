@@ -21,7 +21,13 @@ typedef struct tcp_desc_t {
     int port;
     tcp_receive_handler_t receive_handler;
     tcp_close_handler_t close_handler;      // optional, may be NULL
-    volatile uint32_t active_connections;   // per-server active connections, only for server mode; volatile uint32_t required by Atomic_Increment/Decrement_u32
+    // Per-server active connection count (server mode only).
+    // Updated via GCC atomic builtins (__atomic_fetch_add/sub, __ATOMIC_SEQ_CST); polled
+    // through plain volatile reads in deinit, so the volatile qualifier must stay.
+    // WARNING: GCC/C11 atomic builtins rely on the Xtensa s32c1i instruction, which does
+    // NOT work on external PSRAM — they compile fine but silently break (esp-idf #4635).
+    // Therefore tcp_desc_t must live in internal RAM: never allocate it with MALLOC_CAP_SPIRAM.
+    volatile uint32_t active_connections;
     TaskHandle_t task_handle;
     EventGroupHandle_t event_group;
 } tcp_desc_t;

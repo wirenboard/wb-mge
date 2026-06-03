@@ -12,7 +12,6 @@
 #include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/atomic.h"
 
 
 #define KEEPALIVE_IDLE                  5
@@ -255,7 +254,7 @@ static void tcp_client_task(void *pvParameters)
             continue;
         }
 
-        Atomic_Increment_u32(&desc->active_connections);
+        __atomic_fetch_add(&desc->active_connections, 1, __ATOMIC_SEQ_CST);
         reconnect_delay_ms = TCP_CLIENT_RECONN_DELAY_MS;  // connection succeeded — reset backoff
 
         receive_data(desc);
