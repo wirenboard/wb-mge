@@ -931,6 +931,41 @@ void test_fm_event_transfer_nonfd_length_deterministic(void)
     TEST_ASSERT_TRUE_MESSAGE(frames[2].crc_valid, "frame[2] CRC must be valid");
 }
 
+/* FM-0x09: Fast Modbus subcmd 0x09 ("standard command response", addr 0xFD) wraps a
+ * standard Modbus response and is variable-length (total = 11 + buf[8] for inner read
+ * FCs 0x01..0x04). It must split to its full deterministic length via the length table,
+ * not fall to the Level-3 CRC scan which picks the SHORTEST valid-CRC prefix.
+ * The 13-byte 0x09 frame here has a valid CRC at len 13 AND its 5-byte prefix
+ * FD 46 09 12 56 is ALSO a valid-CRC prefix — a Level-3 first-match trap. */
+void test_fm_std_command_response_0x09_length_deterministic(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FM-0x09: std-command response (subcmd 0x09, addr 0xFD) must split to its full deterministic length (13b), not a 5b Level-3 mis-split");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0xFD,0x46,0x10,0x00,0x4F,0x00,0x00,0xC9,0x7D,            /* FM 0x10 request */
+        0xFF,0xFF,0xFF,0xFF,0xFF,                                 /* arbitration run */
+        0xFD,0x46,0x09,0x12,0x56,0xEB,0x37,0x03,0x02,0xAA,0xBB,0x7D,0x88  /* FM 0x09 std-cmd response, 13B */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, n, "expected 3 frames (request, arbitration, full 0x09 std-command response)");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(9, frames[0].len, "frame[0] len must be 9 (FM 0x10 request)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[1].len, "frame[1] len must be 5 (arbitration run)");
+    TEST_ASSERT_FALSE_MESSAGE(frames[1].crc_valid, "frame[1] (arbitration) CRC must be invalid");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(13, frames[2].len,
+        "frame[2] len must be 13 (WHOLE 0x09 frame), not a 5-byte Level-3 mis-split");
+    TEST_ASSERT_TRUE_MESSAGE(frames[2].crc_valid, "frame[2] CRC must be valid");
+}
+
 /* FF-CARVE-1: a lone single 0xFF byte between two valid frames must be carved as
  * its own 1-byte arbitration frame, not absorbed into a neighbouring frame. */
 void test_ff_carve_lone_single_byte(void)
@@ -1065,6 +1100,64 @@ void test_ff_carve_all_ff_buffer(void)
     TEST_ASSERT_FALSE_MESSAGE(frames[0].crc_valid, "frame[0] (arbitration) CRC must be invalid");
 }
 
+/* MAX-FRAMES-COLLAPSE: feeding more back-to-back valid frames than
+ * STREAM_SPLITTER_MAX_FRAMES (16) must not overflow the output array. The parse
+ * loop stops at STREAM_SPLITTER_MAX_FRAMES-1 (=15) valid frames and the defensive
+ * tail collapses all remaining bytes (here the last two 8-byte frames = 16 bytes)
+ * into one broken frame at index 15. Locks the collapse contract. */
+void test_max_frames_collapse_contract(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MAX-FRAMES: 17 back-to-back FC06 frames collapse to 16 (last is one broken tail)");
+    LOG_MESSAGE();
+
+    /* Standard FC06 frame with valid CRC: 83 06 00 72 00 01 F6 33 */
+    static const uint8_t one[] = {0x83, 0x06, 0x00, 0x72, 0x00, 0x01, 0xF6, 0x33};
+    static uint8_t buf[17 * 8];
+    for (int i = 0; i < 17; i++) {
+        memcpy(&buf[i * 8], one, 8);
+    }
+
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(16, n, "must produce exactly STREAM_SPLITTER_MAX_FRAMES (16) frames");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[0].len, "frame[0] len must be 8");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    /* The last two 8-byte frames (16 bytes) collapse into one defensive broken frame */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(16, frames[15].len, "frame[15] (defensive tail) len must be 16");
+    TEST_ASSERT_FALSE_MESSAGE(frames[15].crc_valid, "frame[15] (defensive tail) CRC must be invalid");
+}
+
+/* FC10-RESPONSE-FIRST: a FC10 (Write Multiple Registers) RESPONSE is a fixed
+ * 8-byte frame. The splitter tries the request interpretation first; for FC10 the
+ * request needs avail>=7 and reads buf[6] as byte_count. Here the 8-byte response's
+ * request-length probe yields a length whose CRC does not match, so the response
+ * (fixed 8) path is taken instead — the response must NOT be mis-parsed. */
+void test_fc10_response_first_not_misparsed(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FC10-RESP-FIRST: FC10 response (8b) parsed via response path, then FC03 response (7b)");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0x83, 0x10, 0x00, 0x72, 0x00, 0x01, 0xBF, 0xF0,  /* FC10 response, 8 bytes, valid CRC */
+        0x83, 0x03, 0x02, 0x00, 0x2A, 0x41, 0x85         /* FC03 response, 7 bytes, valid CRC */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames (FC10 response, FC03 response)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[0].len, "frame[0] len must be 8 (FC10 response)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(7, frames[1].len, "frame[1] len must be 7 (FC03 response)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[1].crc_valid, "frame[1] CRC must be valid");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1102,11 +1195,14 @@ int main(void)
     RUN_TEST(test_tc26_level1_context_hint_fires_for_fc10_response);
     RUN_TEST(test_fm_arbitration_run_emitted_as_separate_frame);
     RUN_TEST(test_fm_event_transfer_nonfd_length_deterministic);
+    RUN_TEST(test_fm_std_command_response_0x09_length_deterministic);
     RUN_TEST(test_ff_carve_lone_single_byte);
     RUN_TEST(test_ff_carve_trailing_run);
     RUN_TEST(test_ff_carve_multiple_runs);
     RUN_TEST(test_ff_carve_then_garbage);
     RUN_TEST(test_ff_carve_all_ff_buffer);
+    RUN_TEST(test_max_frames_collapse_contract);
+    RUN_TEST(test_fc10_response_first_not_misparsed);
 
     return UNITY_END();
 }

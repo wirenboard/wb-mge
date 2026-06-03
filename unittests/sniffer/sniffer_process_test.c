@@ -1788,6 +1788,102 @@ void test_tc27_fast_response_master_immediate_slave_on_response(void)
 }
 
 /* ============================================================
+ * LONE-FF-DROP — a sub-frame shorter than 4 bytes (a lone 0xFF carved by the
+ * stream splitter) is silently dropped by sniffer_process(), which returns early
+ * when len < 4. This documents that the carved 1-byte arbitration filler produces
+ * NO packet, while the two real frames around it are emitted normally.
+ * ============================================================ */
+
+void test_lone_ff_subframe_dropped_at_sniffer(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "LONE-FF: a lone 0xFF carved sub-frame (len<4) is dropped at sniffer level, two real frames remain");
+    LOG_MESSAGE();
+
+    /*
+     * 14-byte idle-delimited blob:
+     *   FC03 request (8 bytes, valid CRC):   83 03 00 61 00 02 8B F7
+     *   lone arbitration byte (1 byte):      FF
+     *   FM No-Events response (5 bytes, CRC): FD 46 12 52 5D
+     *
+     * The stream splitter carves this into three sub-frames:
+     *   [8-byte FC03 request][1-byte 0xFF][5-byte FM No-Events].
+     * sniffer_process() returns early for the 1-byte 0xFF (len < 4 → dropped),
+     * so the queue ends up holding EXACTLY two packets — the lone 0xFF produces none.
+     */
+    uint8_t buf[] = {
+        0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7,  /* FC03 request, 8 bytes */
+        0xFF,                                             /* lone arbitration byte */
+        0xFD, 0x46, 0x12, 0x52, 0x5D                      /* FM No-Events, 5 bytes */
+    };
+
+    SEND0(buf);
+
+    sniff_packet_t pkt0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt0.is_master,
+        "LONE-FF pkt[0]: FC03 request must be MASTER (is_master=true)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt0.crc_valid,
+        "LONE-FF pkt[0]: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt0.slave_id,
+        "LONE-FF pkt[0]: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt0.function,
+        "LONE-FF pkt[0]: function must be 0x03");
+
+    /* The lone 0xFF (len<4) was dropped — the next packet is the FM No-Events response */
+    sniff_packet_t pkt1 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(pkt1.is_master,
+        "LONE-FF pkt[1]: FM No-Events response must be SLAVE (is_master=false)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt1.crc_valid,
+        "LONE-FF pkt[1]: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFD, pkt1.slave_id,
+        "LONE-FF pkt[1]: slave_id must be 0xFD");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x46, pkt1.function,
+        "LONE-FF pkt[1]: function must be 0x46");
+
+    /* Exactly two packets — the lone 0xFF between them produced none */
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * ENQUEUE-FAILURE — try_enqueue handles a full/failing queue without crashing,
+ * and the pipeline recovers once the queue accepts items again. Uses the freertos
+ * queue mock's failure switch mock_xQueueSend_data.should_fail (reset to false by
+ * setUp via mock_freertos_queue_reset()).
+ * ============================================================ */
+
+void test_enqueue_failure_graceful_and_recovers(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "ENQUEUE-FAIL: failing queue is handled gracefully, pipeline recovers afterwards");
+    LOG_MESSAGE();
+
+    /* FC03 request: slave=0x83, func=0x03, valid CRC */
+    uint8_t req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
+
+    /* Step 1 — force every enqueue to fail. The request must NOT crash and the
+     * queue must stay empty because the enqueue was rejected. */
+    mock_xQueueSend_data.should_fail = true;
+    SEND0(req);
+    assert_queue_empty();
+
+    /* Step 2 — allow enqueues again. The same request must now flow through and
+     * be emitted normally, proving the pipeline recovered after the failure. */
+    mock_xQueueSend_data.should_fail = false;
+    SEND0(req);
+    sniff_packet_t pkt = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt.is_master,
+        "ENQUEUE-FAIL: recovered packet must be MASTER (is_master=true)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt.slave_id,
+        "ENQUEUE-FAIL: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt.function,
+        "ENQUEUE-FAIL: function must be 0x03");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
  * main
  * ============================================================ */
 
@@ -1832,6 +1928,8 @@ int main(void)
     RUN_TEST(test_fm_event_transfer_nonfd_visible);
     RUN_TEST(test_fm_config_request_nonfd_visible);
     RUN_TEST(test_fm_merged_event_poll_with_events);
+    RUN_TEST(test_lone_ff_subframe_dropped_at_sniffer);
+    RUN_TEST(test_enqueue_failure_graceful_and_recovers);
 
     return UNITY_END();
 }

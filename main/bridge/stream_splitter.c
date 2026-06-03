@@ -33,6 +33,12 @@ static size_t fm_expected_len(const uint8_t *buf, size_t avail)
             case 0x02: result = 9;  break;
             case 0x03: result = 10; break;
             case 0x04: result = 9;  break;
+            /* 0x09 std-command response: server_id+0x46+0x09 (3) + serial (4) + inner standard
+             * response PDU + CRC (2). Only inner read responses (FC 0x01-0x04) carry a byte-count
+             * we can size from: total = 11 + inner_bytecount (buf[8]). Other inner FCs fall through
+             * (result 0 -> Level-3). */
+            case 0x09: result = (avail >= 9 && buf[7] >= 0x01 && buf[7] <= 0x04)
+                                ? (size_t)(11 + buf[8]) : 0; break;
             case 0x10: result = 9;  break;
             /* 0x11 event transfer: server_id+0x46+0x11+flag+count+datalen (6 hdr) + data(buf[5]) + CRC(2) */
             case 0x11: result = (avail >= 6) ? (size_t)(8 + buf[5]) : 0; break;
