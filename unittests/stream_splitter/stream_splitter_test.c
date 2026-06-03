@@ -887,6 +887,184 @@ void test_fm_arbitration_run_emitted_as_separate_frame(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(buf + 14, frames[2].data, "frame[2] must start at buf[14]");
 }
 
+/* FM-NONFD: a merged event poll containing a non-FD Fast Modbus event-transfer
+ * frame (subcmd 0x11, addressed to the device's server_id 0x05) must split with
+ * a DETERMINISTIC length derived from fm_expected_len (0x11 → 8 + buf[5]), NOT a
+ * fragile Level-3 first-match on a coincidental 5-byte CRC prefix.
+ *
+ * The 26-byte blob:
+ *   FD 46 10 00 4F 00 00 C9 7D | FF FF FF FF FF | 05 46 11 93 AD 04 07 6F 00 0A 40 AE
+ * must split into exactly THREE frames:
+ *   frame[0]: FD 46 10 00 4F 00 00 C9 7D                   (len  9, crc_valid=true)  — Event Request
+ *   frame[1]: FF FF FF FF FF                                (len  5, crc_valid=false) — arbitration run
+ *   frame[2]: 05 46 11 93 AD 04 07 6F 00 0A 40 AE           (len 12, crc_valid=true)  — WHOLE 0x11 frame
+ *
+ * frame[2] is a trap: its 5-byte prefix 05 46 11 93 AD ALSO has a valid CRC, so a
+ * Level-3 first-match would mis-split it into a 5-byte frame plus a broken tail.
+ * The post-fix fm_expected_len(0x11) = 8 + buf[5] = 8 + 4 = 12 pins the full length. */
+void test_fm_event_transfer_nonfd_length_deterministic(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FM-NONFD: non-FD 0x11 event-transfer must split to its full deterministic length (12b), not a 5b mis-split");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0xFD, 0x46, 0x10, 0x00, 0x4F, 0x00, 0x00, 0xC9, 0x7D,         /* FM Event Request, valid CRC */
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF,                                 /* FM bus arbitration run      */
+        0x05, 0x46, 0x11, 0x93, 0xAD, 0x04, 0x07, 0x6F, 0x00, 0x0A, 0x40, 0xAE  /* non-FD 0x11, valid CRC */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, n, "expected 3 frames (request, arbitration, full 0x11 event-transfer)");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(9, frames[0].len, "frame[0] len must be 9 (FM Event Request)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[1].len, "frame[1] len must be 5 (arbitration run)");
+    TEST_ASSERT_FALSE_MESSAGE(frames[1].crc_valid, "frame[1] (arbitration) CRC must be invalid");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(12, frames[2].len,
+        "frame[2] len must be 12 (WHOLE 0x11 frame), not a 5-byte Level-3 mis-split");
+    TEST_ASSERT_TRUE_MESSAGE(frames[2].crc_valid, "frame[2] CRC must be valid");
+}
+
+/* FF-CARVE-1: a lone single 0xFF byte between two valid frames must be carved as
+ * its own 1-byte arbitration frame, not absorbed into a neighbouring frame. */
+void test_ff_carve_lone_single_byte(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FF-CARVE: a lone single 0xFF byte must be carved as its own 1-byte frame");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0x83,0x06,0x00,0x72,0x00,0x01,0xF6,0x33,  /* FC06, valid CRC (8B) */
+        0xFF,                                      /* lone arbitration byte */
+        0xFD,0x46,0x12,0x52,0x5D                   /* FM No-Events, valid CRC (5B) */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, n, "expected 3 frames (FC06, lone FF, FM response)");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8, frames[0].len, "frame[0] len must be 8 (FC06)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[0].crc_valid, "frame[0] CRC must be valid");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(1, frames[1].len, "frame[1] len must be 1 (lone 0xFF)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, frames[1].data[0], "frame[1] data[0] must be 0xFF");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[2].len, "frame[2] len must be 5 (FM No-Events)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[2].crc_valid, "frame[2] CRC must be valid");
+}
+
+/* FF-CARVE-2: a trailing run of 0xFF after a request (no response) must be carved
+ * as a single broken arbitration frame. */
+void test_ff_carve_trailing_run(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FF-CARVE: a trailing 0xFF run after a request must be one broken arbitration frame");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0xFD,0x46,0x10,0x00,0x4F,0x00,0x00,0xC9,0x7D,  /* FM Event Request, valid CRC (9B) */
+        0xFF,0xFF,0xFF,0xFF,0xFF                        /* trailing arbitration run (5B)   */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, n, "expected 2 frames (request, trailing arbitration)");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(9, frames[0].len, "frame[0] len must be 9 (FM Event Request)");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[1].len, "frame[1] len must be 5 (arbitration run)");
+    TEST_ASSERT_FALSE_MESSAGE(frames[1].crc_valid, "frame[1] (arbitration) CRC must be invalid");
+    for (size_t i = 0; i < 5; i++) {
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, frames[1].data[i], "frame[1] bytes must all be 0xFF");
+    }
+}
+
+/* FF-CARVE-3: multiple 0xFF runs of differing lengths interleaved with valid
+ * frames must each be carved as their own arbitration frame. */
+void test_ff_carve_multiple_runs(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FF-CARVE: multiple 0xFF runs of differing length must each be a separate frame");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0xFD,0x46,0x10,0x00,0x4F,0x00,0x00,0xC9,0x7D,  /* FM Event Request, valid CRC (9B) */
+        0xFF,0xFF,                                      /* first arbitration run (2B)      */
+        0xFD,0x46,0x12,0x52,0x5D,                       /* FM No-Events, valid CRC (5B)    */
+        0xFF,0xFF,0xFF,                                 /* second arbitration run (3B)     */
+        0xFD,0x46,0x12,0x52,0x5D                        /* FM No-Events, valid CRC (5B)    */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(5, n, "expected 5 frames (req, FF*2, resp, FF*3, resp)");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(2, frames[1].len, "frame[1] len must be 2 (first FF run)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[2].len, "frame[2] len must be 5 (FM No-Events)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[2].crc_valid, "frame[2] CRC must be valid");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(3, frames[3].len, "frame[3] len must be 3 (second FF run)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[4].len, "frame[4] len must be 5 (FM No-Events)");
+    TEST_ASSERT_TRUE_MESSAGE(frames[4].crc_valid, "frame[4] CRC must be valid");
+}
+
+/* FF-CARVE-4: a 0xFF run followed by non-FF unparseable garbage must carve the FF
+ * run, then emit the remaining non-FF tail as a single broken frame. */
+void test_ff_carve_then_garbage(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FF-CARVE: a 0xFF run then non-FF garbage must carve the run, tail emitted as one broken frame");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = {
+        0xFD,0x46,0x10,0x00,0x4F,0x00,0x00,0xC9,0x7D,  /* FM Event Request, valid CRC (9B) */
+        0xFF,0xFF,0xFF,                                 /* arbitration run (3B)            */
+        0xDE,0xAD,0xBE,0xEF,0x11,0x22                   /* non-FF unparseable tail (6B)    */
+    };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, n, "expected 3 frames (request, FF run, broken tail)");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(3, frames[1].len, "frame[1] len must be 3 (FF run)");
+    TEST_ASSERT_FALSE_MESSAGE(frames[1].crc_valid, "frame[1] (arbitration) CRC must be invalid");
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(6, frames[2].len, "frame[2] len must be 6 (broken non-FF tail)");
+    TEST_ASSERT_FALSE_MESSAGE(frames[2].crc_valid, "frame[2] (broken tail) CRC must be invalid");
+}
+
+/* FF-CARVE-5: a buffer consisting entirely of 0xFF must be carved as a single
+ * broken arbitration frame. */
+void test_ff_carve_all_ff_buffer(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FF-CARVE: an all-0xFF buffer must be carved as one broken arbitration frame");
+    LOG_MESSAGE();
+
+    static const uint8_t buf[] = { 0xFF,0xFF,0xFF,0xFF,0xFF };
+    stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+
+    int n = stream_split(buf, sizeof(buf), 0, 0, frames);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, n, "expected 1 frame (whole-buffer arbitration run)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(5, frames[0].len, "frame[0] len must be 5 (all 0xFF)");
+    TEST_ASSERT_FALSE_MESSAGE(frames[0].crc_valid, "frame[0] (arbitration) CRC must be invalid");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -923,6 +1101,12 @@ int main(void)
     RUN_TEST(test_tc26_empty_buffer_fallback_crc_valid_false);
     RUN_TEST(test_tc26_level1_context_hint_fires_for_fc10_response);
     RUN_TEST(test_fm_arbitration_run_emitted_as_separate_frame);
+    RUN_TEST(test_fm_event_transfer_nonfd_length_deterministic);
+    RUN_TEST(test_ff_carve_lone_single_byte);
+    RUN_TEST(test_ff_carve_trailing_run);
+    RUN_TEST(test_ff_carve_multiple_runs);
+    RUN_TEST(test_ff_carve_then_garbage);
+    RUN_TEST(test_ff_carve_all_ff_buffer);
 
     return UNITY_END();
 }

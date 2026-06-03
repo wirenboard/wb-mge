@@ -213,7 +213,10 @@ SNIFFER_STATIC void strip_arbitration(const uint8_t *data, size_t len, const uin
     }
 }
 
-/* Determine if subcmd is a slave response (vs master request) for FM packets */
+/* Determine if subcmd is a slave response (vs master request) for FM packets.
+ * NOTE: 0x18 (event config) reuses the SAME subcmd for request and response, so a
+ * 0x18 device response is labeled as master. This is a known display-only limitation:
+ * direction cannot be derived from the subcmd alone for 0x18. */
 SNIFFER_STATIC bool fm_is_slave_subcmd(uint8_t subcmd)
 {
     return (subcmd == 0x03 || subcmd == 0x04 ||
@@ -384,9 +387,10 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
     if (ctx->state == SNIFF_IDLE) {
         bool valid_crc = crc_check(effective, effective_len);
 
-        if (effective[0] == 0xFD &&
-                   (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2)) {
+        if (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2) {
             /* Fast Modbus packet (with or without stripped leading 0xFF bytes).
+             * Detected by the command byte at any address — event-transfer/config
+             * frames use the device server_id, not the 0xFD broadcast address.
              * Subcmds 0x03/0x04/0x09/0x11/0x12 are slave responses; all others are master. */
             uint8_t subcmd = (effective_len >= 3) ? effective[2] : 0;
             bool is_slave_response = fm_is_slave_subcmd(subcmd);
@@ -508,8 +512,7 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
 
         /* If the packet arriving in RES_WAIT is a Fast Modbus packet (possibly with
          * stripped 0xFF prefix), the state machine is out of phase. Emit as standalone. */
-        if (effective[0] == 0xFD &&
-            (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2)) {
+        if (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2) {
             uint8_t subcmd2       = (effective_len >= 3) ? effective[2] : 0;
             bool is_slave2        = fm_is_slave_subcmd(subcmd2);
             req_pkt.port         = (uint8_t)port_index;

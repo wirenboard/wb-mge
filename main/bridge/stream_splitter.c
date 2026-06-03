@@ -16,8 +16,9 @@ static bool frame_crc_ok(const uint8_t *buf, size_t len)
     return (buf[len - 2] == crc_lo) && (buf[len - 1] == crc_hi);
 }
 
-/* Compute expected frame length for Fast Modbus frames (slave_id == 0xFD,
- * fc == 0x46 or 0x60).  Returns 0 if length is unknown or exceeds avail. */
+/* Compute expected frame length for Fast Modbus frames (fc == 0x46 or 0x60, any
+ * address — event-transfer/config frames use the device server_id, not 0xFD).
+ * Returns 0 if length is unknown or exceeds avail. */
 static size_t fm_expected_len(const uint8_t *buf, size_t avail)
 {
     if (avail < 3) return 0;
@@ -33,7 +34,11 @@ static size_t fm_expected_len(const uint8_t *buf, size_t avail)
             case 0x03: result = 10; break;
             case 0x04: result = 9;  break;
             case 0x10: result = 9;  break;
+            /* 0x11 event transfer: server_id+0x46+0x11+flag+count+datalen (6 hdr) + data(buf[5]) + CRC(2) */
+            case 0x11: result = (avail >= 6) ? (size_t)(8 + buf[5]) : 0; break;
             case 0x12: result = 5;  break;
+            /* 0x18 event config: server_id+0x46+0x18+listlen (4 hdr) + settings(buf[3]) + CRC(2) */
+            case 0x18: result = (avail >= 4) ? (size_t)(6 + buf[3]) : 0; break;
             default:   result = 0;  break; /* variable length */
         }
     } else if (fc == 0x60) {
@@ -64,8 +69,10 @@ static size_t frame_expected_len(const uint8_t *buf, size_t avail, bool is_respo
     uint8_t fc = buf[1];
     size_t  result = 0;
 
-    /* Fast Modbus: slave_id == 0xFD, fc == 0x46 or 0x60 */
-    if (buf[0] == 0xFD && (fc == 0x46 || fc == 0x60)) {
+    /* Fast Modbus: command byte fc == 0x46 or 0x60. The address (buf[0]) is NOT
+     * required to be 0xFD — event-transfer (0x11) and event-config (0x18) frames
+     * are addressed to the device's own server_id, not the 0xFD broadcast address. */
+    if (fc == 0x46 || fc == 0x60) {
         return fm_expected_len(buf, avail);
     }
 

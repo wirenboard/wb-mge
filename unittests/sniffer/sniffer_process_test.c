@@ -1066,6 +1066,149 @@ void test_tc28_merged_fm_event_transaction_split(void)
 }
 
 /* ============================================================
+ * FM-NONFD-1 — standalone Fast Modbus event-transfer (subcmd 0x11)
+ * addressed to the device's server_id (0x05, NOT 0xFD) must be
+ * recognized as Fast Modbus and surfaced as a SLAVE packet.
+ * ============================================================ */
+
+void test_fm_event_transfer_nonfd_visible(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FM-NONFD-1: event-transfer (subcmd 0x11) @server_id 0x05 must be visible as SLAVE");
+    LOG_MESSAGE();
+
+    /*
+     * V1: standalone Fast Modbus event-transfer frame (14 bytes, valid CRC),
+     * addressed to the device's server_id 0x05 (not 0xFD):
+     *   05 46 11 01 01 06 02 04 01 D0 04 00 2B AC
+     * Desired post-fix behavior: detected as FM (byte[1]=0x46) regardless of
+     * address; subcmd 0x11 is a slave subcmd → emitted as a single SLAVE packet
+     * with valid CRC, slave_id=0x05, function=0x46.
+     */
+    uint8_t v1[] = {0x05, 0x46, 0x11, 0x01, 0x01, 0x06, 0x02, 0x04, 0x01, 0xD0, 0x04, 0x00, 0x2B, 0xAC};
+    SEND0(v1);
+
+    sniff_packet_t pkt = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(pkt.is_master,
+        "FM-NONFD-1: subcmd 0x11 is a slave subcmd → must be SLAVE (is_master=false)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt.crc_valid,
+        "FM-NONFD-1: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x05, pkt.slave_id,
+        "FM-NONFD-1: slave_id must be 0x05 (device server_id)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x46, pkt.function,
+        "FM-NONFD-1: function must be 0x46");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * FM-NONFD-2 — standalone Fast Modbus event-config (subcmd 0x18)
+ * addressed to the device's server_id (0x0A, NOT 0xFD) must be
+ * recognized as Fast Modbus and surfaced as a MASTER packet.
+ * ============================================================ */
+
+void test_fm_config_request_nonfd_visible(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FM-NONFD-2: event-config (subcmd 0x18) @server_id 0x0A must be visible as MASTER");
+    LOG_MESSAGE();
+
+    /*
+     * V2: standalone Fast Modbus event-config frame (11 bytes, valid CRC),
+     * addressed to the device's server_id 0x0A (not 0xFD):
+     *   0A 46 18 05 01 00 04 01 01 D4 4F
+     * Desired post-fix behavior: detected as FM (byte[1]=0x46) regardless of
+     * address; subcmd 0x18 is NOT a slave subcmd → emitted as a single MASTER
+     * (request) packet with valid CRC, slave_id=0x0A, function=0x46.
+     */
+    uint8_t v2[] = {0x0A, 0x46, 0x18, 0x05, 0x01, 0x00, 0x04, 0x01, 0x01, 0xD4, 0x4F};
+    SEND0(v2);
+
+    sniff_packet_t pkt = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt.is_master,
+        "FM-NONFD-2: subcmd 0x18 is not a slave subcmd → must be MASTER (is_master=true)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt.crc_valid,
+        "FM-NONFD-2: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x0A, pkt.slave_id,
+        "FM-NONFD-2: slave_id must be 0x0A (device server_id)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x46, pkt.function,
+        "FM-NONFD-2: function must be 0x46");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * FM-NONFD-3 — merged event-poll transaction WITH events: the 0x10
+ * request (@0xFD), the 0xFF arbitration run, and a non-FD 0x11
+ * event-transfer frame (@0x05) must split into THREE packets.
+ * ============================================================ */
+
+void test_fm_merged_event_poll_with_events(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "FM-NONFD-3: merged event poll WITH events → MASTER req + arbitration + SLAVE 0x11");
+    LOG_MESSAGE();
+
+    /*
+     * V3: a complete event-poll transaction captured as ONE idle-delimited blob
+     * (28 bytes total):
+     *   Request      (9 bytes, valid CRC): FD 46 10 00 4F 00 00 C9 7D
+     *                                       (master FM Event Request, subcmd 0x10)
+     *   Arbitration  (5 bytes):            FF FF FF FF FF
+     *                                       (Fast Modbus bus-arbitration run)
+     *   Event xfer   (14 bytes, valid CRC): 05 46 11 01 01 06 02 04 01 D0 04 00 2B AC
+     *                                       (slave FM event-transfer @server_id 0x05)
+     *
+     * Desired post-fix behavior: split into THREE packets — the MASTER request,
+     * the 0xFF arbitration run as its OWN packet, and the non-FD 0x11 event
+     * transfer as a SLAVE packet (today it is dropped → only 2 packets).
+     */
+    uint8_t v3[] = {
+        0xFD, 0x46, 0x10, 0x00, 0x4F, 0x00, 0x00, 0xC9, 0x7D,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x05, 0x46, 0x11, 0x01, 0x01, 0x06, 0x02, 0x04, 0x01, 0xD0, 0x04, 0x00, 0x2B, 0xAC
+    };
+    SEND0(v3);
+
+    sniff_packet_t pkt0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt0.is_master,
+        "FM-NONFD-3 pkt[0]: FM event request must be MASTER (is_master=true)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt0.crc_valid,
+        "FM-NONFD-3 pkt[0]: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFD, pkt0.slave_id,
+        "FM-NONFD-3 pkt[0]: slave_id must be 0xFD");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x46, pkt0.function,
+        "FM-NONFD-3 pkt[0]: function must be 0x46");
+
+    sniff_packet_t pkt1 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(pkt1.is_master,
+        "FM-NONFD-3 pkt[1]: arbitration run must NOT be MASTER (is_master=false)");
+    TEST_ASSERT_FALSE_MESSAGE(pkt1.crc_valid,
+        "FM-NONFD-3 pkt[1]: arbitration run must have crc_valid=false");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.slave_id,
+        "FM-NONFD-3 pkt[1]: arbitration slave_id must be 0xFF");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0xFF, pkt1.function,
+        "FM-NONFD-3 pkt[1]: arbitration function must be 0xFF");
+    TEST_ASSERT_EQUAL_MESSAGE(5, pkt1.data_len,
+        "FM-NONFD-3 pkt[1]: arbitration data_len must be 5");
+
+    sniff_packet_t pkt2 = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(pkt2.is_master,
+        "FM-NONFD-3 pkt[2]: event-transfer (subcmd 0x11) must be SLAVE (is_master=false)");
+    TEST_ASSERT_TRUE_MESSAGE(pkt2.crc_valid,
+        "FM-NONFD-3 pkt[2]: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x05, pkt2.slave_id,
+        "FM-NONFD-3 pkt[2]: slave_id must be 0x05 (device server_id)");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x46, pkt2.function,
+        "FM-NONFD-3 pkt[2]: function must be 0x46");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
  * TC-CA1 — enabling the CACHE reason does NOT touch the RX timeout
  * (RX timeout is owned by the transport mode, not the overlay)
  * ============================================================ */
@@ -1686,6 +1829,9 @@ int main(void)
     RUN_TEST(test_tc26_slow_response_three_events);
     RUN_TEST(test_tc27_fast_response_master_immediate_slave_on_response);
     RUN_TEST(test_tc28_merged_fm_event_transaction_split);
+    RUN_TEST(test_fm_event_transfer_nonfd_visible);
+    RUN_TEST(test_fm_config_request_nonfd_visible);
+    RUN_TEST(test_fm_merged_event_poll_with_events);
 
     return UNITY_END();
 }
