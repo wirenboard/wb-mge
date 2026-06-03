@@ -5,6 +5,10 @@ Wiren Board Multiprotocol Gateway
 
 WB-MGE is designed to connect devices with RS-485 interface and WBIO I/O side modules to an automation server via Ethernet or Wi-Fi.
 
+All functions described below are configured and monitored through the built-in web interface:
+
+![WB-MGE web interface — Dashboard](docs/images/dashboard.png)
+
 Two modes are available for each port:
 
  - **Modbus TCP** — for Modbus devices only: a full **Modbus TCP ↔ Modbus RTU** converter.
@@ -15,13 +19,31 @@ Two modes are available for each port:
    as-is, without frame parsing. It can run as a TCP **server** (waits for incoming connections)
    or a TCP **client** (connects out to a remote `ip:port`).
 
+   ![Per-port mode — Modbus TCP and Transparent bridge](docs/images/tcp-gateway.png)
+
+   *Each port is switched independently between **Modbus TCP** and **Transparent bridge**
+   (server/client) on the TCP gateway page.*
+
 On top of either mode, each port can additionally enable:
 
  - **Cache (Cache TCP)** — passively tracks the Modbus traffic on the bus, stores the latest
    register and coil values and serves them over a dedicated Modbus TCP server without
    re-polling the devices (a "from cache" reply). Also exposed via `GET /cache/json` and `/cache/csv`.
+
+   ![Cache — Register map page](docs/images/register-map.png)
+
+   *The **Register map** page shows the cache auto-built from observed bus traffic, the value
+   timeout and reset controls, CSV/JSON export, and the Modbus TCP server (port 504) that replies
+   straight from cache.*
+
  - **Sniffer** — captures RS-485 traffic in both directions, decodes Modbus frames and streams
    them to the web UI over WebSocket for diagnostics.
+
+   ![Sniffer — packet capture and Send packet tool](docs/images/sendpacket-read.png)
+
+   *Press **Start** to stream live decoded frames (filter by Slave ID / function code, click a
+   row to decode it); the **Send packet** tool builds and injects read (FC01–FC04) and write
+   (FC05/06/15/16) requests with an automatically computed CRC and a live frame preview.*
 
 Separately, both ports together can run as a:
 
@@ -34,6 +56,11 @@ Separately, both ports together can run as a:
    also exposed under the `repeater` object of `GET /info`). **Warning:** while the repeater is
    active, the two segments behave as if they were electrically connected — if a master is present
    on both sides, the buses collide and communication fails.
+
+   ![Repeater — Port 1 ↔ Port 2 bridge](docs/images/repeater.png)
+
+   *The Repeater page shows the enable toggle and live forwarding statistics; the mode activates
+   only when both ports are switched to repeater mode.*
 
 ## Device Register Map (Unit ID 255)
 
