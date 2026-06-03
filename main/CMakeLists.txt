@@ -101,13 +101,18 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "voltage_monitor"
                             "qemu"
                         EMBED_TXTFILES
-                            frontend/dist/favicon.webp.gz
+                            # Compressible text shell assets served with Content-Encoding: gzip.
                             frontend/dist/index.css.gz
                             frontend/dist/index.html.gz
                             frontend/dist/index.js.gz
-                            frontend/dist/roboto-latin-wght-normal.woff2.gz
-                            frontend/dist/roboto-cyrillic-wght-normal.woff2.gz
-                            frontend/dist/roboto-cyrillic-ext-wght-normal.woff2.gz
+                        EMBED_FILES
+                            # Already-compressed binaries embedded RAW (woff2/webp) and served
+                            # without Content-Encoding. EMBED_FILES preserves exact length and
+                            # does NOT append a NUL terminator, which is required for binary data.
+                            frontend/dist/favicon.webp
+                            frontend/dist/roboto-latin-wght-normal.woff2
+                            frontend/dist/roboto-cyrillic-wght-normal.woff2
+                            frontend/dist/roboto-cyrillic-ext-wght-normal.woff2
 )
 
 target_link_libraries(${COMPONENT_TARGET} "-u wb_app_desc")

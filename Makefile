@@ -211,7 +211,7 @@ build-frontend:
 		npm install && \
 		npm run build && \
 		$(FIND) dist/ -type f -name "*.gz" -exec rm -f {} \; && \
-		$(FIND) dist/ -type f -exec gzip -k {} \; ; \
+		$(FIND) dist/ -type f ! -name "*.gz" ! -name "*.woff2" ! -name "*.webp" -exec gzip -k {} \; ; \
 	}
 
 apply-idf-patches:

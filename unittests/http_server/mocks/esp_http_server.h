@@ -152,6 +152,24 @@ extern httpd_req_t* mock_last_set_hdr_req;
 extern httpd_req_t* mock_last_send_req;
 extern httpd_req_t* mock_current_request;
 
+// Records every header set on the response so multi-header handlers (e.g. the
+// shell assets that set Content-Encoding + ETag + Cache-Control) can be asserted
+// individually instead of only inspecting the last header written.
+#define MOCK_MAX_HEADERS    16
+extern char mock_header_fields[MOCK_MAX_HEADERS][128];
+extern char mock_header_values[MOCK_MAX_HEADERS][128];
+extern int  mock_header_count;
+
+// Response status set via httpd_resp_set_status (defaults to "200 OK").
+extern char mock_last_status[64];
+
+// Request header injection for httpd_req_get_hdr_value_str. When
+// mock_request_header_set is true, the mock returns mock_request_header_value
+// for any requested header name; otherwise it reports the header as absent.
+extern bool mock_request_header_set;
+extern char mock_request_header_value[128];
+void mock_set_request_header(const char* value);
+
 typedef struct {
     char uri[HTTPD_MAX_URI_LEN];
     enum http_method method;
@@ -175,3 +193,5 @@ esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *u
 esp_err_t httpd_resp_set_type(httpd_req_t *r, const char *type);
 esp_err_t httpd_resp_set_hdr(httpd_req_t *r, const char *field, const char *value);
 esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t buf_len);
+esp_err_t httpd_resp_set_status(httpd_req_t *r, const char *status);
+esp_err_t httpd_req_get_hdr_value_str(httpd_req_t *r, const char *field, char *val, size_t val_size);

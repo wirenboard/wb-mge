@@ -43,9 +43,17 @@ export const useUptime = () => {
     }, 10000);
   };
 
+  const stopPolling = () => {
+    if (intervalId) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+  };
+
   return {
     uptime,
     isReconnecting,
     startPolling,
+    stopPolling,
   };
 };
