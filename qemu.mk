@@ -46,6 +46,7 @@ qemu-apply-idf-patches:
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug04-openeth-isr-dram-log.patch
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug05-lact-timer-null-isr-guard.patch
+	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug06-uart-install-rxfifo-storm.patch
 
 build-idf-project-qemu: qemu-apply-idf-patches
 	@echo "Building for QEMU with OpenEth ethernet driver"
