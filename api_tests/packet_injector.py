@@ -327,6 +327,9 @@ class PacketInjector:
         # One TCP socket per injector, reused for every cycle.  Closed on
         # stop() (and on start() failure, see the try/except below).
         self._sock = open_uart_socket(self.port)
+        # Finite timeout so a stalled guest UART (RX-FIFO storm) can't wedge sendall
+        # forever; a timed-out send surfaces as an error via _safe_inject instead.
+        self._sock.settimeout(10.0)
 
         try:
             # One-shot static block — gives cache tests a stable set of
@@ -373,8 +376,16 @@ class PacketInjector:
         self._thread.join(timeout=5)
         if self._thread.is_alive():
             # Thread is wedged in sendall (e.g. firmware UART driver stalled).
-            # Leak the socket rather than close it under the active thread,
-            # and surface the hang.
+            # Close the socket BEFORE giving up: closing the host end unblocks
+            # the wedged sendall (raises OSError, caught in _run) and — critically —
+            # frees QEMU's single-client UART accept slot so subsequent tests can
+            # still connect. Leaking it would poison every later UART test.
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                finally:
+                    self._sock = None
+            self._thread.join(timeout=2)
             self._thread = None
             raise RuntimeError(
                 "PacketInjector background thread did not exit within 5s"

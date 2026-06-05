@@ -73,7 +73,8 @@ gateway_slave = build_gateway_fixture(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(60)
+# 120s: marker covers function-scoped setup+teardown whose retrying 30s HTTP calls are slow under QEMU load
+@pytest.mark.timeout(120)
 def test_gateway_rtu_timeout_no_response(gateway_slave):
     """RTU slave does not respond: gateway must not crash, TCP conn stays open.
 
@@ -140,7 +141,7 @@ def test_gateway_rtu_timeout_no_response(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(120)
 def test_gateway_exception_forwarded_to_tcp(gateway_slave):
     """RTU slave responds with FC03 exception 0x02; TCP client must receive FC=0x83 exception.
 
@@ -182,7 +183,7 @@ def test_gateway_exception_forwarded_to_tcp(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(120)
 def test_gateway_fc06_write_single_register(gateway_slave):
     """FC06 (Write Single Register) request forwarded through gateway.
 
@@ -230,7 +231,7 @@ def test_gateway_fc06_write_single_register(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(120)
 def test_gateway_back_to_back_requests(gateway_slave):
     """Five sequential FC03 requests on the same TCP connection; each TID matches.
 
@@ -274,7 +275,7 @@ def test_gateway_back_to_back_requests(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(120)
 def test_gateway_client_disconnect_during_rtu_wait(gateway_slave):
     """TCP client disconnects while gateway is waiting for RTU response.
 
@@ -348,7 +349,7 @@ def test_gateway_client_disconnect_during_rtu_wait(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(120)
 def test_gateway_disconnect_tid_mismatch_regression(gateway_slave):
     """Regression test: TID in B's response must equal B's request TID.
 

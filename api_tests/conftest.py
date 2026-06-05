@@ -5,6 +5,7 @@ import signal
 import socket
 import subprocess
 import time
+import warnings
 from pathlib import Path
 
 import pytest
@@ -485,3 +486,39 @@ def api(request):
     assert response.json()["auth"] == True, "Initial authentication failed"
 
     return client
+
+
+@pytest.fixture(autouse=True)
+def _uart_leak_guard(request):
+    """Diagnostic-only guard: warn if a test left a QEMU UART socket leaked.
+
+    QEMU exposes each RS-485 UART as a single-client TCP chardev (5561/5562).
+    If a test wedges and leaks its UART socket, the one accept slot stays
+    occupied and every later UART connect() times out. On teardown we probe
+    both ports; if either is no longer connectable we warn (never fail — a
+    fatal probe would make the whole suite fragile) naming the just-finished
+    test as the likely leaker. Active only when running against QEMU.
+    """
+    yield
+    if not request.config.getoption("--qemu", default=False):
+        return
+    unreachable = []
+    for port in (5561, 5562):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.settimeout(2.0)
+        try:
+            probe.connect(("127.0.0.1", port))
+        except (ConnectionRefusedError, OSError, socket.timeout):
+            unreachable.append(port)
+        finally:
+            try:
+                probe.close()
+            except OSError:
+                pass
+    if unreachable:
+        warnings.warn(
+            f"UART chardev port(s) {unreachable} not connectable after "
+            f"{request.node.nodeid} — a prior test may have leaked a UART "
+            f"socket (QEMU single-client).",
+            stacklevel=1,
+        )

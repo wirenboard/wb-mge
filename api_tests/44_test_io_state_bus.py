@@ -71,14 +71,38 @@ def test_rs485_direction_pins_idle_high(api):
 
     G04 (RS485-1 dir) and G15 (RS485-2 dir) default to 1 in rs485_control.c
     when no transmission is in progress.
+
+    Precondition: both ports MUST be in an active transport so their DE pins are
+    RTS-attached and idle HIGH. A prior test may have left a port disabled or
+    tx_disabled (DE pin parked LOW), so we force tcp_bridge on both ports and let
+    the disabled->active reinit transient settle before polling for the level.
     """
-    with IoBus() as bus:
-        assert bus.get("G04") == 1, (
-            f"RS485-1 direction (G04) expected idle HIGH, got {bus.get('G04')}"
-        )
-        assert bus.get("G15") == 1, (
-            f"RS485-2 direction (G15) expected idle HIGH, got {bus.get('G15')}"
-        )
+    info_resp = api.get_info()
+    assert info_resp.status_code == 200, f"GET /info returned {info_resp.status_code}"
+    info = info_resp.json()
+    original_mode_1 = info.get("rs485_1", {}).get("port_mode", "tcp_bridge")
+    original_mode_2 = info.get("rs485_2", {}).get("port_mode", "tcp_bridge")
+
+    try:
+        # Force both ports into an active transport so the DE pins are RTS-attached
+        # and idle HIGH, then let the disabled->active reinit transient
+        # (gpio_reset_pin Pullup->HIGH) fully settle BEFORE reading the pins.
+        api.set_port_mode(1, "tcp_bridge")
+        api.set_port_mode(2, "tcp_bridge")
+        time.sleep(1.0)
+
+        with IoBus() as bus:
+            reached = bus.wait_for("G04", 1, timeout=4.0)
+            assert reached, (
+                f"RS485-1 direction (G04) expected idle HIGH, got {bus.get('G04')}"
+            )
+            reached = bus.wait_for("G15", 1, timeout=4.0)
+            assert reached, (
+                f"RS485-2 direction (G15) expected idle HIGH, got {bus.get('G15')}"
+            )
+    finally:
+        api.set_port_mode(1, original_mode_1)
+        api.set_port_mode(2, original_mode_2)
 
 
 def test_config_button_short_press_increments_counter(api):

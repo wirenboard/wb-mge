@@ -278,7 +278,8 @@ def _teardown_client_mode_bridge(api, port_num: int, original_settings: dict,
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# 120s: marker covers function-scoped setup+teardown whose retrying 30s HTTP calls are slow under QEMU load
+@pytest.mark.timeout(120)
 def test_transparent_basic_roundtrip(transparent_bridge):
     """Send 16 arbitrary bytes through the transparent bridge and receive them back.
 
@@ -330,7 +331,7 @@ def test_transparent_basic_roundtrip(transparent_bridge):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(120)
 def test_transparent_last_writer_routing(transparent_bridge):
     """Second TCP client's bytes get echoed back to it (last_client_sock routing).
 
@@ -408,7 +409,7 @@ def test_transparent_last_writer_routing(transparent_bridge):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(120)
 def test_transparent_zero_bytes_edge_case(transparent_bridge):
     """Client sends empty bytes (length 0), then real data — connection stays open.
 
@@ -466,7 +467,7 @@ def test_transparent_zero_bytes_edge_case(transparent_bridge):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+@pytest.mark.timeout(120)
 def test_transparent_client_mode(api):
     """Transparent bridge client mode: firmware connects outbound to a TCP echo server.
 

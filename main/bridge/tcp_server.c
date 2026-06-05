@@ -92,6 +92,18 @@ static int create_listen_socket(int port)
         }
 
         ESP_LOGD(TAG, "Socket listening on port %d", port);
+
+        /* Put a short timeout on the listen socket so accept() returns periodically
+         * with EAGAIN/EWOULDBLOCK. This lets tcp_server_task() re-check the deinit
+         * exit flag without depending on close(listen_sock) to unblock a forever-
+         * blocked accept() — under QEMU slirp that wake-up is delayed/unreliable and
+         * makes tcp_server_deinit() hang, blocking the single httpd worker. Mirrors
+         * the SO_RCVTIMEO already used on accepted client sockets. */
+        struct timeval acc_timeout = { .tv_sec = 0, .tv_usec = 200000 };  /* 200 ms */
+        if (setsockopt(listen_sock, SOL_SOCKET, SO_RCVTIMEO, &acc_timeout, sizeof(acc_timeout)) != 0) {
+            ESP_LOGW(TAG, "Failed to set SO_RCVTIMEO on listen socket: errno %d", errno);
+        }
+
         return listen_sock;
     }
     return -1;
@@ -222,6 +234,12 @@ static void tcp_server_task(void *pvParameters)
             if (check_task_exit_req(desc)) {
                 ESP_LOGD(TAG, "Socket on port %d returned error %d during connection accept", desc->port, errno);
                 break;
+            }
+
+            /* accept() hit its SO_RCVTIMEO with no pending connection: loop back so the
+             * exit flag at the top of the loop is re-checked. The listen socket is fine. */
+            if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+                continue;
             }
 
             /* Resource exhaustion (socket table full, out of memory, etc.):
