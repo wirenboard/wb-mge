@@ -28,6 +28,20 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions_qemu.csv"
 # upload with "Device signature is empty, OTA not allowed".
 CONFIG_EFUSE_VIRTUAL=y
 
+# Disable the bootloader RTC watchdog (RWDT) for the QEMU build.
+# The bootloader arms RWDT with a 9 s timeout (CONFIG_BOOTLOADER_WDT_TIME_MS=9000
+# in sdkconfig.qemu.minimal) and the app only disables it once early init reaches
+# user code. Under QEMU emulation a reset boot routinely takes 13-23 s of (timer-)
+# time to reach app_main — far longer than the 9 s window — so the RWDT fires
+# mid-boot, resets the chip (rst:0xc), and the boot retries. When several reboot
+# tests run back-to-back this turns into a reset LOOP: the device never stays up
+# long enough to answer the test client, appears dead for minutes, and cascades
+# the whole module to failure (observed intermittently: file 33 au01 + the rest).
+# There is no watchdog need under emulation (a genuine early-boot hang surfaces as
+# a test timeout regardless), so disable it outright — same rationale as the Task
+# WDT below. The hardware build is unaffected (keeps the default RWDT enabled).
+CONFIG_BOOTLOADER_WDT_ENABLE=n
+
 # Disable the esp_io_expander component's GPIO-API wrapper for the QEMU build.
 # That component otherwise links its own (non-weak) __wrap_gpio_config /
 # __wrap_gpio_set_level / __wrap_gpio_get_level / __wrap_gpio_set_direction /
