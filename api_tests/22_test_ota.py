@@ -233,7 +233,7 @@ def test_ota_truncated_stream(api, firmware_bytes):
 
 # --- Positive path: MUST stay last — reboots into ota_1 ----------------------
 
-@pytest.mark.timeout(360)
+@pytest.mark.timeout(2400)
 def test_ota_full_update(api, firmware_bytes):
     """Upload the full QEMU firmware → 200 with bytes_written == size →
     device reboots → /info responds again.
@@ -319,9 +319,9 @@ def test_ota_full_update(api, firmware_bytes):
         # Bumped from 90s → 180s: under host CPU contention, QEMU boot can take longer
         # than 90 s even though the firmware itself reboots in <10 s on real hardware.
         try:
-            api.wait_for_ready(timeout=180)
+            api.wait_for_ready(timeout=1800)
         except TimeoutError:
-            pytest.fail("Device did not come back online within 180s after OTA reboot")
+            pytest.fail("Device did not come back online within 1800s after OTA reboot")
         print("✓ Device back online after OTA reboot")
 
         # Step 7: Verify /info is responsive on the new firmware

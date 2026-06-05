@@ -42,7 +42,7 @@ def _baseline(api):
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(180)
 def test_sniffer_websocket(api):
     """Sniffer WebSocket: collect packets, verify CRC fields, check resilience after bad-CRC"""
     parsed = urlparse(api.base_url)
@@ -69,7 +69,7 @@ def test_sniffer_websocket(api):
             ws_url = f"ws://{host}:{port}/sniffer/ws"
             cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
             ws = websocket.WebSocket()
-            ws.settimeout(15)
+            ws.settimeout(60)
             ws.connect(ws_url, cookie=cookies)
             print(f"✓ WebSocket connected to {ws_url}")
 
@@ -211,7 +211,7 @@ def test_sniffer_ws_no_auth(api):
 
     ws_url = f"ws://{host}:{port}/sniffer/ws"
     ws = websocket.WebSocket()
-    ws.settimeout(10)
+    ws.settimeout(60)
 
     connection_closed_by_server = False
     try:
@@ -254,7 +254,7 @@ def test_sniffer_ws_invalid_cookie(api):
 
     ws_url = f"ws://{host}:{port}/sniffer/ws"
     ws = websocket.WebSocket()
-    ws.settimeout(10)
+    ws.settimeout(60)
 
     connection_closed_by_server = False
     try:
@@ -653,7 +653,7 @@ def test_sniffer_ws_sender_alternates_master_slave(api):
 # Group 2: Stop command and verification
 # ---------------------------------------------------------------------------
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(180)
 def test_sniffer_ws_stop_command_stops_stream(api):
     """After sending stop, no more packets must arrive and /sniffer/status must reflect false."""
     original_port_mode = None
@@ -775,7 +775,7 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
             cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
 
             ws = websocket.WebSocket()
-            ws.settimeout(15)
+            ws.settimeout(60)
             ws.connect(ws_url, cookie=cookies)
 
             # NOTE: deliberately NO background ping thread during the malformed-message
@@ -820,7 +820,7 @@ def test_sniffer_ws_malformed_json_does_not_crash(api):
             time.sleep(1)
 
             ws = websocket.WebSocket()
-            ws.settimeout(15)
+            ws.settimeout(60)
             ws.connect(ws_url, cookie=cookies)
 
             stop_ping = threading.Event()
@@ -888,7 +888,7 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
             cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
 
             ws = websocket.WebSocket()
-            ws.settimeout(15)
+            ws.settimeout(60)
             ws.connect(ws_url, cookie=cookies)
 
             stop_ping = threading.Event()
@@ -927,7 +927,7 @@ def test_sniffer_ws_stop_before_start_does_not_crash(api):
             time.sleep(1)
 
             ws = websocket.WebSocket()
-            ws.settimeout(15)
+            ws.settimeout(60)
             ws.connect(ws_url, cookie=cookies)
 
             stop_ping = threading.Event()

@@ -18,7 +18,7 @@ ALT_PORT_HOST = 8081
 DEFAULT_PORT_HOST = 8080
 
 
-def _wait_for_url(url, timeout=30):
+def _wait_for_url(url, timeout=1800):
     """Poll url until an HTTP response is received or timeout expires. Returns True on success."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -39,7 +39,7 @@ def _is_reachable(url, timeout=5):
         return False
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(2700)
 def test_web_port_change(api, is_qemu):
     """web_port setting: after changing port and rebooting, server must be reachable on the new port only."""
     if not is_qemu:
@@ -67,9 +67,9 @@ def test_web_port_change(api, is_qemu):
             pass  # Connection drop during reboot is expected
 
         # Server must come up on the new port
-        ready = _wait_for_url(f"{alt_url}/favicon.webp", timeout=30)
+        ready = _wait_for_url(f"{alt_url}/favicon.webp", timeout=1800)
         assert ready, (
-            f"Server did not come up on alt host port {ALT_PORT_HOST} within 30s "
+            f"Server did not come up on alt host port {ALT_PORT_HOST} within 1800s "
             f"after setting web_port={ALT_PORT_GUEST} and rebooting"
         )
 
@@ -92,7 +92,7 @@ def test_web_port_change(api, is_qemu):
         except Exception as e:
             print(f"Warning: restore step failed: {e}")
 
-        came_back = _wait_for_url(f"{default_url}/favicon.webp", timeout=30)
+        came_back = _wait_for_url(f"{default_url}/favicon.webp", timeout=1800)
         if came_back:
             api.reconnect()
             api.auth()

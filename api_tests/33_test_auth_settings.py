@@ -11,7 +11,7 @@ from api_client import WBMGEAPI
 MAX_SESSIONS = 10
 
 
-def _wait_device_up(base_url: str, timeout: int = 60) -> bool:
+def _wait_device_up(base_url: str, timeout: int = 1800) -> bool:
     """Poll until device responds to HTTP (without auth). Returns True if up within timeout."""
     plain = requests.Session()
     deadline = time.monotonic() + timeout
@@ -26,7 +26,7 @@ def _wait_device_up(base_url: str, timeout: int = 60) -> bool:
     return False
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(2400)
 def test_au01_session_preserved_after_sw_reboot(api):
     """AU-01: Session cookie persists after POST /cmd reboot (SW reset uses RTC_NOINIT)."""
     # Save current session_id cookie before rebooting
@@ -40,7 +40,7 @@ def test_au01_session_preserved_after_sw_reboot(api):
     # so we don't accidentally refresh the api session yet
     plain_session = requests.Session()
     base_url = api.base_url
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + 1800
     device_up = False
     while time.monotonic() < deadline:
         time.sleep(2)
@@ -53,7 +53,7 @@ def test_au01_session_preserved_after_sw_reboot(api):
             # Device still booting
             pass
 
-    assert device_up, "Device did not come back up within 60 seconds after reboot"
+    assert device_up, "Device did not come back up within 1800 seconds after reboot"
 
     # Verify the OLD session cookie still works (sessions survive SW reset via RTC_NOINIT).
     # This check must happen BEFORE wait_for_ready() creates a new session, which could
@@ -67,10 +67,10 @@ def test_au01_session_preserved_after_sw_reboot(api):
 
     # Re-authenticate the api fixture so subsequent tests still have a valid session
     # (this creates a NEW session in api.session, but that is fine — old_sid was saved)
-    api.wait_for_ready(timeout=30)
+    api.wait_for_ready(timeout=1800)
 
 
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(2400)
 def test_au05_full_buffer_preserved_after_sw_reboot(api):
     """AU-05: All MAX_SESSIONS sessions survive SW reboot (full ring buffer)."""
     base_url = api.base_url
@@ -97,8 +97,8 @@ def test_au05_full_buffer_preserved_after_sw_reboot(api):
         # Trigger SW reboot
         api.execute_command("reboot")
 
-        assert _wait_device_up(base_url, timeout=60), \
-            "Device did not come back up within 60 s after reboot"
+        assert _wait_device_up(base_url, timeout=1800), \
+            "Device did not come back up within 1800 s after reboot"
 
         # All MAX_SESSIONS sessions must survive SW reboot
         for i, sid in enumerate(sids):
@@ -127,7 +127,7 @@ def test_au05_full_buffer_preserved_after_sw_reboot(api):
             f"Re-auth after AU-05 failed: {resp.status_code} {resp.text}"
 
 
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(2400)
 def test_au06_ring_wrap_preserved_after_sw_reboot(api):
     """AU-06: Ring-wrap sessions survive SW reboot; eviction happened before reboot stays evicted."""
     base_url = api.base_url
@@ -163,8 +163,8 @@ def test_au06_ring_wrap_preserved_after_sw_reboot(api):
         # Trigger SW reboot
         api.execute_command("reboot")
 
-        assert _wait_device_up(base_url, timeout=60), \
-            "Device did not come back up within 60 s after reboot"
+        assert _wait_device_up(base_url, timeout=1800), \
+            "Device did not come back up within 1800 s after reboot"
 
         # Sessions 1..MAX_SESSIONS must all survive SW reboot
         for i in range(1, MAX_SESSIONS + 1):

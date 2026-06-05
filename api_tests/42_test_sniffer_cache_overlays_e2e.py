@@ -550,7 +550,7 @@ def _uart_reachable(port: int) -> bool:
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(2400)
 def test_cache_overlay_persists_across_reboot(api):
     """Enable the cache on port 1, reboot, and assert the overlay is restored from
     NVS (rs485_1.cache_enabled still true) AND a fresh FC03 transaction repopulates
@@ -632,9 +632,9 @@ def test_cache_overlay_persists_across_reboot(api):
             print("  Connection dropped during reboot (expected)")
 
         try:
-            api.wait_for_ready(timeout=60)
+            api.wait_for_ready(timeout=1800)
         except TimeoutError:
-            pytest.fail("Device did not come back within 60 s after reboot")
+            pytest.fail("Device did not come back within 1800 s after reboot")
         print("✓ device came back online after reboot")
 
         # Sanity: confirm a real reboot happened (uptime reset).

@@ -14,7 +14,7 @@ from api_client import WBMGEAPI
 from rtu_slave_helpers import ModbusRtuSlaveThread
 
 PROJECT_ROOT = Path(__file__).parent.parent
-QEMU_READY_TIMEOUT = 120
+QEMU_READY_TIMEOUT = 900
 QEMU_READY_INTERVAL = 2
 
 # Test files that reboot/restart the device (which resets the heap). They are

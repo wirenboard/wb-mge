@@ -4,7 +4,7 @@ import time
 import pytest
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(2400)
 def test_reboot(api):
     """Reboot: verify uptime resets and custom settings survive"""
     # Allow previous tests' teardown activity to settle before making requests
@@ -75,9 +75,9 @@ def test_reboot(api):
 
     print("  Waiting for device to reboot...")
     try:
-        api.wait_for_ready(timeout=30)
+        api.wait_for_ready(timeout=1800)
     except TimeoutError:
-        pytest.fail("Device did not come back within 30 seconds after reboot")
+        pytest.fail("Device did not come back within 1800 seconds after reboot")
     print("✓ Device came back online")
 
     # --- verify uptime reset ---

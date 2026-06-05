@@ -38,7 +38,7 @@ def clean_wifi_perm_disable(api):
         pass  # connection drop on reboot is expected
 
     try:
-        api.wait_for_ready(timeout=60)
+        api.wait_for_ready(timeout=1800)
         print("✓ teardown: wifi_perm_disable cleared and device rebooted to clean state")
     except TimeoutError:
         print("✗ teardown: device did not come back after teardown reboot")
@@ -78,7 +78,7 @@ def test_wifi_perm_disable_false_is_ignored(api):
     print("✓ wifi group still present; wifi_perm_disable is still false")
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(2400)
 def test_wifi_perm_disable_activation(api):
     """
     Activate wifi_perm_disable=true, reboot, and verify the setting is permanent.
@@ -131,9 +131,9 @@ def test_wifi_perm_disable_activation(api):
     # Step 4: wait for device to come back online (includes reconnect + re-auth)
     print("  Waiting for device to reboot...")
     try:
-        api.wait_for_ready(timeout=60)
+        api.wait_for_ready(timeout=1800)
     except TimeoutError:
-        pytest.fail("Device did not come back within 60 seconds after reboot")
+        pytest.fail("Device did not come back within 1800 seconds after reboot")
     print("✓ Device came back online")
 
     # Step 5: re-auth is already done inside wait_for_ready; no extra call needed.

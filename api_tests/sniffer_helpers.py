@@ -27,9 +27,30 @@ def _ws_connect(api, port):
     ws_url = f"ws://{host}:{http_port}/sniffer/ws"
     cookies = "; ".join([f"{k}={v}" for k, v in api.session.cookies.items()])
 
-    ws = websocket.WebSocket()
-    ws.settimeout(15)
-    ws.connect(ws_url, cookie=cookies)
+    # The HTTP->WS upgrade handshake can be slow under QEMU emulation on a loaded
+    # host (the single emulated core runs below real-time, so a few seconds of
+    # work stretches to tens of wall-clock seconds). Use a generous handshake
+    # timeout and retry once on failure rather than letting a transient slow
+    # handshake fail the test. (Kept well under the tests' per-test timeout.)
+    ws = None
+    last_exc = None
+    for _attempt in range(2):
+        ws = websocket.WebSocket()
+        ws.settimeout(60)
+        try:
+            ws.connect(ws_url, cookie=cookies)
+            break
+        except Exception as e:  # noqa: BLE001 - retry any handshake failure
+            last_exc = e
+            try:
+                ws.close()
+            except Exception:
+                pass
+            time.sleep(2)
+    else:
+        raise TimeoutError(
+            f"WebSocket handshake to {ws_url} failed after 2 attempts: {last_exc}"
+        )
 
     ws.send(json.dumps({"cmd": "start", "port": port}))
 

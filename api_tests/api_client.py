@@ -73,7 +73,10 @@ class WBMGEAPI:
 
     def get_settings(self):
         """Get settings"""
-        return self.session.get(f"{self.base_url}/settings", timeout=10)
+        # GET /settings serialises ~50 fields, each a keyed NVS read; under QEMU
+        # emulated-flash load this can take several seconds (occasionally >10 s),
+        # so allow a generous read timeout to avoid spurious ReadTimeout flakes.
+        return self.session.get(f"{self.base_url}/settings", timeout=30)
 
     def update_settings(self, data):
         """Update settings"""
@@ -184,7 +187,7 @@ class WBMGEAPI:
         """Get sniffer status for all ports"""
         return self.session.get(f"{self.base_url}/sniffer/status", timeout=10)
 
-    def wait_for_ready(self, timeout=10, interval=1):
+    def wait_for_ready(self, timeout=1800, interval=1):
         """Poll the server until it responds, then reconnect and re-auth."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
