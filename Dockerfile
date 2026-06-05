@@ -34,7 +34,8 @@ RUN python3 -m venv /opt/api_tests_venv \
 COPY patches/ /tmp/patches/
 RUN python3 /tmp/patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch \
  && python3 /tmp/patches/apply_idf_patch.py bug04-openeth-isr-dram-log.patch \
- && python3 /tmp/patches/apply_idf_patch.py bug05-lact-timer-null-isr-guard.patch
+ && python3 /tmp/patches/apply_idf_patch.py bug05-lact-timer-null-isr-guard.patch \
+ && python3 /tmp/patches/apply_idf_patch.py bug06-uart-install-rxfifo-storm.patch
 
 WORKDIR /root/esp/project
 
