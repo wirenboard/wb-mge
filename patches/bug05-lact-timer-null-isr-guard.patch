@@ -1,9 +1,10 @@
 --- a/components/esp_timer/src/esp_timer_impl_lac.c
 +++ b/components/esp_timer/src/esp_timer_impl_lac.c
-@@ -166,6 +166,15 @@
+@@ -180,6 +180,17 @@
      /* Clear interrupt status */
      REG_WRITE(INT_CLR_REG, TIMG_LACT_INT_CLR);
-
+ 
++#if CONFIG_ETH_USE_OPENETH    /* WB: QEMU-only build marker; this fix is not compiled into release firmware */
 +    /* bug05 fix: guard against NULL s_alarm_handler.
 +     * In QEMU, SW_CPU_RESET clears BSS (s_alarm_handler = NULL) but LACT hardware
 +     * registers survive reset. The ISR can fire before esp_timer_impl_init() registers
@@ -12,19 +13,23 @@
 +    if (s_alarm_handler == NULL) {
 +        return;
 +    }
++#endif
 +
      /* Call the upper layer handler */
      (*s_alarm_handler)(arg);
  #else
-@@ -186,7 +195,10 @@
+@@ -200,7 +211,14 @@
                  REG_WRITE(INT_CLR_REG, TIMG_LACT_INT_CLR);
                  portEXIT_CRITICAL_ISR(&s_time_update_lock);
-
--                (*s_alarm_handler)(arg);
+ 
++#if CONFIG_ETH_USE_OPENETH    /* WB: QEMU-only build marker; release keeps the original unguarded call */
 +                /* bug05 fix: guard against NULL s_alarm_handler (see ISR_HANDLERS==1 branch). */
 +                if (s_alarm_handler != NULL) {
 +                    (*s_alarm_handler)(arg);
 +                }
-
++#else
+                 (*s_alarm_handler)(arg);
++#endif
+ 
                  portENTER_CRITICAL_ISR(&s_time_update_lock);
                  // Another alarm could have occurred while were handling the previous alarm.

@@ -1,9 +1,10 @@
 --- a/components/esp_driver_uart/src/uart.c
 +++ b/components/esp_driver_uart/src/uart.c
-@@ -1764,6 +1764,17 @@
+@@ -1764,6 +1764,19 @@
      uart_module_enable(uart_num);
      uart_hal_disable_intr_mask(&(uart_context[uart_num].hal), UART_LL_INTR_MASK);
      uart_hal_clr_intsts_mask(&(uart_context[uart_num].hal), UART_LL_INTR_MASK);
++#if CONFIG_ETH_USE_OPENETH    /* WB: QEMU-only build marker; this fix is not compiled into release firmware */
 +    /* bug06 fix: flush the RX FIFO before enabling the UART interrupt.
 +     * uart_module_enable() above turns the peripheral clock on, after which the
 +     * RX FIFO starts capturing line data. On a warm reboot the FIFO can already
@@ -15,6 +16,7 @@
 +     * uart_rx_intr_handler_default storm). Reset the FIFO so the driver installs
 +     * against a clean RX path. */
 +    uart_hal_rxfifo_rst(&(uart_context[uart_num].hal));
++#endif
  
      ret = esp_intr_alloc(uart_periph_signal[uart_num].irq, intr_alloc_flags,
                           uart_rx_intr_handler_default, p_uart_obj[uart_num],
