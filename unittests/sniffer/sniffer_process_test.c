@@ -1846,6 +1846,58 @@ void test_lone_ff_subframe_dropped_at_sniffer(void)
 }
 
 /* ============================================================
+ * MANY-FRAMES — a long gap-less buffer of >16 back-to-back valid frames must be
+ * fully recovered without unbounded recursion. stream_split() returns at most 16
+ * frames per call, so the iterative sniffer_process() must loop over the trailing
+ * remainder to recover them all. The previous recursive implementation nested one
+ * call per ~15 frames and overflowed the 4 KB UART task stack on streams like this.
+ * ============================================================ */
+
+void test_many_back_to_back_frames_iterative_split(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MANY-FRAMES: 40 glued FC03 requests must all be recovered (iterative split, no recursion overflow)");
+    LOG_MESSAGE();
+
+    /* One valid 8-byte FC03 request (valid CRC), repeated 40 times back-to-back with
+     * no inter-frame gaps. The 320-byte blob has an invalid CRC as a whole, so the
+     * sniffer takes the stream-split path; 40 > STREAM_SPLITTER_MAX_FRAMES (16) forces
+     * the iterative wrapper to loop over the trailing remainder more than once. */
+    static const uint8_t frame[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
+    enum { N_FRAMES = 40 };
+    uint8_t buf[N_FRAMES * sizeof(frame)];
+    for (int i = 0; i < N_FRAMES; i++) {
+        memcpy(buf + (size_t)i * sizeof(frame), frame, sizeof(frame));
+    }
+
+    SEND0(buf);
+
+    /* Every frame is a MASTER FC03 request with a valid CRC; none are responses and
+     * timers are mocked, so exactly N_FRAMES packets must be emitted. */
+    QueueHandle_t q = mock_get_last_created_queue();
+    TEST_ASSERT_NOT_NULL_MESSAGE(q, "MANY-FRAMES: sniffer queue not created");
+
+    int count = 0;
+    sniff_packet_t pkt = {0};
+    while (xQueueReceive(q, &pkt, 0) == pdTRUE) {
+        TEST_ASSERT_TRUE_MESSAGE(pkt.is_master,
+            "MANY-FRAMES: every recovered frame must be MASTER (is_master=true)");
+        TEST_ASSERT_TRUE_MESSAGE(pkt.crc_valid,
+            "MANY-FRAMES: every recovered frame must have crc_valid=true");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt.slave_id,
+            "MANY-FRAMES: slave_id must be 0x83");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, pkt.function,
+            "MANY-FRAMES: function must be 0x03");
+        count++;
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(N_FRAMES, count,
+        "MANY-FRAMES: all 40 back-to-back frames must be recovered as 40 master packets");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
  * ENQUEUE-FAILURE — try_enqueue handles a full/failing queue without crashing,
  * and the pipeline recovers once the queue accepts items again. Uses the freertos
  * queue mock's failure switch mock_xQueueSend_data.should_fail (reset to false by
@@ -1929,6 +1981,7 @@ int main(void)
     RUN_TEST(test_fm_config_request_nonfd_visible);
     RUN_TEST(test_fm_merged_event_poll_with_events);
     RUN_TEST(test_lone_ff_subframe_dropped_at_sniffer);
+    RUN_TEST(test_many_back_to_back_frames_iterative_split);
     RUN_TEST(test_enqueue_failure_graceful_and_recovers);
 
     return UNITY_END();

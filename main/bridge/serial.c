@@ -71,7 +71,7 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             // idle-delimited frame on timeout_flag. This works identically in passive
             // and tcp_bridge modes (transparent or Modbus gateway): the sniffer/cache
             // observe RX traffic without ever altering the bytes/timing the bridge
-            // forwards. The recursive sniffer_process()/cache work it triggers is gated
+            // forwards. The sniffer_process()/cache work it triggers is gated
             // by the reasons bitmask, so an idle bridge with no overlay does no real work.
             if (desc->sniff_handler && buffer_ctx->sniff_data) {
                 if (buffer_ctx->sniff_len + event.size > SERIAL_BUF_SIZE) {

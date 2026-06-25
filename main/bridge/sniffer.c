@@ -318,7 +318,15 @@ SNIFFER_STATIC pdu_direction_t classify_direction(const uint8_t *data, size_t le
     }
 }
 
-static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len)
+/* sniffer_process_frame — run the request/response state machine for exactly ONE
+ * already-delimited Modbus / Fast Modbus frame.
+ *
+ * This function never calls stream_split() and never recurses. Splitting a merged,
+ * gap-less buffer into individual frames is done iteratively by sniffer_process()
+ * below, which dispatches each sub-frame here. Keeping the per-frame work in a leaf
+ * function bounds the UART task stack usage regardless of how many back-to-back
+ * frames arrive in a single buffer. */
+static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size_t len)
 {
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
@@ -333,48 +341,6 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
     const uint8_t *effective;
     size_t effective_len;
     strip_arbitration(data, len, &effective, &effective_len);
-
-    /* When the effective buffer is longer than a single minimum-size Modbus frame
-     * (4 bytes req + 4 bytes resp = 8 bytes minimum for two back-to-back frames)
-     * and its CRC is invalid as a whole (meaning it is not one single valid frame),
-     * attempt to split it into individual frames and process each one separately.
-     * This now applies even when the buffer begins with a Fast Modbus header.
-     *
-     * Rationale: a complete Fast Modbus exchange (master request + 0xFF arbitration
-     * + slave response, e.g. "FD 46 10 .." / "FF FF FF FF FF" / "FD 46 12 ..") can be
-     * captured as a single idle-delimited blob. This is especially common in
-     * transparent repeater mode, where bytes are forwarded with no enforced
-     * inter-frame gap, so the whole transaction arrives as one chunk. stream_split()
-     * understands Fast Modbus frame lengths (fm_expected_len) and recovers each
-     * embedded sub-frame.
-     *
-     * A genuine SINGLE Fast Modbus frame is never harmed: if its CRC is valid it is
-     * excluded here by the !crc_check(...) guard; if it is one truly-corrupted frame,
-     * the splitter returns nframes == 1 and we fall through to the normal path below.
-     *
-     * is_arb still excludes pure 0xFF arbitration noise: there is no embedded frame
-     * to split out of it. */
-    bool is_arb = (effective[0] == 0xFF);
-
-    /* NOTE: the recursive calls below must happen BEFORE taskENTER_CRITICAL.
-     * Moving this block inside the critical section would cause a spinlock
-     * deadlock because each recursive sniffer_process() call acquires the
-     * same portMUX. */
-    if (effective_len > 8 && !crc_check(effective, effective_len) && !is_arb) {
-        stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
-        int nframes = stream_split(effective, effective_len,
-                                   ctx->req_len >= 2 ? ctx->req_buf[0] : 0,
-                                   ctx->req_len >= 2 ? ctx->req_buf[1] : 0,
-                                   frames);
-        if (nframes > 1) {
-            /* Successfully split into multiple frames — process each individually */
-            for (int fi = 0; fi < nframes; fi++) {
-                sniffer_process(port_index, frames[fi].data, frames[fi].len);
-            }
-            return; /* original merged buffer fully handled */
-        }
-        /* nframes == 1: splitter found nothing useful, fall through to normal path */
-    }
 
     bool should_start_timer = false;
     bool should_stop_timer = false;
@@ -584,6 +550,94 @@ exit_critical:
     if (enqueue_req) try_enqueue(port_index, &req_pkt);
     if (enqueue_res) try_enqueue(port_index, &res_pkt);
     if (should_start_timer) xTimerStart(ctx->resp_timer, 0);
+}
+
+/*
+ * sniffer_process — public entry called from the serial RX callbacks.
+ *
+ * RS-485 is a trust boundary: the bytes on the wire are arbitrary. In gap-less
+ * (repeater / transparent) mode a single idle-delimited buffer can carry many
+ * valid back-to-back frames. stream_split() returns at most
+ * STREAM_SPLITTER_MAX_FRAMES frames per call (up to 15 parsed frames plus one
+ * trailing remainder holding everything it could not break up in that pass).
+ *
+ * A previous implementation recursed into sniffer_process() for every sub-frame,
+ * including that trailing remainder, producing ~len/15 nested calls on a long
+ * gap-less stream. Each level placed a stream_frame_t[16] array plus two
+ * sniff_packet_t (~1 KB total) on the 4 KB UART task stack and overflowed it after
+ * only a handful of levels, crashing the device.
+ *
+ * This version is iterative. It splits the current buffer, dispatches every
+ * resulting sub-frame to the non-recursive sniffer_process_frame(), and loops on
+ * the trailing remainder instead of recursing. Only the LAST frame returned by
+ * stream_split() can still need a further split (the broken-frame remainder or the
+ * defensive tail); all earlier frames are either CRC-valid frames or 0xFF
+ * arbitration runs, neither of which re-splits. The remainder is strictly shorter
+ * every iteration, so the loop terminates and stack usage stays constant.
+ */
+static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len)
+{
+    sniff_ctx_t *ctx = &sniff_ctx[port_index];
+
+    /* Run only when at least one reason (display and/or cache) is active. */
+    if (ctx->reasons == 0) return;
+    if (len < 4) return;
+
+    const uint8_t *cur     = data;
+    size_t         cur_len = len;
+
+    for (;;) {
+        /* Strip leading 0xFF arbitration bytes before deciding whether to split.
+         * For all-0xFF / non-FM buffers effective == cur and effective_len == cur_len. */
+        const uint8_t *effective;
+        size_t         effective_len;
+        strip_arbitration(cur, cur_len, &effective, &effective_len);
+
+        /* is_arb excludes pure 0xFF arbitration noise: there is no embedded frame to
+         * split out of it. A genuine single valid frame is excluded by the crc_check()
+         * guard. Only a multi-frame / corrupted blob is handed to stream_split(). */
+        bool is_arb = (effective[0] == 0xFF);
+        if (!(effective_len > 8 && !crc_check(effective, effective_len) && !is_arb)) {
+            /* Not a splittable blob — run the state machine on the whole buffer. */
+            sniffer_process_frame(port_index, cur, cur_len);
+            return;
+        }
+
+        stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
+        int nframes = stream_split(effective, effective_len,
+                                   ctx->req_len >= 2 ? ctx->req_buf[0] : 0,
+                                   ctx->req_len >= 2 ? ctx->req_buf[1] : 0,
+                                   frames);
+        if (nframes <= 1) {
+            /* Splitter found nothing useful — process the whole buffer as one frame. */
+            sniffer_process_frame(port_index, cur, cur_len);
+            return;
+        }
+
+        /* Only the LAST frame can be a remainder that still needs splitting. Detect it
+         * with the same predicate as the split guard above: long enough, not a 0xFF run,
+         * CRC invalid as a whole. */
+        int            last      = nframes - 1;
+        const uint8_t *tail_data = frames[last].data;
+        size_t         tail_len  = frames[last].len;
+        bool tail_needs_split = !frames[last].crc_valid &&
+                                tail_len > 8 &&
+                                tail_data[0] != 0xFF &&
+                                !crc_check(tail_data, tail_len);
+
+        int dispatch_count = tail_needs_split ? last : nframes;
+        for (int fi = 0; fi < dispatch_count; fi++) {
+            sniffer_process_frame(port_index, frames[fi].data, frames[fi].len);
+        }
+
+        if (!tail_needs_split) return;
+
+        /* Continue splitting the trailing remainder on the next loop iteration.
+         * tail_len < cur_len always (earlier frames consumed >= 1 byte), so this loop
+         * terminates. */
+        cur     = tail_data;
+        cur_len = tail_len;
+    }
 }
 
 static void sniffer_receive_cb_0(serial_desc_t *desc, uint8_t *data, size_t len)
