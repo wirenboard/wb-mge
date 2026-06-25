@@ -36,6 +36,7 @@ static const char* TAG = "indication";
 static status_led_ctx_t status_led_ctx = {0};
 static bool indication_initialized = false;
 static SemaphoreHandle_t ctx_mutex = NULL;
+static bool s_test_all_leds_on = false;     // factory-test override: force all indicator LEDs on
 
 
 static struct netif* get_netif(const char* key)
@@ -247,9 +248,21 @@ static void indication_task(void *arg)
     {
         TickType_t sys_time = xTaskGetTickCount();
 
-        status_led_control(sys_time);
-        ethernet_led_control(sys_time);
-        wifi_led_control(sys_time);
+        bool test_all_on;
+        xSemaphoreTake(ctx_mutex, portMAX_DELAY);
+        test_all_on = s_test_all_leds_on;
+        xSemaphoreGive(ctx_mutex);
+
+        if (test_all_on) {
+            // Factory-test override: drive all indicator LEDs on within one tick
+            leds_control_set_status_led(true);
+            leds_control_set_eth_led(true);
+            leds_control_set_wifi_led(true);
+        } else {
+            status_led_control(sys_time);
+            ethernet_led_control(sys_time);
+            wifi_led_control(sys_time);
+        }
 
         vTaskDelay(pdMS_TO_TICKS(LEDS_STATE_UPDATE_PERIOD_MS));
     }
@@ -309,5 +322,17 @@ void indication_status_led_blink_n_times(unsigned period_ms, unsigned count)
     status_led_ctx.count_blink_on_ms = period_ms / 2;
     status_led_ctx.count_blink_off_ms = period_ms - status_led_ctx.count_blink_on_ms;
     status_led_ctx.blink_counter = count;
+    xSemaphoreGive(ctx_mutex);
+}
+
+
+void indication_set_test_all_leds(bool on)
+{
+    if (!indication_initialized || !ctx_mutex) {
+        return;
+    }
+
+    xSemaphoreTake(ctx_mutex, portMAX_DELAY);
+    s_test_all_leds_on = on;
     xSemaphoreGive(ctx_mutex);
 }

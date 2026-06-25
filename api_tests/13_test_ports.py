@@ -8,6 +8,7 @@ import requests
 from urllib.parse import urlparse
 
 from sniffer_helpers import _ws_connect
+from io_bus_helpers import IoBus
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -77,6 +78,71 @@ def test_wb_test(api):
     finally:
         api.set_wb_test(original_clock_out)
         print(f"✓ clock_out restored to {original_clock_out}")
+
+
+@pytest.mark.qemu
+def test_wb_test_leds_coupling(api):
+    """clock_out factory test lights all front-panel LEDs and drives V-out.
+
+    Over the QEMU virtual IO bus we can observe the expander-driven LEDs:
+    E06 = V-out, E04 = WiFi LED (inverted, on == level 0), E05 = Eth LED
+    (inverted, on == 0), E07 = Status LED (non-inverted, on == 1).
+
+    The RS-485-1/RS-485-2 activity LEDs are tapped in hardware from the UART1/UART2
+    TX lines and are NOT observable over the QEMU IO bus (the 100 kHz LEDC signal
+    bypasses the gpio shim); they are verified on real hardware. As the observable
+    proxy for the RS-485-2 path, this test asserts that bridge port 2 (RS-485-2) is
+    switched to "disabled" while clock_out is on (freeing its UART2 TX pin) and is
+    restored to its baseline mode afterwards.
+    """
+    original = api.get_wb_test().json()["clock_out"]
+
+    with IoBus() as bus:
+        bus.pump(0.5)
+        # clock_out=false restores V-out to its configured state (not
+        # unconditionally off), so capture the baseline before the test.
+        vout_baseline = bus.get("E06")
+
+        # Baseline RS-485-2 port mode; clock_out must disable this port (to free
+        # its UART2 TX pin for the LEDC output) and restore it afterwards.
+        port2_baseline = api.get_info().json().get("rs485_2", {}).get("port_mode")
+
+        try:
+            response = api.set_wb_test(True)
+            assert response.status_code == 200, \
+                f"POST /wb_test clock_out=true expected 200, got {response.status_code}"
+
+            # Factory-test coupling: V-out (E06) and all indicator LEDs light up.
+            assert bus.wait_for("E06", 1, timeout=5.0), "clock_out=true must turn V-out (E06) on"
+            assert bus.wait_for("E07", 1, timeout=5.0), "clock_out=true must turn Status LED (E07) on"
+            assert bus.wait_for("E04", 0, timeout=5.0), "clock_out=true must turn WiFi LED (E04) on"
+            assert bus.wait_for("E05", 0, timeout=5.0), "clock_out=true must turn Eth LED (E05) on"
+            print("✓ clock_out=true lit V-out + indicator LEDs")
+
+            # clock_out frees the RS-485-2 UART2 TX pin (GPIO14) by disabling the port.
+            port2_during = api.get_info().json().get("rs485_2", {}).get("port_mode")
+            assert port2_during == "disabled", \
+                f"clock_out=true must disable RS-485-2 port, got {port2_during!r}"
+            print(f"✓ clock_out=true disabled RS-485-2 port (was {port2_baseline!r})")
+
+            response = api.set_wb_test(False)
+            assert response.status_code == 200, \
+                f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
+
+            # Symmetry: V-out must return to its pre-test configured state.
+            assert bus.wait_for("E06", vout_baseline, timeout=5.0), \
+                f"clock_out=false must restore V-out (E06) to baseline {vout_baseline}"
+            print(f"✓ clock_out=false restored V-out (E06) to baseline {vout_baseline}")
+
+            # RS-485-2 port mode must be restored to its pre-test baseline.
+            port2_after = api.get_info().json().get("rs485_2", {}).get("port_mode")
+            assert port2_after == port2_baseline, \
+                f"clock_out=false must restore RS-485-2 port to {port2_baseline!r}, got {port2_after!r}"
+            print(f"✓ clock_out=false restored RS-485-2 port to {port2_baseline!r}")
+
+        finally:
+            api.set_wb_test(original)
+            print(f"✓ clock_out restored to {original}")
 
 
 def test_sniffer_status(api):

@@ -614,7 +614,7 @@ paths:
 
   /wb_test:
     get:
-      summary: Get WB test status (only for internal use!)
+      summary: Get WB test status — clock signal and all front-panel LEDs (only for internal use!)
       responses:
         '200':
           description: Status
@@ -625,6 +625,9 @@ paths:
                 properties:
                   clock_out:
                     type: boolean
+                    description: >-
+                      Current state: when true, the 100 kHz test signal on RS485-1
+                      and all front-panel LEDs (Wi-Fi, Eth, Status, V-out) are active.
         '400':
           description: Bad request
           content:
@@ -640,7 +643,7 @@ paths:
         '401':
           $ref: '#/components/responses/UnauthorizedError'
     post:
-      summary: WB test control (only for internal use!)
+      summary: WB test control — clock signal and all front-panel LEDs (only for internal use!)
       requestBody:
         required: true
         content:
@@ -650,6 +653,10 @@ paths:
               properties:
                 clock_out:
                   type: boolean
+                  description: >-
+                    Enables the 100 kHz test signal on RS485-1 and simultaneously
+                    lights all front-panel LEDs (Wi-Fi, Eth, Status, V-out).
+                    Note: enabling V-out energises the RS-485 bus V-out output.
               required: [clock_out]
       responses:
         '200':
