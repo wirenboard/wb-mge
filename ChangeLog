@@ -1,3 +1,22 @@
+2026-06-25 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
+    * version:  1.3.0
+    * added:    Modbus sniffer — live RS-485 capture over WebSocket with slave/function-code facet filters, CSV export, error stats, and Fast Modbus decode
+    * added:    register map cache — auto-built from bus traffic and served over Modbus TCP, with value timeout, reset, and CSV/JSON export
+    * added:    transparent RS-485 repeater mode between Port 1 and Port 2 with dropped-byte and uptime counters
+    * added:    device-info registers served on Unit ID 255 over Modbus/Cache TCP
+    * added:    device register-map popup, failsafe/terminator hints, and value-timeout clamp in the web UI
+    * added:    factory-test LED override mode
+    * added:    QEMU end-to-end test harness — runs the real firmware in the ESP32 emulator and drives the live HTTP/Modbus-TCP/WebSocket APIs across ~50 e2e suites (auth, settings, ports, cache, sniffer, gateway, transparent bridge, repeater, OTA + NVS persistence, I/O bus)
+    * added:    QEMU virtual I/O state bus with transparent GPIO interception and extra emulated TCP/UART interfaces, enabling hardware-free integration tests
+    * added:    host unit tests for the new cache, sniffer, repeater, port-manager, mb_device, fast-Modbus and transparent-TCP modules, plus shared test utilities
+    * added:    firmware branch-coverage measurement in QEMU via a /gcov endpoint, with a combined unit + e2e coverage report
+    * change:   unified serial transport with additive sniffer/cache overlays (passive / tcp_bridge / disabled port modes)
+    * improve:  faster web UI via cached shell assets and removal of double-gzip
+    * improve:  CI runs lint, clang-tidy, Cyrillic-comment and unit-test stages in parallel with JUnit reporting
+    * fix:      accept application/macbinary firmware uploads from macOS browsers
+    * fix:      bound and back off bridge TCP-client reconnects; validate TCP/cache port collisions
+    * fix:      sniffer wall-clock timestamps, memory usage, and Fast Modbus frame splitting
+
 2026-05-18 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
     * version:  1.2.0
     * added:    redesigned UI with new design system and component updates
