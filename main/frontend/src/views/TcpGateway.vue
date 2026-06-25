@@ -209,6 +209,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
   "en": {
     "title": "TCP gateway",
     "crumbs": "TCP gateway settings",
+    "port": "Port",
     "port1_sub": "Wired terminal · left",
     "port2_sub": "Wired terminal · right + I/O bus",
     "port_1": "RS-485 · Port 1",
@@ -225,6 +226,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
   "ru": {
     "title": "TCP-шлюз",
     "crumbs": "Настройки TCP-шлюза",
+    "port": "Порт",
     "port1_sub": "Левый клеммник",
     "port2_sub": "Правый клеммник + I/O bus",
     "port_1": "RS-485 · Порт 1",
@@ -241,6 +243,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
   "kk": {
     "title": "TCP шлюзі",
     "crumbs": "TCP шлюзінің баптаулары",
+    "port": "Порт",
     "port1_sub": "Сымды клемма · сол",
     "port2_sub": "Сымды клемма · оң + I/O bus",
     "port_1": "RS-485 · Порт 1",
@@ -257,6 +260,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
   "it": {
     "title": "Gateway TCP",
     "crumbs": "Impostazioni gateway TCP",
+    "port": "Porta",
     "port1_sub": "Morsettiera · sinistra",
     "port2_sub": "Morsettiera · destra + I/O bus",
     "port_1": "RS-485 · Porta 1",
@@ -273,6 +277,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
   "de": {
     "title": "TCP-Gateway",
     "crumbs": "TCP-Gateway Einstellungen",
+    "port": "Port",
     "port1_sub": "Klemmenleiste · links",
     "port2_sub": "Klemmenleiste · rechts + I/O bus",
     "port_1": "RS-485 · Port 1",

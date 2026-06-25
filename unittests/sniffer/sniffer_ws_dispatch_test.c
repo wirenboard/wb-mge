@@ -37,6 +37,13 @@ extern uint8_t  mock_cache_multimaster_on_request_last_function;
 extern uint16_t mock_cache_multimaster_on_request_last_start_reg;
 extern uint16_t mock_cache_multimaster_on_request_last_count;
 extern int      mock_cache_multimaster_on_response_called;
+extern uint8_t  mock_cache_multimaster_on_response_last_port;
+extern uint8_t  mock_cache_multimaster_on_response_last_slave_id;
+extern uint8_t  mock_cache_multimaster_on_response_last_function;
+extern uint16_t mock_cache_multimaster_on_response_last_data_len;
+extern uint64_t mock_cache_multimaster_on_response_last_timestamp_us;
+extern uint8_t  mock_cache_multimaster_on_response_last_data[];
+extern bool     mock_cache_multimaster_on_response_last_data_null;
 extern int      mock_cache_multimaster_clear_pending_called;
 extern uint8_t  mock_cache_multimaster_clear_pending_last_port;
 
@@ -368,6 +375,164 @@ void test_ws_dispatch_master_write_clears_pending(void)
         "FC16 is not a cacheable read request");
 }
 
+/* ============================================================
+ * Helpers for the timeout-suppression / cache-response group
+ * ============================================================ */
+
+/* Build a MASTER read request packet for the given FC, with the 8 PDU bytes the
+ * request path needs (slave, fc, start_reg hi/lo, count hi/lo, +2 padding to data_len 8). */
+static sniff_packet_t make_master_read_request(uint8_t fc, bool is_timeout)
+{
+    sniff_packet_t pkt = {0};
+    pkt.port      = 0;
+    pkt.slave_id  = 7;
+    pkt.function  = fc;
+    pkt.is_master = true;
+    pkt.is_timeout = is_timeout;
+    pkt.crc_valid = true;
+    pkt.data_len  = 8;
+    pkt.data[0] = 7;  pkt.data[1] = fc;
+    pkt.data[2] = 0x00; pkt.data[3] = 0x10;  /* start_reg = 16 */
+    pkt.data[4] = 0x00; pkt.data[5] = 0x05;  /* count     = 5  */
+    pkt.data[6] = 0x00; pkt.data[7] = 0x00;
+    return pkt;
+}
+
+/* ============================================================
+ * TC-WS-13: a MASTER read request (FC01/02/03/04) with is_timeout==true is
+ * NOT fed to the cache request path. The timeout master frame falls through to
+ * the else branch (clear_pending), never to on_request (sniffer.c ~677).
+ * ============================================================ */
+
+void test_ws_dispatch_master_read_timeout_suppressed_all_fc(void)
+{
+    const uint8_t fcs[] = {0x01, 0x02, 0x03, 0x04};
+    for (unsigned i = 0; i < sizeof(fcs); i++) {
+        mock_cache_multimaster_reset();
+        mock_cache_multimaster_enabled = true;
+        sniffer_enable(0, SNIFF_REASON_CACHE);
+
+        sniff_packet_t pkt = make_master_read_request(fcs[i], /*is_timeout=*/true);
+        sniffer_ws_dispatch(&pkt);
+
+        TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_on_request_called,
+            "a timed-out master read must NOT be fed into the cache request path");
+        /* The timeout master frame is a transaction-ending event: it must clear the
+         * pending request instead (else branch, corr-7). */
+        TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_clear_pending_called,
+            "a timed-out master read must clear the pending request");
+        TEST_ASSERT_EQUAL(0, mock_cache_multimaster_on_response_called);
+    }
+}
+
+/* ============================================================
+ * TC-WS-14: the NON-timeout equivalent of TC-WS-13 IS fed to on_request.
+ * Same packet, is_timeout==false → on_request fires with decoded args, and the
+ * pending request is NOT cleared. Locks in the timeout flag as the only
+ * difference that suppresses the request feed.
+ * ============================================================ */
+
+void test_ws_dispatch_master_read_non_timeout_fed_all_fc(void)
+{
+    const uint8_t fcs[] = {0x01, 0x02, 0x03, 0x04};
+    for (unsigned i = 0; i < sizeof(fcs); i++) {
+        mock_cache_multimaster_reset();
+        mock_cache_multimaster_enabled = true;
+        sniffer_enable(0, SNIFF_REASON_CACHE);
+
+        sniff_packet_t pkt = make_master_read_request(fcs[i], /*is_timeout=*/false);
+        sniffer_ws_dispatch(&pkt);
+
+        TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_on_request_called,
+            "a non-timeout master read must be fed into the cache request path");
+        TEST_ASSERT_EQUAL(0, mock_cache_multimaster_on_request_last_port);
+        TEST_ASSERT_EQUAL(7, mock_cache_multimaster_on_request_last_slave_id);
+        TEST_ASSERT_EQUAL(fcs[i], mock_cache_multimaster_on_request_last_function);
+        TEST_ASSERT_EQUAL(16, mock_cache_multimaster_on_request_last_start_reg);
+        TEST_ASSERT_EQUAL(5, mock_cache_multimaster_on_request_last_count);
+        /* A normal read request does not end the transaction → no clear_pending. */
+        TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_clear_pending_called,
+            "a live read request must NOT clear the pending request");
+    }
+}
+
+/* ============================================================
+ * TC-WS-15: a SLAVE response with FC 0x01/0x02/0x03/0x04, valid CRC and
+ * data_len within range (>= 5) is forwarded verbatim to
+ * cache_multimaster_on_response() with the right slave/fc/data
+ * (sniffer.c ~685-690).
+ * ============================================================ */
+
+void test_ws_dispatch_slave_response_fed_all_read_fc(void)
+{
+    const uint8_t fcs[] = {0x01, 0x02, 0x03, 0x04};
+    for (unsigned i = 0; i < sizeof(fcs); i++) {
+        mock_cache_multimaster_reset();
+        mock_cache_multimaster_enabled = true;
+        sniffer_enable(0, SNIFF_REASON_CACHE);
+
+        /* Slave response: [slave][fc][byte_count][payload...][crc...]. data_len 7. */
+        sniff_packet_t pkt = {0};
+        pkt.port       = 0;
+        pkt.slave_id   = 9;
+        pkt.function   = fcs[i];
+        pkt.is_master  = false;
+        pkt.is_timeout = false;
+        pkt.crc_valid  = true;
+        pkt.timestamp_us = 0x1122334455667788ULL;
+        pkt.data_len   = 7;
+        pkt.data[0] = 9; pkt.data[1] = fcs[i]; pkt.data[2] = 0x02;
+        pkt.data[3] = 0xDE; pkt.data[4] = 0xAD; pkt.data[5] = 0xBE; pkt.data[6] = 0xEF;
+
+        sniffer_ws_dispatch(&pkt);
+
+        TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_on_response_called,
+            "a valid slave read response must be fed to on_response");
+        TEST_ASSERT_EQUAL(0, mock_cache_multimaster_on_response_last_port);
+        TEST_ASSERT_EQUAL(9, mock_cache_multimaster_on_response_last_slave_id);
+        TEST_ASSERT_EQUAL(fcs[i], mock_cache_multimaster_on_response_last_function);
+        TEST_ASSERT_EQUAL(7, mock_cache_multimaster_on_response_last_data_len);
+        TEST_ASSERT_EQUAL_HEX64(0x1122334455667788ULL,
+            mock_cache_multimaster_on_response_last_timestamp_us);
+        /* The exact packet bytes must be forwarded (right data). */
+        TEST_ASSERT_FALSE_MESSAGE(mock_cache_multimaster_on_response_last_data_null,
+            "on_response must receive a non-NULL data pointer");
+        TEST_ASSERT_EQUAL_HEX8_ARRAY(pkt.data,
+            mock_cache_multimaster_on_response_last_data, pkt.data_len);
+        /* A valid response is not a transaction-ending exception → no clear_pending. */
+        TEST_ASSERT_EQUAL(0, mock_cache_multimaster_clear_pending_called);
+    }
+}
+
+/* ============================================================
+ * TC-WS-16: a SLAVE response just below the minimum range (data_len < 5) is NOT
+ * treated as a cacheable response; it falls through to the else branch
+ * (clear_pending). Locks the data_len >= 5 lower bound of the response path.
+ * ============================================================ */
+
+void test_ws_dispatch_slave_response_below_min_len_not_fed(void)
+{
+    mock_cache_multimaster_enabled = true;
+    sniffer_enable(0, SNIFF_REASON_CACHE);
+
+    sniff_packet_t pkt = {0};
+    pkt.port       = 0;
+    pkt.slave_id   = 3;
+    pkt.function   = 0x04;
+    pkt.is_master  = false;
+    pkt.is_timeout = false;
+    pkt.crc_valid  = true;
+    pkt.data_len   = 4;            /* one byte short of the >= 5 minimum */
+    pkt.data[0] = 3; pkt.data[1] = 0x04; pkt.data[2] = 0x00; pkt.data[3] = 0x00;
+
+    sniffer_ws_dispatch(&pkt);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_on_response_called,
+        "a too-short slave response must NOT be fed to on_response");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_clear_pending_called,
+        "a too-short slave response ends the transaction → clear_pending");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -384,6 +549,10 @@ int main(void)
     RUN_TEST(test_ws_dispatch_timeout_clears_pending);
     RUN_TEST(test_ws_dispatch_valid_response_no_clear);
     RUN_TEST(test_ws_dispatch_master_write_clears_pending);
+    RUN_TEST(test_ws_dispatch_master_read_timeout_suppressed_all_fc);
+    RUN_TEST(test_ws_dispatch_master_read_non_timeout_fed_all_fc);
+    RUN_TEST(test_ws_dispatch_slave_response_fed_all_read_fc);
+    RUN_TEST(test_ws_dispatch_slave_response_below_min_len_not_fed);
 
     return UNITY_END();
 }

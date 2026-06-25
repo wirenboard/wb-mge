@@ -20,16 +20,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* ---- Modbus exception codes ---------------------------------------------- */
+/* ---- Modbus exception codes (aliases of the canonical modbus_helpers set) - */
 
-#define MB_DEV_EX_ILLEGAL_FUNCTION   0x01
-#define MB_DEV_EX_ILLEGAL_ADDRESS    0x02
-#define MB_DEV_EX_ILLEGAL_DATA_VALUE 0x03
+#define MB_DEV_EX_ILLEGAL_FUNCTION   MODBUS_EXC_ILLEGAL_FUNCTION
+#define MB_DEV_EX_ILLEGAL_ADDRESS    MODBUS_EXC_ILLEGAL_ADDRESS
+#define MB_DEV_EX_ILLEGAL_DATA_VALUE MODBUS_EXC_ILLEGAL_DATA_VALUE
 
-/* ---- Modbus function codes ----------------------------------------------- */
+/* ---- Modbus function codes (aliases of the canonical modbus_helpers set) -- */
 
-#define MB_DEV_FC_READ_HOLDING_REGS  0x03
-#define MB_DEV_FC_READ_INPUT_REGS    0x04
+#define MB_DEV_FC_READ_HOLDING_REGS  MODBUS_FC_READ_HOLDING_REGS
+#define MB_DEV_FC_READ_INPUT_REGS    MODBUS_FC_READ_INPUT_REGS
 
 /* ---- Modbus limits ------------------------------------------------------- */
 
@@ -395,20 +395,6 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
     return sizeof(mb_tcp_header_t) + 1u + (size_t)byte_count;
 }
 
-/* Build a Modbus exception ADU into buf and return its total wire length. */
-static size_t build_exception_adu(uint8_t *buf, uint16_t tid_net, uint8_t unit_id,
-                                  uint8_t fc, uint8_t exc)
-{
-    mb_tcp_header_t *h = (mb_tcp_header_t *)buf;
-    h->transaction_id = tid_net;          /* echoed verbatim (network order) */
-    h->protocol_id    = 0x0000;
-    h->length         = modbus_swap16(3); /* unit_id + (fc|0x80) + exc code  */
-    h->unit_id        = unit_id;
-    h->function       = (uint8_t)(fc | 0x80u);
-    buf[sizeof(mb_tcp_header_t)] = exc;
-    return sizeof(mb_tcp_header_t) + 1u;
-}
-
 size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
                                      uint16_t task_stack_size_bytes,
                                      uint8_t *resp_buf)
@@ -419,24 +405,25 @@ size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
     uint8_t  fc      = req_hdr->function;
 
     if (fc != MB_DEV_FC_READ_HOLDING_REGS && fc != MB_DEV_FC_READ_INPUT_REGS) {
-        return build_exception_adu(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_FUNCTION);
+        return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_FUNCTION);
     }
     if (req_len < sizeof(mb_tcp_header_t) + 4u) {
-        return build_exception_adu(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
     }
 
     const uint8_t *pdu = req + sizeof(mb_tcp_header_t);
-    uint16_t start = ((uint16_t)pdu[0] << 8) | pdu[1];
-    uint16_t count = ((uint16_t)pdu[2] << 8) | pdu[3];
+    uint16_t start = 0;
+    uint16_t count = 0;
+    modbus_pdu_parse_read_request(pdu, &start, &count);
     if (count < 1u || count > MB_DEV_MAX_REGISTERS) {
-        return build_exception_adu(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
     }
 
     uint8_t exc = MB_DEV_EX_ILLEGAL_ADDRESS;
     size_t rlen = mb_device_build_read_response(unit_id, fc, tid, start, count,
                                                 task_stack_size_bytes, resp_buf, &exc);
     if (rlen == 0) {
-        return build_exception_adu(resp_buf, tid, unit_id, fc, exc);
+        return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, exc);
     }
     return rlen;
 }

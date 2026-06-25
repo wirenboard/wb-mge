@@ -262,10 +262,11 @@ static void tcp_client_task(void *pvParameters)
         close_socket(desc->last_client_sock);
         desc->last_client_sock = -1;
         delay_until_exit_req(desc, pdMS_TO_TICKS(reconnect_delay_ms));
-        // Reset to 0 rather than decrement: only one client task writes this field.
-        // Plain store is safe on ESP32: internal SRAM is shared (no per-core data cache),
-        // so the write is immediately visible to concurrent readers without a memory barrier.
-        desc->active_connections = 0;
+        // Reset to 0 rather than decrement: only one client task writes this field,
+        // so the single-writer property holds. Use an atomic store (matching the
+        // __atomic_fetch_add above and the __ATOMIC_SEQ_CST invariant documented in
+        // tcp_desc.h) to keep the access discipline on this field uniform.
+        __atomic_store_n(&desc->active_connections, 0, __ATOMIC_SEQ_CST);
     }
 
     ESP_LOGI(TAG, "TCP client task finished");

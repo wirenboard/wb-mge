@@ -91,18 +91,6 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
     return 0;
 }
 
-esp_err_t bridge_disable_port(unsigned index)
-{
-    (void)index;
-    return ESP_OK;
-}
-
-esp_err_t bridge_enable_port(unsigned index)
-{
-    (void)index;
-    return ESP_OK;
-}
-
 void mock_bridge_reset(void)
 {
     memset(mock_bridge_calls, 0, sizeof(mock_bridge_calls));

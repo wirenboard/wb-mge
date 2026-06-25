@@ -9,6 +9,7 @@ import { api } from '@/utils/api';
 import { avgBytesPerSec as computeAvgBytesPerSec, groupBytes, formatBytes, formatUptime, lineParams } from '@/views/repeaterFormat';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
+import RepeaterWarnIcon from '@/assets/repeaterWarnIcon.svg?component';
 
 const { t } = useI18n();
 const { initData: savedSettings } = useSettings();
@@ -71,19 +72,7 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
       <!-- Warning: both segments behave as electrically connected -->
       <div class="rep-banner">
         <div class="rep-banner-icon">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M8 2l6.5 11.5a1 1 0 0 1-.87 1.5H2.37a1 1 0 0 1-.87-1.5z" />
-            <path d="M8 6.5v3.5M8 12.3v.2" />
-          </svg>
+          <RepeaterWarnIcon />
         </div>
         <div>
           <div class="rep-banner-title">{{ t('warning_title') }}</div>

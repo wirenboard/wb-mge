@@ -194,3 +194,21 @@ size_t modbus_tcp_from_rtu(uint16_t transaction_id, const uint8_t *data, size_t 
 
     return tcp_len;
 }
+
+size_t modbus_pdu_build_exception(uint8_t *buf, uint16_t tid_net, uint8_t unit_id, uint8_t fc, uint8_t exc)
+{
+    mb_tcp_header_t *h = (mb_tcp_header_t *)buf;
+    h->transaction_id = tid_net;                          /* echoed verbatim (network order) */
+    h->protocol_id    = modbus_swap16(MODBUS_TCP_PROTOCOL_ID);
+    h->length         = modbus_swap16(3);                 /* unit_id + (fc|0x80) + exc code  */
+    h->unit_id        = unit_id;
+    h->function       = (uint8_t)(fc | MODBUS_EXCEPTION_FLAG);
+    buf[sizeof(mb_tcp_header_t)] = exc;
+    return sizeof(mb_tcp_header_t) + 1u;
+}
+
+void modbus_pdu_parse_read_request(const uint8_t *pdu, uint16_t *start_addr, uint16_t *count)
+{
+    *start_addr = ((uint16_t)pdu[0] << 8) | pdu[1];
+    *count      = ((uint16_t)pdu[2] << 8) | pdu[3];
+}

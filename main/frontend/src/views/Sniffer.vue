@@ -347,20 +347,21 @@ onUnmounted(() => {
   }
 });
 
-function byteRoleStyle(role: ByteRole) {
+// Map a byte role to a scoped BEM class. The actual (static) colors/padding live in CSS
+// under `.byte-role*` so no inline static styles are emitted here.
+function byteRoleClass(role: ByteRole): string {
   switch (role) {
-    case 'address': return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' };
-    case 'fc': return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' };
-    case 'subcommand': return { color: '#fff', background: 'var(--mb-hex-slot)', padding: '1px 4px', borderRadius: '3px' };
-    case 'serial': return { color: '#fff', background: 'var(--mb-master)', padding: '1px 4px', borderRadius: '3px' };
-    case 'crc': return { color: 'var(--mb-hex-crc)' };
-    case 'data': return { color: 'var(--mb-data)' };
-    case 'arbitration': return { color: 'var(--text-muted)', fontWeight: '400' };
-    // FM wrapper "not real" fields — same hue but paler background
-    case 'fm-addr': return { color: '#fff', background: 'color-mix(in oklch, var(--mb-master) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' };
-    case 'fm-ext': return { color: '#fff', background: 'color-mix(in oklch, var(--mb-hex-slot) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' };
-    case 'fm-subcommand': return { color: '#fff', background: 'color-mix(in oklch, var(--mb-hex-slot) 45%, transparent)', padding: '1px 4px', borderRadius: '3px' };
-    default: return { color: 'var(--mb-data)' };
+    case 'address': return 'byte-roleAddress';
+    case 'fc': return 'byte-roleFc';
+    case 'subcommand': return 'byte-roleSubcommand';
+    case 'serial': return 'byte-roleSerial';
+    case 'crc': return 'byte-roleCrc';
+    case 'data': return 'byte-roleData';
+    case 'arbitration': return 'byte-roleArbitration';
+    case 'fm-addr': return 'byte-roleFmAddr';
+    case 'fm-ext': return 'byte-roleFmExt';
+    case 'fm-subcommand': return 'byte-roleFmSubcommand';
+    default: return 'byte-roleData';
   }
 }
 
@@ -534,10 +535,10 @@ Port {{ p }}
         <div class="facet-section">
           <div class="facet-section-header">
             <div>
-              <div class="facet-section-title">Slave ID</div>
+              <div class="facet-section-title">{{ t('facet_slave_id') }}</div>
               <div class="facet-section-hint">{{ activeSlaves.length }} seen · {{ selectedSlaves.size || 'all' }} selected</div>
             </div>
-            <button class="facet-clear" :style="{ visibility: selectedSlaves.size > 0 ? 'visible' : 'hidden' }" @click="selectedSlaves = new Set()">clear</button>
+            <button class="facet-clear" :style="{ visibility: selectedSlaves.size > 0 ? 'visible' : 'hidden' }" @click="selectedSlaves = new Set()">{{ t('clear') }}</button>
           </div>
           <button
             v-for="slave in activeSlaves" :key="slave"
@@ -563,10 +564,10 @@ Port {{ p }}
         <div class="facet-section">
           <div class="facet-section-header">
             <div>
-              <div class="facet-section-title">Function code</div>
+              <div class="facet-section-title">{{ t('facet_function_code') }}</div>
               <div class="facet-section-hint">{{ activeFcs.length }} seen · {{ selectedFcs.size || 'all' }} selected</div>
             </div>
-            <button class="facet-clear" :style="{ visibility: selectedFcs.size > 0 ? 'visible' : 'hidden' }" @click="selectedFcs = new Set()">clear</button>
+            <button class="facet-clear" :style="{ visibility: selectedFcs.size > 0 ? 'visible' : 'hidden' }" @click="selectedFcs = new Set()">{{ t('clear') }}</button>
           </div>
           <button
             v-for="code in activeFcs" :key="code"
@@ -596,14 +597,14 @@ Port {{ p }}
           <thead>
             <tr>
               <th class="col-id">#</th>
-              <th class="col-time">Time</th>
+              <th class="col-time">{{ t('col_time') }}</th>
               <th class="col-dt">&Delta;t</th>
               <th class="col-sender">{{ t('col_sender') }}</th>
-              <th class="col-slave">Slave</th>
-              <th class="col-fc">Function</th>
-              <th class="col-payload">Payload</th>
-              <th class="col-bytes">Bytes</th>
-              <th class="col-crc">CRC</th>
+              <th class="col-slave">{{ t('col_slave') }}</th>
+              <th class="col-fc">{{ t('col_function') }}</th>
+              <th class="col-payload">{{ t('col_payload') }}</th>
+              <th class="col-bytes">{{ t('col_bytes') }}</th>
+              <th class="col-crc">{{ t('col_crc') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -626,8 +627,7 @@ Port {{ p }}
                 <span class="hex-payload">
                   <span
                     v-for="(b, i) in r.hexBytes" :key="i"
-                    class="hex-byte"
-                    :style="byteRoleStyle(r.roles[i] ?? 'unknown')"
+                    :class="['hex-byte', byteRoleClass(r.roles[i] ?? 'unknown')]"
                   >{{ b }}</span>
                 </span>
               </td>
@@ -1085,6 +1085,52 @@ Port {{ p }}
   display: inline-block;
 }
 
+/* Per-byte semantic role styling (static colors extracted from byteRoleStyle) */
+.byte-roleAddress,
+.byte-roleSerial {
+  color: #fff;
+  background: var(--mb-master);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.byte-roleFc,
+.byte-roleSubcommand {
+  color: #fff;
+  background: var(--mb-hex-slot);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.byte-roleCrc {
+  color: var(--mb-hex-crc);
+}
+
+.byte-roleData {
+  color: var(--mb-data);
+}
+
+.byte-roleArbitration {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* FM wrapper "not real" fields — same hue but paler background */
+.byte-roleFmAddr {
+  color: #fff;
+  background: color-mix(in oklch, var(--mb-master) 45%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.byte-roleFmExt,
+.byte-roleFmSubcommand {
+  color: #fff;
+  background: color-mix(in oklch, var(--mb-hex-slot) 45%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
 /* CRC */
 .crc-err {
   color: var(--mb-err);
@@ -1137,9 +1183,14 @@ Port {{ p }}
     "errors": "errors",
     "col_time": "Time",
     "col_sender": "Sender",
+    "col_slave": "Slave",
+    "col_function": "Function",
     "col_fc": "Function code",
-    "col_payload": "Payload (HEX)",
+    "col_payload": "Payload",
     "col_bytes": "Bytes",
+    "col_crc": "CRC",
+    "facet_slave_id": "Slave ID",
+    "facet_function_code": "Function code",
     "parsed": "Parsed",
     "start_addr": "Starting address",
     "quantity": "Quantity",
@@ -1161,9 +1212,14 @@ Port {{ p }}
     "errors": "ошибок",
     "col_time": "Время",
     "col_sender": "Отправитель",
+    "col_slave": "Slave",
+    "col_function": "Функция",
     "col_fc": "Код функции",
-    "col_payload": "Payload (HEX)",
+    "col_payload": "Payload",
     "col_bytes": "Байт",
+    "col_crc": "CRC",
+    "facet_slave_id": "Slave ID",
+    "facet_function_code": "Код функции",
     "parsed": "Разобрано",
     "start_addr": "Начальный адрес",
     "quantity": "Количество",
@@ -1185,9 +1241,14 @@ Port {{ p }}
     "errors": "қате",
     "col_time": "Уақыт",
     "col_sender": "Жіберуші",
+    "col_slave": "Slave",
+    "col_function": "Функция",
     "col_fc": "Функция коды",
-    "col_payload": "Payload (HEX)",
+    "col_payload": "Payload",
     "col_bytes": "Байт",
+    "col_crc": "CRC",
+    "facet_slave_id": "Slave ID",
+    "facet_function_code": "Функция коды",
     "parsed": "Талданған",
     "start_addr": "Бастапқы адрес",
     "quantity": "Саны",
@@ -1209,9 +1270,14 @@ Port {{ p }}
     "errors": "errori",
     "col_time": "Ora",
     "col_sender": "Mittente",
+    "col_slave": "Slave",
+    "col_function": "Funzione",
     "col_fc": "Codice funzione",
-    "col_payload": "Payload (HEX)",
+    "col_payload": "Payload",
     "col_bytes": "Byte",
+    "col_crc": "CRC",
+    "facet_slave_id": "Slave ID",
+    "facet_function_code": "Codice funzione",
     "parsed": "Analizzato",
     "start_addr": "Indirizzo iniziale",
     "quantity": "Quantità",
@@ -1233,9 +1299,14 @@ Port {{ p }}
     "errors": "Fehler",
     "col_time": "Zeit",
     "col_sender": "Absender",
+    "col_slave": "Slave",
+    "col_function": "Funktion",
     "col_fc": "Funktionscode",
-    "col_payload": "Payload (HEX)",
+    "col_payload": "Payload",
     "col_bytes": "Bytes",
+    "col_crc": "CRC",
+    "facet_slave_id": "Slave-ID",
+    "facet_function_code": "Funktionscode",
     "parsed": "Analysiert",
     "start_addr": "Startadresse",
     "quantity": "Anzahl",

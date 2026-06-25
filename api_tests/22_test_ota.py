@@ -142,6 +142,34 @@ def test_ota_wrong_content_type(api, firmware_bytes):
     )
 
 
+def test_ota_macbinary_content_type_accepted(api, firmware_bytes):
+    """Content-Type 'application/macbinary' must NOT be rejected as unsupported.
+
+    Regression for ota_handler.c ota_is_valid_content_type(), which accepts both
+    'application/octet-stream' and 'application/macbinary' (macOS browsers may
+    send the latter when downloading a .bin firmware blob). A regression that
+    dropped macbinary support would reject the upload with the "Invalid content
+    type" error.
+
+    To avoid actually flashing, we send a body shorter than the wb_app_desc head.
+    With macbinary accepted, the request progresses PAST the content-type check
+    and is instead aborted later for the short body — so the response error must
+    be the short-body/upload error, NOT "Invalid content type". This proves the
+    content-type gate let macbinary through.
+    """
+    short = firmware_bytes[: MIN_VALID_HEAD_LEN - 1]
+    resp = _post_update(api, short, content_type="application/macbinary")
+    assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text!r}"
+    body = resp.json()
+    assert body.get("success") is False
+    # The defining assertion: macbinary was accepted, so the failure reason is
+    # NOT the content-type rejection.
+    error = body.get("error", "").lower()
+    assert "content type" not in error, (
+        f"macbinary Content-Type was wrongly rejected as unsupported: {body.get('error')!r}"
+    )
+
+
 def test_ota_short_body_no_app_desc(api, firmware_bytes):
     """Body smaller than 480 bytes (WB_APP_DESC_OFFSET + WB_APP_DESC_SIZE) → error.
 

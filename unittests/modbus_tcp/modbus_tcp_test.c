@@ -2,9 +2,11 @@
 #include "console_log.h"
 
 #include "modbus_tcp_internal.h"
+#include "mb_device.h"
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ---- Mock state from mocks/tcp_server.c (R2) ----------------------------- */
@@ -31,6 +33,15 @@ extern int             mock_pq_push_count;
 extern esp_err_t       mock_pq_push_result;
 void mock_packet_queue_reset(void);
 
+/* ---- Mock state from mocks/mb_device.c ---------------------------------- */
+extern int     mock_mb_device_handle_self_count;
+extern uint8_t mock_mb_device_handle_self_unit;
+void mock_mb_device_reset(void);
+
+/* ---- Mock state from mocks/serial.c ------------------------------------- */
+extern int mock_serial_send_count;
+void mock_serial_reset(void);
+
 /* ---- Context index used by all tests ------------------------------------ */
 #define TEST_CTX_IDX 0
 
@@ -42,6 +53,8 @@ void setUp(void)
 {
     mock_packet_queue_reset();
     mock_tcp_server_reset();
+    mock_mb_device_reset();
+    mock_serial_reset();
     modbus_tcp_test_init_ctx(TEST_CTX_IDX, (packet_queue_handle)1, &s_test_tcp_desc);
 }
 
@@ -714,6 +727,165 @@ void test_reasm_get_full_table_no_overrun(void)
         "no slot for sock 0 must exist after rejected full-table probe");
 }
 
+/* ---- MBTCP-U-027: one-pass fallback — short trailing fragment, no OOB read -- */
+/* separate_and_push_one_pass() casts &data[pos] to mb_tcp_header_t* and reads
+ * header->length, which lives in the first offsetof(unit_id)=6 bytes. A trailing
+ * fragment shorter than 6 bytes cannot contain a full MBAP length field, so the
+ * length guard must break before that cast/read (avoiding an out-of-bounds read
+ * past the logical input). Only the complete leading frame must be processed. */
+void test_one_pass_fallback_short_trailing_fragment(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-027: one-pass fallback: complete frame + <6-byte tail -> only frame pushed, no OOB read");
+    LOG_MESSAGE();
+
+    /* Fill all 8 reassembly slots so that socket 9 falls back to one-pass. */
+    for (int i = 1; i <= 8; i++) {
+        modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
+    }
+
+    /* One complete 8-byte frame (MBAP length = 2 -> total = 8) followed by a
+     * 4-byte trailing fragment, for 12 bytes total. The fragment is shorter than
+     * the 6-byte MBAP length field, so without the guard the loop would cast the
+     * fragment to mb_tcp_header_t and read header->length from bytes 4..5 of the
+     * fragment, i.e. input offsets 12..13 — past the buffer (OOB read).
+     *
+     * The buffer is heap-allocated and sized exactly to the input length so that
+     * the stray read lands past the allocation: under an AddressSanitizer build
+     * the unguarded code triggers a heap-buffer-overflow (the guard removes it),
+     * giving a real Red/Green signal. Under a plain build the read is harmless
+     * but the count assertions below still pin the correct behaviour. */
+    const size_t in_len = 12;
+    uint8_t     *buf    = (uint8_t *)malloc(in_len);
+    TEST_ASSERT_NOT_NULL_MESSAGE(buf, "malloc for input buffer must succeed");
+
+    /* Complete frame [0..7]. */
+    buf[0] = 0x00; buf[1] = 0x05;   /* txid */
+    buf[2] = 0x00; buf[3] = 0x00;   /* protocol_id = 0 */
+    buf[4] = 0x00; buf[5] = 0x02;   /* MBAP length = 2 -> total = 8 */
+    buf[6] = 0x01;                   /* unit_id */
+    buf[7] = 0x03;                   /* FC03 */
+    /* Trailing fragment [8..11] — only 4 bytes, no full MBAP length field. */
+    buf[8] = 0x00; buf[9] = 0x06; buf[10] = 0x00; buf[11] = 0x00;
+
+    /* Push 12 bytes: one complete frame + a 4-byte tail (table full -> one-pass). */
+    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 9, buf, in_len);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed,
+        "only the one complete leading frame must be pushed; short tail must not be processed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count,
+        "push_with_client must be called exactly once (short trailing fragment ignored)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8u, mock_pq_packets[0].len,
+        "pushed frame length must be the 8-byte complete frame");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(9, mock_pq_packets[0].sock,
+        "pushed frame must carry client sock 9");
+
+    free(buf);
+}
+
+/* ---- MBTCP-U-028: Unit ID 0xFF dispatched to local self-device handler --- */
+/* A request addressed to the gateway itself (Unit ID 0xFF) must be recognized
+ * by mb_device_is_self() and answered locally via the self-device handler
+ * (mb_device_handle_self_request + tcp_server_send back to the client), NOT
+ * forwarded to RS485. Regression for modbus_tcp.c's self-device dispatch
+ * branch in modbus_tcp_server_task(). */
+void test_self_device_unit_ff_dispatched_locally(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-028: Unit ID 0xFF -> local self-device handler, replied to client, not RS485");
+    LOG_MESSAGE();
+
+    /* Build a 12-byte FC03 request addressed to the gateway itself (unit 0xFF). */
+    uint8_t req[12];
+    build_fc03_request(req, 0x00AB, 0xFF, 0, 1);
+
+    /* Precondition: 0xFF is recognized as the gateway's own unit id. */
+    TEST_ASSERT_TRUE_MESSAGE(mb_device_is_self(req[6]),
+        "Unit ID 0xFF must be recognized as self-device");
+
+    /* Dispatch via the production self-device handler for client sock 77. */
+    modbus_tcp_test_handle_self_device_request(TEST_CTX_IDX, 77, req, sizeof(req));
+
+    /* The local self-request handler must have been invoked exactly once... */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_mb_device_handle_self_count,
+        "mb_device_handle_self_request must be called once for the self path");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xFF, mock_mb_device_handle_self_unit,
+        "self handler must receive the 0xFF unit id");
+
+    /* ...and the locally built response must be sent back to the originating
+     * client (sock 77) rather than forwarded to the serial bus. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(77, mock_tcp_send_sock,
+        "self-device response must be sent back to the requesting client sock");
+    TEST_ASSERT_GREATER_THAN_size_t_MESSAGE(0u, mock_tcp_send_len,
+        "a non-empty self-device response must be sent");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xFF, mock_tcp_send_buf[6],
+        "self-device response ADU must carry unit id 0xFF");
+
+    /* The self path must NOT forward anything to RS485. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_serial_send_count,
+        "self-device request must not be forwarded to RS485 (serial_send)");
+}
+
+/* ---- MBTCP-U-029: on_tcp_conn_close resets stale in-flight RTU state ----- */
+/* When the client that issued the currently pending RTU request disconnects,
+ * on_tcp_conn_close() must clear pending_tid / pending_slave_id and set
+ * pending_client_sock back to -1. Otherwise the next client could receive a
+ * response stamped with the disconnected client's transaction id, or the RTU
+ * response could be sent to a reused fd (wrong client). Regression for the
+ * stale-pending-reset block in on_tcp_conn_close(). */
+void test_conn_close_resets_pending_for_in_flight_client(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-029: disconnect of the in-flight client clears pending tid/slave/sock");
+    LOG_MESSAGE();
+
+    /* Seed an in-flight RTU request from client sock 88. */
+    modbus_tcp_test_set_pending(TEST_CTX_IDX, 0x1234, 0x07, 88);
+    TEST_ASSERT_EQUAL_HEX16(0x1234, modbus_tcp_test_get_pending_tid(TEST_CTX_IDX));
+    TEST_ASSERT_EQUAL_INT(88, modbus_tcp_test_get_pending_client_sock(TEST_CTX_IDX));
+
+    /* The in-flight client disconnects. */
+    modbus_tcp_test_conn_close(TEST_CTX_IDX, 88);
+
+    /* All pending bookkeeping must be cleared so no stale TID leaks to the next
+     * client and no RTU response targets a reused fd. */
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0, modbus_tcp_test_get_pending_tid(TEST_CTX_IDX),
+        "pending_tid must be cleared after the in-flight client disconnects");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, modbus_tcp_test_get_pending_slave_id(TEST_CTX_IDX),
+        "pending_slave_id must be cleared after the in-flight client disconnects");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, modbus_tcp_test_get_pending_client_sock(TEST_CTX_IDX),
+        "pending_client_sock must be reset to -1 after the in-flight client disconnects");
+}
+
+/* ---- MBTCP-U-030: on_tcp_conn_close keeps pending for a different client -- */
+/* If a DIFFERENT client (not the in-flight one) disconnects, the pending state
+ * for the still-active in-flight request must be left untouched. Guards against
+ * over-eager clearing that would drop a legitimate in-flight request. */
+void test_conn_close_keeps_pending_for_other_client(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-030: disconnect of an unrelated client must NOT clear pending state");
+    LOG_MESSAGE();
+
+    /* In-flight request belongs to sock 88. */
+    modbus_tcp_test_set_pending(TEST_CTX_IDX, 0x1234, 0x07, 88);
+
+    /* A different client (sock 99) disconnects. */
+    modbus_tcp_test_conn_close(TEST_CTX_IDX, 99);
+
+    /* Pending bookkeeping for sock 88 must be preserved. */
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x1234, modbus_tcp_test_get_pending_tid(TEST_CTX_IDX),
+        "pending_tid must be preserved when an unrelated client disconnects");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x07, modbus_tcp_test_get_pending_slave_id(TEST_CTX_IDX),
+        "pending_slave_id must be preserved when an unrelated client disconnects");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(88, modbus_tcp_test_get_pending_client_sock(TEST_CTX_IDX),
+        "pending_client_sock must be preserved when an unrelated client disconnects");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -756,6 +928,12 @@ int main(void)
 
     RUN_TEST(test_push_exact_header_size_frame);
     RUN_TEST(test_reasm_get_full_table_no_overrun);
+
+    RUN_TEST(test_one_pass_fallback_short_trailing_fragment);
+
+    RUN_TEST(test_self_device_unit_ff_dispatched_locally);
+    RUN_TEST(test_conn_close_resets_pending_for_in_flight_client);
+    RUN_TEST(test_conn_close_keeps_pending_for_other_client);
 
     return UNITY_END();
 }

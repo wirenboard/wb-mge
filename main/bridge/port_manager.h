@@ -76,7 +76,7 @@ pm_mode_t port_manager_get_mode(unsigned port_index);
  * @brief Convert a pm_mode_t value to its NVS/JSON string representation.
  *
  * @param mode  Mode value.
- * @return Pointer to a constant string ("disabled", "tcp_bridge", "passive"),
+ * @return Pointer to a constant string ("disabled", "tcp_bridge", "passive", "repeater"),
  *         or "unknown" for unrecognised values.
  */
 const char *port_manager_mode_to_str(pm_mode_t mode);

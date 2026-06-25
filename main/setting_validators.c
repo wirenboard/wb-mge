@@ -277,6 +277,26 @@ bool validate_bridge_mode(const char *value)
     return false;
 }
 
+bool validate_port_mode(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+    if (strncmp(value, PORT_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    if (strncmp(value, PORT_MODE_TCP_BRIDGE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    if (strncmp(value, PORT_MODE_PASSIVE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    if (strncmp(value, PORT_MODE_REPEATER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    return false;
+}
+
 bool validate_bool(const char *value)
 {
     if (!value) {

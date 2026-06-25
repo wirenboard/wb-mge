@@ -833,6 +833,10 @@ paths:
                   packets_processed:
                     type: integer
                     minimum: 0
+                  entries_dropped:
+                    type: integer
+                    minimum: 0
+                    description: "Number of register values dropped because the cache pool was full"
                   last_packet_age_us:
                     type: integer
                     minimum: 0
@@ -848,6 +852,7 @@ paths:
                 max_entries: 1024
                 slaves: 3
                 packets_processed: 1000
+                entries_dropped: 7
                 last_packet_age_us: 500000
                 map_age_us: 1200000
                 memory_bytes: 4096
@@ -963,6 +968,104 @@ paths:
                     enum: ["disabled", "tcp_bridge", "passive", "repeater"]
               example:
                 mode: "repeater"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /ports/{port_number}/send:
+    post:
+      summary: Send raw bytes out the serial port
+      description: >
+        Transmits a raw byte frame out of the given serial port.
+        The payload is supplied as a hex string (two hex characters per byte).
+        Maximum frame length is 256 bytes (512 hex characters).
+      parameters:
+        - name: port_number
+          in: path
+          required: true
+          description: "Port number (1 or 2)"
+          schema:
+            type: integer
+            enum: [1, 2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hex:
+                  type: string
+                  pattern: '^([0-9A-Fa-f]{2})*$'
+                  maxLength: 512
+                  description: "Bytes to send, encoded as an even-length hex string (max 256 bytes / 512 hex characters)"
+              required: [hex]
+            example:
+              hex: "01030000000A"
+      responses:
+        '200':
+          description: Bytes sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: integer
+                    minimum: 0
+                    description: "Number of bytes transmitted"
+              example:
+                sent: 6
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /ports/{port_number}/cache:
+    post:
+      summary: Toggle the Modbus cache overlay for the port
+      parameters:
+        - name: port_number
+          in: path
+          required: true
+          description: "Port number (1 or 2)"
+          schema:
+            type: integer
+            enum: [1, 2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                  description: "Enable or disable the cache overlay for this port"
+              required: [enabled]
+            example:
+              enabled: true
+      responses:
+        '200':
+          description: Cache overlay state updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cache_enabled:
+                    type: boolean
+              example:
+                cache_enabled: true
         '400':
           description: Bad request
           content:

@@ -428,3 +428,12 @@ esp_err_t hostname_get_handler(httpd_req_t *req)
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;
 }
+
+#ifdef __unittest_env__
+/* Thin shim exposing the static AP-clients JSON builder for unit tests, so the
+ * wifi_perm_disable early-return branch can be exercised without an HTTP request. */
+esp_err_t info_handlers_test_build_ap_clients_json(cJSON **clients_json)
+{
+    return info_build_ap_clients_json(clients_json);
+}
+#endif /* __unittest_env__ */

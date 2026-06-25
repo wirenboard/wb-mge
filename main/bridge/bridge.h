@@ -29,9 +29,6 @@ bool bridge_port_check_settings_changed(unsigned index);
 
 int tcp_server_active_connections(tcp_server_num_t server_num);
 
-esp_err_t bridge_disable_port(unsigned index);
-esp_err_t bridge_enable_port(unsigned index);
-
 // Initialize only the serial port for the given bridge index, without any TCP layer.
 // Reads serial config from NVS (baudrate/parity/stopbits/databits).
 // Returns serial_desc via out parameter.

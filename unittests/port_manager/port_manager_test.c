@@ -212,6 +212,59 @@ void test_set_mode_passive_serial_fail(void)
     TEST_ASSERT_EQUAL(1, mock_bridge_calls[0].bridge_port_init_serial_only_called);
 }
 
+/* persist-2 + rollback double-failure: switching to a new mode whose init fails
+ * AND whose rollback to the previous mode ALSO fails must leave the port DISABLED,
+ * keep NVS at the previous mode (no save happens on a failed init), and return the
+ * (error) status. Drives both legs by failing two distinct bridge init routes:
+ *   - new mode  PM_MODE_TCP_BRIDGE → bridge_port_init()             (fails)
+ *   - prev mode PM_MODE_PASSIVE    → bridge_port_init_serial_only() (fails on rollback)
+ * (port_manager.c set_mode rollback ~482-493.) */
+void test_set_mode_double_init_failure_leaves_disabled(void)
+{
+    /* Establish a working PASSIVE mode first (NVS = passive, runtime = PASSIVE). */
+    esp_err_t ok = port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, ok);
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, mock_setting_items_get_port_mode(0));
+
+    /* Snapshot counters so we can assert the failed switch in isolation
+     * (the setup set_mode above already incremented serial_only init once). */
+    int saves_before              = mock_setting_items_save_called;
+    int bridge_init_before        = mock_bridge_calls[0].bridge_port_init_called;
+    int serial_only_init_before   = mock_bridge_calls[0].bridge_port_init_serial_only_called;
+
+    /* Fail BOTH init routes: the new TCP_BRIDGE init and the PASSIVE rollback. */
+    mock_bridge_port_init_should_fail             = true;  /* kills TCP_BRIDGE init  */
+    mock_bridge_port_init_serial_only_should_fail = true;  /* kills PASSIVE rollback */
+
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
+
+    /* set_mode must surface the (error) status from the failed new-mode init. */
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, ret,
+        "a double-failure set_mode must return the failed-init error status");
+
+    /* Both legs must actually have been attempted exactly once during the switch. */
+    TEST_ASSERT_EQUAL_MESSAGE(bridge_init_before + 1,
+        mock_bridge_calls[0].bridge_port_init_called,
+        "the new mode's init (bridge_port_init) must have been attempted");
+    TEST_ASSERT_EQUAL_MESSAGE(serial_only_init_before + 1,
+        mock_bridge_calls[0].bridge_port_init_serial_only_called,
+        "the rollback to the previous mode (bridge_port_init_serial_only) must have been attempted");
+
+    /* With both inits failed, the port is left DISABLED (port_init_mode leaves the
+     * mode unset on failure, and the failed rollback cannot restore PASSIVE). */
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "after a double init failure the port must end DISABLED");
+
+    /* persist-2: NVS is only written after a successful init, so it must still hold
+     * the previous mode — never the failed new mode. */
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_PASSIVE_STR,
+        mock_setting_items_get_port_mode(0),
+        "NVS must keep the previous mode, not the failed new mode");
+    TEST_ASSERT_EQUAL_MESSAGE(saves_before, mock_setting_items_save_called,
+        "a failed set_mode must not write the port mode to NVS");
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * 4. port_init_mode for each mode (via port_manager_set_mode)
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -847,6 +900,7 @@ int port_manager_test(void)
     RUN_TEST(test_set_mode_tcp_bridge_init_fail);
     RUN_TEST(test_set_mode_init_fail_keeps_previous_nvs_mode);
     RUN_TEST(test_set_mode_passive_serial_fail);
+    RUN_TEST(test_set_mode_double_init_failure_leaves_disabled);
 
     /* 4 – port_init_mode for each mode + cache overlay */
     RUN_TEST(test_set_mode_disabled);

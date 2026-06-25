@@ -126,6 +126,8 @@ export function buildPreviewFrame(
   if (isNaN(addr) || addr < 0 || addr > 0xffff) return null;
 
   if (mode === 'read') {
+    // Only FC01/02/03/04 are valid read function codes; reject anything else.
+    if (fcNum !== 0x01 && fcNum !== 0x02 && fcNum !== 0x03 && fcNum !== 0x04) return null;
     const cnt = parseInt(valueStr, 10);
     if (isNaN(cnt) || cnt < 1 || cnt > 2000) return null;
     return buildReadFrame(slave, fcNum, addr, cnt);
@@ -136,10 +138,21 @@ export function buildPreviewFrame(
   if (isNaN(val)) return null;
 
   switch (fcStr) {
-    case '06': return buildWriteSingleRegister(slave, addr, val);
-    case '05': return buildWriteSingleCoil(slave, addr, val);
-    case '10': return buildWriteMultipleRegisters(slave, addr, val);
-    case '0f': return buildWriteMultipleCoils(slave, addr, val);
+    // Register writes: value must fit a 16-bit register (0..0xFFFF), otherwise it
+    // would be silently truncated/wrapped on the wire (e.g. 70000 → 4464, -1 → 0xFFFF).
+    case '06':
+      if (val < 0 || val > 0xffff) return null;
+      return buildWriteSingleRegister(slave, addr, val);
+    case '10':
+      if (val < 0 || val > 0xffff) return null;
+      return buildWriteMultipleRegisters(slave, addr, val);
+    // Coil writes: coils are boolean, so the value must be exactly 0 or 1.
+    case '05':
+      if (val !== 0 && val !== 1) return null;
+      return buildWriteSingleCoil(slave, addr, val);
+    case '0f':
+      if (val !== 0 && val !== 1) return null;
+      return buildWriteMultipleCoils(slave, addr, val);
     default: return null;
   }
 }

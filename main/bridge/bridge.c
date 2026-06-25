@@ -54,8 +54,6 @@ typedef struct {
     serial_desc_t* serial_desc;
     tcp_desc_t* tcp_desc;
     bool initialized;
-    bool disabled;
-    bool init_request;
 } bridge_ctx_t;
 
 static bridge_config_t bridge_current_cfg[BRIDGES_COUNT] = {0};
@@ -77,36 +75,6 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
     }
 
     return (int)bridge_ctx[server_num].tcp_desc->active_connections;
-}
-
-esp_err_t bridge_disable_port(unsigned index)
-{
-    if (index >= BRIDGES_COUNT) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    bridge_ctx[index].disabled = true;
-
-    if (bridge_ctx[index].initialized) {
-        bridge_ctx[index].init_request = true;
-        bridge_port_deinit(index);
-    }
-
-    return ESP_OK;
-}
-
-esp_err_t bridge_enable_port(unsigned index)
-{
-    if (index >= BRIDGES_COUNT) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    bridge_ctx[index].disabled = false;
-
-    if (bridge_ctx[index].init_request) {
-        bridge_ctx[index].init_request = false;
-        bridge_port_init(index);
-    }
-
-    return ESP_OK;
 }
 
 static bridge_mode_t string_to_bridge_mode(const char *str) {
@@ -239,11 +207,6 @@ esp_err_t bridge_port_init(unsigned index)
         ESP_LOGW(TAG, "Port %u already initialized", index + 1);
         return ESP_ERR_NOT_ALLOWED;
     }
-    if (bridge_ctx[index].disabled) {
-        ESP_LOGW(TAG, "Port %u is disabled", index + 1);
-        bridge_ctx[index].init_request = true;
-        return ESP_OK;
-    }
 
     ESP_LOGD(TAG, "Port[%u]: Initializing...", index + 1);
 
@@ -254,8 +217,16 @@ esp_err_t bridge_port_init(unsigned index)
                         TAG, "Port[%u]: Failed to read bridge config", index + 1);
 
     if (bridge_current_cfg[index].bridge_mode == BRIDGE_MODE_DISABLED) {
-        ESP_LOGW(TAG, "Port[%d] is disabled", bridge_current_cfg[index].serial_config.port_num);
-        return ESP_OK;
+        // port_mode is the authoritative on/off axis now: if a port is set to
+        // tcp_bridge, its bridge_mode must be a valid server/client TCP role.
+        // BRIDGE_MODE_DISABLED here means a corrupt/legacy bridge_mode value, so we
+        // refuse to half-initialize. Returning an error (instead of the old
+        // ESP_OK with initialized=false) lets port_manager_set_mode() roll the port
+        // back rather than leave a zombie tcp_bridge that reports active but isn't.
+        ESP_LOGE(TAG, "Port[%d]: tcp_bridge requires a valid server/client bridge_mode, "
+                      "but an invalid/legacy value was found; refusing to initialize",
+                 bridge_current_cfg[index].serial_config.port_num);
+        return ESP_ERR_INVALID_STATE;
     }
 
     if (bridge_current_cfg[index].bridge_mb) {

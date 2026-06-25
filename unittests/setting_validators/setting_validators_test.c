@@ -277,6 +277,27 @@ void test_validate_bridge_mode(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode("SERVER"), "Uppercase bridge mode should be invalid");
 }
 
+// Test validate_port_mode function
+void test_validate_port_mode(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_port_mode function");
+    LOG_MESSAGE();
+
+    // Valid port modes
+    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("disabled"), "Port mode 'disabled' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("tcp_bridge"), "Port mode 'tcp_bridge' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("passive"), "Port mode 'passive' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("repeater"), "Port mode 'repeater' should be valid");
+
+    // Invalid port modes
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode(NULL), "NULL port mode should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode(""), "Empty port mode should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("bogus"), "Port mode 'bogus' should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("server"), "Bridge role 'server' should not be a valid port mode");
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("TCP_BRIDGE"), "Uppercase port mode should be invalid");
+}
+
 // Test validate_bool function
 void test_validate_bool(void)
 {
@@ -400,6 +421,7 @@ int main(void)
     RUN_TEST(test_validate_wifi_mode);
     RUN_TEST(test_validate_wifi_auth);
     RUN_TEST(test_validate_bridge_mode);
+    RUN_TEST(test_validate_port_mode);
     RUN_TEST(test_validate_bool);
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);

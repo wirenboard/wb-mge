@@ -143,6 +143,11 @@ esp_err_t setting_items_save_bool(const char *key, bool value);
 esp_err_t setting_items_save_int(const char *key, int value);
 esp_err_t setting_items_set_defaults(bool only_uninitialized);
 
+// One-time legacy migration: derive port_mode_N from a pre-existing bridge_mode_N
+// (old single-axis firmware) when port_mode_N is absent. Idempotent and best-effort
+// per port. Must run after the storage interface is set and BEFORE set_defaults().
+esp_err_t setting_items_migrate_port_mode(void);
+
 // Iterator functions for all settings
 size_t setting_items_get_count(void);
 const char *setting_items_get_key_at(size_t index);

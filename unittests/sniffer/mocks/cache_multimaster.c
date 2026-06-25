@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 
 /* ---- Controllable state ---- */
 bool mock_cache_multimaster_enabled = false;
@@ -26,6 +27,11 @@ uint8_t mock_cache_multimaster_on_response_last_slave_id = 0;
 uint8_t mock_cache_multimaster_on_response_last_function = 0;
 uint16_t mock_cache_multimaster_on_response_last_data_len = 0;
 uint64_t mock_cache_multimaster_on_response_last_timestamp_us = 0;
+/* Capture a copy of the response payload so tests can assert that the exact
+ * bytes from the sniff packet are forwarded to the cache (right data). */
+#define MOCK_CACHE_MM_DATA_CAP 64
+uint8_t mock_cache_multimaster_on_response_last_data[MOCK_CACHE_MM_DATA_CAP] = {0};
+bool    mock_cache_multimaster_on_response_last_data_null = false;
 
 /* ---- Recording state: clear_pending (corr-7) ---- */
 int     mock_cache_multimaster_clear_pending_called    = 0;
@@ -48,6 +54,9 @@ void mock_cache_multimaster_reset(void)
     mock_cache_multimaster_on_response_last_function = 0;
     mock_cache_multimaster_on_response_last_data_len = 0;
     mock_cache_multimaster_on_response_last_timestamp_us = 0;
+    memset(mock_cache_multimaster_on_response_last_data, 0,
+           sizeof(mock_cache_multimaster_on_response_last_data));
+    mock_cache_multimaster_on_response_last_data_null = false;
 
     mock_cache_multimaster_clear_pending_called    = 0;
     mock_cache_multimaster_clear_pending_last_port = 0;
@@ -73,13 +82,22 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
                                     const uint8_t *data, uint16_t data_len,
                                     uint64_t timestamp_us)
 {
-    (void)data;
     mock_cache_multimaster_on_response_called++;
     mock_cache_multimaster_on_response_last_port = port;
     mock_cache_multimaster_on_response_last_slave_id = slave_id;
     mock_cache_multimaster_on_response_last_function = function;
     mock_cache_multimaster_on_response_last_data_len = data_len;
     mock_cache_multimaster_on_response_last_timestamp_us = timestamp_us;
+    /* Record whether a NULL pointer was passed and snapshot up to the capture cap
+     * so tests can assert the exact forwarded payload (right data). */
+    mock_cache_multimaster_on_response_last_data_null = (data == NULL);
+    if (data != NULL) {
+        uint16_t n = data_len;
+        if (n > MOCK_CACHE_MM_DATA_CAP) {
+            n = MOCK_CACHE_MM_DATA_CAP;
+        }
+        memcpy(mock_cache_multimaster_on_response_last_data, data, n);
+    }
 }
 
 void cache_multimaster_clear_pending(uint8_t port)

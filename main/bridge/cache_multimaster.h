@@ -6,10 +6,14 @@
 
 #include "esp_http_server.h"
 
-/* TODO: The /cache/enable and /cache/disable HTTP endpoints have been removed.
+/* The /cache/enable and /cache/disable HTTP endpoints have been removed.
  * Port mode control (including cache_bus activation) is now exclusively via
- * POST /ports/N/mode through port_manager.  The /settings bridge enable flow
- * should also be migrated to port_manager in a future refactor. */
+ * POST /ports/N/mode through port_manager.
+ *
+ * The single-axis migration is complete: port_mode (set via POST /ports/N/mode
+ * and the one-time legacy NVS migration in setting_items_migrate_port_mode()) is
+ * the authoritative on/off axis for a port. bridge_mode is no longer an on/off
+ * flag — it is only the TCP role (server/client) used when port_mode == tcp_bridge. */
 
 /**
  * @file cache_multimaster.h

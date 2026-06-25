@@ -150,7 +150,7 @@ const valueLabel = computed(() =>
         <!-- Count / Value -->
         <div class="form-field">
           <label class="form-field-label">{{ valueLabel }}</label>
-          <input v-model="value" class="form-field-input" />
+          <input v-model="value" class="form-field-input" inputmode="numeric" />
         </div>
       </div>
 

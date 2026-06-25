@@ -397,12 +397,19 @@ esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled)
     if (port_index >= BRIDGES_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
+    // Hold pm_lock across both the serial_desc lookup and its use: it prevents
+    // apply_settings()/set_mode() from freeing/recreating serial_desc concurrently
+    // (use-after-free). Mirrors port_manager_set_cache()'s lock discipline.
+    pm_lock(port_index);
     serial_desc_t *sd = get_port_serial_desc(port_index);
     if (sd == NULL) {
         // Port not running — setting will be applied on next port_init_mode()
+        pm_unlock(port_index);
         return ESP_OK;
     }
-    return serial_set_tx_disabled(sd, disabled);
+    esp_err_t ret = serial_set_tx_disabled(sd, disabled);
+    pm_unlock(port_index);
+    return ret;
 }
 
 esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t len)
@@ -410,16 +417,23 @@ esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t
     if (port_index >= BRIDGES_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
+    // Hold pm_lock across both the serial_desc lookup and serial_send(): it prevents
+    // apply_settings()/set_mode() from freeing/recreating serial_desc concurrently
+    // (use-after-free). Mirrors port_manager_set_cache()'s lock discipline.
+    pm_lock(port_index);
     serial_desc_t *sd = get_port_serial_desc(port_index);
     if (!sd) {
         ESP_LOGW(TAG, "Port[%u]: no serial_desc, cannot send raw bytes", port_index + 1);
+        pm_unlock(port_index);
         return ESP_FAIL;
     }
     /* TX visibility for the sniffer/cache is now centralized in serial_send(): it feeds
      * the per-port sniff_handler after a successful transmit (and skips it when TX is
      * disabled or the write was partial). Injecting here too would double-count the
      * transmitted frame (R5: a byte reaches the sniffer exactly once per direction). */
-    return serial_send(sd, (uint8_t *)data, len);
+    esp_err_t ret = serial_send(sd, (uint8_t *)data, len);
+    pm_unlock(port_index);
+    return ret;
 }
 
 esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)

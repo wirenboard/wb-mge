@@ -33,6 +33,18 @@ unsigned modbus_tcp_test_push_data(unsigned ctx_idx, int client_sock,
 /* Simulate connection close for client_sock using ctx[ctx_idx]'s tcp_desc. */
 void modbus_tcp_test_conn_close(unsigned ctx_idx, int client_sock);
 
+/* Run the static self-device handler (Unit ID 0xFF local dispatch) for ctx[ctx_idx]. */
+void modbus_tcp_test_handle_self_device_request(unsigned ctx_idx, int client_sock,
+                                                uint8_t *tcp_req_buf, size_t tcp_req_len);
+
+/* Seed / inspect the in-flight RTU request bookkeeping (pending_*), used to drive
+ * and verify the on_tcp_conn_close() stale-pending-reset path. */
+void     modbus_tcp_test_set_pending(unsigned ctx_idx, uint16_t tid,
+                                     uint8_t slave_id, int client_sock);
+uint16_t modbus_tcp_test_get_pending_tid(unsigned ctx_idx);
+uint8_t  modbus_tcp_test_get_pending_slave_id(unsigned ctx_idx);
+int      modbus_tcp_test_get_pending_client_sock(unsigned ctx_idx);
+
 /* Expose calc_response_timeout_ticks() for unit tests (R1). */
 unsigned modbus_tcp_test_calc_timeout(unsigned baudrate);
 

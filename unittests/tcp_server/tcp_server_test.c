@@ -337,6 +337,63 @@ void test_acceptor_enfile_does_not_close_listen_socket(void)
     free(desc);
 }
 
+/* When the acceptor accepts a connection but xTaskCreate() for the receiver
+ * task fails, active_connections must be decremented back to 0 (and the client
+ * socket closed).  Otherwise the leaked count keeps tcp_server_deinit()'s
+ * wait-for-zero loop spinning forever, hanging the single httpd worker.
+ *
+ * Regression for tcp_server.c:292-298 (the failed-spawn rollback).
+ *
+ * Scenario (acceptor task body, driven synchronously):
+ *   iter 1:
+ *     check_task_exit_req()  → WaitBits #1 → 0
+ *     accept()               → fd 10
+ *     malloc(args)           → OK
+ *     active_connections     → 1   (__atomic_fetch_add)
+ *     xTaskCreate(receiver)  → pdFAIL  (should_fail)
+ *       → free(args), close(client), active_connections → 0  (rollback)
+ *   iter 2:
+ *     check_task_exit_req()  → WaitBits #2 → EVENT_TASK_EXIT_REQ → break
+ *
+ * Expected: active_connections == 0 after the acceptor returns.
+ * With the rollback removed, the count would stay at 1 and deinit would hang. */
+void test_acceptor_decrements_on_receiver_spawn_failure(void)
+{
+    /* accept() dispenses fd 10 once, then -1 on the next call. */
+    mock_accept_fd = 10;
+
+    /* EXIT_REQ fires on the 2nd xEventGroupWaitBits call (called > 1), i.e. the
+     * top-of-loop check of the SECOND iteration, so the loop exits right after
+     * the failed receiver spawn. */
+    mock_xEventGroupWaitBits_data.set_event_on_call = 1;        /* trigger after 1st call */
+    mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8); /* EVENT_TASK_EXIT_REQ = BIT8 */
+
+    /* Init must SUCCEED first (acceptor task spawn must pass) — only the LATER
+     * receiver spawn inside the loop should fail.  So enable should_fail AFTER
+     * init records the acceptor task function. */
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_EQUAL(0, desc->active_connections);
+    TEST_ASSERT_NOT_NULL(mock_xTaskCreate_data.pvTaskCode);
+
+    /* From now on every xTaskCreate() fails — this is the receiver-task spawn. */
+    mock_xTaskCreate_data.should_fail = true;
+
+    /* Invoke the acceptor task body synchronously.  Both the function pointer
+     * and its parameter are read before the call, so the inner failing
+     * xTaskCreate() that overwrites mock_xTaskCreate_data does not affect us. */
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
+
+    /* The failed spawn must have rolled the count back to 0 so deinit can finish. */
+    TEST_ASSERT_EQUAL(0, desc->active_connections);
+    /* The accepted client socket must have been closed on the rollback path. */
+    TEST_ASSERT_GREATER_OR_EQUAL(1, mock_close_call_count);
+
+    free(desc);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Section 4: tcp_server_connected()
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -454,6 +511,7 @@ int tcp_server_test(void)
 
     /* Section 3 — accept() ENFILE error handling */
     RUN_TEST(test_acceptor_enfile_does_not_close_listen_socket);
+    RUN_TEST(test_acceptor_decrements_on_receiver_spawn_failure);
 
     /* Section 4 — active_connections */
     RUN_TEST(test_tcp_server_connected_no_connections);

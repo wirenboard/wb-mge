@@ -1994,6 +1994,66 @@ void test_reassembly_reused_fd_clean_after_close(void)
         "reused fd must start from a clean slot after the close hook ran");
 }
 
+/* ---- CMS-U-050: buffer-filling garbage stream resyncs without bogus dispatch */
+
+/* cache_modbus_server.c:516-520 — the reassembler's last-resort drop:
+ *     if (c->len == CACHE_MB_FRAME_MAX) { ... c->len = 0; }
+ * fires when the reassembly buffer is full yet no complete frame was consumed.
+ *
+ * NOTE ON REACHABILITY OF THE EXACT BRANCH: that `c->len == CACHE_MB_FRAME_MAX`
+ * drop with the loop having run is not reachable through this seam. The scan
+ * either (a) dispatches a complete frame (pos += flen) or (b) resyncs one byte
+ * at a time (pos += 1); both advance pos, and the subsequent memmove shrinks
+ * c->len below CACHE_MB_FRAME_MAX. The only way pos stays 0 is the `break` for a
+ * valid header whose frame is not fully buffered — which requires flen > c->len,
+ * but header_ok caps flen at CACHE_MB_FRAME_MAX, so at c->len == CACHE_MB_FRAME_MAX
+ * the frame is always complete and dispatches instead of breaking. An exhaustive
+ * host-side sweep (header at pos 0 + trailing garbage, every flen in [8,300] and
+ * every first-chunk size in [8,600]) confirms the drop never fires. The branch is
+ * a defensive guard for a state the resync logic prevents.
+ *
+ * Closest reachable coverage: feed a long, unframeable garbage stream (every
+ * 8-byte window has a non-zero protocol_id, so every header is rejected) that
+ * keeps the buffer near full across the recv, and assert the property the drop
+ * guard exists to protect — no crash, no bogus dispatch — then prove the
+ * connection RESYNCS: a valid frame delivered afterwards is dispatched normally
+ * (the buffer was not left wedged). */
+void test_reassembly_buffer_filling_garbage_resyncs(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CMS-U-050: buffer-filling garbage stream resyncs (no bogus dispatch, recovers)");
+    LOG_MESSAGE();
+
+    mock_lookup_result = CACHE_LOOKUP_FOUND;
+    mock_lookup_value  = 0x7777;
+    mock_setting_items_set_timeout(0);
+
+    /* 512 bytes of garbage: byte value 0xCC everywhere makes protocol_id (bytes
+     * 2..3 of every candidate header) == 0xCCCC != 0, so no window is ever a
+     * valid Modbus TCP header. This is more than CACHE_MB_FRAME_MAX (300), so the
+     * buffer is driven to capacity and the reassembler must resync through it. */
+    uint8_t garbage[512];
+    memset(garbage, 0xCC, sizeof(garbage));
+
+    cache_modbus_server_test_process(NULL, 40, garbage, sizeof(garbage));
+
+    /* Property the drop guard protects: unframeable bytes never produce a
+     * response and never reach the cache lookup. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_tcp_send_called,
+        "garbage stream must not produce any response (no bogus dispatch)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_lookup_call_count,
+        "garbage stream must not reach the cache lookup");
+
+    /* Recovery: a valid frame after the garbage must be dispatched, proving the
+     * reassembler resynced and did not leave the buffer wedged at capacity. */
+    uint8_t buf[12];
+    build_request(buf, 0x0040, 1, MB_FC_READ_HOLDING_REGS, 0, 1);
+    cache_modbus_server_test_process(NULL, 40, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_called,
+        "valid frame after a buffer-filling garbage stream must be dispatched (resync recovered)");
+}
+
 /* ---- CMS-U-043: self unit (0xFF) served when cache DISABLED -------------- */
 
 /* Load-bearing test: a request addressed to the gateway itself (Unit ID 0xFF)
@@ -2145,6 +2205,7 @@ int main(void)
     RUN_TEST(test_reassembly_oversized_header_split_then_resync);
     RUN_TEST(test_reassembly_ninth_connection_bypass);
     RUN_TEST(test_reassembly_reused_fd_clean_after_close);
+    RUN_TEST(test_reassembly_buffer_filling_garbage_resyncs);
 
     RUN_TEST(test_cache_modbus_server_self_unit_served_when_cache_disabled);
     RUN_TEST(test_cache_modbus_server_self_unit_bypasses_cache_lookup);

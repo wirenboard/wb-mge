@@ -228,8 +228,8 @@ static const setting_item_t setting_items[] = {
     {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // Port manager mode (per-port, mutually exclusive operating mode)
-    {KEY_PORT_MODE1, PORT_MODE_TCP_BRIDGE_STR, NULL, SETTING_ITEM_TYPE_STRING},
-    {KEY_PORT_MODE2, PORT_MODE_TCP_BRIDGE_STR, NULL, SETTING_ITEM_TYPE_STRING},
+    {KEY_PORT_MODE1, PORT_MODE_TCP_BRIDGE_STR, validate_port_mode, SETTING_ITEM_TYPE_STRING},
+    {KEY_PORT_MODE2, PORT_MODE_TCP_BRIDGE_STR, validate_port_mode, SETTING_ITEM_TYPE_STRING},
 
     // Cache Modbus TCP server port and enable/disable flag
     {KEY_CACHE_MODBUS_PORT,           DEFAULT_CACHE_MODBUS_PORT,           validate_port, SETTING_ITEM_TYPE_INT},
@@ -276,10 +276,109 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized)
     return ESP_OK;
 }
 
+// Legacy off-state value historically stored in bridge_mode_N by old firmware.
+// It is NOT a valid bridge_mode any more (validate_bridge_mode rejects it), so it
+// only appears in NVS on devices upgraded from firmware that used bridge_mode as
+// the on/off axis. It is handled here solely for migration purposes.
+#define LEGACY_BRIDGE_MODE_DISABLED_STR    "disabled"
+
+// One-time legacy migration of the per-port operating-state axis.
+//
+// Old firmware used bridge_mode_N alone for both the on/off state and the TCP role:
+//   bridge_mode_N = "server"/"client" -> port was an active TCP bridge
+//   bridge_mode_N = "disabled"        -> port was off
+//
+// New firmware splits these concerns: port_mode_N is the authoritative lifecycle
+// axis (disabled/tcp_bridge/passive/repeater) and bridge_mode_N is reduced to the
+// TCP role used only when port_mode_N == tcp_bridge.
+//
+// On an upgraded device port_mode_N does not exist yet. setting_items_set_defaults()
+// would create it as the "tcp_bridge" default, silently turning a previously OFF
+// port ON. To preserve the user's intent we derive port_mode_N from the legacy
+// bridge_mode_N here, BEFORE defaults run. Mapping table:
+//
+//   legacy bridge_mode_N | derived port_mode_N
+//   ---------------------+---------------------
+//   "server"             | "tcp_bridge"
+//   "client"             | "tcp_bridge"
+//   "disabled"           | "disabled"
+//   any other/unknown    | "tcp_bridge"  (safe default; bridge was active before)
+//
+// Rules:
+//   - If port_mode_N already exists, never overwrite it (a user may have set it).
+//   - If neither key exists, this is a fresh device: leave it to defaults.
+// Best-effort per port: a write failure is logged but does not abort the others.
+esp_err_t setting_items_migrate_port_mode(void)
+{
+    // One entry per RS-485 port. The two arrays are index-aligned; the loop count is
+    // derived from the explicit key list (no magic number, no cross-layer include).
+    static const char *port_mode_keys[] = {KEY_PORT_MODE1, KEY_PORT_MODE2};
+    static const char *bridge_mode_keys[] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
+    static_assert(ARRAY_SIZE(port_mode_keys) == ARRAY_SIZE(bridge_mode_keys),
+                  "port_mode/bridge_mode key arrays must be index-aligned");
+
+    if (!storage_iface) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    for (unsigned i = 0; i < ARRAY_SIZE(port_mode_keys); i++) {
+        const char *port_mode_key = port_mode_keys[i];
+        const char *bridge_mode_key = bridge_mode_keys[i];
+
+        // Already migrated or user-set: do not touch.
+        if (storage_iface->has_key(port_mode_key)) {
+            continue;
+        }
+
+        // No legacy bridge_mode either: fresh device, let defaults handle it.
+        if (!storage_iface->has_key(bridge_mode_key)) {
+            continue;
+        }
+
+        // Upgraded device: derive port_mode from the legacy bridge_mode value.
+        char legacy_value[SETTING_ITEM_MAX_STR_LEN] = {0};
+        esp_err_t read_ret = storage_iface->read_str(bridge_mode_key, legacy_value);
+        if (read_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Migration: failed to read %s (%s); skipping port %u",
+                     bridge_mode_key, esp_err_to_name(read_ret), i + 1);
+            continue;
+        }
+
+        const char *mapped;
+        if (strncmp(legacy_value, LEGACY_BRIDGE_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+            mapped = PORT_MODE_DISABLED_STR;
+        } else {
+            // "server"/"client" -> tcp_bridge; any unknown legacy value also maps to
+            // tcp_bridge because the port was active (not disabled) before the upgrade.
+            mapped = PORT_MODE_TCP_BRIDGE_STR;
+        }
+
+        // Write through setting_items_save() so the value is validated by
+        // validate_port_mode before it lands in NVS.
+        esp_err_t save_ret = setting_items_save(port_mode_key, mapped);
+        if (save_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Migration: failed to set %s = %s (%s)",
+                     port_mode_key, mapped, esp_err_to_name(save_ret));
+            continue;
+        }
+        ESP_LOGI(TAG, "Migration: derived %s = %s from legacy %s = %s",
+                 port_mode_key, mapped, bridge_mode_key, legacy_value);
+    }
+
+    return ESP_OK;
+}
+
 esp_err_t setting_items_init(void)
 {
     ESP_LOGI(TAG, "Initializing settings with string storage");
     storage_iface = &nvs_storage_iface;
+
+    // Migrate the legacy single-axis bridge_mode into port_mode BEFORE defaults run,
+    // otherwise set_defaults would force a previously-off port to "tcp_bridge".
+    esp_err_t migrate_ret = setting_items_migrate_port_mode();
+    if (migrate_ret != ESP_OK) {
+        ESP_LOGW(TAG, "port_mode migration reported an error: %s", esp_err_to_name(migrate_ret));
+    }
 
     return setting_items_set_defaults(true);
 }
@@ -288,6 +387,12 @@ esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *test_st
 {
     ESP_LOGI(TAG, "Initializing settings with custom storage for testing");
     storage_iface = test_storage_iface;
+
+    // Run the same legacy port_mode migration so unit tests exercise it.
+    esp_err_t migrate_ret = setting_items_migrate_port_mode();
+    if (migrate_ret != ESP_OK) {
+        ESP_LOGW(TAG, "port_mode migration reported an error: %s", esp_err_to_name(migrate_ret));
+    }
 
     return setting_items_set_defaults(true);
 }

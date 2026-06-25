@@ -23,6 +23,9 @@ extern esp_err_t mock_cache_modbus_server_deinit_error;
 extern int       mock_cache_modbus_server_init_call_count;
 extern int       mock_cache_modbus_server_deinit_call_count;
 extern int       mock_cache_modbus_server_init_last_port;
+extern int       mock_cache_modbus_server_init_fail_port;   // per-port init failure injection (0 = off)
+extern esp_err_t mock_cache_modbus_server_init_fail_error;  // error returned for the failing port
+extern int       mock_cache_modbus_server_init_ports[];     // ordered log of init() ports since reset
 void             mock_cache_modbus_server_reset(void);
 void             mock_cache_modbus_server_set_running_port(int port);
 
@@ -480,6 +483,80 @@ void test_wifi_perm_disable_nvs_success_sets_flag(void)
 }
 
 // ===================================================================
+// Tests for settings_build_response_json wifi_perm_disable shaping
+// ===================================================================
+
+// When wifi_perm_disable is true in storage, the response JSON must carry
+// "wifi_perm_disable": true and OMIT the "wifi" sub-object entirely.
+// settings_manager.c:402-409
+void test_build_response_wifi_perm_disable_true_omits_wifi(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "build_response: wifi_perm_disable=true -> flag true, no wifi object");
+    LOG_MESSAGE();
+
+    // Mark Wi-Fi as permanently disabled in mock storage.
+    setting_items_save(KEY_WIFI_PERM_DISABLE, "true");
+    TEST_ASSERT_TRUE_MESSAGE(setting_items_read_bool(KEY_WIFI_PERM_DISABLE),
+        "Precondition: wifi_perm_disable must read true");
+
+    cJSON *resp = NULL;
+    esp_err_t ret = settings_build_response_json(&resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_build_response_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+
+    cJSON *flag = cJSON_GetObjectItem(resp, "wifi_perm_disable");
+    TEST_ASSERT_NOT_NULL_MESSAGE(flag, "wifi_perm_disable flag must be present");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsBool(flag), "wifi_perm_disable must be a boolean");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsTrue(flag),
+        "wifi_perm_disable must be true when storage says it is disabled");
+
+    TEST_ASSERT_FALSE_MESSAGE(cJSON_HasObjectItem(resp, "wifi"),
+        "wifi sub-object must be omitted when Wi-Fi is permanently disabled");
+
+    cJSON_Delete(resp);
+}
+
+// When wifi_perm_disable is false in storage, the response JSON must carry
+// "wifi_perm_disable": false AND include the populated "wifi" sub-object.
+// settings_manager.c:410-421
+void test_build_response_wifi_perm_disable_false_includes_wifi(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "build_response: wifi_perm_disable=false -> flag false, wifi object present");
+    LOG_MESSAGE();
+
+    // Default mock storage has wifi_perm_disable=false; assert it explicitly.
+    TEST_ASSERT_FALSE_MESSAGE(setting_items_read_bool(KEY_WIFI_PERM_DISABLE),
+        "Precondition: wifi_perm_disable must read false");
+
+    cJSON *resp = NULL;
+    esp_err_t ret = settings_build_response_json(&resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_build_response_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+
+    cJSON *flag = cJSON_GetObjectItem(resp, "wifi_perm_disable");
+    TEST_ASSERT_NOT_NULL_MESSAGE(flag, "wifi_perm_disable flag must be present");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsBool(flag), "wifi_perm_disable must be a boolean");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsFalse(flag),
+        "wifi_perm_disable must be false when storage says Wi-Fi is enabled");
+
+    cJSON *wifi = cJSON_GetObjectItem(resp, "wifi");
+    TEST_ASSERT_NOT_NULL_MESSAGE(wifi,
+        "wifi sub-object must be present when Wi-Fi is not permanently disabled");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsObject(wifi), "wifi must be a JSON object");
+    // The wifi group must actually be populated (mode comes from the wifi_mappings table).
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_HasObjectItem(wifi, "mode"),
+        "wifi object must contain the mapped fields (e.g. mode)");
+
+    cJSON_Delete(resp);
+}
+
+// ===================================================================
 // Tests for cache server TOCTOU fix
 // ===================================================================
 
@@ -608,6 +685,50 @@ void test_cache_server_restarted_on_port_change_when_enabled(void)
         "cache_modbus_server_init must be called exactly once when the port changes");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1503, mock_cache_modbus_server_init_last_port,
         "cache_modbus_server_init must be called with the NEW port");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// When the cache server port changes and init(new_port) fails, the code must roll
+// back by calling init(old_port). Drives per-port failure injection so init fails on
+// the new port and succeeds on the old port. settings_manager.c:684-695
+void test_cache_server_port_change_init_failure_rolls_back_to_old_port(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Cache server port change, init(new) fails -> rollback init(old)");
+    LOG_MESSAGE();
+
+    // Server currently running on old port 1502; request moves it to 1503.
+    // Ports avoid the RS-485 bridge defaults (502/503) to clear validate_port_collisions.
+    mock_cache_modbus_server_set_running_port(1502);
+    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
+    setting_items_save(KEY_CACHE_MODBUS_PORT, "1502");
+
+    // Arm per-port failure: init(1503) fails, init(1502) (rollback) succeeds.
+    mock_cache_modbus_server_init_fail_port  = 1503;
+    mock_cache_modbus_server_init_fail_error = ESP_FAIL;
+
+    cJSON *req = make_request_int("cache_modbus_port", 1503);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+
+    // The server is torn down once and re-init attempted on the new port.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
+        "cache_modbus_server_deinit must be called exactly once for the restart");
+
+    // Two init() calls in order: the failing init(new) then the rollback init(old).
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_cache_modbus_server_init_call_count,
+        "init must be called twice: failed new-port attempt + rollback to old port");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1503, mock_cache_modbus_server_init_ports[0],
+        "first init must target the NEW port (1503)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1502, mock_cache_modbus_server_init_ports[1],
+        "second init must roll back to the OLD port (1502)");
 
     cJSON_Delete(req);
     cJSON_Delete(resp);
@@ -776,11 +897,16 @@ int main(void)
     RUN_TEST(test_wifi_perm_disable_nvs_failure_returns_success_false);
     RUN_TEST(test_wifi_perm_disable_nvs_success_sets_flag);
 
+    // settings_build_response_json wifi_perm_disable shaping
+    RUN_TEST(test_build_response_wifi_perm_disable_true_omits_wifi);
+    RUN_TEST(test_build_response_wifi_perm_disable_false_includes_wifi);
+
     // Cache server TOCTOU fix
     RUN_TEST(test_cache_server_started_when_enabled_and_not_running);
     RUN_TEST(test_cache_server_stopped_when_disabled_and_running);
     RUN_TEST(test_cache_server_no_op_when_already_running_and_enabled);
     RUN_TEST(test_cache_server_restarted_on_port_change_when_enabled);
+    RUN_TEST(test_cache_server_port_change_init_failure_rolls_back_to_old_port);
     RUN_TEST(test_cache_server_uses_default_port_when_configured_port_zero);
 
     // Port-collision validation (cache Modbus server vs RS-485 bridge gateway)

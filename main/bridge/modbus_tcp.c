@@ -231,6 +231,13 @@ static unsigned separate_and_push_one_pass(
     size_t   pos   = 0;
 
     while (pos < len) {
+        // A short trailing fragment cannot contain a full MBAP length field: the
+        // length lives within the first offsetof(mb_tcp_header_t, unit_id) bytes
+        // (transaction_id[2] + protocol_id[2] + length[2] = 6). Bail out before
+        // casting to the header to avoid reading past the buffer (OOB read).
+        if ((len - pos) < offsetof(mb_tcp_header_t, unit_id)) {
+            break;
+        }
         const uint8_t   *req_data = &data[pos];
         mb_tcp_header_t *header   = (mb_tcp_header_t *)req_data;
         size_t req_len = modbus_swap16(header->length) + offsetof(mb_tcp_header_t, unit_id);
@@ -804,6 +811,43 @@ unsigned modbus_tcp_test_push_data(unsigned ctx_idx, int client_sock,
 void modbus_tcp_test_conn_close(unsigned ctx_idx, int client_sock)
 {
     on_tcp_conn_close(mb_tcp_task_ctx[ctx_idx].tcp_desc, client_sock);
+}
+
+/* Run the static self-device handler (Unit ID 0xFF dispatch target) for
+ * ctx[ctx_idx]. Mirrors the branch taken by modbus_tcp_server_task() when
+ * mb_device_is_self() is true: answers locally and sends back to client_sock,
+ * never touching the RS485 serial path. */
+void modbus_tcp_test_handle_self_device_request(unsigned ctx_idx, int client_sock,
+                                                uint8_t *tcp_req_buf, size_t tcp_req_len)
+{
+    handle_self_device_request(&mb_tcp_task_ctx[ctx_idx], client_sock,
+                               tcp_req_buf, tcp_req_len);
+}
+
+/* Seed the in-flight RTU request bookkeeping so the on_tcp_conn_close()
+ * stale-pending-reset path can be exercised. */
+void modbus_tcp_test_set_pending(unsigned ctx_idx, uint16_t tid,
+                                 uint8_t slave_id, int client_sock)
+{
+    mb_tcp_task_ctx_t *ctx = &mb_tcp_task_ctx[ctx_idx];
+    ctx->pending_tid         = tid;
+    ctx->pending_slave_id    = slave_id;
+    ctx->pending_client_sock = client_sock;
+}
+
+uint16_t modbus_tcp_test_get_pending_tid(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].pending_tid;
+}
+
+uint8_t modbus_tcp_test_get_pending_slave_id(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].pending_slave_id;
+}
+
+int modbus_tcp_test_get_pending_client_sock(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].pending_client_sock;
 }
 
 #endif /* __unittest_env__ */

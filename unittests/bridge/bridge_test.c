@@ -669,30 +669,15 @@ void test_bridge_port_init_already_initialized(void)
     }
 }
 
-// Test bridge_port_init initialization with disabled ports
-void test_bridge_port_init_disabled_ports(void)
+// Test bridge_port_init with an invalid/legacy bridge_mode in settings.
+// port_mode is the authoritative on/off axis now: a tcp_bridge port whose bridge_mode
+// maps to BRIDGE_MODE_DISABLED (corrupt/legacy value) must NOT be half-initialized.
+// bridge_port_init() returns an error so port_manager_set_mode() rolls the port back
+// instead of leaving a zombie tcp_bridge. The port must stay uninitialized.
+void test_bridge_port_init_invalid_bridge_mode_in_settings(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with both ports disabled");
-    LOG_MESSAGE();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_disable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK");
-
-        result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK when port is disabled");
-
-        verify_setting_items_not_called(index);
-        verify_mode_tcp_init_port_calls(index, 0, 0);
-    }
-}
-
-// Test bridge_port_init initialization with ports disabled in settings
-void test_bridge_port_init_disabled_ports_in_settings(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with both ports disabled in settings");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with invalid/legacy bridge_mode in settings");
     LOG_MESSAGE();
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -702,8 +687,12 @@ void test_bridge_port_init_disabled_ports_in_settings(void)
         strcpy(mock_settings_items_bridge_cfg[index].bridge_mode, "disabled");
 
         esp_err_t result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK when port is disabled in settings");
+        TEST_ASSERT_EQUAL_MESSAGE(
+            ESP_ERR_INVALID_STATE, result,
+            "bridge_port_init should return ESP_ERR_INVALID_STATE for invalid/legacy bridge_mode"
+        );
 
+        // Config was read, but no TCP transport was brought up.
         verify_setting_items_read_calls(index);
         verify_mode_tcp_init_port_calls(index, 0, 0);
     }
@@ -762,131 +751,6 @@ void test_bridge_port_deinit_success(void)
         // port_manager, so they are NOT called from bridge_port_deinit() any more.
         verify_rs485_reset_calls(index, 0, 0);
         verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-    }
-}
-
-// Test bridge_disable_port and bridge_enable_port functions with an invalid index
-void test_bridge_disable_enable_port_invalid_index(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_disable_port and bridge_enable_port - invalid index");
-    LOG_MESSAGE();
-
-    esp_err_t result = bridge_disable_port(BRIDGES_COUNT);
-    TEST_ASSERT_EQUAL_MESSAGE(
-        ESP_ERR_INVALID_ARG, result, "bridge_disable_port should return ESP_ERR_INVALID_ARG for invalid index"
-    );
-
-    result = bridge_enable_port(BRIDGES_COUNT);
-    TEST_ASSERT_EQUAL_MESSAGE(
-        ESP_ERR_INVALID_ARG, result, "bridge_enable_port should return ESP_ERR_INVALID_ARG for invalid index"
-    );
-}
-
-// Test bridge_disable_port function with an initialized bridge_port_init
-void test_bridge_disable_port_initialized(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_disable_port - initialized port");
-    LOG_MESSAGE();
-
-    configure_port_modes();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
-
-        result = bridge_disable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK for initialized port");
-
-        // rs485_busy_monitor_reset() and rs485_stats_reset() have been moved to
-        // port_manager, so they are NOT called from bridge_port_deinit() any more.
-        verify_rs485_reset_calls(index, 0, 0);
-        verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-    }
-}
-
-// Test bridge_enable_port function with an uninitialized port and no initialization request
-void test_bridge_enable_port_not_initialized_no_request(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_enable_port - not initialized port without init request");
-    LOG_MESSAGE();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_enable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_enable_port should return ESP_OK");
-
-        verify_setting_items_not_called(index);
-        verify_mode_tcp_init_port_calls(index, 0, 0);
-    }
-}
-
-// Test bridge_enable_port function with an uninitialized port that was disabled before initialization attempt
-void test_bridge_enable_port_disabled_during_init(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_enable_port - port disabled during initialization");
-    LOG_MESSAGE();
-
-    configure_port_modes();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_disable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK");
-
-        // Try to initialize disabled port - should set init_request flag
-        result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK for disabled port");
-
-        // Verify port was not actually initialized
-        verify_setting_items_not_called(index);
-        verify_mode_tcp_init_port_calls(index, 0, 0);
-
-        // Now enable the ports - should trigger actual initialization
-        result = bridge_enable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_enable_port should return ESP_OK");
-        verify_setting_items_read_calls(index);
-        verify_mode_tcp_init_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-    }
-
-    verify_mode_tcp_init_port(0, &mock_modbus_tcp[0]);
-    verify_mode_tcp_init_port(1, &mock_transparent_tcp[1]);
-}
-
-// Test automatic bridge_port_init initialization after disabling and re-enabling a port
-void test_bridge_port_init_after_switching(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init - after disable");
-    LOG_MESSAGE();
-
-    configure_port_modes();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
-        verify_setting_items_read_calls(index);
-        verify_mode_tcp_init_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-
-        result = bridge_disable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK");
-        verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-        // rs485_busy_monitor_reset() and rs485_stats_reset() have been moved to
-        // port_manager, so they are NOT called from bridge_port_deinit() any more.
-        verify_rs485_reset_calls(index, 0, 0);
-
-    }
-
-    mocks_reset();
-
-    configure_port_modes();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_enable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_enable_port should return ESP_OK");
-        verify_setting_items_read_calls(index);
-        verify_mode_tcp_init_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
     }
 }
 
@@ -1236,19 +1100,11 @@ int main(void)
     RUN_TEST(test_bridge_port_init_setting_read_errors_4);
 
     RUN_TEST(test_bridge_port_init_already_initialized);
-    RUN_TEST(test_bridge_port_init_disabled_ports);
-    RUN_TEST(test_bridge_port_init_disabled_ports_in_settings);
+    RUN_TEST(test_bridge_port_init_invalid_bridge_mode_in_settings);
     RUN_TEST(test_bridge_port_init_deinit_invalid_index);
 
     RUN_TEST(test_bridge_port_deinit_not_initialized);
     RUN_TEST(test_bridge_port_deinit_success);
-
-    RUN_TEST(test_bridge_disable_enable_port_invalid_index);
-    RUN_TEST(test_bridge_disable_port_initialized);
-
-    RUN_TEST(test_bridge_enable_port_not_initialized_no_request);
-    RUN_TEST(test_bridge_enable_port_disabled_during_init);
-    RUN_TEST(test_bridge_port_init_after_switching);
 
     RUN_TEST(test_tcp_server_active_connections_invalid_server_num);
     RUN_TEST(test_tcp_server_active_connections_disabled_mode);

@@ -23,19 +23,19 @@ static tcp_desc_t *s_tcp_desc = NULL;
 /* TCP port the server is currently listening on; 0 if not initialized */
 static int s_port = 0;
 
-/* ---- Modbus exception codes ---------------------------------------------- */
+/* ---- Modbus exception codes (aliases of the canonical modbus_helpers set) - */
 
-#define MB_EX_ILLEGAL_FUNCTION   0x01
-#define MB_EX_ILLEGAL_ADDRESS    0x02
-#define MB_EX_ILLEGAL_DATA_VALUE 0x03
-#define MB_EX_GW_TARGET_FAILED   0x0B  /* Gateway target device failed to respond */
+#define MB_EX_ILLEGAL_FUNCTION   MODBUS_EXC_ILLEGAL_FUNCTION
+#define MB_EX_ILLEGAL_ADDRESS    MODBUS_EXC_ILLEGAL_ADDRESS
+#define MB_EX_ILLEGAL_DATA_VALUE MODBUS_EXC_ILLEGAL_DATA_VALUE
+#define MB_EX_GW_TARGET_FAILED   MODBUS_EXC_GW_TARGET_FAILED  /* Gateway target device failed to respond */
 
-/* ---- Modbus function codes supported ------------------------------------- */
+/* ---- Modbus function codes supported (aliases of the canonical set) ------- */
 
-#define MB_FC_READ_COILS            0x01
-#define MB_FC_READ_DISCRETE_INPUTS  0x02
-#define MB_FC_READ_HOLDING_REGS     0x03
-#define MB_FC_READ_INPUT_REGS       0x04
+#define MB_FC_READ_COILS            MODBUS_FC_READ_COILS
+#define MB_FC_READ_DISCRETE_INPUTS  MODBUS_FC_READ_DISCRETE_INPUTS
+#define MB_FC_READ_HOLDING_REGS     MODBUS_FC_READ_HOLDING_REGS
+#define MB_FC_READ_INPUT_REGS       MODBUS_FC_READ_INPUT_REGS
 
 /* ---- Modbus limits (per spec) -------------------------------------------- */
 
@@ -63,17 +63,11 @@ static void send_exception(tcp_desc_t *desc, int client_sock,
     /* Exception PDU: [FC|0x80][exception_code] — 2 bytes.
      * MBAP length field = unit_id (1) + FC (1) + exception_code (1) = 3. */
     uint8_t buf[sizeof(mb_tcp_header_t) + 1]; /* header + 1 byte exception */
-    mb_tcp_header_t *hdr = (mb_tcp_header_t *)buf;
 
-    hdr->transaction_id = transaction_id;        /* already network byte order */
-    hdr->protocol_id    = 0x0000;
-    hdr->length         = htons(3);              /* unit_id + FC|0x80 + code  */
-    hdr->unit_id        = unit_id;
-    hdr->function       = (uint8_t)(fc | 0x80u);
+    /* transaction_id is already in network byte order, echoed verbatim. */
+    size_t len = modbus_pdu_build_exception(buf, transaction_id, unit_id, fc, exception);
 
-    buf[sizeof(mb_tcp_header_t)] = exception;
-
-    tcp_server_send(desc, client_sock, buf, sizeof(buf));
+    tcp_server_send(desc, client_sock, buf, len);
 }
 
 /* ---- Response builder functions ------------------------------------------ */
@@ -325,8 +319,9 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
     /* Bytes immediately after the MBAP header (fc is already in header) */
     const uint8_t *pdu = data + sizeof(mb_tcp_header_t);
     /* pdu[0..1] = start address, pdu[2..3] = count                          */
-    uint16_t start_addr = ((uint16_t)pdu[0] << 8) | pdu[1];
-    uint16_t count      = ((uint16_t)pdu[2] << 8) | pdu[3];
+    uint16_t start_addr = 0;
+    uint16_t count      = 0;
+    modbus_pdu_parse_read_request(pdu, &start_addr, &count);
 
     /* ---- 7. Validate count ------------------------------------------------- */
     if (fc == MB_FC_READ_HOLDING_REGS || fc == MB_FC_READ_INPUT_REGS) {

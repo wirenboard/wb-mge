@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { decodePacket, parseHex, type DecodedPacket, type Direction } from '@/common/modbusDecoder';
 import {
   type TreeRow,
@@ -17,6 +18,8 @@ import MagnifierIcon from '@/assets/magnifierIcon.svg?component';
 // ============================================================
 
 const props = defineProps<{ packet: SniffRow }>();
+
+const { t } = useI18n();
 
 // ============================================================
 // State
@@ -167,11 +170,11 @@ const chunks32 = computed<Chunk32[]>(() => {
     <!-- Header -->
     <div class="pkt-header">
       <div class="pkt-header-left">
-        <span class="pkt-title">Packet #{{ packet.id }}</span>
+        <span class="pkt-title">{{ t('packet') }} #{{ packet.id }}</span>
         <span :class="['sender-pill', 'sender-' + packet.sender.toLowerCase()]">{{ packet.sender }}</span>
         <span class="pkt-dir muted">
-          <template v-if="packet.sender === 'MASTER'">Master → Slave 0x{{ packet.slave }}</template>
-          <template v-else-if="packet.sender === 'SLAVE'">Slave 0x{{ packet.slave }} → Master</template>
+          <template v-if="packet.sender === 'MASTER'">{{ t('dir_master_to_slave', { slave: packet.slave }) }}</template>
+          <template v-else-if="packet.sender === 'SLAVE'">{{ t('dir_slave_to_master', { slave: packet.slave }) }}</template>
           <template v-else>{{ packet.sender }}</template>
           · {{ packet.fc }}
         </span>
@@ -185,8 +188,9 @@ const chunks32 = computed<Chunk32[]>(() => {
     <div class="pkt-body">
       <!-- Left: decoded tree -->
       <div class="pkt-decoded">
-        <div class="pkt-col-label">DECODED</div>
+        <div class="pkt-col-label">{{ t('decoded') }}</div>
         <div class="tree-rows">
+          <!-- Intentional dynamic geometry: per-row indentation depends on the runtime tree depth, so it cannot be a static CSS class. -->
           <div
             v-for="(row, i) in treeRows"
             :key="i"
@@ -203,7 +207,7 @@ const chunks32 = computed<Chunk32[]>(() => {
               <span class="tree-key" :title="row.tooltip">{{ row.label }}</span>
               <span :class="['tree-val', { 'tree-val-error': row.isError }]" :title="row.valueTooltip || undefined">{{ row.value }}</span>
               <!-- Magnifier icon for data fields — opens interpretation popup -->
-              <span v-if="row.isDataField && leafBytes.length >= 2" class="data-icon-btn" title="Interpret data" @click.stop="showDataPopup = !showDataPopup">
+              <span v-if="row.isDataField && leafBytes.length >= 2" class="data-icon-btn" :title="t('interpret_data')" @click.stop="showDataPopup = !showDataPopup">
                 <MagnifierIcon class="data-icon-svg" />
               </span>
             </template>
@@ -223,7 +227,7 @@ const chunks32 = computed<Chunk32[]>(() => {
 
       <!-- Right: raw bytes hex editor -->
       <div class="pkt-raw">
-        <div class="pkt-col-label">RAW BYTES · {{ packet.bytes }} B</div>
+        <div class="pkt-col-label">{{ t('raw_bytes') }} · {{ packet.bytes }} B</div>
         <div class="hexed">
           <div v-for="(row, ri) in hexEditorRows" :key="ri" class="hexed-row">
             <span class="hexed-off">{{ row.offset }}</span>
@@ -242,10 +246,10 @@ const chunks32 = computed<Chunk32[]>(() => {
     <!-- Data interpretation popup (absolute positioned) -->
     <div v-if="showDataPopup && leafBytes.length >= 2" class="data-popup">
       <div class="data-popup-header">
-        <span class="pkt-col-label pkt-col-labelNoPad">DATA INTERPRETATION</span>
+        <span class="pkt-col-label pkt-col-labelNoPad">{{ t('data_interpretation') }}</span>
         <div class="bit-mode-tabs">
-          <button :class="['bit-tab', { active: activeBitMode === '16' }]" @click="activeBitMode = '16'">16-bit</button>
-          <button :class="['bit-tab', { active: activeBitMode === '32' }]" @click="activeBitMode = '32'">32-bit</button>
+          <button :class="['bit-tab', { active: activeBitMode === '16' }]" @click="activeBitMode = '16'">{{ t('bit_16') }}</button>
+          <button :class="['bit-tab', { active: activeBitMode === '32' }]" @click="activeBitMode = '32'">{{ t('bit_32') }}</button>
         </div>
         <button class="popup-close" @click="showDataPopup = false">✕</button>
       </div>
@@ -253,7 +257,7 @@ const chunks32 = computed<Chunk32[]>(() => {
       <!-- 16-bit registers view — table layout matching the 32-bit view -->
       <div v-if="activeBitMode === '16'" class="regs16-view">
         <table class="chunks32-table">
-          <thead><tr><th>Reg</th><th>Hex</th><th>UInt16</th><th>Int16</th></tr></thead>
+          <thead><tr><th>{{ t('th_reg') }}</th><th>{{ t('th_hex') }}</th><th>{{ t('th_uint16') }}</th><th>{{ t('th_int16') }}</th></tr></thead>
           <tbody>
             <tr v-for="r in regs16" :key="r.index">
               <td class="muted">R{{ r.index }}</td>
@@ -267,7 +271,7 @@ const chunks32 = computed<Chunk32[]>(() => {
 
       <!-- 32-bit endianness view -->
       <div v-if="activeBitMode === '32'" class="view32">
-        <div v-if="leafBytes.length < 4" class="muted view32-empty">Need ≥ 4 bytes for 32-bit interpretation</div>
+        <div v-if="leafBytes.length < 4" class="muted view32-empty">{{ t('need_4_bytes') }}</div>
         <template v-else>
           <div class="endian-tabs">
             <button
@@ -280,7 +284,7 @@ const chunks32 = computed<Chunk32[]>(() => {
 </button>
           </div>
           <table class="chunks32-table">
-            <thead><tr><th>Bytes</th><th>Hex</th><th>UInt32</th><th>Int32</th><th>Float32</th></tr></thead>
+            <thead><tr><th>{{ t('th_bytes') }}</th><th>{{ t('th_hex') }}</th><th>{{ t('th_uint32') }}</th><th>{{ t('th_int32') }}</th><th>{{ t('th_float32') }}</th></tr></thead>
             <tbody>
               <tr v-for="c in chunks32" :key="c.offset">
                 <td class="muted">{{ c.offset }}</td>
@@ -601,3 +605,108 @@ const chunks32 = computed<Chunk32[]>(() => {
 .muted   { color: var(--text-muted); }
 .mono    { font-family: var(--font-mono); }
 </style>
+
+<i18n>
+{
+  "en": {
+    "packet": "Packet",
+    "dir_master_to_slave": "Master → Slave 0x{slave}",
+    "dir_slave_to_master": "Slave 0x{slave} → Master",
+    "decoded": "DECODED",
+    "raw_bytes": "RAW BYTES",
+    "data_interpretation": "DATA INTERPRETATION",
+    "interpret_data": "Interpret data",
+    "bit_16": "16-bit",
+    "bit_32": "32-bit",
+    "need_4_bytes": "Need ≥ 4 bytes for 32-bit interpretation",
+    "th_reg": "Reg",
+    "th_hex": "Hex",
+    "th_uint16": "UInt16",
+    "th_int16": "Int16",
+    "th_bytes": "Bytes",
+    "th_uint32": "UInt32",
+    "th_int32": "Int32",
+    "th_float32": "Float32"
+  },
+  "ru": {
+    "packet": "Пакет",
+    "dir_master_to_slave": "Master → Slave 0x{slave}",
+    "dir_slave_to_master": "Slave 0x{slave} → Master",
+    "decoded": "РАЗОБРАНО",
+    "raw_bytes": "СЫРЫЕ БАЙТЫ",
+    "data_interpretation": "ИНТЕРПРЕТАЦИЯ ДАННЫХ",
+    "interpret_data": "Интерпретировать данные",
+    "bit_16": "16 бит",
+    "bit_32": "32 бита",
+    "need_4_bytes": "Нужно ≥ 4 байт для 32-битной интерпретации",
+    "th_reg": "Рег",
+    "th_hex": "Hex",
+    "th_uint16": "UInt16",
+    "th_int16": "Int16",
+    "th_bytes": "Байты",
+    "th_uint32": "UInt32",
+    "th_int32": "Int32",
+    "th_float32": "Float32"
+  },
+  "kk": {
+    "packet": "Пакет",
+    "dir_master_to_slave": "Master → Slave 0x{slave}",
+    "dir_slave_to_master": "Slave 0x{slave} → Master",
+    "decoded": "ТАЛДАНҒАН",
+    "raw_bytes": "ШИКІ БАЙТТАР",
+    "data_interpretation": "ДЕРЕКТЕРДІ ТАЛДАУ",
+    "interpret_data": "Деректерді талдау",
+    "bit_16": "16 бит",
+    "bit_32": "32 бит",
+    "need_4_bytes": "32-биттік талдау үшін ≥ 4 байт қажет",
+    "th_reg": "Рег",
+    "th_hex": "Hex",
+    "th_uint16": "UInt16",
+    "th_int16": "Int16",
+    "th_bytes": "Байттар",
+    "th_uint32": "UInt32",
+    "th_int32": "Int32",
+    "th_float32": "Float32"
+  },
+  "it": {
+    "packet": "Pacchetto",
+    "dir_master_to_slave": "Master → Slave 0x{slave}",
+    "dir_slave_to_master": "Slave 0x{slave} → Master",
+    "decoded": "DECODIFICATO",
+    "raw_bytes": "BYTE GREZZI",
+    "data_interpretation": "INTERPRETAZIONE DATI",
+    "interpret_data": "Interpreta dati",
+    "bit_16": "16 bit",
+    "bit_32": "32 bit",
+    "need_4_bytes": "Servono ≥ 4 byte per l'interpretazione a 32 bit",
+    "th_reg": "Reg",
+    "th_hex": "Hex",
+    "th_uint16": "UInt16",
+    "th_int16": "Int16",
+    "th_bytes": "Byte",
+    "th_uint32": "UInt32",
+    "th_int32": "Int32",
+    "th_float32": "Float32"
+  },
+  "de": {
+    "packet": "Paket",
+    "dir_master_to_slave": "Master → Slave 0x{slave}",
+    "dir_slave_to_master": "Slave 0x{slave} → Master",
+    "decoded": "DEKODIERT",
+    "raw_bytes": "ROHBYTES",
+    "data_interpretation": "DATENINTERPRETATION",
+    "interpret_data": "Daten interpretieren",
+    "bit_16": "16-Bit",
+    "bit_32": "32-Bit",
+    "need_4_bytes": "≥ 4 Bytes für 32-Bit-Interpretation erforderlich",
+    "th_reg": "Reg",
+    "th_hex": "Hex",
+    "th_uint16": "UInt16",
+    "th_int16": "Int16",
+    "th_bytes": "Bytes",
+    "th_uint32": "UInt32",
+    "th_int32": "Int32",
+    "th_float32": "Float32"
+  }
+}
+</i18n>

@@ -227,6 +227,42 @@ describe('buildPreviewFrame', () => {
   it('read mode count=2001 → null (count > 2000)', () => {
     expect(buildPreviewFrame('1', '03', '0', '2001', 'read')).toBeNull();
   });
+
+  it('read mode with invalid FC ("07") → null', () => {
+    expect(buildPreviewFrame('1', '07', '0', '10', 'read')).toBeNull();
+  });
+
+  it('FC06 write val=65536 → null (> 0xFFFF)', () => {
+    expect(buildPreviewFrame('1', '06', '0', '65536', 'write')).toBeNull();
+  });
+
+  it('FC06 write val=-1 → null (< 0)', () => {
+    expect(buildPreviewFrame('1', '06', '0', '-1', 'write')).toBeNull();
+  });
+
+  it('FC06 write val=65535 → not null (boundary)', () => {
+    expect(buildPreviewFrame('1', '06', '0', '65535', 'write')).not.toBeNull();
+  });
+
+  it('FC06 write val=0 → not null (boundary)', () => {
+    expect(buildPreviewFrame('1', '06', '0', '0', 'write')).not.toBeNull();
+  });
+
+  it('FC10 write val=70000 → null (regression: silent truncation 70000 → 4464)', () => {
+    expect(buildPreviewFrame('1', '10', '0', '70000', 'write')).toBeNull();
+  });
+
+  it('FC05 coil write val=2 → null (coil must be 0 or 1)', () => {
+    expect(buildPreviewFrame('1', '05', '0', '2', 'write')).toBeNull();
+  });
+
+  it('FC05 coil write val=1 → not null', () => {
+    expect(buildPreviewFrame('1', '05', '0', '1', 'write')).not.toBeNull();
+  });
+
+  it('FC05 coil write val=0 → not null', () => {
+    expect(buildPreviewFrame('1', '05', '0', '0', 'write')).not.toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

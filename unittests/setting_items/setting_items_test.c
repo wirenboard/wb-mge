@@ -1126,6 +1126,93 @@ void test_wifi_perm_disable_key_exists_in_setting_items(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE("false", default_value, "Default value for wifi_perm_disable should be 'false'");
 }
 
+// ── Legacy port_mode migration (setting_items_migrate_port_mode) ──────────────
+// On an upgraded device port_mode_N does not exist; it is derived from the legacy
+// bridge_mode_N value BEFORE defaults run, so the previous on/off state survives.
+
+// Upgraded device, port was OFF: legacy bridge_mode_1="disabled", no port_mode_1.
+// After init port_mode_1 must be "disabled" (default "tcp_bridge" must NOT win).
+void test_migrate_port_mode_legacy_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - legacy bridge_mode 'disabled'");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "disabled"),
+                                  "Pre-seeding legacy bridge_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_DISABLED_STR, value,
+                                     "Legacy disabled bridge should migrate to port_mode 'disabled'");
+}
+
+// Upgraded device, port was an active bridge: legacy bridge_mode_1="server",
+// no port_mode_1. After init port_mode_1 must be "tcp_bridge".
+void test_migrate_port_mode_legacy_server(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - legacy bridge_mode 'server'");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "server"),
+                                  "Pre-seeding legacy bridge_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
+                                     "Legacy server bridge should migrate to port_mode 'tcp_bridge'");
+}
+
+// Both keys already present (e.g. user already set port_mode_1="passive"). The
+// migration must NOT overwrite an existing port_mode value.
+void test_migrate_port_mode_existing_value_preserved(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - existing value preserved");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "server"),
+                                  "Pre-seeding legacy bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_PASSIVE_STR),
+                                  "Pre-seeding existing port_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_PASSIVE_STR, value,
+                                     "Existing port_mode_1 must be preserved, not overwritten by migration");
+}
+
+// Fresh device (neither key present). The migration is a no-op and the default
+// "tcp_bridge" is written by setting_items_set_defaults().
+void test_migrate_port_mode_fresh_device_default(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - fresh device default");
+    LOG_MESSAGE();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
+                                     "Fresh device should get the default port_mode 'tcp_bridge'");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1168,6 +1255,11 @@ int main(void)
     RUN_TEST(test_wifi_perm_disable_default_is_false);
     RUN_TEST(test_wifi_perm_disable_can_be_set_to_true);
     RUN_TEST(test_wifi_perm_disable_key_exists_in_setting_items);
+
+    RUN_TEST(test_migrate_port_mode_legacy_disabled);
+    RUN_TEST(test_migrate_port_mode_legacy_server);
+    RUN_TEST(test_migrate_port_mode_existing_value_preserved);
+    RUN_TEST(test_migrate_port_mode_fresh_device_default);
 
     return UNITY_END();
 }
