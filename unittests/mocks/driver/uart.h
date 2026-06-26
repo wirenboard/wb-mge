@@ -108,6 +108,7 @@ int uart_write_bytes(uart_port_t uart_num, const void *src, size_t size);
 void uart_set_always_rx_timeout(uart_port_t uart_num, bool always_rx_timeout_en);
 esp_err_t uart_disable_rx_intr(uart_port_t uart_num);
 esp_err_t uart_disable_tx_intr(uart_port_t uart_num);
+esp_err_t uart_get_buffered_data_len(uart_port_t uart_num, size_t *size);
 
 typedef struct {
     int called;
@@ -199,6 +200,13 @@ typedef struct {
     bool always_rx_timeout_en;
 } uart_set_always_rx_timeout_t;
 
+typedef struct {
+    int called;
+    uart_port_t uart_num;
+    size_t size;          // value the mock returns via *size
+    esp_err_t result;     // value the mock returns
+} mock_uart_get_buffered_data_len_t;
+
 extern mock_uart_disable_rx_intr_t mock_uart_disable_rx_intr_data;
 extern mock_uart_disable_tx_intr_t mock_uart_disable_tx_intr_data;
 extern mock_uart_flush_input_t mock_uart_flush_input_data;
@@ -212,5 +220,6 @@ extern mock_uart_wait_tx_done_t mock_uart_wait_tx_done_data;
 extern mock_uart_read_bytes_t mock_uart_read_bytes_data;
 extern mock_uart_write_bytes_t mock_uart_write_bytes_data;
 extern uart_set_always_rx_timeout_t uart_set_always_rx_timeout_data;
+extern mock_uart_get_buffered_data_len_t mock_uart_get_buffered_data_len_data;
 
 void mock_uart_reset(void);

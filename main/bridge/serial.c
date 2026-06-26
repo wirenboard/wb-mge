@@ -47,6 +47,24 @@ typedef struct {
 } buffer_ctx_t;
 
 
+// Report an RX-stage loss (driver-ring / FIFO overflow) then flush the driver ring and
+// reset the SW buffers. ring_len is read BEFORE the flush; the uart_get_buffered_data_len
+// return value is intentionally ignored (best-effort: ring_len stays 0 if it fails, so the
+// count just omits the ring contents). Only the count differs from the UART_DATA overflow
+// path, which reports data_len + event.size instead and stays inline.
+static void serial_drop_and_flush(serial_desc_t *desc, buffer_ctx_t *buffer_ctx)
+{
+    if (desc->drop_handler) {
+        size_t ring_len = 0;
+        uart_get_buffered_data_len(desc->port_num, &ring_len);
+        desc->drop_handler(desc, buffer_ctx->data_len + ring_len);
+    }
+    uart_flush_input(desc->port_num);
+    xQueueReset(desc->uart_queue);
+    buffer_ctx->data_len = 0;
+    buffer_ctx->sniff_len = 0;
+}
+
 static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ctx_t *buffer_ctx)
 {
     switch (event.type) {
@@ -54,6 +72,11 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             int free_space = (int)SERIAL_BUF_SIZE - (int)buffer_ctx->data_len;
             if (free_space < (int)event.size) {
                 ESP_LOGE(TAG, "UART[%d] receive buffer overflow, free: %d, expected: >= %zu", desc->port_num, free_space, event.size);
+                // RX-stage loss: the buffered partial frame plus the incoming chunk that did not fit
+                // are both discarded by uart_flush_input below. Report them so they are counted as dropped.
+                if (desc->drop_handler) {
+                    desc->drop_handler(desc, buffer_ctx->data_len + event.size);
+                }
                 uart_flush_input(desc->port_num);
                 xQueueReset(desc->uart_queue);
                 buffer_ctx->data_len = 0;
@@ -103,17 +126,11 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
         }
         case UART_FIFO_OVF:
             ESP_LOGW(TAG, "UART[%d] HW fifo overflow", desc->port_num);
-            uart_flush_input(desc->port_num);
-            xQueueReset(desc->uart_queue);
-            buffer_ctx->data_len = 0;
-            buffer_ctx->sniff_len = 0;
+            serial_drop_and_flush(desc, buffer_ctx);
             break;
         case UART_BUFFER_FULL:
             ESP_LOGW(TAG, "UART[%d] ring buffer full", desc->port_num);
-            uart_flush_input(desc->port_num);
-            xQueueReset(desc->uart_queue);
-            buffer_ctx->data_len = 0;
-            buffer_ctx->sniff_len = 0;
+            serial_drop_and_flush(desc, buffer_ctx);
             break;
         case UART_BREAK:
             ESP_LOGD(TAG, "UART[%d] rx break", desc->port_num);
@@ -258,6 +275,7 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
     desc->wait_for_idle = false;   // default: forward immediately (transparent bridge behavior)
     desc->receive_handler = serial_receive_handler;
     desc->sniff_handler = NULL;
+    desc->drop_handler = NULL;
     desc->uart_queue = NULL;
     desc->task_handle = NULL;
     desc->event_group = event_group;

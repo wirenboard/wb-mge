@@ -31,6 +31,9 @@ typedef struct serial_desc_t serial_desc_t;
 
 typedef void (*serial_receive_handler_t)(serial_desc_t *desc, uint8_t *, size_t);
 
+// Invoked when received bytes are dropped at the RX stage (buffer/ring overflow). dropped_len = bytes discarded.
+typedef void (*serial_drop_handler_t)(serial_desc_t *desc, size_t dropped_len);
+
 struct serial_desc_t {
     uart_port_t port_num;
     int dir_pin;            // Direction pin used for RS-485 half-duplex control
@@ -39,6 +42,7 @@ struct serial_desc_t {
     QueueHandle_t uart_queue;
     serial_receive_handler_t receive_handler;
     serial_receive_handler_t sniff_handler;
+    serial_drop_handler_t drop_handler;  // Optional: called with the count of bytes dropped on RX overflow (NULL = not counted)
     TaskHandle_t task_handle;
     EventGroupHandle_t event_group;
 };

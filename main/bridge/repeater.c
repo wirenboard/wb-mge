@@ -13,7 +13,7 @@ typedef struct { serial_desc_t *serial_desc; } repeater_ctx_t;
 
 static repeater_ctx_t s_ctx[BRIDGES_COUNT];
 static uint64_t s_bytes[BRIDGES_COUNT];   // s_bytes[i] = bytes forwarded FROM port i to its peer
-static uint64_t s_dropped[BRIDGES_COUNT]; // s_dropped[i] = bytes received on port i that could not be forwarded
+static uint64_t s_dropped[BRIDGES_COUNT]; // s_dropped[i] = bytes received on port i that were lost: forward failures plus RX-stage drops (receive-buffer / ring overflow)
 static unsigned s_active_count;           // number of ports currently in repeater mode
 static int64_t  s_active_since_us;         // esp_timer_get_time() snapshot when forwarding became active (s_active_count 0->1)
 
@@ -61,6 +61,28 @@ static int find_index_by_serial_desc(const serial_desc_t *desc)
         }
     }
     return -1;
+}
+
+// Drop handler installed on every repeater port's serial descriptor: bytes lost at the RX
+// stage (receive-buffer / driver-ring overflow inside serial.c) are attributed to the port
+// that received them, matching the dropped_i semantics ("received on port i, not forwarded").
+// Runs in the port's UART task — the same task as repeater_rx_handler. The two are mutually
+// exclusive per UART event (a single handle_uart_event invocation takes exactly one branch),
+// so they are never nested. find_index_by_serial_desc() is read WITHOUT s_lock (same as
+// repeater_rx_handler does); only the s_dropped[] update is taken under s_lock.
+// A drop that arrives during the teardown window — after repeater_deinit_port() has NULLed
+// s_ctx[index].serial_desc under the lock but before the UART task has fully exited — resolves
+// to index < 0 and is intentionally NOT counted (the port is already deregistered). This is
+// acceptable: such bytes are a negligible tail at shutdown.
+static void repeater_drop_handler(serial_desc_t *desc, size_t dropped_len)
+{
+    int index = find_index_by_serial_desc(desc);
+    if (index < 0) {
+        return;
+    }
+    repeater_lock();
+    s_dropped[index] += (uint64_t)dropped_len;
+    repeater_unlock();
 }
 
 // Receive handler installed on every repeater port: forward received bytes to the peer port.
@@ -114,6 +136,7 @@ esp_err_t repeater_init_port(unsigned index, serial_config_t *config, serial_des
         ESP_LOGE(TAG, "Port[%u]: serial_init failed", index + 1);
         return ESP_FAIL;
     }
+    desc->drop_handler = repeater_drop_handler;  // count RX-stage drops into s_dropped[index]
 
     repeater_lock();
     // Fresh forwarding session: reset counters and start the uptime clock.

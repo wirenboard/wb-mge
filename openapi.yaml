@@ -281,12 +281,12 @@ paths:
                         type: integer
                         format: int64
                         minimum: 0
-                        description: "Bytes received on Port 1 that could not be forwarded"
+                        description: "Bytes received on Port 1 that were lost: forward failures plus RX-stage drops (receive-buffer / driver-ring overflow)"
                       dropped_2:
                         type: integer
                         format: int64
                         minimum: 0
-                        description: "Bytes received on Port 2 that could not be forwarded"
+                        description: "Bytes received on Port 2 that were lost: forward failures plus RX-stage drops (receive-buffer / driver-ring overflow)"
         '400':
           description: Bad request
           content:

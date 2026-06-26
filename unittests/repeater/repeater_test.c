@@ -374,6 +374,83 @@ void test_deinit_serial_deinit_runs_after_unlock(void)
 }
 
 // ---------------------------------------------------------------------------
+// Test: repeater registers a drop handler on each port's descriptor
+// ---------------------------------------------------------------------------
+void test_drop_handler_registered_on_ports(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test: drop handler registered on both ports");
+    LOG_MESSAGE();
+
+    serial_desc_t *d0 = NULL, *d1 = NULL;
+    init_both_ports(&d0, &d1);
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(d0->drop_handler, "Port 0 should have a drop handler registered");
+    TEST_ASSERT_NOT_NULL_MESSAGE(d1->drop_handler, "Port 1 should have a drop handler registered");
+}
+
+// ---------------------------------------------------------------------------
+// Test: RX-stage drops accumulate into dropped_1 / dropped_2 per port
+// ---------------------------------------------------------------------------
+void test_drop_handler_accumulates_per_port(void)
+{
+    serial_desc_t *d0 = NULL, *d1 = NULL;
+    init_both_ports(&d0, &d1);
+
+    d0->drop_handler(d0, 50);
+    d1->drop_handler(d1, 30);
+
+    repeater_stats_t st = {0};
+    repeater_get_stats(&st);
+    TEST_ASSERT_EQUAL_UINT64(50, st.dropped_1);
+    TEST_ASSERT_EQUAL_UINT64(30, st.dropped_2);
+}
+
+// ---------------------------------------------------------------------------
+// Test: RX-stage drops add on top of forward-failure drops, leaving bytes intact
+// ---------------------------------------------------------------------------
+void test_drop_handler_adds_on_top_of_forward(void)
+{
+    serial_desc_t *d0 = NULL, *d1 = NULL;
+    init_both_ports(&d0, &d1);
+
+    // Forward a 3-byte payload port 0 -> port 1: bytes_1to2 == 3, dropped_1 == 0.
+    uint8_t payload[] = {0x01, 0x02, 0x03};
+    mock_serial_registered_handler(d0, payload, sizeof(payload));
+
+    // Now an RX-stage drop of 7 bytes on port 0: dropped_1 == 7, bytes_1to2 unchanged.
+    d0->drop_handler(d0, 7);
+
+    repeater_stats_t st = {0};
+    repeater_get_stats(&st);
+    TEST_ASSERT_EQUAL_UINT64(3, st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(7, st.dropped_1);
+}
+
+// ---------------------------------------------------------------------------
+// Test: an unknown descriptor in the drop handler is dropped early, no counter moves
+// ---------------------------------------------------------------------------
+void test_drop_handler_unknown_desc_ignored(void)
+{
+    serial_config_t cfg0 = make_serial_config();
+    serial_desc_t *d0 = NULL;
+    TEST_ASSERT_EQUAL(ESP_OK, repeater_init_port(0, &cfg0, &d0));
+
+    serial_desc_t bogus;   // a descriptor never registered with the repeater
+
+    // d0->drop_handler is the repeater's static handler; passing an unregistered desc
+    // must hit the index < 0 early-return and leave every counter untouched.
+    d0->drop_handler(&bogus, 99);
+
+    repeater_stats_t st = {0};
+    repeater_get_stats(&st);
+    TEST_ASSERT_EQUAL_UINT64(0, st.dropped_1);
+    TEST_ASSERT_EQUAL_UINT64(0, st.dropped_2);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_1to2);
+    TEST_ASSERT_EQUAL_UINT64(0, st.bytes_2to1);
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 int main(void)
@@ -394,6 +471,10 @@ int main(void)
     RUN_TEST(test_double_init_same_port_is_idempotent);
     RUN_TEST(test_rx_handler_unknown_desc_ignored);
     RUN_TEST(test_deinit_serial_deinit_runs_after_unlock);
+    RUN_TEST(test_drop_handler_registered_on_ports);
+    RUN_TEST(test_drop_handler_accumulates_per_port);
+    RUN_TEST(test_drop_handler_adds_on_top_of_forward);
+    RUN_TEST(test_drop_handler_unknown_desc_ignored);
 
     return UNITY_END();
 }

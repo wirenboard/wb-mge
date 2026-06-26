@@ -17,6 +17,7 @@ mock_uart_wait_tx_done_t mock_uart_wait_tx_done_data = {0};
 mock_uart_read_bytes_t mock_uart_read_bytes_data = {0};
 mock_uart_write_bytes_t mock_uart_write_bytes_data = {0};
 uart_set_always_rx_timeout_t uart_set_always_rx_timeout_data = {0};
+mock_uart_get_buffered_data_len_t mock_uart_get_buffered_data_len_data = {0};
 
 esp_err_t uart_disable_rx_intr(uart_port_t uart_num)
 {
@@ -185,6 +186,20 @@ void uart_set_always_rx_timeout(uart_port_t uart_num, bool always_rx_timeout_en)
     uart_set_always_rx_timeout_data.always_rx_timeout_en = always_rx_timeout_en;
 }
 
+esp_err_t uart_get_buffered_data_len(uart_port_t uart_num, size_t *size)
+{
+    TEST_ASSERT_TRUE_MESSAGE(uart_num < UART_NUM_MAX, "uart_get_buffered_data_len called with invalid uart_num");
+
+    mock_uart_get_buffered_data_len_data.called++;
+    mock_uart_get_buffered_data_len_data.uart_num = uart_num;
+
+    if (size != NULL) {
+        *size = mock_uart_get_buffered_data_len_data.size;
+    }
+
+    return mock_uart_get_buffered_data_len_data.result;
+}
+
 void mock_uart_reset(void)
 {
     memset(&mock_uart_disable_rx_intr_data, 0, sizeof(mock_uart_disable_rx_intr_data));
@@ -200,4 +215,5 @@ void mock_uart_reset(void)
     memset(&mock_uart_read_bytes_data, 0, sizeof(mock_uart_read_bytes_data));
     memset(&mock_uart_write_bytes_data, 0, sizeof(mock_uart_write_bytes_data));
     memset(&uart_set_always_rx_timeout_data, 0, sizeof(uart_set_always_rx_timeout_data));
+    memset(&mock_uart_get_buffered_data_len_data, 0, sizeof(mock_uart_get_buffered_data_len_data));
 }

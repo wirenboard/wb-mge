@@ -57,6 +57,25 @@ typedef struct {
 
 static mock_sniff_handler_t mock_sniff_handler_data = {0};
 
+/* Capture for the drop handler: records that bytes were dropped at the RX stage
+ * (receive-buffer / driver-ring overflow) along with the per-call and total counts. */
+typedef struct {
+    int called;
+    serial_desc_t *desc;
+    size_t total;
+    size_t last_len;
+} mock_drop_handler_t;
+
+static mock_drop_handler_t mock_drop_handler_data;
+
+static void mock_drop_handler(serial_desc_t *desc, size_t dropped_len)
+{
+    mock_drop_handler_data.called++;
+    mock_drop_handler_data.desc = desc;
+    mock_drop_handler_data.last_len = dropped_len;
+    mock_drop_handler_data.total += dropped_len;
+}
+
 void setUp(void)
 {
     mock_uart_reset();
@@ -71,6 +90,8 @@ void setUp(void)
     mock_receive_handler_data.data = mock_receive_buffer;
 
     memset(&mock_sniff_handler_data, 0, sizeof(mock_sniff_handler_data));
+
+    memset(&mock_drop_handler_data, 0, sizeof(mock_drop_handler_data));
 }
 
 void tearDown(void)
@@ -1234,6 +1255,7 @@ void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
 
     // Neither event triggered the handler: event_1 buffered (wait_for_idle=true, no timeout), event_2 hit overflow.
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called (event_1 buffered, event_2 overflowed)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_get_buffered_data_len_data.called, "uart_get_buffered_data_len must not be called when drop_handler is NULL");
 }
 
 // Test receiving UART_FIFO_OVF event
@@ -1264,6 +1286,7 @@ void test_serial_init_success_with_uart_fifo_ovf_event(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_get_buffered_data_len_data.called, "uart_get_buffered_data_len must not be called when drop_handler is NULL");
 }
 
 // Test receiving UART_BUFFER_FULL event
@@ -1294,6 +1317,109 @@ void test_serial_init_success_with_uart_buffer_full_event(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_get_buffered_data_len_data.called, "uart_get_buffered_data_len must not be called when drop_handler is NULL");
+}
+
+// Test that the drop handler fires on a UART_DATA receive-buffer overflow.
+// event_1 (10 bytes, no timeout, wait_for_idle=true) is buffered (data_len=10).
+// event_2 (SERIAL_BUF_SIZE+1 bytes, timeout) overflows: the partial frame (10) plus
+// the incoming chunk (SERIAL_BUF_SIZE+1) are both flushed, so the drop handler must be
+// invoked once with dropped_len = 10 + (SERIAL_BUF_SIZE+1).
+void test_serial_drop_handler_uart_data_overflow(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test drop handler fires on UART_DATA receive buffer overflow");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = SERIAL_BUF_SIZE + 1, .timeout_flag = true};
+    void* events_arr[2] = {&event_1, &event_2};
+    size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 2;
+
+    // Defer task execution so wait_for_idle and drop_handler can be set before events run.
+    mock_xTaskCreate_data.self_execution = false;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    desc->wait_for_idle = true;        // buffer event_1 instead of forwarding it
+    desc->drop_handler = mock_drop_handler;
+
+    serial_test_run_uart_event_task(desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_drop_handler_data.called, "Drop handler should fire once on overflow");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(desc, mock_drop_handler_data.desc, "Drop handler should be called with correct descriptor");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        (size_t)(10 + (SERIAL_BUF_SIZE + 1)),
+        mock_drop_handler_data.last_len,
+        "Drop handler should report buffered partial frame plus the chunk that did not fit"
+    );
+}
+
+// Shared driver: buffer a 12-byte partial frame (UART_DATA, no timeout, wait_for_idle=true),
+// then deliver an overflow event of `type` with the driver ring mocked to `ring_len` bytes.
+// The drop handler must fire once reporting data_len(12) + ring_len — this exercises BOTH
+// terms of the sum on the FIFO_OVF / BUFFER_FULL paths.
+static void run_drop_overflow_case(uart_event_type_t type, size_t ring_len)
+{
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_uart_get_buffered_data_len_data.size = ring_len;
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 12, .timeout_flag = false};
+    uart_event_t event_2 = {.type = type, .size = 0, .timeout_flag = false};
+    void* events_arr[2] = {&event_1, &event_2};
+    size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 2;
+
+    mock_xTaskCreate_data.self_execution = false;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    desc->wait_for_idle = true;            // buffer event_1 (12 bytes) instead of forwarding it
+    desc->drop_handler = mock_drop_handler;
+
+    serial_test_run_uart_event_task(desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_drop_handler_data.called, "Drop handler should fire once on overflow");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(desc, mock_drop_handler_data.desc, "Drop handler should be called with correct descriptor");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        (size_t)(12 + ring_len),
+        mock_drop_handler_data.last_len,
+        "Drop handler should report buffered partial frame (data_len) plus the driver-ring bytes"
+    );
+}
+
+void test_serial_drop_handler_uart_fifo_ovf(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test drop handler fires on UART_FIFO_OVF event");
+    LOG_MESSAGE();
+    run_drop_overflow_case(UART_FIFO_OVF, 700);
+}
+
+void test_serial_drop_handler_uart_buffer_full(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test drop handler fires on UART_BUFFER_FULL event");
+    LOG_MESSAGE();
+    run_drop_overflow_case(UART_BUFFER_FULL, 1000);
 }
 
 // Test receiving UART_BREAK event
@@ -2247,6 +2373,9 @@ int main(void)
     RUN_TEST(test_serial_init_success_with_two_uart_data_events_buffer_overflow);
     RUN_TEST(test_serial_init_success_with_uart_fifo_ovf_event);
     RUN_TEST(test_serial_init_success_with_uart_buffer_full_event);
+    RUN_TEST(test_serial_drop_handler_uart_data_overflow);
+    RUN_TEST(test_serial_drop_handler_uart_fifo_ovf);
+    RUN_TEST(test_serial_drop_handler_uart_buffer_full);
     RUN_TEST(test_serial_init_success_with_uart_break_event);
     RUN_TEST(test_serial_init_success_with_uart_parity_err_event);
     RUN_TEST(test_serial_init_success_with_uart_frame_err_event);
