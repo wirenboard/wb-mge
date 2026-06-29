@@ -13,18 +13,12 @@ import {
 import { type SniffRow } from '@/utils/snifferUtils';
 import MagnifierIcon from '@/assets/magnifierIcon.svg?component';
 
-// ============================================================
 // Props
-// ============================================================
-
 const props = defineProps<{ packet: SniffRow }>();
 
 const { t } = useI18n();
 
-// ============================================================
 // State
-// ============================================================
-
 const hoveredRange = ref<{ start: number; end: number } | null>(null);
 const activeEndianness = ref<EndiannessKey>('abcd');
 type BitMode = '16' | '32';
@@ -49,10 +43,7 @@ const fullHex = computed<string>(() =>
   rawBytes.value.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('')
 );
 
-// ============================================================
 // Tree — flatten decoded object into rows
-// ============================================================
-
 const treeRows = computed<TreeRow[]>(() =>
   flattenNode(
     decoded.value as unknown as Record<string, unknown>,
@@ -63,10 +54,7 @@ const treeRows = computed<TreeRow[]>(() =>
   )
 );
 
-// ============================================================
 // Hover
-// ============================================================
-
 function onRowHover(start: number, end: number) {
   hoveredRange.value = end > start ? { start, end } : null;
 }
@@ -74,10 +62,7 @@ function onRowLeave() {
  hoveredRange.value = null;
 }
 
-// ============================================================
 // Hex editor — 8 bytes per row
-// ============================================================
-
 function isByteHighlighted(i: number): boolean {
   return hoveredRange.value !== null && i >= hoveredRange.value.start && i < hoveredRange.value.end;
 }
@@ -109,10 +94,7 @@ const hexEditorRows = computed<HexEditorRow[]>(() => {
   return out;
 });
 
-// ============================================================
 // Data interpretation popup
-// ============================================================
-
 const leafData = computed<string | null>(() => {
   function findDeepest(obj: Record<string, unknown>): string | null {
     if (obj.payload && typeof obj.payload === 'object') {
@@ -207,7 +189,7 @@ const chunks32 = computed<Chunk32[]>(() => {
               <span class="tree-key" :title="row.tooltip">{{ row.label }}</span>
               <span :class="['tree-val', { 'tree-val-error': row.isError }]" :title="row.valueTooltip || undefined">{{ row.value }}</span>
               <!-- Magnifier icon for data fields — opens interpretation popup -->
-              <span v-if="row.isDataField && leafBytes.length >= 2" class="data-icon-btn" :title="t('interpret_data')" @click.stop="showDataPopup = !showDataPopup">
+              <span v-if="row.isDataField && leafBytes.length >= 2" class="data-icon-btn" role="button" tabindex="0" :title="t('interpret_data')" :aria-label="t('interpret_data')" @click.stop="showDataPopup = !showDataPopup" @keydown.enter.stop="showDataPopup = !showDataPopup" @keydown.space.prevent.stop="showDataPopup = !showDataPopup">
                 <MagnifierIcon class="data-icon-svg" />
               </span>
             </template>
@@ -251,7 +233,7 @@ const chunks32 = computed<Chunk32[]>(() => {
           <button :class="['bit-tab', { active: activeBitMode === '16' }]" @click="activeBitMode = '16'">{{ t('bit_16') }}</button>
           <button :class="['bit-tab', { active: activeBitMode === '32' }]" @click="activeBitMode = '32'">{{ t('bit_32') }}</button>
         </div>
-        <button class="popup-close" @click="showDataPopup = false">✕</button>
+        <button class="popup-close" :aria-label="t('close')" @click="showDataPopup = false">✕</button>
       </div>
 
       <!-- 16-bit registers view — table layout matching the 32-bit view -->
@@ -613,6 +595,7 @@ const chunks32 = computed<Chunk32[]>(() => {
     "dir_master_to_slave": "Master → Slave 0x{slave}",
     "dir_slave_to_master": "Slave 0x{slave} → Master",
     "decoded": "DECODED",
+    "close": "Close",
     "raw_bytes": "RAW BYTES",
     "data_interpretation": "DATA INTERPRETATION",
     "interpret_data": "Interpret data",
@@ -633,6 +616,7 @@ const chunks32 = computed<Chunk32[]>(() => {
     "dir_master_to_slave": "Master → Slave 0x{slave}",
     "dir_slave_to_master": "Slave 0x{slave} → Master",
     "decoded": "РАЗОБРАНО",
+    "close": "Закрыть",
     "raw_bytes": "СЫРЫЕ БАЙТЫ",
     "data_interpretation": "ИНТЕРПРЕТАЦИЯ ДАННЫХ",
     "interpret_data": "Интерпретировать данные",
@@ -653,6 +637,7 @@ const chunks32 = computed<Chunk32[]>(() => {
     "dir_master_to_slave": "Master → Slave 0x{slave}",
     "dir_slave_to_master": "Slave 0x{slave} → Master",
     "decoded": "ТАЛДАНҒАН",
+    "close": "Жабу",
     "raw_bytes": "ШИКІ БАЙТТАР",
     "data_interpretation": "ДЕРЕКТЕРДІ ТАЛДАУ",
     "interpret_data": "Деректерді талдау",
@@ -673,6 +658,7 @@ const chunks32 = computed<Chunk32[]>(() => {
     "dir_master_to_slave": "Master → Slave 0x{slave}",
     "dir_slave_to_master": "Slave 0x{slave} → Master",
     "decoded": "DECODIFICATO",
+    "close": "Chiudi",
     "raw_bytes": "BYTE GREZZI",
     "data_interpretation": "INTERPRETAZIONE DATI",
     "interpret_data": "Interpreta dati",
@@ -693,6 +679,7 @@ const chunks32 = computed<Chunk32[]>(() => {
     "dir_master_to_slave": "Master → Slave 0x{slave}",
     "dir_slave_to_master": "Slave 0x{slave} → Master",
     "decoded": "DEKODIERT",
+    "close": "Schließen",
     "raw_bytes": "ROHBYTES",
     "data_interpretation": "DATENINTERPRETATION",
     "interpret_data": "Daten interpretieren",

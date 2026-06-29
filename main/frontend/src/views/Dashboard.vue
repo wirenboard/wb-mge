@@ -56,7 +56,7 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">{{ t('ethernet') }}</div>
-              <button class="card-edit-btn" :title="t('edit_settings')" @click="router.push('/network')">
+              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/network')">
                 <GearIcon />
               </button>
             </div>
@@ -73,7 +73,7 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">{{ t('wifi') }}</div>
-              <button class="card-edit-btn" :title="t('edit_settings')" @click="router.push('/network')">
+              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/network')">
                 <GearIcon />
               </button>
             </div>
@@ -140,8 +140,8 @@ const getDisplayValue = (val: string | boolean | number) => {
         <section class="card">
           <div class="card-header">
             <div class="card-title-row">
-              <div class="title">RS-485 · Port 1</div>
-              <button class="card-edit-btn" :title="t('edit_settings')" @click="router.push('/settings')">
+              <div class="title">{{ t('port_1') }}</div>
+              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/settings')">
                 <GearIcon />
               </button>
             </div>
@@ -149,15 +149,15 @@ const getDisplayValue = (val: string | boolean | number) => {
             <span v-else class="pill muted">{{ t('inactive') }}</span>
           </div>
           <div class="card-body">
-            <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
+            <RsStatus :title="t('rs_status_1')" :info="info!.rs485_1" :settings="settings!.rs485_1" />
           </div>
         </section>
 
         <section class="card">
           <div class="card-header">
             <div class="card-title-row">
-              <div class="title">RS-485 · Port 2</div>
-              <button class="card-edit-btn" :title="t('edit_settings')" @click="router.push('/settings')">
+              <div class="title">{{ t('port_2') }}</div>
+              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/settings')">
                 <GearIcon />
               </button>
             </div>
@@ -165,7 +165,7 @@ const getDisplayValue = (val: string | boolean | number) => {
             <span v-else class="pill muted">{{ t('inactive') }}</span>
           </div>
           <div class="card-body">
-            <RsStatus title="RS-485 2" :info="info!.rs485_2" :settings="settings!.rs485_2" />
+            <RsStatus :title="t('rs_status_2')" :info="info!.rs485_2" :settings="settings!.rs485_2" />
           </div>
         </section>
       </div>
@@ -238,7 +238,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_latest": "up to date",
     "firmware_latest_label": "latest",
-    "firmware_update_btn": "Update"
+    "firmware_update_btn": "Update",
+    "port_1": "RS-485 · Port 1",
+    "port_2": "RS-485 · Port 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   },
   "ru": {
     "title": "Обзор",
@@ -277,7 +281,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Прошивка",
     "firmware_latest": "актуальная",
     "firmware_latest_label": "последняя",
-    "firmware_update_btn": "Обновить"
+    "firmware_update_btn": "Обновить",
+    "port_1": "RS-485 · Порт 1",
+    "port_2": "RS-485 · Порт 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   },
   "kk": {
     "title": "Шолу",
@@ -316,7 +324,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Бағдарлама",
     "firmware_latest": "өзекті",
     "firmware_latest_label": "соңғы",
-    "firmware_update_btn": "Жаңарту"
+    "firmware_update_btn": "Жаңарту",
+    "port_1": "RS-485 · Порт 1",
+    "port_2": "RS-485 · Порт 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   },
   "it": {
     "title": "Dashboard",
@@ -355,7 +367,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_latest": "aggiornato",
     "firmware_latest_label": "ultima",
-    "firmware_update_btn": "Aggiorna"
+    "firmware_update_btn": "Aggiorna",
+    "port_1": "RS-485 · Porta 1",
+    "port_2": "RS-485 · Porta 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   },
   "de": {
     "title": "Übersicht",
@@ -394,7 +410,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_latest": "aktuell",
     "firmware_latest_label": "neueste",
-    "firmware_update_btn": "Aktualisieren"
+    "firmware_update_btn": "Aktualisieren",
+    "port_1": "RS-485 · Port 1",
+    "port_2": "RS-485 · Port 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   }
 }
 </i18n>

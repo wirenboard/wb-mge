@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { RsSettings } from '@/common/types';
-import { avgBytesPerSec, groupBytes, formatBytes, formatUptime, lineParams } from '@/views/repeaterFormat';
+import { avgBytesPerSec, groupBytes, formatBytes, formatUptime, lineParams } from '@/utils/repeaterFormat';
 
 // Build a full RsSettings with a configurable parity; other fields are fixed.
 function makeRs(parity: RsSettings['parity']): RsSettings {

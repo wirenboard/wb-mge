@@ -13,9 +13,6 @@ import {
   type DeviceNode,
 } from './registerMapUtils';
 
-// ============================================================
-// formatAgeUs
-// ============================================================
 describe('formatAgeUs', () => {
   it('returns em-dash for 0 µs', () => {
     expect(formatAgeUs(0)).toBe('—');
@@ -46,9 +43,6 @@ describe('formatAgeUs', () => {
   });
 });
 
-// ============================================================
-// formatMemory
-// ============================================================
 describe('formatMemory', () => {
   it('returns em-dash for 0 bytes', () => {
     expect(formatMemory(0)).toBe('—');
@@ -75,9 +69,6 @@ describe('formatMemory', () => {
   });
 });
 
-// ============================================================
-// formatAge
-// ============================================================
 describe('formatAge', () => {
   it('returns "< 1 s" for 0 seconds', () => {
     expect(formatAge(0)).toBe('< 1 s');
@@ -128,9 +119,6 @@ describe('formatAge', () => {
   });
 });
 
-// ============================================================
-// typeName
-// ============================================================
 describe('typeName', () => {
   it('maps "h" to "Holding"', () => {
     expect(typeName('h')).toBe('Holding');
@@ -153,9 +141,6 @@ describe('typeName', () => {
   });
 });
 
-// ============================================================
-// resolvePortSelection
-// ============================================================
 describe('resolvePortSelection', () => {
   it('(true, true) → {p1: true, p2: false} — both selected, keep port 1', () => {
     expect(resolvePortSelection(true, true)).toEqual({ p1: true, p2: false });
@@ -174,9 +159,6 @@ describe('resolvePortSelection', () => {
   });
 });
 
-// ============================================================
-// buildDevices
-// ============================================================
 describe('buildDevices', () => {
   it('returns empty array for empty entries', () => {
     expect(buildDevices([])).toEqual([]);
@@ -258,9 +240,6 @@ describe('buildDevices', () => {
   });
 });
 
-// ============================================================
-// buildRegsByKey
-// ============================================================
 describe('buildRegsByKey', () => {
   it('returns empty object for empty entries', () => {
     expect(buildRegsByKey([], 60)).toEqual({});
@@ -393,9 +372,6 @@ describe('buildRegsByKey', () => {
   });
 });
 
-// ============================================================
-// buildExportPayload
-// ============================================================
 describe('buildExportPayload', () => {
   it('returns { slaves: {} } for empty entries', () => {
     expect(buildExportPayload([])).toEqual({ slaves: {} });
@@ -485,9 +461,6 @@ describe('buildExportPayload', () => {
   });
 });
 
-// ============================================================
-// filterDevices — RM-U-010
-// ============================================================
 describe('filterDevices — RM-U-010', () => {
   // Slave 10 (decimal 10, hex 0x0a) and slave 255 (hex 0xff)
   const devices: DeviceNode[] = [

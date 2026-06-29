@@ -19,14 +19,10 @@ import { createRouter, createMemoryHistory } from 'vue-router';
 import type { Info } from '@/common/types';
 import { api } from '@/utils/api';
 
-// ---------------------------------------------------------------------------
 // Shared reactive info ref — mutated per test scenario to simulate polls.
-// ---------------------------------------------------------------------------
 const infoRef = ref<Info | undefined>(undefined);
 
-// ---------------------------------------------------------------------------
 // Mocks — hoisted before any component import by Vitest's vi.mock hoisting.
-// ---------------------------------------------------------------------------
 
 const fetchInfoMock = vi.fn().mockResolvedValue(undefined);
 
@@ -59,10 +55,6 @@ vi.mock('@unhead/vue', () => ({
   createUnhead: vi.fn(() => ({})),
   headSymbol: Symbol('head'),
 }));
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Build a minimal Info object — only the fields consumed by the watch are set.
@@ -164,10 +156,6 @@ function makeRouter() {
     ],
   });
 }
-
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
 
 describe('RM-I-001: RegisterMap port-initialization guard', () => {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
@@ -313,9 +301,6 @@ describe('RM-I-001: RegisterMap port-initialization guard', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-003: toggleCaching — enable path
-// ---------------------------------------------------------------------------
 /**
  * Integration test RM-I-003: RegisterMap toggleCaching — enable path.
  *
@@ -501,9 +486,6 @@ describe('RM-I-003: toggleCaching enable', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-04: toggleCaching — disable path
-// ---------------------------------------------------------------------------
 /**
  * Verifies that clicking the caching toggle when cacheEnabled=true (disable path):
  *   A. calls ports/1/cache disabled only (port1 cache on, port2 off)
@@ -603,9 +585,6 @@ describe('RM-I-04: toggleCaching — disable path', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-05: resetMap
-// ---------------------------------------------------------------------------
 /**
  * Verifies resetMap():
  *   A. port1 only active → disable then re-enable port1, fetchEntries called
@@ -732,9 +711,6 @@ describe('RM-I-05: resetMap', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-06: saveSettings
-// ---------------------------------------------------------------------------
 /**
  * Verifies saveSettings():
  *   A. TCP port changed → settings POST called with new port value
@@ -1038,9 +1014,6 @@ describe('RM-I-06: saveSettings', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-07: downloadJsonExport
-// ---------------------------------------------------------------------------
 /**
  * Verifies that clicking the JSON export button:
  *   - calls URL.createObjectURL with a Blob
@@ -1128,9 +1101,6 @@ describe('RM-I-07: downloadJsonExport', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-08: expandAll / collapseAll / toggleDevice / toggleGroup
-// ---------------------------------------------------------------------------
 /**
  * Verifies tree expansion/collapse controls:
  *   - expandAll: all devices become aria-expanded=true
@@ -1278,9 +1248,6 @@ describe('RM-I-08: expandAll / collapseAll / toggleDevice / toggleGroup', () => 
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-09: cacheEnabled watcher — stats side-effect
-// ---------------------------------------------------------------------------
 /**
  * Verifies the cacheEnabled watcher side-effects:
  *   A. When cacheEnabled=true on mount, api('cache/status') is called
@@ -1384,9 +1351,6 @@ describe('RM-I-09: cacheEnabled watcher — stats side-effect', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-10: onUnmounted — interval/timer cleanup
-// ---------------------------------------------------------------------------
 /**
  * Verifies that onUnmounted clears all intervals and timers:
  *   A. Unmounting stops the pollInterval and statsInterval (no api calls after unmount)
@@ -1464,9 +1428,6 @@ describe('RM-I-10: onUnmounted — interval/timer cleanup', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-11: fetchEntries — error state
-// ---------------------------------------------------------------------------
 /**
  * Verifies fetchEntries error handling:
  *   A. api throws on initial fetch → .rm-error-wrap shown with error message
@@ -1551,9 +1512,6 @@ describe('RM-I-11: fetchEntries — error state', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-12: searchFilter — filter devices by slave ID
-// ---------------------------------------------------------------------------
 /**
  * Verifies that typing into the search input (.rm-search input) filters the device tree
  * by decimal or hexadecimal slave ID.
@@ -1625,9 +1583,6 @@ describe('RM-I-12: searchFilter — filter devices by slave ID', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-13: selectListenPort — clicking port-tag buttons
-// ---------------------------------------------------------------------------
 /**
  * Verifies that clicking .rsp-port-tag buttons switches the active port selection.
  *
@@ -1675,9 +1630,6 @@ describe('RM-I-13: selectListenPort — clicking port-tag buttons', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-14: Export CSV button — window.open call
-// ---------------------------------------------------------------------------
 /**
  * Verifies that clicking the first .rsp-btn-export (CSV) calls
  * window.open('/cache/csv', '_blank', 'noopener').
@@ -1729,9 +1681,6 @@ describe('RM-I-14: Export CSV button — window.open call', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-15: tcpServeEnabled toggle + save
-// ---------------------------------------------------------------------------
 /**
  * Verifies that toggling the TCP serve switch and clicking Save causes
  * api('settings', { method: 'POST', json: { cache_modbus_server_enabled: false } })
@@ -1786,9 +1735,6 @@ describe('RM-I-15: tcpServeEnabled toggle + save', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-16: Stale indicator — .stale class and .stale-dot
-// ---------------------------------------------------------------------------
 /**
  * Verifies that a register row with age > valueTimeout gets the .stale class
  * and renders .stale-dot, while a fresh row does not.
@@ -1864,9 +1810,6 @@ describe('RM-I-16: Stale indicator — .stale class and .stale-dot', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-17: Stats DOM values from cache/status
-// ---------------------------------------------------------------------------
 /**
  * Verifies that values returned by cache/status are rendered in the stats strip DOM.
  *
@@ -1946,9 +1889,6 @@ describe('RM-I-17: Stats DOM values from cache/status', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-18: isMutating guard — toggleCaching double-click prevention
-// ---------------------------------------------------------------------------
 /**
  * Verifies that isMutating prevents a second toggleCaching() call from starting
  * while the first one is still in-flight.
@@ -2075,9 +2015,6 @@ describe('RM-I-18: isMutating guard — toggleCaching double-click prevention', 
   });
 });
 
-// ---------------------------------------------------------------------------
-// RM-I-19: statsInterval not double-scheduled on cacheEnabled flicker
-// ---------------------------------------------------------------------------
 /**
  * Verifies that the cacheEnabled watcher clears any existing statsInterval before
  * starting a new one, so a true→false→true transition does not leave two overlapping

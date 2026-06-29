@@ -11,9 +11,6 @@ import {
 } from './packetDecoderUtils';
 import { decodePacket } from '../common/modbusDecoder';
 
-// ============================================================
-// isPrintable
-// ============================================================
 describe('isPrintable', () => {
   it('0x20 (space) is printable', () => {
     expect(isPrintable(0x20)).toBe(true);
@@ -36,9 +33,6 @@ describe('isPrintable', () => {
   });
 });
 
-// ============================================================
-// f32str
-// ============================================================
 describe('f32str', () => {
   it('0x3F800000 → float 1.0 → "1"', () => {
     expect(f32str(0x3F800000)).toBe('1');
@@ -59,9 +53,6 @@ describe('f32str', () => {
   });
 });
 
-// ============================================================
-// rawToRange
-// ============================================================
 describe('rawToRange', () => {
   it('finds AABB at start of AABBCC', () => {
     expect(rawToRange('AABB', 'AABBCC', 0)).toEqual({ start: 0, end: 2 });
@@ -84,9 +75,6 @@ describe('rawToRange', () => {
   });
 });
 
-// ============================================================
-// fmtVal
-// ============================================================
 describe('fmtVal', () => {
   it('function_code 03 → Read Holding Registers', () => {
     expect(fmtVal('function_code', '03')).toBe('0x03 (Read Holding Registers)');
@@ -121,9 +109,6 @@ describe('fmtVal', () => {
   });
 });
 
-// ============================================================
-// fieldRanges
-// ============================================================
 describe('fieldRanges', () => {
   it('read_coils request at offset 0: fc={0,1} register={1,3} count={3,5}', () => {
     const obj: Record<string, unknown> = { type: 'read_coils', fc: '01', register: '0013', count: 19 };
@@ -172,10 +157,6 @@ describe('fieldRanges', () => {
     expect(r.modbus_address).toEqual({ start: 6, end: 7 });
   });
 });
-
-// ============================================================
-// flattenNode
-// ============================================================
 
 /**
  * Helper: decode a hex packet and flatten it into a compact row array.
@@ -328,9 +309,6 @@ describe('flattenNode', () => {
   });
 });
 
-// ============================================================
-// fmtCoilData
-// ============================================================
 describe('fmtCoilData', () => {
   it('single byte 08 → "0x08  (00001000)"', () => {
     expect(fmtCoilData('08')).toBe('0x08  (00001000)');
@@ -349,9 +327,6 @@ describe('fmtCoilData', () => {
   });
 });
 
-// ============================================================
-// modiconStr
-// ============================================================
 describe('modiconStr', () => {
   it('wire 0 + prefix 4 → "Modicon: 40001"', () => {
     expect(modiconStr(0, 4)).toBe('Modicon: 40001');
@@ -379,9 +354,6 @@ describe('modiconStr', () => {
   });
 });
 
-// ============================================================
-// flattenNode — register Modicon notation
-// ============================================================
 describe('flattenNode — register Modicon notation', () => {
   it('FC03 read holding registers: register 0x0000 shows Modicon 40001', () => {
     // addr=0x01, FC=0x03, reg=0x0000, count=2, CRC=computed
@@ -417,9 +389,6 @@ describe('flattenNode — register Modicon notation', () => {
   });
 });
 
-// ============================================================
-// flattenNode — CRC status annotation
-// ============================================================
 describe('flattenNode — CRC status annotation', () => {
   it('crcStatus "OK" appends "(OK)" to the CRC field value', () => {
     // addr=0x83, FC=0x03, reg=0x0061, count=2, CRC=0x8BF7

@@ -509,7 +509,7 @@ function exportCsv() {
                 :class="['port-btn', { active: portFilter === p }]"
                 @click="portFilter = p"
               >
-Port {{ p }}
+{{ t('port_n', { n: p }) }}
 </button>
             </div>
             <Button :variant="running ? 'danger' : 'primary'" @click="running ? stopCapture() : startCapture()">
@@ -1198,7 +1198,8 @@ Port {{ p }}
     "raw_bytes": "Raw bytes",
     "export_csv": "Export CSV",
     "hide_errors": "Hide errors",
-    "send_packet": "Send packet"
+    "send_packet": "Send packet",
+    "port_n": "Port {n}"
   },
   "ru": {
     "title": "Sniffer",
@@ -1227,7 +1228,8 @@ Port {{ p }}
     "raw_bytes": "Сырые байты",
     "export_csv": "Экспорт CSV",
     "hide_errors": "Скрывать ошибки",
-    "send_packet": "Отправить пакет"
+    "send_packet": "Отправить пакет",
+    "port_n": "Порт {n}"
   },
   "kk": {
     "title": "Sniffer",
@@ -1256,7 +1258,8 @@ Port {{ p }}
     "raw_bytes": "Шикі байттар",
     "export_csv": "CSV жүктеу",
     "hide_errors": "Қателерді жасыру",
-    "send_packet": "Пакет жіберу"
+    "send_packet": "Пакет жіберу",
+    "port_n": "Порт {n}"
   },
   "it": {
     "title": "Sniffer",
@@ -1285,7 +1288,8 @@ Port {{ p }}
     "raw_bytes": "Byte grezzi",
     "export_csv": "Esporta CSV",
     "hide_errors": "Nascondi errori",
-    "send_packet": "Invia pacchetto"
+    "send_packet": "Invia pacchetto",
+    "port_n": "Porta {n}"
   },
   "de": {
     "title": "Sniffer",
@@ -1314,7 +1318,8 @@ Port {{ p }}
     "raw_bytes": "Rohbytes",
     "export_csv": "CSV exportieren",
     "hide_errors": "Fehler ausblenden",
-    "send_packet": "Paket senden"
+    "send_packet": "Paket senden",
+    "port_n": "Port {n}"
   }
 }
 </i18n>

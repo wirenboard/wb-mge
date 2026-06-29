@@ -27,22 +27,22 @@ const sending = ref(false);
 const error = ref('');
 
 // Read mode FC options
-const readFcOptions = [
-  { value: '01', label: 'FC01 — Read Coils' },
-  { value: '02', label: 'FC02 — Read Discrete Inputs' },
-  { value: '03', label: 'FC03 — Read Holding Registers' },
-  { value: '04', label: 'FC04 — Read Input Registers' },
-];
+const readFcOptions = computed(() => [
+  { value: '01', label: t('fc_opt_01') },
+  { value: '02', label: t('fc_opt_02') },
+  { value: '03', label: t('fc_opt_03') },
+  { value: '04', label: t('fc_opt_04') },
+]);
 
 // Write mode FC options
-const writeFcOptions = [
-  { value: '05', label: 'FC05 — Write Single Coil' },
-  { value: '06', label: 'FC06 — Write Single Register' },
-  { value: '0f', label: 'FC15 — Write Multiple Coils' },
-  { value: '10', label: 'FC16 — Write Multiple Registers' },
-];
+const writeFcOptions = computed(() => [
+  { value: '05', label: t('fc_opt_05') },
+  { value: '06', label: t('fc_opt_06') },
+  { value: '0f', label: t('fc_opt_15') },
+  { value: '10', label: t('fc_opt_16') },
+]);
 
-const fcOptions = computed(() => (mode.value === 'read' ? readFcOptions : writeFcOptions));
+const fcOptions = computed(() => (mode.value === 'read' ? readFcOptions.value : writeFcOptions.value));
 
 // Switch mode and reset fc to first option for that mode
 function setMode(m: 'read' | 'write') {
@@ -430,7 +430,15 @@ const valueLabel = computed(() =>
     "hint_crc": "CRC computed automatically",
     "hint_tx_disabled": "TX is disabled for this port",
     "send_read": "Send read to port {port}",
-    "send_write": "Send write to port {port}"
+    "send_write": "Send write to port {port}",
+    "fc_opt_01": "FC01 — Read Coils",
+    "fc_opt_02": "FC02 — Read Discrete Inputs",
+    "fc_opt_03": "FC03 — Read Holding Registers",
+    "fc_opt_04": "FC04 — Read Input Registers",
+    "fc_opt_05": "FC05 — Write Single Coil",
+    "fc_opt_06": "FC06 — Write Single Register",
+    "fc_opt_15": "FC15 — Write Multiple Coils",
+    "fc_opt_16": "FC16 — Write Multiple Registers"
   },
   "ru": {
     "title": "Отправить пакет",
@@ -446,7 +454,15 @@ const valueLabel = computed(() =>
     "hint_crc": "CRC добавляется автоматически",
     "hint_tx_disabled": "TX отключён для этого порта",
     "send_read": "Отправить чтение на порт {port}",
-    "send_write": "Отправить запись на порт {port}"
+    "send_write": "Отправить запись на порт {port}",
+    "fc_opt_01": "FC01 — Чтение Coils",
+    "fc_opt_02": "FC02 — Чтение Discrete Inputs",
+    "fc_opt_03": "FC03 — Чтение Holding Registers",
+    "fc_opt_04": "FC04 — Чтение Input Registers",
+    "fc_opt_05": "FC05 — Запись одного Coil",
+    "fc_opt_06": "FC06 — Запись одного регистра",
+    "fc_opt_15": "FC15 — Запись нескольких Coils",
+    "fc_opt_16": "FC16 — Запись нескольких регистров"
   },
   "kk": {
     "title": "Пакет жіберу",
@@ -462,7 +478,15 @@ const valueLabel = computed(() =>
     "hint_crc": "CRC автоматты түрде есептеледі",
     "hint_tx_disabled": "Бұл порт үшін TX өшірілген",
     "send_read": "{port} портына оқуды жіберу",
-    "send_write": "{port} портына жазуды жіберу"
+    "send_write": "{port} портына жазуды жіберу",
+    "fc_opt_01": "FC01 — Coils оқу",
+    "fc_opt_02": "FC02 — Discrete Inputs оқу",
+    "fc_opt_03": "FC03 — Holding Registers оқу",
+    "fc_opt_04": "FC04 — Input Registers оқу",
+    "fc_opt_05": "FC05 — Бір Coil жазу",
+    "fc_opt_06": "FC06 — Бір регистр жазу",
+    "fc_opt_15": "FC15 — Бірнеше Coils жазу",
+    "fc_opt_16": "FC16 — Бірнеше регистр жазу"
   },
   "it": {
     "title": "Invia pacchetto",
@@ -478,7 +502,15 @@ const valueLabel = computed(() =>
     "hint_crc": "CRC calcolato automaticamente",
     "hint_tx_disabled": "TX disabilitato per questa porta",
     "send_read": "Invia lettura alla porta {port}",
-    "send_write": "Invia scrittura alla porta {port}"
+    "send_write": "Invia scrittura alla porta {port}",
+    "fc_opt_01": "FC01 — Lettura Coils",
+    "fc_opt_02": "FC02 — Lettura Discrete Inputs",
+    "fc_opt_03": "FC03 — Lettura Holding Registers",
+    "fc_opt_04": "FC04 — Lettura Input Registers",
+    "fc_opt_05": "FC05 — Scrittura singolo Coil",
+    "fc_opt_06": "FC06 — Scrittura singolo registro",
+    "fc_opt_15": "FC15 — Scrittura Coils multipli",
+    "fc_opt_16": "FC16 — Scrittura registri multipli"
   },
   "de": {
     "title": "Paket senden",
@@ -494,7 +526,15 @@ const valueLabel = computed(() =>
     "hint_crc": "CRC wird automatisch berechnet",
     "hint_tx_disabled": "TX für diesen Port deaktiviert",
     "send_read": "Lesen an Port {port} senden",
-    "send_write": "Schreiben an Port {port} senden"
+    "send_write": "Schreiben an Port {port} senden",
+    "fc_opt_01": "FC01 — Coils lesen",
+    "fc_opt_02": "FC02 — Discrete Inputs lesen",
+    "fc_opt_03": "FC03 — Holding Registers lesen",
+    "fc_opt_04": "FC04 — Input Registers lesen",
+    "fc_opt_05": "FC05 — Einzelnes Coil schreiben",
+    "fc_opt_06": "FC06 — Einzelnes Register schreiben",
+    "fc_opt_15": "FC15 — Mehrere Coils schreiben",
+    "fc_opt_16": "FC16 — Mehrere Register schreiben"
   }
 }
 </i18n>

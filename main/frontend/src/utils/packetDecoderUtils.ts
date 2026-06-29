@@ -1,6 +1,4 @@
-// ============================================================
 // Human-readable labels
-// ============================================================
 
 export const TYPE_LABELS: Record<string, string> = {
   rtu_frame: 'RTU Frame',
@@ -246,9 +244,7 @@ export const REGISTER_LABELS: Record<string, string> = {
 // 'reserved_address' is rendered separately with a warning message.
 export const SKIP_FIELDS = new Set(['type', 'raw', 'payload', 'objects', 'sub_requests', 'sub_responses', 'reserved_address']);
 
-// ============================================================
 // Types
-// ============================================================
 
 export interface TreeRow {
   depth: number;
@@ -269,9 +265,7 @@ export interface TreeRow {
 
 export type EndiannessKey = 'abcd' | 'cdab' | 'badc' | 'dcba';
 
-// ============================================================
 // Pure utility functions
-// ============================================================
 
 /** PDU types whose `data` field carries bit-packed coil/discrete input bytes */
 export const COIL_DATA_TYPES = new Set([
@@ -554,9 +548,7 @@ export function isPrintable(b: number): boolean {
  return b >= 0x20 && b < 0x7f;
 }
 
-// ============================================================
 // 32-bit endianness configurations
-// ============================================================
 
 export const ENDIAN_CONFIGS: Record<EndiannessKey, { label: string; desc: string; fn: (b: number[], i: number) => number }> = {
   abcd: { label: 'AB CD', desc: 'Big Endian', fn: (b, i) => ((b[i] << 24) | (b[i+1] << 16) | (b[i+2] << 8) | b[i+3]) >>> 0 },

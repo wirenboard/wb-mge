@@ -6,7 +6,7 @@ import { useInfo } from '@/common/info';
 import { useAlerts } from '@/common/alert';
 import { useOptimisticToggle } from '@/common/useOptimisticToggle';
 import { api } from '@/utils/api';
-import { avgBytesPerSec as computeAvgBytesPerSec, groupBytes, formatBytes, formatUptime, lineParams } from '@/views/repeaterFormat';
+import { avgBytesPerSec as computeAvgBytesPerSec, groupBytes, formatBytes, formatUptime, lineParams } from '@/utils/repeaterFormat';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import RepeaterWarnIcon from '@/assets/repeaterWarnIcon.svg?component';
@@ -43,9 +43,7 @@ function toggleRepeater(): void {
   });
 }
 
-// ---------------------------------------------------------------------------
 // Live stats from info.repeater
-// ---------------------------------------------------------------------------
 const forwardBytes = computed<number>(() => info.value?.repeater?.bytes_1to2 ?? 0); // Port 1 -> Port 2
 const reverseBytes = computed<number>(() => info.value?.repeater?.bytes_2to1 ?? 0); // Port 2 -> Port 1
 const dropped1 = computed<number>(() => info.value?.repeater?.dropped_1 ?? 0);

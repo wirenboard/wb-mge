@@ -510,7 +510,7 @@ onUnmounted(() => {
                       class="caret"
                       :class="{ open: openDevices.has(dev.id) }"
                     />
-                    <span class="rm-slave mono">Slave {{ dev.id }} (0x{{ dev.id.toString(16).padStart(2, '0').toUpperCase() }})</span>
+                    <span class="rm-slave mono">{{ t('slave_n', { n: dev.id }) }} (0x{{ dev.id.toString(16).padStart(2, '0').toUpperCase() }})</span>
                     <span class="rm-meta">
                       <span class="rm-meta-item">
                           <span class="dim">{{ t('last') }}</span>
@@ -1564,6 +1564,7 @@ onUnmounted(() => {
     "stale_dot_title": "Older than value timeout",
     "ago": "ago",
     "last": "last",
+    "slave_n": "Slave {n}",
     "registers": "registers",
     "entries": "entries",
     "settings_title": "Settings",
@@ -1626,6 +1627,7 @@ onUnmounted(() => {
     "stale_dot_title": "Старше таймаута значения",
     "ago": "назад",
     "last": "последний",
+    "slave_n": "Slave {n}",
     "registers": "регистры",
     "entries": "записей",
     "settings_title": "Настройки",
@@ -1688,6 +1690,7 @@ onUnmounted(() => {
     "stale_dot_title": "Мән таймаутынан ескі",
     "ago": "бұрын",
     "last": "соңғы",
+    "slave_n": "Slave {n}",
     "registers": "тіркеулер",
     "entries": "жазбалар",
     "settings_title": "Параметрлер",
@@ -1750,6 +1753,7 @@ onUnmounted(() => {
     "stale_dot_title": "Più vecchio del timeout valore",
     "ago": "fa",
     "last": "ultimo",
+    "slave_n": "Slave {n}",
     "registers": "registri",
     "entries": "voci",
     "settings_title": "Impostazioni",
@@ -1812,6 +1816,7 @@ onUnmounted(() => {
     "stale_dot_title": "Älter als Wert-Timeout",
     "ago": "her",
     "last": "zuletzt",
+    "slave_n": "Slave {n}",
     "registers": "Register",
     "entries": "Einträge",
     "settings_title": "Einstellungen",

@@ -11,9 +11,7 @@
  *   {type:'parse_error', reason, raw}
  */
 
-// ============================================================
 // Types
-// ============================================================
 
 export type Direction = 'request' | 'response';
 
@@ -163,9 +161,7 @@ export function getByteRoles(decoded: DecodedPacket): ByteRole[] {
   return roles;
 }
 
-// ============================================================
 // Utilities
-// ============================================================
 
 function toHex(bytes: number[]): string {
   return bytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('');
@@ -193,9 +189,7 @@ export function parseHex(str: string): number[] | null {
   return result;
 }
 
-// ============================================================
 // FC name table
-// ============================================================
 
 const FC_NAMES: Record<number, string> = {
   0x01: 'read_coils',
@@ -232,9 +226,7 @@ function isUserDefinedFc(fc: number): boolean {
 // but actively used by Schneider (M340, M580, Unity Pro). Treat as vendor-specific.
 const VENDOR_FC = new Set([0x5a, 0x5b]);
 
-// ============================================================
 // Shared PDU helpers — used in both request and response decoders
-// ============================================================
 
 function makeError(fc: number, bytes: number[]): PduResult {
   const origFc = fc & 0x7f;
@@ -279,9 +271,7 @@ function decodeMei(bytes: number[], isResponse: boolean): PduResult | ParseError
   return { type: 'mei_transport', raw, fc: fcHex, mei_type: meiHex, data: toHex(bytes.slice(2)) };
 }
 
-// ============================================================
 // PDU decoder (request)
-// ============================================================
 
 export function decodeStdPduRequest(bytes: number[]): PduResult | ParseError {
   if (bytes.length < 1) return { type: 'parse_error', reason: 'pdu_empty', raw: '' };
@@ -383,9 +373,7 @@ export function decodeStdPduRequest(bytes: number[]): PduResult | ParseError {
   return { type: 'parse_error', reason: 'unknown_fc', raw, fc: fcHex };
 }
 
-// ============================================================
 // PDU decoder (response)
-// ============================================================
 
 export function decodeStdPduResponse(bytes: number[]): PduResult | ParseError {
   if (bytes.length < 1) return { type: 'parse_error', reason: 'pdu_empty', raw: '' };
@@ -498,9 +486,7 @@ export function decodeStdPduResponse(bytes: number[]): PduResult | ParseError {
   return { type: 'parse_error', reason: 'unknown_fc', raw, fc: fcHex };
 }
 
-// ============================================================
 // Fast Modbus subcommand layer (bytes after ext_byte, before CRC)
-// ============================================================
 
 function decodeFastModbusPayload(bytes: number[]): FastModbusSubcommand {
   if (bytes.length < 1) return { type: 'parse_error', reason: 'subcommand_missing', raw: '' };
@@ -571,9 +557,7 @@ function decodeFastModbusPayload(bytes: number[]): FastModbusSubcommand {
   return { type: 'parse_error', reason: 'unknown_subcommand', raw, subcommand: toHex([sub]) };
 }
 
-// ============================================================
 // Top-level decoder
-// ============================================================
 
 /**
  * Decode a Modbus packet.

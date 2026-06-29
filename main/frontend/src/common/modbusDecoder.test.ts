@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { decodePacket, parseHex } from './modbusDecoder';
 
-// ============================================================
-// parseHex
-// ============================================================
 describe('parseHex', () => {
   it('spaces', () => expect(parseHex('FD 60 01')).toEqual([0xFD, 0x60, 0x01]));
   it('no spaces', () => expect(parseHex('FD6001')).toEqual([0xFD, 0x60, 0x01]));
@@ -17,9 +14,7 @@ describe('parseHex', () => {
   it('leading/trailing spaces', () => expect(parseHex('  FD 60  ')).toEqual([0xFD, 0x60]));
 });
 
-// ============================================================
 // Arbitration (packets 32, 47)
-// ============================================================
 describe('arbitration', () => {
   it('10 FF bytes (packet 32)', () => {
     const r = decodePacket('FF FF FF FF FF FF FF FF FF FF');
@@ -36,9 +31,7 @@ describe('arbitration', () => {
   });
 });
 
-// ============================================================
 // Scan Start — packet 31: FD 60 01 09 F0
-// ============================================================
 describe('scan_start (packet 31)', () => {
   const RAW = 'FD600109F0';
 
@@ -65,9 +58,7 @@ describe('scan_start (packet 31)', () => {
   });
 });
 
-// ============================================================
 // Scan Continue — packet 46: FD 60 02 49 F1
-// ============================================================
 describe('scan_continue (packet 46)', () => {
   it('structure', () => {
     const r = decodePacket('FD 60 02 49 F1');
@@ -79,9 +70,7 @@ describe('scan_continue (packet 46)', () => {
   });
 });
 
-// ============================================================
 // Scan Response — packet 33: FD 60 03 00 06 24 66 83 C4 61
-// ============================================================
 describe('scan_response (packet 33)', () => {
   it('full structure', () => {
     const r = decodePacket('FD 60 03 00 06 24 66 83 C4 61');
@@ -110,9 +99,7 @@ describe('scan_response (packet 33)', () => {
   });
 });
 
-// ============================================================
 // Scan End — packet 48: FD 60 04 C9 F3
-// ============================================================
 describe('scan_end (packet 48)', () => {
   it('structure', () => {
     const r = decodePacket('FD 60 04 C9 F3');
@@ -123,9 +110,7 @@ describe('scan_end (packet 48)', () => {
   });
 });
 
-// ============================================================
 // Cmd Send (0x08) — packets 34,36,38,40,42,44
-// ============================================================
 describe('command_by_serial (0x08)', () => {
   it('packet 34: read 20 regs from 200 (0x00C8)', () => {
     const r = decodePacket('FD 60 08 00 06 24 66 03 00 C8 00 14 9D 24');
@@ -223,9 +208,7 @@ describe('command_by_serial (0x08)', () => {
   });
 });
 
-// ============================================================
 // Cmd Response (0x09) — packets 35,37,39,41,43,45
-// ============================================================
 describe('response_by_serial (0x09)', () => {
   it('packet 35: WB-MSW4 name (40 bytes = 20 regs)', () => {
     const r = decodePacket('FD 60 09 00 06 24 66 03 28 00 57 00 42 00 4D 00 53 00 57 00 34 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 A9 78');
@@ -309,9 +292,6 @@ describe('response_by_serial (0x09)', () => {
   });
 });
 
-// ============================================================
-// Parse error cases
-// ============================================================
 describe('parse_error cases', () => {
   it('empty string', () => {
     expect(decodePacket('').type).toBe('parse_error');
@@ -384,9 +364,7 @@ describe('parse_error cases', () => {
   });
 });
 
-// ============================================================
 // raw field integrity — every node must have raw with correct hex
-// ============================================================
 describe('raw field integrity', () => {
   it('arbitration raw = all bytes', () => {
     const r = decodePacket('FF FF FF FF');
@@ -430,9 +408,7 @@ describe('raw field integrity', () => {
   });
 });
 
-// ============================================================
 // Full trace end-to-end (packets 31-48)
-// ============================================================
 describe('full trace packets 31-48', () => {
   const trace = [
     { hex: 'FD 60 01 09 F0', outerType: 'rtu_frame', innerType: 'scan_start' },
@@ -469,9 +445,7 @@ describe('full trace packets 31-48', () => {
   });
 });
 
-// ============================================================
 // Standard Modbus RTU tests (from modbus_codes.md)
-// ============================================================
 
 // Helper: get standard modbus payload
 function pdu(r: ReturnType<typeof decodePacket>): any {
@@ -983,9 +957,7 @@ describe('Standard RTU — ADU too short', () => {
   });
 });
 
-// ============================================================
 // FM Event subcommands: 0x10, 0x11, 0x12, 0x18
-// ============================================================
 
 describe('FM event_request (0x10)', () => {
   // FD 46 10 min_server_id max_data_len prev_server_id prev_flag CRC

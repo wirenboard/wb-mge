@@ -119,14 +119,14 @@ watch(
       <div v-if="info && savedSettings" class="sb-ports">
         <div class="sb-port">
           <div class="sb-port-head">
-            <span class="sb-port-name">Port 1</span>
+            <span class="sb-port-name">{{ t('port_1') }}</span>
             <span :class="['sb-port-state', info.rs485_1.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_1.is_busy ? 'ACTIVE' : 'IDLE' }}
+              <span class="dot" />{{ info.rs485_1.is_busy ? t('status_active') : t('status_idle') }}
             </span>
           </div>
           <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_1.port_mode}`, info.rs485_1.port_mode) }}</span></div>
           <div class="sb-port-row mono">
-            <span class="sb-port-k">Line</span>
+            <span class="sb-port-k">{{ t('line') }}</span>
             <span class="sb-port-v">
               {{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}<template v-if="savedSettings.rs485_1.tx_disabled"> · <span class="sb-tx-off">TX</span></template>
             </span>
@@ -134,14 +134,14 @@ watch(
         </div>
         <div class="sb-port">
           <div class="sb-port-head">
-            <span class="sb-port-name">Port 2</span>
+            <span class="sb-port-name">{{ t('port_2') }}</span>
             <span :class="['sb-port-state', info.rs485_2.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_2.is_busy ? 'ACTIVE' : 'IDLE' }}
+              <span class="dot" />{{ info.rs485_2.is_busy ? t('status_active') : t('status_idle') }}
             </span>
           </div>
           <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_2.port_mode}`, info.rs485_2.port_mode) }}</span></div>
           <div class="sb-port-row mono">
-            <span class="sb-port-k">Line</span>
+            <span class="sb-port-k">{{ t('line') }}</span>
             <span class="sb-port-v">
               {{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}<template v-if="savedSettings.rs485_2.tx_disabled"> · <span class="sb-tx-off">TX</span></template>
             </span>
@@ -500,6 +500,11 @@ watch(
     "link_buy": "Buy devices",
     "logout": "Logout",
     "toggle_menu": "Toggle navigation menu",
+    "port_1": "Port 1",
+    "port_2": "Port 2",
+    "status_active": "ACTIVE",
+    "status_idle": "IDLE",
+    "line": "Line",
     "mode": "Mode",
     "port_mode_disabled": "Disabled",
     "port_mode_tcp_bridge": "TCP bridge",
@@ -515,6 +520,11 @@ watch(
     "link_buy": "Купить устройства",
     "logout": "Выйти",
     "toggle_menu": "Открыть меню",
+    "port_1": "Порт 1",
+    "port_2": "Порт 2",
+    "status_active": "АКТИВЕН",
+    "status_idle": "ПРОСТОЙ",
+    "line": "Линия",
     "mode": "Режим",
     "port_mode_disabled": "Отключён",
     "port_mode_tcp_bridge": "TCP-мост",
@@ -530,6 +540,11 @@ watch(
     "link_buy": "Құрылғыларды сатып алу",
     "logout": "Шығу",
     "toggle_menu": "Мәзірді ашу",
+    "port_1": "Порт 1",
+    "port_2": "Порт 2",
+    "status_active": "БЕЛСЕНДІ",
+    "status_idle": "БОС",
+    "line": "Желі",
     "mode": "Режим",
     "port_mode_disabled": "Өшірілген",
     "port_mode_tcp_bridge": "TCP көпір",
@@ -545,6 +560,11 @@ watch(
     "link_buy": "Acquista dispositivi",
     "logout": "Esci",
     "toggle_menu": "Apri menu",
+    "port_1": "Porta 1",
+    "port_2": "Porta 2",
+    "status_active": "ATTIVO",
+    "status_idle": "INATTIVO",
+    "line": "Linea",
     "mode": "Modalità",
     "port_mode_disabled": "Disabilitato",
     "port_mode_tcp_bridge": "Bridge TCP",
@@ -560,6 +580,11 @@ watch(
     "link_buy": "Geräte kaufen",
     "logout": "Abmelden",
     "toggle_menu": "Menü öffnen",
+    "port_1": "Port 1",
+    "port_2": "Port 2",
+    "status_active": "AKTIV",
+    "status_idle": "INAKTIV",
+    "line": "Leitung",
     "mode": "Modus",
     "port_mode_disabled": "Deaktiviert",
     "port_mode_tcp_bridge": "TCP-Bridge",

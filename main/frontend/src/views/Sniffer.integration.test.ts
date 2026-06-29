@@ -33,10 +33,8 @@ import { createI18n } from 'vue-i18n';
 import { createRouter, createMemoryHistory } from 'vue-router';
 import type { Info } from '@/common/types';
 
-// ---------------------------------------------------------------------------
 // Minimal WebSocket mock.
 // Each construction replaces MockWS.instance so tests can detect new WS creations.
-// ---------------------------------------------------------------------------
 
 class MockWS {
   static instance: MockWS | null = null;
@@ -61,16 +59,12 @@ class MockWS {
   send() {}
 }
 
-// ---------------------------------------------------------------------------
 // Shared info ref — mutated per test to simulate different port modes.
-// ---------------------------------------------------------------------------
 
 const sharedInfoRef = ref<Info | undefined>(undefined);
 const fetchInfoMock = vi.fn().mockResolvedValue(undefined);
 
-// ---------------------------------------------------------------------------
 // Mocks — must be hoisted before the component import.
-// ---------------------------------------------------------------------------
 
 vi.mock('@/common/info', () => ({
   useInfo: () => ({ info: sharedInfoRef, fetchInfo: fetchInfoMock }),
@@ -101,10 +95,6 @@ vi.mock('@unhead/vue', () => ({
   createUnhead: vi.fn(() => ({})),
   headSymbol: Symbol('head'),
 }));
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeRouter() {
   return createRouter({
@@ -156,10 +146,6 @@ function makeInfo(
     psram_size_kb: 0,
   };
 }
-
-// ---------------------------------------------------------------------------
-// SNIF-I-001: WS reconnect timer cleanup on stopCapture
-// ---------------------------------------------------------------------------
 
 describe('SNIF-I-001: WS reconnect timer cleanup on stopCapture', () => {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
@@ -286,10 +272,6 @@ describe('SNIF-I-001: WS reconnect timer cleanup on stopCapture', () => {
     await flushPromises();
   });
 });
-
-// ---------------------------------------------------------------------------
-// SNIF-I-002: startCapture auto-switch to sniffer mode
-// ---------------------------------------------------------------------------
 
 // Import the api mock once at module level — vi.mock hoists the factory so
 // this import always resolves to the mocked version.
@@ -471,10 +453,6 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// SNIF-I-003: virtualization windows the DOM
-// ---------------------------------------------------------------------------
-
 describe('SNIF-I-003: virtualization windows the DOM', () => {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
 
@@ -555,9 +533,6 @@ describe('SNIF-I-003: virtualization windows the DOM', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// SNIF-I-004: ring-buffer overflow scroll compensation
-// ---------------------------------------------------------------------------
 /**
  * Exercises the flushPending() branch that runs ONLY when the ring buffer overflows AND the
  * user is NOT following the tail (autoScroll=false): dropping the oldest rows shifts the

@@ -30,14 +30,10 @@ import { createRouter, createMemoryHistory } from 'vue-router';
 import type { Info, PortMode, Settings } from '@/common/types';
 import { api } from '@/utils/api';
 
-// ---------------------------------------------------------------------------
 // Shared reactive info ref — mutated per test scenario to simulate polls.
-// ---------------------------------------------------------------------------
 const infoRef = ref<Info | undefined>(undefined);
 
-// ---------------------------------------------------------------------------
 // Mocks — hoisted before any component import by Vitest's vi.mock hoisting.
-// ---------------------------------------------------------------------------
 
 const fetchInfoMock = vi.fn().mockResolvedValue(undefined);
 
@@ -108,10 +104,6 @@ vi.mock('@unhead/vue', () => ({
   createUnhead: vi.fn(() => ({})),
   headSymbol: Symbol('head'),
 }));
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /** Build a minimal Info object with explicit per-port transport mode + cache overlay. */
 function makeInfo(opts: {
@@ -206,9 +198,6 @@ beforeEach(() => {
   vi.mocked(api).mockResolvedValue(undefined as never);
 });
 
-// ---------------------------------------------------------------------------
-// TG-I-001: switch reflects the transport mode
-// ---------------------------------------------------------------------------
 describe('TG-I-001: enable switch reflects port_mode', () => {
   it('tcp_bridge → checked, disabled/passive → unchecked', async () => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
@@ -232,9 +221,6 @@ describe('TG-I-001: enable switch reflects port_mode', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TG-I-002: toggling a disabled port ON
-// ---------------------------------------------------------------------------
 describe('TG-I-002: toggle ON', () => {
   it('disabled port → posts ports/1/mode { mode: tcp_bridge } then fetchInfo(low)', async () => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
@@ -255,9 +241,6 @@ describe('TG-I-002: toggle ON', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TG-I-003: toggling a tcp_bridge port OFF with cache overlay off → disabled
-// ---------------------------------------------------------------------------
 describe('TG-I-003: toggle OFF (cache off → disabled)', () => {
   it('tcp_bridge port, cache_enabled=false → posts ports/1/mode { mode: disabled }', async () => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
@@ -278,9 +261,6 @@ describe('TG-I-003: toggle OFF (cache off → disabled)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TG-I-004: toggling a tcp_bridge port OFF with cache overlay on → passive
-// ---------------------------------------------------------------------------
 describe('TG-I-004: toggle OFF (cache on → passive)', () => {
   it('tcp_bridge port, cache_enabled=true → posts ports/1/mode { mode: passive }', async () => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
@@ -301,9 +281,6 @@ describe('TG-I-004: toggle OFF (cache on → passive)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TG-I-005: port isolation
-// ---------------------------------------------------------------------------
 describe('TG-I-005: port isolation', () => {
   it('toggling port 1 does not touch ports/2', async () => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
@@ -340,9 +317,6 @@ describe('TG-I-005: port isolation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TG-I-006: error path reverts optimistic state and alerts
-// ---------------------------------------------------------------------------
 describe('TG-I-006: error path', () => {
   it('rejected api call reverts the switch and calls showAlert(connection_error)', async () => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
@@ -371,9 +345,6 @@ describe('TG-I-006: error path', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TG-I-007: concurrency guard
-// ---------------------------------------------------------------------------
 describe('TG-I-007: concurrency guard', () => {
   it('double-toggle with a hanging request posts ports/1/mode exactly once', async () => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
@@ -406,9 +377,6 @@ describe('TG-I-007: concurrency guard', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TG-I-008: disabled when info is undefined
-// ---------------------------------------------------------------------------
 describe('TG-I-008: disabled when info undefined', () => {
   it('switch is disabled and toggling makes no ports/1/mode call until info loads', async () => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');

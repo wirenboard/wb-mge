@@ -254,7 +254,7 @@ const addNetwork = () => {
                       </template>
                     </Select>
 
-                    <Button variant="outline" type="button" class="network-reloadButton" :disabled="isPolling" @click="startPolling">
+                    <Button variant="outline" type="button" class="network-reloadButton" :aria-label="t('reload_networks')" :disabled="isPolling" @click="startPolling">
                       <ReloadIcon
                         class="network-reload"
                         :class="{
@@ -363,6 +363,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Add ssid",
+    "reload_networks": "Reload networks",
     "wrong_ssid_pattern": "Enter a string of 1–31 characters: Latin letters, numbers, spaces, and special characters",
     "wrong_pass_pattern": "Enter a string of 8–63 characters: Latin letters, numbers, spaces, and special characters"
   },
@@ -383,6 +384,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Добавить ssid",
+    "reload_networks": "Обновить список сетей",
     "wrong_ssid_pattern": "Введите строку из 1–31 символов: латиница, цифры, пробелы и спецсимволы",
     "wrong_pass_pattern": "Введите строку из 8–63 символов: латиница, цифры, пробелы и спецсимволы"
   },
@@ -403,6 +405,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "SSID қосу",
+    "reload_networks": "Желілер тізімін жаңарту",
     "wrong_ssid_pattern": "1–31 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар",
     "wrong_pass_pattern": "8–63 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар"
   },
@@ -423,6 +426,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Aggiungi SSID",
+    "reload_networks": "Ricarica reti",
     "wrong_ssid_pattern": "Inserisci una stringa di 1–31 caratteri: lettere latine, numeri, spazi e caratteri speciali",
     "wrong_pass_pattern": "Inserisci una stringa di 8–63 caratteri: lettere latine, numeri, spazi e caratteri speciali"
   },
@@ -443,6 +447,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "SSID hinzufügen",
+    "reload_networks": "Netzwerke neu laden",
     "wrong_ssid_pattern": "Geben Sie eine Zeichenfolge mit 1–31 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen",
     "wrong_pass_pattern": "Geben Sie eine Zeichenfolge mit 8–63 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen"
   }

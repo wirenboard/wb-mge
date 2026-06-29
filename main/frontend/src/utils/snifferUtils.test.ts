@@ -15,9 +15,6 @@ import {
   type SniffFilter,
 } from './snifferUtils';
 
-// ============================================================
-// formatTimestamp
-// ============================================================
 describe('formatTimestamp', () => {
   // Determinism note: we build the anchor offset from LOCAL date components
   // (new Date(y, m, d, ...).getTime()). Rendering reads back local components
@@ -50,9 +47,6 @@ describe('formatTimestamp', () => {
   });
 });
 
-// ============================================================
-// updateWallOffsetMs
-// ============================================================
 describe('updateWallOffsetMs', () => {
   it('returns the candidate on the first call (prev=null) -> (re)anchor', () => {
     // candidate = recvWallMs - deviceUs/1000 = 10000 - 5 = 9995
@@ -79,9 +73,6 @@ describe('updateWallOffsetMs', () => {
   });
 });
 
-// ============================================================
-// formatDt
-// ============================================================
 describe('formatDt', () => {
   it('returns em-dash when prevUs is 0', () => {
     expect(formatDt(1000000, 0)).toBe('—');
@@ -100,9 +91,6 @@ describe('formatDt', () => {
   });
 });
 
-// ============================================================
-// hexToPayloadString
-// ============================================================
 describe('hexToPayloadString', () => {
   it('returns empty string for empty input', () => {
     expect(hexToPayloadString('')).toBe('');
@@ -121,9 +109,6 @@ describe('hexToPayloadString', () => {
   });
 });
 
-// ============================================================
-// getRowBytes / getRowByteRoles
-// ============================================================
 describe('getRowBytes', () => {
   it('splits a space-separated payload into byte strings', () => {
     expect(getRowBytes('AA BB CC')).toEqual(['AA', 'BB', 'CC']);
@@ -153,9 +138,6 @@ describe('getRowByteRoles', () => {
   });
 });
 
-// ============================================================
-// toggleSet
-// ============================================================
 describe('toggleSet', () => {
   it('adds a value not in the set', () => {
     const result = toggleSet(new Set(['a', 'b']), 'c');
@@ -179,9 +161,6 @@ describe('toggleSet', () => {
   });
 });
 
-// ============================================================
-// parsePacket
-// ============================================================
 describe('parsePacket', () => {
   // Fixed wall-clock offset for deterministic tests. None of the parsePacket assertions
   // check the rendered `t` (wall-clock Time) string, so a constant 0 is sufficient here.
@@ -349,9 +328,6 @@ describe('parsePacket', () => {
   });
 });
 
-// ============================================================
-// computeVirtualWindow
-// ============================================================
 describe('computeVirtualWindow', () => {
   it('top of list: scrollTop=0 → window starts at 0, full visibleCount, only bottom spacer', () => {
     // visibleCount = ceil(290/29) + 10*2 = 10 + 20 = 30
@@ -432,9 +408,6 @@ describe('computeVirtualWindow', () => {
   });
 });
 
-// ============================================================
-// trimToCap
-// ============================================================
 describe('trimToCap', () => {
   it('within cap (length < cap): returns [], array unchanged', () => {
     const arr = [1, 2, 3];
@@ -462,9 +435,6 @@ describe('trimToCap', () => {
   });
 });
 
-// ============================================================
-// rowMatchesFilter
-// ============================================================
 describe('rowMatchesFilter', () => {
   // Minimal SniffRow factory: only port/crc/slave/fc_code matter to the predicate; the rest
   // are dummy values to satisfy the SniffRow type.

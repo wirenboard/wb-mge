@@ -13,9 +13,7 @@ import { createI18n } from 'vue-i18n';
 import { createRouter, createMemoryHistory, matchedRouteKey } from 'vue-router';
 import { messages } from '@/i18n/messages';
 
-// ---------------------------------------------------------------------------
 // Mocks — hoisted before any component import by Vitest's vi.mock hoisting.
-// ---------------------------------------------------------------------------
 
 vi.mock('@/common/network', () => ({
     useWifi: () => ({
@@ -46,10 +44,6 @@ vi.mock('@unhead/vue', () => ({
     headSymbol: Symbol('head'),
 }));
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /** Build a minimal router required by Sidebar.vue (useRoute/useRouter). */
 function makeRouter() {
     return createRouter({
@@ -68,10 +62,6 @@ function makeRouter() {
  * that live in the root scope rather than the component's <i18n> block.
  */
 const i18n = createI18n({ legacy: false, locale: 'en', messages, missingWarn: false, fallbackWarn: false });
-
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
 
 describe('NW-I-001: renders WiFi card when wifi_perm_disable is false', () => {
     it('WiFi settings form is present in DOM when wifi_perm_disable=false', async () => {

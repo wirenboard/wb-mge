@@ -21,14 +21,10 @@ import { createRouter, createMemoryHistory } from 'vue-router';
 import type { Info, PortMode, RepeaterStats, Settings } from '@/common/types';
 import { api } from '@/utils/api';
 
-// ---------------------------------------------------------------------------
 // Shared reactive info ref — mutated per test scenario to simulate polls.
-// ---------------------------------------------------------------------------
 const infoRef = ref<Info | undefined>(undefined);
 
-// ---------------------------------------------------------------------------
 // Mocks — hoisted before any component import by Vitest's vi.mock hoisting.
-// ---------------------------------------------------------------------------
 
 const fetchInfoMock = vi.fn().mockResolvedValue(undefined);
 
@@ -99,10 +95,6 @@ vi.mock('@unhead/vue', () => ({
   createUnhead: vi.fn(() => ({})),
   headSymbol: Symbol('head'),
 }));
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Build a minimal Info object with explicit per-port mode + repeater stats.
@@ -203,9 +195,6 @@ beforeEach(() => {
   vi.mocked(api).mockResolvedValue(undefined as never);
 });
 
-// ---------------------------------------------------------------------------
-// REP-I-001: toggle reflects state
-// ---------------------------------------------------------------------------
 describe('REP-I-001: toggle reflects repeater state', () => {
   it('both ports repeater → ON; any other combo → OFF', async () => {
     const { default: Repeater } = await import('@/views/Repeater.vue');
@@ -229,9 +218,6 @@ describe('REP-I-001: toggle reflects repeater state', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// REP-I-002: toggling ON posts both ports { mode: 'repeater' }
-// ---------------------------------------------------------------------------
 describe('REP-I-002: toggle ON', () => {
   it('posts ports/1/mode AND ports/2/mode { mode: repeater } then fetchInfo(low)', async () => {
     const { default: Repeater } = await import('@/views/Repeater.vue');
@@ -254,9 +240,6 @@ describe('REP-I-002: toggle ON', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// REP-I-003: toggling OFF posts both ports { mode: 'disabled' }
-// ---------------------------------------------------------------------------
 describe('REP-I-003: toggle OFF', () => {
   it('posts ports/1/mode AND ports/2/mode { mode: disabled }', async () => {
     const { default: Repeater } = await import('@/views/Repeater.vue');
@@ -278,9 +261,6 @@ describe('REP-I-003: toggle OFF', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// REP-I-004: stats from info.repeater are rendered
-// ---------------------------------------------------------------------------
 describe('REP-I-004: stats render', () => {
   it('forward/reverse bytes and per-port dropped bytes appear in the DOM', async () => {
     const { default: Repeater } = await import('@/views/Repeater.vue');
@@ -318,9 +298,6 @@ describe('REP-I-004: stats render', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// REP-I-005: info without a `repeater` object renders safely (older firmware)
-// ---------------------------------------------------------------------------
 describe('REP-I-005: missing repeater object', () => {
   it('renders without throwing and falls back to zero placeholders', async () => {
     const { default: Repeater } = await import('@/views/Repeater.vue');
@@ -344,9 +321,6 @@ describe('REP-I-005: missing repeater object', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// REP-I-006: toggle error path — a rejected api() reverts the optimistic state
-// ---------------------------------------------------------------------------
 describe('REP-I-006: toggle error path', () => {
   it('a rejected api() reverts the toggle and raises the connection alert', async () => {
     const { default: Repeater } = await import('@/views/Repeater.vue');

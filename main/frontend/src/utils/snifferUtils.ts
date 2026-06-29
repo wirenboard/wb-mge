@@ -2,9 +2,7 @@ import { decodePacket, getByteRoles, type ByteRole, type Direction } from '@/com
 
 export type { ByteRole };
 
-// ============================================================
 // Types
-// ============================================================
 
 export type SniffRow = {
   id: number;
@@ -24,9 +22,7 @@ export type SniffRow = {
   tooltip: string;
 };
 
-// ============================================================
 // Constants
-// ============================================================
 
 export const FC_NAMES: Record<number, string> = {
   1: 'Read Coils',
@@ -84,9 +80,7 @@ export const FC_TOOLTIPS: Record<number, string> = {
   16: 'Write Multiple Regs (FC16): write N holding registers. Request: addr(2) + count(2) + byte_count(1) + data. Response: addr+count.',
 };
 
-// ============================================================
 // Pure utility functions
-// ============================================================
 
 /** Update the wall-clock<->device-uptime offset (ms vs Unix epoch).
  *  deviceUs = packet timestamp_us (µs since boot); recvWallMs = Date.now() at receipt.
@@ -210,9 +204,7 @@ export function trimToCap<T>(arr: T[], cap: number): T[] {
   return [];
 }
 
-// ============================================================
 // parsePacket — pure, accepts prevTimestampUs and returns new timestamp
-// ============================================================
 
 /**
  * Parse a raw WebSocket sniffer message into a SniffRow.
