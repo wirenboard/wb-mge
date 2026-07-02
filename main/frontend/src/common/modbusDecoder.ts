@@ -11,8 +11,6 @@
  *   {type:'parse_error', reason, raw}
  */
 
-// Types
-
 export type Direction = 'request' | 'response';
 
 export interface ParseError {
@@ -161,8 +159,6 @@ export function getByteRoles(decoded: DecodedPacket): ByteRole[] {
   return roles;
 }
 
-// Utilities
-
 function toHex(bytes: number[]): string {
   return bytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('');
 }
@@ -188,8 +184,6 @@ export function parseHex(str: string): number[] | null {
   }
   return result;
 }
-
-// FC name table
 
 const FC_NAMES: Record<number, string> = {
   0x01: 'read_coils',
@@ -270,8 +264,6 @@ function decodeMei(bytes: number[], isResponse: boolean): PduResult | ParseError
   if (meiType === 0x0d) return { type: 'mei_canopen', raw, fc: fcHex, mei_type: meiHex, data: toHex(bytes.slice(2)) };
   return { type: 'mei_transport', raw, fc: fcHex, mei_type: meiHex, data: toHex(bytes.slice(2)) };
 }
-
-// PDU decoder (request)
 
 export function decodeStdPduRequest(bytes: number[]): PduResult | ParseError {
   if (bytes.length < 1) return { type: 'parse_error', reason: 'pdu_empty', raw: '' };
@@ -372,8 +364,6 @@ export function decodeStdPduRequest(bytes: number[]): PduResult | ParseError {
   if (VENDOR_FC.has(fc)) return { type: 'vendor_specific', raw, fc: fcHex, data: toHex(bytes.slice(1)) };
   return { type: 'parse_error', reason: 'unknown_fc', raw, fc: fcHex };
 }
-
-// PDU decoder (response)
 
 export function decodeStdPduResponse(bytes: number[]): PduResult | ParseError {
   if (bytes.length < 1) return { type: 'parse_error', reason: 'pdu_empty', raw: '' };
@@ -556,8 +546,6 @@ function decodeFastModbusPayload(bytes: number[]): FastModbusSubcommand {
   }
   return { type: 'parse_error', reason: 'unknown_subcommand', raw, subcommand: toHex([sub]) };
 }
-
-// Top-level decoder
 
 /**
  * Decode a Modbus packet.

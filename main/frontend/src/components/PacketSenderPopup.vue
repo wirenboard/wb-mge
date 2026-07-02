@@ -26,7 +26,6 @@ const value = ref('10');
 const sending = ref(false);
 const error = ref('');
 
-// Read mode FC options
 const readFcOptions = computed(() => [
   { value: '01', label: t('fc_opt_01') },
   { value: '02', label: t('fc_opt_02') },
@@ -34,7 +33,6 @@ const readFcOptions = computed(() => [
   { value: '04', label: t('fc_opt_04') },
 ]);
 
-// Write mode FC options
 const writeFcOptions = computed(() => [
   { value: '05', label: t('fc_opt_05') },
   { value: '06', label: t('fc_opt_06') },
@@ -44,14 +42,12 @@ const writeFcOptions = computed(() => [
 
 const fcOptions = computed(() => (mode.value === 'read' ? readFcOptions.value : writeFcOptions.value));
 
-// Switch mode and reset fc to first option for that mode
 function setMode(m: 'read' | 'write') {
   mode.value = m;
   fc.value = m === 'read' ? '03' : '06';
   error.value = '';
 }
 
-// Build the current RTU frame based on inputs, or return null on bad input
 const previewBytes = computed((): Uint8Array | null =>
   buildPreviewFrame(slaveId.value, fc.value, address.value, value.value, mode.value)
 );
@@ -100,7 +96,6 @@ const valueLabel = computed(() =>
 
 <template>
   <div class="sniffer-sender">
-    <!-- Header -->
     <div class="sniffer-sender-head">
       <span class="sniffer-sender-title">
         <span class="sniffer-sender-play">▶</span> {{ t('title') }}
@@ -108,7 +103,6 @@ const valueLabel = computed(() =>
       <button class="sniffer-sender-close" :aria-label="t('close')" @click="emit('close')">✕</button>
     </div>
 
-    <!-- Read / Write segmented toggle -->
     <div class="sniffer-sender-seg">
       <button
         :class="['sniffer-sender-seg-btn', { 'sniffer-sender-seg-btnActive': mode === 'read' }]"
@@ -124,7 +118,6 @@ const valueLabel = computed(() =>
 </button>
     </div>
 
-    <!-- Form body -->
     <div class="sniffer-sender-body">
       <div class="form-grid">
         <!-- Slave ID -->
@@ -154,7 +147,6 @@ const valueLabel = computed(() =>
         </div>
       </div>
 
-      <!-- Preview bar -->
       <div class="sniffer-sender-preview">
         <span class="sniffer-sender-preview-label">{{ t('preview_label') }}</span>
         <span class="sniffer-sender-preview-bytes">
@@ -169,11 +161,9 @@ const valueLabel = computed(() =>
         </span>
       </div>
 
-      <!-- Error message -->
       <div v-if="error" class="sniffer-sender-error">{{ error }}</div>
     </div>
 
-    <!-- Footer -->
     <div class="sniffer-sender-foot">
       <button
         class="sniffer-sender-foot-send"
@@ -207,7 +197,6 @@ const valueLabel = computed(() =>
   font-size: 13px;
 }
 
-/* Header */
 .sniffer-sender-head {
   display: flex;
   align-items: center;
@@ -247,7 +236,6 @@ const valueLabel = computed(() =>
   background: var(--bg-surface-subtle);
 }
 
-/* Segmented control */
 .sniffer-sender-seg {
   display: flex;
   margin: 12px 16px 0;
@@ -277,7 +265,6 @@ const valueLabel = computed(() =>
   color: #fff;
 }
 
-/* Body */
 .sniffer-sender-body {
   padding: 12px 16px;
   display: flex;
@@ -285,7 +272,6 @@ const valueLabel = computed(() =>
   gap: 10px;
 }
 
-/* 2-column form grid */
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -323,7 +309,6 @@ const valueLabel = computed(() =>
   border-color: var(--primary-color);
 }
 
-/* Preview bar */
 .sniffer-sender-preview {
   background: var(--bg-surface-subtle);
   border: 1px solid var(--border-color);
@@ -365,14 +350,12 @@ const valueLabel = computed(() =>
   color: var(--text-muted);
 }
 
-/* Error */
 .sniffer-sender-error {
   color: var(--danger-color, #e53e3e);
   font-size: 12px;
   padding: 4px 0;
 }
 
-/* Footer */
 .sniffer-sender-foot {
   display: flex;
   flex-direction: column;

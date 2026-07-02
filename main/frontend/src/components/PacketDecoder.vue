@@ -13,12 +13,10 @@ import {
 import { type SniffRow } from '@/utils/snifferUtils';
 import MagnifierIcon from '@/assets/magnifierIcon.svg?component';
 
-// Props
 const props = defineProps<{ packet: SniffRow }>();
 
 const { t } = useI18n();
 
-// State
 const hoveredRange = ref<{ start: number; end: number } | null>(null);
 const activeEndianness = ref<EndiannessKey>('abcd');
 type BitMode = '16' | '32';
@@ -43,7 +41,6 @@ const fullHex = computed<string>(() =>
   rawBytes.value.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('')
 );
 
-// Tree — flatten decoded object into rows
 const treeRows = computed<TreeRow[]>(() =>
   flattenNode(
     decoded.value as unknown as Record<string, unknown>,
@@ -54,7 +51,6 @@ const treeRows = computed<TreeRow[]>(() =>
   )
 );
 
-// Hover
 function onRowHover(start: number, end: number) {
   hoveredRange.value = end > start ? { start, end } : null;
 }
@@ -62,7 +58,6 @@ function onRowLeave() {
  hoveredRange.value = null;
 }
 
-// Hex editor — 8 bytes per row
 function isByteHighlighted(i: number): boolean {
   return hoveredRange.value !== null && i >= hoveredRange.value.start && i < hoveredRange.value.end;
 }
@@ -94,7 +89,6 @@ const hexEditorRows = computed<HexEditorRow[]>(() => {
   return out;
 });
 
-// Data interpretation popup
 const leafData = computed<string | null>(() => {
   function findDeepest(obj: Record<string, unknown>): string | null {
     if (obj.payload && typeof obj.payload === 'object') {
@@ -149,7 +143,6 @@ const chunks32 = computed<Chunk32[]>(() => {
 
 <template>
   <div class="pkt-panel">
-    <!-- Header -->
     <div class="pkt-header">
       <div class="pkt-header-left">
         <span class="pkt-title">{{ t('packet') }} #{{ packet.id }}</span>
@@ -166,9 +159,7 @@ const chunks32 = computed<Chunk32[]>(() => {
       </span>
     </div>
 
-    <!-- Body: two columns -->
     <div class="pkt-body">
-      <!-- Left: decoded tree -->
       <div class="pkt-decoded">
         <div class="pkt-col-label">{{ t('decoded') }}</div>
         <div class="tree-rows">
@@ -207,7 +198,6 @@ const chunks32 = computed<Chunk32[]>(() => {
         </div>
       </div>
 
-      <!-- Right: raw bytes hex editor -->
       <div class="pkt-raw">
         <div class="pkt-col-label">{{ t('raw_bytes') }} · {{ packet.bytes }} B</div>
         <div class="hexed">
@@ -225,7 +215,6 @@ const chunks32 = computed<Chunk32[]>(() => {
       </div>
     </div>
 
-    <!-- Data interpretation popup (absolute positioned) -->
     <div v-if="showDataPopup && leafBytes.length >= 2" class="data-popup">
       <div class="data-popup-header">
         <span class="pkt-col-label pkt-col-labelNoPad">{{ t('data_interpretation') }}</span>
@@ -251,7 +240,6 @@ const chunks32 = computed<Chunk32[]>(() => {
         </table>
       </div>
 
-      <!-- 32-bit endianness view -->
       <div v-if="activeBitMode === '32'" class="view32">
         <div v-if="leafBytes.length < 4" class="muted view32-empty">{{ t('need_4_bytes') }}</div>
         <template v-else>
@@ -293,7 +281,6 @@ const chunks32 = computed<Chunk32[]>(() => {
   position: relative;
 }
 
-/* Header */
 .pkt-header {
   display: flex;
   align-items: center;
@@ -315,7 +302,6 @@ const chunks32 = computed<Chunk32[]>(() => {
 .pkt-dir   { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pkt-meta  { font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 
-/* Body */
 .pkt-body {
   display: flex;
   min-height: 0;
@@ -354,7 +340,6 @@ const chunks32 = computed<Chunk32[]>(() => {
   padding: 0 14px 6px;
 }
 
-/* Tree rows */
 .tree-rows { font-size: 12.5px; }
 
 .tree-row {
@@ -393,7 +378,6 @@ const chunks32 = computed<Chunk32[]>(() => {
 .array-items { display: flex; flex-direction: column; gap: 1px; }
 .array-item  { display: flex; gap: 6px; font-size: 11.5px; }
 
-/* Magnifier icon */
 .data-icon-btn {
   flex-shrink: 0;
   display: inline-flex;
@@ -425,7 +409,6 @@ const chunks32 = computed<Chunk32[]>(() => {
   font-size: 10px;
 }
 
-/* Hex editor */
 .hexed {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -476,7 +459,6 @@ const chunks32 = computed<Chunk32[]>(() => {
 
 .hexed-ch-print { color: var(--text-color); }
 
-/* Data popup */
 .data-popup {
   position: absolute;
   bottom: 100%;
@@ -510,7 +492,6 @@ const chunks32 = computed<Chunk32[]>(() => {
 }
 .popup-close:hover { color: var(--text-color); background: var(--bg-surface-subtle); }
 
-/* Bit mode tabs */
 .bit-mode-tabs { display: flex; gap: 3px; }
 .bit-tab {
   padding: 2px 10px;
@@ -528,10 +509,8 @@ const chunks32 = computed<Chunk32[]>(() => {
   font-weight: 600;
 }
 
-/* 16-bit view */
 .regs16-view { padding: 2px 0; }
 
-/* Endianness tabs */
 .endian-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
 .endian-tab {
   padding: 3px 10px;
@@ -565,7 +544,6 @@ const chunks32 = computed<Chunk32[]>(() => {
 .c-i32 { color: var(--mb-slave); }
 .c-f32 { color: var(--mb-master); }
 
-/* Sender pills */
 .sender-pill {
   display: inline-block;
   font-family: var(--font-mono);

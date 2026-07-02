@@ -648,7 +648,6 @@ function exportCsv() {
       </div><!-- /sniffer-body -->
     </div><!-- /sniffer-main -->
 
-    <!-- Floating send packet popup — anchored to sniffer-content-wrap -->
     <PacketSenderPopup
       v-if="senderOpen"
       :port-num="portFilter"
@@ -660,7 +659,6 @@ function exportCsv() {
 </template>
 
 <style scoped>
-/* Grouped toolbar: stats | capture controls | data actions */
 .sniffer-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -759,14 +757,12 @@ function exportCsv() {
   position: relative;
 }
 
-/* Sniffer main layout */
 .sniffer-main {
   flex: 1;
   display: flex;
   min-height: 0;
 }
 
-/* Facet rail */
 .facet-rail {
   width: 280px;
   flex-shrink: 0;
@@ -923,7 +919,6 @@ function exportCsv() {
   background: var(--primary-color);
 }
 
-/* Sniffer body */
 .sniffer-body {
   flex: 1;
   display: flex;
@@ -946,7 +941,6 @@ function exportCsv() {
   background-attachment: local, local, scroll, scroll;
 }
 
-/* Table */
 .sniffer-table {
   width: 100%;
   border-collapse: collapse;
@@ -1031,7 +1025,6 @@ function exportCsv() {
   color: var(--text-secondary);
 }
 
-/* Sender pill */
 .sender-pill {
   display: inline-block;
   font-family: var(--font-mono);
@@ -1067,7 +1060,6 @@ function exportCsv() {
   border-color: color-mix(in oklch, var(--text-muted) 20%, var(--bg-surface));
 }
 
-/* Hex payload */
 .hex-payload {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1131,7 +1123,6 @@ function exportCsv() {
   border-radius: 3px;
 }
 
-/* CRC */
 .crc-err {
   color: var(--mb-err);
   font-weight: 600;
@@ -1144,7 +1135,6 @@ function exportCsv() {
   font-size: 11px;
 }
 
-/* Responsive */
 @media (max-width: 680px) {
   .sniffer-main {
     flex-direction: column;

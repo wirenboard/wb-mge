@@ -23,7 +23,6 @@ import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { documentation, support, email, website } from '@/common/links';
 
-// Map of menuIcon key → imported SVG component
 const MENU_ICONS: Record<string, Component> = {
   gauge: GaugeIcon,
   sliders: SlidersIcon,
@@ -35,12 +34,10 @@ const MENU_ICONS: Record<string, Component> = {
   repeat: RepeatIcon,
 };
 
-// Helper: returns the icon component for a given menuIcon key
 function getMenuIcon(key: unknown): Component | undefined {
   return typeof key === 'string' ? MENU_ICONS[key] : undefined;
 }
 
-// Helper: returns the i18n key as a string for menu link name
 function getMenuName(name: unknown): string {
   return typeof name === 'string' ? name : '';
 }

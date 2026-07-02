@@ -14,7 +14,6 @@ describe('parseHex', () => {
   it('leading/trailing spaces', () => expect(parseHex('  FD 60  ')).toEqual([0xFD, 0x60]));
 });
 
-// Arbitration (packets 32, 47)
 describe('arbitration', () => {
   it('10 FF bytes (packet 32)', () => {
     const r = decodePacket('FF FF FF FF FF FF FF FF FF FF');

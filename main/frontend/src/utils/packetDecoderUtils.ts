@@ -244,8 +244,6 @@ export const REGISTER_LABELS: Record<string, string> = {
 // 'reserved_address' is rendered separately with a warning message.
 export const SKIP_FIELDS = new Set(['type', 'raw', 'payload', 'objects', 'sub_requests', 'sub_responses', 'reserved_address']);
 
-// Types
-
 export interface TreeRow {
   depth: number;
   label: string;
@@ -264,8 +262,6 @@ export interface TreeRow {
 }
 
 export type EndiannessKey = 'abcd' | 'cdab' | 'badc' | 'dcba';
-
-// Pure utility functions
 
 /** PDU types whose `data` field carries bit-packed coil/discrete input bytes */
 export const COIL_DATA_TYPES = new Set([

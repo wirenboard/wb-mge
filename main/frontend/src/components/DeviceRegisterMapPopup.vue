@@ -99,7 +99,6 @@ const notes: BiText[] = [
           <button class="drm-close" :aria-label="t('close')" @click="emit('close')">✕</button>
         </div>
 
-        <!-- Scrollable body -->
         <div class="drm-body">
           <p class="drm-intro">{{ intro[lang] }}</p>
 
@@ -149,7 +148,6 @@ const notes: BiText[] = [
             </tbody>
           </table>
 
-          <!-- Notes -->
           <div class="drm-section-title">{{ t('section_notes') }}</div>
           <ul class="drm-notes">
             <li v-for="(note, i) in notes" :key="i">{{ note[lang] }}</li>
@@ -188,7 +186,6 @@ const notes: BiText[] = [
   overflow: hidden;
 }
 
-/* Header */
 .drm-head {
   display: flex;
   align-items: flex-start;
@@ -236,7 +233,6 @@ const notes: BiText[] = [
   background: var(--bg-surface-subtle);
 }
 
-/* Body */
 .drm-body {
   padding: 16px 18px 20px;
   overflow: auto;
@@ -262,7 +258,6 @@ const notes: BiText[] = [
   margin-top: 0;
 }
 
-/* Table */
 .drm-table {
   width: 100%;
   border-collapse: collapse;
@@ -303,7 +298,6 @@ const notes: BiText[] = [
   white-space: nowrap;
 }
 
-/* Notes */
 .drm-notes {
   margin: 0;
   padding-left: 18px;

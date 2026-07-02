@@ -78,7 +78,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
         </div>
       </div>
 
-      <!-- Bridge card: Port 1 | toggle + arrows | Port 2 -->
       <section class="card">
         <div class="card-header">
           <div class="card-title-wrap">
@@ -88,7 +87,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
         </div>
 
         <div class="rep-stage">
-          <!-- Port 1 panel -->
           <div class="rep-port rep-port-info">
             <div class="rep-port-head">
               <span>RS-485</span>
@@ -103,7 +101,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
             </div>
           </div>
 
-          <!-- Center: arrows + toggle -->
           <div class="rep-center">
             <div class="rep-flow rep-flow-fwd">
               <span class="rep-flow-tag">TX</span>
@@ -138,7 +135,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
             </div>
           </div>
 
-          <!-- Port 2 panel -->
           <div class="rep-port rep-port-warn">
             <div class="rep-port-head">
               <span>RS-485</span>
@@ -159,7 +155,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
 </template>
 
 <style scoped>
-/* Warning banner */
 .rep-banner {
   display: flex;
   gap: 12px;
@@ -192,7 +187,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
   line-height: 1.5;
 }
 
-/* Bridge stage layout: Port 1 | center | Port 2 */
 .rep-stage {
   display: grid;
   grid-template-columns: 1fr minmax(220px, 280px) 1fr;
@@ -205,7 +199,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
   }
 }
 
-/* Port panels */
 .rep-port {
   display: flex;
   flex-direction: column;
@@ -295,7 +288,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
   color: var(--danger-color);
 }
 
-/* Center column: arrows around the toggle button */
 .rep-center {
   display: flex;
   flex-direction: column;
@@ -418,7 +410,6 @@ const port2Line = computed<string>(() => lineParams(savedSettings.value?.rs485_2
   word-spacing: -0.3em;
 }
 
-/* The big enable/disable toggle button */
 .rep-toggle {
   display: flex;
   flex-direction: column;

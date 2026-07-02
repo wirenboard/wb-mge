@@ -2,8 +2,6 @@ import { decodePacket, getByteRoles, type ByteRole, type Direction } from '@/com
 
 export type { ByteRole };
 
-// Types
-
 export type SniffRow = {
   id: number;
   port: number;
@@ -21,8 +19,6 @@ export type SniffRow = {
   dt: string;
   tooltip: string;
 };
-
-// Constants
 
 export const FC_NAMES: Record<number, string> = {
   1: 'Read Coils',
@@ -79,8 +75,6 @@ export const FC_TOOLTIPS: Record<number, string> = {
   15: 'Write Multiple Coils (FC15): write N coils. Request: addr(2) + count(2) + byte_count(1) + data. Response: addr+count.',
   16: 'Write Multiple Regs (FC16): write N holding registers. Request: addr(2) + count(2) + byte_count(1) + data. Response: addr+count.',
 };
-
-// Pure utility functions
 
 /** Update the wall-clock<->device-uptime offset (ms vs Unix epoch).
  *  deviceUs = packet timestamp_us (µs since boot); recvWallMs = Date.now() at receipt.

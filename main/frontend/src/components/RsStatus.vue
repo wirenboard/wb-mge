@@ -10,10 +10,8 @@ const { t } = useI18n();
 
 <template>
   <div>
-    <!-- always visible: operating mode -->
     <InfoRow :label="t('port_mode_label')">{{ t(`port_mode_${info.port_mode}`, info.port_mode) }}</InfoRow>
 
-    <!-- TCP bridge specific rows -->
     <template v-if="info.port_mode === 'tcp_bridge'">
       <InfoRow :label="t('modbus_mode')">{{ settings.bridge.modbus ? t('bridge_modbus') : t('bridge_transparent') }}</InfoRow>
       <InfoRow v-if="!settings.bridge.modbus" :label="t('bridge_mode')">{{ settings.bridge.mode === 'client' ? t('client') : t('server') }}</InfoRow>
@@ -30,7 +28,6 @@ const { t } = useI18n();
     <!-- cache overlay status — independent of transport mode -->
     <InfoRow :label="t('cache_label')">{{ info.cache_enabled ? t('cache_on') : t('cache_off') }}</InfoRow>
 
-    <!-- always visible: bus activity status -->
     <InfoRow :label="t('status')">
       {{ info.is_busy ? t('active') : t('not_active') }}
       <template #hint>{{ t('status_info') }}</template>
