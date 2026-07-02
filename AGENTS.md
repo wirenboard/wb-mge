@@ -105,6 +105,11 @@ Full style guide: https://raw.githubusercontent.com/wirenboard/codestyle/refs/he
 ### Localization
 - Every user-visible text string in the UI must be localized via the i18n system. No hardcoded strings in templates or scripts.
 
+### Comments
+- A comment is warranted only where the code is not self-explanatory (complex logic or an edge case).
+- A comment must not duplicate what the code already states: a function/variable name, a test `describe`/`it` title, a component/class name in the markup, or a description of how something is laid out in CSS.
+- No divider/banner comments (`// ==========`) or bare structural section labels (`// Props`, `// State`, `/* Header */`) — they add nothing the code does not already convey.
+
 ### CSS Class Naming (BEM)
 We use BEM (Block, Element, Modifier) methodology for CSS class names.
 
