@@ -19,6 +19,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#include "board.h"
+
 
 #define SERIAL_PORT_NUM_1             1
 #define SERIAL_PORT_NUM_2             2
@@ -97,14 +99,17 @@ static int lookup_str_to_int(const char *str, const char * const keys[], const i
 static esp_err_t read_serial_port_config(const int index, serial_config_t* serial_config)
 {
     static const uart_port_t port_nums[BRIDGES_COUNT] = {SERIAL_PORT_NUM_1, SERIAL_PORT_NUM_2};
-    static const int tx_pins[BRIDGES_COUNT] = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};
-    static const int rx_pins[BRIDGES_COUNT] = {SERIAL_INPUT_PIN_1, SERIAL_INPUT_PIN_2};
-    static const int dir_pins[BRIDGES_COUNT] = {SERIAL_IO_PIN_1, SERIAL_IO_PIN_2};
 
+    /* RS485 GPIOs depend on the board variant (WB-MGE vs WB-MGU); the UART number
+     * is the same on both. The per-board pin tables live in board.c (single source
+     * of truth, shared with the mqtt-serial bridge). The SERIAL_*_PIN_* macros above
+     * document the WB-MGE mapping only. */
+    int tx = 0, rx = 0, rts = 0;
+    board_rs485_pins((unsigned)index, &tx, &rx, &rts);
     serial_config->port_num = port_nums[index];
-    serial_config->tx_pin = tx_pins[index];
-    serial_config->rx_pin = rx_pins[index];
-    serial_config->dir_pin = dir_pins[index];
+    serial_config->tx_pin = tx;
+    serial_config->rx_pin = rx;
+    serial_config->dir_pin = rts;
 
     char key_buf[SETTING_ITEM_MAX_STR_LEN];
     char value_str[SETTING_ITEM_MAX_STR_LEN];
