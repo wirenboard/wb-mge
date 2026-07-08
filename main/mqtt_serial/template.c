@@ -8,8 +8,18 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <math.h>  /* NAN */
+#ifdef ESP_PLATFORM
 #include "esp_system.h"  /* esp_get_free_heap_size */
 #include "esp_log.h"
+#else
+/* Host build (no ESP-IDF): map logging to stderr and heap query to 0 so the
+ * same source compiles for unit tests. ESP_PLATFORM is auto-defined by ESP-IDF. */
+#include <stdint.h>
+#define ESP_LOGE(tag, fmt, ...) fprintf(stderr, "E %s: " fmt "\n", (tag), ##__VA_ARGS__)
+#define ESP_LOGW(tag, fmt, ...) fprintf(stderr, "W %s: " fmt "\n", (tag), ##__VA_ARGS__)
+#define ESP_LOGI(tag, fmt, ...) fprintf(stderr, "I %s: " fmt "\n", (tag), ##__VA_ARGS__)
+static inline uint32_t esp_get_free_heap_size(void) { return 0; }
+#endif
 
 static const char *TAG_TMPL = "template";
 

@@ -1,26 +1,29 @@
-# Unit test runner for wb_modbus_bridge PoC
+# Unit test harness for the shared mqtt-serial modules (firmware sources).
 # Uses Unity (ThrowTheSwitch), same approach as wb-mge.
 #
 # Usage:
 #   make          - build and run all tests
 #   make clean    - remove build artifacts
 
+# firmware = single source of truth for shared mqtt-serial modules
+FW = ../../main/mqtt_serial
+
 CC       = gcc
 CFLAGS   = -std=c99 -Wall -Wextra -g -O0 \
             -D_POSIX_C_SOURCE=200809L \
             -D_DEFAULT_SOURCE \
             -Iunity \
-            -I../src \
+            -I$(FW) \
             -I../thirdparty/cJSON
 
 # Source files under test (no main, no platform I/O)
-SRC_MODBUS_FRAME = ../src/modbus_frame.c
-SRC_VALUE_CONV   = ../src/value_conv.c
-SRC_TEMPLATE     = ../src/template.c ../thirdparty/cJSON/cJSON.c
+SRC_MODBUS_FRAME = $(FW)/modbus_frame.c
+SRC_VALUE_CONV   = $(FW)/value_conv.c
+SRC_TEMPLATE     = $(FW)/template.c ../thirdparty/cJSON/cJSON.c
 SRC_UNITY        = unity/unity.c
 
 BUILD = build
-TESTS = test_crc test_value_conv test_template test_condition test_enum test_fast_modbus
+TESTS = test_crc test_value_conv test_template test_condition test_enum test_fast_modbus test_poll_planner
 
 .PHONY: all clean $(TESTS)
 
@@ -69,9 +72,16 @@ test_enum: $(BUILD)
 test_fast_modbus: $(BUILD)
 	@echo "=== Building test_fast_modbus ==="
 	$(CC) $(CFLAGS) -o $(BUILD)/test_fast_modbus \
-	    test_fast_modbus.c ../src/fast_modbus_events.c ../src/modbus_frame.c $(SRC_UNITY) -lm
+	    test_fast_modbus.c $(FW)/fast_modbus_events.c $(SRC_MODBUS_FRAME) $(SRC_UNITY) -lm
 	@echo "=== Running test_fast_modbus ==="
 	@$(BUILD)/test_fast_modbus
+
+test_poll_planner: $(BUILD)
+	@echo "=== Building test_poll_planner ==="
+	$(CC) $(CFLAGS) -o $(BUILD)/test_poll_planner \
+	    test_poll_planner.c $(FW)/poll_planner.c $(SRC_UNITY) -lm
+	@echo "=== Running test_poll_planner ==="
+	@$(BUILD)/test_poll_planner
 
 $(BUILD):
 	@mkdir -p $(BUILD)
