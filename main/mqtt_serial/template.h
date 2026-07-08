@@ -4,8 +4,8 @@
  * Reads a wb-mqtt-serial JSON template and extracts the channel list
  * that we need to poll / publish.
  *
- * Deliberately simple: no Jinja, no conditions, no consists_of,
- * no parameters/setup sections -- just the "channels" array.
+ * Supports channel `condition` evaluation against the device `parameters`
+ * section (value/default). Still no Jinja, no consists_of, no setup.
  *
  * Designed to be buildable on both Linux (PoC) and an MCU (ESP32).
  * Heap usage: one call to malloc per channel name string + the

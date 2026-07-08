@@ -20,7 +20,7 @@ SRC_TEMPLATE     = ../src/template.c ../thirdparty/cJSON/cJSON.c
 SRC_UNITY        = unity/unity.c
 
 BUILD = build
-TESTS = test_crc test_value_conv test_template
+TESTS = test_crc test_value_conv test_template test_condition
 
 .PHONY: all clean $(TESTS)
 
@@ -51,6 +51,13 @@ test_template: $(BUILD)
 	    test_template.c $(SRC_TEMPLATE) $(SRC_UNITY) -lm
 	@echo "=== Running test_template ==="
 	@$(BUILD)/test_template
+
+test_condition: $(BUILD)
+	@echo "=== Building test_condition ==="
+	$(CC) $(CFLAGS) -o $(BUILD)/test_condition \
+	    test_condition.c $(SRC_TEMPLATE) $(SRC_UNITY) -lm
+	@echo "=== Running test_condition ==="
+	@$(BUILD)/test_condition
 
 $(BUILD):
 	@mkdir -p $(BUILD)

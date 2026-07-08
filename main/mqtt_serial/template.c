@@ -108,6 +108,173 @@ static uint32_t format_num_regs(reg_type_t rtype, reg_format_t fmt,
 }
 
 /* ------------------------------------------------------------------ */
+/* Template parameters + channel "condition" evaluation                */
+/* ------------------------------------------------------------------ */
+/*
+ * WB templates gate channels with a "condition" string that references
+ * device "parameters" (e.g. "Show_modes_as_range==1"). We evaluate each
+ * condition against the template-declared parameter values so that only the
+ * matching channel variant is created. This deduplicates same-named
+ * conditional pairs (which would otherwise collide on a single MQTT topic)
+ * and hides parameter-gated (e.g. debug) channels.
+ *
+ * Parameter value source, in priority order: the parameter's "value", then
+ * "default", else 0. Live per-device register reads and user overrides are
+ * out of scope for this bridge.
+ *
+ * Supported grammar: "<param> <op> <number>", op in ==,!=,>=,<=,>,<.
+ * Compound expressions (&&, ||, parentheses), a non-numeric right-hand side,
+ * or an unknown parameter FAIL OPEN (channel kept) so real data is never
+ * silently dropped.
+ */
+typedef struct {
+    char   id[64];
+    double value;
+} tmpl_param_t;
+
+typedef struct {
+    tmpl_param_t *items;
+    int           count;
+} tmpl_params_t;
+
+/* Load the device "parameters" section into a flat id->value table.
+ * Accepts both template shapes:
+ *   array : [ { "id":"X", "default":0, ... }, ... ]
+ *   object: { "X": { "default":0, ... }, ... }   (the key is the id)
+ */
+static void params_load(const cJSON *dev_obj, tmpl_params_t *p)
+{
+    p->items = NULL;
+    p->count = 0;
+
+    cJSON *params = cJSON_GetObjectItemCaseSensitive(dev_obj, "parameters");
+    if (!params) return;
+
+    int n = cJSON_GetArraySize(params);
+    if (n <= 0) return;
+
+    p->items = calloc((size_t)n, sizeof(tmpl_param_t));
+    if (!p->items) return;
+
+    bool is_array = cJSON_IsArray(params);
+    cJSON *it = NULL;
+    cJSON_ArrayForEach(it, params) {
+        if (!cJSON_IsObject(it)) continue;
+
+        /* array form: id is a field; object form: id is the child key */
+        const char *id = is_array ? json_str(it, "id", NULL) : it->string;
+        if (!id || !*id) continue;
+
+        cJSON *v = cJSON_GetObjectItemCaseSensitive(it, "value");
+        if (!v) v = cJSON_GetObjectItemCaseSensitive(it, "default");
+
+        double val = 0.0;
+        if (v && cJSON_IsNumber(v))      val = v->valuedouble;
+        else if (v && cJSON_IsBool(v))   val = cJSON_IsTrue(v) ? 1.0 : 0.0;
+
+        strncpy(p->items[p->count].id, id, sizeof(p->items[p->count].id) - 1);
+        p->items[p->count].id[sizeof(p->items[p->count].id) - 1] = '\0';
+        p->items[p->count].value = val;
+        p->count++;
+    }
+}
+
+static void params_free(tmpl_params_t *p)
+{
+    free(p->items);
+    p->items = NULL;
+    p->count = 0;
+}
+
+/* Look up a parameter by name span [name, name+len). Returns true if found. */
+static bool params_lookup(const tmpl_params_t *p, const char *name, size_t len,
+                          double *out_val)
+{
+    for (int i = 0; i < p->count; i++) {
+        if (strlen(p->items[i].id) == len &&
+            strncmp(p->items[i].id, name, len) == 0) {
+            *out_val = p->items[i].value;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Trim leading/trailing ASCII spaces and tabs by moving [*s, *e). */
+static void trim_span(const char **s, const char **e)
+{
+    while (*s < *e && (**s == ' ' || **s == '\t')) (*s)++;
+    while (*e > *s && ((*e)[-1] == ' ' || (*e)[-1] == '\t')) (*e)--;
+}
+
+/* Evaluate a channel "condition". Returns true if the channel must be KEPT.
+ * Empty/absent condition -> keep. Unsupported/unknown -> fail open (keep). */
+static bool eval_condition(const char *cond, const tmpl_params_t *params)
+{
+    if (!cond || !*cond) return true;
+
+    /* Compound / unsupported expressions -> fail open. */
+    if (strstr(cond, "&&") || strstr(cond, "||") ||
+        strchr(cond, '(')  || strchr(cond, ')')) {
+        return true;
+    }
+
+    /* Find the operator: two-char ops first, then single-char. */
+    static const char *ops2[] = { "==", "!=", ">=", "<=" };
+    const char *op_pos = NULL;
+    int  op_len = 0;
+    char op0 = 0, op1 = 0;
+    for (size_t i = 0; i < sizeof(ops2) / sizeof(ops2[0]); i++) {
+        const char *q = strstr(cond, ops2[i]);
+        if (q) { op_pos = q; op_len = 2; op0 = ops2[i][0]; op1 = ops2[i][1]; break; }
+    }
+    if (!op_pos) {
+        const char *q;
+        if ((q = strchr(cond, '>')) || (q = strchr(cond, '<')) || (q = strchr(cond, '='))) {
+            op_pos = q; op_len = 1; op0 = *q; op1 = 0;
+        }
+    }
+    if (!op_pos) return true;  /* not a comparison we understand -> keep */
+
+    /* Left operand = parameter id (trimmed span). */
+    const char *ls = cond, *le = op_pos;
+    trim_span(&ls, &le);
+    if (le <= ls) return true;
+
+    /* Right operand = number (trimmed, copied to a small buffer). */
+    const char *rs = op_pos + op_len, *re = cond + strlen(cond);
+    trim_span(&rs, &re);
+    if (re <= rs) return true;
+    size_t nlen = (size_t)(re - rs);
+    char numbuf[32];
+    if (nlen >= sizeof(numbuf)) return true;
+    memcpy(numbuf, rs, nlen);
+    numbuf[nlen] = '\0';
+    char *endp;
+    double rhs = strtod(numbuf, &endp);
+    /* Require the whole (already-trimmed) right side to be numeric; a partial
+     * parse like "1.5.6" or "1abc" -> fail open per the grammar contract. */
+    if (endp == numbuf || *endp != '\0') return true;
+
+    double lhs;
+    if (!params_lookup(params, ls, (size_t)(le - ls), &lhs)) {
+        return true;  /* unknown parameter -> fail open */
+    }
+
+    if (op_len == 2) {
+        if (op0 == '=' && op1 == '=') return lhs == rhs;
+        if (op0 == '!' && op1 == '=') return lhs != rhs;
+        if (op0 == '>' && op1 == '=') return lhs >= rhs;
+        if (op0 == '<' && op1 == '=') return lhs <= rhs;
+    } else {
+        if (op0 == '>') return lhs >  rhs;
+        if (op0 == '<') return lhs <  rhs;
+        if (op0 == '=') return lhs == rhs;  /* tolerate a lone '=' as equality */
+    }
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
 /* File reading helper                                                 */
 /* ------------------------------------------------------------------ */
 static char *read_file(const char *path)
@@ -150,6 +317,10 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
     out->channels = calloc((size_t)total, sizeof(wb_channel_t));
     if (!out->channels) return -1;
 
+    /* Load parameters once so channel conditions can be evaluated. */
+    tmpl_params_t params;
+    params_load(dev_obj, &params);
+
     int count = 0;
     for (int i = 0; i < total; i++) {
         cJSON *ch = cJSON_GetArrayItem(arr, i);
@@ -162,6 +333,12 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
         /* Skip channels that have "consists_of" (RGB composite) u2013
          * we don't support those in the PoC. */
         if (cJSON_GetObjectItemCaseSensitive(ch, "consists_of")) continue;
+
+        /* Skip channels whose "condition" is not satisfied by the template's
+         * parameter values. Deduplicates conditional same-named pairs and
+         * hides parameter-gated channels. */
+        const char *cond = json_str(ch, "condition", NULL);
+        if (!eval_condition(cond, &params)) continue;
 
         const char *name = json_str(ch, "name", NULL);
         if (!name) continue;
@@ -232,6 +409,7 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
         count++;
     }
 
+    params_free(&params);
     out->num_channels = count;
     return 0;
 }
