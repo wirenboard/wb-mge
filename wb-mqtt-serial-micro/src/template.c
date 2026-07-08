@@ -382,6 +382,36 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
                       || c->reg_type == REG_INPUT
                       || c->reg_type == REG_DISCRETE;
 
+        /* Optional enum value->label mapping: parallel "enum"/"enum_titles"
+         * arrays. Pair only the overlapping prefix; a value with no matching
+         * title (or vice versa) is dropped. Channel array is calloc'd, so the
+         * enums pointer/count already default to NULL/0 when absent. */
+        {
+            cJSON *evals   = cJSON_GetObjectItemCaseSensitive(ch, "enum");
+            cJSON *etitles = cJSON_GetObjectItemCaseSensitive(ch, "enum_titles");
+            if (evals && cJSON_IsArray(evals) && etitles && cJSON_IsArray(etitles)) {
+                int ne = cJSON_GetArraySize(evals);
+                int nt = cJSON_GetArraySize(etitles);
+                int ncap = ne < nt ? ne : nt;
+                if (ncap > 0) {
+                    c->enums = calloc((size_t)ncap, sizeof(wb_enum_entry_t));
+                    if (c->enums) {
+                        for (int e = 0; e < ncap; e++) {
+                            cJSON *vv = cJSON_GetArrayItem(evals, e);
+                            cJSON *tt = cJSON_GetArrayItem(etitles, e);
+                            if (!vv || !cJSON_IsNumber(vv) ||
+                                !tt || !cJSON_IsString(tt)) continue;
+                            char *dup = strdup(tt->valuestring);
+                            if (!dup) continue;  /* skip entry on OOM */
+                            c->enums[c->enum_count].value = (long)vv->valuedouble;
+                            c->enums[c->enum_count].title = dup;
+                            c->enum_count++;
+                        }
+                    }
+                }
+            }
+        }
+
         count++;
     }
 
@@ -429,11 +459,35 @@ int wb_template_parse(const char *path, wb_template_t *out)
     return rc;
 }
 
+const char *wb_channel_enum_title(const wb_channel_t *ch, long value)
+{
+    if (!ch) return NULL;
+    for (int i = 0; i < ch->enum_count; i++) {
+        if (ch->enums[i].value == value) return ch->enums[i].title;
+    }
+    return NULL;
+}
+
+bool wb_channel_enum_value(const wb_channel_t *ch, const char *title, long *out_value)
+{
+    if (!ch || !title) return false;
+    for (int i = 0; i < ch->enum_count; i++) {
+        if (ch->enums[i].title && strcmp(ch->enums[i].title, title) == 0) {
+            if (out_value) *out_value = ch->enums[i].value;
+            return true;
+        }
+    }
+    return false;
+}
+
 void wb_template_free(wb_template_t *t)
 {
     if (!t) return;
     for (int i = 0; i < t->num_channels; i++) {
         free(t->channels[i].name);
+        for (int e = 0; e < t->channels[i].enum_count; e++)
+            free(t->channels[i].enums[e].title);
+        free(t->channels[i].enums);
     }
     free(t->channels);
     memset(t, 0, sizeof(*t));

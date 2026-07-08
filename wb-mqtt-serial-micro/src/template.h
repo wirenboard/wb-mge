@@ -60,6 +60,14 @@ typedef enum {
 } ch_byte_order_t;
 
 /* ------------------------------------------------------------------ */
+/* A single enum value->label mapping entry                            */
+/* ------------------------------------------------------------------ */
+typedef struct {
+    long   value;   /* raw register value */
+    char  *title;   /* heap-allocated display label */
+} wb_enum_entry_t;
+
+/* ------------------------------------------------------------------ */
 /* A single channel extracted from the template                        */
 /* ------------------------------------------------------------------ */
 typedef struct {
@@ -76,6 +84,8 @@ typedef struct {
     uint32_t          string_data_size; /* for FMT_STRING: bytes in the string    */
     ch_word_order_t   word_order;       /* word order for multi-register values   */
     ch_byte_order_t   byte_order;       /* byte order within each word            */
+    wb_enum_entry_t  *enums;      /* heap array of value->label maps, NULL if none */
+    int               enum_count; /* number of enum entries (0 if none)            */
 } wb_channel_t;
 
 /* ------------------------------------------------------------------ */
@@ -97,3 +107,11 @@ int  wb_template_parse(const char *path, wb_template_t *out);
 
 /* Free all resources owned by *t.  Does not free t itself. */
 void wb_template_free(wb_template_t *t);
+
+/* Return the label mapped to `value` for an enum channel, or NULL if the
+ * channel has no enum or the value is not listed. */
+const char *wb_channel_enum_title(const wb_channel_t *ch, long value);
+
+/* If `title` matches one of the channel's enum labels, store its raw value in
+ * *out_value and return true; otherwise return false. */
+bool wb_channel_enum_value(const wb_channel_t *ch, const char *title, long *out_value);

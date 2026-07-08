@@ -279,11 +279,22 @@ static void execute_write(bridge_ctx_t *b, const write_cmd_t *cmd)
     const char *payload = cmd->payload;
     ESP_LOGI(TAG, "set  %s <- %s", ch->name, payload);
 
+    /* If the channel is an enum and the payload is one of its labels, use the
+     * mapped raw register value directly (enum values are pre-scale). */
+    long enum_raw = 0;
+    bool is_enum = (ch->enum_count > 0) &&
+                   wb_channel_enum_value(ch, payload, &enum_raw);
+
     switch (ch->reg_type) {
     case REG_COIL: {
-        int bit = (strcmp(payload, "0") != 0 &&
+        int bit;
+        if (is_enum) {
+            bit = (enum_raw != 0);
+        } else {
+            bit = (strcmp(payload, "0") != 0 &&
                    strcmp(payload, "false") != 0 &&
                    strlen(payload) > 0);
+        }
         mb_write_coil(b->mb, b->slave_id, (uint16_t)ch->address, bit);
         break;
     }
@@ -299,7 +310,8 @@ static void execute_write(bridge_ctx_t *b, const write_cmd_t *cmd)
                           ? WORD_ORDER_LITTLE_ENDIAN : WORD_ORDER_BIG_ENDIAN;
         byte_order_t bo = (ch->byte_order == CH_BYTE_ORDER_LITTLE)
                           ? BYTE_ORDER_LITTLE_ENDIAN : BYTE_ORDER_BIG_ENDIAN;
-        double fval = string_to_value(payload, ch->scale, ch->offset);
+        double fval = is_enum ? (double)enum_raw
+                              : string_to_value(payload, ch->scale, ch->offset);
         uint16_t regs[4] = {0};
         double_to_regs(fval, ch->format, wo, bo, regs);
         if (ch->num_regs == 1)
@@ -468,7 +480,30 @@ static int poll_channel(bridge_ctx_t *b, int idx)
     }
 
     char val_str[256];
-    if (ch->reg_type == REG_COIL || ch->reg_type == REG_DISCRETE) {
+
+    /* Enum channels publish the human-readable label mapped to the raw
+     * register value (pre-scale). String channels are never enums. */
+    const char *enum_label = NULL;
+    if (ch->enum_count > 0 && ch->format != FMT_STRING) {
+        if (ch->reg_type == REG_COIL || ch->reg_type == REG_DISCRETE) {
+            enum_label = wb_channel_enum_title(ch, (long)regs[0]);
+        } else {
+            word_order_t kwo = (ch->word_order == CH_WORD_ORDER_LITTLE)
+                               ? WORD_ORDER_LITTLE_ENDIAN : WORD_ORDER_BIG_ENDIAN;
+            byte_order_t kbo = (ch->byte_order == CH_BYTE_ORDER_LITTLE)
+                               ? BYTE_ORDER_LITTLE_ENDIAN : BYTE_ORDER_BIG_ENDIAN;
+            double kraw = raw_to_double(regs, ch->format, kwo, kbo);
+            /* The error sentinel must win over an enum label: only map to a
+             * label when the raw value is not the channel's error value. */
+            if (!is_error_value(kraw, ch->error_value)) {
+                enum_label = wb_channel_enum_title(ch, (long)kraw);
+            }
+        }
+    }
+
+    if (enum_label) {
+        snprintf(val_str, sizeof(val_str), "%s", enum_label);
+    } else if (ch->reg_type == REG_COIL || ch->reg_type == REG_DISCRETE) {
         snprintf(val_str, sizeof(val_str), "%d", (int)regs[0]);
     } else if (ch->format == FMT_STRING) {
         decode_string_regs(regs, ch->num_regs, val_str, sizeof(val_str));
