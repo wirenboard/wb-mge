@@ -16,6 +16,10 @@
 #include <stdbool.h>
 #include <math.h>  /* NAN */
 
+/* Modbus FC03/FC04 return at most 125 registers per read. Clamp a channel's
+ * register span to this so no single channel can overflow a poll read buffer. */
+#define WB_MAX_REGS_PER_CHANNEL 125
+
 /* ------------------------------------------------------------------ */
 /* Register types (Modbus function codes used for read/write)          */
 /* ------------------------------------------------------------------ */

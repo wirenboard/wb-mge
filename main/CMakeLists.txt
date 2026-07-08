@@ -46,6 +46,7 @@ set(COMPONENT_SRCS "main.c"
                    "mqtt_serial/value_conv.c"
                    "mqtt_serial/modbus_rtu_esp32.c"
                    "mqtt_serial/fast_modbus_events.c"
+                   "mqtt_serial/poll_planner.c"
                    "mqtt_serial/mqtt_serial_bridge.c"
                    "mqtt_serial/template_handler.c")
 

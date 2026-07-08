@@ -380,6 +380,9 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
         c->enabled  = enabled;
         c->string_data_size = (uint32_t)(int)json_num(ch, "string_data_size", 0.0);
         c->num_regs = format_num_regs(c->reg_type, c->format, c->string_data_size);
+        if (c->num_regs > WB_MAX_REGS_PER_CHANNEL) {
+            c->num_regs = WB_MAX_REGS_PER_CHANNEL;  /* clamp to the Modbus read limit */
+        }
         c->word_order = parse_word_order(json_str(ch, "word_order", NULL));
         c->byte_order = parse_byte_order(json_str(ch, "byte_order", NULL));
 

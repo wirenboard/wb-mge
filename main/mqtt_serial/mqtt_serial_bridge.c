@@ -10,6 +10,7 @@
 #include "mqtt_client.h"
 #include "template_handler.h"
 #include "fast_modbus_events.h"
+#include "poll_planner.h"
 #include "sys_info.h"
 #include "cJSON.h"
 
@@ -66,6 +67,8 @@ typedef struct {
     esp_mqtt_client_handle_t mqtt;
     uint8_t                  slave_id;
     char                   **last_values;
+    poll_group_t            *poll_groups;   /* batched read groups for holding/input */
+    int                      n_poll_groups;
     QueueHandle_t            write_queue;   /* MQTT -> bridge task */
     int                      bridge_port_index; /* 0-based index for the port_manager port */
     pm_mode_t                saved_port_mode;   /* port mode to restore when the bridge stops */
@@ -451,40 +454,13 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
     }
 }
 
-/* ------------------------------------------------------------------
- * Poll one channel: read Modbus, publish to MQTT if changed
- * ------------------------------------------------------------------ */
-static int poll_channel(bridge_ctx_t *b, int idx)
+/* Format the channel value from its raw registers and publish it, applying
+ * enum/error/scale/string formatting and publish-on-change. `regs` points at
+ * the channel's first register (regs[0..num_regs-1]); for coil/discrete
+ * regs[0] holds the bit. Publishes only on change; updates last_values. */
+static void format_and_publish(bridge_ctx_t *b, int idx, const uint16_t *regs)
 {
     wb_channel_t *ch = &b->tmpl.channels[idx];
-    if (!ch->enabled) return 0;
-
-    uint16_t regs[64] = {0};
-    uint8_t  bit      = 0;
-    int      rc       = -1;
-
-    switch (ch->reg_type) {
-    case REG_HOLDING:
-        rc = mb_read_holding(b->mb, b->slave_id, (uint16_t)ch->address, (uint16_t)ch->num_regs, regs);
-        break;
-    case REG_INPUT:
-        rc = mb_read_input(b->mb, b->slave_id, (uint16_t)ch->address, (uint16_t)ch->num_regs, regs);
-        break;
-    case REG_COIL:
-        rc = mb_read_coils(b->mb, b->slave_id, (uint16_t)ch->address, 1, &bit);
-        if (rc == 0) regs[0] = bit;
-        break;
-    case REG_DISCRETE:
-        rc = mb_read_discrete(b->mb, b->slave_id, (uint16_t)ch->address, 1, &bit);
-        if (rc == 0) regs[0] = bit;
-        break;
-    }
-
-    if (rc != 0) {
-        ESP_LOGW(TAG, "poll failed for '%s' (addr=%" PRIu32 ")", ch->name, ch->address);
-        return -1;
-    }
-
     char val_str[256];
 
     /* Enum channels publish the human-readable label mapped to the raw
@@ -526,14 +502,14 @@ static int poll_channel(bridge_ctx_t *b, int idx)
         }
     }
 
-    if (!b->mqtt_connected) return 0;
+    if (!b->mqtt_connected) return;
 
     /* Publish only when the formatted value changed since the last successful
      * publish. last_values[idx] holds the last PUBLISHED string (NULL = never
      * published yet / forced republish after reconnect). */
     if (b->last_values[idx] != NULL &&
         strcmp(b->last_values[idx], val_str) == 0) {
-        return 0;  /* unchanged: read succeeded, nothing to publish */
+        return;  /* unchanged: read succeeded, nothing to publish */
     }
 
     char topic[TOPIC_MAX];
@@ -541,7 +517,7 @@ static int poll_channel(bridge_ctx_t *b, int idx)
     int r = esp_mqtt_client_publish(b->mqtt, topic, val_str, 0, 0, 1);
     if (r < 0) {
         ESP_LOGE(TAG, "publish failed for %s", topic);
-        return 0;  /* keep last_values unchanged so we retry next time */
+        return;  /* keep last_values unchanged so we retry next time */
     }
     ESP_LOGD(TAG, "[PUB] %s = %s", topic, val_str);
 
@@ -553,6 +529,44 @@ static int poll_channel(bridge_ctx_t *b, int idx)
     }
     /* If strdup failed, leave last_values[idx] as-is: at worst we republish
      * the same value next cycle — no correctness or memory problem. */
+    return;
+}
+
+/* ------------------------------------------------------------------
+ * Poll one channel: read Modbus, publish to MQTT if changed
+ * ------------------------------------------------------------------ */
+static int poll_channel(bridge_ctx_t *b, int idx)
+{
+    wb_channel_t *ch = &b->tmpl.channels[idx];
+    if (!ch->enabled) return 0;
+
+    uint16_t regs[POLL_MAX_READ_REGS] = {0};
+    uint8_t  bit      = 0;
+    int      rc       = -1;
+
+    switch (ch->reg_type) {
+    case REG_HOLDING:
+        rc = mb_read_holding(b->mb, b->slave_id, (uint16_t)ch->address, (uint16_t)ch->num_regs, regs);
+        break;
+    case REG_INPUT:
+        rc = mb_read_input(b->mb, b->slave_id, (uint16_t)ch->address, (uint16_t)ch->num_regs, regs);
+        break;
+    case REG_COIL:
+        rc = mb_read_coils(b->mb, b->slave_id, (uint16_t)ch->address, 1, &bit);
+        if (rc == 0) regs[0] = bit;
+        break;
+    case REG_DISCRETE:
+        rc = mb_read_discrete(b->mb, b->slave_id, (uint16_t)ch->address, 1, &bit);
+        if (rc == 0) regs[0] = bit;
+        break;
+    }
+
+    if (rc != 0) {
+        ESP_LOGW(TAG, "poll failed for '%s' (addr=%" PRIu32 ")", ch->name, ch->address);
+        return -1;
+    }
+
+    format_and_publish(b, idx, regs);
     return 0;
 }
 
@@ -676,6 +690,34 @@ static void fast_events_poll(bridge_ctx_t *b)
     }
 }
 
+/* Read one group with a single Modbus transaction and publish each member.
+ * On read failure, fall back to per-channel reads so one bad register does
+ * not block its neighbours. Returns 1 if at least one member was read OK. */
+static int poll_group(bridge_ctx_t *b, const poll_group_t *g)
+{
+    uint16_t regs[POLL_MAX_READ_REGS] = {0};
+    int rc = (g->reg_type == REG_INPUT)
+             ? mb_read_input(b->mb, b->slave_id, g->start, g->count, regs)
+             : mb_read_holding(b->mb, b->slave_id, g->start, g->count, regs);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "group read failed (type=%d start=%u count=%u), per-channel fallback",
+                 g->reg_type, g->start, g->count);
+        int any = 0;
+        for (int m = 0; m < g->n_members; m++) {
+            if (poll_channel(b, g->members[m]) == 0) {
+                any = 1;
+            }
+        }
+        return any;
+    }
+    for (int m = 0; m < g->n_members; m++) {
+        int idx = g->members[m];
+        const wb_channel_t *ch = &b->tmpl.channels[idx];
+        format_and_publish(b, idx, regs + (ch->address - g->start));  /* slice into the group buffer */
+    }
+    return 1;
+}
+
 /* ------------------------------------------------------------------
  * Bridge FreeRTOS task
  * ------------------------------------------------------------------ */
@@ -732,19 +774,31 @@ static void bridge_task(void *pvParameters)
             }
         }
 
-        /* Poll all channels; when events are enabled, interleave Fast Modbus
-         * event reads so changes are reflected faster than a full poll cycle
-         * (events on top of polling). Skip event reads entirely when events are
-         * not enabled, to avoid wasted per-cycle response timeouts. */
+        /* Poll holding/input channels via batched group reads (one Modbus
+         * transaction per group); coil/discrete channels are read one-by-one
+         * since bit reads are not batched. Fast Modbus event reads are
+         * interleaved so changes are reflected faster than a full poll cycle.
+         * Skip event reads entirely when events are not enabled, to avoid
+         * wasted per-cycle response timeouts. */
         int cycle_ok = 0;
-        for (int i = 0; i < b->tmpl.num_channels; i++) {
-            /* Check stop between channels */
-            if (xEventGroupGetBits(g_stop_eg) & EV_STOP_REQ) goto done;
 
-            if (poll_channel(b, i) == 0) cycle_ok = 1;
-            if (b->fm_enabled && (i & 0x07) == 0) fast_events_poll(b);
+        /* Batched reads: one Modbus transaction per holding/input group. */
+        for (int gi = 0; gi < b->n_poll_groups; gi++) {
+            if (xEventGroupGetBits(g_stop_eg) & EV_STOP_REQ) { goto done; }
+            if (poll_group(b, &b->poll_groups[gi])) { cycle_ok = 1; }
+            if (b->fm_enabled && (gi & 0x07) == 0) { fast_events_poll(b); }
         }
-        if (b->fm_enabled) fast_events_poll(b);
+
+        /* Coil/discrete channels are read one-by-one (bit reads are not batched). */
+        for (int i = 0; i < b->tmpl.num_channels; i++) {
+            const wb_channel_t *ch = &b->tmpl.channels[i];
+            if (!ch->enabled) { continue; }
+            if (ch->reg_type != REG_COIL && ch->reg_type != REG_DISCRETE) { continue; }
+            if (xEventGroupGetBits(g_stop_eg) & EV_STOP_REQ) { goto done; }
+            if (poll_channel(b, i) == 0) { cycle_ok = 1; }
+            if (b->fm_enabled && (i & 0x07) == 0) { fast_events_poll(b); }
+        }
+        if (b->fm_enabled) { fast_events_poll(b); }
 
         if (cycle_ok) {
             consecutive_fail_cycles = 0;
@@ -777,6 +831,9 @@ done:
     for (int i = 0; i < b->tmpl.num_channels; i++) free(b->last_values[i]);
     free(b->last_values);
     b->last_values = NULL;
+
+    free(b->poll_groups);
+    b->poll_groups = NULL;
 
     vQueueDelete(b->write_queue);
     b->write_queue = NULL;
@@ -824,9 +881,22 @@ esp_err_t mqtt_serial_bridge_start(void)
     g_ctx.last_values = calloc((size_t)g_ctx.tmpl.num_channels, sizeof(char *));
     if (!g_ctx.last_values) { wb_template_free(&g_ctx.tmpl); return ESP_ERR_NO_MEM; }
 
+    g_ctx.poll_groups = calloc((size_t)g_ctx.tmpl.num_channels, sizeof(poll_group_t));
+    if (!g_ctx.poll_groups) {
+        free(g_ctx.last_values);
+        wb_template_free(&g_ctx.tmpl);
+        return ESP_ERR_NO_MEM;
+    }
+    g_ctx.n_poll_groups = mb_plan_poll_groups(g_ctx.tmpl.channels, g_ctx.tmpl.num_channels,
+                                              POLL_MAX_READ_REGS, POLL_MAX_GAP_REGS,
+                                              g_ctx.poll_groups, g_ctx.tmpl.num_channels);
+    ESP_LOGI(TAG, "poll: %d channel(s) -> %d holding/input group read(s)",
+             g_ctx.tmpl.num_channels, g_ctx.n_poll_groups);
+
     g_ctx.write_queue = xQueueCreate(WRITE_QUEUE_DEPTH, sizeof(write_cmd_t));
     if (!g_ctx.write_queue) {
         free(g_ctx.last_values);
+        free(g_ctx.poll_groups);
         wb_template_free(&g_ctx.tmpl);
         return ESP_ERR_NO_MEM;
     }
@@ -859,6 +929,7 @@ esp_err_t mqtt_serial_bridge_start(void)
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
         vQueueDelete(g_ctx.write_queue);
         free(g_ctx.last_values);
+        free(g_ctx.poll_groups);
         wb_template_free(&g_ctx.tmpl);
         return pin_err;
     }
@@ -891,6 +962,7 @@ esp_err_t mqtt_serial_bridge_start(void)
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
         vQueueDelete(g_ctx.write_queue);
         free(g_ctx.last_values);
+        free(g_ctx.poll_groups);
         wb_template_free(&g_ctx.tmpl);
         return ESP_FAIL;
     }
@@ -903,6 +975,7 @@ esp_err_t mqtt_serial_bridge_start(void)
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
         vQueueDelete(g_ctx.write_queue);
         free(g_ctx.last_values);
+        free(g_ctx.poll_groups);
         wb_template_free(&g_ctx.tmpl);
         return ESP_ERR_INVALID_ARG;
     }
@@ -961,6 +1034,7 @@ esp_err_t mqtt_serial_bridge_start(void)
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
         vQueueDelete(g_ctx.write_queue);
         free(g_ctx.last_values);
+        free(g_ctx.poll_groups);
         wb_template_free(&g_ctx.tmpl);
         return ESP_FAIL;
     }
@@ -974,6 +1048,7 @@ esp_err_t mqtt_serial_bridge_start(void)
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
         vQueueDelete(g_ctx.write_queue);
         free(g_ctx.last_values);
+        free(g_ctx.poll_groups);
         wb_template_free(&g_ctx.tmpl);
         return ret;
     }
@@ -992,6 +1067,7 @@ esp_err_t mqtt_serial_bridge_start(void)
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
         vQueueDelete(g_ctx.write_queue);
         free(g_ctx.last_values);
+        free(g_ctx.poll_groups);
         wb_template_free(&g_ctx.tmpl);
         return ESP_FAIL;
     }
