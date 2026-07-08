@@ -325,3 +325,12 @@ int mb_read_coils(mb_rtu_port_t *p, uint8_t slave, uint16_t addr, uint16_t n, ui
     { return read_bits(p, slave, 0x01, addr, n, b); }
 int mb_read_discrete(mb_rtu_port_t *p, uint8_t slave, uint16_t addr, uint16_t n, uint8_t *b)
     { return read_bits(p, slave, 0x02, addr, n, b); }
+
+int mb_rtu_raw_txn(mb_rtu_port_t *p, const uint8_t *tx, int tx_len,
+                   uint8_t *rx, int rx_max, int timeout_ms)
+{
+    if (!p || !tx || tx_len <= 0) return -1;
+    if (port_send(p, tx, tx_len) < 0) return -1;
+    if (!rx || rx_max <= 0) return 0;
+    return port_recv(p, rx, rx_max, timeout_ms);
+}

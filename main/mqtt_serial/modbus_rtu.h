@@ -55,3 +55,9 @@ int mb_write_holding(mb_rtu_port_t *p, uint8_t slave, uint16_t addr, uint16_t va
 
 /* Write multiple holding registers */
 int mb_write_holding_multi(mb_rtu_port_t *p, uint8_t slave, uint16_t addr, uint16_t n_regs, const uint16_t *regs);
+
+/* Send a raw, already-framed request and receive a raw response.
+ * No Modbus framing/validation is applied (used for Fast Modbus).
+ * Returns bytes received (>=0), or negative on send error. */
+int mb_rtu_raw_txn(mb_rtu_port_t *p, const uint8_t *tx, int tx_len,
+                   uint8_t *rx, int rx_max, int timeout_ms);

@@ -9,6 +9,7 @@
 #include "board.h"          /* board_rs485_pins() — board-dependent RS485 GPIOs */
 #include "mqtt_client.h"
 #include "template_handler.h"
+#include "fast_modbus_events.h"
 #include "sys_info.h"
 #include "cJSON.h"
 
@@ -73,6 +74,12 @@ typedef struct {
     char                     avail_topic[TOPIC_MAX];  /* modbusmqtt/<gw>/<dev>/status */
     char                     gateway_id[64];           /* hostname of the gateway, e.g. "wb-mge-30d7cf" */
     char                     full_device_id[64];       /* "<device_id>-<slave_id>", e.g. "wb-msw-v4-131" */
+    /* Fast Modbus event reading state (single device). */
+    bool     fm_enabled;    /* events successfully enabled on the device */
+    bool     fm_have_ack;   /* a responder flag is pending confirmation */
+    uint8_t  fm_ack_slave;  /* slave id to confirm on the next request */
+    uint8_t  fm_ack_flag;   /* flag value to confirm on the next request */
+    int      fm_enable_backoff; /* cycles to wait before retrying enable when it failed */
 } bridge_ctx_t;
 
 static bridge_ctx_t    g_ctx;
@@ -533,12 +540,137 @@ static int poll_channel(bridge_ctx_t *b, int idx)
 }
 
 /* ------------------------------------------------------------------
+ * Fast Modbus event reading (events on top of normal polling)
+ * ------------------------------------------------------------------ */
+
+/* Map our reg_type_t to a Fast Modbus type code. */
+static uint8_t fm_type_from_reg(reg_type_t rt)
+{
+    switch (rt) {
+    case REG_COIL:     return FM_TYPE_COIL;
+    case REG_DISCRETE: return FM_TYPE_DISCRETE;
+    case REG_INPUT:    return FM_TYPE_INPUT;
+    case REG_HOLDING:
+    default:           return FM_TYPE_HOLDING;
+    }
+}
+
+/* Send one enable-events batch to the device. Returns true on a reply. */
+static bool fm_send_enable_batch(bridge_ctx_t *b,
+                                 const fm_enable_range_t *ranges, int nr)
+{
+    if (nr <= 0) return true;
+    uint8_t tx[256];
+    uint8_t rx[64];
+    int txlen = fm_build_enable(tx, sizeof(tx), b->slave_id, ranges, nr);
+    if (txlen <= 0) return false;
+    return mb_rtu_raw_txn(b->mb, tx, txlen, rx, sizeof(rx), 200) > 0;
+}
+
+/* Enable event reporting for every enabled channel. Batches ranges into frames
+ * that stay within the Fast Modbus settings-length limit. Sets b->fm_enabled
+ * on full success. Safe to call repeatedly (e.g. re-enable after a reboot). */
+static void fast_events_enable(bridge_ctx_t *b)
+{
+    fm_enable_range_t ranges[16];
+    int nr = 0, settings = 0;
+    int total_ranges = 0;   /* ranges actually configured across all batches */
+    bool all_ok = true;
+
+    for (int i = 0; i < b->tmpl.num_channels; i++) {
+        wb_channel_t *ch = &b->tmpl.channels[i];
+        if (!ch->enabled) continue;
+
+        uint32_t nregs = ch->num_regs ? ch->num_regs : 1;
+        if (nregs > 64) nregs = 64;   /* clamp: poll reads into regs[64], and it keeps count in one byte */
+        uint8_t cnt = (ch->reg_type == REG_COIL || ch->reg_type == REG_DISCRETE)
+                      ? 1 : (uint8_t)nregs;
+
+        /* Flush the batch before it would overflow the frame or the array. */
+        if (nr >= (int)(sizeof(ranges) / sizeof(ranges[0])) ||
+            settings + 4 + cnt > 200) {
+            if (!fm_send_enable_batch(b, ranges, nr)) all_ok = false;
+            nr = 0; settings = 0;
+        }
+
+        ranges[nr].reg_type = fm_type_from_reg(ch->reg_type);
+        ranges[nr].addr     = (uint16_t)ch->address;
+        ranges[nr].count    = cnt;
+        ranges[nr].priority = 1;   /* low priority */
+        settings += 4 + cnt;
+        nr++;
+        total_ranges++;
+    }
+    if (!fm_send_enable_batch(b, ranges, nr)) all_ok = false;
+
+    /* Only consider events enabled if at least one range was actually sent;
+     * a template with no enabled channels must not trigger pointless polling. */
+    b->fm_enabled = all_ok && total_ranges > 0;
+    ESP_LOGI(TAG, "fast-modbus: enable %s (%d ranges)",
+             b->fm_enabled ? "OK" : "not supported/failed", total_ranges);
+}
+
+/* Request pending change-events and re-publish each affected channel by doing a
+ * normal read (so all formats/enum/scale/error handling are reused). */
+static void fast_events_poll(bridge_ctx_t *b)
+{
+    uint8_t tx[16];
+    uint8_t rx[256];
+    uint8_t ack_slave = b->fm_have_ack ? b->fm_ack_slave : 0;
+    uint8_t ack_flag  = b->fm_have_ack ? b->fm_ack_flag  : 0;
+
+    int txlen = fm_build_request(tx, sizeof(tx), 0, 100, ack_slave, ack_flag);
+    if (txlen <= 0) return;
+
+    int rlen = mb_rtu_raw_txn(b->mb, tx, txlen, rx, sizeof(rx), 200);
+    if (rlen <= 0) return;
+
+    /* Sized for the worst case: max_data_len=100 with 4-byte minimal events
+     * yields at most 25 events; 32 leaves margin so none are dropped. */
+    fm_event_t events[32];
+    uint8_t slave = 0, flag = 0;
+    int n = fm_parse_response(rx, rlen, events, 32, &slave, &flag);
+    if (n <= 0) return;   /* 0 = no events, <0 = bad frame */
+
+    /* Confirm this batch on the next request so the device does not resend it. */
+    b->fm_ack_slave = slave;
+    b->fm_ack_flag  = flag;
+    b->fm_have_ack  = true;
+    ESP_LOGI(TAG, "fast-modbus: %d event(s) from slave %u", n, slave);
+
+    for (int e = 0; e < n; e++) {
+        if (events[e].type == FM_TYPE_REBOOT) {
+            b->fm_enabled = false;   /* device reset: re-enable next cycle */
+            continue;
+        }
+        for (int i = 0; i < b->tmpl.num_channels; i++) {
+            wb_channel_t *ch = &b->tmpl.channels[i];
+            if (!ch->enabled) continue;
+            if (fm_type_from_reg(ch->reg_type) != events[e].type) continue;
+            uint32_t span = ch->num_regs ? ch->num_regs : 1;
+            if (events[e].id >= ch->address &&
+                events[e].id <  ch->address + span) {
+                ESP_LOGI(TAG, "fast-modbus: event type=%u id=%u -> re-read '%s'",
+                         events[e].type, events[e].id, ch->name);
+                poll_channel(b, i);   /* re-read + publish with full formatting */
+                break;
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------
  * Bridge FreeRTOS task
  * ------------------------------------------------------------------ */
 static void bridge_task(void *pvParameters)
 {
     bridge_ctx_t *b = (bridge_ctx_t *)pvParameters;
     int consecutive_fail_cycles = 0;
+
+    /* Reset Fast Modbus state on (re)start. */
+    b->fm_enabled        = false;
+    b->fm_have_ack       = false;
+    b->fm_enable_backoff = 0;
 
     while (1) {
         /* Check stop request */
@@ -562,14 +694,30 @@ static void bridge_task(void *pvParameters)
             execute_write(b, &cmd);
         }
 
-        /* Poll all channels */
+        /* Try to enable Fast Modbus events, with back-off: a device that does
+         * not support them (no reply to 0x18) must not be probed every cycle. */
+        if (!b->fm_enabled) {
+            if (b->fm_enable_backoff > 0) {
+                b->fm_enable_backoff--;
+            } else {
+                fast_events_enable(b);
+                if (!b->fm_enabled) b->fm_enable_backoff = 20;  /* retry later */
+            }
+        }
+
+        /* Poll all channels; when events are enabled, interleave Fast Modbus
+         * event reads so changes are reflected faster than a full poll cycle
+         * (events on top of polling). Skip event reads entirely when events are
+         * not enabled, to avoid wasted per-cycle response timeouts. */
         int cycle_ok = 0;
         for (int i = 0; i < b->tmpl.num_channels; i++) {
             /* Check stop between channels */
             if (xEventGroupGetBits(g_stop_eg) & EV_STOP_REQ) goto done;
 
             if (poll_channel(b, i) == 0) cycle_ok = 1;
+            if (b->fm_enabled && (i & 0x07) == 0) fast_events_poll(b);
         }
+        if (b->fm_enabled) fast_events_poll(b);
 
         if (cycle_ok) {
             consecutive_fail_cycles = 0;

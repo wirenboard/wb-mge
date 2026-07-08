@@ -20,7 +20,7 @@ SRC_TEMPLATE     = ../src/template.c ../thirdparty/cJSON/cJSON.c
 SRC_UNITY        = unity/unity.c
 
 BUILD = build
-TESTS = test_crc test_value_conv test_template test_condition test_enum
+TESTS = test_crc test_value_conv test_template test_condition test_enum test_fast_modbus
 
 .PHONY: all clean $(TESTS)
 
@@ -65,6 +65,13 @@ test_enum: $(BUILD)
 	    test_enum.c $(SRC_TEMPLATE) $(SRC_UNITY) -lm
 	@echo "=== Running test_enum ==="
 	@$(BUILD)/test_enum
+
+test_fast_modbus: $(BUILD)
+	@echo "=== Building test_fast_modbus ==="
+	$(CC) $(CFLAGS) -o $(BUILD)/test_fast_modbus \
+	    test_fast_modbus.c ../src/fast_modbus_events.c ../src/modbus_frame.c $(SRC_UNITY) -lm
+	@echo "=== Running test_fast_modbus ==="
+	@$(BUILD)/test_fast_modbus
 
 $(BUILD):
 	@mkdir -p $(BUILD)
