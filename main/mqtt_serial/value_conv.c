@@ -53,6 +53,17 @@ static uint32_t decode_bcd_bytes(const uint8_t *bytes, int n)
     return v;
 }
 
+/* Encode v as n BCD bytes (most-significant pair first). Mirrors decode_bcd_bytes.
+ * Values exceeding the format's range are silently truncated by the narrow
+ * destination (no UB); callers should pre-clamp for strict correctness. */
+static void encode_bcd_bytes(uint32_t v, uint8_t *bytes, int n)
+{
+    for (int i = n - 1; i >= 0; i--) {
+        bytes[i] = (uint8_t)((((v / 10) % 10) << 4) | (v % 10));
+        v /= 100;
+    }
+}
+
 /* ------------------------------------------------------------------
  * raw_to_double
  * ------------------------------------------------------------------ */
@@ -196,11 +207,57 @@ void double_to_regs(double v, reg_format_t fmt,
             norm[1] = (uint16_t)(u & 0xFFFF);
             n = 2; break;
         }
+        case FMT_U64: {
+            uint64_t u = (uint64_t)(unsigned long long)v;
+            norm[0] = (uint16_t)(u >> 48);
+            norm[1] = (uint16_t)(u >> 32);
+            norm[2] = (uint16_t)(u >> 16);
+            norm[3] = (uint16_t)u;
+            n = 4;
+            break;
+        }
+        case FMT_S64: {
+            uint64_t u = (uint64_t)(int64_t)(long long)v;
+            norm[0] = (uint16_t)(u >> 48);
+            norm[1] = (uint16_t)(u >> 32);
+            norm[2] = (uint16_t)(u >> 16);
+            norm[3] = (uint16_t)u;
+            n = 4;
+            break;
+        }
+        case FMT_BCD8: {
+            uint8_t b[1];
+            encode_bcd_bytes((uint32_t)(unsigned long long)v, b, 1);
+            norm[0] = (uint16_t)b[0];   /* 1 BCD byte in the low byte; high byte 0 */
+            break;
+        }
+        case FMT_BCD16: {
+            uint8_t b[2];
+            encode_bcd_bytes((uint32_t)(unsigned long long)v, b, 2);
+            norm[0] = (uint16_t)(((uint16_t)b[0] << 8) | b[1]);
+            break;
+        }
+        case FMT_BCD24: {
+            /* 3 BCD bytes in 2 registers; high byte of norm[0] is padding.
+             * Layout mirrors raw_to_double: [norm[0]:0|B0][norm[1]:B1|B2]. */
+            uint8_t b[3];
+            encode_bcd_bytes((uint32_t)(unsigned long long)v, b, 3);
+            norm[0] = (uint16_t)b[0];
+            norm[1] = (uint16_t)(((uint16_t)b[1] << 8) | b[2]);
+            n = 2;
+            break;
+        }
+        case FMT_BCD32: {
+            uint8_t b[4];
+            encode_bcd_bytes((uint32_t)(unsigned long long)v, b, 4);
+            norm[0] = (uint16_t)(((uint16_t)b[0] << 8) | b[1]);
+            norm[1] = (uint16_t)(((uint16_t)b[2] << 8) | b[3]);
+            n = 2;
+            break;
+        }
         default:
-            /* BCD, string, U64, S64 write is not supported.
-             * Write path is only used for coils and holding registers,
-             * and BCD/string channels are always readonly in WB templates.
-             * Fallback: write lower 16 bits, caller should not reach here. */
+            /* FMT_STRING is handled by encode_string_regs (not double_to_regs);
+             * this fallback is only reached for an unexpected format. */
             norm[0] = (uint16_t)(unsigned long long)v;
             break;
     }
@@ -230,6 +287,20 @@ void decode_string_regs(const uint16_t *regs, uint32_t n_regs,
         buf[out++] = lo;
     }
     buf[out] = '\0';
+}
+
+/* Encode a string into n_regs 16-bit words, big-endian (hi char first in each
+ * word). Mirrors decode_string_regs: word_order/byte_order are NOT applied
+ * (strings are a raw big-endian byte stream). Truncates if the string is longer
+ * than 2*n_regs; zero-pads the tail if shorter. */
+void encode_string_regs(const char *s, uint32_t n_regs, uint16_t *regs)
+{
+    size_t len = strlen(s);
+    for (uint32_t i = 0; i < n_regs; i++) {
+        char hi = (2 * i     < len) ? s[2 * i]     : '\0';
+        char lo = (2 * i + 1 < len) ? s[2 * i + 1] : '\0';
+        regs[i] = (uint16_t)(((uint8_t)hi << 8) | (uint8_t)lo);
+    }
 }
 
 /* ------------------------------------------------------------------

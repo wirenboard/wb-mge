@@ -62,6 +62,13 @@ void decode_string_regs(const uint16_t *regs, uint32_t n_regs,
                         char *buf, int buf_size);
 
 /*
+ * encode_string_regs()
+ * Encode a string into n_regs 16-bit words, big-endian (hi char first).
+ * Truncates if longer than 2*n_regs; zero-pads if shorter. No word/byte order.
+ */
+void encode_string_regs(const char *s, uint32_t n_regs, uint16_t *regs);
+
+/*
  * string_to_value()
  * Parse s as a double, reverse the scale/offset transform.
  * Returns the raw value suitable for passing to double_to_regs.

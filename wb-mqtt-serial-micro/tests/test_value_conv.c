@@ -357,6 +357,162 @@ void test_error_value_zero(void)
     TEST_ASSERT_TRUE(is_error_value(0.0, 0.0));
 }
 
+/* ==================================================================
+ * double_to_regs: U64 / S64
+ * ================================================================== */
+
+void test_dtr_u64_zero(void)
+{
+    uint16_t r[4] = {0};
+    DTR(0.0, FMT_U64, r);
+    TEST_ASSERT_EQUAL_INT(0, (long long)RAW(r, FMT_U64));
+}
+
+void test_dtr_u64_roundtrip(void)
+{
+    uint16_t r[4] = {0};
+    DTR(4294967297.0, FMT_U64, r);
+    TEST_ASSERT_EQUAL_INT(4294967297LL, (long long)RAW(r, FMT_U64));
+}
+
+void test_dtr_u64_2pow53(void)
+{
+    uint16_t r[4] = {0};
+    DTR(9007199254740992.0, FMT_U64, r);
+    TEST_ASSERT_EQUAL_INT(9007199254740992LL, (long long)RAW(r, FMT_U64));
+}
+
+void test_dtr_s64_negative(void)
+{
+    uint16_t r[4] = {0};
+    DTR(-1.0, FMT_S64, r);
+    TEST_ASSERT_EQUAL_INT(-1, (long long)RAW(r, FMT_S64));
+    TEST_ASSERT_EQUAL_HEX16(0xFFFF, r[0]);
+    TEST_ASSERT_EQUAL_HEX16(0xFFFF, r[1]);
+    TEST_ASSERT_EQUAL_HEX16(0xFFFF, r[2]);
+    TEST_ASSERT_EQUAL_HEX16(0xFFFF, r[3]);
+}
+
+void test_dtr_u64_word_order_little(void)
+{
+    uint16_t r[4] = {0};
+    /* Value 4294967297 = 0x0000000100000001 -> canonical words:
+     *   norm[0]=0x0000, norm[1]=0x0001, norm[2]=0x0000, norm[3]=0x0001.
+     * Little-endian word order reverses: regs[0]=LSW=0x0001. */
+    double_to_regs(4294967297.0, FMT_U64,
+                   WORD_ORDER_LITTLE_ENDIAN, BYTE_ORDER_BIG_ENDIAN, r);
+    TEST_ASSERT_EQUAL_HEX16(0x0001, r[0]);
+    TEST_ASSERT_EQUAL_HEX16(0x0000, r[1]);
+    TEST_ASSERT_EQUAL_HEX16(0x0001, r[2]);
+    TEST_ASSERT_EQUAL_HEX16(0x0000, r[3]);
+    /* Read back with matching little-endian word order */
+    double back = raw_to_double(r, FMT_U64,
+                                WORD_ORDER_LITTLE_ENDIAN, BYTE_ORDER_BIG_ENDIAN);
+    TEST_ASSERT_EQUAL_INT(4294967297LL, (long long)back);
+}
+
+/* ==================================================================
+ * double_to_regs: BCD formats
+ * ================================================================== */
+
+void test_dtr_bcd8(void)
+{
+    uint16_t r[1] = {0};
+    DTR(99.0, FMT_BCD8, r);
+    TEST_ASSERT_EQUAL_INT(99, (int)RAW(r, FMT_BCD8));
+
+    DTR(45.0, FMT_BCD8, r);
+    TEST_ASSERT_EQUAL_INT(45, (int)RAW(r, FMT_BCD8));
+}
+
+void test_dtr_bcd16(void)
+{
+    uint16_t r[1] = {0};
+    DTR(9999.0, FMT_BCD16, r);
+    TEST_ASSERT_EQUAL_INT(9999, (int)RAW(r, FMT_BCD16));
+
+    DTR(1234.0, FMT_BCD16, r);
+    TEST_ASSERT_EQUAL_INT(1234, (int)RAW(r, FMT_BCD16));
+}
+
+void test_dtr_bcd24(void)
+{
+    uint16_t r[2] = {0};
+    DTR(999999.0, FMT_BCD24, r);
+    TEST_ASSERT_EQUAL_INT(999999, (int)RAW(r, FMT_BCD24));
+
+    DTR(123456.0, FMT_BCD24, r);
+    TEST_ASSERT_EQUAL_INT(123456, (int)RAW(r, FMT_BCD24));
+}
+
+void test_dtr_bcd24_padding(void)
+{
+    uint16_t r[2] = {0};
+    DTR(123456.0, FMT_BCD24, r);
+    /* High byte of first reg must be padding (zero) */
+    TEST_ASSERT_EQUAL_INT(0, r[0] & 0xFF00);
+    TEST_ASSERT_EQUAL_INT(123456, (int)RAW(r, FMT_BCD24));
+}
+
+void test_dtr_bcd32(void)
+{
+    uint16_t r[2] = {0};
+    DTR(99999999.0, FMT_BCD32, r);
+    TEST_ASSERT_EQUAL_INT(99999999, (int)RAW(r, FMT_BCD32));
+
+    DTR(12345678.0, FMT_BCD32, r);
+    TEST_ASSERT_EQUAL_INT(12345678, (int)RAW(r, FMT_BCD32));
+}
+
+/* ==================================================================
+ * encode_string_regs
+ * ================================================================== */
+
+void test_enc_str_even(void)
+{
+    uint16_t r[2] = {0};
+    encode_string_regs("WBMS", 2, r);
+    char buf[8];
+    decode_string_regs(r, 2, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("WBMS", buf);
+}
+
+void test_enc_str_odd(void)
+{
+    uint16_t r[2] = {0};
+    encode_string_regs("ABC", 2, r);
+    char buf[8];
+    decode_string_regs(r, 2, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("ABC", buf);
+}
+
+void test_enc_str_truncate(void)
+{
+    uint16_t r[2] = {0};
+    encode_string_regs("ABCDE", 2, r);
+    char buf[8];
+    decode_string_regs(r, 2, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("ABCD", buf);
+}
+
+void test_enc_str_pad(void)
+{
+    uint16_t r[2] = {0};
+    encode_string_regs("AB", 2, r);
+    char buf[8];
+    decode_string_regs(r, 2, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("AB", buf);
+}
+
+void test_enc_str_empty(void)
+{
+    uint16_t r[1] = {0};
+    encode_string_regs("", 1, r);
+    char buf[8];
+    decode_string_regs(r, 1, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("", buf);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -379,11 +535,32 @@ int main(void)
     RUN_TEST(test_dtr_u32);
     RUN_TEST(test_dtr_float_roundtrip);
 
+    /* double_to_regs: U64 / S64 */
+    RUN_TEST(test_dtr_u64_zero);
+    RUN_TEST(test_dtr_u64_roundtrip);
+    RUN_TEST(test_dtr_u64_2pow53);
+    RUN_TEST(test_dtr_s64_negative);
+    RUN_TEST(test_dtr_u64_word_order_little);
+
+    /* double_to_regs: BCD */
+    RUN_TEST(test_dtr_bcd8);
+    RUN_TEST(test_dtr_bcd16);
+    RUN_TEST(test_dtr_bcd24);
+    RUN_TEST(test_dtr_bcd24_padding);
+    RUN_TEST(test_dtr_bcd32);
+
     RUN_TEST(test_string_decode_ascii);
     RUN_TEST(test_string_decode_multi_word);
     RUN_TEST(test_string_decode_null_terminated);
     RUN_TEST(test_string_decode_odd_null);
     RUN_TEST(test_string_decode_buf_limit);
+
+    /* encode_string_regs */
+    RUN_TEST(test_enc_str_even);
+    RUN_TEST(test_enc_str_odd);
+    RUN_TEST(test_enc_str_truncate);
+    RUN_TEST(test_enc_str_pad);
+    RUN_TEST(test_enc_str_empty);
 
     /* BCD */
     RUN_TEST(test_bcd8_simple);

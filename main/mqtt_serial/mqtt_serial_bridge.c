@@ -49,6 +49,7 @@ static const char *TAG = "mqtt_serial_bridge";
 
 #define TOPIC_MAX   512
 #define WRITE_QUEUE_DEPTH  8
+#define MB_FC16_MAX_WRITE_REGS  123   /* Modbus FC16 caps a single write at 123 registers */
 
 /* ------------------------------------------------------------------
  * Write command dispatched from MQTT event to bridge task
@@ -310,11 +311,15 @@ static void execute_write(bridge_ctx_t *b, const write_cmd_t *cmd)
         break;
     }
     case REG_HOLDING: {
-        if (ch->format == FMT_U64 || ch->format == FMT_S64 ||
-            ch->format == FMT_STRING ||
-            ch->format == FMT_BCD8  || ch->format == FMT_BCD16 ||
-            ch->format == FMT_BCD24 || ch->format == FMT_BCD32) {
-            ESP_LOGW(TAG, "write to format %d not supported for '%s'", ch->format, ch->name);
+        if (ch->format == FMT_STRING) {
+            uint32_t nr = ch->num_regs;
+            if (nr > MB_FC16_MAX_WRITE_REGS) {
+                nr = MB_FC16_MAX_WRITE_REGS;   /* Modbus FC16 write limit */
+            }
+            uint16_t sregs[WB_MAX_REGS_PER_CHANNEL] = {0};
+            encode_string_regs(payload, nr, sregs);
+            mb_write_holding_multi(b->mb, b->slave_id, (uint16_t)ch->address,
+                                   (uint16_t)nr, sregs);
             break;
         }
         word_order_t wo = (ch->word_order == CH_WORD_ORDER_LITTLE)
