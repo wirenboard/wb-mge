@@ -112,6 +112,12 @@ static void make_availability_topic(const char *gw_id, const char *full_dev_id,
 
 #pragma GCC diagnostic pop
 
+/* Home Assistant MQTT auto-discovery is temporarily disabled: large device
+ * templates produced oversized discovery payloads that could stall the MQTT
+ * client / clutter the broker. Flip this to 1 to re-enable discovery. */
+#define MQTT_SERIAL_HA_DISCOVERY_ENABLED 0
+
+#if MQTT_SERIAL_HA_DISCOVERY_ENABLED
 /* Replace any character not in [a-zA-Z0-9_-] with '_' */
 static void sanitize_for_unique_id(const char *src, char *dst, int dsz)
 {
@@ -256,6 +262,7 @@ static void ha_discovery_publish(bridge_ctx_t *b)
 
     free(payload);
 }
+#endif /* MQTT_SERIAL_HA_DISCOVERY_ENABLED */
 
 /* ------------------------------------------------------------------
  * Execute one write command in the bridge task context
@@ -333,8 +340,10 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
         }
         /* Publish availability "online" with retain=1 */
         esp_mqtt_client_publish(b->mqtt, b->avail_topic, "online", 0, 0, 1);
+#if MQTT_SERIAL_HA_DISCOVERY_ENABLED
         /* Subscribe to HA status topic to re-publish discovery when HA restarts */
         esp_mqtt_client_subscribe(b->mqtt, "homeassistant/status", 0);
+#endif /* MQTT_SERIAL_HA_DISCOVERY_ENABLED */
         for (int i = 0; i < b->tmpl.num_channels; i++) {
             wb_channel_t *ch = &b->tmpl.channels[i];
             if (ch->readonly) continue;
@@ -342,8 +351,10 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
             make_set_topic(b->gateway_id, b->full_device_id, ch->name, set_topic, sizeof(set_topic));
             esp_mqtt_client_subscribe(b->mqtt, set_topic, 0);
         }
+#if MQTT_SERIAL_HA_DISCOVERY_ENABLED
         /* Signal bridge_task to publish HA discovery (keep heavy work out of MQTT task) */
         b->needs_discovery_publish = true;
+#endif /* MQTT_SERIAL_HA_DISCOVERY_ENABLED */
         break;
 
     case MQTT_EVENT_DATA: {
@@ -354,6 +365,7 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
         memcpy(topic, event->topic, (size_t)tlen);
         topic[tlen] = '\0';
 
+#if MQTT_SERIAL_HA_DISCOVERY_ENABLED
         /* Re-publish HA discovery if Home Assistant has (re)started */
         if (strcmp(topic, "homeassistant/status") == 0) {
             char data_buf[16];
@@ -367,6 +379,7 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
             }
             break;
         }
+#endif /* MQTT_SERIAL_HA_DISCOVERY_ENABLED */
 
         /* Check prefix for writable channel commands */
         char prefix[TOPIC_MAX];
@@ -497,6 +510,7 @@ static void bridge_task(void *pvParameters)
         EventBits_t bits = xEventGroupGetBits(g_stop_eg);
         if (bits & EV_STOP_REQ) break;
 
+#if MQTT_SERIAL_HA_DISCOVERY_ENABLED
         /* Publish HA discovery if requested by MQTT event handler.
          * Clear the flag BEFORE calling ha_discovery_publish so that
          * a concurrent set from the MQTT task during the publish is
@@ -505,6 +519,7 @@ static void bridge_task(void *pvParameters)
             b->needs_discovery_publish = false;
             ha_discovery_publish(b);
         }
+#endif /* MQTT_SERIAL_HA_DISCOVERY_ENABLED */
 
         /* Drain pending write commands first */
         write_cmd_t cmd;
