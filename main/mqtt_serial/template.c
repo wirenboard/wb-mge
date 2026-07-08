@@ -309,7 +309,7 @@ static char *read_file(const char *path)
 /* ------------------------------------------------------------------ */
 /* Parse "channels" array from the device object                      */
 /* ------------------------------------------------------------------ */
-static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
+static int parse_channels(const cJSON *dev_obj, const tmpl_params_t *ext_params, wb_template_t *out)
 {
     cJSON *arr = cJSON_GetObjectItemCaseSensitive(dev_obj, "channels");
     if (!arr || !cJSON_IsArray(arr)) {
@@ -327,9 +327,16 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
     out->channels = calloc((size_t)total, sizeof(wb_channel_t));
     if (!out->channels) return -1;
 
-    /* Load parameters once so channel conditions can be evaluated. */
+    /* Use externally-supplied parameter values when provided (live device read);
+     * otherwise load them from the JSON parameters block (template defaults). */
     tmpl_params_t params;
-    params_load(dev_obj, &params);
+    bool owns_params = false;
+    if (ext_params != NULL) {
+        params = *ext_params;   /* shallow copy: borrow the caller's items array */
+    } else {
+        params_load(dev_obj, &params);
+        owns_params = true;
+    }
 
     int count = 0;
     for (int i = 0; i < total; i++) {
@@ -452,7 +459,9 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
         count++;
     }
 
-    params_free(&params);
+    if (owns_params) {
+        params_free(&params);
+    }
     out->num_channels = count;
     return 0;
 }
@@ -460,7 +469,7 @@ static int parse_channels(const cJSON *dev_obj, wb_template_t *out)
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
-static int parse_json_root(cJSON *root, wb_template_t *out)
+static int parse_json_root(cJSON *root, const tmpl_params_t *ext_params, wb_template_t *out)
 {
     cJSON *dev = cJSON_GetObjectItemCaseSensitive(root, "device");
     if (!dev) {
@@ -474,7 +483,7 @@ static int parse_json_root(cJSON *root, wb_template_t *out)
     strncpy(out->device_name, dname, sizeof(out->device_name) - 1);
     strncpy(out->device_id,   did,   sizeof(out->device_id) - 1);
 
-    int rc = parse_channels(dev, out);
+    int rc = parse_channels(dev, ext_params, out);
     cJSON_Delete(root);
     return rc;
 }
@@ -503,27 +512,100 @@ int wb_template_parse(const char *path, wb_template_t *out)
         return -1;
     }
 
-    return parse_json_root(root, out);
+    return parse_json_root(root, NULL, out);
 }
 
-int wb_template_parse_str(const char *json, wb_template_t *out)
+int wb_template_extract_params(const char *json, wb_param_t *out, int max)
+{
+    int count = 0;
+    cJSON *root = cJSON_Parse(json);
+    if (!root) return 0;
+    cJSON *dev = cJSON_GetObjectItemCaseSensitive(root, "device");
+    if (!dev) { cJSON_Delete(root); return 0; }
+    cJSON *params = cJSON_GetObjectItemCaseSensitive(dev, "parameters");
+    if (params) {
+        bool is_array = cJSON_IsArray(params);
+        cJSON *it = NULL;
+        cJSON_ArrayForEach(it, params) {
+            if (count >= max) break;
+            if (!cJSON_IsObject(it)) continue;
+            const char *id = is_array ? json_str(it, "id", NULL) : it->string;
+            if (!id || !*id) continue;
+
+            wb_param_t *p = &out[count];
+            strncpy(p->id, id, sizeof(p->id) - 1);
+            p->id[sizeof(p->id) - 1] = '\0';
+            p->reg_type = parse_reg_type(json_str(it, "reg_type", "holding"));
+
+            cJSON *addr = cJSON_GetObjectItemCaseSensitive(it, "address");
+            if (addr && cJSON_IsNumber(addr)) {
+                p->address = (uint16_t)(int)addr->valuedouble;
+            } else if (addr && cJSON_IsString(addr)) {
+                char *end;
+                unsigned long a = strtoul(addr->valuestring, &end, 0);
+                p->address = (end == addr->valuestring) ? 0 : (uint16_t)a;
+            } else {
+                p->address = 0;
+            }
+
+            cJSON *v = cJSON_GetObjectItemCaseSensitive(it, "value");
+            if (!v) v = cJSON_GetObjectItemCaseSensitive(it, "default");
+            double val = 0.0;
+            if (v && cJSON_IsNumber(v))      val = v->valuedouble;
+            else if (v && cJSON_IsBool(v))   val = cJSON_IsTrue(v) ? 1.0 : 0.0;
+            p->value = val;
+
+            count++;
+        }
+    }
+    cJSON_Delete(root);
+    return count;
+}
+
+int wb_template_parse_str_ex(const char *json, const wb_param_t *params, int n,
+                             wb_template_t *out)
 {
     memset(out, 0, sizeof(*out));
 
     cJSON *root = cJSON_Parse(json);
     if (!root) {
-        /* Distinguish JSON syntax error from OOM */
+        /* Same diagnostics as wb_template_parse_str. */
         const char *err = cJSON_GetErrorPtr();
         uint32_t free_heap = esp_get_free_heap_size();
         if (err) {
             ESP_LOGE(TAG_TMPL, "JSON parse error near: '%.32s' (free heap: %"PRIu32" bytes)", err, free_heap);
         } else {
-            ESP_LOGE(TAG_TMPL, "JSON parse failed — likely out of memory (free heap: %"PRIu32" bytes)", free_heap);
+            ESP_LOGE(TAG_TMPL, "JSON parse failed - likely out of memory (free heap: %"PRIu32" bytes)", free_heap);
         }
         return -1;
     }
 
-    return parse_json_root(root, out);
+    /* If the caller supplied live parameter values, project them into the
+     * internal id->value table; otherwise parse_channels will fall back to the
+     * JSON parameters block (template defaults). */
+    tmpl_params_t ext = { NULL, 0 };
+    const tmpl_params_t *ext_ptr = NULL;
+    if (params != NULL && n > 0) {
+        ext.items = calloc((size_t)n, sizeof(tmpl_param_t));
+        if (ext.items) {
+            for (int i = 0; i < n; i++) {
+                strncpy(ext.items[ext.count].id, params[i].id, sizeof(ext.items[ext.count].id) - 1);
+                ext.items[ext.count].id[sizeof(ext.items[ext.count].id) - 1] = '\0';
+                ext.items[ext.count].value = params[i].value;
+                ext.count++;
+            }
+            ext_ptr = &ext;
+        }
+    }
+
+    int rc = parse_json_root(root, ext_ptr, out);
+    free(ext.items);
+    return rc;
+}
+
+int wb_template_parse_str(const char *json, wb_template_t *out)
+{
+    return wb_template_parse_str_ex(json, NULL, 0, out);
 }
 
 const char *wb_channel_enum_title(const wb_channel_t *ch, long value)

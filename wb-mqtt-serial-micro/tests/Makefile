@@ -23,7 +23,7 @@ SRC_TEMPLATE     = $(FW)/template.c ../thirdparty/cJSON/cJSON.c
 SRC_UNITY        = unity/unity.c
 
 BUILD = build
-TESTS = test_crc test_value_conv test_template test_condition test_enum test_fast_modbus test_poll_planner
+TESTS = test_crc test_value_conv test_template test_condition test_enum test_fast_modbus test_poll_planner test_params
 
 .PHONY: all clean $(TESTS)
 
@@ -61,6 +61,13 @@ test_condition: $(BUILD)
 	    test_condition.c $(SRC_TEMPLATE) $(SRC_UNITY) -lm
 	@echo "=== Running test_condition ==="
 	@$(BUILD)/test_condition
+
+test_params: $(BUILD)
+	@echo "=== Building test_params ==="
+	$(CC) $(CFLAGS) -o $(BUILD)/test_params \
+	    test_params.c $(SRC_TEMPLATE) $(SRC_UNITY) -lm
+	@echo "=== Running test_params ==="
+	@$(BUILD)/test_params
 
 test_enum: $(BUILD)
 	@echo "=== Building test_enum ==="

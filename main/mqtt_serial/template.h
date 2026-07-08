@@ -31,6 +31,16 @@ typedef enum {
 } reg_type_t;
 
 /* ------------------------------------------------------------------ */
+/* A device parameter extracted from the template "parameters" block   */
+/* ------------------------------------------------------------------ */
+typedef struct {
+    char        id[64];
+    reg_type_t  reg_type;   /* coil/discrete/holding/input */
+    uint16_t    address;    /* register address (0 if absent in the template) */
+    double      value;      /* template value/default/0; overwritten by a live device read */
+} wb_param_t;
+
+/* ------------------------------------------------------------------ */
 /* Register data formats                                               */
 /* ------------------------------------------------------------------ */
 typedef enum {
@@ -112,6 +122,18 @@ int  wb_template_parse(const char *path, wb_template_t *out);
 
 /* Parse from an in-memory JSON string (used on MCU with embedded templates). */
 int  wb_template_parse_str(const char *json, wb_template_t *out);
+
+/* Parse ONLY the device "parameters" block into out[] (id/reg_type/address/value).
+ * value = "value" -> "default" -> 0. Accepts array and object parameter forms.
+ * Returns the number of parameters written (<= max). */
+int wb_template_extract_params(const char *json, wb_param_t *out, int max);
+
+/* Like wb_template_parse_str, but channel "condition" is evaluated against the
+ * values in params[] (matched by id) instead of the JSON parameters block.
+ * params==NULL or n==0 -> identical to wb_template_parse_str (fallback to JSON
+ * defaults). */
+int wb_template_parse_str_ex(const char *json, const wb_param_t *params, int n,
+                             wb_template_t *out);
 
 /* Free all resources owned by *t.  Does not free t itself. */
 void wb_template_free(wb_template_t *t);

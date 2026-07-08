@@ -50,6 +50,7 @@ static const char *TAG = "mqtt_serial_bridge";
 #define TOPIC_MAX   512
 #define WRITE_QUEUE_DEPTH  8
 #define MB_FC16_MAX_WRITE_REGS  123   /* Modbus FC16 caps a single write at 123 registers */
+#define WB_PARAM_MAX            32    /* max device parameters read for condition eval */
 
 /* ------------------------------------------------------------------
  * Write command dispatched from MQTT event to bridge task
@@ -850,6 +851,72 @@ done:
     vTaskDelete(NULL);
 }
 
+/* Read one register per unique device parameter so channel "condition" can be
+ * evaluated against live settings. Registers shared by several parameters are
+ * read once. On any read failure the parameter keeps its template default, so
+ * an unreachable device degrades gracefully. Returns how many parameters
+ * received a live value. */
+static int read_device_params(mb_rtu_port_t *mb, uint8_t slave_id,
+                              wb_param_t *params, int np)
+{
+    bool read_ok[WB_PARAM_MAX] = {false};   /* matches the WB_PARAM_MAX cap in _start */
+    int nread = 0;
+    for (int i = 0; i < np; i++) {
+        /* A parameter without a register address in the template cannot be read
+         * from the device; leave its template default untouched. */
+        if (params[i].address == 0) {
+            continue;
+        }
+        /* Dedup: reuse an earlier read of the same (reg_type, address). */
+        int src = -1;
+        for (int j = 0; j < i; j++) {
+            if (params[j].reg_type == params[i].reg_type &&
+                params[j].address == params[i].address) {
+                src = j;
+                break;
+            }
+        }
+        if (src >= 0) {
+            params[i].value = params[src].value;
+            read_ok[i] = read_ok[src];
+            if (read_ok[i]) {
+                nread++;
+            }
+            continue;
+        }
+
+        uint16_t reg = 0;
+        uint8_t  bit = 0;
+        int ok = 0;
+        double v = 0.0;
+        switch (params[i].reg_type) {
+        case REG_COIL:
+            ok = (mb_read_coils(mb, slave_id, params[i].address, 1, &bit) == 0);
+            v = bit;
+            break;
+        case REG_DISCRETE:
+            ok = (mb_read_discrete(mb, slave_id, params[i].address, 1, &bit) == 0);
+            v = bit;
+            break;
+        case REG_INPUT:
+            ok = (mb_read_input(mb, slave_id, params[i].address, 1, &reg) == 0);
+            v = reg;
+            break;
+        default:  /* REG_HOLDING */
+            ok = (mb_read_holding(mb, slave_id, params[i].address, 1, &reg) == 0);
+            v = reg;
+            break;
+        }
+        if (ok) {
+            params[i].value = v;
+            read_ok[i] = true;
+            nread++;
+        }
+        /* On failure: leave the template default set by wb_template_extract_params. */
+    }
+    return nread;
+}
+
 /* ------------------------------------------------------------------
  * Public API
  * ------------------------------------------------------------------ */
@@ -867,43 +934,14 @@ esp_err_t mqtt_serial_bridge_start(void)
         return ESP_OK;
     }
 
-    /* ---- Load template (SPIFFS if available, else embedded default) ---- */
+    /* ---- Load template (SPIFFS if available, else embedded default) ----
+     * tmpl_buf stays alive past this point: the live device parameters are
+     * read first, then the template is parsed with those values, so the
+     * buffer is only freed after the parse succeeds. */
     char *tmpl_buf = NULL;
     size_t tmpl_len = 0;
     if (template_handler_load(&tmpl_buf, &tmpl_len) != ESP_OK || !tmpl_buf) {
         return ESP_FAIL;
-    }
-    if (wb_template_parse_str(tmpl_buf, &g_ctx.tmpl) != 0) {
-        ESP_LOGE(TAG, "Failed to parse device template");
-        free(tmpl_buf);
-        return ESP_FAIL;
-    }
-    free(tmpl_buf);
-
-    ESP_LOGI(TAG, "Template: '%s' id='%s' (%d channels)",
-             g_ctx.tmpl.device_name, g_ctx.tmpl.device_id, g_ctx.tmpl.num_channels);
-
-    g_ctx.last_values = calloc((size_t)g_ctx.tmpl.num_channels, sizeof(char *));
-    if (!g_ctx.last_values) { wb_template_free(&g_ctx.tmpl); return ESP_ERR_NO_MEM; }
-
-    g_ctx.poll_groups = calloc((size_t)g_ctx.tmpl.num_channels, sizeof(poll_group_t));
-    if (!g_ctx.poll_groups) {
-        free(g_ctx.last_values);
-        wb_template_free(&g_ctx.tmpl);
-        return ESP_ERR_NO_MEM;
-    }
-    g_ctx.n_poll_groups = mb_plan_poll_groups(g_ctx.tmpl.channels, g_ctx.tmpl.num_channels,
-                                              POLL_MAX_READ_REGS, POLL_MAX_GAP_REGS,
-                                              g_ctx.poll_groups, g_ctx.tmpl.num_channels);
-    ESP_LOGI(TAG, "poll: %d channel(s) -> %d holding/input group read(s)",
-             g_ctx.tmpl.num_channels, g_ctx.n_poll_groups);
-
-    g_ctx.write_queue = xQueueCreate(WRITE_QUEUE_DEPTH, sizeof(write_cmd_t));
-    if (!g_ctx.write_queue) {
-        free(g_ctx.last_values);
-        free(g_ctx.poll_groups);
-        wb_template_free(&g_ctx.tmpl);
-        return ESP_ERR_NO_MEM;
     }
 
     /* ---- Determine RS485 port ---- */
@@ -932,10 +970,7 @@ esp_err_t mqtt_serial_bridge_start(void)
     if (pin_err != ESP_OK) {
         ESP_LOGE(TAG, "uart_set_pin failed: %s", esp_err_to_name(pin_err));
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
-        vQueueDelete(g_ctx.write_queue);
-        free(g_ctx.last_values);
-        free(g_ctx.poll_groups);
-        wb_template_free(&g_ctx.tmpl);
+        free(tmpl_buf);
         return pin_err;
     }
 
@@ -965,10 +1000,7 @@ esp_err_t mqtt_serial_bridge_start(void)
     if (!g_ctx.mb) {
         ESP_LOGE(TAG, "Failed to open UART%d for Modbus RTU", uart_num);
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
-        vQueueDelete(g_ctx.write_queue);
-        free(g_ctx.last_values);
-        free(g_ctx.poll_groups);
-        wb_template_free(&g_ctx.tmpl);
+        free(tmpl_buf);
         return ESP_FAIL;
     }
 
@@ -978,13 +1010,73 @@ esp_err_t mqtt_serial_bridge_start(void)
         ESP_LOGE(TAG, "Invalid slave ID %d (must be 1-247)", slave_id);
         mb_rtu_close(g_ctx.mb);
         port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
-        vQueueDelete(g_ctx.write_queue);
-        free(g_ctx.last_values);
-        free(g_ctx.poll_groups);
-        wb_template_free(&g_ctx.tmpl);
+        free(tmpl_buf);
         return ESP_ERR_INVALID_ARG;
     }
     g_ctx.slave_id = (uint8_t)slave_id;
+
+    /* Read device parameters so channel "condition" is evaluated against the
+     * live device settings, not the template defaults. Parameters that fail to
+     * read keep their template default, so an offline device still starts. */
+    /* Heap-allocated: wb_param_t is ~80 bytes, so WB_PARAM_MAX of them (~2.5 KB)
+     * is too large for the caller's stack (this runs on the main task too). */
+    wb_param_t *params = calloc(WB_PARAM_MAX, sizeof(wb_param_t));
+    int np = 0;
+    int nread = 0;
+    if (params) {
+        np = wb_template_extract_params(tmpl_buf, params, WB_PARAM_MAX);
+        nread = read_device_params(g_ctx.mb, g_ctx.slave_id, params, np);
+        ESP_LOGI(TAG, "params: %d/%d read from device, %d fell back to default",
+                 nread, np, np - nread);
+    }
+
+    /* Parse the template with the live parameter values so channel "condition"
+     * expressions resolve against what the device actually reports. */
+    if (wb_template_parse_str_ex(tmpl_buf, params, np, &g_ctx.tmpl) != 0) {
+        ESP_LOGE(TAG, "Failed to parse device template");
+        mb_rtu_close(g_ctx.mb);
+        port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
+        free(tmpl_buf);
+        free(params);
+        return ESP_FAIL;
+    }
+    free(params);
+    free(tmpl_buf);   /* parse done — tmpl_buf no longer needed */
+
+    ESP_LOGI(TAG, "Template: '%s' id='%s' (%d channels)",
+             g_ctx.tmpl.device_name, g_ctx.tmpl.device_id, g_ctx.tmpl.num_channels);
+
+    g_ctx.last_values = calloc((size_t)g_ctx.tmpl.num_channels, sizeof(char *));
+    if (!g_ctx.last_values) {
+        mb_rtu_close(g_ctx.mb);
+        port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
+        wb_template_free(&g_ctx.tmpl);
+        return ESP_ERR_NO_MEM;
+    }
+
+    g_ctx.poll_groups = calloc((size_t)g_ctx.tmpl.num_channels, sizeof(poll_group_t));
+    if (!g_ctx.poll_groups) {
+        mb_rtu_close(g_ctx.mb);
+        port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
+        free(g_ctx.last_values);
+        wb_template_free(&g_ctx.tmpl);
+        return ESP_ERR_NO_MEM;
+    }
+    g_ctx.n_poll_groups = mb_plan_poll_groups(g_ctx.tmpl.channels, g_ctx.tmpl.num_channels,
+                                              POLL_MAX_READ_REGS, POLL_MAX_GAP_REGS,
+                                              g_ctx.poll_groups, g_ctx.tmpl.num_channels);
+    ESP_LOGI(TAG, "poll: %d channel(s) -> %d holding/input group read(s)",
+             g_ctx.tmpl.num_channels, g_ctx.n_poll_groups);
+
+    g_ctx.write_queue = xQueueCreate(WRITE_QUEUE_DEPTH, sizeof(write_cmd_t));
+    if (!g_ctx.write_queue) {
+        mb_rtu_close(g_ctx.mb);
+        port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
+        free(g_ctx.last_values);
+        free(g_ctx.poll_groups);
+        wb_template_free(&g_ctx.tmpl);
+        return ESP_ERR_NO_MEM;
+    }
 
     /* Build gateway identifier from hostname setting */
     char hostname_buf[SETTING_ITEM_MAX_STR_LEN] = {0};  /* same size as setting_items_read contract */
