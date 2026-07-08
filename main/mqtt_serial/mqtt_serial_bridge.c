@@ -71,6 +71,7 @@ typedef struct {
     pm_mode_t                saved_port_mode;   /* port mode to restore when the bridge stops */
     volatile bool            mqtt_connected;
     volatile bool            needs_discovery_publish; /* set by MQTT event, consumed by bridge_task */
+    volatile bool            republish_all;  /* set by MQTT task on (re)connect; consumed by bridge_task */
     char                     avail_topic[TOPIC_MAX];  /* modbusmqtt/<gw>/<dev>/status */
     char                     gateway_id[64];           /* hostname of the gateway, e.g. "wb-mge-30d7cf" */
     char                     full_device_id[64];       /* "<device_id>-<slave_id>", e.g. "wb-msw-v4-131" */
@@ -352,11 +353,9 @@ static void on_mqtt_event(void *handler_args, esp_event_base_t base,
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT connected");
         b->mqtt_connected = true;
-        /* Reset last_values so all channels are re-published after reconnect */
-        for (int i = 0; i < b->tmpl.num_channels; i++) {
-            free(b->last_values[i]);
-            b->last_values[i] = NULL;
-        }
+        /* Force a full re-publish after (re)connect; the actual last_values
+         * reset is done in the bridge task to avoid a cross-task race. */
+        b->republish_all = true;
         /* Publish availability "online" with retain=1 */
         esp_mqtt_client_publish(b->mqtt, b->avail_topic, "online", 0, 0, 1);
 #if MQTT_SERIAL_HA_DISCOVERY_ENABLED
@@ -529,13 +528,31 @@ static int poll_channel(bridge_ctx_t *b, int idx)
 
     if (!b->mqtt_connected) return 0;
 
+    /* Publish only when the formatted value changed since the last successful
+     * publish. last_values[idx] holds the last PUBLISHED string (NULL = never
+     * published yet / forced republish after reconnect). */
+    if (b->last_values[idx] != NULL &&
+        strcmp(b->last_values[idx], val_str) == 0) {
+        return 0;  /* unchanged: read succeeded, nothing to publish */
+    }
+
     char topic[TOPIC_MAX];
     make_value_topic(b->gateway_id, b->full_device_id, ch->name, topic, sizeof(topic));
     int r = esp_mqtt_client_publish(b->mqtt, topic, val_str, 0, 0, 1);
-    if (r < 0)
+    if (r < 0) {
         ESP_LOGE(TAG, "publish failed for %s", topic);
-    else
-        ESP_LOGD(TAG, "[PUB] %s = %s", topic, val_str);
+        return 0;  /* keep last_values unchanged so we retry next time */
+    }
+    ESP_LOGD(TAG, "[PUB] %s = %s", topic, val_str);
+
+    /* Remember what we just published (replace the previous string). */
+    char *dup = strdup(val_str);
+    if (dup) {
+        free(b->last_values[idx]);
+        b->last_values[idx] = dup;
+    }
+    /* If strdup failed, leave last_values[idx] as-is: at worst we republish
+     * the same value next cycle — no correctness or memory problem. */
     return 0;
 }
 
@@ -702,6 +719,16 @@ static void bridge_task(void *pvParameters)
             } else {
                 fast_events_enable(b);
                 if (!b->fm_enabled) b->fm_enable_backoff = 20;  /* retry later */
+            }
+        }
+
+        /* Consume the (re)connect republish request in this task so that
+         * last_values is only ever mutated by the bridge task. */
+        if (b->republish_all) {
+            b->republish_all = false;
+            for (int i = 0; i < b->tmpl.num_channels; i++) {
+                free(b->last_values[i]);
+                b->last_values[i] = NULL;
             }
         }
 
