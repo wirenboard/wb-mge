@@ -36,5 +36,7 @@ managed_components/
 **/covr_report/
 *.gcov
 
-
+# Python
 __pycache__
+.venv/
+api_tests/.venv/
