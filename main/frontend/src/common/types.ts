@@ -46,6 +46,7 @@ export interface RepeaterStats {
 
 export interface Info {
   device_name: string;
+  signature?: string; // device signature, e.g. 'mge_v3' (WB-MGE) or 'mgu_v1' (WB-MGU)
   serial_num: number;
   firmware: string;
   hardware: string;

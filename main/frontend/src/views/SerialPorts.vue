@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
+import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -9,6 +10,9 @@ import Switch from '@/components/Switch.vue';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
+// info (incl. device signature) is loaded by the route's beforeEnter fetchInfo() and the
+// global poller in App.vue, so this component only needs to read the shared singleton.
+const { info } = useInfo();
 </script>
 
 <template>
@@ -30,6 +34,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
             field="rs485_2"
             :title="t('port_2')"
             :sub="t('port2_sub')"
+            :signature="info?.signature"
           />
 
           <section class="card">
