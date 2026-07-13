@@ -178,7 +178,7 @@ const updateInterface = () => {
             </div>
           </div>
           <div class="card-body">
-            <InfoRow :label="t('power')"><span class="mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</span></InfoRow>
+            <InfoRow :label="t('power')"><span class="mono">{{ info?.system_voltage?.toFixed(1) }} {{ t('v') }}</span></InfoRow>
           </div>
         </section>
 </div>
