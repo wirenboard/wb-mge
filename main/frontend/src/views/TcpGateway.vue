@@ -45,6 +45,12 @@ const isEnabled = (portKey: PortKey): boolean => toggles[portKey].value.value;
 const isToggleDisabled = (portKey: PortKey): boolean =>
   toggles[portKey].inFlight.value || info.value === undefined;
 
+// True when the port currently acts as a transparent repeater. While repeater mode is on,
+// the enable toggle derives OFF (it only tracks 'tcp_bridge'), so warn that TCP gateway
+// settings will not take effect until the repeater is turned off on the Repeater page.
+const isRepeaterMode = (portKey: PortKey): boolean =>
+  info.value?.[portKey].port_mode === 'repeater';
+
 // Toggle the TCP gateway transport mode for a single port.
 // ON  -> open as 'tcp_bridge'.
 // OFF -> 'passive' when the cache overlay is active (keep serial open for the
@@ -137,6 +143,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
               </Button>
             </div>
             <div class="card-body">
+              <Info v-if="isRepeaterMode(portKey)" :text="t('repeater_active')" />
               <div class="field">
                 <label :for="`${portKey}-enabled`">{{ t('enabled') }}</label>
                 <div class="field-switch">
@@ -221,6 +228,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Transparent bridge",
     "bridge_ip": "IP address",
     "ports_conflict": "Port values must be unique",
+    "repeater_active": "Repeater mode is active on this port. TCP gateway settings will not take effect until the repeater is turned off.",
     "save": "Save"
   },
   "ru": {
@@ -238,6 +246,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Прозрачный мост",
     "bridge_ip": "IP-адрес сервера",
     "ports_conflict": "Значение порта должно быть уникальным",
+    "repeater_active": "На этом порту включён повторитель. Настройки TCP-шлюза не применятся, пока он не будет выключен.",
     "save": "Сохранить"
   },
   "kk": {
@@ -255,6 +264,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Мөлдір көпір",
     "bridge_ip": "IP мекенжайы",
     "ports_conflict": "Порт мәндері бірегей болуы керек",
+    "repeater_active": "Бұл портта қайталағыш қосулы. TCP шлюзінің баптаулары ол өшірілгенше қолданылмайды.",
     "save": "Сақтау"
   },
   "it": {
@@ -272,6 +282,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Bridge trasparente",
     "bridge_ip": "Indirizzo IP",
     "ports_conflict": "I valori delle porte devono essere unici",
+    "repeater_active": "La modalità ripetitore è attiva su questa porta. Le impostazioni del gateway TCP non avranno effetto finché il ripetitore non viene disattivato.",
     "save": "Salva"
   },
   "de": {
@@ -289,6 +300,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Transparente Brücke",
     "bridge_ip": "IP-Adresse",
     "ports_conflict": "Portwerte müssen eindeutig sein",
+    "repeater_active": "Der Repeater-Modus ist an diesem Port aktiv. Die TCP-Gateway-Einstellungen werden erst wirksam, wenn der Repeater ausgeschaltet ist.",
     "save": "Speichern"
   }
 }
