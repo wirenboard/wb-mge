@@ -588,7 +588,7 @@ function exportCsv() {
           <div class="facet-section-header">
             <div>
               <div class="facet-section-title">{{ t('facet_slave_id') }}</div>
-              <div class="facet-section-hint">{{ activeSlaves.length }} seen · {{ selectedSlaves.size || 'all' }} selected</div>
+              <div class="facet-section-hint">{{ activeSlaves.length }} {{ t('seen') }} · {{ selectedSlaves.size || t('all') }} {{ t('selected') }}</div>
             </div>
             <button class="facet-clear" :style="{ visibility: selectedSlaves.size > 0 ? 'visible' : 'hidden' }" @click="selectedSlaves = new Set()">{{ t('clear') }}</button>
           </div>
@@ -617,7 +617,7 @@ function exportCsv() {
           <div class="facet-section-header">
             <div>
               <div class="facet-section-title">{{ t('facet_function_code') }}</div>
-              <div class="facet-section-hint">{{ activeFcs.length }} seen · {{ selectedFcs.size || 'all' }} selected</div>
+              <div class="facet-section-hint">{{ activeFcs.length }} {{ t('seen') }} · {{ selectedFcs.size || t('all') }} {{ t('selected') }}</div>
             </div>
             <button class="facet-clear" :style="{ visibility: selectedFcs.size > 0 ? 'visible' : 'hidden' }" @click="selectedFcs = new Set()">{{ t('clear') }}</button>
           </div>
@@ -1256,6 +1256,9 @@ function exportCsv() {
     "start": "Start",
     "stop": "Stop",
     "clear": "Clear",
+    "seen": "seen",
+    "selected": "selected",
+    "all": "all",
     "errors_only": "Errors only",
     "packets": "packets",
     "error": "error",
@@ -1291,16 +1294,19 @@ function exportCsv() {
     "start": "Старт",
     "stop": "Стоп",
     "clear": "Очистить",
+    "seen": "видно",
+    "selected": "выбрано",
+    "all": "все",
     "errors_only": "Только ошибки",
     "packets": "пакетов",
     "error": "ошибка",
     "errors": "ошибок",
     "col_time": "Время",
     "col_sender": "Отправитель",
-    "col_slave": "Slave",
+    "col_slave": "Адрес",
     "col_function": "Функция",
     "col_fc": "Код функции",
-    "col_payload": "Payload",
+    "col_payload": "Данные",
     "col_bytes": "Байт",
     "col_crc": "CRC",
     "facet_slave_id": "Slave ID",
@@ -1326,6 +1332,9 @@ function exportCsv() {
     "start": "Бастау",
     "stop": "Тоқтату",
     "clear": "Тазалау",
+    "seen": "көрінді",
+    "selected": "таңдалды",
+    "all": "барлығы",
     "errors_only": "Тек қателер",
     "packets": "пакет",
     "error": "қате",
@@ -1361,6 +1370,9 @@ function exportCsv() {
     "start": "Avvia",
     "stop": "Ferma",
     "clear": "Cancella",
+    "seen": "visti",
+    "selected": "selezionati",
+    "all": "tutti",
     "errors_only": "Solo errori",
     "packets": "pacchetti",
     "error": "errore",
@@ -1396,6 +1408,9 @@ function exportCsv() {
     "start": "Start",
     "stop": "Stopp",
     "clear": "Löschen",
+    "seen": "erkannt",
+    "selected": "ausgewählt",
+    "all": "alle",
     "errors_only": "Nur Fehler",
     "packets": "Pakete",
     "error": "Fehler",
