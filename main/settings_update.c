@@ -33,6 +33,23 @@ static const char *TAG = "settings_update";
 
 static TaskHandle_t update_task_handle = NULL;
 
+/* MQTT-serial bridge change-detection cache. Primed once at boot by
+ * settings_update_prime() with the boot-time values, so the FIRST later change
+ * (e.g. mqts_port from the web UI) is detected and the bridge is restarted
+ * without needing a reboot. */
+static bool s_mqts_primed       = false;
+static bool s_mqts_prev_enabled = false;
+static int  s_mqts_prev_port    = -1;
+static int  s_mqts_prev_slave   = -1;
+
+void settings_update_prime(void)
+{
+    s_mqts_prev_enabled = setting_items_read_bool(KEY_MQTS_ENABLED);
+    s_mqts_prev_port    = setting_items_read_int(KEY_MQTS_PORT);
+    s_mqts_prev_slave   = setting_items_read_int(KEY_MQTS_SLAVE_ID);
+    s_mqts_primed       = true;
+}
+
 
 // ── Cache Modbus TCP server ──────────────────────────────────────────────────
 // cache_modbus_server exposes init/deinit/get_port, so its check/release/acquire trio is built
@@ -450,28 +467,24 @@ esp_err_t settings_update(void)
     }
 
     {
-        /* Check MQTT serial bridge settings change */
-        static bool prev_mqts_enabled = false;
-        static int  prev_mqts_port    = -1;
-        static int  prev_mqts_slave   = -1;
-        static bool mqts_initialized  = false;
-
+        /* Check MQTT serial bridge settings change (cache primed at boot by
+         * settings_update_prime, so the first change after boot is applied). */
         bool cur_enabled = setting_items_read_bool(KEY_MQTS_ENABLED);
         int  cur_port    = setting_items_read_int(KEY_MQTS_PORT);
         int  cur_slave   = setting_items_read_int(KEY_MQTS_SLAVE_ID);
 
-        if (!mqts_initialized ||
-            cur_enabled  != prev_mqts_enabled ||
-            cur_port     != prev_mqts_port    ||
-            cur_slave    != prev_mqts_slave) {
-            if (mqts_initialized) {
+        if (!s_mqts_primed ||
+            cur_enabled  != s_mqts_prev_enabled ||
+            cur_port     != s_mqts_prev_port    ||
+            cur_slave    != s_mqts_prev_slave) {
+            if (s_mqts_primed) {
                 ESP_LOGD(TAG, "MQTT serial bridge settings were changed");
                 flags |= MQTS_FLAG;
             }
-            prev_mqts_enabled = cur_enabled;
-            prev_mqts_port    = cur_port;
-            prev_mqts_slave   = cur_slave;
-            mqts_initialized  = true;
+            s_mqts_prev_enabled = cur_enabled;
+            s_mqts_prev_port    = cur_port;
+            s_mqts_prev_slave   = cur_slave;
+            s_mqts_primed       = true;
         }
     }
 

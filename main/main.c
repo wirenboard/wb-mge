@@ -134,6 +134,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
     template_handler_init();  /* Mount SPIFFS for device templates */
+    settings_update_prime();  /* Seed change-detection so the first mqts change applies without a reboot */
 
     update_io_bus_control();
 
