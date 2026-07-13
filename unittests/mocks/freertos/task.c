@@ -5,7 +5,8 @@
 #include <string.h>
 
 #define MOCK_TASK_HANDLE                ((TaskHandle_t)0xCCCCCCCC)
-#define CONFIG_FREERTOS_HZ              500
+// CONFIG_FREERTOS_HZ is provided by FreeRTOS.h (via task.h) as 500u; defining it
+// again here (as 500) triggered -Wmacro-redefined. Rely on the FreeRTOS.h value.
 
 mock_xTaskCreate_t mock_xTaskCreate_data = {0};
 mock_vTaskDelete_t mock_vTaskDelete_data = {0};
