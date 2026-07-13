@@ -11,7 +11,6 @@ const props = defineProps<{ title: string; sub?: string; field: string }>();
 const { t } = useI18n();
 const { isChanged, isLoading, updateSettings } = useSettings();
 const settings = defineModel<RsSettings>('settings');
-const ioBus = defineModel<boolean>('io_bus', { required: false });
 
 const baudrateOptions: Baudrate[] = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
 
@@ -25,17 +24,12 @@ const save = () => {
   const data: Partial<Settings> = {
     [props.field]: settings.value,
   };
-
-  if (typeof ioBus.value !== 'undefined' && props.field === 'rs485_2') {
-    data['io_bus'] = ioBus.value;
-  }
   updateSettings(data);
 };
 
-const isSaveDisabled = computed(() => {
-  const fields = props.field === 'rs485_2' ? [props.field, 'io_bus'] : [props.field];
-  return isLoading.value || !isChanged(fields);
-});
+// I/O Bus lives in its own card with a dedicated Save button (see SerialPorts.vue),
+// so io_bus changes must not enable the RS-485 Port 2 Save. Track only this port's field.
+const isSaveDisabled = computed(() => isLoading.value || !isChanged([props.field]));
 </script>
 
 <template>
