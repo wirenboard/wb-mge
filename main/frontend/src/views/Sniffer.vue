@@ -649,14 +649,14 @@ function exportCsv() {
           <thead>
             <tr>
               <th class="col-id">#</th>
-              <th class="col-time">{{ t('col_time') }}</th>
+              <th class="col-time" :title="t('col_time')">{{ t('col_time') }}</th>
               <th class="col-dt">&Delta;t</th>
-              <th class="col-sender">{{ t('col_sender') }}</th>
-              <th class="col-slave">{{ t('col_slave') }}</th>
-              <th class="col-fc">{{ t('col_function') }}</th>
-              <th class="col-payload">{{ t('col_payload') }}</th>
-              <th class="col-bytes">{{ t('col_bytes') }}</th>
-              <th class="col-crc">{{ t('col_crc') }}</th>
+              <th class="col-sender" :title="t('col_sender')">{{ t('col_sender') }}</th>
+              <th class="col-slave" :title="t('col_slave')">{{ t('col_slave') }}</th>
+              <th class="col-fc" :title="t('col_function')">{{ t('col_function') }}</th>
+              <th class="col-payload" :title="t('col_payload')">{{ t('col_payload') }}</th>
+              <th class="col-bytes" :title="t('col_bytes')">{{ t('col_bytes') }}</th>
+              <th class="col-crc" :title="t('col_crc')">{{ t('col_crc') }}</th>
             </tr>
           </thead>
           <tbody>
