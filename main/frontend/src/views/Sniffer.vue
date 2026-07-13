@@ -10,6 +10,7 @@ import CheckmarkIcon from '@/assets/checkmarkIcon.svg?component';
 import { useSettings } from '@/common/settings';
 import { useInfo } from '@/common/info';
 import { api } from '@/utils/api';
+import { sendPacketToPort } from '@/utils/modbusUtils';
 import {
   type SniffRow,
   type ByteRole,
@@ -455,6 +456,57 @@ const sel = computed(() =>
   selected.value !== null ? filteredRows.value.find(r => r.id === selected.value) ?? null : null
 );
 
+// Resend: re-inject the selected packet's raw RTU frame on the current port. The captured
+// frame (sel.pl) already carries a valid CRC, so it is sent byte-for-byte. Only frames with a
+// valid CRC are resendable; arbitration frames (crc 'N/A'), timeouts (empty payload) and
+// CRC-error frames are not real/trustworthy frames and must not be replayed.
+const resending = ref(false);
+const resendMsg = ref('');
+const resendIsError = ref(false);
+
+const canResend = computed(() =>
+  sel.value !== null && !sel.value.isArbitration && sel.value.pl.length > 0 && sel.value.crc === 'OK'
+);
+
+const resendDisabled = computed(() =>
+  !canResend.value || txDisabledForCurrentPort.value || resending.value
+);
+
+const resendDisabledReason = computed(() => {
+  const row = sel.value;
+  if (row === null) return '';
+  if (txDisabledForCurrentPort.value) return t('resend_tx_disabled');
+  // A real frame (non-arbitration, non-empty) with a bad/absent CRC must not be replayed.
+  if (!row.isArbitration && row.pl.length > 0 && row.crc !== 'OK') return t('resend_crc_err');
+  if (!canResend.value) return t('resend_unavailable');
+  return '';
+});
+
+async function resendSelected() {
+  const row = sel.value;
+  if (row === null || !canResend.value) return;
+  resending.value = true;
+  resendMsg.value = '';
+  resendIsError.value = false;
+  try {
+    // Strip the display spaces from the payload to get a compact hex string.
+    const hex = row.pl.replace(/\s+/g, '');
+    const res = await sendPacketToPort(portFilter.value, hex);
+    resendMsg.value = t('resend_sent', { n: res.sent, port: portFilter.value });
+  } catch (e: unknown) {
+    resendIsError.value = true;
+    resendMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    resending.value = false;
+  }
+}
+
+// Clear stale resend feedback when the selected row changes.
+watch(selected, () => {
+  resendMsg.value = '';
+  resendIsError.value = false;
+});
+
 function senderPillClass(sender: string) {
   return 'sender-pill sender-' + sender.toLowerCase();
 }
@@ -643,7 +695,14 @@ function exportCsv() {
         </table>
       </div>
 
-      <!-- Detail panel -->
+      <!-- Detail panel: resend action bar + decoder -->
+      <div v-if="sel" class="pkt-resend-bar">
+        <Button variant="outline" :disabled="resendDisabled" :title="resendDisabledReason || undefined" @click="resendSelected()">
+          ↻ {{ t('resend') }}
+        </Button>
+        <span v-if="resendMsg" :class="['pkt-resend-msg', { 'pkt-resend-msgErr': resendIsError }]">{{ resendMsg }}</span>
+        <span v-else-if="resendDisabledReason" class="pkt-resend-hint">{{ resendDisabledReason }}</span>
+      </div>
       <PacketDecoder v-if="sel" :packet="sel" />
       </div><!-- /sniffer-body -->
     </div><!-- /sniffer-main -->
@@ -967,6 +1026,10 @@ function exportCsv() {
   border-right: none;
   border-left: none;
   white-space: nowrap;
+  /* Safety net for table-layout:fixed: clip an over-wide localized header (e.g. "Отправитель")
+     instead of letting it overflow into the neighbouring column. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sniffer-table td {
@@ -1013,7 +1076,7 @@ function exportCsv() {
 .col-id { width: 56px; }
 .col-time { width: 100px; }
 .col-dt { width: 68px; }
-.col-sender { width: 76px; }
+.col-sender { width: 100px; }
 .col-slave { width: 54px; }
 .col-fc { width: 240px; }
 .col-payload { max-width: 0; width: 100%; }
@@ -1135,6 +1198,32 @@ function exportCsv() {
   font-size: 11px;
 }
 
+/* Resend action bar above the packet decoder detail panel */
+.pkt-resend-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 8px 20px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-surface-subtle);
+}
+
+.pkt-resend-msg {
+  font-size: 12px;
+  color: var(--mb-ok);
+}
+
+.pkt-resend-msgErr {
+  color: var(--mb-err);
+}
+
+.pkt-resend-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 @media (max-width: 680px) {
   .sniffer-main {
     flex-direction: column;
@@ -1189,6 +1278,11 @@ function exportCsv() {
     "export_csv": "Export CSV",
     "hide_errors": "Hide errors",
     "send_packet": "Send packet",
+    "resend": "Resend",
+    "resend_sent": "Sent {n} bytes to port {port}",
+    "resend_tx_disabled": "TX is disabled for this port",
+    "resend_unavailable": "This packet cannot be resent",
+    "resend_crc_err": "A frame with a CRC error cannot be resent",
     "port_n": "Port {n}"
   },
   "ru": {
@@ -1219,6 +1313,11 @@ function exportCsv() {
     "export_csv": "Экспорт CSV",
     "hide_errors": "Скрывать ошибки",
     "send_packet": "Отправить пакет",
+    "resend": "Отправить повторно",
+    "resend_sent": "Отправлено {n} байт на порт {port}",
+    "resend_tx_disabled": "TX отключён для этого порта",
+    "resend_unavailable": "Этот пакет нельзя отправить повторно",
+    "resend_crc_err": "Кадр с ошибкой CRC нельзя отправить повторно",
     "port_n": "Порт {n}"
   },
   "kk": {
@@ -1249,6 +1348,11 @@ function exportCsv() {
     "export_csv": "CSV жүктеу",
     "hide_errors": "Қателерді жасыру",
     "send_packet": "Пакет жіберу",
+    "resend": "Қайта жіберу",
+    "resend_sent": "{port} портына {n} байт жіберілді",
+    "resend_tx_disabled": "Бұл порт үшін TX өшірілген",
+    "resend_unavailable": "Бұл пакетті қайта жіберу мүмкін емес",
+    "resend_crc_err": "CRC қатесі бар кадрды қайта жіберу мүмкін емес",
     "port_n": "Порт {n}"
   },
   "it": {
@@ -1279,6 +1383,11 @@ function exportCsv() {
     "export_csv": "Esporta CSV",
     "hide_errors": "Nascondi errori",
     "send_packet": "Invia pacchetto",
+    "resend": "Reinvia",
+    "resend_sent": "Inviati {n} byte alla porta {port}",
+    "resend_tx_disabled": "TX disabilitato per questa porta",
+    "resend_unavailable": "Questo pacchetto non può essere reinviato",
+    "resend_crc_err": "Un frame con errore CRC non può essere reinviato",
     "port_n": "Porta {n}"
   },
   "de": {
@@ -1309,6 +1418,11 @@ function exportCsv() {
     "export_csv": "CSV exportieren",
     "hide_errors": "Fehler ausblenden",
     "send_packet": "Paket senden",
+    "resend": "Erneut senden",
+    "resend_sent": "{n} Bytes an Port {port} gesendet",
+    "resend_tx_disabled": "TX für diesen Port deaktiviert",
+    "resend_unavailable": "Dieses Paket kann nicht erneut gesendet werden",
+    "resend_crc_err": "Ein Frame mit CRC-Fehler kann nicht erneut gesendet werden",
     "port_n": "Port {n}"
   }
 }

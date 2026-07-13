@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   buildPreviewFrame,
   frameToPreviewParts,
   sendPacketToPort,
+  parseModbusAddress,
+  parseValueList,
 } from '@/utils/modbusUtils';
+import { senderState } from '@/utils/senderState';
 
 const props = defineProps<{
   portNum: string;
@@ -18,13 +21,17 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const mode = ref<'read' | 'write'>('read');
-const slaveId = ref('01');
-const fc = ref('03');
-const address = ref('0x0000');
-const value = ref('10');
+// Form fields live in a module-level singleton so they survive popup close/open (#1).
+// Transient UI state (in-flight flag, error, success confirmation) stays component-local.
+const state = senderState;
 const sending = ref(false);
 const error = ref('');
+const success = ref('');
+
+// FCs that write coils (boolean, value 0/1) as opposed to 16-bit registers.
+const COIL_FCS = new Set(['05', '0f']);
+// FCs that take a list of values (FC15/FC16) rather than a single value (FC05/FC06).
+const LIST_FCS = new Set(['0f', '10']);
 
 const readFcOptions = computed(() => [
   { value: '01', label: t('fc_opt_01') },
@@ -40,16 +47,28 @@ const writeFcOptions = computed(() => [
   { value: '10', label: t('fc_opt_16') },
 ]);
 
-const fcOptions = computed(() => (mode.value === 'read' ? readFcOptions.value : writeFcOptions.value));
+const fcOptions = computed(() => (state.mode === 'read' ? readFcOptions.value : writeFcOptions.value));
 
 function setMode(m: 'read' | 'write') {
-  mode.value = m;
-  fc.value = m === 'read' ? '03' : '06';
+  state.mode = m;
+  // Switching mode changes the FC, which triggers the fc watcher that resets `value`.
+  state.fc = m === 'read' ? '03' : '06';
   error.value = '';
+  success.value = '';
 }
 
+// Reset `value` to a sensible default whenever the FC changes so the form never carries an
+// incompatible value into the new FC (e.g. "10" left over when switching to a coil FC that
+// only accepts 0/1, which would silently disable the send button). Fires only on a real
+// change — not on mount — so persisted values (#1) are preserved across reopen.
+watch(() => state.fc, (fc) => {
+  state.value = COIL_FCS.has(fc) ? '1' : '10';
+  error.value = '';
+  success.value = '';
+});
+
 const previewBytes = computed((): Uint8Array | null =>
-  buildPreviewFrame(slaveId.value, fc.value, address.value, value.value, mode.value)
+  buildPreviewFrame(state.slaveId, state.fc, state.address, state.value, state.mode)
 );
 
 // Build a "preview" string: data bytes normal, last 2 bytes (CRC) in a wrapper span
@@ -60,18 +79,48 @@ const previewParts = computed((): { hex: string; isCrc: boolean }[] => {
   return frameToPreviewParts(bytes);
 });
 
+// When the preview is invalid in write mode, explain exactly why so the send button is never
+// "dead" without a reason. Checks shared fields (slave, address) first, then the value per FC.
+const writeHint = computed((): string => {
+  if (state.mode !== 'write' || previewBytes.value !== null) return '';
+  const slave = parseModbusAddress(state.slaveId);
+  if (isNaN(slave) || slave < 1 || slave > 247) return t('hint_slave');
+  const addr = parseModbusAddress(state.address);
+  if (isNaN(addr) || addr < 0 || addr > 0xffff) return t('hint_addr');
+  switch (state.fc) {
+    case '06': return t('hint_reg');
+    case '05': return t('hint_coil');
+    case '10': {
+      const vals = parseValueList(state.value);
+      if (vals.length === 0) return t('hint_list');
+      if (vals.length > 123) return t('hint_reg_count');
+      return t('hint_reg');
+    }
+    case '0f': {
+      const vals = parseValueList(state.value);
+      if (vals.length === 0) return t('hint_list');
+      if (vals.length > 1968) return t('hint_coil_count');
+      return t('hint_coil');
+    }
+    default: return '';
+  }
+});
+
 async function handleSend() {
   const bytes = previewBytes.value;
   if (!bytes) return;
   sending.value = true;
   error.value = '';
+  success.value = '';
   try {
     // Convert bytes to compact hex string (no spaces)
     const hex = Array.from(bytes)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
-    await sendPacketToPort(props.portNum, hex);
-    emit('close');
+    const res = await sendPacketToPort(props.portNum, hex);
+    // Keep the popup open and confirm the result so the user sees what was sent (#3c);
+    // closing is only via the ✕ button.
+    success.value = t('sent_ok', { n: res.sent, port: props.portNum });
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -84,14 +133,20 @@ const sendDisabled = computed(() =>
 );
 
 const sendLabel = computed(() =>
-  mode.value === 'read'
+  state.mode === 'read'
     ? t('send_read', { port: props.portNum })
     : t('send_write', { port: props.portNum })
 );
 
-const valueLabel = computed(() =>
-  mode.value === 'read' ? t('label_count') : t('label_value')
-);
+// FC15/FC16 accept a list of values; FC05/FC06 a single value; read mode shows a count.
+const isList = computed(() => state.mode === 'write' && LIST_FCS.has(state.fc));
+
+const valueLabel = computed(() => {
+  if (state.mode === 'read') return t('label_count');
+  return isList.value ? t('label_values') : t('label_value');
+});
+
+const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') : ''));
 </script>
 
 <template>
@@ -105,13 +160,13 @@ const valueLabel = computed(() =>
 
     <div class="sniffer-sender-seg">
       <button
-        :class="['sniffer-sender-seg-btn', { 'sniffer-sender-seg-btnActive': mode === 'read' }]"
+        :class="['sniffer-sender-seg-btn', { 'sniffer-sender-seg-btnActive': state.mode === 'read' }]"
         @click="setMode('read')"
       >
 {{ t('mode_read') }}
 </button>
       <button
-        :class="['sniffer-sender-seg-btn', { 'sniffer-sender-seg-btnActive': mode === 'write' }]"
+        :class="['sniffer-sender-seg-btn', { 'sniffer-sender-seg-btnActive': state.mode === 'write' }]"
         @click="setMode('write')"
       >
 {{ t('mode_write') }}
@@ -123,13 +178,13 @@ const valueLabel = computed(() =>
         <!-- Slave ID -->
         <div class="form-field">
           <label class="form-field-label">{{ t('label_slave_id') }}</label>
-          <input v-model="slaveId" class="form-field-input" />
+          <input v-model="state.slaveId" class="form-field-input" />
         </div>
 
         <!-- Function code -->
         <div class="form-field">
           <label class="form-field-label">{{ t('label_fc') }}</label>
-          <select v-model="fc" class="form-field-input">
+          <select v-model="state.fc" class="form-field-input">
             <option v-for="opt in fcOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
         </div>
@@ -137,13 +192,18 @@ const valueLabel = computed(() =>
         <!-- Address -->
         <div class="form-field">
           <label class="form-field-label">{{ t('label_address') }}</label>
-          <input v-model="address" class="form-field-input" />
+          <input v-model="state.address" class="form-field-input" />
         </div>
 
-        <!-- Count / Value -->
+        <!-- Count / Value(s) -->
         <div class="form-field">
           <label class="form-field-label">{{ valueLabel }}</label>
-          <input v-model="value" class="form-field-input" inputmode="numeric" />
+          <input
+            v-model="state.value"
+            class="form-field-input"
+            :inputmode="isList ? 'text' : 'numeric'"
+            :placeholder="valuePlaceholder"
+          />
         </div>
       </div>
 
@@ -161,6 +221,9 @@ const valueLabel = computed(() =>
         </span>
       </div>
 
+      <!-- Explain why a write frame is invalid so the send button is never silently disabled -->
+      <div v-if="writeHint" class="sniffer-sender-warn">{{ writeHint }}</div>
+      <div v-if="success" class="sniffer-sender-success">{{ success }}</div>
       <div v-if="error" class="sniffer-sender-error">{{ error }}</div>
     </div>
 
@@ -356,6 +419,18 @@ const valueLabel = computed(() =>
   padding: 4px 0;
 }
 
+.sniffer-sender-warn {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.sniffer-sender-success {
+  color: var(--mb-ok, #2f855a);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
 .sniffer-sender-foot {
   display: flex;
   flex-direction: column;
@@ -409,9 +484,19 @@ const valueLabel = computed(() =>
     "label_address": "Start address",
     "label_count": "Count",
     "label_value": "Value",
+    "label_values": "Values (comma-separated)",
+    "placeholder_values": "e.g. 10, 20, 30",
     "preview_label": "PREVIEW",
     "hint_crc": "CRC computed automatically",
     "hint_tx_disabled": "TX is disabled for this port",
+    "hint_slave": "Slave ID must be between 1 and 247",
+    "hint_addr": "Address must be between 0 and 65535",
+    "hint_reg": "Register value must be 0..65535",
+    "hint_coil": "Coil value must be 0 or 1",
+    "hint_list": "Enter values separated by commas",
+    "hint_reg_count": "Up to 123 registers can be written at once",
+    "hint_coil_count": "Up to 1968 coils can be written at once",
+    "sent_ok": "Sent {n} bytes to port {port}",
     "send_read": "Send read to port {port}",
     "send_write": "Send write to port {port}",
     "fc_opt_01": "FC01 — Read Coils",
@@ -433,9 +518,19 @@ const valueLabel = computed(() =>
     "label_address": "Адрес",
     "label_count": "Количество",
     "label_value": "Значение",
+    "label_values": "Значения (через запятую)",
+    "placeholder_values": "например 10, 20, 30",
     "preview_label": "PREVIEW",
     "hint_crc": "CRC добавляется автоматически",
     "hint_tx_disabled": "TX отключён для этого порта",
+    "hint_slave": "Slave ID должен быть от 1 до 247",
+    "hint_addr": "Адрес должен быть от 0 до 65535",
+    "hint_reg": "Значение регистра должно быть 0..65535",
+    "hint_coil": "Значение coil должно быть 0 или 1",
+    "hint_list": "Введите значения через запятую",
+    "hint_reg_count": "За один раз можно записать до 123 регистров",
+    "hint_coil_count": "За один раз можно записать до 1968 coils",
+    "sent_ok": "Отправлено {n} байт на порт {port}",
     "send_read": "Отправить чтение на порт {port}",
     "send_write": "Отправить запись на порт {port}",
     "fc_opt_01": "FC01 — Чтение Coils",
@@ -457,9 +552,19 @@ const valueLabel = computed(() =>
     "label_address": "Мекенжай",
     "label_count": "Саны",
     "label_value": "Мән",
+    "label_values": "Мәндер (үтір арқылы)",
+    "placeholder_values": "мысалы 10, 20, 30",
     "preview_label": "PREVIEW",
     "hint_crc": "CRC автоматты түрде есептеледі",
     "hint_tx_disabled": "Бұл порт үшін TX өшірілген",
+    "hint_slave": "Slave ID 1 мен 247 аралығында болуы керек",
+    "hint_addr": "Мекенжай 0 бен 65535 аралығында болуы керек",
+    "hint_reg": "Регистр мәні 0..65535 болуы керек",
+    "hint_coil": "Coil мәні 0 немесе 1 болуы керек",
+    "hint_list": "Мәндерді үтір арқылы енгізіңіз",
+    "hint_reg_count": "Бір уақытта 123 регистрге дейін жазуға болады",
+    "hint_coil_count": "Бір уақытта 1968 coil-ге дейін жазуға болады",
+    "sent_ok": "{port} портына {n} байт жіберілді",
     "send_read": "{port} портына оқуды жіберу",
     "send_write": "{port} портына жазуды жіберу",
     "fc_opt_01": "FC01 — Coils оқу",
@@ -481,9 +586,19 @@ const valueLabel = computed(() =>
     "label_address": "Indirizzo",
     "label_count": "Conteggio",
     "label_value": "Valore",
+    "label_values": "Valori (separati da virgola)",
+    "placeholder_values": "es. 10, 20, 30",
     "preview_label": "ANTEPRIMA",
     "hint_crc": "CRC calcolato automaticamente",
     "hint_tx_disabled": "TX disabilitato per questa porta",
+    "hint_slave": "Lo Slave ID deve essere compreso tra 1 e 247",
+    "hint_addr": "L'indirizzo deve essere compreso tra 0 e 65535",
+    "hint_reg": "Il valore del registro deve essere 0..65535",
+    "hint_coil": "Il valore del coil deve essere 0 o 1",
+    "hint_list": "Inserisci i valori separati da virgole",
+    "hint_reg_count": "Si possono scrivere fino a 123 registri per volta",
+    "hint_coil_count": "Si possono scrivere fino a 1968 coil per volta",
+    "sent_ok": "Inviati {n} byte alla porta {port}",
     "send_read": "Invia lettura alla porta {port}",
     "send_write": "Invia scrittura alla porta {port}",
     "fc_opt_01": "FC01 — Lettura Coils",
@@ -505,9 +620,19 @@ const valueLabel = computed(() =>
     "label_address": "Adresse",
     "label_count": "Anzahl",
     "label_value": "Wert",
+    "label_values": "Werte (kommagetrennt)",
+    "placeholder_values": "z. B. 10, 20, 30",
     "preview_label": "VORSCHAU",
     "hint_crc": "CRC wird automatisch berechnet",
     "hint_tx_disabled": "TX für diesen Port deaktiviert",
+    "hint_slave": "Slave-ID muss zwischen 1 und 247 liegen",
+    "hint_addr": "Adresse muss zwischen 0 und 65535 liegen",
+    "hint_reg": "Registerwert muss 0..65535 sein",
+    "hint_coil": "Coil-Wert muss 0 oder 1 sein",
+    "hint_list": "Werte durch Kommas getrennt eingeben",
+    "hint_reg_count": "Es können bis zu 123 Register auf einmal geschrieben werden",
+    "hint_coil_count": "Es können bis zu 1968 Coils auf einmal geschrieben werden",
+    "sent_ok": "{n} Bytes an Port {port} gesendet",
     "send_read": "Lesen an Port {port} senden",
     "send_write": "Schreiben an Port {port} senden",
     "fc_opt_01": "FC01 — Coils lesen",
