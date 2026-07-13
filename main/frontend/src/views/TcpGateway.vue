@@ -81,9 +81,19 @@ const ports = ['rs485_1', 'rs485_2'] as const;
 const getBridgeMode = (settings: RsSettings): BridgeMode[] =>
   !settings.bridge.modbus ? ['client', 'server'] : ['server'];
 
-const hasPortsConflict = computed(
-  () => data.value?.rs485_1.bridge.port === data.value?.rs485_2.bridge.port
-);
+// A port opens a local TCP listener only when it acts as a server: transparent-bridge
+// 'server' mode, or Modbus TCP (which is always a server). A 'client' port instead connects
+// out to a remote host, so its port number never collides with the other port's.
+const isBridgeServer = (settings?: RsSettings): boolean =>
+  !!settings && (settings.bridge.modbus || settings.bridge.mode === 'server');
+
+// Only a real clash — two server listeners bound to the same local TCP port — is a conflict.
+const hasPortsConflict = computed(() => {
+  const p1 = data.value?.rs485_1;
+  const p2 = data.value?.rs485_2;
+  if (!p1 || !p2) return false;
+  return isBridgeServer(p1) && isBridgeServer(p2) && p1.bridge.port === p2.bridge.port;
+});
 
 const save = (field: 'rs485_1' | 'rs485_2') => {
   updateSettings({ [field]: data.value![field] });
@@ -227,7 +237,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Transparent bridge",
     "bridge_ip": "IP address",
-    "ports_conflict": "Port values must be unique",
+    "ports_conflict": "Two ports in server mode must use different port numbers",
     "repeater_active": "Repeater mode is active on this port. TCP gateway settings will not take effect until the repeater is turned off.",
     "save": "Save"
   },
@@ -245,7 +255,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Прозрачный мост",
     "bridge_ip": "IP-адрес сервера",
-    "ports_conflict": "Значение порта должно быть уникальным",
+    "ports_conflict": "Два порта в режиме «Сервер» должны использовать разные номера порта",
     "repeater_active": "На этом порту включён повторитель. Настройки TCP-шлюза не применятся, пока он не будет выключен.",
     "save": "Сохранить"
   },
@@ -263,7 +273,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Мөлдір көпір",
     "bridge_ip": "IP мекенжайы",
-    "ports_conflict": "Порт мәндері бірегей болуы керек",
+    "ports_conflict": "Сервер режиміндегі екі порт әртүрлі порт нөмірлерін қолдануы керек",
     "repeater_active": "Бұл портта қайталағыш қосулы. TCP шлюзінің баптаулары ол өшірілгенше қолданылмайды.",
     "save": "Сақтау"
   },
@@ -281,7 +291,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Bridge trasparente",
     "bridge_ip": "Indirizzo IP",
-    "ports_conflict": "I valori delle porte devono essere unici",
+    "ports_conflict": "Due porte in modalità server devono usare numeri di porta diversi",
     "repeater_active": "La modalità ripetitore è attiva su questa porta. Le impostazioni del gateway TCP non avranno effetto finché il ripetitore non viene disattivato.",
     "save": "Salva"
   },
@@ -299,7 +309,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_modbus": "Modbus TCP",
     "bridge_transparent": "Transparente Brücke",
     "bridge_ip": "IP-Adresse",
-    "ports_conflict": "Portwerte müssen eindeutig sein",
+    "ports_conflict": "Zwei Ports im Servermodus müssen unterschiedliche Portnummern verwenden",
     "repeater_active": "Der Repeater-Modus ist an diesem Port aktiv. Die TCP-Gateway-Einstellungen werden erst wirksam, wenn der Repeater ausgeschaltet ist.",
     "save": "Speichern"
   }
