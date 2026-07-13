@@ -10,6 +10,8 @@ import {
   buildPreviewFrame,
   frameToPreviewParts,
   sendPacketToPort,
+  parseValueList,
+  parseStrictInt,
 } from './modbusUtils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,26 +129,35 @@ describe('buildWriteSingleRegister', () => {
 // 6. buildWriteMultipleRegisters
 // ─────────────────────────────────────────────────────────────────────────────
 describe('buildWriteMultipleRegisters', () => {
-  it('quantity bytes at positions 4-5 are always [0x00, 0x01]', () => {
-    const frame = buildWriteMultipleRegisters(1, 0, 42);
+  it('single value [42] → quantity=1, byte_count=2, total 11 bytes', () => {
+    const frame = buildWriteMultipleRegisters(1, 0, [42]);
     expect(frame[4]).toBe(0x00);
     expect(frame[5]).toBe(0x01);
-  });
-
-  it('byte_count at position 6 is always 0x02', () => {
-    const frame = buildWriteMultipleRegisters(1, 0, 42);
     expect(frame[6]).toBe(0x02);
+    expect(frame.length).toBe(11);
   });
 
-  it('value encoded in big-endian at positions 7-8', () => {
-    const frame = buildWriteMultipleRegisters(1, 0, 0x1234);
+  it('single value encoded in big-endian at positions 7-8', () => {
+    const frame = buildWriteMultipleRegisters(1, 0, [0x1234]);
     expect(frame[7]).toBe(0x12);
     expect(frame[8]).toBe(0x34);
   });
 
-  it('total length is 11 bytes', () => {
-    const frame = buildWriteMultipleRegisters(1, 0, 10);
-    expect(frame.length).toBe(11);
+  it('three values → quantity=3, byte_count=6, all registers big-endian, total 15 bytes', () => {
+    const frame = buildWriteMultipleRegisters(1, 0x0000, [0x1234, 0x5678, 0xabcd]);
+    // slave, fc, addr(2), quantity(2), byte_count(1), data(6), crc(2) = 15
+    expect(frame.length).toBe(15);
+    expect(frame[4]).toBe(0x00); // quantity hi
+    expect(frame[5]).toBe(0x03); // quantity lo = 3
+    expect(frame[6]).toBe(0x06); // byte_count = 2 * 3
+    expect(Array.from(frame.slice(7, 13))).toEqual([0x12, 0x34, 0x56, 0x78, 0xab, 0xcd]);
+  });
+
+  it('two values → exact frame bytes including CRC', () => {
+    const frame = buildWriteMultipleRegisters(1, 0x0000, [0x1234, 0x5678]);
+    const body = [0x01, 0x10, 0x00, 0x00, 0x00, 0x02, 0x04, 0x12, 0x34, 0x56, 0x78];
+    const crc = appendCrc(new Uint8Array(body));
+    expect(Array.from(frame)).toEqual(Array.from(crc));
   });
 });
 
@@ -154,30 +165,39 @@ describe('buildWriteMultipleRegisters', () => {
 // 7. buildWriteMultipleCoils
 // ─────────────────────────────────────────────────────────────────────────────
 describe('buildWriteMultipleCoils', () => {
-  it('quantity bytes at positions 4-5 are always [0x00, 0x01]', () => {
-    const frame = buildWriteMultipleCoils(1, 0, 1);
+  it('single coil [1] → quantity=1, byte_count=1, coilByte=0x01, total 10 bytes', () => {
+    const frame = buildWriteMultipleCoils(1, 0, [1]);
     expect(frame[4]).toBe(0x00);
     expect(frame[5]).toBe(0x01);
-  });
-
-  it('byte_count at position 6 is 0x01 (NOT 0x02 — 1 byte shorter than FC16)', () => {
-    const frame = buildWriteMultipleCoils(1, 0, 1);
-    expect(frame[6]).toBe(0x01);
-  });
-
-  it('coilByte at position 7 is 0x01 when value=1', () => {
-    const frame = buildWriteMultipleCoils(1, 0, 1);
+    expect(frame[6]).toBe(0x01); // byte_count = ceil(1/8) = 1
     expect(frame[7]).toBe(0x01);
+    expect(frame.length).toBe(10);
   });
 
-  it('coilByte at position 7 is 0x00 when value=0', () => {
-    const frame = buildWriteMultipleCoils(1, 0, 0);
+  it('single coil [0] → coilByte=0x00', () => {
+    const frame = buildWriteMultipleCoils(1, 0, [0]);
     expect(frame[7]).toBe(0x00);
   });
 
-  it('total length is 10 bytes (not 11)', () => {
-    const frame = buildWriteMultipleCoils(1, 0, 1);
-    expect(frame.length).toBe(10);
+  it('eight coils pack LSB-first into one data byte', () => {
+    // coils: index0..7 = 1,0,1,1,0,0,0,1 → bit0,bit2,bit3,bit7 set → 0b10001101 = 0x8D
+    const frame = buildWriteMultipleCoils(1, 0, [1, 0, 1, 1, 0, 0, 0, 1]);
+    expect(frame[4]).toBe(0x00);
+    expect(frame[5]).toBe(0x08); // quantity = 8
+    expect(frame[6]).toBe(0x01); // byte_count = ceil(8/8) = 1
+    expect(frame[7]).toBe(0x8d);
+    expect(frame.length).toBe(10); // 7 header + 1 data + 2 crc
+  });
+
+  it('nine coils span two data bytes (LSB-first), byte_count=2', () => {
+    // coils index0..8 = 1,0,1,1,0,0,0,0,1
+    // byte0: bit0,bit2,bit3 → 0b00001101 = 0x0D ; byte1: bit0 → 0x01
+    const frame = buildWriteMultipleCoils(1, 0, [1, 0, 1, 1, 0, 0, 0, 0, 1]);
+    expect(frame[5]).toBe(0x09); // quantity = 9
+    expect(frame[6]).toBe(0x02); // byte_count = ceil(9/8) = 2
+    expect(frame[7]).toBe(0x0d);
+    expect(frame[8]).toBe(0x01);
+    expect(frame.length).toBe(11); // 7 header + 2 data + 2 crc
   });
 });
 
@@ -262,6 +282,155 @@ describe('buildPreviewFrame', () => {
 
   it('FC05 coil write val=0 → not null', () => {
     expect(buildPreviewFrame('1', '05', '0', '0', 'write')).not.toBeNull();
+  });
+
+  // ── Multi-value FC16 (write multiple registers) ────────────────────────────
+  it('FC16 write list "10,20,30" → valid, quantity=3, byte_count=6', () => {
+    const frame = buildPreviewFrame('1', '10', '0', '10,20,30', 'write');
+    expect(frame).not.toBeNull();
+    expect(frame![5]).toBe(0x03); // quantity lo
+    expect(frame![6]).toBe(0x06); // byte_count
+  });
+
+  it('FC16 write list accepts space and comma separators "10 20, 30"', () => {
+    const frame = buildPreviewFrame('1', '10', '0', '10 20, 30', 'write');
+    expect(frame).not.toBeNull();
+    expect(frame![5]).toBe(0x03);
+  });
+
+  it('FC16 write empty list "" → null', () => {
+    expect(buildPreviewFrame('1', '10', '0', '', 'write')).toBeNull();
+  });
+
+  it('FC16 write list with an out-of-range value "10,70000" → null', () => {
+    expect(buildPreviewFrame('1', '10', '0', '10,70000', 'write')).toBeNull();
+  });
+
+  it('FC16 write list with a non-numeric token "10,x" → null', () => {
+    expect(buildPreviewFrame('1', '10', '0', '10,x', 'write')).toBeNull();
+  });
+
+  it('FC16 write list count=123 → valid (boundary)', () => {
+    const vals = Array.from({ length: 123 }, () => '1').join(',');
+    expect(buildPreviewFrame('1', '10', '0', vals, 'write')).not.toBeNull();
+  });
+
+  it('FC16 write list count=124 → null (> 123)', () => {
+    const vals = Array.from({ length: 124 }, () => '1').join(',');
+    expect(buildPreviewFrame('1', '10', '0', vals, 'write')).toBeNull();
+  });
+
+  // ── Multi-value FC15 (write multiple coils) ────────────────────────────────
+  it('FC15 write list "1,0,1" → valid, quantity=3, byte_count=1', () => {
+    const frame = buildPreviewFrame('1', '0f', '0', '1,0,1', 'write');
+    expect(frame).not.toBeNull();
+    expect(frame![5]).toBe(0x03); // quantity lo
+    expect(frame![6]).toBe(0x01); // byte_count = ceil(3/8)
+  });
+
+  it('FC15 write list with value 2 "1,2" → null (coil must be 0 or 1)', () => {
+    expect(buildPreviewFrame('1', '0f', '0', '1,2', 'write')).toBeNull();
+  });
+
+  it('FC15 write empty list "" → null', () => {
+    expect(buildPreviewFrame('1', '0f', '0', '', 'write')).toBeNull();
+  });
+
+  it('FC15 write list count=1968 → valid (boundary)', () => {
+    const vals = Array.from({ length: 1968 }, () => '1').join(',');
+    expect(buildPreviewFrame('1', '0f', '0', vals, 'write')).not.toBeNull();
+  });
+
+  it('FC15 write list count=1969 → null (> 1968)', () => {
+    const vals = Array.from({ length: 1969 }, () => '1').join(',');
+    expect(buildPreviewFrame('1', '0f', '0', vals, 'write')).toBeNull();
+  });
+
+  // ── Strict decimal parsing of value/count fields (address/slave keep 0x support) ────
+  it('read count "1.5" → null (float rejected)', () => {
+    expect(buildPreviewFrame('1', '03', '0', '1.5', 'read')).toBeNull();
+  });
+
+  it('read count "10abc" → null (trailing garbage rejected)', () => {
+    expect(buildPreviewFrame('1', '03', '0', '10abc', 'read')).toBeNull();
+  });
+
+  it('FC06 write value "5x" → null (partial token rejected)', () => {
+    expect(buildPreviewFrame('1', '06', '0', '5x', 'write')).toBeNull();
+  });
+
+  it('FC06 write value "0x10" → null (hex not allowed in decimal value field)', () => {
+    expect(buildPreviewFrame('1', '06', '0', '0x10', 'write')).toBeNull();
+  });
+
+  it('FC16 write list "10,1.5,30" → null (one float token rejected)', () => {
+    expect(buildPreviewFrame('1', '10', '0', '10,1.5,30', 'write')).toBeNull();
+  });
+
+  it('FC16 write list "10,0x10" → null (hex token rejected)', () => {
+    expect(buildPreviewFrame('1', '10', '0', '10,0x10', 'write')).toBeNull();
+  });
+
+  it('address still accepts 0x prefix (unchanged) while value stays decimal', () => {
+    expect(buildPreviewFrame('1', '06', '0x0010', '256', 'write')).not.toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8b. parseValueList
+// ─────────────────────────────────────────────────────────────────────────────
+describe('parseValueList', () => {
+  it('splits on commas', () => {
+    expect(parseValueList('10,20,30')).toEqual([10, 20, 30]);
+  });
+
+  it('splits on whitespace and commas, dropping empties', () => {
+    expect(parseValueList(' 10 , 20,  30 ')).toEqual([10, 20, 30]);
+  });
+
+  it('empty / whitespace-only string → []', () => {
+    expect(parseValueList('')).toEqual([]);
+    expect(parseValueList('   ')).toEqual([]);
+  });
+
+  it('non-numeric tokens become NaN', () => {
+    const result = parseValueList('10,x,30');
+    expect(result.length).toBe(3);
+    expect(result[0]).toBe(10);
+    expect(Number.isNaN(result[1])).toBe(true);
+    expect(result[2]).toBe(30);
+  });
+
+  it('rejects partial/float/hex tokens as NaN (strict integers only)', () => {
+    // "1.5" → 1, "5x" → 5, "0x10" → 0, "10abc" → 10 under parseInt; strict parse gives NaN.
+    const result = parseValueList('1.5,5x,0x10,10abc');
+    expect(result.length).toBe(4);
+    for (const v of result) {
+      expect(Number.isNaN(v)).toBe(true);
+    }
+  });
+
+  it('keeps valid signed integers intact', () => {
+    expect(parseValueList('0, 1, 42, -3')).toEqual([0, 1, 42, -3]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8c. parseStrictInt
+// ─────────────────────────────────────────────────────────────────────────────
+describe('parseStrictInt', () => {
+  it('parses whole signed integers', () => {
+    expect(parseStrictInt('0')).toBe(0);
+    expect(parseStrictInt(' 42 ')).toBe(42);
+    expect(parseStrictInt('-7')).toBe(-7);
+  });
+
+  it('rejects float / partial / hex / garbage tokens as NaN', () => {
+    expect(Number.isNaN(parseStrictInt('1.5'))).toBe(true);
+    expect(Number.isNaN(parseStrictInt('5x'))).toBe(true);
+    expect(Number.isNaN(parseStrictInt('0x10'))).toBe(true);
+    expect(Number.isNaN(parseStrictInt('10abc'))).toBe(true);
+    expect(Number.isNaN(parseStrictInt(''))).toBe(true);
   });
 });
 
