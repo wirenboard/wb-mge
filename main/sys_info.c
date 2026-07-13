@@ -126,7 +126,10 @@ esp_err_t sys_info_init(void)
     ESP_LOGI(TAG, "Firmware version: %s", sys_info.firmware_ver);
     ESP_LOGI(TAG, "Firmware GIT info: %s", sys_info.firmware_git_info);
 
-    // Detect PSRAM availability
+    // Detect PSRAM availability. The esp_psram component (and thus
+    // esp_psram_is_initialized/esp_psram_get_size) is only linked when
+    // CONFIG_SPIRAM is enabled (WB-MGU / mgu_v1); WB-MGE (mge_v3) builds it out.
+#if CONFIG_SPIRAM
     sys_info.psram_available = esp_psram_is_initialized();
     if (sys_info.psram_available) {
         sys_info.psram_size_kb = (uint32_t)(esp_psram_get_size() / 1024);
@@ -135,6 +138,11 @@ esp_err_t sys_info_init(void)
         sys_info.psram_size_kb = 0;
         ESP_LOGI(TAG, "PSRAM not available");
     }
+#else
+    sys_info.psram_available = false;
+    sys_info.psram_size_kb = 0;
+    ESP_LOGI(TAG, "PSRAM not supported on this board");
+#endif
 
     return ESP_OK;
 }

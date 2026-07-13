@@ -53,6 +53,9 @@
 #ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"
 
+#elif defined(MODEL_mgu_v1)
+    #define DEVICE_MODEL            "WB-MGU v.1"
+
 #elif QEMU_BUILD
     // QEMU build
     #define DEVICE_MODEL            "QEMU WB-MGE v.3"
