@@ -789,6 +789,63 @@ paths:
                 type: string
                 format: binary
 
+  /roboto-latin-wght-normal.woff2:
+    get:
+      summary: Get Roboto (latin subset) web font
+      description: Serves the embedded Roboto latin variable font (WOFF2). Public static asset served for the login page before authentication.
+      security: []  # No authentication required for static font asset
+      responses:
+        '200':
+          description: Roboto latin variable font (WOFF2)
+          content:
+            font/woff2:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: ['public, max-age=31536000, immutable']
+
+  /roboto-cyrillic-wght-normal.woff2:
+    get:
+      summary: Get Roboto (cyrillic subset) web font
+      description: Serves the embedded Roboto cyrillic variable font (WOFF2). Public static asset served for the login page before authentication.
+      security: []  # No authentication required for static font asset
+      responses:
+        '200':
+          description: Roboto cyrillic variable font (WOFF2)
+          content:
+            font/woff2:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: ['public, max-age=31536000, immutable']
+
+  /roboto-cyrillic-ext-wght-normal.woff2:
+    get:
+      summary: Get Roboto (cyrillic-ext subset) web font
+      description: Serves the embedded Roboto cyrillic-ext variable font (WOFF2). Public static asset served for the login page before authentication.
+      security: []  # No authentication required for static font asset
+      responses:
+        '200':
+          description: Roboto cyrillic-ext variable font (WOFF2)
+          content:
+            font/woff2:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: ['public, max-age=31536000, immutable']
+
   /hostname:
     get:
       summary: Get device hostname
@@ -1109,6 +1166,25 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+
+  /gcov:
+    get:
+      summary: Stream on-target code-coverage data (coverage builds only)
+      description: >
+        Streams the concatenated gcfn+gcda records for every instrumented
+        translation unit as a chunked application/octet-stream. On the host
+        the stream is reassembled via `xtensa-esp-elf-gcov-tool merge-stream`.
+        This endpoint is present ONLY in coverage builds (COVERAGE_BUILD) and
+        is absent from production firmware.
+      security: []  # No authentication required
+      responses:
+        '200':
+          description: Concatenated gcfn+gcda coverage stream
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
 
 components:
   securitySchemes:
