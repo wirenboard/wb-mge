@@ -16,6 +16,7 @@ import InfoRow from '@/components/InfoRow.vue';
 import Heading from '@/components/Heading.vue';
 import Info from '@/components/Info.vue';
 import InputNumber from '@/components/InputNumber.vue';
+import PasswordInput from '@/components/PasswordInput.vue';
 import FileUpload from '@/components/FileUpload.vue';
 import Layout from '@/components/Layout.vue';
 import { api } from '@/utils/api';
@@ -218,18 +219,17 @@ const updateInterface = () => {
               </div>
               <div class="field">
                 <label for="new-password">{{ t('password') }}</label>
-                <input
+                <PasswordInput
                   id="new-password"
                   v-model="settings!.pass"
                   :placeholder="t('pass_placeholder')"
                   :autocomplete="isChanged(['pass']) ? 'new-password' : 'off'"
-                  type="password"
                   name="new-password"
                   pattern="^[\x20-\x7E]+$"
                   minlength="1"
                   maxlength="31"
                   required
-                  @input="(ev) => onCustomValidation(ev, t('wrong_password_pattern'))"
+                  @input="(ev: Event) => onCustomValidation(ev, t('wrong_password_pattern'))"
                 />
               </div>
               <div class="field">

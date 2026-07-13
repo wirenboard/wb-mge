@@ -11,6 +11,7 @@ import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import IpInput from '@/components/IpInput.vue';
+import PasswordInput from '@/components/PasswordInput.vue';
 import Switch from '@/components/Switch.vue';
 import { onCustomValidation } from '@/utils/validation';
 
@@ -189,7 +190,7 @@ const addNetwork = () => {
                 <template v-if="wifiSettings.ap_auth !== 'open'">
                   <div class="field">
                     <label for="ap_pass">{{ t('password') }}</label>
-                    <input
+                    <PasswordInput
                       id="ap_pass"
                       v-model="wifiSettings.ap_pass"
                       required
@@ -197,9 +198,8 @@ const addNetwork = () => {
                       pattern="[\x20-\x7E]{8,63}"
                       minlength="8"
                       maxlength="63"
-                      type="password"
                       name="ap_pass"
-                      @input="(ev) => onCustomValidation(ev, t('wrong_pass_pattern'))"
+                      @input="(ev: Event) => onCustomValidation(ev, t('wrong_pass_pattern'))"
                     />
                   </div>
                 </template>
@@ -275,7 +275,7 @@ const addNetwork = () => {
                 <template v-if="wifiSettings.sta_auth !== 'open'">
                   <div class="field">
                     <label for="sta_pass">{{ t('password') }}</label>
-                    <input
+                    <PasswordInput
                       id="sta_pass"
                       v-model="wifiSettings.sta_pass"
                       required
@@ -283,9 +283,8 @@ const addNetwork = () => {
                       pattern="[\x20-\x7E]{8,63}"
                       minlength="8"
                       maxlength="63"
-                      type="password"
                       name="sta_pass"
-                      @input="(ev) => onCustomValidation(ev, t('wrong_pass_pattern'))"
+                      @input="(ev: Event) => onCustomValidation(ev, t('wrong_pass_pattern'))"
                     />
                   </div>
                 </template>
