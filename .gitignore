@@ -15,6 +15,10 @@ sdkconfig
 sdkconfig.old
 sdkconfig.native
 sdkconfig.native.old
+sdkconfig.mge_v3
+sdkconfig.mge_v3.old
+sdkconfig.mgu_v1
+sdkconfig.mgu_v1.old
 sdkconfig.qemu_build
 sdkconfig.qemu_build.old
 dependencies.lock

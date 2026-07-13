@@ -13,6 +13,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "array_size.h"
+#include "board_pins.h"
 #include <string.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
@@ -20,14 +21,7 @@
 
 
 #define SERIAL_PORT_NUM_1             1
-#define SERIAL_INPUT_PIN_1            GPIO_NUM_9
-#define SERIAL_OUTPUT_PIN_1           GPIO_NUM_10
-#define SERIAL_IO_PIN_1               GPIO_NUM_4
-
 #define SERIAL_PORT_NUM_2             2
-#define SERIAL_INPUT_PIN_2            GPIO_NUM_12
-#define SERIAL_OUTPUT_PIN_2           GPIO_NUM_14
-#define SERIAL_IO_PIN_2               GPIO_NUM_15
 
 #define RS485_BUSY_TIMEOUT_MS         5000
 

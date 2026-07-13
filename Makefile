@@ -13,12 +13,20 @@ EIM_IDF_VERSION := v5.4
 # device signature
 #######################################
 
-TARGET := mge_v3
+# Buildable device signatures. Each must match the eFuse signature and its
+# fw-releases.wirenboard.com/fw/by-signature/<sig> line.
+MODEL_LIST := mge_v3 mgu_v1
+# Default build target; override e.g. `make TARGET=mgu_v1 build-idf-project`.
+TARGET ?= mge_v3
 
 MODEL_DEFINE := $(shell echo MODEL_$(TARGET))
 
 DEFS += DEVICE_SIGNATURE=$(TARGET)
 DEFS += MODEL_DEFINE=$(MODEL_DEFINE)
+
+# Per-target generated sdkconfig so switching TARGET never reuses another
+# signature's PSRAM/pin config (mirrors the dedicated sdkconfig.qemu_build).
+SDKCONFIG_FILE := sdkconfig.$(TARGET)
 
 #######################################
 # Directories
@@ -218,9 +226,11 @@ apply-idf-patches:
 	@echo "Applying IDF patches..."
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
 
+# NOTE: the build/ dir is shared across signatures. When switching TARGET
+# (mge_v3 <-> mgu_v1) run `make clean` first to avoid a stale/mixed artifact.
 build-idf-project: apply-idf-patches
 	@echo 'Building ESP-IDF project'
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native $(addprefix -D, $(DEFS)) build
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
 
 prepare_release:
@@ -232,11 +242,11 @@ prepare_release:
 clean:
 	@echo 'Cleaning project'
 	@rm -rf $(BUILD_DIR)
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native fullclean
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) fullclean
 	@rm -rf $(RELEASE_DIR)
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
-	@rm -f sdkconfig sdkconfig.old sdkconfig.native sdkconfig.native.old sdkconfig.qemu_build sdkconfig.qemu_build.old
+	@rm -f sdkconfig sdkconfig.old sdkconfig.native sdkconfig.native.old sdkconfig.qemu_build sdkconfig.qemu_build.old sdkconfig.mge_v3 sdkconfig.mge_v3.old sdkconfig.mgu_v1 sdkconfig.mgu_v1.old
 	@echo 'Cleaning unittests'
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
@@ -250,7 +260,7 @@ clean:
 #######################################
 
 flash:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native flash
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" flash
 
 # Flash all partitions (bootloader + partition table + OTA data + app) via esptool directly.
 # Useful when idf.py flash cannot detect the port automatically.
@@ -264,7 +274,7 @@ flash-all:
 		0x90000 build/$(TARGET).bin
 
 monitor:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.native monitor
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" monitor
 
 #######################################
 # OTA flash
