@@ -327,11 +327,11 @@ void test_wifi_validators(void)
     // Test WiFi password validators
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_AP_PASS, "wifipass123"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_password_called, "validate_password should be called for AP password");
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_wifi_password_called, "validate_wifi_password should be called for AP password");
 
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_STA_PASS, "wifipass456"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_password_called, "validate_password should be called for STA password");
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_wifi_password_called, "validate_wifi_password should be called for STA password");
 }
 
 void test_serial_validators(void)

@@ -8,6 +8,8 @@
 #define MAX_SSID_LEN                        31          // In ESP-IDF there is ssid[32], terminating '\0' included
 #define MAX_LOGIN_LEN                       31
 #define MAX_PASS_LEN                        31
+#define MIN_WIFI_PASS_LEN                   8
+#define MAX_WIFI_PASS_LEN                   63
 #define BAUDRATE_MIN                        1200
 #define BAUDRATE_MAX                        115200
 
@@ -370,6 +372,39 @@ bool validate_password(const char *value)
     }
 
     // Basic password validation - can be enhanced with regex or additional rules
+    for (size_t i = 0; i < len; i++) {
+        char c = value[i];
+        if (c < ' ') {
+            return false;
+        }
+        if (c > '~') {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Wi-Fi passphrase validation (sta_pass / ap_pass).
+// Allows either an empty string (open network, no passphrase) or a WPA2
+// passphrase of 8..63 printable characters (0x20..0x7E inclusive).
+bool validate_wifi_password(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+
+    size_t len = strlen(value);
+    if (len == 0) {
+        return true;  // empty means open network (no passphrase)
+    }
+    if (len < MIN_WIFI_PASS_LEN) {
+        return false;
+    }
+    if (len > MAX_WIFI_PASS_LEN) {
+        return false;
+    }
+
+    // Allow only printable symbols in range 0x20 - 0x7E
     for (size_t i = 0; i < len; i++) {
         char c = value[i];
         if (c < ' ') {

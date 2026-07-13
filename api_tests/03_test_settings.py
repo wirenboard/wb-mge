@@ -479,6 +479,63 @@ def test_validation_patterns(api):
         print("✓ Original settings restored")
 
 
+def test_wifi_password_validation(api):
+    """Wi-Fi passphrase validation (G7 fix): open network + WPA2 length bounds.
+
+    Wi-Fi passwords (sta_pass/ap_pass) use a dedicated validator that accepts an
+    empty string (open network, no passphrase) or an 8..63 printable-character
+    WPA2 passphrase — independent of the web-password validator. Validation
+    failures are reported as HTTP 200 with success=false.
+    """
+    original_response = api.get_settings()
+    assert original_response.status_code == 200
+    original = original_response.json()
+
+    try:
+        # Open network: empty sta_pass must now be accepted (this is the open-Wi-Fi fix)
+        response = api.update_settings({"wifi": {"sta_pass": ""}})
+        assert response.status_code == 200
+        assert response.json().get("success") is True, \
+            f"Empty sta_pass (open network) must be accepted: {response.json()}"
+        print("✓ Empty sta_pass (open network) accepted")
+
+        # Open network: empty ap_pass must also be accepted
+        response = api.update_settings({"wifi": {"ap_pass": ""}})
+        assert response.status_code == 200
+        assert response.json().get("success") is True, \
+            f"Empty ap_pass (open network) must be accepted: {response.json()}"
+        print("✓ Empty ap_pass (open network) accepted")
+
+        # Long WPA2 passphrase (32..63 chars) must now be accepted and saved
+        long_pass = "A" * 40
+        response = api.update_settings({"wifi": {"sta_pass": long_pass}})
+        assert response.status_code == 200
+        assert response.json().get("success") is True, \
+            f"40-character sta_pass must be accepted: {response.json()}"
+        check = api.get_settings()
+        assert check.status_code == 200
+        assert check.json()["wifi"]["sta_pass"] == long_pass, \
+            "40-character sta_pass was not saved"
+        print("✓ Long (40-char) Wi-Fi password accepted and saved")
+
+        # Too-short non-empty passphrase (1..7 chars) must be rejected
+        response = api.update_settings({"wifi": {"sta_pass": "short"}})
+        assert response.status_code == 200
+        assert response.json().get("success") is False, \
+            f"5-character (too short) sta_pass must be rejected: {response.json()}"
+        print("✓ Too-short (5-char) Wi-Fi password rejected")
+
+        # Regression control: web password must still reject an empty value
+        response = api.update_settings({"pass": ""})
+        assert response.status_code == 200
+        assert response.json().get("success") is False, \
+            f"Empty web password must still be rejected: {response.json()}"
+        print("✓ Empty web password still rejected (regression control)")
+    finally:
+        api.update_settings(original)
+        print("✓ Original settings restored")
+
+
 def test_settings_partial_update(api):
     """Test POST /settings with sparse payload — must preserve unset fields"""
     response = api.get_settings()

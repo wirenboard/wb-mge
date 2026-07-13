@@ -174,7 +174,7 @@ const addNetwork = () => {
                     name="ap_ssid"
                     pattern="^[\x20-\x7E]{1,31}$"
                     minlength="1"
-                    maxlength="32"
+                    maxlength="31"
                     required
                     @input="(ev) => onCustomValidation(ev, t('wrong_ssid_pattern'))"
                   />
@@ -275,7 +275,18 @@ const addNetwork = () => {
                 <template v-if="wifiSettings.sta_auth !== 'open'">
                   <div class="field">
                     <label for="sta_pass">{{ t('password') }}</label>
-                    <input id="sta_pass" v-model="wifiSettings.sta_pass" required :placeholder="t('pass_placeholder')" type="password" name="sta_pass" />
+                    <input
+                      id="sta_pass"
+                      v-model="wifiSettings.sta_pass"
+                      required
+                      :placeholder="t('pass_placeholder')"
+                      pattern="[\x20-\x7E]{8,63}"
+                      minlength="8"
+                      maxlength="63"
+                      type="password"
+                      name="sta_pass"
+                      @input="(ev) => onCustomValidation(ev, t('wrong_pass_pattern'))"
+                    />
                   </div>
                 </template>
 

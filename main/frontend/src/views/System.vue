@@ -209,6 +209,7 @@ const updateInterface = () => {
                   v-model="settings!.login"
                   type="text"
                   pattern="^[a-zA-Z0-9_\-]+$"
+                  maxlength="31"
                   name="username"
                   :autocomplete="isChanged(['login']) ? 'username' : 'off'"
                   required
@@ -225,6 +226,8 @@ const updateInterface = () => {
                   type="password"
                   name="new-password"
                   pattern="^[\x20-\x7E]+$"
+                  minlength="1"
+                  maxlength="31"
                   required
                   @input="(ev) => onCustomValidation(ev, t('wrong_password_pattern'))"
                 />

@@ -3,6 +3,8 @@
 
 #include "setting_validators.h"
 
+#include <string.h>
+
 void setUp(void)
 {
 
@@ -405,6 +407,47 @@ void test_validate_password(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_password(invalid_password_with_null), "Password with control character should be invalid");
 }
 
+// Test validate_wifi_password function (sta_pass / ap_pass)
+void test_validate_wifi_password(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_wifi_password function");
+    LOG_MESSAGE();
+
+    // Valid Wi-Fi passphrases
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password(""), "Empty Wi-Fi password (open network) should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password("12345678"), "8-character Wi-Fi password should be valid (inclusive lower length bound)");
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password("pass with space"), "Wi-Fi password with space should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password("P@ssw0rd!~"), "Wi-Fi password with special chars and tilde (0x7E upper bound) should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password("        "), "8 spaces (0x20 lower printable bound) should be valid");
+
+    // Exactly 63 printable chars is the maximum WPA2 passphrase length (valid)
+    char wifi_pass_63[64];
+    memset(wifi_pass_63, 'A', 63);
+    wifi_pass_63[63] = '\0';
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password(wifi_pass_63), "63-character Wi-Fi password should be valid (inclusive upper length bound)");
+
+    // Invalid Wi-Fi passphrases
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(NULL), "NULL Wi-Fi password should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password("1234567"), "7-character (non-empty, too short) Wi-Fi password should be invalid");
+
+    // 64 printable chars exceeds the maximum length (invalid)
+    char wifi_pass_64[65];
+    memset(wifi_pass_64, 'A', 64);
+    wifi_pass_64[64] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_64), "64-character Wi-Fi password should be invalid");
+
+    // Non-printable characters within an otherwise valid-length password
+    char wifi_pass_with_tab[] = "pass\twords";  // Tab character (ASCII 9)
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_with_tab), "Wi-Fi password with tab character should be invalid");
+
+    char wifi_pass_with_us[] = "pass\x1Fwords";  // Unit Separator character (ASCII 31)
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_with_us), "Wi-Fi password with control character (0x1F) should be invalid");
+
+    char wifi_pass_with_del[] = "password\x7F";  // DEL character (ASCII 127)
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_with_del), "Wi-Fi password with DEL character (0x7F) should be invalid");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -425,6 +468,7 @@ int main(void)
     RUN_TEST(test_validate_bool);
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);
+    RUN_TEST(test_validate_wifi_password);
     RUN_TEST(test_validate_timeout);
 
     return UNITY_END();
