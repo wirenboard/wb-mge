@@ -545,9 +545,13 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
                 result = CACHE_LOOKUP_FOUND;
 
                 /* Age check: age_s is maintained by cache_age_task (saturating counter).
-                 * value_timeout_s == 0 disables the check — always return FOUND.          */
+                 * value_timeout_s == 0 disables the check — always return FOUND.
+                 * The comparison is >= so that an entry reaching the timeout is
+                 * stale: age_s saturates at CACHE_AGE_MAX_S (65535), so a strict >
+                 * could never fire for value_timeout_s == 65535 and such entries
+                 * would be served as fresh forever.                                       */
                 if (value_timeout_s > 0) {
-                    if (e->age_s > value_timeout_s) {
+                    if (e->age_s >= value_timeout_s) {
                         result = CACHE_LOOKUP_STALE;
                     }
                 }
