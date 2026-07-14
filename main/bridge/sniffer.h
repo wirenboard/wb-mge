@@ -15,7 +15,7 @@
 typedef void* httpd_handle_t;
 
 /* Internal packet structure; exposed here only for unit test builds so that
- * format_timeout_json / format_packet_json can be tested without including
+ * format_packet_json can be tested without including
  * the full FreeRTOS / ESP-IDF headers. */
 typedef struct {
     uint8_t  port;

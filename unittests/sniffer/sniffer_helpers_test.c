@@ -18,7 +18,6 @@ void     strip_arbitration(uint8_t *data, size_t len, uint8_t **effective, size_
 bool     fm_is_slave_subcmd(uint8_t subcmd);
 
 /* Forward declarations for JSON formatter functions */
-int      format_timeout_json(char *buf, size_t buf_size, uint32_t id, const sniff_packet_t *pkt);
 int      format_packet_json(char *buf, size_t buf_size, uint32_t id, const sniff_packet_t *pkt);
 
 /* pdu_direction_t is now exported from sniffer.h under __unittest_env__,
@@ -478,105 +477,6 @@ void test_fm_is_slave_subcmd_master_00(void)
     LOG_MESSAGE();
 
     TEST_ASSERT_FALSE(fm_is_slave_subcmd(0x00));
-}
-
-/* ============================================================
- * format_timeout_json tests
- * ============================================================ */
-
-void test_json_timeout_type_field(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test format_timeout_json - type field is 'timeout', no sender/raw/size/crc_valid");
-    LOG_MESSAGE();
-
-    /* is_timeout packet must produce "type":"timeout" and must NOT contain
-     * "sender", "raw", "size", or "crc_valid" fields */
-    sniff_packet_t pkt = {
-        .port = 0,
-        .timestamp_us = 12345678,
-        .is_master = true,
-        .crc_valid = true,
-        .is_timeout = true,
-        .slave_id = 0x83,
-        .function = 0x04,
-        .data = {0},
-        .data_len = 0,
-    };
-    char buf[512];
-    int n = format_timeout_json(buf, sizeof(buf), 1, &pkt);
-    TEST_ASSERT_GREATER_THAN(0, n);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"type\":\"timeout\""));
-    TEST_ASSERT_NULL(strstr(buf, "\"sender\""));
-    TEST_ASSERT_NULL(strstr(buf, "\"raw\""));
-    TEST_ASSERT_NULL(strstr(buf, "\"size\""));
-    TEST_ASSERT_NULL(strstr(buf, "\"crc_valid\""));
-}
-
-void test_json_timeout_port_name(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test format_timeout_json - port index 0→port:1, index 1→port:2");
-    LOG_MESSAGE();
-
-    /* port index 0 → "port":1, port index 1 → "port":2 */
-    sniff_packet_t pkt = { .port = 0, .timestamp_us = 0, .slave_id = 1, .function = 1 };
-    char buf[512];
-    format_timeout_json(buf, sizeof(buf), 1, &pkt);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"port\":1"));
-
-    pkt.port = 1;
-    format_timeout_json(buf, sizeof(buf), 1, &pkt);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"port\":2"));
-}
-
-void test_json_timeout_id_value(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test format_timeout_json - id field matches supplied counter value");
-    LOG_MESSAGE();
-
-    /* id field must match the supplied counter value */
-    sniff_packet_t pkt = { .port = 0, .timestamp_us = 0, .slave_id = 1, .function = 1 };
-    char buf[512];
-    format_timeout_json(buf, sizeof(buf), 42, &pkt);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"id\":42"));
-}
-
-void test_json_timeout_slave_and_function(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test format_timeout_json - slave_id and function decimal encoding");
-    LOG_MESSAGE();
-
-    /* slave_id and function must appear as decimal numbers */
-    sniff_packet_t pkt = { .port = 0, .timestamp_us = 0, .slave_id = 0x83, .function = 0x04 };
-    char buf[512];
-    format_timeout_json(buf, sizeof(buf), 1, &pkt);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"slave_id\":131"));
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"function\":4"));
-}
-
-void test_json_timeout_max_length_fits_in_buffer(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test format_timeout_json - worst-case timeout fits in SNIFFER_JSON_BUF_SIZE bytes");
-    LOG_MESSAGE();
-
-    /* Worst-case timeout: id=UINT32_MAX, port=0 (name=1), timestamp_us=UINT64_MAX,
-     * slave_id=255, function=255. Result must fit in SNIFFER_JSON_BUF_SIZE bytes. */
-    sniff_packet_t pkt = {
-        .port         = 0,
-        .timestamp_us = UINT64_MAX,
-        .slave_id     = 255,
-        .function     = 255,
-    };
-    char buf[SNIFFER_JSON_BUF_SIZE];
-    int n = format_timeout_json(buf, sizeof(buf), UINT32_MAX, &pkt);
-    TEST_ASSERT_LESS_THAN((int)sizeof(buf), n);
-    if (n < (int)sizeof(buf)) {
-        TEST_ASSERT_EQUAL('\0', buf[n]);
-    }
 }
 
 /* ============================================================
@@ -1052,13 +952,6 @@ int main(void)
     RUN_TEST(test_fm_is_slave_subcmd_master_13);
     RUN_TEST(test_fm_is_slave_subcmd_master_ff);
     RUN_TEST(test_fm_is_slave_subcmd_master_00);
-
-    /* format_timeout_json tests */
-    RUN_TEST(test_json_timeout_type_field);
-    RUN_TEST(test_json_timeout_port_name);
-    RUN_TEST(test_json_timeout_id_value);
-    RUN_TEST(test_json_timeout_slave_and_function);
-    RUN_TEST(test_json_timeout_max_length_fits_in_buffer);
 
     /* format_packet_json tests */
     RUN_TEST(test_json_packet_type_field);

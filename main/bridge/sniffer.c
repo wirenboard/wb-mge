@@ -115,19 +115,6 @@ SNIFFER_STATIC void bytes_to_hex(const uint8_t *data, uint16_t len, char *out, s
     out[pos] = '\0';
 }
 
-/* Format a timeout JSON message into buf (at most buf_size bytes).
- * Returns the number of characters written (like snprintf). */
-SNIFFER_STATIC int format_timeout_json(char *buf, size_t buf_size,
-                                       uint32_t id, const sniff_packet_t *pkt)
-{
-    return snprintf(buf, buf_size,
-        "{\"type\":\"timeout\",\"id\":%" PRIu32 ",\"port\":%u"
-        ",\"timestamp_us\":%" PRIu64
-        ",\"slave_id\":%u,\"function\":%u}",
-        id, port_index_to_name(pkt->port), pkt->timestamp_us,
-        pkt->slave_id, pkt->function);
-}
-
 /* Format a normal (non-timeout) packet JSON message into buf.
  * Returns the number of characters written (like snprintf). */
 SNIFFER_STATIC int format_packet_json(char *buf, size_t buf_size,
