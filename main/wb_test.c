@@ -1,7 +1,9 @@
 #include "esp_err.h"
 #include <esp_http_server.h>
+#include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "auth.h"
+#include "board_pins.h"
 #include "json_utils.h"
 #include "bridge/port_manager.h"
 #include "esp_log.h"
@@ -10,29 +12,31 @@
 #include "update_rs485_mio_gpio_states.h"
 
 
-#define BRIDGE_PORT_INDEX       0
-#define BRIDGE_PORT_INDEX_2     1   // RS-485-2 (UART2); freed so LEDC can reuse its TX pin (GPIO14)
+// The clock-out test drives the TX and DE/RE lines of both serial ports directly.
+// The pins come from board_pins.h (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the GPIO numbers
+// differ per board, and hardcoding the WB-MGE ones drove the wrong pins on WB-MGU
+// (there GPIO4 is an input, the port-2 RX line).
+#define BRIDGE_PORT_INDEX       0   // port 1; freed so LEDC can reuse its TX pin
+#define BRIDGE_PORT_INDEX_2     1   // port 2; freed so LEDC can reuse its TX pin
 
-#define CLK_OUT_PIN             GPIO_NUM_10
+#define CLK_OUT_PIN             SERIAL_OUTPUT_PIN_1
 #define CLK_OUT_FREQ_HZ         100000
 #define CLK_OUT_PWM_CHANNEL     LEDC_CHANNEL_0
 #define CLK_OUT_PWM_TIMER       LEDC_TIMER_0
 
-// Second 100 kHz output on the RS-485-2 UART2 TX line (GPIO14). Shares
-// CLK_OUT_PWM_TIMER with the RS-485-1 output, so both ports carry the same
-// waveform and both activity LEDs blink in lockstep.
-#define CLK_OUT_PIN_2           GPIO_NUM_14
+// Second 100 kHz output, on the port-2 TX line. Shares CLK_OUT_PWM_TIMER with the
+// port-1 output, so both ports carry the same waveform and both activity LEDs blink
+// in lockstep.
+#define CLK_OUT_PIN_2           SERIAL_OUTPUT_PIN_2
 #define CLK_OUT_PWM_CHANNEL_2   LEDC_CHANNEL_1
 
-// RS-485 transceiver driver-enable (DE/RE) pins. Both must be driven HIGH for the
-// square wave to actually reach the RS-485 bus: with DE low the TX pin only toggles
-// on the logic side, so the activity LED lights but nothing is emitted on the line.
-// CLK_OUT_EN_PIN   = SERIAL_IO_PIN_1 (RS-485-1 DE/RE).
-// CLK_OUT_EN_PIN_2 = SERIAL_IO_PIN_2 (RS-485-2 DE/RE, U4.DE). The RS-485-2 bus is
-//   shared with the MIO transceiver U10, which stays idle here because both ports
-//   are held DISABLED for the duration of the test.
-#define CLK_OUT_EN_PIN          GPIO_NUM_4
-#define CLK_OUT_EN_PIN_2        GPIO_NUM_15
+// Transceiver driver-enable (DE/RE) pins. Both must be driven HIGH for the square
+// wave to actually reach the bus: with DE low the TX pin only toggles on the logic
+// side, so the activity LED lights but nothing is emitted on the line.
+// On WB-MGE the port-2 bus is shared with the MIO transceiver; it stays idle here
+// because both ports are held DISABLED for the duration of the test.
+#define CLK_OUT_EN_PIN          SERIAL_IO_PIN_1
+#define CLK_OUT_EN_PIN_2        SERIAL_IO_PIN_2
 
 #define CLK_OUT_JSON_FIELD      "clock_out"
 
@@ -72,23 +76,30 @@ static ledc_channel_config_t channel_config_2 = {
     .flags.output_invert = 0
 };
 
-gpio_config_t gpio_clk_en_config = {
-    .pin_bit_mask = (1ULL << CLK_OUT_EN_PIN) | (1ULL << CLK_OUT_EN_PIN_2),
-    .mode = GPIO_MODE_OUTPUT,
-    .pull_up_en = GPIO_PULLUP_DISABLE,
-    .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    .intr_type = GPIO_INTR_DISABLE
-};
-
 static const char* TAG = "wb_test";
+
+
+// Put a DE/RE pin into a driven-LOW output state (transceiver in receive mode).
+// The level is latched BEFORE the pin becomes an output: gpio_reset_pin() does not
+// clear the output latch (GPIO_OUT_REG), so on the second and later runs of the test
+// the latch still holds whatever the previous owner left there — the UART leaves it
+// HIGH after driving half-duplex direction control. Enabling the output driver first
+// would then briefly assert DE (on the WB-MGE port-2 line that is a pulse onto the
+// bus shared with the MIO transceiver). Same order as serial_set_tx_disabled() in
+// serial.c.
+static void de_pin_latch_low_output(gpio_num_t pin)
+{
+    gpio_reset_pin(pin);
+    gpio_set_level(pin, 0);
+    gpio_set_direction(pin, GPIO_MODE_OUTPUT);
+}
 
 
 static void start_clock_out(void)
 {
-    gpio_config(&gpio_clk_en_config);
     // Keep both transceivers in receive mode until the waveform is running.
-    gpio_set_level(CLK_OUT_EN_PIN, 0);
-    gpio_set_level(CLK_OUT_EN_PIN_2, 0);
+    de_pin_latch_low_output(CLK_OUT_EN_PIN);
+    de_pin_latch_low_output(CLK_OUT_EN_PIN_2);
 
     ledc_timer_config_t tim_conf = timer_config;
     tim_conf.deconfigure = false;
@@ -97,7 +108,7 @@ static void start_clock_out(void)
     ledc_channel_config_t ch_conf = channel_config;
     ledc_channel_config(&ch_conf);
 
-    // RS-485-2: drive UART2 TX (GPIO14) with the same 100 kHz timer.
+    // Port 2: drive its TX line with the same 100 kHz timer.
     ledc_channel_config_t ch_conf2 = channel_config_2;
     ledc_channel_config(&ch_conf2);
 
@@ -123,6 +134,11 @@ static void stop_clock_out(void)
     tim_conf.deconfigure = true;
     ledc_timer_config(&tim_conf);
 
+    // Release all four pins so port_manager_apply_settings() can hand the TX and
+    // DE lines back to the UART. The DE pins were actively driven LOW just above,
+    // so nothing is asserted while they float back to their default input state;
+    // start_clock_out() re-latches them LOW anyway rather than trusting the latch
+    // left here, since the UART owns these pins in between two runs of the test.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
@@ -153,6 +169,10 @@ static esp_err_t process_request_json(cJSON *request_json)
     if (cmd_item->valueint) {
         if (!clock_out_en) {
             clock_out_en = true;
+            // Freeze the ports first: from here on the runtime mode (DISABLED)
+            // deliberately differs from the mode in NVS, and nothing but this test
+            // may re-init the ports while the LEDC drives their TX/DE pins.
+            port_manager_set_ports_frozen(true);
             // Disable both ports so the LEDC can take over their TX pins, but do NOT
             // persist the DISABLED mode: NVS must keep the user's configured mode so
             // that losing power during the test cannot wipe the port configuration.
@@ -178,8 +198,13 @@ static esp_err_t process_request_json(cJSON *request_json)
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
+            // The LEDC has released the TX/DE pins, so the ports may be brought up
+            // again: release the freeze before apply_settings, which is a no-op
+            // while the ports are frozen.
+            port_manager_set_ports_frozen(false);
             // The test never touched NVS, so the configured mode is still there:
             // re-read it and re-initialise both ports from the persisted settings.
+            // This also picks up any settings written while the test was running.
             esp_err_t err = port_manager_apply_settings(BRIDGE_PORT_INDEX);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to restore port mode after clock_out: %s", esp_err_to_name(err));

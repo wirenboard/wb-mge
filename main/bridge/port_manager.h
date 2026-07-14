@@ -129,11 +129,44 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled);
 bool port_manager_get_cache(unsigned port_index);
 
 /**
+ * @brief Freeze / unfreeze all ports for the duration of the factory test.
+ *
+ * The factory 100 kHz clock-out test drives the RS-485 TX/DE pins directly with
+ * the LEDC peripheral, after transiently forcing both ports to PM_MODE_DISABLED
+ * (runtime only — NVS keeps the user's configured mode). That mismatch between
+ * the runtime mode and NVS would otherwise make port_manager_check_settings_changed()
+ * report "changed" for every port, so any unrelated POST /settings would run
+ * port_manager_apply_settings() and re-init the ports on top of the running
+ * waveform.
+ *
+ * While frozen:
+ *   - port_manager_check_settings_changed() always reports false;
+ *   - port_manager_apply_settings() is a no-op returning ESP_OK.
+ *
+ * NVS is not affected either way. Unfreeze first, then call
+ * port_manager_apply_settings() for each port to bring them back up from NVS
+ * (this also picks up any settings written while the test was running).
+ *
+ * @param frozen  True to freeze the ports, false to release them.
+ */
+void port_manager_set_ports_frozen(bool frozen);
+
+/**
+ * @brief Return whether the ports are currently frozen by the factory test.
+ *
+ * @return true if frozen (see port_manager_set_ports_frozen()).
+ */
+bool port_manager_ports_frozen(void);
+
+/**
  * @brief Re-apply settings for a port, re-reading mode and parameters from NVS.
  *
  * Deinitialises the current mode and re-initialises from the current NVS
  * settings, including the port mode.  Called by settings_update when any
  * serial, bridge, or mode parameters change.
+ *
+ * No-op (returns ESP_OK without touching the port) while the ports are frozen
+ * by the factory test — see port_manager_set_ports_frozen().
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @return ESP_OK on success.
@@ -146,6 +179,9 @@ esp_err_t port_manager_apply_settings(unsigned port_index);
  * For TCP_BRIDGE mode this delegates to bridge_port_check_settings_changed().
  * For other modes it compares the saved serial config and port mode against
  * the current NVS values.
+ *
+ * Always reports false while the ports are frozen by the factory test — see
+ * port_manager_set_ports_frozen().
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @return true if settings have changed and port_manager_apply_settings()

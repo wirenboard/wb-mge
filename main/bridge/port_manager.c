@@ -50,6 +50,18 @@ typedef struct {
 
 static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
 
+// Set while the factory 100 kHz clock-out test owns the RS-485 TX/DE pins.
+// The test puts both ports into DISABLED transiently (runtime only — NVS keeps
+// the user's configured mode), which makes the runtime mode differ from NVS.
+// Without this flag check_settings_changed() would report "changed" for both
+// ports, so ANY unrelated POST /settings would run apply_settings() and re-init
+// the ports — re-grabbing the TX/DE pins that the LEDC is currently driving.
+// While frozen, check_settings_changed() reports no change and apply_settings()
+// is a no-op, so the ports stay down for the whole test. The test clears the
+// flag on exit and then calls apply_settings() itself to restore both ports
+// from NVS (which also picks up any settings written during the test).
+static bool s_ports_frozen = false;
+
 // Take the per-port init mutex. Lazily creates it on first use so we don't depend
 // on init order (port_manager_init may not have run yet when an early handler is
 // dispatched). portMAX_DELAY because the critical section is the entire reinit and
@@ -556,10 +568,30 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     return ret;
 }
 
+void port_manager_set_ports_frozen(bool frozen)
+{
+    s_ports_frozen = frozen;
+    ESP_LOGI(TAG, "Ports %s", frozen ? "frozen (factory test active)" : "unfrozen");
+}
+
+bool port_manager_ports_frozen(void)
+{
+    return s_ports_frozen;
+}
+
 esp_err_t port_manager_apply_settings(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    // While the factory test owns the TX/DE pins, never bring a port back up:
+    // a settings_update_task already in flight when the test started could
+    // otherwise re-init the port on top of the running LEDC output.
+    if (s_ports_frozen) {
+        ESP_LOGW(TAG, "Port[%u]: apply_settings skipped, ports frozen by factory test",
+                 port_index + 1);
+        return ESP_OK;
     }
 
     pm_lock(port_index);
@@ -576,6 +608,14 @@ esp_err_t port_manager_apply_settings(unsigned port_index)
 bool port_manager_check_settings_changed(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) {
+        return false;
+    }
+
+    // The factory test holds both ports DISABLED at runtime while NVS still has
+    // the user's mode, so a naive compare would report "changed" for every port
+    // and let any unrelated settings write re-init them mid-test. Report no
+    // change instead; the test restores the ports from NVS when it finishes.
+    if (s_ports_frozen) {
         return false;
     }
 
@@ -853,5 +893,6 @@ esp_err_t port_manager_register_handlers(httpd_handle_t server)
 void port_manager_reset_for_test(void)
 {
     memset(pm_ctx, 0, sizeof(pm_ctx));
+    s_ports_frozen = false;
 }
 #endif /* __unittest_env__ */
