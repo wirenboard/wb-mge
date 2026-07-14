@@ -745,19 +745,20 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: >
-            The test could not be started: the RS-485 ports or the I/O bus could not be
-            freed, so driving the TX/DE pins would have collided with a live UART or a
-            live MIO transceiver on the shared RS-485-2 pair. The entry is rolled back
-            (ports and I/O bus restored from the persisted settings) and the test stays
-            off — the device is left exactly as it was. The request itself was valid, so
-            the same request may succeed on retry.
+            The test could not be started: either the RS-485 ports or the I/O bus could
+            not be freed (driving the TX/DE pins would have collided with a live UART or
+            a live MIO transceiver on the shared RS-485-2 pair), or the LEDC refused to
+            produce the waveform. The entry is rolled back (ports and I/O bus restored
+            from the persisted settings, the transceivers left in receive mode) and the
+            test stays off — the device is left exactly as it was. The request itself was
+            valid, so the same request may succeed on retry.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 success: false
-                error: "Cannot start clock_out test: the RS-485 ports or the I/O bus could not be disabled"
+                error: "Cannot start clock_out test: the RS-485 ports, the I/O bus or the clock generator could not be set up"
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 

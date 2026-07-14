@@ -102,32 +102,10 @@ static void de_pin_latch_low_output(gpio_num_t pin)
 }
 
 
-static void start_clock_out(void)
-{
-    // Keep both transceivers in receive mode until the waveform is running.
-    de_pin_latch_low_output(CLK_OUT_EN_PIN);
-    de_pin_latch_low_output(CLK_OUT_EN_PIN_2);
-
-    ledc_timer_config_t tim_conf = timer_config;
-    tim_conf.deconfigure = false;
-    ledc_timer_config(&tim_conf);
-
-    ledc_channel_config_t ch_conf = channel_config;
-    ledc_channel_config(&ch_conf);
-
-    // Port 2: drive its TX line with the same 100 kHz timer.
-    ledc_channel_config_t ch_conf2 = channel_config_2;
-    ledc_channel_config(&ch_conf2);
-
-    // Enable both line drivers so the square wave reaches both RS-485 buses.
-    gpio_set_level(CLK_OUT_EN_PIN, 1);
-    gpio_set_level(CLK_OUT_EN_PIN_2, 1);
-
-    ESP_LOGW(TAG, "100 kHz clock output on RS485-1/RS485-2 TX enabled (all indicator LEDs on)");
-}
-
-
-static void stop_clock_out(void)
+// Tear the LEDC down and release the four pins the test owns (TX + DE of both ports).
+// Also used to roll back a half-configured LEDC when start_clock_out() fails midway:
+// the ledc_* calls simply report an error for a channel/timer that was never set up.
+static void release_clock_out_hw(void)
 {
     // Disable both line drivers before tearing the waveform down.
     gpio_set_level(CLK_OUT_EN_PIN, 0);
@@ -159,7 +137,59 @@ static void stop_clock_out(void)
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
     gpio_reset_pin(CLK_OUT_EN_PIN_2);
+}
 
+
+// Bring the 100 kHz waveform up on the TX line of both ports and enable both line
+// drivers. The DE pins are raised ONLY once every LEDC call has succeeded: if the
+// waveform never started, enabling the drivers would put both transceivers into
+// transmit with a STATIC level on the line — including the RS-485-2 bus — while the
+// API happily reported success. On any error the half-configured LEDC is released and
+// the DE lines stay LOW (receive mode); the caller aborts the test entry.
+static esp_err_t start_clock_out(void)
+{
+    // Keep both transceivers in receive mode until the waveform is running.
+    de_pin_latch_low_output(CLK_OUT_EN_PIN);
+    de_pin_latch_low_output(CLK_OUT_EN_PIN_2);
+
+    ledc_timer_config_t tim_conf = timer_config;
+    tim_conf.deconfigure = false;
+    esp_err_t err = ledc_timer_config(&tim_conf);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "clock_out: ledc_timer_config failed: %s", esp_err_to_name(err));
+        release_clock_out_hw();
+        return err;
+    }
+
+    ledc_channel_config_t ch_conf = channel_config;
+    err = ledc_channel_config(&ch_conf);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "clock_out: ledc_channel_config for RS485-1 TX failed: %s", esp_err_to_name(err));
+        release_clock_out_hw();
+        return err;
+    }
+
+    // Port 2: drive its TX line with the same 100 kHz timer.
+    ledc_channel_config_t ch_conf2 = channel_config_2;
+    err = ledc_channel_config(&ch_conf2);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "clock_out: ledc_channel_config for RS485-2 TX failed: %s", esp_err_to_name(err));
+        release_clock_out_hw();
+        return err;
+    }
+
+    // The waveform is running: enable both line drivers so it reaches both RS-485 buses.
+    gpio_set_level(CLK_OUT_EN_PIN, 1);
+    gpio_set_level(CLK_OUT_EN_PIN_2, 1);
+
+    ESP_LOGW(TAG, "100 kHz clock output on RS485-1/RS485-2 TX enabled (all indicator LEDs on)");
+    return ESP_OK;
+}
+
+
+static void stop_clock_out(void)
+{
+    release_clock_out_hw();
     ESP_LOGW(TAG, "100 kHz clock output on RS485-1/RS485-2 TX disabled");
 }
 
@@ -237,9 +267,19 @@ static esp_err_t process_request_json(cJSON *request_json)
                 abort_clock_out_entry();
                 return ESP_ERR_INVALID_STATE;
             }
-            // Both ports are down and the pins are free: the test is now on.
+            // Both ports are down and the pins are free: start the waveform.
+            esp_err_t clk_err = start_clock_out();
+            if (clk_err != ESP_OK) {
+                // The LEDC never came up, so start_clock_out() left both DE lines LOW and
+                // released the pins. Reporting success here would leave the factory tester
+                // with a device that claims to emit a clock but does not. Abort the entry:
+                // unfreeze, restore both ports from NVS and put the I/O bus back.
+                ESP_LOGE(TAG, "clock_out aborted: the LEDC could not be set up");
+                abort_clock_out_entry();
+                return ESP_ERR_INVALID_STATE;
+            }
+            // The test is now on.
             clock_out_en = true;
-            start_clock_out();
             // Factory test: light all LEDs simultaneously with the test signal.
             indication_set_test_all_leds(true);
             // Also lights the V-out LED (energises RS-485 bus V-out).
@@ -331,11 +371,11 @@ esp_err_t wb_test_post_handler(httpd_req_t *req)
         } else if (res == ESP_ERR_INVALID_ARG) {
             return json_utils_send_error(req, "Incorrect command field value");
         } else if (res == ESP_ERR_INVALID_STATE) {
-            // The RS-485 ports or the I/O bus could not be freed, so the test never
-            // started and the entry was rolled back — 503: the request was valid, the
-            // device could not serve it.
+            // The RS-485 ports or the I/O bus could not be freed, or the LEDC refused to
+            // produce the waveform, so the test never started and the entry was rolled
+            // back — 503: the request was valid, the device could not serve it.
             return json_utils_send_error_status(req, "503 Service Unavailable",
-                "Cannot start clock_out test: the RS-485 ports or the I/O bus could not be disabled");
+                "Cannot start clock_out test: the RS-485 ports, the I/O bus or the clock generator could not be set up");
         } else {
             return json_utils_send_error(req, "Failed to process request");
         }
