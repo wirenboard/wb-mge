@@ -123,11 +123,14 @@ static void release_clock_out_hw(void)
     // DE lines back to the UART. Note that gpio_reset_pin() does not leave a pin
     // floating: it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON,
     // so a released DE pin is weakly pulled towards 1 — the "driver enabled" level.
-    // On the port-2 DE line the external pulldown (R4 on U4.DE) overpowers that
-    // internal pull-up and holds the transceiver in receive mode for the whole
-    // window. No such external pulldown is documented for the port-1 DE line, so the
-    // guarantee there is weaker: its driver may be weakly enabled until the UART
-    // re-attaches. What bounds the exposure is the window itself — it is short
+    // On WB-MGE the port-2 DE line (SERIAL_IO_PIN_2) has an external pulldown (R4 on
+    // U4.DE) that overpowers the internal pull-up and holds that transceiver in receive
+    // mode for the whole window. That is a WB-MGE schematic fact, not a portable one:
+    // on other boards SERIAL_IO_PIN_2 is a different net (on WB-MGU it is the WBE2 bus
+    // DE, not an RS-485-2 transceiver with R4), so there the guarantee is the same weak
+    // one as for port 1. And no external pulldown is documented for the port-1 DE line
+    // on any board: its driver may be weakly enabled until the UART re-attaches.
+    // What bounds the exposure is the window itself — it is short
     // (apply_settings re-inits the UART right after) and the released TX pin is
     // pulled to the idle level the UART holds between frames, so a briefly-enabled
     // driver idles the line rather than corrupting traffic. On the way back in,
