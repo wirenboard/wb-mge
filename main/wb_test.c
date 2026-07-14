@@ -3,6 +3,7 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "auth.h"
+#include "board_pins.h"
 #include "json_utils.h"
 #include "bridge/port_manager.h"
 #include "esp_log.h"
@@ -11,29 +12,31 @@
 #include "update_rs485_mio_gpio_states.h"
 
 
-#define BRIDGE_PORT_INDEX       0
-#define BRIDGE_PORT_INDEX_2     1   // RS-485-2 (UART2); freed so LEDC can reuse its TX pin (GPIO14)
+// The clock-out test drives the TX and DE/RE lines of both serial ports directly.
+// The pins come from board_pins.h (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the GPIO numbers
+// differ per board, and hardcoding the WB-MGE ones drove the wrong pins on WB-MGU
+// (there GPIO4 is an input, the port-2 RX line).
+#define BRIDGE_PORT_INDEX       0   // port 1; freed so LEDC can reuse its TX pin
+#define BRIDGE_PORT_INDEX_2     1   // port 2; freed so LEDC can reuse its TX pin
 
-#define CLK_OUT_PIN             GPIO_NUM_10
+#define CLK_OUT_PIN             SERIAL_OUTPUT_PIN_1
 #define CLK_OUT_FREQ_HZ         100000
 #define CLK_OUT_PWM_CHANNEL     LEDC_CHANNEL_0
 #define CLK_OUT_PWM_TIMER       LEDC_TIMER_0
 
-// Second 100 kHz output on the RS-485-2 UART2 TX line (GPIO14). Shares
-// CLK_OUT_PWM_TIMER with the RS-485-1 output, so both ports carry the same
-// waveform and both activity LEDs blink in lockstep.
-#define CLK_OUT_PIN_2           GPIO_NUM_14
+// Second 100 kHz output, on the port-2 TX line. Shares CLK_OUT_PWM_TIMER with the
+// port-1 output, so both ports carry the same waveform and both activity LEDs blink
+// in lockstep.
+#define CLK_OUT_PIN_2           SERIAL_OUTPUT_PIN_2
 #define CLK_OUT_PWM_CHANNEL_2   LEDC_CHANNEL_1
 
-// RS-485 transceiver driver-enable (DE/RE) pins. Both must be driven HIGH for the
-// square wave to actually reach the RS-485 bus: with DE low the TX pin only toggles
-// on the logic side, so the activity LED lights but nothing is emitted on the line.
-// CLK_OUT_EN_PIN   = SERIAL_IO_PIN_1 (RS-485-1 DE/RE).
-// CLK_OUT_EN_PIN_2 = SERIAL_IO_PIN_2 (RS-485-2 DE/RE, U4.DE). The RS-485-2 bus is
-//   shared with the MIO transceiver U10, which stays idle here because both ports
-//   are held DISABLED for the duration of the test.
-#define CLK_OUT_EN_PIN          GPIO_NUM_4
-#define CLK_OUT_EN_PIN_2        GPIO_NUM_15
+// Transceiver driver-enable (DE/RE) pins. Both must be driven HIGH for the square
+// wave to actually reach the bus: with DE low the TX pin only toggles on the logic
+// side, so the activity LED lights but nothing is emitted on the line.
+// On WB-MGE the port-2 bus is shared with the MIO transceiver; it stays idle here
+// because both ports are held DISABLED for the duration of the test.
+#define CLK_OUT_EN_PIN          SERIAL_IO_PIN_1
+#define CLK_OUT_EN_PIN_2        SERIAL_IO_PIN_2
 
 #define CLK_OUT_JSON_FIELD      "clock_out"
 
@@ -81,8 +84,9 @@ static const char* TAG = "wb_test";
 // clear the output latch (GPIO_OUT_REG), so on the second and later runs of the test
 // the latch still holds whatever the previous owner left there — the UART leaves it
 // HIGH after driving half-duplex direction control. Enabling the output driver first
-// would then briefly assert DE (on RS-485-2 that is a pulse onto the bus shared with
-// the MIO transceiver). Same order as serial_set_tx_disabled() in serial.c.
+// would then briefly assert DE (on the WB-MGE port-2 line that is a pulse onto the
+// bus shared with the MIO transceiver). Same order as serial_set_tx_disabled() in
+// serial.c.
 static void de_pin_latch_low_output(gpio_num_t pin)
 {
     gpio_reset_pin(pin);
@@ -104,7 +108,7 @@ static void start_clock_out(void)
     ledc_channel_config_t ch_conf = channel_config;
     ledc_channel_config(&ch_conf);
 
-    // RS-485-2: drive UART2 TX (GPIO14) with the same 100 kHz timer.
+    // Port 2: drive its TX line with the same 100 kHz timer.
     ledc_channel_config_t ch_conf2 = channel_config_2;
     ledc_channel_config(&ch_conf2);
 
