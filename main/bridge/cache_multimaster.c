@@ -431,6 +431,10 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             return;
         }
 
+        /* Captured under the mutex, logged after it is released (count <= 127
+         * here, so uint16_t cannot overflow). */
+        uint16_t dropped = 0;
+
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
         for (uint16_t i = 0; i < count; i++) {
             uint16_t addr  = start_addr + i;
@@ -445,8 +449,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
                  * every dropped value so the condition is observable via
                  * /cache/status instead of being silently lost (mem-exhaust-1). */
                 if (s_pool != NULL) {
-                    s_entries_dropped += (uint32_t)(count - i);
-                    ESP_LOGW(TAG, "Pool full, dropping %u entries", (unsigned)(count - i));
+                    dropped = (uint16_t)(count - i);
+                    s_entries_dropped += (uint32_t)dropped;
                 }
                 break;
             }
@@ -460,6 +464,12 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         s_packets_processed++;
         s_last_packet_us = timestamp_us;
         xSemaphoreGive(s_cache_mutex);
+
+        /* Logged outside the critical section: the log backend can block on the
+         * console and would stall every other cache user holding s_cache_mutex. */
+        if (dropped > 0) {
+            ESP_LOGW(TAG, "Pool full, dropping %u entries", (unsigned)dropped);
+        }
 
     } else if (function == 0x01 || function == 0x02) {
         /* Coils / discrete inputs: bit-packed, LSB first (bit 0 of data[3] = coil[start_addr]) */
@@ -490,6 +500,10 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             return;
         }
 
+        /* Captured under the mutex, logged after it is released (count <= 2000
+         * here, so uint16_t cannot overflow). */
+        uint16_t dropped = 0;
+
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
         for (uint16_t i = 0; i < count; i++) {
             uint16_t addr  = start_addr + i;
@@ -498,8 +512,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             if (e == NULL) {
                 /* Pool full — see register branch (mem-exhaust-1). */
                 if (s_pool != NULL) {
-                    s_entries_dropped += (uint32_t)(count - i);
-                    ESP_LOGW(TAG, "Pool full, dropping %u coil entries", (unsigned)(count - i));
+                    dropped = (uint16_t)(count - i);
+                    s_entries_dropped += (uint32_t)dropped;
                 }
                 break;
             }
@@ -510,6 +524,11 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         s_packets_processed++;
         s_last_packet_us = timestamp_us;
         xSemaphoreGive(s_cache_mutex);
+
+        /* Logged outside the critical section — see register branch. */
+        if (dropped > 0) {
+            ESP_LOGW(TAG, "Pool full, dropping %u coil entries", (unsigned)dropped);
+        }
     }
 }
 
