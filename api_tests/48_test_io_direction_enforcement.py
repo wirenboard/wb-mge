@@ -10,11 +10,18 @@ So these tests double as proof that the real firmware config drives the model:
     G15 (RS485-2 DE)     -> OUTPUT : serial.c calls uart_set_pin(...rts=G15...).
 
 The model enforces three rules NON-fatally (see main/qemu/virtual_io_qemu.c):
-    - HOST writing an OUTPUT pin (raw G<NN>) is illegal -> V<NN>/0, rejected.
-    - FIRMWARE driving an INPUT pin is illegal          -> V<NN>/1, rejected.
-    - Either side operating an UNCONFIGURED pin         -> V<NN>/2, rejected.
-On a violation the pin level is NOT changed and a V record is emitted; the bus
-helper records it in ``bus.violations`` as ``(gpio_num:int, code:int)``.
+    - HOST writing an OUTPUT pin (raw G<NN>) is illegal   -> V<NN>/0, rejected.
+    - FIRMWARE configuring an input-only pad (ESP32 GPIO34..39, which has no
+      output driver) as an OUTPUT is illegal              -> V<NN>/1, rejected.
+    - HOST operating an UNCONFIGURED pin                  -> V<NN>/2, rejected.
+On a violation the pin level (or the direction change) is NOT applied and a V
+record is emitted; the bus helper records it in ``bus.violations`` as
+``(gpio_num:int, code:int)``.
+
+A firmware ``gpio_set_level()`` on a pin that is not currently an output is NOT
+a violation: as on real silicon it writes the pad's output latch, which reaches
+the line only once the pad is switched to OUTPUT. serial.c relies on exactly
+that to force the RS-485 DE pin LOW without a glitch.
 
 Non-destructive (all settings changed are restored in finally); NOT marked
 reboot.

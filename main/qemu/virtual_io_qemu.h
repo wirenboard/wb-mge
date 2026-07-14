@@ -46,12 +46,17 @@ esp_err_t virtual_io_init(void);
 
 // Set a native GPIO's model direction (derived from the firmware's gpio mode).
 // On a change to INPUT/OUTPUT a "D<NN>/<d>" record is emitted; switching to
-// UNCONFIGURED emits nothing.
+// UNCONFIGURED emits nothing. On the transition to OUTPUT the pad starts driving
+// the value held in its output latch (see vio_native_fw_set_level), so a G record
+// is emitted if that changes the line. Configuring an input-only pad (ESP32
+// GPIO34..39) as OUTPUT is a violation: V<NN>/1, direction change rejected.
 void vio_native_set_direction(int gpio_num, vio_dir_state_t dir);
 
-// FIRMWARE write path (mirrors gpio_set_level). OUTPUT: update + emit G on
-// change. INPUT: violation V<NN>/1 (firmware drove input), rejected.
-// UNCONFIGURED: violation V<NN>/2 (operate uninitialized), rejected.
+// FIRMWARE write path (mirrors gpio_set_level). Always writes the pin's output
+// latch, as the silicon does regardless of pad direction. OUTPUT: the pad drives
+// the line -> update level + emit G on change. INPUT/UNCONFIGURED: latch-only,
+// the line is untouched and nothing is emitted — legal, not a violation (this is
+// the glitch-free "set level, then switch to OUTPUT" idiom).
 void vio_native_fw_set_level(int gpio_num, int level);
 
 // Return the model level for a native GPIO (for gpio_get_level on a tracked pin).
