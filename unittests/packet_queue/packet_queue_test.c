@@ -81,8 +81,8 @@ void test_packet_queue_delete_success(void)
     const uint8_t test_data1[] = {0x01, 0x02, 0x03};
     const uint8_t test_data2[] = {0x04, 0x05, 0x06, 0x07};
 
-    esp_err_t result1 = packet_queue_push(test_handle, test_data1, sizeof(test_data1));
-    esp_err_t result2 = packet_queue_push(test_handle, test_data2, sizeof(test_data2));
+    esp_err_t result1 = packet_queue_push_with_client(test_handle, test_data1, sizeof(test_data1), 1);
+    esp_err_t result2 = packet_queue_push_with_client(test_handle, test_data2, sizeof(test_data2), 2);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result1, "First push should succeed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result2, "Second push should succeed");
@@ -122,9 +122,9 @@ void test_packet_queue_clear_valid_handle(void)
     const uint8_t test_data2[] = {0x04, 0x05, 0x06, 0x07};
     const uint8_t test_data3[] = {0x08, 0x09};
 
-    esp_err_t result1 = packet_queue_push(g_test_handle, test_data1, sizeof(test_data1));
-    esp_err_t result2 = packet_queue_push(g_test_handle, test_data2, sizeof(test_data2));
-    esp_err_t result3 = packet_queue_push(g_test_handle, test_data3, sizeof(test_data3));
+    esp_err_t result1 = packet_queue_push_with_client(g_test_handle, test_data1, sizeof(test_data1), 1);
+    esp_err_t result2 = packet_queue_push_with_client(g_test_handle, test_data2, sizeof(test_data2), 2);
+    esp_err_t result3 = packet_queue_push_with_client(g_test_handle, test_data3, sizeof(test_data3), 3);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result1, "First push should succeed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result2, "Second push should succeed");
@@ -177,269 +177,22 @@ void test_packet_queue_count(void)
 
     const uint8_t test_data[] = {0x01, 0x02, 0x03};
 
-    packet_queue_push(g_test_handle, test_data, sizeof(test_data));
+    packet_queue_push_with_client(g_test_handle, test_data, sizeof(test_data), 1);
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, packet_queue_count(g_test_handle), "Queue should have 1 item");
 
-    packet_queue_push(g_test_handle, test_data, sizeof(test_data));
+    packet_queue_push_with_client(g_test_handle, test_data, sizeof(test_data), 2);
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, packet_queue_count(g_test_handle), "Queue should have 2 items");
 
-    packet_queue_push(g_test_handle, test_data, sizeof(test_data));
+    packet_queue_push_with_client(g_test_handle, test_data, sizeof(test_data), 3);
     TEST_ASSERT_EQUAL_INT_MESSAGE(3, packet_queue_count(g_test_handle), "Queue should have 3 items");
 
     uint8_t* received_buf = NULL;
-    packet_queue_pop(g_test_handle, &received_buf, 0);
+    int received_sock = -1;
+    packet_queue_pop_with_client(g_test_handle, &received_buf, 0, &received_sock);
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, packet_queue_count(g_test_handle), "Queue should have 2 items after pop");
+    free(received_buf);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(NULL), "NULL handle should return 0");
-}
-
-// Test successful push of a packet to the queue
-void test_packet_queue_push_success(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push - success case");
-    LOG_MESSAGE();
-
-    const size_t max_len = 10;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    const uint8_t test_data[] = {0x01, 0x02, 0x03, 0x04, 0x05};
-    const size_t test_len = sizeof(test_data);
-
-    esp_err_t result = packet_queue_push(g_test_handle, test_data, test_len);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Push should succeed");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(test_len, allocated_ptrs[0].size, "malloc should allocate test_len bytes for buffer");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueSend_data.called, "xQueueSend should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.ticks, "xQueueSend should be called with correct ticks");
-
-    UBaseType_t spaces = uxQueueSpacesAvailable(g_test_handle);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(max_len - 1, spaces, "Queue should have one item");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        g_test_handle, mock_uxQueueSpacesAvailable_data.handle, "g_queue_spaces_handle should point to the correct queue"
-    );
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(
-        g_test_handle, mock_xQueueSend_data.handle, "g_queue_send_handle should point to the correct queue"
-    );
-}
-
-// Test pushing a packet to the queue with a NULL handle
-void test_packet_queue_push_null_handle(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push - NULL handle");
-    LOG_MESSAGE();
-
-    const uint8_t test_data[] = {0x01, 0x02, 0x03};
-    const size_t test_len = sizeof(test_data);
-
-    esp_err_t result = packet_queue_push(NULL, test_data, test_len);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "Push should fail with NULL handle");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should not be called");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called");
-}
-
-// Test pushing a packet to a full queue
-void test_packet_queue_push_no_space(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push - no space in queue");
-    LOG_MESSAGE();
-
-    const size_t max_len = 2;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    const uint8_t test_data[] = {0x01, 0x02, 0x03};
-    const size_t test_len = sizeof(test_data);
-
-    esp_err_t result1 = packet_queue_push(g_test_handle, test_data, test_len);
-    esp_err_t result2 = packet_queue_push(g_test_handle, test_data, test_len);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result1, "First push should succeed");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result2, "Second push should succeed");
-
-    esp_err_t result3 = packet_queue_push(g_test_handle, test_data, test_len);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result3, "Third push should fail when queue is full");
-
-    UBaseType_t spaces = uxQueueSpacesAvailable(g_test_handle);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, spaces, "Queue should be full");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(4, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called 4 times");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_xQueueSend_data.called, "xQueueSend should be called only 2 times");
-}
-
-// Test pushing a packet with memory allocation failure
-void test_packet_queue_push_malloc_fail(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push - malloc failure");
-    LOG_MESSAGE();
-
-    const size_t max_len = 2;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    const uint8_t test_data[] = {0x01, 0x02, 0x03};
-    const size_t test_len = sizeof(test_data);
-
-    malloc_should_fail = true;
-
-    esp_err_t result = packet_queue_push(g_test_handle, test_data, test_len);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "Push should fail when malloc fails");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.called, "xQueueSend should not be called when malloc fails");
-}
-
-// Test pushing a packet with queue send failure
-void test_packet_queue_push_queue_send_fail(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push - queue send failure");
-    LOG_MESSAGE();
-
-    const size_t max_len = 2;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    const uint8_t test_data[] = {0x01, 0x02, 0x03};
-    const size_t test_len = sizeof(test_data);
-
-    mock_xQueueSend_data.should_fail = true;
-
-    esp_err_t result = packet_queue_push(g_test_handle, test_data, test_len);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, result, "Push should fail when queue send fails");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_uxQueueSpacesAvailable_data.called, "uxQueueSpacesAvailable should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueSend_data.called, "xQueueSend should be called once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueSend_data.ticks, "xQueueSend should be called with correct ticks");
-}
-
-// Test successful pop of a packet from the queue
-void test_packet_queue_pop_success(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop - success case");
-    LOG_MESSAGE();
-
-    const size_t max_len = 5;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    const uint8_t test_data[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
-    const size_t test_len = sizeof(test_data);
-
-    esp_err_t push_result = packet_queue_push(g_test_handle, test_data, test_len);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "Push should succeed");
-
-    uint8_t* received_buf = NULL;
-    size_t result = packet_queue_pop(g_test_handle, &received_buf, 0);
-
-    TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "Should return correct packet length");
-    TEST_ASSERT_NOT_NULL_MESSAGE(received_buf, "Buffer pointer should not be NULL");
-    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(test_data, received_buf, test_len, "Received data should match sent data");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueReceive_data.called, "xQueueReceive should be called once");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, packet_queue_count(g_test_handle), "Queue should be empty after pop");
-}
-
-// Test popping a packet from the queue with a NULL handle
-void test_packet_queue_pop_null_handle(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop - NULL handle");
-    LOG_MESSAGE();
-
-    uint8_t* received_buf = NULL;
-    size_t result = packet_queue_pop(NULL, &received_buf, 0);
-
-    TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for NULL handle");
-    TEST_ASSERT_NULL_MESSAGE(received_buf, "Buffer pointer should remain NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xQueueReceive_data.called, "xQueueReceive should not be called");
-}
-
-// Test popping a packet from an empty queue
-void test_packet_queue_pop_empty_queue(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop - empty queue");
-    LOG_MESSAGE();
-
-    const size_t max_len = 5;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    uint8_t* received_buf = NULL;
-    size_t result = packet_queue_pop(g_test_handle, &received_buf, 0);
-
-    TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
-    TEST_ASSERT_NULL_MESSAGE(received_buf, "Buffer pointer should remain NULL");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueReceive_data.called, "xQueueReceive should be called once");
-}
-
-// Test popping a packet with a NULL buffer pointer
-void test_packet_queue_pop_null_buffer_ptr(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop - NULL buffer pointer");
-    LOG_MESSAGE();
-
-    const size_t max_len = 5;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    const uint8_t test_data[] = {0x11, 0x22, 0x33};
-    const size_t test_len = sizeof(test_data);
-
-    esp_err_t push_result = packet_queue_push(g_test_handle, test_data, test_len);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "Push should succeed");
-
-    void* buffer_ptr = get_allocated_ptr(0);
-    TEST_ASSERT_NOT_NULL_MESSAGE(buffer_ptr, "Allocated buffer should not be NULL");
-
-    size_t result = packet_queue_pop(g_test_handle, NULL, 0);
-
-    TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "Should return correct packet length even with NULL buf_ptr");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xQueueReceive_data.called, "xQueueReceive should be called once");
-    TEST_ASSERT_TRUE_MESSAGE(was_ptr_freed(buffer_ptr), "The correct allocated buffer should be freed");
-}
-
-// Test popping a packet with various wait timeouts
-void test_packet_queue_pop_with_timeout(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_pop - with timeout");
-    LOG_MESSAGE();
-
-    const size_t max_len = 5;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    const uint8_t test_data[] = {0x11, 0x22, 0x33};
-    const size_t test_len = sizeof(test_data);
-
-    esp_err_t push_result = packet_queue_push(g_test_handle, test_data, test_len);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "Push should succeed");
-
-    uint8_t* received_buf = NULL;
-    TickType_t wait_time = 0;
-    size_t result = packet_queue_pop(g_test_handle, &received_buf, wait_time);
-    TEST_ASSERT_EQUAL_MESSAGE(wait_time, mock_xQueueReceive_data.ticks, "xQueueReceive should be called with correct wait time");
-    TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "Should return correct packet length");
-
-    wait_time = 1000;
-    result = packet_queue_pop(g_test_handle, &received_buf, wait_time);
-    TEST_ASSERT_EQUAL_MESSAGE(wait_time, mock_xQueueReceive_data.ticks, "xQueueReceive should be called with correct wait time");
-    TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
-
-    wait_time = portMAX_DELAY;
-    result = packet_queue_pop(g_test_handle, &received_buf, wait_time);
-    TEST_ASSERT_EQUAL_MESSAGE(wait_time, mock_xQueueReceive_data.ticks, "xQueueReceive should be called with correct wait time");
-    TEST_ASSERT_EQUAL_MESSAGE(0, result, "Should return 0 for empty queue");
 }
 
 // Test successful push of a packet with client socket to the queue
@@ -663,35 +416,6 @@ void test_packet_queue_pop_with_client_preserves_sock(void)
     free(buf2);
 }
 
-// Test that packet_queue_push stores the -1 client_sock sentinel (not 0),
-// observable by popping the same element via pop_with_client.
-void test_packet_queue_push_sets_client_sock_sentinel(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test packet_queue_push - stores -1 client_sock sentinel");
-    LOG_MESSAGE();
-
-    const size_t max_len = 5;
-    g_test_handle = packet_queue_create(max_len);
-    TEST_ASSERT_NOT_NULL_MESSAGE(g_test_handle, "Queue handle should not be NULL");
-
-    const uint8_t test_data[] = {0x01, 0x02, 0x03};
-    const size_t test_len = sizeof(test_data);
-
-    esp_err_t push_result = packet_queue_push(g_test_handle, test_data, test_len);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, push_result, "Push should succeed");
-
-    uint8_t *received_buf = NULL;
-    int received_sock = 12345;  // poison value distinct from both -1 and 0
-    size_t result = packet_queue_pop_with_client(g_test_handle, &received_buf, 0, &received_sock);
-
-    TEST_ASSERT_EQUAL_MESSAGE(test_len, result, "pop_with_client should return correct packet length");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, received_sock,
-        "packet_queue_push must default client_sock to -1 sentinel, not 0");
-
-    free(received_buf);
-}
-
 int main(void)
 {
     UNITY_BEGIN();
@@ -707,18 +431,6 @@ int main(void)
 
     RUN_TEST(test_packet_queue_count);
 
-    RUN_TEST(test_packet_queue_push_success);
-    RUN_TEST(test_packet_queue_push_null_handle);
-    RUN_TEST(test_packet_queue_push_no_space);
-    RUN_TEST(test_packet_queue_push_malloc_fail);
-    RUN_TEST(test_packet_queue_push_queue_send_fail);
-
-    RUN_TEST(test_packet_queue_pop_success);
-    RUN_TEST(test_packet_queue_pop_null_handle);
-    RUN_TEST(test_packet_queue_pop_empty_queue);
-    RUN_TEST(test_packet_queue_pop_null_buffer_ptr);
-    RUN_TEST(test_packet_queue_pop_with_timeout);
-
     RUN_TEST(test_packet_queue_push_with_client_success);
     RUN_TEST(test_packet_queue_push_with_client_null_handle);
     RUN_TEST(test_packet_queue_push_with_client_no_space);
@@ -729,8 +441,6 @@ int main(void)
     RUN_TEST(test_packet_queue_pop_with_client_null_client_sock);
     RUN_TEST(test_packet_queue_pop_with_client_null_buffer_ptr);
     RUN_TEST(test_packet_queue_pop_with_client_preserves_sock);
-
-    RUN_TEST(test_packet_queue_push_sets_client_sock_sentinel);
 
     return UNITY_END();
 }

@@ -23,8 +23,9 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
                324-325 numeric version LE word order (324=low);
                326-327 numeric version BE word order (326=high);
                65504..65508 RAM/stack/reboot diagnostics;
-               336 cache timeout s; 337-338 packets u32; 339-340 last-pkt-age u32;
-               341 devices_on_bus; 342 bus poll ppm.
+               337-338 packets u32; 339-340 last-pkt-age u32;
+               341 devices_on_bus; 342 bus poll ppm; 343 cache timeout s.
+               (336 is left undefined: last register of the WB bootloader-version field.)
   FC03 holding: 290-301 signature string. Other holding addrs -> exception 0x02.
   Any fc not in {0x03,0x04} on unit 0xFF -> exception 0x01.
 """
@@ -439,7 +440,7 @@ def test_self_unit_ram_stack_diagnostics_kb(api, gateway_slave):
 
 @pytest.mark.qemu
 def test_self_unit_stats_block(api, gateway_slave):
-    """FC04 336..342 statistics block at unit 0xFF responds with sane u16 values.
+    """FC04 337..343 statistics block at unit 0xFF responds with sane u16 values.
 
     In gateway-only mode the multimaster cache is typically inactive, so the
     counters may legitimately be 0. The point of this test is that the whole
@@ -447,15 +448,15 @@ def test_self_unit_stats_block(api, gateway_slave):
     (devices_on_bus <= 247, cache timeout matches /settings when present).
     """
     _tid, unit_id, resp_fc, payload = read_self_regs(
-        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 336, 7
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 337, 7
     )
     assert not (resp_fc & 0x80), \
         f"stats block read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID, \
         f"echoed unit_id mismatch: expected 0x{SELF_UNIT_ID:02X}, got 0x{unit_id:02X}"
     regs = regs_from_payload(payload)
-    assert len(regs) == 7, f"expected 7 registers (336..342), got {regs}"
-    cache_timeout, pkt_hi, pkt_lo, age_hi, age_lo, devices, poll_ppm = regs
+    assert len(regs) == 7, f"expected 7 registers (337..343), got {regs}"
+    pkt_hi, pkt_lo, age_hi, age_lo, devices, poll_ppm, cache_timeout = regs
 
     # u32 reconstructions (MSW-first). >= 0 is always true for a u16 combine —
     # the real assertion here is "the registers responded without an exception".
@@ -468,18 +469,18 @@ def test_self_unit_stats_block(api, gateway_slave):
         f"devices_on_bus reg 341 = {devices} out of range 0..247 (Modbus slave addresses)"
     )
     assert cache_timeout < 0xFFFF, (
-        f"cache timeout reg 336 = {cache_timeout} == 0xFFFF — implausible for a u16 setting"
+        f"cache timeout reg 343 = {cache_timeout} == 0xFFFF — implausible for a u16 setting"
     )
 
     # Cross-check against /settings when the key is present.
     cfg_timeout = api.get_settings().json().get("cache_value_timeout_s")
     if cfg_timeout is not None:
         assert cache_timeout == cfg_timeout, (
-            f"cache timeout reg 336 = {cache_timeout} != /settings "
+            f"cache timeout reg 343 = {cache_timeout} != /settings "
             f"cache_value_timeout_s = {cfg_timeout}"
         )
 
-    print("✓ self-unit stats block 336-342: timeout=%d packets=%d last_pkt_age=%d devices=%d poll_ppm=%d"
+    print("✓ self-unit stats block 337-343: timeout=%d packets=%d last_pkt_age=%d devices=%d poll_ppm=%d"
           % (cache_timeout, packets, age, devices, poll_ppm))
 
 
@@ -605,9 +606,9 @@ def test_self_unit_via_cache_server_uptime(api, cache_server):
 
 @pytest.mark.qemu
 def test_self_unit_cache_timeout_reg(api, cache_server):
-    """FC04 336 (cache timeout) at unit 0xFF reflects cache_value_timeout_s.
+    """FC04 343 (cache timeout) at unit 0xFF reflects cache_value_timeout_s.
 
-    Sets a known cache_value_timeout_s (33), reads register 336 on the cache
+    Sets a known cache_value_timeout_s (33), reads register 343 on the cache
     server, asserts they match, then restores the original timeout.
     """
     host, port = cache_server
@@ -623,16 +624,16 @@ def test_self_unit_cache_timeout_reg(api, cache_server):
         assert resp.status_code == 200 and resp.json().get("success") is True, \
             f"failed to set cache_value_timeout_s={KNOWN_TIMEOUT}: {resp.status_code} {resp.text}"
 
-        _tid, unit_id, resp_fc, payload = read_self_regs(host, port, 0x04, 336, 1)
+        _tid, unit_id, resp_fc, payload = read_self_regs(host, port, 0x04, 343, 1)
         assert not (resp_fc & 0x80), \
             f"cache timeout read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
         assert unit_id == SELF_UNIT_ID
         regs = regs_from_payload(payload)
         assert len(regs) == 1, f"expected 1 register, got {regs}"
         assert regs[0] == KNOWN_TIMEOUT, (
-            f"cache timeout reg 336 mismatch: got {regs[0]}, expected {KNOWN_TIMEOUT}"
+            f"cache timeout reg 343 mismatch: got {regs[0]}, expected {KNOWN_TIMEOUT}"
         )
-        print(f"✓ self-unit cache timeout FC04 336 == cache_value_timeout_s={KNOWN_TIMEOUT}")
+        print(f"✓ self-unit cache timeout FC04 343 == cache_value_timeout_s={KNOWN_TIMEOUT}")
     finally:
         restore = api.update_settings({"cache_value_timeout_s": original_timeout})
         # print instead of assert: an assert in teardown would mask a test failure.

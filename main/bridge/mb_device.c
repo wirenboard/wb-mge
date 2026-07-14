@@ -60,13 +60,18 @@
 #define REG_FW_VERSION_BE_HI  326u  /* 0x0146 big-endian word order, high word    */
 #define REG_FW_VERSION_BE_LO  327u  /* 0x0147 big-endian word order, low word     */
 
-#define REG_CACHE_TIMEOUT     336u  /* 0x0150 */
+/* Statistics block. Register 336 (0x0150) is deliberately left out: it is the
+ * last register of the standard WB bootloader-version field (330..336,
+ * 0x014A..0x0150), so reusing it would clash with the common WB register map.
+ * The cache timeout therefore sits at 343, right after the rest of the block,
+ * which keeps 337..343 contiguous for a single-request read. */
 #define REG_PKT_PROC_HI       337u  /* 0x0151 */
 #define REG_PKT_PROC_LO       338u  /* 0x0152 */
 #define REG_LAST_PKT_AGE_HI   339u  /* 0x0153 */
 #define REG_LAST_PKT_AGE_LO   340u  /* 0x0154 */
 #define REG_DEVICES_ON_BUS    341u  /* 0x0155 */
 #define REG_POLL_FREQ_PPM     342u  /* 0x0156 */
+#define REG_CACHE_TIMEOUT     343u  /* 0x0157 */
 
 #define REG_MAX_STACK_USED    65504u /* 0xFFE0 */
 #define REG_FREE_RAM          65505u /* 0xFFE1 */
@@ -81,7 +86,7 @@
 
 /* ---- WB reboot reason codes ---------------------------------------------- */
 
-#define WB_REBOOT_NONE  0u
+#define WB_REBOOT_UNKNOWN 0u  /* reset cause not reported by the SDK */
 #define WB_REBOOT_LPWR  1u  /* brownout / deep sleep wakeup */
 #define WB_REBOOT_WWDG  2u  /* interrupt watchdog          */
 #define WB_REBOOT_IWDG  3u  /* task / generic watchdog     */
@@ -174,7 +179,7 @@ static uint16_t map_reboot_reason(void)
         case ESP_RST_PANIC:     return WB_REBOOT_SFT;
         case ESP_RST_POWERON:   return WB_REBOOT_POR;
         case ESP_RST_EXT:       return WB_REBOOT_PIN;
-        default:                return WB_REBOOT_NONE;
+        default:                return WB_REBOOT_UNKNOWN;
     }
 }
 
