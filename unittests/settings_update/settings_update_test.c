@@ -333,11 +333,15 @@ void test_settings_update_task_already_running(void)
     );
 }
 
-// The factory clock_out test holds the MIO controller in reset and forces V-out on
-// while it drives the RS-485 lines. A POST /settings during the test must not undo
-// that: with the ports frozen, settings_update() must skip update_rs485_control()
-// and update_io_bus_control() (wb_test re-applies both when the test ends).
-void test_settings_update_ports_frozen_skips_rs485_and_io_bus(void)
+// The factory clock_out test holds the MIO controller in reset, forces V-out on and
+// drives the TX/DE pins of both ports with the LEDC. A POST /settings during the test
+// must not undo any of that: with the ports frozen, settings_update() must skip
+// update_rs485_control(), update_io_bus_control() AND update_serial_tx_disabled() —
+// the last one is not the pure software flag it looks like, it drives the port's
+// dir_pin, which is the very DE pin the test holds HIGH. wb_test re-applies the first
+// two when the test ends, and port_manager_apply_settings() re-applies tx_disabled from
+// NVS as it brings each port back up, so nothing written during the test is lost.
+void test_settings_update_ports_frozen_skips_rs485_io_bus_and_tx_disabled(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - ports frozen (clock_out test active)");
@@ -352,8 +356,8 @@ void test_settings_update_ports_frozen_skips_rs485_and_io_bus(void)
         "update_rs485_control must not run while the ports are frozen (it would restore the configured V-out)");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_update_io_bus_control_called,
         "update_io_bus_control must not run while the ports are frozen (it would take MIO out of reset)");
-    TEST_ASSERT_EQUAL_MESSAGE(1, mock_update_serial_tx_disabled_called,
-        "update_serial_tx_disabled is a software flag and must still run");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_update_serial_tx_disabled_called,
+        "update_serial_tx_disabled must not run while the ports are frozen (it drives the DE pin the test holds HIGH)");
 }
 
 int main(void)
@@ -361,7 +365,7 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_settings_update_no_changes);
-    RUN_TEST(test_settings_update_ports_frozen_skips_rs485_and_io_bus);
+    RUN_TEST(test_settings_update_ports_frozen_skips_rs485_io_bus_and_tx_disabled);
     RUN_TEST(test_settings_update_bridge_ports_changed);
     RUN_TEST(test_settings_update_mdns_changed);
     RUN_TEST(test_settings_update_http_server_changed);

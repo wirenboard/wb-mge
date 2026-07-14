@@ -72,20 +72,39 @@ static void settings_update_task(void *arg)
 esp_err_t settings_update(void)
 {
     // The factory clock_out test owns the RS-485 hardware while it runs: it holds the
-    // MIO controller in reset (it hangs off the same RS-485-2 pair the LEDC drives) and
-    // forces V-out on. Re-applying the settings here would undo both — io_bus_enabled
-    // defaults to true, so ANY POST /settings would take MIO out of reset on top of the
-    // running waveform, and the configured vout value would override the test's. Skip
-    // them while the ports are frozen, exactly as the port re-init below is skipped.
-    // wb_test's exit path calls update_rs485_control() + update_io_bus_control()
-    // itself, so settings written during the test are applied when the test ends.
+    // MIO controller in reset (it hangs off the same RS-485-2 pair the LEDC drives),
+    // forces V-out on, and drives the TX/DE pins of both ports with the LEDC. Re-applying
+    // the settings here would undo all of that:
+    //   - io_bus_enabled defaults to true, so ANY POST /settings would take MIO out of
+    //     reset on top of the running waveform, and the configured vout value would
+    //     override the test's;
+    //   - update_serial_tx_disabled() is NOT the pure software flag it looks like:
+    //     serial_set_tx_disabled() does gpio_reset_pin()/gpio_set_level()/
+    //     gpio_set_direction() on the port's dir_pin, which is exactly the DE pin
+    //     (SERIAL_IO_PIN_1/2) the test holds HIGH. Today it happens to be harmless only
+    //     because the frozen ports sit in PM_MODE_DISABLED, so port_manager_set_tx_disabled()
+    //     finds no serial_desc and returns early — an accident of the disable order, not a
+    //     property of the call. Gate it like the other two rather than depend on that.
+    // Skipped while the ports are frozen, exactly as the port re-init below is skipped.
+    // Nothing is lost: wb_test's exit path calls update_rs485_control() +
+    // update_io_bus_control() itself, and port_manager_apply_settings() re-applies
+    // tx_disabled from NVS when it brings each port back up — so settings written during
+    // the test take effect when the test ends.
+    //
+    // The flag is read here without any lock (see the locking contract in port_manager.c):
+    // unlike the port re-init below, these three calls do not touch pm_ctx, so there is no
+    // pm_lock that would exclude them against wb_test. That leaves a narrow window — read
+    // false, get preempted, the test starts, resume and re-apply V-out / io_bus on top of
+    // it. settings_update() runs from the httpd task (POST /settings) and from the button
+    // task (main.c, factory reset on long press), so it is a real window, just a very small
+    // one. Closing it needs a lock shared with wb_test's entry/exit sequences (held across
+    // "check frozen + apply" here and across "freeze + disable io_bus + start LEDC" there);
+    // it would take no other lock inside, so it cannot deadlock with pm_lock.
     if (!port_manager_ports_frozen()) {
         update_rs485_control();
         update_io_bus_control();
+        update_serial_tx_disabled();
     }
-    // tx_disabled is a pure software flag on the serial layer (no GPIO expander, no
-    // pins the LEDC owns), so it stays unconditional.
-    update_serial_tx_disabled();
 
     if (update_task_handle != NULL) {
         ESP_LOGW(TAG, "Previous settings have not yet been applied, waiting for setting update task finished");

@@ -63,13 +63,35 @@ static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
 // test clears the flag on exit and then calls apply_settings() itself to restore
 // both ports from NVS (which also picks up any settings written during the test).
 //
-// Written by the httpd task (the wb_test handler) and read by settings_update_task,
-// so it is accessed with GCC atomics — same convention as tcp_desc.active_connections.
-// Every port-touching path reads it while holding that port's pm_lock, and the test
-// only starts the LEDC after set_mode_transient() has taken (and released) both
-// locks. That ordering is what closes the race: a settings_update_task that read the
-// flag as false is, by then, either already finished or still holding the lock the
-// test is waiting on — it can no longer re-init a port after the waveform is live.
+// Locking contract. The flag is written by the httpd task (the wb_test handler) and
+// read from several tasks, so it is accessed with GCC atomics (SEQ_CST) — same
+// convention as tcp_desc.active_connections. Readers fall into two groups:
+//
+//  * Port paths — port_set_mode_impl(), port_manager_apply_settings() and
+//    port_manager_check_settings_changed() — read it while holding that port's
+//    pm_lock, together with the runtime mode it guards. Since the test only starts
+//    the LEDC after set_mode_transient() has taken (and released) both pm_locks, a
+//    reader that saw the flag as false is by then either already finished or still
+//    holding the lock the test is waiting on: it can no longer re-init a port after
+//    the waveform is live. This is the ordering that matters — these are the paths
+//    that would hand the TX/DE pins back to the UART.
+//
+//  * Non-port paths — settings_update() gating update_rs485_control() (V-out),
+//    update_io_bus_control() (MIO reset) and update_serial_tx_disabled() — read it
+//    atomically with NO lock held. There is no pm_lock to take there: those calls
+//    drive the GPIO expander and the serial layer, not pm_ctx, and taking a port lock
+//    would only give a false sense of mutual exclusion against a test that does not
+//    hold it either. The residual window: settings_update() reads the flag as false,
+//    is preempted, the test freezes the ports and starts, and settings_update()
+//    resumes and re-applies the configured V-out / io_bus_enabled on top of the
+//    running test (tx_disabled lands on ports that are DISABLED by then, so it is a
+//    no-op). It is accepted, not proved impossible: the window is the few instructions
+//    between the read and the expander write, it has to be hit by a concurrent
+//    POST /settings or a factory-reset button long-press (main.c) on a board that is
+//    at that exact moment entering the factory test, and the damage is bounded —
+//    nothing is persisted, and switching the test off re-applies both settings anyway.
+//    Closing it properly needs a lock the non-port paths and wb_test can share (see
+//    the note in settings_update.c), not a wider pm_lock.
 static bool s_ports_frozen = false;
 
 static inline bool ports_frozen(void)
@@ -480,14 +502,18 @@ static esp_err_t port_set_mode_impl(unsigned port_index, pm_mode_t mode, bool pe
     // While the factory test owns the TX/DE pins, a persisting mode change
     // (POST /ports/N/mode) must not go through: port_init_mode() would hand the
     // pins the LEDC is driving back to the UART, and the new mode would be written
-    // to NVS on top of the user's configuration. Reject it — the REST handler maps
-    // this to 409. The transient path stays open: it is how the test disables the
-    // ports in the first place.
+    // to NVS on top of the user's configuration. Reject it with the dedicated
+    // PM_ERR_PORTS_FROZEN — the REST handler maps that (and only that) to 409.
+    // A generic ESP_ERR_INVALID_STATE would not do: port_init_mode() can return the
+    // same code for an unrelated reason (bridge_port_init() refuses a tcp_bridge with
+    // an invalid/legacy bridge_mode), and that must not be reported as a test conflict.
+    // The transient path stays open: it is how the test disables the ports in the
+    // first place.
     if (persist && ports_frozen()) {
         pm_unlock(port_index);
         ESP_LOGW(TAG, "Port[%u]: mode change rejected, ports frozen by factory test",
                  port_index + 1);
-        return ESP_ERR_INVALID_STATE;
+        return PM_ERR_PORTS_FROZEN;
     }
 
     // Remember the current (presumed-working) mode so we can roll back if the
@@ -812,13 +838,27 @@ PORT_MANAGER_STATIC esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned p
     }
 
     esp_err_t ret = port_manager_set_mode(port_index, new_mode);
-    if (ret == ESP_ERR_INVALID_STATE) {
+    if (ret == PM_ERR_PORTS_FROZEN) {
         // The factory clock-out test owns the port's TX/DE pins right now, so the
         // port cannot be reconfigured. 409: the request is fine, the resource state
-        // is not — retry once the test is switched off (POST /test {"clock_out":false}).
+        // is not — retry once the test is switched off (POST /wb_test {"clock_out":false}).
+        // Only the dedicated freeze code lands here. ESP_ERR_INVALID_STATE must NOT:
+        // port_init_mode() returns it for an unrelated reason too (a tcp_bridge whose
+        // persisted bridge_mode is invalid/legacy — bridge.c), and answering that with
+        // "the clock_out test is active" would be a false status and a false diagnosis.
         cJSON_Delete(req_json);
         return json_utils_send_error_status(req, "409 Conflict",
             "Port mode is locked while the clock_out factory test is active");
+    }
+    if (ret == ESP_ERR_INVALID_STATE) {
+        // The requested mode is valid, but the port refused to initialise in it. The
+        // only source today is bridge_port_init() rejecting a tcp_bridge whose
+        // persisted bridge_mode is invalid/legacy; the port has already been rolled
+        // back to its previous mode. That is a device-configuration fault, not a bad
+        // request — report 500 and name the real cause.
+        cJSON_Delete(req_json);
+        return json_utils_send_error_status(req, "500 Internal Server Error",
+            "Port failed to initialize in the requested mode (check the persisted bridge_mode)");
     }
     if (ret != ESP_OK) {
         cJSON_Delete(req_json);

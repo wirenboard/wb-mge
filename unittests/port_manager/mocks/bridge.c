@@ -9,6 +9,7 @@
 /* Mock tracking state definitions */
 mock_bridge_calls_t mock_bridge_calls[BRIDGES_COUNT] = {0};
 bool mock_bridge_port_init_should_fail = false;
+esp_err_t mock_bridge_port_init_fail_err = ESP_FAIL;
 bool mock_bridge_port_init_serial_only_should_fail = false;
 
 serial_desc_t mock_serial_desc_instances[BRIDGES_COUNT];
@@ -23,7 +24,7 @@ esp_err_t bridge_port_init(unsigned index)
     TEST_ASSERT_LESS_THAN_UINT_MESSAGE(BRIDGES_COUNT, index, "bridge_port_init: invalid index");
     mock_bridge_calls[index].bridge_port_init_called++;
     if (mock_bridge_port_init_should_fail) {
-        return ESP_FAIL;
+        return mock_bridge_port_init_fail_err;
     }
     return ESP_OK;
 }
@@ -95,6 +96,7 @@ void mock_bridge_reset(void)
 {
     memset(mock_bridge_calls, 0, sizeof(mock_bridge_calls));
     mock_bridge_port_init_should_fail = false;
+    mock_bridge_port_init_fail_err = ESP_FAIL;
     mock_bridge_port_init_serial_only_should_fail = false;
     memset(mock_serial_desc_instances, 0, sizeof(mock_serial_desc_instances));
     /* R3: each test starts with a zeroed (default) injected config, preserving the
