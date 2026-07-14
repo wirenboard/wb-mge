@@ -227,17 +227,18 @@ def test_clock_out_freezes_port_mode(api):
 
 
 @pytest.mark.qemu
-def test_clock_out_disables_io_bus(api):
-    """clock_out holds the MIO controller in reset, and POST /settings must not undo it.
+def test_clock_out_leaves_io_bus_alone(api):
+    """clock_out must not disturb the MIO controller, and must not gate the io_bus setting.
 
-    On WB-MGE the MIO controller hangs off the same RS-485-2 pair the clock_out test
-    drives, and its reset is an expander pin (E08), independent of the port mode. So the
-    test takes the I/O bus down itself (E08 -> 0) and restores it from the io_bus setting
-    on exit.
+    The clock_out test drives the logic-side TX (DI) line of RS-485-2 so that LED2 blinks,
+    but it never enables that transceiver's driver: SERIAL_IO_PIN_2 (U4.DE) is left to the
+    hardware pulldown R4. The RS-485-2 pair the MIO controller shares therefore stays
+    silent, so the test has no reason to touch the I/O bus — its reset line (E08) must keep
+    whatever the io_bus setting put there, all the way through the test.
 
-    A POST /settings while the test is running must NOT bring MIO back out of reset:
-    io_bus defaults to true, so an unconditional update_io_bus_control() would put the
-    MIO transceiver back on the bus the LEDC is driving at 100 kHz.
+    And because the test does not own the I/O bus, an io_bus written via POST /settings
+    while the test runs must reach the hardware immediately, not be deferred to test exit
+    (the exit path does not re-apply it).
     """
     original_clock_out = api.get_wb_test().json()["clock_out"]
     original_io_bus = api.get_settings().json().get("io_bus")
@@ -245,45 +246,55 @@ def test_clock_out_disables_io_bus(api):
     with IoBus() as bus:
         bus.pump(0.5)
         try:
-            # Precondition: the I/O bus must be ON, otherwise "off during the test" would
-            # be trivially true.
+            # Baseline: the I/O bus is ON, so any reset pulse by the test would show up as
+            # an E08 -> 0 event.
             resp = api.update_settings({"io_bus": True})
             assert resp.status_code == 200, \
                 f"Baseline POST /settings io_bus=true expected 200, got {resp.status_code}"
             assert bus.wait_for("E08", 1, timeout=5.0), \
                 f"Baseline: io_bus=true must drive E08 high, got {bus.get('E08')}"
 
+            first_new_event = len(bus.events)
             response = api.set_wb_test(True)
             assert response.status_code == 200, \
                 f"POST /wb_test clock_out=true expected 200, got {response.status_code}"
 
-            # (c) The I/O bus is held down for the duration of the test.
-            assert bus.wait_for("E08", 0, timeout=5.0), \
-                f"clock_out=true must hold MIO in reset (E08 == 0), got {bus.get('E08')}"
-            print("✓ clock_out=true disabled the I/O bus (E08 == 0)")
+            # The test must not reset MIO. Watch the event stream, not just the final
+            # level: even a momentary E08 -> 0 would drop the I/O bus the test has no
+            # business touching.
+            bus.pump(1.0)
+            assert ("E08", 0) not in bus.events[first_new_event:], \
+                "clock_out=true must not reset the MIO controller (E08 went low)"
+            assert bus.get("E08") == 1, \
+                f"I/O bus must stay enabled during clock_out, E08 == {bus.get('E08')}"
+            print("✓ clock_out=true left the I/O bus alone (E08 == 1)")
 
-            # A settings write during the test must not re-enable it. Watch the event
-            # stream, not just the final level: an E08 pulse back to 1 would put the MIO
-            # transceiver on the live bus even if something later drove it low again.
-            first_new_event = len(bus.events)
+            # The io_bus setting is not frozen by the test: it still reaches the hardware.
+            resp = api.update_settings({"io_bus": False})
+            assert resp.status_code == 200, \
+                f"POST /settings io_bus=false during clock_out expected 200, got {resp.status_code}"
+            assert bus.wait_for("E08", 0, timeout=5.0), \
+                f"io_bus=false during clock_out must drive E08 low, got {bus.get('E08')}"
+            print("✓ POST /settings io_bus=false during clock_out reached the hardware")
+
             resp = api.update_settings({"io_bus": True})
             assert resp.status_code == 200, \
-                f"POST /settings during clock_out expected 200, got {resp.status_code}"
-            bus.pump(1.0)
-            assert ("E08", 1) not in bus.events[first_new_event:], \
-                "POST /settings during clock_out must not take MIO out of reset (E08 went high)"
-            assert bus.get("E08") == 0, \
-                f"I/O bus must stay disabled during clock_out, E08 == {bus.get('E08')}"
-            print("✓ POST /settings during clock_out did not re-enable the I/O bus")
+                f"POST /settings io_bus=true during clock_out expected 200, got {resp.status_code}"
+            assert bus.wait_for("E08", 1, timeout=5.0), \
+                f"io_bus=true during clock_out must drive E08 high, got {bus.get('E08')}"
 
+            first_new_event = len(bus.events)
             response = api.set_wb_test(False)
             assert response.status_code == 200, \
                 f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
 
-            # On exit the I/O bus is restored from the io_bus setting (true, written above).
-            assert bus.wait_for("E08", 1, timeout=5.0), \
-                f"clock_out=false must restore the I/O bus from the setting, got {bus.get('E08')}"
-            print("✓ clock_out=false restored the I/O bus (E08 == 1)")
+            # Leaving the test must not touch the I/O bus either.
+            bus.pump(1.0)
+            assert ("E08", 0) not in bus.events[first_new_event:], \
+                "clock_out=false must not reset the MIO controller (E08 went low)"
+            assert bus.get("E08") == 1, \
+                f"I/O bus must stay enabled after clock_out, E08 == {bus.get('E08')}"
+            print("✓ clock_out=false left the I/O bus alone (E08 == 1)")
 
         finally:
             api.set_wb_test(original_clock_out)

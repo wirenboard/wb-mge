@@ -8,7 +8,6 @@
 #include "bridge/port_manager.h"
 #include "esp_log.h"
 #include "indication.h"
-#include "mio_control.h"
 #include "rs485_control.h"
 #include "update_rs485_mio_gpio_states.h"
 
@@ -199,14 +198,13 @@ static void stop_clock_out(void)
 
 // Roll back a failed clock_out entry: the LEDC was never started, so the ports can be
 // unfrozen and brought straight back up from NVS (which also undoes any port this
-// attempt did manage to disable transiently), and the I/O bus is put back to whatever
-// io_bus_enabled says. Leaves the device exactly as it was before the request.
+// attempt did manage to disable transiently). Leaves the device exactly as it was before
+// the request — V-out and the I/O bus were never touched on the way in.
 static void abort_clock_out_entry(void)
 {
     port_manager_set_ports_frozen(false);
     port_manager_apply_settings(BRIDGE_PORT_INDEX);
     port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
-    update_io_bus_control();
 }
 
 
@@ -256,24 +254,18 @@ static esp_err_t process_request_json(cJSON *request_json)
                 abort_clock_out_entry();
                 return ESP_ERR_INVALID_STATE;
             }
-            // Hold the MIO controller in reset: it hangs off the RS-485-2 pair, and
-            // disabling port 2 does nothing to it (its reset is an expander pin, not a
-            // UART pin). Restored from io_bus_enabled on exit.
-            esp_err_t io_bus_err = mio_control_io_bus_onoff(false);
-            if (io_bus_err != ESP_OK) {
-                // Treat it like a port that could not be disabled and abort the entry.
-                ESP_LOGE(TAG, "clock_out aborted: the I/O bus could not be disabled: %s",
-                         esp_err_to_name(io_bus_err));
-                abort_clock_out_entry();
-                return ESP_ERR_INVALID_STATE;
-            }
+            // The I/O bus is deliberately left alone. The MIO controller hangs off the
+            // RS-485-2 pair, but the test never drives that pair (the port-2 transceiver
+            // stays in receive mode, see CLK_OUT_EN_PIN), so there is nothing for MIO to
+            // contend with and no reason to reset it.
+            //
             // Both ports are down and the pins are free: start the waveform.
             esp_err_t clk_err = start_clock_out();
             if (clk_err != ESP_OK) {
                 // The LEDC never came up, so start_clock_out() left the DE line LOW and
                 // released the pins. Reporting success here would leave the factory tester
                 // with a device that claims to emit a clock but does not. Abort the entry:
-                // unfreeze, restore both ports from NVS and put the I/O bus back.
+                // unfreeze and restore both ports from NVS.
                 ESP_LOGE(TAG, "clock_out aborted: the LEDC could not be set up");
                 abort_clock_out_entry();
                 return ESP_ERR_INVALID_STATE;
@@ -308,11 +300,9 @@ static esp_err_t process_request_json(cJSON *request_json)
                 ESP_LOGE(TAG, "Failed to restore port 2 mode after clock_out: %s", esp_err_to_name(err2));
             }
             // Factory test: return LEDs to normal indication and restore V-out state.
+            // The I/O bus needs no restoring: the test never touched it.
             indication_set_test_all_leds(false);
             update_rs485_control();         // restore V-out to the configured KEY_485_VOUT state
-            update_io_bus_control();        // restore MIO to the configured KEY_IO_BUS_ENABLED state
-                                            // (re-applies the setting, so an I/O bus that was
-                                            // already off before the test stays off)
         }
     }
 
@@ -371,11 +361,11 @@ esp_err_t wb_test_post_handler(httpd_req_t *req)
         } else if (res == ESP_ERR_INVALID_ARG) {
             return json_utils_send_error(req, "Incorrect command field value");
         } else if (res == ESP_ERR_INVALID_STATE) {
-            // The RS-485 ports or the I/O bus could not be freed, or the LEDC refused to
-            // produce the waveform, so the test never started and the entry was rolled
-            // back — 503: the request was valid, the device could not serve it.
+            // The RS-485 ports could not be freed, or the LEDC refused to produce the
+            // waveform, so the test never started and the entry was rolled back — 503:
+            // the request was valid, the device could not serve it.
             return json_utils_send_error_status(req, "503 Service Unavailable",
-                "Cannot start clock_out test: the RS-485 ports, the I/O bus or the clock generator could not be set up");
+                "Cannot start clock_out test: the RS-485 ports or the clock generator could not be set up");
         } else {
             return json_utils_send_error(req, "Failed to process request");
         }
