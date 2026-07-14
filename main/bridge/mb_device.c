@@ -86,7 +86,7 @@
 
 /* ---- WB reboot reason codes ---------------------------------------------- */
 
-#define WB_REBOOT_NONE  0u
+#define WB_REBOOT_UNKNOWN 0u  /* reset cause not reported by the SDK */
 #define WB_REBOOT_LPWR  1u  /* brownout / deep sleep wakeup */
 #define WB_REBOOT_WWDG  2u  /* interrupt watchdog          */
 #define WB_REBOOT_IWDG  3u  /* task / generic watchdog     */
@@ -179,7 +179,7 @@ static uint16_t map_reboot_reason(void)
         case ESP_RST_PANIC:     return WB_REBOOT_SFT;
         case ESP_RST_POWERON:   return WB_REBOOT_POR;
         case ESP_RST_EXT:       return WB_REBOOT_PIN;
-        default:                return WB_REBOOT_NONE;
+        default:                return WB_REBOOT_UNKNOWN;
     }
 }
 

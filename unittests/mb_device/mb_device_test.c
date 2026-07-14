@@ -839,7 +839,7 @@ void test_reboot_reason_all(void)
         { ESP_RST_SW,        4u }, /* WB_REBOOT_SFT  */
         { ESP_RST_PANIC,     4u }, /* WB_REBOOT_SFT  */
         { ESP_RST_EXT,       6u }, /* WB_REBOOT_PIN  */
-        { ESP_RST_UNKNOWN,   0u }, /* WB_REBOOT_NONE (default) */
+        { ESP_RST_UNKNOWN,   0u }, /* WB_REBOOT_UNKNOWN (default) */
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
