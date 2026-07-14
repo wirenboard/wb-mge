@@ -171,13 +171,24 @@ static void uart_event_task(void *pvParameters)
 
     uint8_t *dtmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
     uint8_t *sniff_tmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
-    if (dtmp == NULL || sniff_tmp == NULL) {
-        // Do NOT return early: the task must keep servicing EVENT_TASK_EXIT_REQ below,
-        // otherwise serial_deinit() would block on EVENT_TASK_FINISHED forever. The NULL
-        // guards (here, and on sniff_data in handle_uart_event) keep it from dereferencing
-        // the failed buffer -- but that means RX is inoperative on this port, so say so
-        // loudly instead of silently discarding every received byte.
-        ESP_LOGE(TAG, "UART[%d] failed to allocate RX buffers (%d bytes each): RX inoperative on this port",
+    // Do NOT return early when an allocation fails: the task must keep servicing
+    // EVENT_TASK_EXIT_REQ below, otherwise serial_deinit() would block on
+    // EVENT_TASK_FINISHED forever. The NULL guards (buffer_ctx.data in the loop below,
+    // sniff_data in handle_uart_event) keep it from dereferencing the failed buffer.
+    // The two buffers have very different consequences, so report them separately
+    // instead of blaming the sniffer buffer for killing RX.
+    if (dtmp == NULL) {
+        // The event loop is gated on buffer_ctx.data, so without it every received byte
+        // is silently discarded: RX really is dead on this port. Say so loudly.
+        ESP_LOGE(TAG, "UART[%d] failed to allocate the %d-byte RX buffer: RX inoperative on this port",
+                 desc->port_num, SERIAL_BUF_SIZE);
+    }
+    if (sniff_tmp == NULL) {
+        // RX is unaffected — received frames still reach receive_handler. Only the
+        // sniffer/cache overlay gets nothing from this port (handle_uart_event skips the
+        // sniff path when sniff_data is NULL).
+        ESP_LOGE(TAG, "UART[%d] failed to allocate the %d-byte sniffer buffer: RX still works, "
+                      "but the sniffer/cache overlay is inoperative on this port",
                  desc->port_num, SERIAL_BUF_SIZE);
     }
     buffer_ctx_t buffer_ctx = {
