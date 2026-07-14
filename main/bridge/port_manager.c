@@ -57,8 +57,8 @@ static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
 // ports, so ANY unrelated POST /settings would run apply_settings() and re-init
 // the ports — re-grabbing the TX/DE pins that the LEDC is currently driving.
 // While frozen, check_settings_changed() reports no change, apply_settings() is a
-// no-op and a persisting set_mode() (POST /ports/N/mode) is refused with
-// ESP_ERR_INVALID_STATE, so the ports stay down for the whole test. Only the
+// no-op and a persisting set_mode() (POST /ports/N/mode) is refused with the
+// dedicated PM_ERR_PORTS_FROZEN, so the ports stay down for the whole test. Only the
 // transient set_mode path stays open — that is how the test disables them. The
 // test clears the flag on exit and then calls apply_settings() itself to restore
 // both ports from NVS (which also picks up any settings written during the test).
