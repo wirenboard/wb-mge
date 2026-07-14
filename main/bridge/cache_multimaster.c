@@ -844,7 +844,11 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
          * rather than emit a torn snapshot (cache-concurrency-1). */
         if (s_pool == NULL || s_pool_generation != gen) {
             xSemaphoreGive(s_cache_mutex);
-            httpd_resp_send_chunk(req, "]}", 2);
+            /* Close out exactly like the normal tail below, error handling included:
+             * a failed send means the connection is broken, so report it instead of
+             * telling the caller the response went out fine. */
+            ret = httpd_resp_send_chunk(req, "]}", 2);
+            if (ret != ESP_OK) return ret;
             httpd_resp_send_chunk(req, NULL, 0);
             return ESP_OK;
         }
