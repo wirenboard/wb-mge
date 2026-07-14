@@ -1967,13 +1967,15 @@ void test_serial_set_tx_disabled_disable_gpio_sequence(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.level,
         "gpio_set_level must force the dir_pin LOW (0)");
 
-    // Order: reset_pin -> set_direction -> set_level.
+    // Order: reset_pin -> set_level -> set_direction. The safe level is latched
+    // before the pin is switched to output, so it never drives an undefined level
+    // in the window between the direction change and the level change.
     TEST_ASSERT_TRUE_MESSAGE(
-        mock_gpio_reset_pin_data.call_seq < mock_gpio_set_direction_data.call_seq,
-        "gpio_reset_pin must precede gpio_set_direction");
+        mock_gpio_reset_pin_data.call_seq < mock_gpio_set_level_data.call_seq,
+        "gpio_reset_pin must precede gpio_set_level");
     TEST_ASSERT_TRUE_MESSAGE(
-        mock_gpio_set_direction_data.call_seq < mock_gpio_set_level_data.call_seq,
-        "gpio_set_direction must precede gpio_set_level");
+        mock_gpio_set_level_data.call_seq < mock_gpio_set_direction_data.call_seq,
+        "gpio_set_level must precede gpio_set_direction");
 }
 
 // Test serial_set_tx_disabled(false) re-attaches dir_pin to the UART via uart_set_pin
