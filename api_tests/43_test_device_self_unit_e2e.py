@@ -102,7 +102,7 @@ def decode_mem8(values):
     raw = bytearray()
     for v in values:
         assert (v >> 8) == 0x00, (
-            f"MEM_8 field register 0x{v:04X} has a non-zero high byte: the field is "
+            f"MEM_8 register value 0x{v:04X} has a non-zero high byte: the field is "
             "not packed 1 character per register and WB tooling would read garbage"
         )
         raw.append(v & 0xFF)

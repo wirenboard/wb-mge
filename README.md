@@ -109,7 +109,9 @@ TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (in
 - **FC03 and FC04 share one address space**: every address in both tables answers on both
   function codes with the same value. The split above only records where the Wiren Board common
   register map files each field.
-- **Strings**: 2 characters per register, high byte = first character; the tail is zero-padded.
+- **Strings (model, firmware version, signature)**: MEM_8 packing — 1 character per register in
+  the low byte, high byte = 0x00; the tail is zero-padded.
+- **Git info**: 2 characters per register, first character in the low byte; the tail is zero-padded.
 - **Multi-register integers** (except 324–325) use big-endian word order — the most significant
   word is at the lower register address.
 - **Numeric version** is computed per the Wiren Board rule
