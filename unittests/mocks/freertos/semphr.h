@@ -24,6 +24,12 @@ extern int mock_vSemaphoreDelete_called;
 extern unsigned mock_vSemaphoreDelete_call_seq;
 extern SemaphoreHandle_t mock_vSemaphoreDelete_Handle;
 
+/* Called from inside xSemaphoreTake(), before it returns — i.e. in the window where
+ * the caller is "waiting for the lock". Lets a single-threaded test inject the event
+ * that a competing task would have caused there (see the port-freeze race tests).
+ * NULL (the default, restored by mock_freertos_semaphore_reset()) means no hook. */
+extern void (*mock_xSemaphoreTake_hook)(void);
+
 SemaphoreHandle_t xSemaphoreCreateMutex(void);
 BaseType_t xSemaphoreTake(SemaphoreHandle_t xSemaphore, TickType_t xTicksToWait);
 BaseType_t xSemaphoreGive(SemaphoreHandle_t xSemaphore);
