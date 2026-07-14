@@ -904,7 +904,11 @@ void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
     // Store the descriptor in the context before publishing the callback, so the
     // UART event task never sees sniff_handler set while serial_desc is still stale.
     sniff_ctx[port_index].serial_desc = serial_desc;
-    serial_desc->sniff_handler = s_port_callbacks[port_index];
+    // Publish the callback with a release store. Plain ordering of the two writes is not
+    // enough: nothing stops the compiler from reordering them, and the reader is the UART
+    // event task, potentially on the other core. The release store makes the serial_desc
+    // write above visible to any core that observes this non-NULL sniff_handler.
+    __atomic_store_n(&serial_desc->sniff_handler, s_port_callbacks[port_index], __ATOMIC_RELEASE);
 }
 
 void sniffer_detach(unsigned port_index)
