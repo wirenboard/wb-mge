@@ -1140,7 +1140,8 @@ paths:
             refused to initialize in the requested mode — a "tcp_bridge" whose persisted
             bridge_mode is invalid or left over from a legacy firmware, a serial port that
             could not be opened, out of memory — in which case the port keeps its previous
-            mode; or the mode was applied but could not be written to NVS, in which case it
+            mode (or is left disabled if that rollback also fails); or the mode was applied
+            but could not be written to NVS, in which case it
             is live now but will be reverted to the persisted one on the next settings cycle
             or reboot. The error field carries the underlying esp_err_t name.
           content:

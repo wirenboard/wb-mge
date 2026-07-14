@@ -857,9 +857,10 @@ PORT_MANAGER_STATIC esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned p
         // to initialise in the requested mode (bridge_port_init() rejecting a tcp_bridge
         // whose persisted bridge_mode is invalid/legacy, serial_init() failing with
         // "UART driver already installed", repeater_init_port(), ESP_ERR_NO_MEM), or the
-        // mode was applied but could not be persisted to NVS (persist-6). The port has
-        // already been rolled back to its previous mode. Report 500 and name the real
-        // cause — never 400.
+        // mode was applied but could not be persisted to NVS (persist-6). On an init
+        // failure the port is rolled back to its previous mode (or left disabled if the
+        // rollback failed too); on a persist failure the new mode is live but NVS still
+        // holds the old one. Report 500 and name the real cause — never 400.
         cJSON_Delete(req_json);
         return json_utils_send_error_status(req, "500 Internal Server Error",
                                             esp_err_to_name(ret));
