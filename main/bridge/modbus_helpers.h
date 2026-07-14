@@ -22,6 +22,11 @@ typedef struct __attribute__((packed)) {
     uint8_t function;
 } mb_tcp_header_t;
 
+// Canonical Modbus TCP protocol ID (shared across the gateway): always 0.
+// Keep the literal spelled exactly as 0x0000 — some unit tests still define this
+// macro locally, and an identical replacement list keeps that redefinition benign.
+#define MODBUS_TCP_PROTOCOL_ID 0x0000
+
 // Canonical Modbus exception codes (shared across the gateway)
 #define MODBUS_EXC_ILLEGAL_FUNCTION   0x01u  // Illegal function
 #define MODBUS_EXC_ILLEGAL_ADDRESS    0x02u  // Illegal data address
