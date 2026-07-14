@@ -36,6 +36,8 @@ static const char *TAG = "bridge";
 static bridge_mode_t string_to_bridge_mode(const char *str);
 
 
+// When adding/removing a field, update bridge_config_equal() below —
+// it compares this struct field by field.
 typedef struct {
     serial_config_t serial_config;
     bridge_mode_t bridge_mode;
@@ -276,6 +278,8 @@ esp_err_t bridge_port_deinit(unsigned index)
 }
 
 
+// Field-by-field compare (memcmp is unsafe due to struct padding).
+// Keep in sync with bridge_config_t: every field must be compared here.
 static inline bool bridge_config_equal(const bridge_config_t *a, const bridge_config_t *b)
 {
     return (a->serial_config.port_num == b->serial_config.port_num) &&
