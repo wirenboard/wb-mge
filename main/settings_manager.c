@@ -65,7 +65,21 @@ static const setting_mapping_t rs485_base_mappings[] = {
     {"term", "485_term"},
     {"fail_safe", "485_fail_safe"},
     {"tx_disabled", "485_tx_dis"},
-    {"port_mode", "port_mode"},   // -> NVS port_mode_N (STRING, validate_port_mode)
+    // -> NVS port_mode_N (STRING, validate_port_mode).
+    //
+    // Note the deliberate asymmetry with POST /ports/N/mode, which is refused with 409
+    // while the clock_out factory test runs, whereas port_mode via POST /settings is
+    // accepted (200) even then. It is not an inconsistency:
+    //   - POST /ports/N/mode APPLIES the mode immediately (port_manager_set_mode ->
+    //     deinit + re-init of the port). During the test that would hand the TX/DE pins
+    //     back to the UART while the LEDC is driving them, so it must be refused.
+    //   - POST /settings only WRITES NVS here; the applying step is settings_update(),
+    //     and port_manager_apply_settings() is a no-op while the ports are frozen. The
+    //     new mode simply takes effect when the test ends and wb_test restores both
+    //     ports from NVS — which is exactly what a settings write is supposed to mean.
+    // So the request that touches the live hardware is blocked, and the one that only
+    // records intent is not.
+    {"port_mode", "port_mode"},
     {"cache_en", "cache_en"},     // -> NVS cache_en_N  (BOOL,   validate_bool)
 };
 

@@ -171,6 +171,13 @@ bool port_manager_get_cache(unsigned port_index);
  *   - port_manager_set_mode_transient() still works — it is how the test itself
  *     puts the ports into PM_MODE_DISABLED.
  *
+ * Note that POST /settings may still write a new port_mode to NVS during the test and
+ * is answered 200, while POST /ports/N/mode is answered 409. That is the intended
+ * split, not an inconsistency: /ports/N/mode applies the mode immediately (a deinit +
+ * re-init of a port whose pins the LEDC is driving), whereas /settings only records it
+ * — apply_settings() is frozen, and the value takes effect when the test ends. See the
+ * port_mode entry in settings_manager.c's rs485_base_mappings.
+ *
  * NVS is not affected either way. Unfreeze first, then call
  * port_manager_apply_settings() for each port to bring them back up from NVS
  * (this also picks up any settings written while the test was running).

@@ -1115,6 +1115,11 @@ paths:
             RS-485 TX/DE lines of both ports. The request body was valid — retry once
             the test has been switched off. Returned ONLY for that conflict; a port
             that fails to initialize for any other reason returns 500.
+
+
+            This endpoint applies the mode immediately, which is why it is refused. To
+            change port_mode during the test, write it with POST /settings instead: that
+            only persists the value (200) and it takes effect when the test ends.
           content:
             application/json:
               schema:
