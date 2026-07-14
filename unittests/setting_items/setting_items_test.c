@@ -1160,15 +1160,21 @@ void test_migrate_port_mode_legacy_disabled(void)
                                      "Stale legacy bridge_mode must be replaced by the default role");
 }
 
-// Upgraded device, port was an active bridge: legacy bridge_mode_1="server",
+// Upgraded device, port was an active bridge: legacy bridge_mode_1="client",
 // no port_mode_1. After init port_mode_1 must be "tcp_bridge".
-void test_migrate_port_mode_legacy_server(void)
+//
+// The legacy value is deliberately "client", not "server": "server" is also
+// DEFAULT_BRIDGE_MODE, so a "server" fixture would still pass if the migration
+// erased bridge_mode_1 and set_defaults() recreated it from the default - i.e. it
+// could not tell role preservation apart from role loss. "client" differs from the
+// default, so it only survives if the migration really keeps the key.
+void test_migrate_port_mode_legacy_client(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - legacy bridge_mode 'server'");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - legacy bridge_mode 'client'");
     LOG_MESSAGE();
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "server"),
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, BRIDGE_MODE_CLIENT_STR),
                                   "Pre-seeding legacy bridge_mode_1 should succeed");
 
     esp_err_t result = setting_items_init_with_storage(&test_storage);
@@ -1178,13 +1184,13 @@ void test_migrate_port_mode_legacy_server(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
                                   "Reading port_mode_1 should succeed");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
-                                     "Legacy server bridge should migrate to port_mode 'tcp_bridge'");
+                                     "Legacy client bridge should migrate to port_mode 'tcp_bridge'");
 
-    // "server" is still a valid TCP role, so the migration must NOT erase it - otherwise
-    // set_defaults() would silently reset a user's role (e.g. "client") after an upgrade.
+    // "client" is still a valid TCP role, so the migration must NOT erase it - otherwise
+    // set_defaults() would silently reset the user's role to "server" after an upgrade.
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
                                   "Reading bridge_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_CLIENT_STR, value,
                                      "A still-valid bridge role must be preserved by the migration");
 }
 
@@ -1273,7 +1279,7 @@ int main(void)
     RUN_TEST(test_wifi_perm_disable_key_exists_in_setting_items);
 
     RUN_TEST(test_migrate_port_mode_legacy_disabled);
-    RUN_TEST(test_migrate_port_mode_legacy_server);
+    RUN_TEST(test_migrate_port_mode_legacy_client);
     RUN_TEST(test_migrate_port_mode_existing_value_preserved);
     RUN_TEST(test_migrate_port_mode_fresh_device_default);
 

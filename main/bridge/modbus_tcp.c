@@ -24,7 +24,8 @@
 #define EVENT_TASK_FINISHED                 BIT9            // Event flag: task finished
 #define EVENT_TASK_EXIT_REQ                 BIT16           // Event flag: task exit request
 
-#define MODBUS_TCP_MAX_ADU_LEN              260             // Maximum Modbus TCP ADU length: 6 (MBAP) + 1 (unit) + 1 (FC) + 252 (data)
+// MODBUS_TCP_MAX_ADU_LEN comes from mb_device.h: it is the resp_buf contract of
+// mb_device_handle_self_request(), shared with cache_modbus_server.c.
 
 #define MODBUS_RTU_MAX_PACKET_LEN           256             // Maximum Modbus RTU packet length (frames)
 #define MODBUS_RTU_RECV_RESERVE_LEN         10              // Reserve for packet reception with silence interval and Fast Modbus arbitration (frames)
