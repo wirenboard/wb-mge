@@ -12,10 +12,12 @@
 #include "update_rs485_mio_gpio_states.h"
 
 
-// The clock-out test drives the TX lines of both serial ports and the DE/RE line of
-// port 1 directly. The pins come from board_pins.h (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the
-// GPIO numbers differ per board, and hardcoding the WB-MGE ones drove the wrong pins on
-// WB-MGU (there GPIO4 is an input, the port-2 RX line).
+// The clock-out test drives four pins directly: the TX line of both serial ports (the
+// 100 kHz waveform, via the LEDC) and the DE/RE line of both ports as plain GPIOs — port
+// 1's is RAISED (its transceiver transmits), port 2's is HELD LOW (its transceiver stays
+// in receive, so that bus is not driven). The pins come from board_pins.h
+// (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the GPIO numbers differ per board, and hardcoding the
+// WB-MGE ones drove the wrong pins on WB-MGU (there GPIO4 is an input, the port-2 RX line).
 #define BRIDGE_PORT_INDEX       0   // port 1; freed so LEDC can reuse its TX pin
 #define BRIDGE_PORT_INDEX_2     1   // port 2; freed so LEDC can reuse its TX pin
 
@@ -31,21 +33,30 @@
 #define CLK_OUT_PIN_2           SERIAL_OUTPUT_PIN_2
 #define CLK_OUT_PWM_CHANNEL_2   LEDC_CHANNEL_1
 
-// Transceiver driver-enable (DE/RE) pin — port 1 ONLY. Driving it HIGH is what makes the
-// square wave actually reach the bus: with DE low the TX pin only toggles on the logic
-// side, so the activity LED lights but nothing is emitted on the line.
+// Transceiver driver-enable (DE/RE) pins. Port 1 is RAISED: driving DE HIGH is what makes
+// the square wave actually reach the bus — with DE low the TX pin only toggles on the
+// logic side, so the activity LED lights but nothing is emitted on the line.
 //
-// The RS-485-2 transceiver driver is intentionally left DISABLED, and SERIAL_IO_PIN_2 is
-// intentionally not configured here at all: on WB-MGE U4.DE (GPIO15) is held low by the
-// hardware pulldown R4, so no signal is emitted onto the RS-485-2 bus — which is shared
-// with the MIO transceiver U10 and wired out to the external RS-485-2 terminals. Driving
-// that pair would put the factory meander on a bus we do not own, in front of whatever is
-// wired to the terminals and alongside a live MIO controller (its reset is an expander
-// pin, not a UART pin, so disabling port 2 does not silence it). Review comment #30
-// ("emit the 100 kHz on the second RS-485 too, i.e. raise GPIO15") was considered and
-// DECLINED for exactly that reason: LED2 only needs the DI line, which we do drive.
-// Leaving the pin unconfigured leaves it to R4, which is its real owner.
-#define CLK_OUT_EN_PIN          SERIAL_IO_PIN_1
+// Port 2 is the exact opposite: its DE line is PARKED LOW for the whole test and is NEVER
+// raised. Review comment #30 ("emit the 100 kHz on the second RS-485 too, i.e. raise
+// GPIO15") was considered and DECLINED: the RS-485-2 pair is shared with the MIO
+// transceiver U10 and wired out to the external RS-485-2 terminals, so driving it would
+// put the factory meander on a bus we do not own, in front of whatever is wired to the
+// terminals and alongside a live MIO controller (its reset is an expander pin, not a UART
+// pin, so disabling port 2 does not silence it). LED2 only needs the DI line, which we do
+// drive.
+//
+// Because that decision stands, the RS-485-2 driver must be OFF for the whole test — and
+// holding it off is OUR job, not the hardware's. Disabling the port only reaches
+// uart_driver_delete(); neither serial_deinit() nor port_deinit_mode() releases the dir
+// pin, so it stays a push-pull OUTPUT wired through the GPIO matrix to UART2 RTS, at the
+// level the UART left there — HIGH, the TX-enabled idle level. A weak external pulldown
+// (R4 on WB-MGE) cannot pull down a driven pad, so leaving the pin alone would leave the
+// port-2 driver ENABLED and put the meander from the DI line straight onto the bus. The
+// test therefore takes the pin and drives it LOW itself; R4 is only a backstop for the
+// short window in which the pin is released.
+#define CLK_OUT_EN_PIN          SERIAL_IO_PIN_1   // DE of port 1 — raised while the test runs
+#define CLK_OUT_DE_PARK_PIN     SERIAL_IO_PIN_2   // DE of port 2 — held LOW, never raised
 
 #define CLK_OUT_JSON_FIELD      "clock_out"
 
@@ -103,10 +114,11 @@ static void de_pin_latch_low_output(gpio_num_t pin)
 }
 
 
-// Tear the LEDC down and release the three pins the test owns (the TX line of both
-// ports plus the port-1 DE line). Also used to roll back a half-configured LEDC when
-// start_clock_out() fails midway: the ledc_* calls simply report an error for a
-// channel/timer that was never set up.
+// Tear the LEDC down and release the four pins the test owns (the TX line of both ports,
+// the raised port-1 DE line and the parked-LOW port-2 DE line). Also used to roll back a
+// half-configured LEDC when start_clock_out() fails midway: the ledc_* calls simply
+// report an error for a channel/timer that was never set up, and gpio_reset_pin() is
+// harmless on a pin this attempt never got as far as configuring.
 static void release_clock_out_hw(void)
 {
     // Disable the RS-485-1 line driver before tearing the waveform down.
@@ -120,39 +132,52 @@ static void release_clock_out_hw(void)
     tim_conf.deconfigure = true;
     ledc_timer_config(&tim_conf);
 
-    // Release all three pins so port_manager_apply_settings() can hand the TX and DE
-    // lines back to the UART. Note that gpio_reset_pin() does not leave a pin floating:
-    // it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON, so the released
-    // port-1 DE pin is weakly pulled towards 1 — the "driver enabled" level — and no
-    // external pulldown is documented for that line on any board, so its driver may be
-    // weakly enabled until the UART re-attaches. What bounds the exposure is the window
-    // itself — it is short (apply_settings re-inits the UART right after) and the released
-    // TX pin is pulled to the idle level the UART holds between frames, so a briefly-enabled
-    // driver idles the line rather than corrupting traffic. On the way back in,
-    // start_clock_out() re-latches the DE pin LOW before driving it rather than trusting
-    // whatever the previous owner left in the output latch.
+    // Release all four pins so port_manager_apply_settings() can hand the TX and DE lines
+    // back to the UART. Note that gpio_reset_pin() does not leave a pin floating: it puts
+    // the pad in GPIO_MODE_DISABLE with the internal pull-up ON, so a released DE pin is
+    // weakly pulled towards 1 — the "driver enabled" level — and its driver may be weakly
+    // enabled until the UART re-attaches. What bounds the exposure is the window itself —
+    // it is short (apply_settings re-inits the UART right after) and the released TX pin is
+    // pulled to the idle level the UART holds between frames, so a briefly-enabled driver
+    // idles the line rather than corrupting traffic. On the way back in, start_clock_out()
+    // re-latches both DE pins LOW before driving them rather than trusting whatever the
+    // previous owner left in the output latch.
     //
-    // The port-2 DE line is not in this list because the test never took it: it is owned
-    // by the hardware pulldown (R4 on WB-MGE) throughout, so nothing has to be given back.
+    // The port-2 DE line is released here as well: for the whole test it was an output
+    // driven LOW by us (see CLK_OUT_DE_PARK_PIN), so it has to be given back like any
+    // other pin the test owns. In that short release window the WB-MGE pulldown R4 fights
+    // the internal pull-up — a weak-vs-weak contention, unlike the driven HIGH the UART
+    // would otherwise have kept on the pin for the entire test. That backstop is
+    // WB-MGE-specific and must not be assumed elsewhere: on WB-MGU SERIAL_IO_PIN_2 is
+    // GPIO13, the DE line of the WBE2 bus, with no R4 — there the window is bounded only
+    // by its own length, exactly like the port-1 DE line above.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
+    gpio_reset_pin(CLK_OUT_DE_PARK_PIN);
 }
 
 
 // Bring the 100 kHz waveform up on the TX line of both ports and enable the RS-485-1
-// line driver. The DE pin is raised ONLY once every LEDC call has succeeded: if the
-// waveform never started, enabling the driver would put the transceiver into transmit
+// line driver. The port-1 DE pin is raised ONLY once every LEDC call has succeeded: if
+// the waveform never started, enabling the driver would put the transceiver into transmit
 // with a STATIC level on the RS-485-1 line while the API happily reported success. On
 // any error the half-configured LEDC is released and the DE line stays LOW (receive
 // mode); the caller aborts the test entry.
 //
-// Port 2 gets the waveform on its TX (DI) line only — its driver stays disabled, so the
-// RS-485-2 pair stays silent (see CLK_OUT_EN_PIN above).
+// Port 2 gets the waveform on its TX (DI) line only. Its DE line is driven LOW here and
+// is never raised — that is what keeps the RS-485-2 pair silent (see CLK_OUT_DE_PARK_PIN
+// above); the disabled port would otherwise have left it driven HIGH.
 static esp_err_t start_clock_out(void)
 {
     // Keep the RS-485-1 transceiver in receive mode until the waveform is running.
     de_pin_latch_low_output(CLK_OUT_EN_PIN);
+    // Park the RS-485-2 transceiver in receive mode for the whole test. Its port has just
+    // been disabled, but that only deleted the UART driver: the dir pin is still an output
+    // held at the UART's TX-enabled idle level (HIGH), which would gate the meander from
+    // the DI line onto a bus we do not own. Take the pin and hold it LOW ourselves. It is
+    // never set to 1 anywhere in this file — that is the invariant review #30 turned on.
+    de_pin_latch_low_output(CLK_OUT_DE_PARK_PIN);
 
     ledc_timer_config_t tim_conf = timer_config;
     tim_conf.deconfigure = false;
@@ -181,7 +206,7 @@ static esp_err_t start_clock_out(void)
     }
 
     // The waveform is running: enable the RS-485-1 line driver so it reaches that bus.
-    // The RS-485-2 driver stays off — its bus is not ours to drive.
+    // The RS-485-2 driver stays parked LOW — its bus is not ours to drive.
     gpio_set_level(CLK_OUT_EN_PIN, 1);
 
     ESP_LOGW(TAG, "100 kHz clock output on RS485-1/RS485-2 TX enabled (all indicator LEDs on)");
@@ -229,8 +254,9 @@ static esp_err_t process_request_json(cJSON *request_json)
     if (cmd_item->valueint) {
         if (!clock_out_en) {
             // Freeze the ports first: from here on the runtime mode (DISABLED)
-            // deliberately differs from the mode in NVS, and nothing but this test
-            // may re-init the ports while the LEDC drives their TX/DE pins.
+            // deliberately differs from the mode in NVS, and nothing but this test may
+            // re-init the ports while it owns their TX and DE pins (the LEDC drives the
+            // TX lines; the DE lines are driven straight as GPIOs).
             port_manager_set_ports_frozen(true);
             // Disable both ports so the LEDC can take over their TX pins, but do NOT
             // persist the DISABLED mode: NVS must keep the user's configured mode so
@@ -256,8 +282,8 @@ static esp_err_t process_request_json(cJSON *request_json)
             }
             // The I/O bus is deliberately left alone. The MIO controller hangs off the
             // RS-485-2 pair, but the test never drives that pair (the port-2 transceiver
-            // stays in receive mode, see CLK_OUT_EN_PIN), so there is nothing for MIO to
-            // contend with and no reason to reset it.
+            // is held in receive mode, see CLK_OUT_DE_PARK_PIN), so there is nothing for
+            // MIO to contend with and no reason to reset it.
             //
             // Both ports are down and the pins are free: start the waveform.
             esp_err_t clk_err = start_clock_out();
@@ -284,9 +310,9 @@ static esp_err_t process_request_json(cJSON *request_json)
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
-            // The LEDC has released the TX/DE pins, so the ports may be brought up
-            // again: release the freeze before apply_settings, which is a no-op
-            // while the ports are frozen.
+            // stop_clock_out() has released the TX and DE pins, so the ports may be
+            // brought up again: release the freeze before apply_settings, which is a
+            // no-op while the ports are frozen.
             port_manager_set_ports_frozen(false);
             // The test never touched NVS, so the configured mode is still there:
             // re-read it and re-initialise both ports from the persisted settings.

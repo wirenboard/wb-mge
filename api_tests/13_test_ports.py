@@ -145,12 +145,114 @@ def test_wb_test_leds_coupling(api):
             print(f"✓ clock_out restored to {original}")
 
 
+@pytest.mark.qemu
+def test_clock_out_keeps_rs485_2_de_low(api):
+    """clock_out must never enable the RS-485-2 transceiver driver.
+
+    This is the regression test for the decision behind review comment #30 ("emit the
+    100 kHz on the second RS-485 too, i.e. raise GPIO15"), which was DECLINED: the
+    RS-485-2 pair is shared with the MIO transceiver and wired out to the external
+    RS-485-2 terminals, so the factory meander must not reach it.
+
+    Holding that line low is the firmware's job, not the hardware's. Disabling port 2
+    only deletes the UART driver — it does not release the dir pin, which stays a
+    push-pull output at the level UART2 RTS left there (HIGH = TX enabled), and a weak
+    external pulldown cannot pull down a driven pad. So wb_test.c parks the port-2 DE
+    line (G15 = SERIAL_IO_PIN_2, GPIO15 on WB-MGE) LOW itself for the whole test.
+
+    Asserted over the QEMU IO bus:
+      * baseline: both DE lines idle HIGH (RTS-attached, TX-enabled);
+      * during the test: G15 drops to 0 and no ("G15", 1) record appears afterwards —
+        the driver is off for the whole run, not just at the end;
+      * positive control: G04 (port-1 DE) is HIGH, i.e. the RS-485-1 driver IS enabled
+        and the meander really does reach that bus. The asymmetry is the point;
+      * after the test: G15 goes back to 1, proving the parked pin was handed back to
+        the UART instead of being left driven.
+
+    The "no rise" window is anchored at the first G15 -> 0 record, not at the request:
+    entry runs gpio_reset_pin() on the pin, and the QEMU model seeds a fresh INPUT with
+    an idle-HIGH G record (virtual_io_qemu.c). That artifact re-states the level the UART
+    had already left on the line; it is not a rise this test drives. Everything after the
+    park must be flat 0.
+    """
+    original_clock_out = api.get_wb_test().json()["clock_out"]
+    info = api.get_info().json()
+    original_1 = info.get("rs485_1", {}).get("port_mode", "tcp_bridge")
+    original_2 = info.get("rs485_2", {}).get("port_mode", "tcp_bridge")
+
+    try:
+        # Both ports must be in an active transport, so their DE pins are RTS-attached
+        # and idle HIGH. That is what makes the assertion below meaningful: G15 starts
+        # at 1 and only the firmware can bring it down.
+        assert api.set_port_mode(1, "tcp_bridge").status_code == 200
+        assert api.set_port_mode(2, "tcp_bridge").status_code == 200
+        time.sleep(1.0)
+
+        with IoBus() as bus:
+            assert bus.wait_for("G04", 1, timeout=5.0), \
+                f"Baseline: RS-485-1 DE (G04) expected idle HIGH, got {bus.get('G04')}"
+            assert bus.wait_for("G15", 1, timeout=5.0), \
+                f"Baseline: RS-485-2 DE (G15) expected idle HIGH, got {bus.get('G15')}"
+
+            response = api.set_wb_test(True)
+            assert response.status_code == 200, \
+                f"POST /wb_test clock_out=true expected 200, got {response.status_code}"
+
+            try:
+                # The test takes the port-2 DE line and drives it LOW (receive mode).
+                assert bus.wait_for("G15", 0, timeout=5.0), \
+                    f"clock_out=true must park the RS-485-2 DE line (G15) LOW, got {bus.get('G15')}"
+                # ...as a driven output, not as a released/floating pin.
+                assert bus.get("D15") == 1, \
+                    f"RS-485-2 DE (G15) must be a driven OUTPUT while parked, D15 == {bus.get('D15')}"
+                print("✓ clock_out=true parked the RS-485-2 DE line low (G15 == 0, driven)")
+
+                # Positive control: the RS-485-1 driver IS enabled, so the waveform
+                # reaches that bus. Only the port-2 pair is kept silent.
+                assert bus.wait_for("G04", 1, timeout=5.0), \
+                    f"clock_out=true must raise the RS-485-1 DE line (G04), got {bus.get('G04')}"
+                print("✓ clock_out=true raised the RS-485-1 DE line (G04 == 1)")
+
+                # It must stay low for the WHOLE test, not just settle low: watch the
+                # event stream, since even a momentary G15 -> 1 would key the RS-485-2
+                # driver and put the meander on a bus we do not own.
+                parked_at = len(bus.events)
+                bus.pump(2.0)
+                assert ("G15", 1) not in bus.events[parked_at:], \
+                    "RS-485-2 DE (G15) went HIGH during clock_out: the port-2 driver was keyed"
+                assert bus.get("G15") == 0, \
+                    f"RS-485-2 DE (G15) must stay LOW for the whole test, got {bus.get('G15')}"
+                print("✓ RS-485-2 DE line stayed low for the whole clock_out test")
+
+            finally:
+                response = api.set_wb_test(False)
+                assert response.status_code == 200, \
+                    f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
+
+            # Exit must hand the parked pin back: port 2 comes up from NVS (tcp_bridge)
+            # and its DE line returns to the UART's TX-enabled idle level.
+            assert bus.wait_for("G15", 1, timeout=5.0), \
+                f"clock_out=false must release the RS-485-2 DE line back to the UART, got {bus.get('G15')}"
+            print("✓ clock_out=false released the RS-485-2 DE line back to the UART (G15 == 1)")
+
+    finally:
+        api.set_wb_test(original_clock_out)
+        restore_errors = []
+        for port_num, mode in [(1, original_1), (2, original_2)]:
+            resp = api.set_port_mode(port_num, mode)
+            if resp.status_code != 200:
+                restore_errors.append(f"port {port_num} -> {mode}: {resp.status_code}")
+        if restore_errors:
+            raise AssertionError("Port mode restore failed: " + "; ".join(restore_errors))
+
+
 def test_clock_out_freezes_port_mode(api):
     """clock_out freezes the ports: mode changes are rejected and NVS is untouched.
 
-    While the test runs, the LEDC owns the TX/DE pins of both ports, so a persisting
-    mode change (POST /ports/N/mode) must not go through: the firmware rejects it with
-    409 Conflict instead of handing the pins back to the UART. The runtime mode is
+    While the test runs it owns the TX and DE pins of both ports (the LEDC drives the two
+    TX lines; the two DE lines are driven as plain GPIOs), so a persisting mode change
+    (POST /ports/N/mode) must not go through: the firmware rejects it with 409 Conflict
+    instead of handing the pins back to the UART. The runtime mode is
     DISABLED for the duration, but that is deliberately NOT persisted — GET /settings
     reads straight from NVS and must still show the mode configured before the test,
     both during it and after it. On exit both ports come back up from NVS.
@@ -231,10 +333,11 @@ def test_clock_out_leaves_io_bus_alone(api):
     """clock_out must not disturb the MIO controller, and must not gate the io_bus setting.
 
     The clock_out test drives the logic-side TX (DI) line of RS-485-2 so that LED2 blinks,
-    but it never enables that transceiver's driver: SERIAL_IO_PIN_2 (U4.DE) is left to the
-    hardware pulldown R4. The RS-485-2 pair the MIO controller shares therefore stays
-    silent, so the test has no reason to touch the I/O bus — its reset line (E08) must keep
-    whatever the io_bus setting put there, all the way through the test.
+    but it never enables that transceiver's driver: it holds SERIAL_IO_PIN_2 (U4.DE) LOW
+    itself for the whole run (see test_clock_out_keeps_rs485_2_de_low). The RS-485-2 pair
+    the MIO controller shares therefore stays silent, so the test has no reason to touch
+    the I/O bus — its reset line (E08) must keep whatever the io_bus setting put there,
+    all the way through the test.
 
     And because the test does not own the I/O bus, an io_bus written via POST /settings
     while the test runs must reach the hardware immediately, not be deferred to test exit

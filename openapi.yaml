@@ -692,16 +692,16 @@ paths:
           high), so the signal is emitted on the RS-485-1 bus — do not run it with live
           devices attached to RS-485-1;
 
-        * the RS-485-2 bus stays silent on purpose: its transceiver driver is left
-          disabled (the DE line is held low in hardware), so the port-2 TX line only
-          toggles on the logic side and blinks the RS-485-2 activity LED. Nothing is
-          emitted on the RS-485-2 pair, which is shared with the MIO transceiver and
-          wired out to the RS-485-2 terminals;
+        * the RS-485-2 pair stays silent on purpose: the firmware drives that port's DE
+          line low and holds it there for the whole test, so its transceiver driver is
+          off and the port-2 TX line only toggles on the logic side, blinking the
+          RS-485-2 activity LED. Nothing is emitted on the RS-485-2 pair, which is
+          shared with the MIO transceiver and wired out to the RS-485-2 terminals;
 
         * both ports are forced to "disabled" at runtime so the LEDC can own their TX
-          pins (and the RS-485-1 DE pin). This is NOT persisted: NVS keeps the
-          configured port_mode, and both ports are restored from it when the test is
-          switched off;
+          pins (the firmware also takes both DE pins: RS-485-1 raised, RS-485-2 held
+          low). This is NOT persisted: NVS keeps the configured port_mode, and both
+          ports are restored from it when the test is switched off;
 
         * the I/O bus is NOT touched: the MIO controller keeps whatever state
           io_bus_enabled put it in, during the test and after it, and a POST /settings
@@ -1127,7 +1127,7 @@ paths:
         '409':
           description: >
             Port mode is locked: the clock_out factory test is active and owns the
-            RS-485 TX lines of both ports (plus the RS-485-1 DE line). The request body
+            RS-485 TX lines of both ports and both DE lines. The request body
             was valid — retry once the test has been switched off. Returned ONLY for that
             conflict; a port that fails to initialize for any other reason returns 500.
 
