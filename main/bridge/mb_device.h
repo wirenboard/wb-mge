@@ -6,10 +6,9 @@
 /* Gateway's own Modbus Unit ID (0xFF), per the Modbus Messaging Implementation Guide. */
 #define MB_DEVICE_UNIT_ID 0xFFu
 
-/* Maximum Modbus TCP ADU length: 6 (MBAP) + 1 (unit) + 1 (FC) + 252 (data).
- * This is the minimum size of the resp_buf every function below writes into,
- * so callers must size their response buffers with this constant. */
-#define MODBUS_TCP_MAX_ADU_LEN 260u
+/* MODBUS_TCP_MAX_ADU_LEN (modbus_helpers.h) is the minimum size of the resp_buf
+ * every function below writes into: callers must size their response buffers with
+ * that constant. */
 
 /* True if unit_id addresses the gateway itself (0xFF). */
 bool mb_device_is_self(uint8_t unit_id);
