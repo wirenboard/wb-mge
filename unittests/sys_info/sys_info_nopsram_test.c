@@ -81,6 +81,10 @@ void test_sys_info_init_psram_absent_with_idle_mock(void)
     esp_err_t result = sys_info_init();
 
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK on a no-PSRAM board");
+    // Anchor: without this, the zero-assertions below would also pass against the
+    // struct that setUp() zeroes, i.e. even if sys_info_init() bailed out early.
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(
+        SERIAL_FROM_MAC, sys_info.device_serial_num, "sys_info_init must still populate the serial number");
     TEST_ASSERT_FALSE_MESSAGE(sys_info.psram_available, "psram_available should be false on a no-PSRAM board");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, sys_info.psram_size_kb, "psram_size_kb should be 0 on a no-PSRAM board");
 }
