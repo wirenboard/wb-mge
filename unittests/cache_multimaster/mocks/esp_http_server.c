@@ -23,6 +23,9 @@ const char  *mock_http_resp_set_hdr_last_field;
 /* Last header value set via httpd_resp_set_hdr() */
 const char  *mock_http_resp_set_hdr_last_value;
 
+/* Status line from the last httpd_resp_set_status() call */
+const char *mock_http_resp_status_last;
+
 /* Optional hook invoked at the START of each data-carrying httpd_resp_send_chunk()
  * call, with the 1-based chunk index. Lets tests inject an action (e.g. a cache
  * clear/disable) mid-stream — exactly when the handler has released the mutex —
@@ -41,6 +44,7 @@ void mock_http_reset(void)
     mock_http_resp_set_hdr_last_field = NULL;
     mock_http_resp_set_hdr_last_value = NULL;
     mock_http_chunk_hook              = NULL;
+    mock_http_resp_status_last        = NULL;
 }
 
 /* ---- Helper: append bytes to the accumulation buffer ---- */
@@ -127,5 +131,12 @@ esp_err_t httpd_resp_send_chunk(httpd_req_t *r, const char *buf,
         }
     }
     mock_http_append(buf, buf_len);
+    return ESP_OK;
+}
+
+esp_err_t httpd_resp_set_status(httpd_req_t *r, const char *status)
+{
+    (void)r;
+    mock_http_resp_status_last = status;
     return ESP_OK;
 }

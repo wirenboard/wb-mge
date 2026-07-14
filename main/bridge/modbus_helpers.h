@@ -43,11 +43,16 @@ typedef struct __attribute__((packed)) {
 #define MODBUS_EXC_ILLEGAL_DATA_VALUE 0x03u  // Illegal data value
 #define MODBUS_EXC_GW_TARGET_FAILED   0x0Bu  // Gateway target device failed to respond
 
-// Canonical Modbus read function codes (shared across the gateway)
+// Canonical Modbus read function codes (shared across the gateway).
+// FC01..FC04 are contiguous and non-zero — code relies on both properties.
 #define MODBUS_FC_READ_COILS           0x01u  // FC01: read coils
 #define MODBUS_FC_READ_DISCRETE_INPUTS 0x02u  // FC02: read discrete inputs
 #define MODBUS_FC_READ_HOLDING_REGS    0x03u  // FC03: read holding registers
 #define MODBUS_FC_READ_INPUT_REGS      0x04u  // FC04: read input registers
+
+// Maximum quantity readable in one request (Modbus application protocol spec)
+#define MODBUS_MAX_READ_REGISTERS      125u   // FC03/FC04: 125 registers (250 bytes)
+#define MODBUS_MAX_READ_COILS          2000u  // FC01/FC02: 2000 coils (250 bytes)
 
 // Convert 16-bit word (register) Little Endian <-> Big Endian
 static inline uint16_t modbus_swap16(uint16_t x) {return (x >> 8) | (x << 8);}

@@ -60,6 +60,12 @@ extern const char  *mock_http_resp_set_hdr_last_field;
 /* Last header field value set via httpd_resp_set_hdr() */
 extern const char  *mock_http_resp_set_hdr_last_value;
 
+/* Status line set via httpd_resp_set_status(); NULL if never called.
+ * ESP-IDF's httpd_err_code_t has no 409 entry, so a 409 is sent by setting the
+ * status line directly — mirror that here rather than inventing an enum value
+ * the real header does not have. */
+extern const char  *mock_http_resp_status_last;
+
 /* Reset all mock state — call in setUp() before each test */
 void mock_http_reset(void);
 
@@ -77,3 +83,5 @@ esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t buf_len);
 
 esp_err_t httpd_resp_send_chunk(httpd_req_t *r, const char *buf,
                                 ssize_t buf_len);
+
+esp_err_t httpd_resp_set_status(httpd_req_t *r, const char *status);

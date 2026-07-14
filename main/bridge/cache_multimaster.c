@@ -1,6 +1,7 @@
 #include "cache_multimaster.h"
 #include "bridge.h"
 #include "auth.h"
+#include "modbus_helpers.h"  /* MODBUS_FC_READ_* — the cache entry type IS the FC */
 
 #ifdef __unittest_env__
 #include "malloc.h"  /* test_malloc / test_free for allocation tracking in unit tests */
@@ -26,16 +27,20 @@ static const char *TAG = "cache_mm";
 
 /* Type field bit layout:
  *   bit 7  (0x80) = used flag: 1 = slot occupied, 0 = free
- *   bits 1:0      = register type: 0=holding(FC03), 1=input(FC04),
- *                                  2=coil(FC01),    3=discrete(FC02)
- *   bits 6:2      = reserved, must be 0
- * A zero byte means "free slot".
+ *   bits 2:0      = the Modbus read function code the value came from:
+ *                   1 = FC01 coils, 2 = FC02 discrete inputs,
+ *                   3 = FC03 holding regs, 4 = FC04 input regs
+ *   bits 6:3      = reserved, must be 0
+ * A zero byte means "free slot" — and since no valid FC is 0, a used entry can
+ * never look like a free one.
+ *
+ * The entry type IS the Modbus function code: storing anything else would mean
+ * translating FC -> type on every store and every lookup, and back again for the
+ * CSV/JSON output. Only the outward-facing name (holding/input/coil/discrete) is
+ * derived, in the two output handlers. The field stays one byte, so
+ * cache_entry_t is unchanged at 8 bytes and the HTTP API is unaffected.
  */
-#define CACHE_TYPE_HOLDING   0u
-#define CACHE_TYPE_INPUT     1u
-#define CACHE_TYPE_COIL      2u
-#define CACHE_TYPE_DISCRETE  3u
-#define CACHE_TYPE_MASK      0x03u /* bits 1:0 — register type */
+#define CACHE_TYPE_MASK      0x07u  /* bits 2:0 of cache_entry_t.type = Modbus FC */
 #define CACHE_USED_BIT       0x80u
 
 /* Saturating cap for age_s counter: ~18.2 hours in seconds */
@@ -44,11 +49,15 @@ static const char *TAG = "cache_mm";
 /* One flat pool entry — 8 bytes, no padding, naturally aligned. */
 typedef struct {
     uint8_t  slave_id;      /* Modbus slave address (0x00..0xFE)              */
-    uint8_t  type;          /* bit7=used, bits1:0=register type (see above)   */
+    uint8_t  type;          /* bit7=used, bits2:0=Modbus FC (see above)       */
     uint16_t address;       /* register or coil address (0-based)             */
     uint16_t value;         /* last known value (0 or 1 for coils)            */
     uint16_t age_s;         /* seconds since last update; saturates at CACHE_AGE_MAX_S */
 } cache_entry_t;
+
+/* The 32 KB pool budget (CACHE_MAX_ENTRIES x 8) and the memory_bytes figure
+ * reported by /cache/status are both computed from this size. */
+_Static_assert(sizeof(cache_entry_t) == 8, "cache_entry_t must stay 8 bytes");
 
 /** Saved context from a master request, per port */
 typedef struct {
@@ -61,7 +70,25 @@ typedef struct {
 
 /* ---- Module-level state ------------------------------------------------- */
 
-/* Pool is heap-allocated on cache_multimaster_enable() and freed on disable(). */
+/* Pool is heap-allocated on cache_multimaster_enable() and freed on disable().
+ *
+ * POOL INVARIANT — DENSE PREFIX:
+ *   Used entries occupy a contiguous prefix s_pool[0 .. n-1]; every slot from
+ *   the first free one onwards is free. It holds because entries are never
+ *   released individually: find_or_alloc_entry() always takes the FIRST free
+ *   slot, and the only ways a slot is freed are enable(), clear() and disable(),
+ *   which all wipe the WHOLE pool at once. There is no eviction.
+ *
+ *   find_or_alloc_entry() and cache_multimaster_lookup() rely on this: they stop
+ *   scanning at the first free slot instead of walking all CACHE_MAX_ENTRIES
+ *   (4096) slots under the mutex, which for a 125-register FC03 response is the
+ *   difference between ~512k and O(entries) iterations per packet.
+ *
+ *   IF YOU ADD PER-ENTRY EVICTION (LRU, TTL-based reclaim, a "delete one entry"
+ *   API, ...) THE INVARIANT BREAKS AND THOSE EARLY EXITS BECOME SILENT BUGS:
+ *   a hole left behind would hide every entry after it. Either compact the pool
+ *   on removal (keeping the prefix dense) or revert both scans to a full pass.
+ */
 static cache_entry_t    *s_pool              = NULL;
 static volatile bool     s_cache_enabled = false;
 static SemaphoreHandle_t s_cache_mutex   = NULL;
@@ -82,12 +109,46 @@ static volatile uint32_t s_pool_generation   = 0;
 
 /* ---- Internal helpers ---------------------------------------------------- */
 
+/* The four read function codes the cache can store. They are contiguous
+ * (FC01 coils .. FC04 input registers), which is what lets the entry type be the
+ * raw function code. Anything else must never reach the pool. */
+static inline bool cache_fc_is_cacheable(uint8_t fc)
+{
+    return (fc >= MODBUS_FC_READ_COILS) && (fc <= MODBUS_FC_READ_INPUT_REGS);
+}
+
+/* Maximum quantity the given read FC may ask for in one request. */
+static inline uint16_t cache_fc_max_count(uint8_t fc)
+{
+    return (fc == MODBUS_FC_READ_HOLDING_REGS || fc == MODBUS_FC_READ_INPUT_REGS)
+           ? MODBUS_MAX_READ_REGISTERS
+           : MODBUS_MAX_READ_COILS;
+}
+
+/**
+ * @brief Can a response to this request ever be stored in the cache?
+ *
+ * True only for a spec-legal read request: one of FC01..FC04, a quantity within
+ * that FC's limit, and an address range that fits the 16-bit space. Anything
+ * else (a write, a zero/oversized count, a range wrapping past 0xFFFF) can only
+ * produce a response we would have to throw away, so it is never recorded as a
+ * pending request in the first place.
+ */
+static bool request_is_cacheable(uint8_t function, uint16_t start_reg, uint16_t count)
+{
+    if (!cache_fc_is_cacheable(function)) return false;
+    if (count == 0 || count > cache_fc_max_count(function)) return false;
+    if ((uint32_t)start_reg + (uint32_t)count > 0x10000u) return false;
+    return true;
+}
+
 /**
  * @brief Find an existing pool entry matching (slave_id, type, address),
  *        or allocate the first unused slot for a new entry.
  *
- * Performs a single linear scan: if an exact match is found it is returned
- * immediately; otherwise the first unused slot is initialised and returned.
+ * Scans the used prefix of the pool (see the POOL INVARIANT at s_pool): if an
+ * exact match is found it is returned immediately; the scan stops at the first
+ * free slot, which is then initialised and returned as the new entry.
  * Returns NULL when the pool is full.
  *
  * Note: the port is intentionally NOT part of the lookup key.  The cache is
@@ -96,8 +157,8 @@ static volatile uint32_t s_pool_generation   = 0;
  * matches the behaviour of cache_multimaster_lookup(), which also ignores the
  * originating port.
  *
- * @p type_value must be one of CACHE_TYPE_HOLDING / INPUT / COIL / DISCRETE
- * (bits 1:0 only, without CACHE_USED_BIT).
+ * @p type_value is the Modbus read function code (FC01..FC04), stored verbatim
+ * in bits 2:0 of the type byte — caller must have validated it.
  *
  * Caller must hold s_cache_mutex.
  */
@@ -107,29 +168,28 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
     /* Pool not allocated yet — cache is disabled or enable() failed */
     if (s_pool == NULL) return NULL;
 
-    cache_entry_t *free_slot = NULL;
-
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-        if ((s_pool[i].type & CACHE_USED_BIT) &&
-            s_pool[i].slave_id                 == slave_id &&
-            (s_pool[i].type & CACHE_TYPE_MASK) == type_value &&
-            s_pool[i].address                  == address) {
-            return &s_pool[i];  /* existing entry found */
+        cache_entry_t *e = &s_pool[i];
+
+        /* First free slot: by the dense-prefix invariant no used entry can
+         * follow it, so the search is over — claim this slot for the new entry. */
+        if (!(e->type & CACHE_USED_BIT)) {
+            e->type     = (uint8_t)(CACHE_USED_BIT | type_value);
+            e->slave_id = slave_id;
+            e->address  = address;
+            e->value    = 0;
+            e->age_s    = 0;
+            return e;
         }
-        if (!(s_pool[i].type & CACHE_USED_BIT) && free_slot == NULL) {
-            free_slot = &s_pool[i];
+
+        if (e->slave_id                 == slave_id &&
+            (e->type & CACHE_TYPE_MASK) == type_value &&
+            e->address                  == address) {
+            return e;  /* existing entry found */
         }
     }
 
-    if (free_slot != NULL) {
-        free_slot->type     = (uint8_t)(CACHE_USED_BIT | type_value);
-        free_slot->slave_id = slave_id;
-        free_slot->address  = address;
-        free_slot->value    = 0;
-        free_slot->age_s    = 0;
-    }
-
-    return free_slot;  /* NULL when pool is full */
+    return NULL;  /* pool is full */
 }
 
 /**
@@ -352,13 +412,22 @@ void cache_multimaster_on_request(uint8_t port, uint8_t slave_id, uint8_t functi
 {
     if (port >= BRIDGES_COUNT) return;
 
+    /* Only a spec-legal read request can ever yield a response worth storing.
+     * A write, a zero/oversized count or a wrapping address range is recorded
+     * with valid = false: the slot is still overwritten (so this request retires
+     * whatever was pending before it — a stale pending must never survive a new
+     * request and go on to match some later response) but nothing can be stored
+     * against it. This is the first half of the cache-poisoning defence; the
+     * second is the response-grammar check in on_response(). */
+    const bool cacheable = request_is_cacheable(function, start_reg, count);
+
     /* s_pending is written here and in on_response from the sniffer task, but
      * ALSO reset (memset) by enable()/clear() running on the httpd/settings
      * task — so the single-writer assumption does not hold and these accesses
      * must be serialised under s_cache_mutex to avoid a torn read in
      * on_response on a dual-core SMP device (corr-5). */
     if (s_cache_mutex != NULL) xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-    s_pending[port].valid     = true;
+    s_pending[port].valid     = cacheable;
     s_pending[port].slave_id  = slave_id;
     s_pending[port].function  = function;
     s_pending[port].start_reg = start_reg;
@@ -408,31 +477,55 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
 
     if (s_cache_mutex == NULL) return;
 
-    if (function == 0x03 || function == 0x04) {
-        /* Holding / input registers: 2 bytes per value, big-endian */
-        uint8_t  type_value = (function == 0x03) ? CACHE_TYPE_HOLDING : CACHE_TYPE_INPUT;
-        uint16_t max_regs   = byte_count / 2;
+    /* The entry type is the function code itself (see the type bit layout). */
+    const uint8_t type_value = function;
 
-        if (max_regs < count) count = max_regs;
-
-        /* Clamp so (start_addr + count) does not wrap past the 16-bit address
-         * space. Without this a response read near 0xFFFF (e.g. start 0xFFFE,
-         * count 4) would compute addr = 0xFFFE, 0xFFFF, 0x0000, 0x0001 and the
-         * wrapped low addresses would poison unrelated registers of the same
-         * slave (cache-lookup-1). Only the in-range portion is stored. */
-        if ((uint32_t)start_addr + count > 0x10000u) {
-            count = (uint16_t)(0x10000u - start_addr);
+    /* ---- Response grammar check — the second half of the cache-poisoning
+     * defence (the first is request_is_cacheable() gating s_pending.valid).
+     *
+     * A pending request is matched to a response on (port, slave_id, function)
+     * only: an RTU read response carries no start address, so there is nothing
+     * else to bind them with. That binding is therefore weak — a late reply, a
+     * duplicated slave address on the bus, or a corrupt frame that still passes
+     * CRC can all be matched to a request they do not answer. Whatever such a
+     * response carries would then be filed under OUR start_addr with age_s = 0,
+     * i.e. another register's values presented as our own, fresh.
+     *
+     * The binding cannot be strengthened, but a reply whose SHAPE does not match
+     * the request can be refused: a genuine answer to "read N registers" always
+     * declares exactly 2*N data bytes (or ceil(N/8) for coils) and carries them.
+     * Anything else is not our answer — DROP THE WHOLE RESPONSE.
+     *
+     * Storing the overlapping prefix instead (what the old code did: silently
+     * shrinking count to the bytes actually present) is exactly the mechanism by
+     * which a mismatched reply poisons the cache, so a short/long/garbled
+     * response must never be trimmed into a "partial success".
+     *
+     * count and start_addr themselves need no re-validation here: they come from
+     * a pending entry that request_is_cacheable() already vetted (FC01..FC04,
+     * 1 <= count <= per-FC limit, start_addr + count <= 0x10000).
+     */
+    if (function == MODBUS_FC_READ_HOLDING_REGS || function == MODBUS_FC_READ_INPUT_REGS) {
+        /* Holding / input registers: exactly 2 bytes per requested register.
+         * count <= 125, so count*2 <= 250 and the comparison cannot overflow. */
+        if (byte_count != (uint8_t)(count * 2u)) {
+            ESP_LOGW(TAG, "Port %u slave %u FC%02X: byte_count %u != %u for %u regs — dropped",
+                     port, slave_id, function,
+                     (unsigned)byte_count, (unsigned)(count * 2u), (unsigned)count);
+            return;
         }
 
-        /* Bounds check: need at least 3 + 2*count bytes */
-        if (((uint32_t)3 + (uint32_t)count * 2u) > (uint32_t)data_len) {
-            ESP_LOGW(TAG, "Port %u slave %u FC%02X: response too short",
+        /* ...and the frame must actually carry the bytes it declares. */
+        if ((uint32_t)3u + (uint32_t)byte_count > (uint32_t)data_len) {
+            ESP_LOGW(TAG, "Port %u slave %u FC%02X: response too short — dropped",
                      port, slave_id, function);
             return;
         }
 
-        /* Captured under the mutex, logged after it is released (count <= 127
-         * here, so uint16_t cannot overflow). */
+        /* Number of values this response could not store because the pool was
+         * full. Recorded under the mutex, logged after releasing it: ESP_LOGW
+         * goes to the UART and can block for milliseconds, and the sniffer task
+         * must not hold the cache mutex for that long. */
         uint16_t dropped = 0;
 
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
@@ -471,37 +564,33 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             ESP_LOGW(TAG, "Pool full, dropping %u entries", (unsigned)dropped);
         }
 
-    } else if (function == 0x01 || function == 0x02) {
-        /* Coils / discrete inputs: bit-packed, LSB first (bit 0 of data[3] = coil[start_addr]) */
-        uint8_t type_value = (function == 0x01) ? CACHE_TYPE_COIL : CACHE_TYPE_DISCRETE;
+    } else if (function == MODBUS_FC_READ_COILS || function == MODBUS_FC_READ_DISCRETE_INPUTS) {
+        /* Coils / discrete inputs: bit-packed, LSB first (bit 0 of data[3] = coil[start_addr]).
+         * Same grammar check as the register branch above: exactly ceil(count/8)
+         * data bytes, no more, no less. count <= 2000, so the expected byte count
+         * is at most 250 and fits a uint8_t. */
+        const uint8_t expected_bytes = (uint8_t)((count + 7u) / 8u);
 
-        /* Clamp count to Modbus spec maximum (2000 coils per request) to prevent
-         * uint overflow in byte arithmetic when a malformed response is received. */
-        if (count > 2000) count = 2000;
-
-        /* Use uint32_t for byte arithmetic to avoid uint8_t overflow. */
-        uint32_t bytes_needed = (count + 7u) / 8u;
-
-        /* Clamp count if the response carries fewer bytes than requested */
-        if ((uint32_t)byte_count < bytes_needed) count = (uint16_t)((uint32_t)byte_count * 8u);
-
-        /* Clamp so (start_addr + count) does not wrap past the 16-bit address
-         * space — same rationale as the register branch (cache-lookup-1): a
-         * coil read near 0xFFFF must not poison low coils via wrap-around. */
-        if ((uint32_t)start_addr + count > 0x10000u) {
-            count = (uint16_t)(0x10000u - start_addr);
+        if (byte_count != expected_bytes) {
+            ESP_LOGW(TAG, "Port %u slave %u FC%02X: byte_count %u != %u for %u coils — dropped",
+                     port, slave_id, function,
+                     (unsigned)byte_count, (unsigned)expected_bytes, (unsigned)count);
+            return;
         }
 
-        /* Recalculate after clamping, then bounds check */
-        bytes_needed = (count + 7u) / 8u;
-        if ((3u + bytes_needed) > (uint32_t)data_len) {
-            ESP_LOGW(TAG, "Port %u slave %u FC%02X: coil response too short",
+        if ((uint32_t)3u + (uint32_t)byte_count > (uint32_t)data_len) {
+            ESP_LOGW(TAG, "Port %u slave %u FC%02X: coil response too short — dropped",
                      port, slave_id, function);
             return;
         }
 
-        /* Captured under the mutex, logged after it is released (count <= 2000
-         * here, so uint16_t cannot overflow). */
+        /* count is NOT widened to byte_count*8: the last data byte is padded with
+         * zero bits up to the byte boundary, and those padding bits are not coils.
+         * Storing them would invent up to 7 phantom coils per response, reported
+         * as real values with age_s = 0. Only the count the master asked for is
+         * stored. */
+
+        /* Logged after the mutex is released — see the register branch. */
         uint16_t dropped = 0;
 
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
@@ -540,15 +629,9 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
 {
     if (s_cache_mutex == NULL || value_out == NULL) return CACHE_LOOKUP_NOT_FOUND;
 
-    /* Map Modbus function code to cache type value (bits 1:0) */
-    uint8_t type_value;
-    switch (function_code) {
-        case 0x01: type_value = CACHE_TYPE_COIL;      break;
-        case 0x02: type_value = CACHE_TYPE_DISCRETE;  break;
-        case 0x03: type_value = CACHE_TYPE_HOLDING;   break;
-        case 0x04: type_value = CACHE_TYPE_INPUT;     break;
-        default:   return CACHE_LOOKUP_NOT_FOUND;
-    }
+    /* The entry type IS the function code — no mapping needed, just validation. */
+    if (!cache_fc_is_cacheable(function_code)) return CACHE_LOOKUP_NOT_FOUND;
+    const uint8_t type_value = function_code;
 
     cache_lookup_result_t result = CACHE_LOOKUP_NOT_FOUND;
 
@@ -556,8 +639,12 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
     if (s_pool != NULL) {
         for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
             const cache_entry_t *e = &s_pool[i];
-            if ((e->type & CACHE_USED_BIT) &&
-                e->slave_id                 == slave_id &&
+
+            /* Dense-prefix invariant (see s_pool): the first free slot ends the
+             * used region — nothing beyond it can match. */
+            if (!(e->type & CACHE_USED_BIT)) break;
+
+            if (e->slave_id                 == slave_id &&
                 (e->type & CACHE_TYPE_MASK) == type_value &&
                 e->address                  == address) {
                 *value_out = e->value;
@@ -699,12 +786,34 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
 /**
  * GET /cache/csv — download all cached register values as a CSV file.
  *
+ * Returns 409 Conflict when the cache is disabled: there is no data to export
+ * and handing the user a file containing nothing but a header row is worse than
+ * an explicit error.
+ *
  * Uses chunked transfer: one stack-local 128-byte buffer per line so that
  * the full dataset (potentially ~240 KB) never has to be allocated at once.
  */
 static esp_err_t cache_csv_handler(httpd_req_t *req)
 {
     if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
+    /* This check MUST stay ahead of httpd_resp_set_type() and of the first
+     * httpd_resp_send_chunk(): once a chunked response has begun, the 200 status
+     * line is already on the wire and cannot be turned into a 409.
+     *
+     * Only the CSV endpoint does this. /cache/json is polled by the UI, where an
+     * empty result set is a normal state and {"d":[]} is its correct
+     * representation — an error status there would turn "cache is off" into a
+     * failed request on every poll. */
+    if (!cache_multimaster_is_enabled()) {
+        /* ESP-IDF's httpd_err_code_t has no 409 entry, so set the status line
+         * directly — the same idiom the rest of the project uses. */
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "text/plain");
+        const char *msg = "cache disabled";
+        httpd_resp_send(req, msg, (ssize_t)strlen(msg));
         return ESP_OK;
     }
 
@@ -728,28 +837,30 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
-    if (s_pool == NULL) {
-        xSemaphoreGive(s_cache_mutex);
-        httpd_resp_send_chunk(req, NULL, 0);
-        return ESP_OK;
-    }
-
     /* Snapshot the pool generation: if it changes while we are streaming (a
      * concurrent clear()/disable()+enable()), abort to avoid a torn snapshot
      * (cache-concurrency-1). */
     uint32_t gen = s_pool_generation;
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+        /* One guard at the top of every iteration covers both cases in which
+         * s_pool must not be dereferenced: the pool was never allocated (cache
+         * disabled), or disable()/clear()/enable() replaced or wiped it while
+         * the mutex was released for the previous chunk. Stopping here falls
+         * through to the normal terminator below, so a partial stream is ended
+         * cleanly rather than torn. */
+        if (s_pool == NULL || s_pool_generation != gen) break;
+
         const cache_entry_t *e = &s_pool[i];
         if (!(e->type & CACHE_USED_BIT)) continue;
 
         const char *type_str;
         switch (e->type & CACHE_TYPE_MASK) {
-            case CACHE_TYPE_HOLDING:  type_str = "holding";  break;
-            case CACHE_TYPE_INPUT:    type_str = "input";    break;
-            case CACHE_TYPE_COIL:     type_str = "coil";     break;
-            case CACHE_TYPE_DISCRETE: type_str = "discrete"; break;
-            default:                  type_str = "unknown";  break;
+            case MODBUS_FC_READ_HOLDING_REGS:    type_str = "holding";  break;
+            case MODBUS_FC_READ_INPUT_REGS:      type_str = "input";    break;
+            case MODBUS_FC_READ_COILS:           type_str = "coil";     break;
+            case MODBUS_FC_READ_DISCRETE_INPUTS: type_str = "discrete"; break;
+            default:                             type_str = "unknown";  break;
         }
 
         /* Format one CSV row into a stack-local 128-byte buffer */
@@ -774,15 +885,8 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
             xSemaphoreGive(s_cache_mutex);
             return ret;
         }
-
-        if (s_pool == NULL || s_pool_generation != gen) {
-            /* Pool was freed by disable() or wholesale-changed (clear()/
-             * disable+enable) while we were sending — stop iteration rather than
-             * emit a torn snapshot (cache-concurrency-1). */
-            xSemaphoreGive(s_cache_mutex);
-            httpd_resp_send_chunk(req, NULL, 0);
-            return ESP_OK;
-        }
+        /* A pool change during the send above is caught by the guard at the top
+         * of the next iteration. */
     }
 
     xSemaphoreGive(s_cache_mutex);
@@ -859,11 +963,11 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
         /* Single-char type tag — shorter JSON, faster JS access */
         char type_ch;
         switch (e->type & CACHE_TYPE_MASK) {
-            case CACHE_TYPE_HOLDING:  type_ch = 'h'; break;
-            case CACHE_TYPE_INPUT:    type_ch = 'i'; break;
-            case CACHE_TYPE_COIL:     type_ch = 'c'; break;
-            case CACHE_TYPE_DISCRETE: type_ch = 'd'; break;
-            default:                  type_ch = '?'; break;
+            case MODBUS_FC_READ_HOLDING_REGS:    type_ch = 'h'; break;
+            case MODBUS_FC_READ_INPUT_REGS:      type_ch = 'i'; break;
+            case MODBUS_FC_READ_COILS:           type_ch = 'c'; break;
+            case MODBUS_FC_READ_DISCRETE_INPUTS: type_ch = 'd'; break;
+            default:                             type_ch = '?'; break;
         }
 
         /* Stack-local buffer: max entry ~72 chars, prefix comma = 73 */
@@ -999,14 +1103,10 @@ bool cache_multimaster_test_get_pending_valid(uint8_t port)
 bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_code,
                                            uint16_t address, uint16_t age_s_val)
 {
-    uint8_t type_value;
-    switch (function_code) {
-        case 0x01: type_value = CACHE_TYPE_COIL;     break;
-        case 0x02: type_value = CACHE_TYPE_DISCRETE; break;
-        case 0x03: type_value = CACHE_TYPE_HOLDING;  break;
-        case 0x04: type_value = CACHE_TYPE_INPUT;    break;
-        default:   return false;
-    }
+    /* The entry type IS the function code — see the type bit layout. */
+    if (!cache_fc_is_cacheable(function_code)) return false;
+    const uint8_t type_value = function_code;
+
     if (s_pool == NULL) return false;
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         if ((s_pool[i].type & CACHE_USED_BIT) &&

@@ -725,13 +725,20 @@ void test_cache_multimaster_on_response_fc03_correct(void)
 
 /* ---- CM-U-013: on_response() FC03 — truncated byte_count ----------------- */
 
-/* Verify that when byte_count in the response is smaller than what the pending
- * request asked for, only the available registers are stored and the rest are
- * not found. */
+/* A response whose byte_count disagrees with the requested register count is not
+ * the answer to that request — it must be DROPPED WHOLE, not truncated into a
+ * partial store.
+ *
+ * This is the cache-poisoning case. Request/response are matched on
+ * (port, slave_id, function) alone (an RTU response carries no start address),
+ * so a reply that does not belong to this request can be matched to it. If the
+ * mismatched prefix were stored, another register's values would be filed under
+ * OUR addresses with age_s = 0 — wrong values, marked fresh. */
 void test_cache_multimaster_on_response_truncated_fc03(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-013: on_response FC03 truncated byte_count");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-013: on_response FC03 short byte_count must drop the whole response");
     LOG_MESSAGE();
 
     /* Pre-condition: init + enable */
@@ -741,11 +748,11 @@ void test_cache_multimaster_on_response_truncated_fc03(void)
     /* Request 5 registers, but the response only carries 2 */
     cache_multimaster_on_request(0, 7, 3, 0, 5);
 
-    /* byte_count=4 → only 2 registers; data_len=7 covers exactly these 2 regs */
+    /* byte_count=4 → 2 registers, but 5 were asked for (byte_count should be 10) */
     uint8_t data[] = {
         7,              /* [0] slave_id */
         0x03,           /* [1] FC */
-        4,              /* [2] byte count (only 2 regs, not 5) */
+        4,              /* [2] byte count (only 2 regs, not the 5 requested) */
         0x00, 0x01,     /* reg 0: 1 */
         0x00, 0x02      /* reg 1: 2 */
     };
@@ -753,24 +760,95 @@ void test_cache_multimaster_on_response_truncated_fc03(void)
 
     uint16_t val = 0;
 
-    /* Register 0 must be FOUND with value 1 */
+    /* NOTHING may be stored — not even the two registers the frame does carry */
     cache_lookup_result_t r = cache_multimaster_lookup(7, 3, 0, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "lookup(7, 3, 0) should return FOUND");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "register 0 value should be 1");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "register 0 must NOT be stored: the response does not match the request");
 
-    /* Register 1 must be FOUND with value 2 */
     val = 0;
     r = cache_multimaster_lookup(7, 3, 1, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "lookup(7, 3, 1) should return FOUND");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(2, val, "register 1 value should be 2");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "register 1 must NOT be stored: the response does not match the request");
 
-    /* Register 2 must NOT be found (byte_count clamped count to 2) */
+    /* Register 2 must NOT be found either */
     val = 0;
     r = cache_multimaster_lookup(7, 3, 2, &val, 0);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
-        "lookup(7, 3, 2) should return NOT_FOUND (clamped by byte_count)");
+        "register 2 must NOT be stored: the response does not match the request");
+
+    /* A well-formed response to the same request must still be stored in full —
+     * the strict check must reject mismatches, not reads of this shape. */
+    cache_multimaster_on_request(0, 7, 3, 0, 5);
+    uint8_t good[] = {
+        7, 0x03, 10,          /* byte_count = 5 regs * 2 = 10 */
+        0x00, 0x01,  0x00, 0x02,  0x00, 0x03,  0x00, 0x04,  0x00, 0x05
+    };
+    cache_multimaster_on_response(0, 7, 3, good, sizeof(good), 0);
+
+    for (uint16_t i = 0; i < 5; i++) {
+        val = 0;
+        TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+            cache_multimaster_lookup(7, 3, i, &val, 0),
+            "a well-formed 5-register response must store every register");
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(i + 1u, val, "register value");
+    }
+}
+
+/* ---- CM-U-013b: a foreign response must not poison our addresses ---------- */
+
+/* The cache-poisoning scenario in full.
+ *
+ * Requests and responses are bound only by (port, slave_id, function): an RTU
+ * read response carries no start address, so nothing in the frame says WHICH
+ * read it answers. A reply that belongs to a different transaction — a late
+ * answer, a second master on the bus, a duplicated slave address — therefore
+ * matches our pending request and is accepted as ours.
+ *
+ * Here the master asked slave 5 for 2 registers at address 100, but the reply on
+ * the wire is the answer to somebody's 10-register read at address 200. Under
+ * the old "clamp count to what fits" rule, the first 2 registers of THAT read
+ * (0xDEAD, 0xBEEF — the values of registers 200 and 201) were written to
+ * addresses 100 and 101 with age_s = 0: wrong values, presented as fresh.
+ *
+ * The byte_count check catches it: an answer to "read 2 registers" declares 4
+ * data bytes, and this frame declares 20. It is not our answer — drop it. */
+void test_cache_multimaster_foreign_response_does_not_poison(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-013b: a response to a different read must not be filed under our addresses");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* We asked slave 5 for 2 holding registers at address 100 */
+    cache_multimaster_on_request(0, 5, 3, 100, 2);
+
+    /* What arrives is the answer to a 10-register read at address 200: same
+     * slave, same FC, so it matches our pending request. */
+    uint8_t foreign[3 + 20];
+    foreign[0] = 5;
+    foreign[1] = 0x03;
+    foreign[2] = 20;                    /* 10 registers — not the 4 bytes we expect */
+    memset(foreign + 3, 0x00, 20);
+    foreign[3] = 0xDE; foreign[4] = 0xAD;   /* register 200 */
+    foreign[5] = 0xBE; foreign[6] = 0xEF;   /* register 201 */
+
+    cache_multimaster_on_response(0, 5, 3, foreign, sizeof(foreign), 0);
+
+    uint16_t val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 3, 100, &val, 0),
+        "register 100 must NOT be poisoned with register 200's value");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 3, 101, &val, 0),
+        "register 101 must NOT be poisoned with register 201's value");
+
+    /* And the foreign read's own addresses are not invented either */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 3, 200, &val, 0),
+        "the foreign response's addresses must not be stored either");
 }
 
 /* ---- CM-U-014: on_response() FC03 — malformed: data_len too short -------- */
@@ -872,142 +950,155 @@ void test_cache_multimaster_on_response_fc01_9_coils(void)
     }
 }
 
-/* ---- CM-U-016: on_response() FC01 — count overflow (clamped to 2000) ----- */
+/* ---- CM-U-016: on_request() FC01 — count above the spec limit is refused -- */
 
-/* Verify that a pending request with count > 2000 is safely clamped to 2000
- * and the implementation does not crash. */
+/* A request for more coils than the Modbus spec allows (max 2000) cannot produce
+ * a response worth caching, so it must never become a pending request: no
+ * response can be stored against it, whatever that response contains. */
 void test_cache_multimaster_on_response_fc01_count_overflow(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-016: on_response FC01 count overflow");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-016: FC01 request with count=65535 must be refused, not clamped");
     LOG_MESSAGE();
 
     /* Pre-condition: init + enable */
     cache_multimaster_init();
     cache_multimaster_enable();
 
-    /* Request with count=65535 — will be clamped to 2000 */
+    /* Request with count=65535 — far above the 2000-coil limit */
     cache_multimaster_on_request(0, 11, 1, 0, 65535);
 
-    /* Build a response with byte_count=250 (covers 2000 coils: (2000+7)/8 = 250).
-     * All coil bits are 1 (0xFF). */
+    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_test_get_pending_valid(0),
+        "an over-limit request must not be recorded as a valid pending request");
+
+    /* A slave answers anyway, with a full 2000-coil payload */
     uint8_t response_buf[253];
     response_buf[0] = 11;    /* slave_id */
     response_buf[1] = 0x01;  /* FC01 */
     response_buf[2] = 250;   /* byte_count */
-    memset(response_buf + 3, 0xFF, 250); /* all 2000 coils = 1 */
+    memset(response_buf + 3, 0xFF, 250); /* all bits set */
 
     cache_multimaster_on_response(0, 11, 1, response_buf, sizeof(response_buf), 0);
 
-    /* Coil 0 must be stored and equal 1 */
+    /* Nothing may be cached: there was no valid request to attribute it to */
     uint16_t val = 0xFFFF;
-    cache_lookup_result_t r = cache_multimaster_lookup(11, 1, 0, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "coil 0 should be FOUND after overflow response");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 0 should be 1");
-
-    /* Coil 1999 (last valid after clamping) must be FOUND */
-    val = 0xFFFF;
-    r = cache_multimaster_lookup(11, 1, 1999, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "coil 1999 should be FOUND (last valid after count clamped to 2000)");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 1999 should be 1");
-
-    /* Coil 2000 must NOT be found (count was clamped to 2000) */
-    val = 0xFFFF;
-    r = cache_multimaster_lookup(11, 1, 2000, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
-        "coil 2000 should be NOT_FOUND (count clamped to 2000, indices 0-1999 only)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(11, 1, 0, &val, 0),
+        "coil 0 must NOT be stored: the request was never cacheable");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(11, 1, 1999, &val, 0),
+        "coil 1999 must NOT be stored: the request was never cacheable");
 }
 
-/* ---- CM-U-049: on_response() FC01 — coil count clamp boundary (2001) ----- */
+/* ---- CM-U-049: on_request() FC01 — the count limit is 2000, not 2001 ------ */
 
-/* Verify the coil-count clamp uses `> 2000` (clamp to 2000), not `> 2001`.
- * A pending request for exactly 2001 coils with a response that carries enough
- * bytes (251) for all of them is the only input that distinguishes the two
- * boundaries: the original clamps to 2000 (coil 2000 is NOT stored), whereas a
- * `> 2001` mutant leaves count at 2001 and stores coil 2000. */
+/* Boundary of the coil-count check: exactly 2000 coils is legal and must be
+ * cached; 2001 is one over the spec limit and must be refused outright. */
 void test_cache_multimaster_on_response_fc01_count_clamp_boundary_2001(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-049: on_response FC01 count clamp boundary (2001 -> 2000)");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-049: FC01 count boundary — 2000 accepted, 2001 refused");
     LOG_MESSAGE();
 
     /* Pre-condition: init + enable */
     cache_multimaster_init();
     cache_multimaster_enable();
 
-    /* Request exactly 2001 coils starting at address 0 for slave 12 */
+    /* 2001 coils: one over the limit — must be refused */
     cache_multimaster_on_request(0, 12, 1, 0, 2001);
+    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_test_get_pending_valid(0),
+        "a 2001-coil request is over the spec limit and must be refused");
 
-    /* Response carries byte_count=251 (= ceil(2001/8)) so the bounds check
-     * passes for both the clamped (2000) and unclamped (2001) counts.
-     * data_len = 3 + 251 = 254. All coils = 1 (0xFF). */
-    uint8_t response_buf[254];
-    response_buf[0] = 12;    /* slave_id */
-    response_buf[1] = 0x01;  /* FC01 */
-    response_buf[2] = 251;   /* byte_count */
-    memset(response_buf + 3, 0xFF, 251);
+    uint8_t over_buf[254];
+    over_buf[0] = 12;
+    over_buf[1] = 0x01;
+    over_buf[2] = 251;       /* ceil(2001/8) */
+    memset(over_buf + 3, 0xFF, 251);
+    cache_multimaster_on_response(0, 12, 1, over_buf, sizeof(over_buf), 0);
 
-    cache_multimaster_on_response(0, 12, 1, response_buf, sizeof(response_buf), 0);
-
-    /* Coil 1999 (last valid after clamping to 2000) must be FOUND */
     uint16_t val = 0xFFFF;
-    cache_lookup_result_t r = cache_multimaster_lookup(12, 1, 1999, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "coil 1999 should be FOUND (within the 2000-coil clamp)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(12, 1, 0, &val, 0),
+        "nothing from an over-limit request may be cached");
+
+    /* Exactly 2000 coils: the largest legal read — must be cached in full */
+    cache_multimaster_on_request(0, 12, 1, 0, 2000);
+    TEST_ASSERT_TRUE_MESSAGE(cache_multimaster_test_get_pending_valid(0),
+        "a 2000-coil request is exactly at the limit and must be accepted");
+
+    uint8_t ok_buf[253];
+    ok_buf[0] = 12;
+    ok_buf[1] = 0x01;
+    ok_buf[2] = 250;         /* ceil(2000/8) */
+    memset(ok_buf + 3, 0xFF, 250);
+    cache_multimaster_on_response(0, 12, 1, ok_buf, sizeof(ok_buf), 0);
+
+    val = 0xFFFF;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(12, 1, 1999, &val, 0),
+        "coil 1999 (the last of 2000) must be cached");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 1999 should be 1");
 
-    /* Coil 2000 must NOT be found: count must be clamped to 2000 (> 2000),
-     * so indices 0..1999 only. A `> 2001` mutant would store coil 2000. */
     val = 0xFFFF;
-    r = cache_multimaster_lookup(12, 1, 2000, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
-        "coil 2000 should be NOT_FOUND (count clamped to 2000, not 2001)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(12, 1, 2000, &val, 0),
+        "coil 2000 was never requested and must not exist");
 }
 
 /* ---- CM-U-017: on_response() FC02 — byte_count shorter than requested ---- */
 
-/* Verify that when byte_count is shorter than the requested count, the
- * implementation stores only byte_count*8 discretes and does not read past
- * the available data. */
+/* Coil counterpart of CM-U-013: a discrete-input response carrying fewer bytes
+ * than the request implies is not the answer to that request. Drop it whole —
+ * storing the bytes that did arrive would file some other read's bits under our
+ * addresses and mark them fresh. */
 void test_cache_multimaster_on_response_fc02_byte_count_short(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-017: on_response FC02 byte_count short");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-017: FC02 short byte_count must drop the whole response");
     LOG_MESSAGE();
 
     /* Pre-condition: init + enable */
     cache_multimaster_init();
     cache_multimaster_enable();
 
-    /* Request 16 discrete inputs but the response only carries 1 byte (8 discretes) */
+    /* Request 16 discrete inputs (needs 2 bytes) but the response carries 1 */
     cache_multimaster_on_request(0, 13, 2, 0, 16);
 
-    /* byte_count=1 with all bits set: only 8 discretes available, all value 1 */
     uint8_t data[] = {
         13,     /* [0] slave_id */
         0x02,   /* [1] FC02 */
-        1,      /* [2] byte_count = 1 (covers only 8 bits) */
+        1,      /* [2] byte_count = 1, but 16 discretes need 2 */
         0xFF    /* bits: discretes 0-7 all = 1 */
     };
     cache_multimaster_on_response(0, 13, 2, data, sizeof(data), 0);
 
-    /* Discretes 0-7 must all be FOUND with value 1 */
+    /* Not one discrete may be stored */
     for (int i = 0; i < 8; i++) {
         uint16_t val = 0xFFFF;
         cache_lookup_result_t r = cache_multimaster_lookup(13, 2, (uint16_t)i, &val, 0);
-        TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-            "discrete 0-7 should be FOUND");
-        TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val,
-            "discrete 0-7 value should be 1");
+        TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+            "no discrete may be stored from a response with a mismatched byte_count");
     }
 
-    /* Discrete 8 must NOT be found (only 8 entries stored from 1 byte) */
+    /* The matching 2-byte response for the same request must still be stored */
+    cache_multimaster_on_request(0, 13, 2, 0, 16);
+    uint8_t good[] = { 13, 0x02, 2, 0xFF, 0x00 };  /* discretes 0-7 = 1, 8-15 = 0 */
+    cache_multimaster_on_response(0, 13, 2, good, sizeof(good), 0);
+
     uint16_t val = 0xFFFF;
-    cache_lookup_result_t r = cache_multimaster_lookup(13, 2, 8, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
-        "discrete 8 should be NOT_FOUND (count clamped by short byte_count)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(13, 2, 0, &val, 0),
+        "a well-formed 16-discrete response must be stored");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "discrete 0 should be 1");
+
+    val = 0xFFFF;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(13, 2, 15, &val, 0),
+        "discrete 15 must be stored");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, val, "discrete 15 should be 0");
 }
 
 /* ---- CM-U-018: on_response() — null data and too-short data_len ---------- */
@@ -1128,11 +1219,47 @@ void test_cache_multimaster_lookup_age_check(void)
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xBEEF, val,
         "value should be 0xBEEF");
 
-    /* Exact boundary case: age_s == timeout must return STALE. The check is >=
-     * so that a saturated age (65535) still expires under a 65535 timeout. */
+    /* Exact boundary case: age_s == timeout must return STALE. The check is >=,
+     * not >, so that a timeout equal to the age saturation cap (65535) can still
+     * fire — see CM-U-021b. */
     r = cache_multimaster_lookup(22, 3, 0, &val, 100);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
-        "age_s == value_timeout_s must return STALE (>= is the boundary)");
+        "age_s == value_timeout_s must return STALE (check is >=, not >)");
+
+    /* One below the timeout is still fresh */
+    r = cache_multimaster_lookup(22, 3, 0, &val, 101);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "age_s < value_timeout_s must return FOUND");
+}
+
+/* ---- CM-U-021b: lookup() — timeout at the age saturation cap ------------- */
+
+/* age_s saturates at CACHE_AGE_MAX_S (65535) and can never exceed it. With a
+ * strict > comparison an entry whose value_timeout_s is 65535 would therefore
+ * never be reported STALE, no matter how old it got — the staleness check would
+ * be silently dead at the top of its range. The >= comparison must fire. */
+void test_cache_multimaster_lookup_timeout_at_saturation_cap(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-021b: timeout == age saturation cap (65535) must still report STALE");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    cache_multimaster_on_request(0, 26, 3, 0, 1);
+    uint8_t data[] = { 26, 0x03, 2, 0xCA, 0xFE };
+    cache_multimaster_on_response(0, 26, 3, data, sizeof(data), 0);
+
+    /* Drive the entry to the saturation cap — the oldest age it can ever reach */
+    bool set_ok = cache_multimaster_test_set_entry_age(26, 3, 0, 65535);
+    TEST_ASSERT_TRUE_MESSAGE(set_ok, "cache_multimaster_test_set_entry_age must return true");
+
+    uint16_t val = 0;
+    cache_lookup_result_t r = cache_multimaster_lookup(26, 3, 0, &val, 65535);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
+        "a fully saturated entry (age_s=65535) with timeout=65535 must be STALE, not FOUND");
 }
 
 /* ---- CM-U-021: lookup() — age saturation boundary near CACHE_AGE_MAX_S -- */
@@ -1372,6 +1499,137 @@ void test_cache_multimaster_pool_full_no_crash(void)
     );
 }
 
+/* ---- CM-U-025b: dense-prefix pool invariant ------------------------------ */
+
+/* find_or_alloc_entry() and lookup() stop scanning at the first free slot, which
+ * is only sound because used entries form a contiguous prefix (entries are never
+ * released one at a time). Lock both ends of that invariant:
+ *   - the LAST slot of a completely full pool is still reachable (the early exit
+ *     must not truncate a scan that has no free slot to stop at);
+ *   - a miss in a sparsely populated pool is still NOT_FOUND, and allocation
+ *     after it keeps filling the prefix rather than leaving holes. */
+void test_cache_multimaster_dense_prefix_invariant(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-025b: dense-prefix invariant — last slot of a full pool stays reachable");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Fill every one of the 4096 slots: slave 1, FC03, addr 0..4095 */
+    uint8_t fill[5] = { 1, 0x03, 2, 0xAB, 0xCD };
+    for (uint16_t addr = 0; addr < 4096; addr++) {
+        cache_multimaster_on_request(0, 1, 3, addr, 1);
+        cache_multimaster_on_response(0, 1, 3, fill, sizeof(fill), 0);
+    }
+
+    /* The entry in the very last slot must still be found: with no free slot in
+     * the pool the scan has to walk all 4096 entries. */
+    uint16_t val = 0;
+    cache_lookup_result_t r = cache_multimaster_lookup(1, 3, 4095, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "last slot of a completely full pool must still be FOUND");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xABCD, val, "last-slot value must be intact");
+
+    /* Fresh pool, two entries only: a miss must be NOT_FOUND (scan stops at the
+     * first free slot), and a subsequent store must still be retrievable. */
+    cache_multimaster_clear();
+
+    cache_multimaster_on_request(0, 7, 3, 10, 1);
+    uint8_t d1[5] = { 7, 0x03, 2, 0x11, 0x22 };
+    cache_multimaster_on_response(0, 7, 3, d1, sizeof(d1), 0);
+
+    r = cache_multimaster_lookup(7, 3, 999, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+        "absent address in a sparse pool must be NOT_FOUND");
+
+    cache_multimaster_on_request(0, 7, 3, 11, 1);
+    uint8_t d2[5] = { 7, 0x03, 2, 0x33, 0x44 };
+    cache_multimaster_on_response(0, 7, 3, d2, sizeof(d2), 0);
+
+    val = 0;
+    r = cache_multimaster_lookup(7, 3, 11, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "entry allocated after a miss must be FOUND (prefix stays dense)");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x3344, val, "newly allocated entry must hold its value");
+
+    /* The first entry must still be reachable too */
+    val = 0;
+    r = cache_multimaster_lookup(7, 3, 10, &val, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r, "first entry must remain FOUND");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x1122, val, "first entry value must be intact");
+}
+
+/* ---- CM-U-025c: entry type is the Modbus function code ------------------- */
+
+/* The cache stores the raw Modbus FC in the entry type byte, so the four read
+ * FCs must be independent keys: the same (slave, address) read via FC01/02/03/04
+ * yields four distinct entries with their own values, and each is reported under
+ * its own name. A lookup with the wrong FC must not return another FC's value,
+ * and a non-read FC must never be cacheable at all. */
+void test_cache_multimaster_entry_type_is_function_code(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-025c: FC01..FC04 at the same address are four independent entries");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    /* Same slave (9) and same address (0), read through all four FCs */
+    cache_multimaster_on_request(0, 9, 3, 0, 1);
+    uint8_t h[5] = { 9, 0x03, 2, 0x00, 0x33 };           /* holding = 0x0033 */
+    cache_multimaster_on_response(0, 9, 3, h, sizeof(h), 0);
+
+    cache_multimaster_on_request(0, 9, 4, 0, 1);
+    uint8_t in[5] = { 9, 0x04, 2, 0x00, 0x44 };          /* input   = 0x0044 */
+    cache_multimaster_on_response(0, 9, 4, in, sizeof(in), 0);
+
+    cache_multimaster_on_request(0, 9, 1, 0, 1);
+    uint8_t c[4] = { 9, 0x01, 1, 0x01 };                 /* coil     = 1 */
+    cache_multimaster_on_response(0, 9, 1, c, sizeof(c), 0);
+
+    cache_multimaster_on_request(0, 9, 2, 0, 1);
+    uint8_t di[4] = { 9, 0x02, 1, 0x00 };                /* discrete = 0 */
+    cache_multimaster_on_response(0, 9, 2, di, sizeof(di), 0);
+
+    uint16_t val = 0;
+    TEST_ASSERT_EQUAL_INT(CACHE_LOOKUP_FOUND, cache_multimaster_lookup(9, 3, 0, &val, 0));
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x0033, val, "FC03 must return the holding value");
+
+    TEST_ASSERT_EQUAL_INT(CACHE_LOOKUP_FOUND, cache_multimaster_lookup(9, 4, 0, &val, 0));
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x0044, val, "FC04 must return the input value");
+
+    TEST_ASSERT_EQUAL_INT(CACHE_LOOKUP_FOUND, cache_multimaster_lookup(9, 1, 0, &val, 0));
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "FC01 must return the coil value");
+
+    TEST_ASSERT_EQUAL_INT(CACHE_LOOKUP_FOUND, cache_multimaster_lookup(9, 2, 0, &val, 0));
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, val, "FC02 must return the discrete value");
+
+    /* A non-read FC is not a cache key: lookup must refuse it outright */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(9, 0x06, 0, &val, 0),
+        "FC06 (write single register) must never resolve in the cache");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(9, 0x00, 0, &val, 0),
+        "FC00 must never resolve in the cache (0 is the free-slot marker)");
+
+    /* All four types must round-trip to their names in the CSV output */
+    httpd_req_t req = {0};
+    cache_multimaster_test_csv_handler(&req);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "9,holding,0,51,"),
+        "CSV must name the FC03 entry 'holding'");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "9,input,0,68,"),
+        "CSV must name the FC04 entry 'input'");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "9,coil,0,1,"),
+        "CSV must name the FC01 entry 'coil'");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(mock_http_resp_buf, "9,discrete,0,0,"),
+        "CSV must name the FC02 entry 'discrete'");
+}
+
 /* ---- CM-U-026: on_response FC03 address-zero boundary -------------------- */
 
 /* Verify that address 0 is stored correctly — no off-by-one treating address 0
@@ -1415,7 +1673,8 @@ void test_cache_multimaster_on_response_fc03_address_zero(void)
 void test_cache_multimaster_on_response_fc03_odd_byte_count(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-027: on_response FC03 odd byte_count (floor division)");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-027: on_response FC03 odd byte_count must drop the whole response");
     LOG_MESSAGE();
 
     /* Pre-condition: init + enable */
@@ -1425,41 +1684,26 @@ void test_cache_multimaster_on_response_fc03_odd_byte_count(void)
     /* Request: slave 6, FC03, 3 registers starting at address 10 */
     cache_multimaster_on_request(0, 6, 3, 10, 3);
 
-    /* byte_count=5 (odd) → max_regs = 5/2 = 2 (floor division).
-     * Only reg10 and reg11 should be stored; reg12 must NOT be stored.
-     * data_len = 3 + 5 = 8 bytes total. */
+    /* byte_count=5 is odd — it cannot be a whole number of registers at all, let
+     * alone the 6 bytes this request implies. The frame is malformed; no part of
+     * it may be believed. */
     uint8_t data[] = {
         6,              /* [0] slave_id */
         0x03,           /* [1] FC */
-        5,              /* [2] byte_count = 5 (odd) */
-        0x00, 0xAA,     /* reg10: 0x00AA */
-        0x00, 0xBB,     /* reg11: 0x00BB */
-        0xCC            /* partial byte — must be ignored due to floor division */
+        5,              /* [2] byte_count = 5 (odd; 3 regs would need 6) */
+        0x00, 0xAA,
+        0x00, 0xBB,
+        0xCC            /* dangling half register */
     };
     cache_multimaster_on_response(0, 6, 3, data, sizeof(data), 0);
 
     uint16_t val = 0;
 
-    /* reg10 must be FOUND with value 0x00AA */
-    cache_lookup_result_t r = cache_multimaster_lookup(6, 3, 10, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "lookup(6, 3, 10) should return FOUND");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x00AA, val,
-        "register 10 value should be 0x00AA");
-
-    /* reg11 must be FOUND with value 0x00BB */
-    val = 0;
-    r = cache_multimaster_lookup(6, 3, 11, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "lookup(6, 3, 11) should return FOUND");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x00BB, val,
-        "register 11 value should be 0x00BB");
-
-    /* reg12 must NOT be found — floor division means the partial byte is dropped */
-    val = 0xFFFF;
-    r = cache_multimaster_lookup(6, 3, 12, &val, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
-        "lookup(6, 3, 12) should return NOT_FOUND: max_regs = byte_count/2 = 5/2 = 2");
+    for (uint16_t addr = 10; addr <= 12; addr++) {
+        cache_lookup_result_t r = cache_multimaster_lookup(6, 3, addr, &val, 0);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND, r,
+            "an odd byte_count is malformed — no register may be stored from it");
+    }
 }
 
 /* ---- CM-U-028: on_response FC01 exactly 8 coils (single full byte) -------- */
@@ -1935,39 +2179,78 @@ void test_cache_status_handler_same_slave(void)
         "Response must contain \"slaves\":1 (unique slave count uses bitmask)");
 }
 
-/* ---- CM-U-039: cache_csv_handler — empty pool (init only, no enable) ------ */
+/* ---- CM-U-039: cache_csv_handler — cache disabled must 409 ---------------- */
 
-/* Verify that the CSV handler sends only the header line when the pool is
- * NULL (cache initialised but not enabled). */
-void test_cache_csv_handler_empty_pool(void)
+/* Exporting a CSV that contains nothing but a header row is a useless download,
+ * so a disabled cache must be refused with 409 Conflict instead.
+ *
+ * The refusal has to happen before ANY output: httpd_resp_set_type() and the
+ * first httpd_resp_send_chunk() commit a 200 status line that can no longer be
+ * changed. This test therefore asserts not only that the 409 is sent, but that
+ * no content type and no chunk preceded it. */
+void test_cache_csv_handler_disabled_returns_409(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-039: cache_csv_handler empty pool (init only)");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-039: cache_csv_handler must answer 409 when the cache is disabled");
     LOG_MESSAGE();
 
-    /* Pre-condition: init only — mutex is valid but pool remains NULL */
+    /* Pre-condition: init only — the cache is NOT enabled */
     cache_multimaster_init();
 
     httpd_req_t req = {0};
     esp_err_t ret = cache_multimaster_test_csv_handler(&req);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, ret,
-        "cache_csv_handler must return ESP_OK when pool is NULL");
+        "cache_csv_handler must return ESP_OK after sending the error response");
 
-    /* The CSV header must be present */
+    TEST_ASSERT_NOT_NULL_MESSAGE(mock_http_resp_status_last,
+        "cache_csv_handler must set an explicit status line");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("409 Conflict", mock_http_resp_status_last,
+        "the status must be 409 Conflict");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("cache disabled", mock_http_resp_buf,
+        "the body must be the 'cache disabled' message, not a CSV");
+
+    /* The status must be decided before ANY chunk: once a chunked response has
+     * begun, the 200 status line is on the wire and cannot be changed. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_http_resp_send_chunk_called,
+        "no chunk may be sent — a chunk would commit a 200 status");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("text/plain", mock_http_resp_set_type_last,
+        "the error response is text/plain, not text/csv");
+}
+
+/* An ENABLED but empty cache is a different case: it is a legitimate export of
+ * zero rows, so it must still succeed with a header-only CSV. */
+void test_cache_csv_handler_enabled_but_empty(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-039b: cache_csv_handler enabled but empty must still emit a header-only CSV");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    httpd_req_t req = {0};
+    esp_err_t ret = cache_multimaster_test_csv_handler(&req);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, ret, "cache_csv_handler must return ESP_OK");
+    TEST_ASSERT_NULL_MESSAGE(mock_http_resp_status_last,
+        "an enabled cache must NOT set an error status (the default 200 stands)");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("text/csv", mock_http_resp_set_type_last,
+        "an enabled cache must serve text/csv");
+
     TEST_ASSERT_NOT_NULL_MESSAGE(
         strstr(mock_http_resp_buf, "slave_id,type,address,value,age_s\r\n"),
         "CSV response must start with the header line");
 
-    /* Accumulated buffer must not contain any data rows (no comma-separated numeric lines) */
     const char *after_header = strstr(mock_http_resp_buf, "\r\n");
     if (after_header != NULL) {
         after_header += 2; /* skip the \r\n of the header line */
     }
-    /* after the header there should be nothing (empty pool) */
     TEST_ASSERT_TRUE_MESSAGE(
         (after_header == NULL || *after_header == '\0'),
-        "CSV response must contain only the header — no data rows for empty pool");
+        "CSV response must contain only the header — no data rows for an empty pool");
 }
 
 /* ---- CM-U-040: cache_csv_handler — 2 entries, correct CSV format ---------- */
@@ -2516,12 +2799,13 @@ void test_cache_multimaster_get_stats_age_guards(void)
 
 /* ---- CM-U-056: FC03 address wrap must not poison low addresses ----------- */
 
-/* Regression for cache-lookup-1 / corr-3: a response whose
- * (start_addr + count) crosses the 16-bit address boundary must NOT write
- * wrapped-around low addresses. on_request(0,5,3,0xFFFE,4) with a 4-register
- * response would, without a wrap guard, compute addr = 0xFFFE, 0xFFFF,
- * 0x0000, 0x0001 — the last two poisoning unrelated low registers of the
- * same slave. Only the two in-range addresses (0xFFFE, 0xFFFF) may be stored. */
+/* Regression for cache-lookup-1 / corr-3: a request whose (start_addr + count)
+ * crosses the 16-bit address boundary — on_request(0,5,3,0xFFFE,4) would run
+ * 0xFFFE, 0xFFFF, 0x0000, 0x0001 — must never write the wrapped low addresses.
+ *
+ * Such a request is malformed (no Modbus device can serve it), so it is refused
+ * outright rather than trimmed to its in-range prefix: a response we cannot
+ * fully attribute is a response we do not store. */
 void test_cache_multimaster_on_response_fc03_addr_wrap_no_poison(void)
 {
     LOG_MESSAGE();
@@ -2532,6 +2816,9 @@ void test_cache_multimaster_on_response_fc03_addr_wrap_no_poison(void)
     cache_multimaster_enable();
 
     cache_multimaster_on_request(0, 5, 3, 0xFFFE, 4);
+    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_test_get_pending_valid(0),
+        "a request whose range wraps past 0xFFFF must be refused");
+
     uint8_t data[] = {
         5, 0x03, 8,
         0xAA, 0xAA,   /* addr 0xFFFE */
@@ -2542,29 +2829,26 @@ void test_cache_multimaster_on_response_fc03_addr_wrap_no_poison(void)
     cache_multimaster_on_response(0, 5, 3, data, sizeof(data), 0);
 
     uint16_t val = 0x1234;
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
-        cache_multimaster_lookup(5, 3, 0xFFFE, &val, 0),
-        "in-range addr 0xFFFE must be stored");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xAAAA, val, "addr 0xFFFE value");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
-        cache_multimaster_lookup(5, 3, 0xFFFF, &val, 0),
-        "in-range addr 0xFFFF must be stored");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xBBBB, val, "addr 0xFFFF value");
-
-    val = 0x1234;
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
         cache_multimaster_lookup(5, 3, 0x0000, &val, 0),
         "addr 0x0000 must NOT be poisoned by 16-bit wrap");
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
         cache_multimaster_lookup(5, 3, 0x0001, &val, 0),
         "addr 0x0001 must NOT be poisoned by 16-bit wrap");
+
+    /* Not even the in-range part is kept: the request was never cacheable */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 3, 0xFFFE, &val, 0),
+        "a wrapping request is refused whole — no partial store");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 3, 0xFFFF, &val, 0),
+        "a wrapping request is refused whole — no partial store");
 }
 
 /* ---- CM-U-057: FC01 coil address wrap must not poison low coils ---------- */
 
-/* Coil-branch counterpart of CM-U-056. on_request(0,6,1,0xFFFF,4) with a
- * 1-byte coil response would compute addr = 0xFFFF, 0x0000, 0x0001, 0x0002;
- * only 0xFFFF is in range. The low coils must not be written. */
+/* Coil-branch counterpart of CM-U-056: on_request(0,6,1,0xFFFF,4) would run
+ * 0xFFFF, 0x0000, 0x0001, 0x0002. Refused whole. */
 void test_cache_multimaster_on_response_fc01_addr_wrap_no_poison(void)
 {
     LOG_MESSAGE();
@@ -2575,6 +2859,9 @@ void test_cache_multimaster_on_response_fc01_addr_wrap_no_poison(void)
     cache_multimaster_enable();
 
     cache_multimaster_on_request(0, 6, 1, 0xFFFF, 4);
+    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_test_get_pending_valid(0),
+        "a coil request whose range wraps past 0xFFFF must be refused");
+
     uint8_t data[] = {
         6, 0x01, 1,
         0x0F          /* coils: bit0..bit3 set */
@@ -2582,18 +2869,15 @@ void test_cache_multimaster_on_response_fc01_addr_wrap_no_poison(void)
     cache_multimaster_on_response(0, 6, 1, data, sizeof(data), 0);
 
     uint16_t val = 0x1234;
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
-        cache_multimaster_lookup(6, 1, 0xFFFF, &val, 0),
-        "in-range coil 0xFFFF must be stored");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 0xFFFF value (bit0 set)");
-
-    val = 0x1234;
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
         cache_multimaster_lookup(6, 1, 0x0000, &val, 0),
         "coil 0x0000 must NOT be poisoned by 16-bit wrap");
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
         cache_multimaster_lookup(6, 1, 0x0001, &val, 0),
         "coil 0x0001 must NOT be poisoned by 16-bit wrap");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(6, 1, 0xFFFF, &val, 0),
+        "a wrapping request is refused whole — no partial store");
 }
 
 /* ---- CM-U-058: exact 16-bit boundary must NOT be clamped ----------------- */
@@ -2781,14 +3065,15 @@ void test_cache_multimaster_clear_pending_oob_port(void)
 
 /* ---- CM-U-063: coil response must not write coils beyond the request ----- */
 
-/* coil-clamp (audit cache-lookup-4): the audit hypothesised that an FC01
- * response with a byte_count larger than the requested coil count would inflate
- * the write to byte_count*8 coils (phantom coils 8..15 the master never asked
- * for). This test pins the actual behavior: `count` comes from the request and
- * is only ever clamped DOWN (by byte_count when short, by 2000, by the address
- * wrap), never inflated. A 1-coil request with a 2-byte response must write
- * exactly ONE coil; coils 8..15 must NOT appear in the cache. (If this ever
- * fails, the coil branch regressed to writing byte_count*8 coils.) */
+/* coil-clamp (audit cache-lookup-4): a coil response must never write coils the
+ * master did not ask for. Two ways that could happen, both pinned here:
+ *
+ *   1. An OVERSIZED response (byte_count larger than the request implies) is not
+ *      an answer to this request at all — drop it whole. Trusting its first byte
+ *      would let a mismatched reply set our coils.
+ *   2. Within a well-formed response the last data byte is zero-padded up to the
+ *      byte boundary. Those padding bits are NOT coils: a 1-coil request yields
+ *      1 byte, and only coil 0 may be stored — never bits 1..7 of that byte. */
 void test_cache_multimaster_on_response_fc01_no_phantom_coils(void)
 {
     LOG_MESSAGE();
@@ -2798,27 +3083,37 @@ void test_cache_multimaster_on_response_fc01_no_phantom_coils(void)
     cache_multimaster_init();
     cache_multimaster_enable();
 
-    /* Master requests exactly ONE coil at address 0. */
+    /* (1) Master requests ONE coil; slave replies with byte_count=2 — mismatch */
     cache_multimaster_on_request(0, 5, 1, 0, 1);
-
-    /* Slave replies with byte_count=2: coil 0 set, plus byte 1 = 0xFF (would be
-     * coils 8..15 if the count were inflated to byte_count*8 = 16). */
-    uint8_t resp[] = { 5, 0x01, 2, 0x01, 0xFF };
-    cache_multimaster_on_response(0, 5, 1, resp, sizeof(resp), 0);
+    uint8_t oversized[] = { 5, 0x01, 2, 0x01, 0xFF };
+    cache_multimaster_on_response(0, 5, 1, oversized, sizeof(oversized), 0);
 
     uint16_t val = 0x1234;
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
-        cache_multimaster_lookup(5, 1, 0, &val, 0), "the one requested coil must be cached");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 0 value (bit0 set)");
-
-    /* Coils the master never requested must NOT be in the cache. */
-    val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(5, 1, 0, &val, 0),
+        "an oversized coil response must be dropped whole — not even coil 0 is kept");
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
         cache_multimaster_lookup(5, 1, 8, &val, 0), "coil 8 must NOT be written (no phantom coils)");
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
         cache_multimaster_lookup(5, 1, 15, &val, 0), "coil 15 must NOT be written (no phantom coils)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
-        cache_multimaster_lookup(5, 1, 1, &val, 0), "coil 1 must NOT be written (only 1 coil requested)");
+
+    /* (2) The well-formed answer to the same request: byte_count=1, and the seven
+     * padding bits in that byte are all set — they must NOT become coils 1..7. */
+    cache_multimaster_on_request(0, 5, 1, 0, 1);
+    uint8_t padded[] = { 5, 0x01, 1, 0xFF };  /* bit0 = coil 0; bits 1..7 = padding */
+    cache_multimaster_on_response(0, 5, 1, padded, sizeof(padded), 0);
+
+    val = 0x1234;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(5, 1, 0, &val, 0), "the one requested coil must be cached");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, val, "coil 0 value (bit0 set)");
+
+    for (uint16_t addr = 1; addr <= 7; addr++) {
+        val = 0x1234;
+        TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+            cache_multimaster_lookup(5, 1, addr, &val, 0),
+            "padding bits of the last data byte must NOT be stored as coils");
+    }
 }
 
 /* ---- CM-U-064: JSON stream aborts on a mid-stream pool generation change -- */
@@ -2936,6 +3231,7 @@ int main(void)
     RUN_TEST(test_cache_multimaster_on_response_no_pending);
     RUN_TEST(test_cache_multimaster_on_response_fc03_correct);
     RUN_TEST(test_cache_multimaster_on_response_truncated_fc03);
+    RUN_TEST(test_cache_multimaster_foreign_response_does_not_poison);
     RUN_TEST(test_cache_multimaster_on_response_malformed_length);
     RUN_TEST(test_cache_multimaster_on_response_fc01_9_coils);
     RUN_TEST(test_cache_multimaster_on_response_fc01_count_overflow);
@@ -2944,11 +3240,14 @@ int main(void)
     RUN_TEST(test_cache_multimaster_on_response_null_short_data);
     RUN_TEST(test_cache_multimaster_lookup_timeout_zero);
     RUN_TEST(test_cache_multimaster_lookup_age_check);
+    RUN_TEST(test_cache_multimaster_lookup_timeout_at_saturation_cap);
     RUN_TEST(test_cache_multimaster_lookup_age_saturation_boundary);
     RUN_TEST(test_cache_multimaster_lookup_not_found_value_unchanged);
     RUN_TEST(test_cache_multimaster_lookup_null_value_out);
     RUN_TEST(test_cache_multimaster_lookup_unknown_fc);
     RUN_TEST(test_cache_multimaster_pool_full_no_crash);
+    RUN_TEST(test_cache_multimaster_dense_prefix_invariant);
+    RUN_TEST(test_cache_multimaster_entry_type_is_function_code);
     RUN_TEST(test_cache_multimaster_on_response_fc03_address_zero);
     RUN_TEST(test_cache_multimaster_on_response_fc03_odd_byte_count);
     RUN_TEST(test_cache_multimaster_on_response_fc01_exactly_8_coils);
@@ -2962,7 +3261,8 @@ int main(void)
     RUN_TEST(test_cache_status_handler_disabled_empty);
     RUN_TEST(test_cache_status_handler_enabled_two_entries);
     RUN_TEST(test_cache_status_handler_same_slave);
-    RUN_TEST(test_cache_csv_handler_empty_pool);
+    RUN_TEST(test_cache_csv_handler_disabled_returns_409);
+    RUN_TEST(test_cache_csv_handler_enabled_but_empty);
     RUN_TEST(test_cache_csv_handler_two_entries);
     RUN_TEST(test_cache_csv_handler_type_mapping);
     RUN_TEST(test_cache_json_handler_null_mutex);
