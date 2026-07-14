@@ -77,6 +77,7 @@ static const setting_mapping_t rs485_bridge_mappings[] = {
 };
 
 static esp_err_t add_rs485_settings_to_json(cJSON *parent);
+static bool validate_setting_from_json(cJSON *item, const char *setting_key);
 
 // Helper function to add setting to JSON using automatic type detection
 static bool add_setting_to_json(cJSON *parent, const char *setting_key, const char *json_key) {
@@ -104,36 +105,25 @@ static bool add_setting_to_json(cJSON *parent, const char *setting_key, const ch
     }
 }
 
-// Helper function to save JSON value using automatic type detection
+// Helper function to save JSON value using automatic type detection.
+// The JSON type checks, the INT range check and the value validation are exactly those of
+// validate_setting_from_json(), so reuse it here instead of duplicating them: what remains
+// is only the type-specific write itself.
 static bool save_setting_from_json(cJSON *item, const char *setting_key) {
+    if (!validate_setting_from_json(item, setting_key)) {
+        return false;
+    }
+
     setting_item_type_t type = setting_items_get_type(setting_key);
 
     switch (type) {
     case SETTING_ITEM_TYPE_STRING:
-        if (!cJSON_IsString(item)) {
-            ESP_LOGE(TAG, "Expected string for setting %s", setting_key);
-            return false;
-        }
         return setting_items_save(setting_key, item->valuestring) == ESP_OK;
 
     case SETTING_ITEM_TYPE_BOOL:
-        if (!cJSON_IsBool(item)) {
-            ESP_LOGE(TAG, "Expected boolean for setting %s", setting_key);
-            return false;
-        }
         return setting_items_save_bool(setting_key, cJSON_IsTrue(item)) == ESP_OK;
 
     case SETTING_ITEM_TYPE_INT:
-        if (!cJSON_IsNumber(item)) {
-            ESP_LOGE(TAG, "Expected number for setting %s", setting_key);
-            return false;
-        }
-        // Casting a double outside [INT_MIN, INT_MAX] to int is undefined behaviour;
-        // reject the value before the cast.
-        if ((item->valuedouble < (double)INT_MIN) || (item->valuedouble > (double)INT_MAX)) {
-            ESP_LOGE(TAG, "Integer value out of range for setting %s: %f", setting_key, item->valuedouble);
-            return false;
-        }
         return setting_items_save_int(setting_key, (int)item->valuedouble) == ESP_OK;
 
     default:
