@@ -23,6 +23,7 @@ extern bool mock_setting_items_cache_server_enabled;
 extern int  mock_setting_items_cache_port;
 void        mock_setting_items_reset(void);
 
+extern esp_err_t mock_cache_modbus_server_deinit_error;     // makes deinit() report a failure
 extern int       mock_cache_modbus_server_init_call_count;
 extern int       mock_cache_modbus_server_deinit_call_count;
 extern int       mock_cache_modbus_server_init_last_port;
@@ -384,6 +385,253 @@ void test_settings_update_ports_frozen_skips_rs485_and_tx_disabled(void)
         "update_io_bus_control must still run while the ports are frozen (the test does not own the I/O bus)");
 }
 
+// ===================================================================
+// Cache Modbus TCP server lifecycle (check/release/acquire driven by settings_update)
+// ===================================================================
+
+// NVS says the server must run and it is stopped -> init once with the configured port.
+void test_settings_update_cache_server_started_when_enabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache server enabled, not running -> init");
+    LOG_MESSAGE();
+
+    mock_setting_items_cache_server_enabled = true;
+    mock_setting_items_cache_port = 504;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
+        "cache_modbus_server_init must be called exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(504, mock_cache_modbus_server_init_last_port,
+        "cache_modbus_server_init must be called with the configured port");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_deinit_call_count,
+        "a stopped server has no socket to release");
+
+    verify_task_deleted();
+}
+
+// A configured port of 0 falls back to the default CACHE_MODBUS_SERVER_PORT.
+void test_settings_update_cache_server_uses_default_port_when_configured_port_zero(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache port 0 -> default port");
+    LOG_MESSAGE();
+
+    mock_setting_items_cache_server_enabled = true;
+    mock_setting_items_cache_port = 0;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
+        "cache_modbus_server_init must be called exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_MODBUS_SERVER_PORT, mock_cache_modbus_server_init_last_port,
+        "configured port 0 must fall back to CACHE_MODBUS_SERVER_PORT");
+}
+
+// NVS says the server must be off and it is running -> deinit once, no init.
+void test_settings_update_cache_server_stopped_when_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache server disabled, running -> deinit");
+    LOG_MESSAGE();
+
+    mock_cache_modbus_server_set_running_port(504);
+    mock_setting_items_cache_server_enabled = false;
+    mock_setting_items_cache_port = 504;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
+        "cache_modbus_server_deinit must be called exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_init_call_count,
+        "cache_modbus_server_init must not be called when stopping the server");
+}
+
+// Server already running on the configured port -> nothing to do (no task, no calls).
+void test_settings_update_cache_server_no_op_when_already_running(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache server already running -> no-op");
+    LOG_MESSAGE();
+
+    mock_cache_modbus_server_set_running_port(504);
+    mock_setting_items_cache_server_enabled = true;
+    mock_setting_items_cache_port = 504;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTaskCreate_data.called,
+        "xTaskCreate should not be called when the cache server already matches NVS");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_init_call_count,
+        "init must not be called when the server is already running on the configured port");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_deinit_call_count,
+        "deinit must not be called when the server should keep running");
+}
+
+// A port change restarts the server exactly once: deinit + init on the NEW port.
+void test_settings_update_cache_server_restarted_on_port_change(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache port changed -> deinit+init");
+    LOG_MESSAGE();
+
+    mock_cache_modbus_server_set_running_port(1502);
+    mock_setting_items_cache_server_enabled = true;
+    mock_setting_items_cache_port = 1503;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
+        "cache_modbus_server_deinit must be called exactly once when the port changes");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
+        "cache_modbus_server_init must be called exactly once when the port changes");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1503, mock_cache_modbus_server_init_last_port,
+        "cache_modbus_server_init must be called with the NEW port");
+}
+
+// init(new_port) fails -> roll back by re-initialising the previously running port.
+void test_settings_update_cache_server_port_change_init_failure_rolls_back(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache init(new) fails -> rollback init(old)");
+    LOG_MESSAGE();
+
+    mock_cache_modbus_server_set_running_port(1502);
+    mock_setting_items_cache_server_enabled = true;
+    mock_setting_items_cache_port = 1503;
+
+    // Arm per-port failure: init(1503) fails, init(1502) (the rollback) succeeds.
+    mock_cache_modbus_server_init_fail_port  = 1503;
+    mock_cache_modbus_server_init_fail_error = ESP_FAIL;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
+        "cache_modbus_server_deinit must be called exactly once for the restart");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_cache_modbus_server_init_call_count,
+        "init must be called twice: failed new-port attempt + rollback to the old port");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1503, mock_cache_modbus_server_init_ports[0],
+        "first init must target the NEW port (1503)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1502, mock_cache_modbus_server_init_ports[1],
+        "second init must roll back to the OLD port (1502)");
+}
+
+// A deinit that reports a failure leaves the OLD listener up. Starting a second one would orphan it
+// (deinit only frees the latest descriptor), so the server must be left exactly as it is.
+void test_settings_update_cache_server_failed_release_blocks_acquire(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - failed cache deinit -> no second listener");
+    LOG_MESSAGE();
+
+    mock_cache_modbus_server_set_running_port(1502);
+    mock_setting_items_cache_server_enabled = true;
+    mock_setting_items_cache_port = 1503;
+    mock_cache_modbus_server_deinit_error = ESP_FAIL;   // the old listener stays up
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
+        "the release phase must have tried to stop the server exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_init_call_count,
+        "no second listener may be started while the old one is still up");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1502, cache_modbus_server_get_port(),
+        "the server keeps serving the port it could not give up");
+}
+
+// Enabling the server and changing its port in one settings write must bring it up ONCE, not start
+// it and then restart it — the two concerns used to be applied in separate blocks.
+void test_settings_update_cache_server_enable_and_port_change_applied_once(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - enable + port change -> single init");
+    LOG_MESSAGE();
+
+    // Server stopped; the request enables it on a new port.
+    mock_setting_items_cache_server_enabled = true;
+    mock_setting_items_cache_port = 1503;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
+        "the server must be brought up exactly once, not started and then restarted");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1503, mock_cache_modbus_server_init_last_port,
+        "the server must be brought up on the new port");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_deinit_call_count,
+        "a stopped server must not be deinitialised before starting it");
+}
+
+// The cache server gives its socket up BEFORE the RS-485 ports are re-initialized, so a bridge
+// gateway can be moved onto the port the server is vacating without its bind() hitting EADDRINUSE
+// (port_manager_apply_settings() has no rollback — the port would just stay dead).
+void test_settings_update_cache_server_released_before_ports(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache releases its port before the bridges");
+    LOG_MESSAGE();
+
+    mock_cache_modbus_server_set_running_port(504);
+    mock_setting_items_cache_server_enabled = false;                    // the server must free 504
+    mock_port_manager_check_settings_changed_return_value[0] = true;    // RS-485-1 wants 504 now
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
+        "the cache server must be stopped exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_init_call_count,
+        "a disabled cache server must not be restarted");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_port_manager_apply_settings_called[0],
+        "the changed port must be re-applied");
+
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_cache_modbus_server_deinit_call_seq < mock_port_manager_apply_settings_call_seq[0],
+        "the cache server must give its socket up before a bridge binds that port");
+}
+
+// The reverse hand-over: the cache server moves onto a port an RS-485 gateway is vacating, so it
+// may only take the socket AFTER the ports have been re-applied.
+void test_settings_update_cache_server_acquires_after_ports(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache takes its port after the bridges");
+    LOG_MESSAGE();
+
+    mock_cache_modbus_server_set_running_port(0);           // server stopped
+    mock_setting_items_cache_server_enabled = true;
+    mock_setting_items_cache_port = 502;                    // the port RS-485-1 is giving up
+    mock_port_manager_check_settings_changed_return_value[0] = true;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
+        "the cache server must be started exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(502, mock_cache_modbus_server_init_last_port,
+        "the cache server must be started on the port taken over from the bridge");
+
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_port_manager_apply_settings_call_seq[0] < mock_cache_modbus_server_init_call_seq,
+        "the cache server must bind its socket only after the ports have been re-applied");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -398,6 +646,18 @@ int main(void)
     RUN_TEST(test_settings_update_all_changed);
     RUN_TEST(test_settings_update_task_creation_failure);
     RUN_TEST(test_settings_update_task_already_running);
+
+    // Cache Modbus TCP server lifecycle
+    RUN_TEST(test_settings_update_cache_server_started_when_enabled);
+    RUN_TEST(test_settings_update_cache_server_uses_default_port_when_configured_port_zero);
+    RUN_TEST(test_settings_update_cache_server_stopped_when_disabled);
+    RUN_TEST(test_settings_update_cache_server_no_op_when_already_running);
+    RUN_TEST(test_settings_update_cache_server_restarted_on_port_change);
+    RUN_TEST(test_settings_update_cache_server_port_change_init_failure_rolls_back);
+    RUN_TEST(test_settings_update_cache_server_failed_release_blocks_acquire);
+    RUN_TEST(test_settings_update_cache_server_enable_and_port_change_applied_once);
+    RUN_TEST(test_settings_update_cache_server_released_before_ports);
+    RUN_TEST(test_settings_update_cache_server_acquires_after_ports);
 
     return UNITY_END();
 }

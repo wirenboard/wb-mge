@@ -16,6 +16,10 @@ extern int mock_port_manager_apply_settings_called[BRIDGES_COUNT];
 extern unsigned mock_port_manager_apply_settings_index[BRIDGES_COUNT];
 extern esp_err_t mock_port_manager_apply_settings_return_value[BRIDGES_COUNT];
 
+// Global call id (call_sequence_get_call_id()) of the last apply_settings() call for this port.
+// Lets a test assert the order of the phases against the cache Modbus server and the web server.
+extern unsigned mock_port_manager_apply_settings_call_seq[BRIDGES_COUNT];
+
 extern int mock_port_manager_ports_frozen_called;
 extern bool mock_port_manager_ports_frozen_return_value;
 
