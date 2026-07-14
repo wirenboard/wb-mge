@@ -98,10 +98,6 @@ void mbtcp_reasm_close(mbtcp_reasm_t *r, int sock);
  * "…because a partial frame is still accumulating". */
 size_t mbtcp_reasm_pending(mbtcp_reasm_t *r, int sock);
 
-/* True if @p sock currently holds a slot. Distinguishes "no slot" from "a slot
- * holding zero buffered bytes", which mbtcp_reasm_pending() cannot. */
-bool mbtcp_reasm_has_slot(mbtcp_reasm_t *r, int sock);
-
 /* Number of feed() calls that found no free slot since init. */
 uint32_t mbtcp_reasm_slot_exhausted(const mbtcp_reasm_t *r);
 
@@ -126,3 +122,11 @@ int mbtcp_reasm_feed(mbtcp_reasm_t *r, int sock, const uint8_t *data, size_t len
 /* Total ADU length declared by an MBAP header (needs >= 6 readable bytes).
  * Exposed for callers that parse a header themselves. */
 size_t mbtcp_reasm_frame_total_len(const uint8_t *buf);
+
+#ifdef __unittest_env__
+/* True if @p sock currently holds a slot. Distinguishes "no slot" from "a slot holding
+ * zero buffered bytes", which mbtcp_reasm_pending() cannot — the tests need that
+ * distinction to assert slot allocation and release. No production caller does, so the
+ * firmware build does not carry it. */
+bool mbtcp_reasm_has_slot(mbtcp_reasm_t *r, int sock);
+#endif /* __unittest_env__ */

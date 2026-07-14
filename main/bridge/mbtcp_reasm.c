@@ -86,6 +86,7 @@ size_t mbtcp_reasm_pending(mbtcp_reasm_t *r, int sock)
     return pending;
 }
 
+#ifdef __unittest_env__
 bool mbtcp_reasm_has_slot(mbtcp_reasm_t *r, int sock)
 {
     if (r == NULL || sock < 0) return false;   /* sock < 0 is the free-slot sentinel */
@@ -98,6 +99,7 @@ bool mbtcp_reasm_has_slot(mbtcp_reasm_t *r, int sock)
     if (r->mutex) { xSemaphoreGive(r->mutex); }
     return found;
 }
+#endif /* __unittest_env__ */
 
 uint32_t mbtcp_reasm_slot_exhausted(const mbtcp_reasm_t *r)
 {
