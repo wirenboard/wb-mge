@@ -12,10 +12,12 @@
 #include "update_rs485_mio_gpio_states.h"
 
 
-// The clock-out test drives the TX lines of both serial ports and the DE/RE line of
-// port 1 directly. The pins come from board_pins.h (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the
-// GPIO numbers differ per board, and hardcoding the WB-MGE ones drove the wrong pins on
-// WB-MGU (there GPIO4 is an input, the port-2 RX line).
+// The clock-out test drives four pins directly: the TX line of both serial ports (the
+// 100 kHz waveform, via the LEDC) and the DE/RE line of both ports as plain GPIOs — port
+// 1's is RAISED (its transceiver transmits), port 2's is HELD LOW (its transceiver stays
+// in receive, so that bus is not driven). The pins come from board_pins.h
+// (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the GPIO numbers differ per board, and hardcoding the
+// WB-MGE ones drove the wrong pins on WB-MGU (there GPIO4 is an input, the port-2 RX line).
 #define BRIDGE_PORT_INDEX       0   // port 1; freed so LEDC can reuse its TX pin
 #define BRIDGE_PORT_INDEX_2     1   // port 2; freed so LEDC can reuse its TX pin
 
@@ -143,9 +145,12 @@ static void release_clock_out_hw(void)
     //
     // The port-2 DE line is released here as well: for the whole test it was an output
     // driven LOW by us (see CLK_OUT_DE_PARK_PIN), so it has to be given back like any
-    // other pin the test owns. In that short release window the external pulldown (R4 on
-    // WB-MGE) fights the internal pull-up — a weak-vs-weak contention, unlike the driven
-    // HIGH the UART would otherwise have kept on the pin for the entire test.
+    // other pin the test owns. In that short release window the WB-MGE pulldown R4 fights
+    // the internal pull-up — a weak-vs-weak contention, unlike the driven HIGH the UART
+    // would otherwise have kept on the pin for the entire test. That backstop is
+    // WB-MGE-specific and must not be assumed elsewhere: on WB-MGU SERIAL_IO_PIN_2 is
+    // GPIO13, the DE line of the WBE2 bus, with no R4 — there the window is bounded only
+    // by its own length, exactly like the port-1 DE line above.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
@@ -249,8 +254,9 @@ static esp_err_t process_request_json(cJSON *request_json)
     if (cmd_item->valueint) {
         if (!clock_out_en) {
             // Freeze the ports first: from here on the runtime mode (DISABLED)
-            // deliberately differs from the mode in NVS, and nothing but this test
-            // may re-init the ports while the LEDC drives their TX/DE pins.
+            // deliberately differs from the mode in NVS, and nothing but this test may
+            // re-init the ports while it owns their TX and DE pins (the LEDC drives the
+            // TX lines; the DE lines are driven straight as GPIOs).
             port_manager_set_ports_frozen(true);
             // Disable both ports so the LEDC can take over their TX pins, but do NOT
             // persist the DISABLED mode: NVS must keep the user's configured mode so
@@ -304,9 +310,9 @@ static esp_err_t process_request_json(cJSON *request_json)
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
-            // The LEDC has released the TX/DE pins, so the ports may be brought up
-            // again: release the freeze before apply_settings, which is a no-op
-            // while the ports are frozen.
+            // stop_clock_out() has released the TX and DE pins, so the ports may be
+            // brought up again: release the freeze before apply_settings, which is a
+            // no-op while the ports are frozen.
             port_manager_set_ports_frozen(false);
             // The test never touched NVS, so the configured mode is still there:
             // re-read it and re-initialise both ports from the persisted settings.

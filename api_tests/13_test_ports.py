@@ -249,9 +249,10 @@ def test_clock_out_keeps_rs485_2_de_low(api):
 def test_clock_out_freezes_port_mode(api):
     """clock_out freezes the ports: mode changes are rejected and NVS is untouched.
 
-    While the test runs, the LEDC owns the TX/DE pins of both ports, so a persisting
-    mode change (POST /ports/N/mode) must not go through: the firmware rejects it with
-    409 Conflict instead of handing the pins back to the UART. The runtime mode is
+    While the test runs it owns the TX and DE pins of both ports (the LEDC drives the two
+    TX lines; the two DE lines are driven as plain GPIOs), so a persisting mode change
+    (POST /ports/N/mode) must not go through: the firmware rejects it with 409 Conflict
+    instead of handing the pins back to the UART. The runtime mode is
     DISABLED for the duration, but that is deliberately NOT persisted — GET /settings
     reads straight from NVS and must still show the mode configured before the test,
     both during it and after it. On exit both ports come back up from NVS.
@@ -332,10 +333,11 @@ def test_clock_out_leaves_io_bus_alone(api):
     """clock_out must not disturb the MIO controller, and must not gate the io_bus setting.
 
     The clock_out test drives the logic-side TX (DI) line of RS-485-2 so that LED2 blinks,
-    but it never enables that transceiver's driver: SERIAL_IO_PIN_2 (U4.DE) is left to the
-    hardware pulldown R4. The RS-485-2 pair the MIO controller shares therefore stays
-    silent, so the test has no reason to touch the I/O bus — its reset line (E08) must keep
-    whatever the io_bus setting put there, all the way through the test.
+    but it never enables that transceiver's driver: it holds SERIAL_IO_PIN_2 (U4.DE) LOW
+    itself for the whole run (see test_clock_out_keeps_rs485_2_de_low). The RS-485-2 pair
+    the MIO controller shares therefore stays silent, so the test has no reason to touch
+    the I/O bus — its reset line (E08) must keep whatever the io_bus setting put there,
+    all the way through the test.
 
     And because the test does not own the I/O bus, an io_bus written via POST /settings
     while the test runs must reach the hardware immediately, not be deferred to test exit

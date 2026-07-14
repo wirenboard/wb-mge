@@ -55,7 +55,8 @@ static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
 // the user's configured mode), which makes the runtime mode differ from NVS.
 // Without this flag check_settings_changed() would report "changed" for both
 // ports, so ANY unrelated POST /settings would run apply_settings() and re-init
-// the ports — re-grabbing the TX/DE pins that the LEDC is currently driving.
+// the ports — re-grabbing the TX/DE pins that the factory test is currently
+// driving (the LEDC on the TX lines, plain GPIO writes on the DE lines).
 // While frozen, check_settings_changed() reports no change, apply_settings() is a
 // no-op and a persisting set_mode() (POST /ports/N/mode) is refused with the
 // dedicated PM_ERR_PORTS_FROZEN, so the ports stay down for the whole test. Only the
