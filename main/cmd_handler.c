@@ -16,8 +16,6 @@
 
 #if (QEMU_BUILD)
     #include <soc/timer_group_reg.h>   /* TIMG_LACTCONFIG_REG etc. — LACT shutdown */
-    #include <esp_intr_alloc.h>         /* esp_intr_dump() — interrupt map debug */
-    #include <driver/uart.h>            /* uart_is_driver_installed(), uart_write_bytes() */
 #endif
 
 static const char *TAG = "cmd_handler";
@@ -33,11 +31,6 @@ static const char *TAG = "cmd_handler";
 typedef enum {
     CMD_REBOOT,
     CMD_SET_DEFAULT_SETTINGS,
-#if (QEMU_BUILD)
-    CMD_REBOOT_RAW, /* DEBUG/QEMU: esp_restart() without LACT silence — bug05 repro */
-    CMD_INTR_DUMP,  /* DEBUG/QEMU: dump CPU interrupt allocation table via esp_intr_dump() */
-    CMD_UART1_TX,   /* DEBUG/QEMU: flood UART1 TX to provoke UART1 interrupt (bug01 repro) */
-#endif
 } cmd_code_t;
 
 typedef struct {
@@ -49,26 +42,7 @@ typedef struct {
 static const cmd_t available_commands[] = {
     {CMD_REBOOT, "reboot", "Restart the device"},
     {CMD_SET_DEFAULT_SETTINGS, "set_default_settings", "Reset all settings to factory defaults"},
-#if (QEMU_BUILD)
-    {CMD_REBOOT_RAW, "reboot_raw", "DEBUG: esp_restart() without LACT shutdown (bug05 repro)"},
-    {CMD_INTR_DUMP,  "intr_dump",  "DEBUG: dump CPU interrupt allocation table"},
-    {CMD_UART1_TX,   "uart1_tx",   "DEBUG: flood UART1 TX to make UART1 interrupt pending (bug01 repro)"},
-#endif
 };
-
-#if (QEMU_BUILD)
-static void reboot_raw_task(void *pvParameters)
-{
-    /* Use 100 ms instead of REBOOT_DELAY_MS (1 s): under QEMU starvation,
-     * vTaskDelay(1 s) may hang indefinitely (bug 08). 100 ms is enough for
-     * httpd to send the HTTP response before esp_restart() tears down the chip. */
-    vTaskDelay(pdMS_TO_TICKS(100));
-    /* Intentionally do NOT silence LACT — same as panic path. Bug05 repro tool.
-     * With the IDF-level NULL guard in timer_alarm_isr() (bug05 patch),
-     * this should now result in one clean reboot instead of a boot-loop. */
-    esp_restart();
-}
-#endif
 
 static void reboot_task(void *pvParameters)
 {
@@ -133,30 +107,6 @@ static esp_err_t cmd_execute(int cmd_code)
     case CMD_REBOOT:
         cmd_reboot_device();
         break;
-
-#if (QEMU_BUILD)
-    case CMD_REBOOT_RAW:
-        xTaskCreate(reboot_raw_task, "reboot_raw", REBOOT_TASK_STACK_SIZE, NULL, REBOOT_TASK_PRIORITY, NULL);
-        break;
-
-    case CMD_INTR_DUMP:
-        /* Dump the CPU interrupt allocation table to stdout (QEMU serial).
-         * Useful for identifying which CPU slot a given peripheral uses (e.g. bug 01). */
-        esp_intr_dump(NULL);
-        break;
-
-    case CMD_UART1_TX:
-        /* Flood UART1 TX to provoke a pending UART1 TX interrupt.
-         * If port teardown happens immediately after (uart_driver_delete),
-         * code WITHOUT fix 01 would land in xt_unhandled_interrupt. */
-        if (uart_is_driver_installed(UART_NUM_1)) {
-            static const uint8_t buf[256] = {0xAA};
-            for (int i = 0; i < 8; i++) {
-                uart_write_bytes(UART_NUM_1, (const char *)buf, sizeof(buf));
-            }
-        }
-        break;
-#endif
 
     case CMD_SET_DEFAULT_SETTINGS:
         settings_save_timer_auto_init();
