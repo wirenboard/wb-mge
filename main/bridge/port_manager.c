@@ -56,10 +56,12 @@ static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
 // Without this flag check_settings_changed() would report "changed" for both
 // ports, so ANY unrelated POST /settings would run apply_settings() and re-init
 // the ports — re-grabbing the TX/DE pins that the LEDC is currently driving.
-// While frozen, check_settings_changed() reports no change and apply_settings()
-// is a no-op, so the ports stay down for the whole test. The test clears the
-// flag on exit and then calls apply_settings() itself to restore both ports
-// from NVS (which also picks up any settings written during the test).
+// While frozen, check_settings_changed() reports no change, apply_settings() is a
+// no-op and a persisting set_mode() (POST /ports/N/mode) is refused with
+// ESP_ERR_INVALID_STATE, so the ports stay down for the whole test. Only the
+// transient set_mode path stays open — that is how the test disables them. The
+// test clears the flag on exit and then calls apply_settings() itself to restore
+// both ports from NVS (which also picks up any settings written during the test).
 static bool s_ports_frozen = false;
 
 // Take the per-port init mutex. Lazily creates it on first use so we don't depend
@@ -462,6 +464,19 @@ static esp_err_t port_set_mode_impl(unsigned port_index, pm_mode_t mode, bool pe
 
     pm_lock(port_index);
 
+    // While the factory test owns the TX/DE pins, a persisting mode change
+    // (POST /ports/N/mode) must not go through: port_init_mode() would hand the
+    // pins the LEDC is driving back to the UART, and the new mode would be written
+    // to NVS on top of the user's configuration. Reject it — the REST handler maps
+    // this to 409. The transient path stays open: it is how the test disables the
+    // ports in the first place.
+    if (persist && s_ports_frozen) {
+        pm_unlock(port_index);
+        ESP_LOGW(TAG, "Port[%u]: mode change rejected, ports frozen by factory test",
+                 port_index + 1);
+        return ESP_ERR_INVALID_STATE;
+    }
+
     // Remember the current (presumed-working) mode so we can roll back if the
     // new mode fails to initialise.
     pm_mode_t prev_mode = pm_ctx[port_index].mode;
@@ -739,7 +754,7 @@ static esp_err_t port2_send_handler(httpd_req_t *req)
     return port_send_handler(req, 1);
 }
 
-static esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
+PORT_MANAGER_STATIC esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
 {
     if (!auth_middleware_check(req)) {
         return ESP_OK;
@@ -767,6 +782,14 @@ static esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
     }
 
     esp_err_t ret = port_manager_set_mode(port_index, new_mode);
+    if (ret == ESP_ERR_INVALID_STATE) {
+        // The factory clock-out test owns the port's TX/DE pins right now, so the
+        // port cannot be reconfigured. 409: the request is fine, the resource state
+        // is not — retry once the test is switched off (POST /test {"clock_out":false}).
+        cJSON_Delete(req_json);
+        return json_utils_send_error_status(req, "409 Conflict",
+            "Port mode is locked while the clock_out factory test is active");
+    }
     if (ret != ESP_OK) {
         cJSON_Delete(req_json);
         return json_utils_send_error(req, esp_err_to_name(ret));

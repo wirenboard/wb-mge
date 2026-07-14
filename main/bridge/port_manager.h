@@ -54,9 +54,15 @@ esp_err_t port_manager_init(void);
  * Deinitialises the current mode, saves the new mode to NVS, then initialises
  * the new mode.
  *
+ * Rejected with ESP_ERR_INVALID_STATE while the ports are frozen by the factory
+ * test (see port_manager_set_ports_frozen()): re-initialising the port would take
+ * the TX/DE pins back from the LEDC that is driving them.
+ *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @param mode        Target mode.
  * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         ESP_ERR_INVALID_STATE if the ports are frozen by the factory test
+ *         (nothing is changed, neither live nor in NVS);
  *         the init error if the new mode failed to initialise (the previous mode
  *         is rolled back); or the NVS save error if the mode initialised live
  *         but could not be persisted — in that case the mode is applied now but
@@ -141,7 +147,11 @@ bool port_manager_get_cache(unsigned port_index);
  *
  * While frozen:
  *   - port_manager_check_settings_changed() always reports false;
- *   - port_manager_apply_settings() is a no-op returning ESP_OK.
+ *   - port_manager_apply_settings() is a no-op returning ESP_OK;
+ *   - port_manager_set_mode() is rejected with ESP_ERR_INVALID_STATE (the REST
+ *     handler turns that into 409 Conflict);
+ *   - port_manager_set_mode_transient() still works — it is how the test itself
+ *     puts the ports into PM_MODE_DISABLED.
  *
  * NVS is not affected either way. Unfreeze first, then call
  * port_manager_apply_settings() for each port to bring them back up from NVS
