@@ -175,7 +175,9 @@ static const setting_item_t setting_items[] = {
     {KEY_IO_BUS_ENABLED, DEFAULT_IO_BUS_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_VOUT, DEFAULT_485_VOUT, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
-    // WiFi permanent disable flag (one-way: can be set to true but never cleared back to false)
+    // WiFi permanent-disable flag. The settings API cannot clear it back to false
+    // (see settings_manager.c), but it is NOT irreversible: a factory reset
+    // (setting_items_set_defaults) or an NVS erase resets it to the default below.
     {KEY_WIFI_PERM_DISABLE, DEFAULT_WIFI_PERM_DISABLE, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // WiFi settings

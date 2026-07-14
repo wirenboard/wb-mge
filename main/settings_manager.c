@@ -737,11 +737,14 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
             } else {
 #if QEMU_BUILD
                 // In QEMU builds, allow clearing the flag for test fixture teardown.
-                // On real hardware this path is never compiled — the flag is truly one-way.
+                // On real hardware this path is not compiled, so the API cannot clear
+                // the flag — but it is not irreversible: a factory reset
+                // (setting_items_set_defaults) or an NVS erase still resets it to false.
                 should_set_wifi_perm_disable = true;
                 wifi_perm_disabled = false;
 #endif
-                // On hardware: false is silently ignored — the flag cannot be cleared
+                // On hardware: false is silently ignored — the API cannot clear the flag
+                //              (factory reset / NVS erase still do)
             }
         }
     }
