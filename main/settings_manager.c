@@ -373,6 +373,18 @@ static bool validate_rs485_settings(cJSON *request_json)
     return true;
 }
 
+// Add the wifi_perm_disable flag to the response. On failure the response JSON is freed,
+// so the caller only has to propagate the error.
+static esp_err_t add_wifi_perm_disable_flag(cJSON *response_json, bool value)
+{
+    if (!cJSON_AddBoolToObject(response_json, "wifi_perm_disable", value)) {
+        ESP_LOGE(TAG, "Failed to add wifi_perm_disable flag to JSON");
+        cJSON_Delete(response_json);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
 esp_err_t settings_build_response_json(cJSON **response_json)
 {
     if (response_json == NULL) {
@@ -391,20 +403,13 @@ esp_err_t settings_build_response_json(cJSON **response_json)
                            top_level_mappings[i].json_key);
     }
 
-    // Add WiFi settings group (omitted when WiFi is permanently disabled)
-    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
-        // WiFi is permanently disabled — report only the flag, no wifi sub-object
-        if (!cJSON_AddBoolToObject(*response_json, "wifi_perm_disable", true)) {
-            ESP_LOGE(TAG, "Failed to add wifi_perm_disable flag to JSON");
-            cJSON_Delete(*response_json);
-            return ESP_FAIL;
-        }
-    } else {
-        if (!cJSON_AddBoolToObject(*response_json, "wifi_perm_disable", false)) {
-            ESP_LOGE(TAG, "Failed to add wifi_perm_disable flag to JSON");
-            cJSON_Delete(*response_json);
-            return ESP_FAIL;
-        }
+    // Report the wifi_perm_disable flag, then add the WiFi settings group - the group is
+    // omitted when WiFi is permanently disabled, leaving only the flag.
+    bool wifi_perm_disabled = setting_items_read_bool(KEY_WIFI_PERM_DISABLE);
+    if (add_wifi_perm_disable_flag(*response_json, wifi_perm_disabled) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    if (!wifi_perm_disabled) {
         if (add_group_to_json(*response_json, "wifi", wifi_mappings, ARRAY_SIZE(wifi_mappings)) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to add WiFi settings to JSON");
             cJSON_Delete(*response_json);
