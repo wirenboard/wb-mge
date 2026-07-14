@@ -24,7 +24,7 @@
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 
-#define WEB_PORT_FALLBACK                   80          // Used if unable to read from settings
+#define WEB_PORT_FALLBACK                   HTTP_SERVER_DEFAULT_PORT    // Used if unable to read from settings
 
 // Buffer size is chosen to be larger than the HTTP header size
 
@@ -297,11 +297,17 @@ static uint16_t get_web_port_setting(void)
 
 esp_err_t http_server_init(void)
 {
+    return http_server_init_port(get_web_port_setting());
+}
+
+
+esp_err_t http_server_init_port(uint16_t port)
+{
     memcpy(&httpd_current_config, &httpd_default_config, sizeof(httpd_current_config));
     httpd_current_config.max_uri_handlers = MAX_URI_HANDLERS;
     httpd_current_config.stack_size = STACK_SIZE;
     httpd_current_config.max_open_sockets = MAX_OPEN_SOCKETS;
-    httpd_current_config.server_port = get_web_port_setting();
+    httpd_current_config.server_port = port;
 
     // Precompute per-asset ETags from the firmware build identity. sys_info is
     // populated by sys_info_init(), which runs before http_server_init(). The
@@ -385,6 +391,15 @@ esp_err_t http_server_deinit(void)
         return ret;
     }
     return ESP_OK;  // HTTP server not started -> deinitialized
+}
+
+
+uint16_t http_server_get_port(void)
+{
+    if (http_server == NULL) {
+        return 0;   // not listening: nothing to hand over, nothing to roll back to
+    }
+    return httpd_current_config.server_port;
 }
 
 

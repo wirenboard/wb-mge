@@ -112,28 +112,91 @@ static void cache_modbus_server_acquire(int released_port)
 // not the release/acquire pair the two-phase apply needs, so it is built here on top of that
 // public API — the same shape as the cache Modbus server's above.
 
-// Release half: give up the web UI's listening socket, so a subsystem that is moving onto
-// web_port can bind it in the acquire phase.
-static void http_server_release(void)
+// Release half: give up the web UI's listening socket, so a subsystem that is moving onto web_port
+// can bind it in the acquire phase. Returns the port that was released, or 0 when the server was
+// not running (or could not be stopped). The released port is handed to http_server_acquire() so a
+// failed start on the new port can roll back to it.
+static uint16_t http_server_release(void)
 {
+    uint16_t running_port = http_server_get_port();
+
     esp_err_t ret = http_server_deinit();
     if (ret != ESP_OK) {
         // Defensive only: http_server_deinit() drops its handle whatever httpd_stop() says (and
         // httpd_stop() can only fail on a NULL handle, which cannot happen here). So the server is
-        // NOT listening any more; we simply do not know what became of its socket.
+        // NOT listening any more, we simply do not know what happened to its socket — which is
+        // exactly why running_port is not offered as a rollback target. The web UI is down at this
+        // point; http_server_acquire() takes it from there (a failed start on the new port then
+        // falls back to the default port).
         ESP_LOGE(TAG, "http_server_deinit failed: %s", esp_err_to_name(ret));
+        return 0;
     }
+    return running_port;
 }
 
-// Acquire half: start the web UI on the port NVS asks for.
-static void http_server_acquire(void)
+// Acquire half: start the web UI on the port NVS asks for. released_port is what
+// http_server_release() stopped (0 = nothing was stopped).
+//
+// A start that fails and is left failed takes the web interface down until the power is pulled:
+// http_server_check_settings_changed() reports "no change" while the server is stopped, so
+// HTTP_SERVER_FLAG is never raised again and no later settings write can bring the server back —
+// and the API that would fix the setting IS the web server. That was the path to a bricked device:
+// POST {web_port: <a port a bridge gateway is already serving>} → no validation of web_port at the
+// time → NVS written → deinit freed 80 → init on the busy port failed → the web UI was gone for
+// good. Hence the ladder below: configured port → the port we just gave up → the default port.
+//
+// If none of them binds, that is the end of it: log and return. NO REBOOT — do not add one back.
+// The ladder tells its rungs apart only by "ret != ESP_OK", while http_server_init_port() collapses
+// every reason for a refusal into a single ESP_FAIL: out of heap, LWIP out of sockets (httpd alone
+// takes up to MAX_OPEN_SOCKETS of CONFIG_LWIP_MAX_SOCKETS, and the two bridge TCP servers and the
+// cache server hold theirs on top), a refused wifi_scan_init()/auth_init(). Those causes sink every
+// rung alike, so "no port bound" says nothing about the ports — a busy gateway would reboot itself
+// mid-Modbus-traffic on a plain "Save" click, when waiting would have been enough. A reboot also
+// cannot repair a shortage that outlives it: the boot path calls http_server_init() again and meets
+// the same refusal.
+//
+// What is left when the ladder runs out is the behaviour this code had before the ladder existed:
+// the gateway keeps routing Modbus — its actual job — with a dead web UI until it is power-cycled.
+static void http_server_acquire(uint16_t released_port)
 {
     esp_err_t ret = http_server_init();
-    if (ret != ESP_OK) {
-        // The result used to be discarded entirely, which is how a settings write could take the
-        // web interface down without a trace in the log.
-        ESP_LOGE(TAG, "http_server_init failed: %s", esp_err_to_name(ret));
+    if (ret == ESP_OK) {
+        return;
     }
+    ESP_LOGE(TAG, "http_server_init failed: %s", esp_err_to_name(ret));
+
+    // Fallback 1: roll back to the port the web UI was serving. A web UI that is down on both the
+    // old and the new port leaves the user with no way to undo the setting that broke it — worse
+    // than any single failed port change. The rolled-back port deliberately diverges from NVS, so
+    // http_server_check_settings_changed() keeps reporting a change and the next settings write
+    // retries the move — as does the default-port fallback below, for the same reason: any port
+    // other than the configured one keeps that flag raised.
+    if (released_port != 0) {
+        ESP_LOGW(TAG, "Rolling the HTTP server back to port %u", released_port);
+        esp_err_t rb = http_server_init_port(released_port);
+        if (rb == ESP_OK) {
+            return;
+        }
+        ESP_LOGE(TAG, "Rollback to port %u also failed: %s", released_port, esp_err_to_name(rb));
+    }
+
+    // Fallback 2: the default port. Neither the configured port nor the one we vacated can be
+    // bound, so try the one port that is not derived from the settings that just broke the server.
+    // It may well be the port http_server_init() already tried (when NVS holds the default anyway)
+    // — one wasted bind() attempt is a cheap price for not having to guess.
+    if (released_port != HTTP_SERVER_DEFAULT_PORT) {
+        ESP_LOGW(TAG, "Falling back to the default HTTP port %u", HTTP_SERVER_DEFAULT_PORT);
+        if (http_server_init_port(HTTP_SERVER_DEFAULT_PORT) == ESP_OK) {
+            return;
+        }
+        ESP_LOGE(TAG, "Fallback to the default port %u also failed", HTTP_SERVER_DEFAULT_PORT);
+    }
+
+    // Out of fallbacks. The web interface stays down until the device is power-cycled; the gateway
+    // itself keeps running. See the comment above this function for why nothing more is attempted
+    // here — in particular, why this must not become a reboot.
+    ESP_LOGE(TAG, "HTTP server could not be started on any port, the web interface stays down "
+                  "until the device is power-cycled");
 }
 
 
@@ -179,9 +242,10 @@ static void settings_update_task(void *arg)
     // write is a rare, user-initiated event; a few hundred milliseconds of extra downtime on it is
     // cheaper than a port that stays dead until the next one. Do not "optimise" this back into a
     // per-subsystem apply.
+    uint16_t http_released_port = 0;
     if (flags & HTTP_SERVER_FLAG) {
         ESP_LOGD(TAG, "Releasing the HTTP server socket");
-        http_server_release();
+        http_released_port = http_server_release();
     }
 
     int cache_released_port = 0;
@@ -211,7 +275,7 @@ static void settings_update_task(void *arg)
 
     if (flags & HTTP_SERVER_FLAG) {
         ESP_LOGD(TAG, "Applying new settings to HTTP server");
-        http_server_acquire();
+        http_server_acquire(http_released_port);
     }
 
     if (flags & MDNS_FLAG) {
