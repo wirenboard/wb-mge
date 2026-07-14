@@ -35,7 +35,18 @@
 
 #define MB_DEV_MAX_REGISTERS         125u  /* max registers per FC03/FC04 read */
 
-/* ---- Input register address map (FC04) ----------------------------------- */
+/* ---- Register address map (shared by FC03 and FC04) ----------------------- */
+
+/*
+ * FC03 (holding) and FC04 (input) serve ONE common address space: every address
+ * below answers on both function codes with the same value.
+ *
+ * The WB common register map nominally files these fields under input or holding
+ * registers, but the reference firmwares answer the whole map on both function
+ * codes and the standard tooling relies on that — `wb-mcu-fw-flasher
+ * --get-device-info` and the usual `modbus_client -t3 -r <addr>` invocations read
+ * the signature AND the info block over FC03, while pollers read them over FC04.
+ */
 
 #define REG_UPTIME_HI         104u  /* 0x0068 */
 #define REG_UPTIME_LO         105u  /* 0x0069 */
@@ -50,6 +61,9 @@
 
 #define REG_SERIAL_EXT_BASE   266u  /* 0x010A .. 0x010D, u64 MSW-first */
 #define REG_SERIAL_BASE       270u  /* 0x010E .. 0x010F, u32 MSW-first */
+
+#define REG_SIGNATURE_BASE    290u  /* 0x0122 .. 0x012D, 12 regs */
+#define REG_SIGNATURE_COUNT    12u
 
 #define REG_FW_MAJOR          320u  /* 0x0140 */
 #define REG_FW_MINOR          321u  /* 0x0141 */
@@ -78,11 +92,6 @@
 #define REG_USED_RAM          65506u /* 0xFFE2 */
 #define REG_STACK_SIZE        65507u /* 0xFFE3 */
 #define REG_REBOOT_REASON     65508u /* 0xFFE4 */
-
-/* ---- Holding register address map (FC03) --------------------------------- */
-
-#define REG_SIGNATURE_BASE    290u  /* 0x0122 .. 0x012D, 12 regs */
-#define REG_SIGNATURE_COUNT    12u
 
 /* ---- WB reboot reason codes ---------------------------------------------- */
 
@@ -218,12 +227,18 @@ static uint16_t map_reboot_reason(void)
 /* ---- Register getters ---------------------------------------------------- */
 
 /*
- * Look up one input register (FC04) by address.
+ * Look up one register by address in the common FC03/FC04 map.
+ *
+ * There is a single address space: FC03 (holding) and FC04 (input) both resolve
+ * through this function, so every defined address answers on both function codes
+ * with the same value — including the signature, which standard WB tooling reads
+ * over FC03 and a plain poller may read over FC04.
+ *
  * task_stack_bytes: total stack size of the calling task, for the stack-usage
  * registers (0 if unknown).
  * Returns true and writes *val if the address is a defined register, false otherwise.
  */
-static bool device_get_input_reg(uint16_t addr, uint16_t task_stack_bytes, uint16_t *val)
+static bool device_get_reg(uint16_t addr, uint16_t task_stack_bytes, uint16_t *val)
 {
     /* uptime, 32-bit, MSW-first */
     if (addr == REG_UPTIME_HI || addr == REG_UPTIME_LO) {
@@ -273,6 +288,13 @@ static bool device_get_input_reg(uint16_t addr, uint16_t task_stack_bytes, uint1
         uint32_t sn = (uint32_t)(sys_info.device_serial_num & 0xFFFFFFFFu);
         *val = (addr == REG_SERIAL_BASE) ? (uint16_t)(sn >> 16)
                                          : (uint16_t)(sn & 0xFFFFu);
+        return true;
+    }
+
+    /* device signature string — 1 char/reg (12 regs, 12 chars) */
+    if (addr >= REG_SIGNATURE_BASE && addr < REG_SIGNATURE_BASE + REG_SIGNATURE_COUNT) {
+        *val = pack_string_reg_1c(sys_info.device_signature, DEVICE_SIGNATURE_LEN,
+                                  REG_SIGNATURE_BASE, addr);
         return true;
     }
 
@@ -361,33 +383,6 @@ static bool device_get_input_reg(uint16_t addr, uint16_t task_stack_bytes, uint1
     return false;
 }
 
-/*
- * Look up one holding register (FC03) by address.
- * task_stack_bytes: total stack size of the calling task, forwarded to the
- * input-register map (0 if unknown).
- * Returns true and writes *val if the address is a defined register, false otherwise.
- */
-static bool device_get_holding_reg(uint16_t addr, uint16_t task_stack_bytes, uint16_t *val)
-{
-    /* device signature string — 1 char/reg (12 regs, 12 chars) */
-    if (addr >= REG_SIGNATURE_BASE && addr < REG_SIGNATURE_BASE + REG_SIGNATURE_COUNT) {
-        *val = pack_string_reg_1c(sys_info.device_signature, DEVICE_SIGNATURE_LEN,
-                                  REG_SIGNATURE_BASE, addr);
-        return true;
-    }
-
-    /* Fall back to the input-register map.
-     *
-     * The WB common register map nominally files the info block (model, git,
-     * firmware version, serial) under input registers, but the reference
-     * firmwares answer it on FC03 as well, and the standard tooling reads it that
-     * way — `wb-mcu-fw-flasher --get-device-info` and the usual
-     * `modbus_client -t3 -r <addr>` invocations all use FC03. Serving the same
-     * map through both function codes matches the reference behaviour and is
-     * backwards compatible: every address that answered before still answers. */
-    return device_get_input_reg(addr, task_stack_bytes, val);
-}
-
 /* ---- Public API ---------------------------------------------------------- */
 
 bool mb_device_is_self(uint8_t unit_id)
@@ -425,9 +420,8 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
     for (uint16_t i = 0; i < count; i++) {
         uint16_t addr  = (uint16_t)(start_addr + i);
         uint16_t value = 0;
-        bool found = (fc == MB_DEV_FC_READ_INPUT_REGS)
-                     ? device_get_input_reg(addr, task_stack_size_bytes, &value)
-                     : device_get_holding_reg(addr, task_stack_size_bytes, &value);
+        /* One shared map: FC03 and FC04 resolve the same addresses. */
+        bool found = device_get_reg(addr, task_stack_size_bytes, &value);
         if (!found) {
             /* Any undefined register in the range -> ILLEGAL DATA ADDRESS. */
             *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;

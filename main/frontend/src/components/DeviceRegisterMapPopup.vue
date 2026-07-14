@@ -71,6 +71,7 @@ const holdingRows: RegRow[] = [
 ];
 
 const notes: BiText[] = [
+  { en: 'FC03 and FC04 share one address space: every address in both tables answers on both function codes with the same value. The split only records where the Wiren Board common register map files each field.', ru: 'FC03 и FC04 используют общее адресное пространство: каждый адрес из обеих таблиц отвечает по обеим функциям одним и тем же значением. Разделение лишь показывает, куда поле отнесено в общей карте регистров Wiren Board.' },
   { en: 'Strings: 2 characters per register, high byte = first character; the tail is zero-padded.', ru: 'Строки: 2 символа на регистр, старший байт — первый символ; хвост дополняется нулями.' },
   { en: 'Multi-register integers (except 324–325) use big-endian word order — the most significant word is at the lower register address.', ru: 'Многорегистровые целые (кроме 324–325) хранятся в порядке слов big-endian — старшее слово в младшем адресе.' },
   { en: 'Numeric version is computed per the Wiren Board rule: if (SUFFIX >= 0) enc = SUFFIX + 128; else enc = -1 - SUFFIX; VERSION = (MAJOR << 24) | (MINOR << 16) | (PATCH << 8) | enc.', ru: 'Числовая версия считается по правилу Wiren Board: if (SUFFIX >= 0) enc = SUFFIX + 128; else enc = -1 - SUFFIX; VERSION = (MAJOR << 24) | (MINOR << 16) | (PATCH << 8) | enc.' },

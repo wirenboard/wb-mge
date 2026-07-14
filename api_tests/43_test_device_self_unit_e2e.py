@@ -28,9 +28,10 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
                337-338 packets u32; 339-340 last-pkt-age u32;
                341 devices_on_bus; 342 bus poll ppm; 343 cache timeout s.
                (336 is left undefined: last register of the WB bootloader-version field.)
-  FC03 holding: 290-301 signature string (MEM_8: 1 char/reg, in the LOW byte),
-               plus the whole input map above — a holding read falls back to the
-               input-register map, so FC03 answers every FC04 address as well.
+               290-301 signature string (MEM_8: 1 char/reg, in the LOW byte).
+  FC03 holding: the SAME map. FC03 and FC04 share one address space — every
+               address above, the signature included, answers on both function
+               codes with the same value.
   An address defined in neither map -> exception 0x02.
   Any fc not in {0x03,0x04} on unit 0xFF -> exception 0x01.
 """

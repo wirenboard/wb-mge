@@ -987,19 +987,20 @@ void test_pack_string_odd_boundary(void)
         "reg 222 is past the string: zero");
 }
 
-/* ---- MBDEV-U-030: the info block is readable via FC03 as well as FC04 ----- */
+/* ---- MBDEV-U-030: FC03 and FC04 share ONE address space ------------------ */
 
 /* The WB common register map nominally files model / git / firmware version /
- * serial under INPUT registers, but the reference firmwares also answer them on
- * FC03 and the standard tooling reads them that way (wb-mcu-fw-flasher
- * --get-device-info, and the usual `modbus_client -t3 -r <addr>` invocations).
- * Holding reads therefore fall back to the input map. FC03 and FC04 must return
- * identical values for every address in the block. */
+ * serial under INPUT registers and the signature under HOLDING registers, but the
+ * reference firmwares answer the whole map on both function codes and the standard
+ * tooling reads it that way (wb-mcu-fw-flasher --get-device-info, and the usual
+ * `modbus_client -t3 -r <addr>` invocations). Both FCs therefore resolve through
+ * the same map: every defined address — the signature included — must return an
+ * identical value on FC03 and FC04. */
 void test_info_block_readable_via_fc03(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "MBDEV-U-030: FC03 must serve the same info block as FC04");
+        "MBDEV-U-030: FC03 and FC04 must serve one shared address space");
     LOG_MESSAGE();
 
     static const uint16_t addrs[] = {
@@ -1008,6 +1009,7 @@ void test_info_block_readable_via_fc03(void)
         250u, 265u,   /* firmware version */
         266u, 269u,   /* serial extension */
         270u, 271u,   /* serial number    */
+        290u, 301u,   /* signature        */
         320u, 327u,   /* numeric version  */
     };
 
@@ -1025,13 +1027,13 @@ void test_info_block_readable_via_fc03(void)
         TEST_ASSERT_TRUE_MESSAGE(n_in > 0, "the address must be served on FC04");
         TEST_ASSERT_TRUE_MESSAGE(n_hold > 0, "the same address must be served on FC03");
         TEST_ASSERT_EQUAL_HEX16_MESSAGE(resp_reg(in_buf, 0), resp_reg(hold_buf, 0),
-            "FC03 and FC04 must return the same value for an info-block register");
+            "FC03 and FC04 must return the same value for a shared-map register");
     }
 
-    /* And the signature (a genuine holding register) is still only on FC03's own
-     * map — reading it back via FC03 must keep working. */
     uint8_t buf[260];
     uint8_t exc = 0xAA;
+
+    /* The signature keeps working on FC03 — this is the read WB tooling performs. */
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
                                              290u, 6u, 0u, buf, &exc);
     TEST_ASSERT_TRUE_MESSAGE(n > 0, "the signature must still be served on FC03");
@@ -1039,11 +1041,29 @@ void test_info_block_readable_via_fc03(void)
     decode_string_1c(buf, 6u, decoded);
     TEST_ASSERT_EQUAL_STRING("sigXYZ", decoded);
 
-    /* An address defined in NEITHER map is still an illegal address on FC03. */
+    /* ...and, the map being shared, the very same field now answers on FC04 too.
+     * This used to be an ILLEGAL DATA ADDRESS: the signature was the one field
+     * that broke the FC03/FC04 symmetry. */
+    exc = 0xAA;
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                      290u, 6u, 0u, buf, &exc);
+    TEST_ASSERT_TRUE_MESSAGE(n > 0, "the signature must now be served on FC04 as well");
+    char decoded_fc04[64] = {0};
+    decode_string_1c(buf, 6u, decoded_fc04);
+    TEST_ASSERT_EQUAL_STRING("sigXYZ", decoded_fc04);
+
+    /* An address defined in the map is illegal on neither FC; one defined nowhere
+     * is illegal on both. */
     exc = 0xAA;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
                                       1000u, 1u, 0u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "an undefined address must not be served on FC03");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x02u, exc, "undefined address -> ILLEGAL DATA ADDRESS");
+
+    exc = 0xAA;
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                      1000u, 1u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "an undefined address must not be served on FC04");
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x02u, exc, "undefined address -> ILLEGAL DATA ADDRESS");
 }
 
