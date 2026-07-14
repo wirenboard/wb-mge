@@ -618,6 +618,76 @@ void test_init_fail_invalid_state_is_not_reported_as_409(void)
         "a failed mode change must not report success");
 }
 
+/* The body is fully validated before port_manager_set_mode() is called (the port index
+ * comes from the URI registration, an unknown mode string is rejected earlier), so ANY
+ * failure that comes back from set_mode() is server-side and must be a 500 — not only
+ * ESP_ERR_INVALID_STATE. A plain ESP_FAIL from the serial init ("UART driver already
+ * installed") is a device fault, and reporting it as 400 Bad Request would blame the
+ * client for a request that was perfectly valid. */
+void test_init_fail_esp_fail_is_reported_as_500(void)
+{
+    TEST_ASSERT_FALSE(port_manager_ports_frozen());
+    mock_json_utils_reset();
+
+    /* PASSIVE goes through bridge_port_init_serial_only() → ESP_FAIL. */
+    mock_bridge_port_init_serial_only_should_fail = true;
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_mode(PORT_MODE_PASSIVE_STR);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_mode_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_error_called,
+        "a mode change whose serial init fails must be reported as an error");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("500 Internal Server Error",
+        mock_json_utils_send_error_last_status,
+        "a failed port init is a server-side fault, not a bad request");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_response_called,
+        "a failed mode change must not report success");
+}
+
+/* persist-6 through the REST layer: the mode came up live but could not be written to
+ * NVS. The request was valid, so this is a server-side failure too — 500, not 400. */
+void test_persist_fail_is_reported_as_500(void)
+{
+    TEST_ASSERT_FALSE(port_manager_ports_frozen());
+    mock_json_utils_reset();
+
+    mock_setting_items_save_should_fail = true;
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_mode(PORT_MODE_PASSIVE_STR);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_mode_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_error_called,
+        "a mode change that could not be persisted must be reported as an error");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("500 Internal Server Error",
+        mock_json_utils_send_error_last_status,
+        "a failed NVS write is a server-side fault, not a bad request");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_response_called,
+        "a mode change that could not be persisted must not report success");
+}
+
+/* The 400 path must stay: a genuinely invalid request body is still a bad request. */
+void test_unknown_mode_value_is_reported_as_400(void)
+{
+    mock_json_utils_reset();
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_mode("nonsense_mode");
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_mode_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_error_called,
+        "an unknown mode value must be rejected");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("400 Bad Request",
+        mock_json_utils_send_error_last_status,
+        "an invalid request body is the one case that still returns 400");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_called,
+        "an invalid mode value must not reach the port init path");
+}
+
 /* ── The freeze must be observed under pm_lock, not before it ───────────────
  *
  * The race: settings_update_task enters apply_settings(), reads the freeze flag as
@@ -1311,6 +1381,9 @@ int port_manager_test(void)
     RUN_TEST(test_frozen_set_mode_handler_returns_409);
     RUN_TEST(test_unfrozen_set_mode_handler_succeeds);
     RUN_TEST(test_init_fail_invalid_state_is_not_reported_as_409);
+    RUN_TEST(test_init_fail_esp_fail_is_reported_as_500);
+    RUN_TEST(test_persist_fail_is_reported_as_500);
+    RUN_TEST(test_unknown_mode_value_is_reported_as_400);
     RUN_TEST(test_freeze_landing_during_lock_wait_stops_apply_settings);
     RUN_TEST(test_freeze_landing_during_lock_wait_stops_check_settings_changed);
     RUN_TEST(test_freeze_landing_during_lock_wait_stops_set_mode);
