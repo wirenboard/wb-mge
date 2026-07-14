@@ -173,6 +173,7 @@ const updateInterface = () => {
               <Switch
                 id="system_vout"
                 v-model="settings!.vout"
+                :aria-label="t('vout_aria')"
                 @change="() => updateSettings({ vout: settings!.vout })"
               />
             </div>
@@ -350,6 +351,7 @@ const updateInterface = () => {
     "power_title": "Power",
     "power_sub": "Supply & auxiliary output",
     "power": "Supply voltage",
+    "vout_aria": "Vout power output",
     "v": "V",
     "uptime": "Uptime",
     "uptime_days": "- | {n} day | {n} days | {n} days",
@@ -396,6 +398,7 @@ const updateInterface = () => {
     "power_title": "Питание",
     "power_sub": "Питание и вспомогательный выход",
     "power": "Напряжение питания",
+    "vout_aria": "Выход питания Vout",
     "v": "В",
     "uptime": "Время работы",
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
@@ -442,6 +445,7 @@ const updateInterface = () => {
     "power_title": "Қуат",
     "power_sub": "Қуат және көмекші шығыс",
     "power": "Қорек кернеуі",
+    "vout_aria": "Vout қуат шығысы",
     "v": "В",
     "uptime": "Жұмыс уақыты",
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
@@ -488,6 +492,7 @@ const updateInterface = () => {
     "power_title": "Alimentazione",
     "power_sub": "Alimentazione e uscita ausiliaria",
     "power": "Tensione di alimentazione",
+    "vout_aria": "Uscita di alimentazione Vout",
     "v": "V",
     "uptime": "Tempo di attività",
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
@@ -534,6 +539,7 @@ const updateInterface = () => {
     "power_title": "Stromversorgung",
     "power_sub": "Versorgung und Hilfsausgang",
     "power": "Versorgungsspannung",
+    "vout_aria": "Vout-Stromausgang",
     "v": "V",
     "uptime": "Betriebszeit",
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
