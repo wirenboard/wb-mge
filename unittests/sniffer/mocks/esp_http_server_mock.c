@@ -21,6 +21,11 @@ int              mock_httpd_ws_send_data_called      = 0;
 httpd_ws_frame_t mock_httpd_ws_send_data_last_frame = {0};
 int              mock_httpd_ws_send_data_last_fd     = -1;
 
+/* ---- httpd_sess_trigger_close state ---- */
+int            mock_httpd_sess_trigger_close_called     = 0;
+int            mock_httpd_sess_trigger_close_last_fd     = -1;
+httpd_handle_t mock_httpd_sess_trigger_close_last_handle = NULL;
+
 void mock_esp_http_server_reset(void)
 {
     mock_httpd_ws_get_fd_info_return = HTTPD_WS_CLIENT_WEBSOCKET;
@@ -31,6 +36,18 @@ void mock_esp_http_server_reset(void)
     mock_httpd_ws_send_data_called  = 0;
     memset(&mock_httpd_ws_send_data_last_frame, 0, sizeof(mock_httpd_ws_send_data_last_frame));
     mock_httpd_ws_send_data_last_fd = -1;
+
+    mock_httpd_sess_trigger_close_called     = 0;
+    mock_httpd_sess_trigger_close_last_fd     = -1;
+    mock_httpd_sess_trigger_close_last_handle = NULL;
+}
+
+esp_err_t httpd_sess_trigger_close(httpd_handle_t handle, int sockfd)
+{
+    mock_httpd_sess_trigger_close_called++;
+    mock_httpd_sess_trigger_close_last_fd     = sockfd;
+    mock_httpd_sess_trigger_close_last_handle = handle;
+    return ESP_OK;
 }
 
 httpd_ws_client_info_t httpd_ws_get_fd_info(httpd_handle_t hd, int fd)

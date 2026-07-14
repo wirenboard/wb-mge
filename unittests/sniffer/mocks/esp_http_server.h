@@ -106,12 +106,9 @@ static inline esp_err_t httpd_resp_send(httpd_req_t *req, const char *buf, ssize
     return ESP_OK;
 }
 
-static inline esp_err_t httpd_sess_trigger_close(httpd_handle_t handle, int sockfd)
-{
-    (void)handle;
-    (void)sockfd;
-    return ESP_OK;
-}
+/* Tracked in esp_http_server_mock.c: the sniffer uses it both to reject an
+ * unauthenticated upgrade and to evict the previous single-slot WS client. */
+esp_err_t httpd_sess_trigger_close(httpd_handle_t handle, int sockfd);
 
 /* Controllable mock state for httpd_ws_get_fd_info and httpd_ws_send_data.
  * Defined in esp_http_server_mock.c; tests use mock_esp_http_server_reset()
@@ -124,6 +121,10 @@ extern esp_err_t mock_httpd_ws_send_data_return;
 extern int mock_httpd_ws_send_data_called;
 extern httpd_ws_frame_t mock_httpd_ws_send_data_last_frame;
 extern int mock_httpd_ws_send_data_last_fd;
+
+extern int mock_httpd_sess_trigger_close_called;
+extern int mock_httpd_sess_trigger_close_last_fd;
+extern httpd_handle_t mock_httpd_sess_trigger_close_last_handle;
 
 void mock_esp_http_server_reset(void);
 

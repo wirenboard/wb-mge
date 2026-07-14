@@ -539,6 +539,74 @@ void test_ws_dispatch_slave_response_below_min_len_not_fed(void)
         "a too-short slave response ends the transaction → clear_pending");
 }
 
+/* ============================================================
+ * TC-WS-6: a second WS client evicts the first — the previous httpd session must
+ * be closed, not merely dropped from ws_client_fd. Leaked sessions pile up against
+ * MAX_OPEN_SOCKETS and eventually lock the whole web UI out.
+ * ============================================================ */
+
+void test_ws_handler_new_client_closes_previous_session(void)
+{
+    httpd_req_t first = {
+        .handle = (httpd_handle_t)0xCAFE,
+        .method = HTTP_GET,
+        .aux    = (void *)(intptr_t)42,
+    };
+    sniffer_ws_handler(&first);
+    TEST_ASSERT_EQUAL_MESSAGE(42, sniffer_test_get_ws_client_fd(),
+        "first client must occupy the single WS slot");
+
+    /* Ignore anything the first upgrade may have evicted (ws_client_fd is a static
+     * that survives across test cases); measure only the second upgrade. */
+    mock_esp_http_server_reset();
+
+    httpd_req_t second = {
+        .handle = (httpd_handle_t)0xCAFE,
+        .method = HTTP_GET,
+        .aux    = (void *)(intptr_t)43,
+    };
+    sniffer_ws_handler(&second);
+
+    TEST_ASSERT_EQUAL_MESSAGE(43, sniffer_test_get_ws_client_fd(),
+        "the new client must take over the WS slot");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_httpd_sess_trigger_close_called,
+        "the displaced client's session must be closed exactly once");
+    TEST_ASSERT_EQUAL_MESSAGE(42, mock_httpd_sess_trigger_close_last_fd,
+        "it is the OLD fd that must be closed, not the new one");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE((httpd_handle_t)0xCAFE, mock_httpd_sess_trigger_close_last_handle,
+        "the close must be issued on the server handle that owned the old session");
+}
+
+/* ============================================================
+ * TC-WS-7: httpd may hand the same fd number to the new session once the old one
+ * is already gone. Closing it would kill the client we just accepted.
+ * ============================================================ */
+
+void test_ws_handler_same_fd_reconnect_not_closed(void)
+{
+    httpd_req_t first = {
+        .handle = (httpd_handle_t)0xCAFE,
+        .method = HTTP_GET,
+        .aux    = (void *)(intptr_t)42,
+    };
+    sniffer_ws_handler(&first);
+
+    mock_esp_http_server_reset();
+
+    /* Same fd number reused for the new session. */
+    httpd_req_t again = {
+        .handle = (httpd_handle_t)0xCAFE,
+        .method = HTTP_GET,
+        .aux    = (void *)(intptr_t)42,
+    };
+    sniffer_ws_handler(&again);
+
+    TEST_ASSERT_EQUAL_MESSAGE(42, sniffer_test_get_ws_client_fd(),
+        "the slot must still hold fd 42");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_httpd_sess_trigger_close_called,
+        "must NOT close the session we have just accepted onto the same fd");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -558,6 +626,8 @@ int main(void)
     RUN_TEST(test_ws_dispatch_master_read_timeout_suppressed_all_fc);
     RUN_TEST(test_ws_dispatch_master_read_non_timeout_fed_all_fc);
     RUN_TEST(test_ws_dispatch_slave_response_fed_all_read_fc);
+    RUN_TEST(test_ws_handler_new_client_closes_previous_session);
+    RUN_TEST(test_ws_handler_same_fd_reconnect_not_closed);
     RUN_TEST(test_ws_dispatch_slave_response_below_min_len_not_fed);
 
     return UNITY_END();
