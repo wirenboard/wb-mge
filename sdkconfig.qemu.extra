@@ -4,11 +4,17 @@
 
 CONFIG_HTTPD_WS_SUPPORT=y
 
-# Increase the lwIP socket pool for QEMU test runs.
-# The table-exhaustion test opens 9 simultaneous Modbus TCP connections, and
-# the system also needs sockets for httpd, the transparent-TCP listen socket,
-# mDNS (IPv4 + IPv6), DHCP, etc.  15 (the hardware default) is not enough;
-# 20 gives comfortable headroom without impacting the QEMU memory budget.
+# Keep the lwIP socket pool at 20 — the SAME value the production build now ships
+# in sdkconfig.defaults, so QEMU and hardware run one socket budget (see the socket
+# accounting in that file).
+#
+# This override cannot be dropped even though the two values now agree: the QEMU
+# build's defaults chain is "sdkconfig.qemu.minimal;sdkconfig.qemu.extra" (see
+# qemu.mk) and does NOT include sdkconfig.defaults, and the auto-generated
+# sdkconfig.qemu.minimal pins CONFIG_LWIP_MAX_SOCKETS=15. Without this line QEMU
+# would silently fall back to 15 and the table-exhaustion test (9 simultaneous
+# Modbus TCP connections on top of httpd, the bridge listen sockets, mDNS and DHCP)
+# would start failing. If you change the value here, change sdkconfig.defaults too.
 CONFIG_LWIP_MAX_SOCKETS=20
 CONFIG_SPIRAM=y
 
