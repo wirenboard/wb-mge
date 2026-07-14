@@ -48,6 +48,10 @@ static void init_both_ports(serial_desc_t **d0, serial_desc_t **d1)
 // setUp / tearDown
 // ---------------------------------------------------------------------------
 
+// rs485_stats mock: per-port RX/TX activity notifications recorded by the mock.
+extern int mock_rs485_busy_monitor_activity_called[BRIDGES_COUNT];
+void mock_rs485_stats_reset(void);
+
 void setUp(void)
 {
     repeater_reset_for_test();
@@ -55,6 +59,7 @@ void setUp(void)
     mock_freertos_task_reset();
     mock_freertos_semaphore_reset();
     mock_esp_timer_reset();
+    mock_rs485_stats_reset();
 }
 
 void tearDown(void)
@@ -107,6 +112,44 @@ void test_forward_port1_to_port0(void)
     repeater_get_stats(&st);
     TEST_ASSERT_EQUAL_UINT64(sizeof(payload), st.bytes_2to1);
     TEST_ASSERT_EQUAL_UINT64(0, st.bytes_1to2);
+}
+
+// ---------------------------------------------------------------------------
+// Test: peer with TX disabled -> bytes counted as dropped, no send, no TX activity
+// serial_send() returns ESP_OK without transmitting when desc->tx_disabled is set, so the
+// repeater must not report those bytes as forwarded (nor blink the peer's TX indicator).
+// ---------------------------------------------------------------------------
+void test_drop_when_peer_tx_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test: peer TX disabled -> dropped, not forwarded");
+    LOG_MESSAGE();
+
+    serial_desc_t *d0 = NULL, *d1 = NULL;
+    init_both_ports(&d0, &d1);
+
+    // The user turned "Disable transmission (TX)" on for port 2, the peer of port 1.
+    d1->tx_disabled = true;
+
+    uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    mock_serial_registered_handler(d0, payload, sizeof(payload));
+
+    // The send is skipped entirely — serial_send() would have swallowed the data and said ESP_OK.
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_calls.send_called,
+        "no serial_send() on a peer whose TX is disabled");
+
+    repeater_stats_t st = {0};
+    repeater_get_stats(&st);
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(0, st.bytes_1to2,
+        "bytes that never reach the wire must not be counted as forwarded");
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(sizeof(payload), st.dropped_1,
+        "bytes lost because the peer cannot transmit must be counted as dropped");
+
+    // RX activity on the receiving port is real; TX activity on the peer is not.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_rs485_busy_monitor_activity_called[0],
+        "RX activity must still be reported on the receiving port");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_rs485_busy_monitor_activity_called[1],
+        "no TX activity may be reported on a peer that transmitted nothing");
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +508,7 @@ int main(void)
     RUN_TEST(test_forward_port0_to_port1);
     RUN_TEST(test_forward_port1_to_port0);
     RUN_TEST(test_drop_when_peer_not_inited);
+    RUN_TEST(test_drop_when_peer_tx_disabled);
     RUN_TEST(test_drop_when_peer_send_fails);
     RUN_TEST(test_active_requires_both_ports);
     RUN_TEST(test_deinit_decrements_active);

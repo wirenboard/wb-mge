@@ -86,7 +86,8 @@ static void repeater_drop_handler(serial_desc_t *desc, size_t dropped_len)
     repeater_unlock();
 }
 
-// Receive handler installed on every repeater port: forward received bytes to the peer port.
+// Receive handler installed on every repeater port: forward received bytes to the peer port,
+// unless the peer cannot actually transmit them (not in repeater mode, or its TX is disabled).
 // The peer-pointer read, serial_send and the counter update run under s_lock so a concurrent
 // repeater_deinit_port() (running in another context) cannot free the peer descriptor while
 // this task is mid-send. serial_send() is intentionally called UNDER the lock: the only other
@@ -106,11 +107,20 @@ static void repeater_rx_handler(serial_desc_t *desc, uint8_t *data, size_t len)
 
     repeater_lock();
     serial_desc_t *peer_desc = s_ctx[peer].serial_desc;
-    if (peer_desc != NULL && serial_send(peer_desc, data, len) == ESP_OK) {
+
+    // A peer with "Disable transmission (TX)" turned on makes serial_send() a silent no-op that
+    // still returns ESP_OK (documented in port_manager.h): the bytes never reach the wire. Test
+    // the flag BEFORE the send. Letting serial_send() swallow them would count them as forwarded
+    // and blink the peer's TX indicator, so the UI would report "Forwarded: N, Dropped: 0" for a
+    // repeater that is relaying nothing at all.
+    bool peer_tx_disabled = (peer_desc != NULL) && peer_desc->tx_disabled;
+
+    if (peer_desc != NULL && !peer_tx_disabled && serial_send(peer_desc, data, len) == ESP_OK) {
         s_bytes[index] += (uint64_t)len;
         rs485_busy_monitor_update_activity(peer);          // TX forwarded to peer
     } else {
-        // Peer not in repeater mode (NULL) or the send failed: bytes cannot be forwarded.
+        // Peer not in repeater mode (NULL), peer TX disabled, or the send failed:
+        // the bytes cannot be forwarded.
         s_dropped[index] += (uint64_t)len;
     }
     repeater_unlock();
