@@ -80,14 +80,31 @@ static uint8_t resp_byte_count(const uint8_t *buf)
     return buf[MBAP_LEN];
 }
 
-/* Decode a packed string field (big-endian, hi byte = first char) back into a
- * NUL-terminated C string. count = number of registers in the field. */
-static void decode_string(const uint8_t *buf, uint16_t count, char *out)
+/* Decode a WB string field packed ONE character per register, in the low byte
+ * (model 200, firmware version 250, signature 290). This mirrors what the
+ * standard read does:  modbus_client -t3 -r 290 -c 12 | sed 's/ 0x00/\x/g'
+ * count = number of registers in the field. */
+static void decode_string_1c(const uint8_t *buf, uint16_t count, char *out)
 {
     for (uint16_t i = 0; i < count; i++) {
         uint16_t r = resp_reg(buf, i);
-        out[i * 2]     = (char)(r >> 8);
-        out[i * 2 + 1] = (char)(r & 0xFFu);
+        /* the high byte must be zero — anything else means the field was packed
+         * with the wrong layout and WB tooling would read garbage */
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x00u, (uint8_t)(r >> 8),
+            "1-char-per-register field must leave the high byte zero");
+        out[i] = (char)(r & 0xFFu);
+    }
+    out[count] = '\0';
+}
+
+/* Decode a WB string field packed TWO characters per register, first character
+ * in the LOW byte (git info, 220-244). count = number of registers in the field. */
+static void decode_string_2c(const uint8_t *buf, uint16_t count, char *out)
+{
+    for (uint16_t i = 0; i < count; i++) {
+        uint16_t r = resp_reg(buf, i);
+        out[i * 2]     = (char)(r & 0xFFu);
+        out[i * 2 + 1] = (char)(r >> 8);
     }
     out[count * 2] = '\0';
 }
@@ -191,26 +208,36 @@ void test_supply_voltage(void)
     TEST_ASSERT_EQUAL_UINT16(12000u, resp_reg(buf, 0));
 }
 
-/* ---- MBDEV-U-003: FC04 model string (200, 4 regs) ------------------------ */
+/* ---- MBDEV-U-003: FC04 model string (200) -------------------------------- */
 
-/* device_name="TEST-DEV" packs to 0x5445 0x5354 0x2D44 0x4556. */
+/* The model field is 20 registers wide for a 20-character field: ONE character
+ * per register, in the LOW byte (high byte 0x00) — the WB reference layout.
+ * device_name="TEST-DEV" therefore reads 0x0054 0x0045 0x0053 0x0054 ... */
 void test_model_string(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-003: FC04 model string");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-003: FC04 model string (1 char/reg, low byte)");
     LOG_MESSAGE();
 
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             200u, 5u, 0u, buf, &exc);
+                                             200u, 9u, 0u, buf, &exc);
 
-    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 10u, n);
-    TEST_ASSERT_EQUAL_HEX16(0x5445, resp_reg(buf, 0)); /* 'T''E' */
-    TEST_ASSERT_EQUAL_HEX16(0x5354, resp_reg(buf, 1)); /* 'S''T' */
-    TEST_ASSERT_EQUAL_HEX16(0x2D44, resp_reg(buf, 2)); /* '-''D' */
-    TEST_ASSERT_EQUAL_HEX16(0x4556, resp_reg(buf, 3)); /* 'E''V' */
-    TEST_ASSERT_EQUAL_HEX16(0x0000, resp_reg(buf, 4)); /* trailing zero-pad */
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 18u, n);
+    TEST_ASSERT_EQUAL_HEX16(0x0054, resp_reg(buf, 0)); /* 'T' */
+    TEST_ASSERT_EQUAL_HEX16(0x0045, resp_reg(buf, 1)); /* 'E' */
+    TEST_ASSERT_EQUAL_HEX16(0x0053, resp_reg(buf, 2)); /* 'S' */
+    TEST_ASSERT_EQUAL_HEX16(0x0054, resp_reg(buf, 3)); /* 'T' */
+    TEST_ASSERT_EQUAL_HEX16(0x002D, resp_reg(buf, 4)); /* '-' */
+    TEST_ASSERT_EQUAL_HEX16(0x0044, resp_reg(buf, 5)); /* 'D' */
+    TEST_ASSERT_EQUAL_HEX16(0x0045, resp_reg(buf, 6)); /* 'E' */
+    TEST_ASSERT_EQUAL_HEX16(0x0056, resp_reg(buf, 7)); /* 'V' */
+    TEST_ASSERT_EQUAL_HEX16(0x0000, resp_reg(buf, 8)); /* trailing zero-pad */
+
+    char decoded[64] = {0};
+    decode_string_1c(buf, 8u, decoded);
+    TEST_ASSERT_EQUAL_STRING("TEST-DEV", decoded);
 }
 
 /* ---- MBDEV-U-004: FC04 firmware version string (250) --------------------- */
@@ -222,7 +249,7 @@ void test_fw_version_string(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-004: FC04 firmware version string");
     LOG_MESSAGE();
 
-    const uint16_t count = 6u; /* 12 chars covers "1.2.3+wb5" (9 chars) + pad */
+    const uint16_t count = 9u; /* 1 char/reg: "1.2.3+wb5" is 9 chars -> 9 regs */
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
@@ -231,7 +258,7 @@ void test_fw_version_string(void)
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + (size_t)count * 2u, n);
 
     char decoded[64] = {0};
-    decode_string(buf, count, decoded);
+    decode_string_1c(buf, count, decoded);
     TEST_ASSERT_EQUAL_STRING("1.2.3+wb5", decoded);
 }
 
@@ -517,7 +544,7 @@ void test_signature_string_fc03(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-014: FC03 signature string");
     LOG_MESSAGE();
 
-    const uint16_t count = 4u; /* 8 chars covers "sigXYZ" (6) + pad */
+    const uint16_t count = 6u; /* 1 char/reg: "sigXYZ" is 6 chars -> 6 regs */
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
@@ -529,8 +556,17 @@ void test_signature_string_fc03(void)
     TEST_ASSERT_EQUAL_HEX8(FC_READ_HOLDING, hdr->function);
 
     char decoded[64] = {0};
-    decode_string(buf, count, decoded);
+    decode_string_1c(buf, count, decoded);
     TEST_ASSERT_EQUAL_STRING("sigXYZ", decoded);
+
+    /* This is the read wb-mcu-fw-flasher --get-device-info performs, so the whole
+     * 12-register field must come back with every high byte zero. */
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                      290u, 12u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 24u, n);
+    char full[64] = {0};
+    decode_string_1c(buf, 12u, full);
+    TEST_ASSERT_EQUAL_STRING("sigXYZ", full);   /* the tail is zero-padded */
 }
 
 /* ---- MBDEV-U-015: error paths -------------------------------------------- */
@@ -807,15 +843,20 @@ void test_git_info_string(void)
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + (size_t)count * 2u, n);
 
     char decoded[64] = {0};
-    decode_string(buf, count, decoded);
+    decode_string_2c(buf, count, decoded);
     TEST_ASSERT_EQUAL_STRING("g1a2b3c4_main", decoded);
+
+    /* Byte order within the pair: 'g' is the FIRST character, so it must be in
+     * the LOW byte of register 220 and '1' in the high byte. */
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x3167u, resp_reg(buf, 0),
+        "git info packs the first character of the pair in the low byte");
 
     /* Full 25-reg field: upper bound + trailing zero pad. */
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
                                       220u, 25u, 0u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 50u, n);
     char full[64] = {0};
-    decode_string(buf, 25u, full);
+    decode_string_2c(buf, 25u, full);
     TEST_ASSERT_EQUAL_STRING("g1a2b3c4_main", full); /* trailing zeros stripped by NUL */
 }
 
@@ -904,26 +945,106 @@ void test_fw_numeric_no_suffix(void)
     TEST_ASSERT_EQUAL_HEX16(0x0680u, le_lo);
 }
 
-/* ---- MBDEV-U-029: pack_string_reg odd-length boundary -------------------- */
+/* ---- MBDEV-U-029: string end-of-field boundaries ------------------------- */
 
-/* firmware_ver="ABCDE" (length 5, odd). fwver field base is 250; register
- * index 2 (@252) spans char[4]='E' (hi) and char[5] past end (lo=0) ->
- * the register must read 0x4500 ('E' << 8). */
+/* End-of-string handling for both packing layouts.
+ *
+ * 1-char/reg (firmware version @250): the last character sits alone in the low
+ * byte of its register and every register past the string reads 0x0000.
+ *
+ * 2-char/reg (git info @220): an odd-length string leaves the last register
+ * half-filled — the final character in the LOW byte, the missing second
+ * character zero-padded in the high byte. */
 void test_pack_string_odd_boundary(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-029: pack_string_reg odd-length boundary");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-029: string end-of-field boundaries");
     LOG_MESSAGE();
-
-    strcpy(sys_info.firmware_ver, "ABCDE");
 
     uint8_t buf[260];
     uint8_t exc = 0xAA;
 
-    /* fwver register @252 (index 2) -> chars[4],[5] = 'E', (none) -> 0x4500 */
+    /* --- 1 char per register: "ABCDE" at base 250 --- */
+    strcpy(sys_info.firmware_ver, "ABCDE");
+
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  252u, 1u, 0u, buf, &exc);
-    TEST_ASSERT_EQUAL_HEX16(0x4500u, resp_reg(buf, 0));
+                                  250u, 7u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0041u, resp_reg(buf, 0), "reg 250 = 'A' in the low byte");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0045u, resp_reg(buf, 4), "reg 254 = 'E', the last character");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0000u, resp_reg(buf, 5), "reg 255 is past the string: zero");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0000u, resp_reg(buf, 6), "reg 256 is past the string: zero");
+
+    /* --- 2 chars per register: "ABC" (odd) at base 220 --- */
+    strcpy(sys_info.firmware_git_info, "ABC");
+
+    mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                  220u, 3u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x4241u, resp_reg(buf, 0),
+        "reg 220 = 'A' (low) + 'B' (high)");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0043u, resp_reg(buf, 1),
+        "reg 221 = 'C' (low) + zero pad (high) — the odd tail");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0000u, resp_reg(buf, 2),
+        "reg 222 is past the string: zero");
+}
+
+/* ---- MBDEV-U-030: the info block is readable via FC03 as well as FC04 ----- */
+
+/* The WB common register map nominally files model / git / firmware version /
+ * serial under INPUT registers, but the reference firmwares also answer them on
+ * FC03 and the standard tooling reads them that way (wb-mcu-fw-flasher
+ * --get-device-info, and the usual `modbus_client -t3 -r <addr>` invocations).
+ * Holding reads therefore fall back to the input map. FC03 and FC04 must return
+ * identical values for every address in the block. */
+void test_info_block_readable_via_fc03(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBDEV-U-030: FC03 must serve the same info block as FC04");
+    LOG_MESSAGE();
+
+    static const uint16_t addrs[] = {
+        200u, 219u,   /* model            */
+        220u, 244u,   /* git info         */
+        250u, 265u,   /* firmware version */
+        266u, 269u,   /* serial extension */
+        270u, 271u,   /* serial number    */
+        320u, 327u,   /* numeric version  */
+    };
+
+    uint8_t in_buf[260];
+    uint8_t hold_buf[260];
+
+    for (size_t i = 0; i < sizeof(addrs) / sizeof(addrs[0]); i++) {
+        uint8_t exc_in = 0xAA, exc_hold = 0xAA;
+
+        size_t n_in = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                                    addrs[i], 1u, 0u, in_buf, &exc_in);
+        size_t n_hold = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                                      addrs[i], 1u, 0u, hold_buf, &exc_hold);
+
+        TEST_ASSERT_TRUE_MESSAGE(n_in > 0, "the address must be served on FC04");
+        TEST_ASSERT_TRUE_MESSAGE(n_hold > 0, "the same address must be served on FC03");
+        TEST_ASSERT_EQUAL_HEX16_MESSAGE(resp_reg(in_buf, 0), resp_reg(hold_buf, 0),
+            "FC03 and FC04 must return the same value for an info-block register");
+    }
+
+    /* And the signature (a genuine holding register) is still only on FC03's own
+     * map — reading it back via FC03 must keep working. */
+    uint8_t buf[260];
+    uint8_t exc = 0xAA;
+    size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                             290u, 6u, 0u, buf, &exc);
+    TEST_ASSERT_TRUE_MESSAGE(n > 0, "the signature must still be served on FC03");
+    char decoded[64] = {0};
+    decode_string_1c(buf, 6u, decoded);
+    TEST_ASSERT_EQUAL_STRING("sigXYZ", decoded);
+
+    /* An address defined in NEITHER map is still an illegal address on FC03. */
+    exc = 0xAA;
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                      1000u, 1u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "an undefined address must not be served on FC03");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x02u, exc, "undefined address -> ILLEGAL DATA ADDRESS");
 }
 
 /* ---- main ---------------------------------------------------------------- */
@@ -966,6 +1087,7 @@ int main(void)
     RUN_TEST(test_poll_freq_edges);
     RUN_TEST(test_fw_numeric_no_suffix);
     RUN_TEST(test_pack_string_odd_boundary);
+    RUN_TEST(test_info_block_readable_via_fc03);
 
     return UNITY_END();
 }

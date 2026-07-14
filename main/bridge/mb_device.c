@@ -103,26 +103,58 @@ static uint16_t sat_u16(uint32_t v)
 }
 
 /*
- * Pack two consecutive characters of a NUL-terminated string into a single
- * 16-bit register, big-endian (high byte = first character). Indices past the
- * end of the string (or past maxlen) are zero-padded.
+ * String packing — must match the Wiren Board reference firmwares exactly, or
+ * standard WB tooling reads garbage out of this device. Two different layouts
+ * are in use, and which one applies is fixed per field by the common register
+ * map (see the WB wiki):
  *
- *   base : base register address of the string field
- *   addr : the requested register address (base <= addr < base + field_regs)
+ *   ONE character per register, in the LOW byte (high byte 0x00)
+ *     - model             200-219 (20 regs, 20 chars)
+ *     - firmware version  250-265 (16 regs, 16 chars)
+ *     - signature         290-301 (12 regs, 12 chars)
+ *   Each field's register count equals its character count, which is what tells
+ *   you the grid was laid out for one char per register. This is the layout the
+ *   standard read relies on:
+ *     modbus_client -t3 -r 290 -c 12 | sed 's/ 0x00/\x/g'
+ *   and it is what `wb-mcu-fw-flasher --get-device-info` expects from reg 290.
+ *
+ *   TWO characters per register, first character in the LOW byte
+ *     - git info          220-244 (25 regs, 50 chars) — the WB common register
+ *                         map documents this field as 2 characters per register.
+ *
+ * Indices past the end of the string (or past maxlen) are zero-padded.
+ *
+ *   base   : base register address of the string field
+ *   addr   : the requested register address (base <= addr < base + field_regs)
  *   maxlen : maximum field length in characters (string buffer bound)
  */
-static uint16_t pack_string_reg(const char *s, size_t maxlen, uint16_t base, uint16_t addr)
+
+/* One character per register, in the low byte. */
+static uint16_t pack_string_reg_1c(const char *s, size_t maxlen, uint16_t base, uint16_t addr)
 {
-    size_t i = (size_t)(addr - base) * 2u;
+    size_t i    = (size_t)(addr - base);
     size_t slen = strlen(s);
 
-    uint8_t hi = 0;
-    uint8_t lo = 0;
     if (i < slen && i < maxlen) {
-        hi = (uint8_t)s[i];
+        return (uint16_t)(uint8_t)s[i];
+    }
+    return 0u;
+}
+
+/* Two characters per register: the first (even) character in the LOW byte, the
+ * second in the high byte. */
+static uint16_t pack_string_reg_2c(const char *s, size_t maxlen, uint16_t base, uint16_t addr)
+{
+    size_t i    = (size_t)(addr - base) * 2u;
+    size_t slen = strlen(s);
+
+    uint8_t lo = 0;  /* first character of the pair */
+    uint8_t hi = 0;  /* second character of the pair */
+    if (i < slen && i < maxlen) {
+        lo = (uint8_t)s[i];
     }
     if ((i + 1u) < slen && (i + 1u) < maxlen) {
-        lo = (uint8_t)s[i + 1u];
+        hi = (uint8_t)s[i + 1u];
     }
     return (uint16_t)(((uint16_t)hi << 8) | lo);
 }
@@ -207,24 +239,24 @@ static bool device_get_input_reg(uint16_t addr, uint16_t task_stack_bytes, uint1
         return true;
     }
 
-    /* device model string */
+    /* device model string — 1 char/reg (20 regs, 20 chars) */
     if (addr >= REG_MODEL_BASE && addr < REG_MODEL_BASE + REG_MODEL_COUNT) {
-        *val = pack_string_reg(sys_info.device_name, DEVICE_MODEL_LEN,
-                               REG_MODEL_BASE, addr);
+        *val = pack_string_reg_1c(sys_info.device_name, DEVICE_MODEL_LEN,
+                                  REG_MODEL_BASE, addr);
         return true;
     }
 
-    /* firmware git info string */
+    /* firmware git info string — 2 chars/reg (25 regs, 50 chars) */
     if (addr >= REG_GIT_BASE && addr < REG_GIT_BASE + REG_GIT_COUNT) {
-        *val = pack_string_reg(sys_info.firmware_git_info, FIRMWARE_GIT_INFO_LEN,
-                               REG_GIT_BASE, addr);
+        *val = pack_string_reg_2c(sys_info.firmware_git_info, FIRMWARE_GIT_INFO_LEN,
+                                  REG_GIT_BASE, addr);
         return true;
     }
 
-    /* firmware version string */
+    /* firmware version string — 1 char/reg (16 regs, 16 chars) */
     if (addr >= REG_FWVER_BASE && addr < REG_FWVER_BASE + REG_FWVER_COUNT) {
-        *val = pack_string_reg(sys_info.firmware_ver, FIRMWARE_VERSION_LEN,
-                               REG_FWVER_BASE, addr);
+        *val = pack_string_reg_1c(sys_info.firmware_ver, FIRMWARE_VERSION_LEN,
+                                  REG_FWVER_BASE, addr);
         return true;
     }
 
@@ -331,17 +363,29 @@ static bool device_get_input_reg(uint16_t addr, uint16_t task_stack_bytes, uint1
 
 /*
  * Look up one holding register (FC03) by address.
+ * task_stack_bytes: total stack size of the calling task, forwarded to the
+ * input-register map (0 if unknown).
  * Returns true and writes *val if the address is a defined register, false otherwise.
  */
-static bool device_get_holding_reg(uint16_t addr, uint16_t *val)
+static bool device_get_holding_reg(uint16_t addr, uint16_t task_stack_bytes, uint16_t *val)
 {
-    /* device signature string */
+    /* device signature string — 1 char/reg (12 regs, 12 chars) */
     if (addr >= REG_SIGNATURE_BASE && addr < REG_SIGNATURE_BASE + REG_SIGNATURE_COUNT) {
-        *val = pack_string_reg(sys_info.device_signature, DEVICE_SIGNATURE_LEN,
-                               REG_SIGNATURE_BASE, addr);
+        *val = pack_string_reg_1c(sys_info.device_signature, DEVICE_SIGNATURE_LEN,
+                                  REG_SIGNATURE_BASE, addr);
         return true;
     }
-    return false;
+
+    /* Fall back to the input-register map.
+     *
+     * The WB common register map nominally files the info block (model, git,
+     * firmware version, serial) under input registers, but the reference
+     * firmwares answer it on FC03 as well, and the standard tooling reads it that
+     * way — `wb-mcu-fw-flasher --get-device-info` and the usual
+     * `modbus_client -t3 -r <addr>` invocations all use FC03. Serving the same
+     * map through both function codes matches the reference behaviour and is
+     * backwards compatible: every address that answered before still answers. */
+    return device_get_input_reg(addr, task_stack_bytes, val);
 }
 
 /* ---- Public API ---------------------------------------------------------- */
@@ -370,7 +414,7 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
 
     mb_tcp_header_t *resp_hdr = (mb_tcp_header_t *)resp_buf;
     resp_hdr->transaction_id = transaction_id_net; /* echoed verbatim (network order) */
-    resp_hdr->protocol_id    = 0x0000;
+    resp_hdr->protocol_id    = MODBUS_TCP_PROTOCOL_ID;
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
 
@@ -383,7 +427,7 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
         uint16_t value = 0;
         bool found = (fc == MB_DEV_FC_READ_INPUT_REGS)
                      ? device_get_input_reg(addr, task_stack_size_bytes, &value)
-                     : device_get_holding_reg(addr, &value);
+                     : device_get_holding_reg(addr, task_stack_size_bytes, &value);
         if (!found) {
             /* Any undefined register in the range -> ILLEGAL DATA ADDRESS. */
             *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
