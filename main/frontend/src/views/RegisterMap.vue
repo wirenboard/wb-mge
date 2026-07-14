@@ -46,6 +46,12 @@ const cacheToggle = useOptimisticToggle({
   },
 });
 const cacheEnabled = computed(() => cacheToggle.value.value);
+// The cache state the DEVICE actually reports (GET /cache/status → `enabled`), as opposed
+// to cacheEnabled, which is optimistic (it can read true before the device confirms) and
+// derived from the per-port overlay flags rather than from the cache pool itself.
+// Export gating must use this one: GET /cache/csv answers 409 when the pool is off, so a
+// button enabled on optimism alone would open a tab reading "cache disabled".
+const cacheActive = ref(false);
 
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -94,6 +100,9 @@ async function fetchCacheStats(): Promise<void> {
     cacheMemoryBytes.value = s.memory_bytes;
     cacheMaxEntries.value = s.max_entries;
     cacheEntries.value = s.entries;
+    // Ground truth for the export buttons — the only place the device's own view of the
+    // cache pool is available.
+    cacheActive.value = s.enabled;
   } catch {
     // Silently ignore fetch errors
   }
@@ -349,6 +358,11 @@ watch(cacheEnabled, (val, oldVal) => {
     if (statsInterval) {
  clearInterval(statsInterval); statsInterval = null;
 }
+    // Nothing polls /cache/status while the cache is off, so the device-confirmed flag
+    // cannot be refreshed and must not keep the export buttons enabled. Reset it
+    // unconditionally (unlike the displayed stats below): the next confirmed enable
+    // re-arms it from the immediate fetchCacheStats() in the on-branch.
+    cacheActive.value = false;
     // Only reset stats when transitioning from a known-enabled state, not from undefined/initial
     if (oldVal === true) {
       cachePackets.value = 0;
@@ -637,9 +651,26 @@ onUnmounted(() => {
 
             <!-- Export row -->
             <div class="rsp-row">
+              <!-- Gated on cacheActive (device-confirmed), not on the optimistic cacheEnabled:
+                   with the cache off /cache/csv answers 409 and there is nothing to export.
+                   Disabled rather than hidden so the panel layout does not jump. -->
               <div class="rsp-control rsp-control--btns">
-                <button class="rsp-btn-export" @click="openUrl('/cache/csv')">{{ t('export_csv') }}</button>
-                <button class="rsp-btn-export" @click="downloadJsonExport()">{{ t('export_json') }}</button>
+                <button
+                  class="rsp-btn-export"
+                  :disabled="!cacheActive"
+                  :title="cacheActive ? undefined : t('export_unavailable')"
+                  @click="openUrl('/cache/csv')"
+                >
+                  {{ t('export_csv') }}
+                </button>
+                <button
+                  class="rsp-btn-export"
+                  :disabled="!cacheActive"
+                  :title="cacheActive ? undefined : t('export_unavailable')"
+                  @click="downloadJsonExport()"
+                >
+                  {{ t('export_json') }}
+                </button>
               </div>
               <div class="rsp-row-info">
                 <div class="rsp-row-title">{{ t('export_title') }}</div>
@@ -1080,9 +1111,15 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-.rsp-btn-export:hover {
+.rsp-btn-export:hover:not(:disabled) {
   background: var(--bg-surface-subtle);
   color: var(--text-color);
+}
+
+/* Cache off — nothing to export (GET /cache/csv would answer 409). */
+.rsp-btn-export:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Port tag buttons for the Listen port selector */
@@ -1584,6 +1621,7 @@ onUnmounted(() => {
     "export_json": "↓ JSON",
     "export_title": "Download current map",
     "export_desc": "Snapshot of every observed register and its last cached value.",
+    "export_unavailable": "Enable caching to export the register map.",
     "section_tcp": "TCP MODBUS",
     "tcp_serve_title": "Serve cached values over TCP",
     "tcp_serve_desc": "Reply to TCP Modbus reads from cache without round-tripping the bus.",
@@ -1647,6 +1685,7 @@ onUnmounted(() => {
     "export_json": "↓ JSON",
     "export_title": "Скачать текущую карту",
     "export_desc": "Снимок всех наблюдавшихся регистров и их последних кэшированных значений.",
+    "export_unavailable": "Включите кэширование, чтобы экспортировать карту регистров.",
     "section_tcp": "TCP MODBUS",
     "tcp_serve_title": "Отдавать кэшированные значения по TCP",
     "tcp_serve_desc": "Отвечать на запросы TCP Modbus из кэша без обращения к шине.",
@@ -1710,6 +1749,7 @@ onUnmounted(() => {
     "export_json": "↓ JSON",
     "export_title": "Ағымдағы картаны жүктеу",
     "export_desc": "Барлық байқалған тіркеулер мен олардың соңғы кэштелген мәндерінің суреті.",
+    "export_unavailable": "Тіркеу картасын экспорттау үшін кэштеуді қосыңыз.",
     "section_tcp": "TCP MODBUS",
     "tcp_serve_title": "Кэштелген мәндерді TCP арқылы беру",
     "tcp_serve_desc": "TCP Modbus сұрауларына шинаға бармай кэштен жауап беру.",
@@ -1773,6 +1813,7 @@ onUnmounted(() => {
     "export_json": "↓ JSON",
     "export_title": "Scarica mappa corrente",
     "export_desc": "Snapshot di tutti i registri osservati e del loro ultimo valore in cache.",
+    "export_unavailable": "Abilita la cache per esportare la mappa dei registri.",
     "section_tcp": "TCP MODBUS",
     "tcp_serve_title": "Servi valori in cache via TCP",
     "tcp_serve_desc": "Rispondi alle letture TCP Modbus dalla cache senza accedere al bus.",
@@ -1836,6 +1877,7 @@ onUnmounted(() => {
     "export_json": "↓ JSON",
     "export_title": "Aktuelle Karte herunterladen",
     "export_desc": "Snapshot aller beobachteten Register und ihres letzten gecachten Wertes.",
+    "export_unavailable": "Cache aktivieren, um die Register-Karte zu exportieren.",
     "section_tcp": "TCP MODBUS",
     "tcp_serve_title": "Gecachte Werte über TCP bereitstellen",
     "tcp_serve_desc": "TCP-Modbus-Leseanfragen aus dem Cache beantworten, ohne den Bus zu nutzen.",

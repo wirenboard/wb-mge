@@ -1038,8 +1038,13 @@ describe('RM-I-07: downloadJsonExport', () => {
   it('creates a blob URL, triggers download with correct filename, revokes URL', async () => {
     const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
 
-    // Make api return entries so rawEntries is populated after fetchEntries
+    // Make api return entries so rawEntries is populated after fetchEntries.
+    // cache/status must report enabled:true — the export buttons are gated on the
+    // device-confirmed cache state, not on the optimistic cacheEnabled toggle.
     vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'cache/status') {
+        return { enabled: true } as never;
+      }
       if (url === 'cache/json') {
         return { d: [{ s: 1, t: 'h', a: 10, v: 0x1234, age: 5 }] } as never;
       }
@@ -1652,8 +1657,13 @@ describe('RM-I-14: Export CSV button — window.open call', () => {
   it('clicking CSV export button calls window.open with correct arguments', async () => {
     const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
 
-    // Return an entry so the component reaches the enabled/loaded state and shows export buttons
+    // Return an entry so the component reaches the enabled/loaded state and shows export buttons.
+    // cache/status must report enabled:true — the export buttons are gated on the
+    // device-confirmed cache state, not on the optimistic cacheEnabled toggle.
     vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'cache/status') {
+        return { enabled: true } as never;
+      }
       if (url === 'cache/json') {
         return { d: [{ s: 1, t: 'h', a: 10, v: 100, age: 2 }] } as never;
       }
@@ -2080,6 +2090,95 @@ describe('RM-I-19: statsInterval not double-scheduled on cacheEnabled flicker', 
     // With the fix: exactly 2 calls (one at ~5000ms, one at ~10000ms).
     // Without the fix: 4+ calls (two overlapping intervals each firing twice).
     expect(statusCalls.length).toBe(2);
+
+    wrapper.unmount();
+  });
+});
+
+/**
+ * RM-I-20: the CSV/JSON export buttons are gated on the DEVICE-CONFIRMED cache state
+ * (GET /cache/status → `enabled`), not on the optimistic `cacheEnabled` toggle.
+ *
+ * cacheEnabled is derived from the per-port overlay flags and can read true before the
+ * device has confirmed anything (useOptimisticToggle). GET /cache/csv answers 409 while
+ * the cache pool is off, so a button armed on optimism alone opens a tab reading
+ * "cache disabled" — and the JSON export would write out an empty file.
+ */
+describe('RM-I-20: export buttons gated on the device-confirmed cache state', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    fetchInfoMock.mockClear();
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('disables both export buttons while cache/status reports enabled:false', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // The per-port overlay flags say "on" (so cacheEnabled — the optimistic value — is
+    // true and the panel renders), but the device reports the cache pool as OFF.
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'cache/status') {
+        return { enabled: false } as never;
+      }
+      if (url === 'cache/json') {
+        return { d: [{ s: 1, t: 'h', a: 10, v: 100, age: 2 }] } as never;
+      }
+      return {} as never;
+    });
+
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    const exportButtons = wrapper.findAll('.rsp-btn-export');
+    expect(exportButtons.length).toBe(2);
+    for (const btn of exportButtons) {
+      expect(btn.attributes('disabled')).toBeDefined();
+      // A hint must explain why the button is dead.
+      expect(btn.attributes('title')).toBeTruthy();
+    }
+
+    // Clicking a disabled CSV button must not open a tab on the 409.
+    const openMock = vi.fn();
+    vi.stubGlobal('open', openMock);
+    await exportButtons[0].trigger('click');
+    expect(openMock).not.toHaveBeenCalled();
+
+    wrapper.unmount();
+  });
+
+  it('enables both export buttons once cache/status reports enabled:true', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'cache/status') {
+        return { enabled: true } as never;
+      }
+      if (url === 'cache/json') {
+        return { d: [{ s: 1, t: 'h', a: 10, v: 100, age: 2 }] } as never;
+      }
+      return {} as never;
+    });
+
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    const exportButtons = wrapper.findAll('.rsp-btn-export');
+    expect(exportButtons.length).toBe(2);
+    for (const btn of exportButtons) {
+      expect(btn.attributes('disabled')).toBeUndefined();
+    }
 
     wrapper.unmount();
   });

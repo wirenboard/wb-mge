@@ -1019,6 +1019,14 @@ paths:
         Returns a CSV file containing the cached Modbus register values.
         The CSV header is: slave_id,type,address,value,age_s
         where type is one of: holding, input, coil, discrete.
+
+
+        The cache is active only while at least one port carries the cache overlay
+        (POST /ports/{n}/cache); GET /cache/status reports it as `enabled`. With the
+        cache off there is nothing to export and the endpoint returns 409 rather than
+        a file holding nothing but a header row. Unlike /cache/json — polled by the UI,
+        where an empty cache is a normal state — this endpoint is a user-initiated
+        download, so the empty case is worth an explicit error.
       responses:
         '200':
           description: CSV file with cached register data
@@ -1033,6 +1041,16 @@ paths:
                 type: string
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+        '409':
+          description: >
+            Cache is disabled — nothing to export. The check runs before the response
+            body starts, so no (empty) file is sent and no Content-Disposition header
+            is set.
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: cache disabled
 
   /cache/json:
     get:

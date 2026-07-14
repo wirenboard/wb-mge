@@ -27,6 +27,16 @@ def _baseline(api):
     resp = api.set_port_mode(1, "tcp_bridge")  # deterministic start; multimaster test will switch to passive + enable the cache overlay
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
 
+    # The cache POOL is gated by the per-port cache overlay, NOT by
+    # cache_modbus_server_enabled (that one only governs the Modbus TCP server).
+    # Without an overlay on some port cache_multimaster_is_enabled() stays false and
+    # GET /cache/csv answers 409 by design. Tests below assert the cache-active
+    # contract, so arm the overlay here; test_cache_csv_conflict_when_disabled turns
+    # it off explicitly to cover the other half. The overlay is orthogonal to the
+    # transport mode, so it coexists with tcp_bridge above.
+    resp = api.set_port_cache(1, True)
+    assert resp.status_code == 200, f"_baseline: set_port_cache(1, True) failed: {resp.status_code} {resp.text}"
+
 
 def test_cache_endpoints(api):
     """Test cache HTTP endpoints: /cache/status, /cache/csv, /cache/json"""
@@ -43,6 +53,8 @@ def test_cache_endpoints(api):
         assert field in status, f"Field '{field}' is missing from /cache/status response"
 
     assert isinstance(status["enabled"], bool), "Field 'enabled' must be a boolean"
+    assert status["enabled"] is True, \
+        "_baseline arms the port-1 cache overlay, so the cache pool must report enabled"
     assert isinstance(status["entries"], int) and status["entries"] >= 0, \
         "Field 'entries' must be a non-negative integer"
     assert isinstance(status["max_entries"], int) and status["max_entries"] >= 0, \
@@ -105,6 +117,67 @@ def test_cache_csv_headers(api):
         f"Content-Disposition filename must end with .csv, got: {content_disposition}"
 
     print(f"✓ Content-Disposition header present and correct: {content_disposition}")
+
+
+def test_cache_csv_conflict_when_disabled(api):
+    """GET /cache/csv must answer 409 when the cache pool is off.
+
+    The pool is enabled iff at least one port carries the cache overlay, so dropping
+    every overlay disables it. Handing the user a .csv file containing nothing but a
+    header row is worse than an explicit error, hence 409 + text/plain.
+
+    /cache/status and /cache/json stay 200: the UI polls both, and "cache is off" is a
+    normal state there ({"d":[]} is its correct representation), not a failed request.
+    """
+    response = api.get_info()
+    assert response.status_code == 200, \
+        f"GET /info expected 200, got {response.status_code}"
+    info = response.json()
+    original = {
+        port: bool(info.get(f"rs485_{port}", {}).get("cache_enabled", False))
+        for port in (1, 2)
+    }
+
+    try:
+        for port in (1, 2):
+            response = api.set_port_cache(port, False)
+            assert response.status_code == 200, \
+                f"POST /ports/{port}/cache expected 200, got {response.status_code}"
+
+        response = api.get_cache_status()
+        assert response.status_code == 200, \
+            f"GET /cache/status expected 200, got {response.status_code}"
+        assert response.json()["enabled"] is False, \
+            "cache must report disabled once no port carries the overlay"
+
+        response = api.get_cache_csv()
+        assert response.status_code == 409, \
+            f"GET /cache/csv with the cache off expected 409, got {response.status_code}"
+
+        content_type = response.headers.get("content-type", "")
+        assert "text/plain" in content_type.lower(), \
+            f"the 409 body is a plain-text message, not a CSV file; got: {content_type}"
+        assert "attachment" not in response.headers.get("Content-Disposition", "").lower(), \
+            "a 409 must not offer the browser a file to download"
+
+        print("✓ /cache/csv returns 409 while the cache is disabled")
+
+        # The polled endpoints must stay usable while the cache is off.
+        response = api.get_cache_json()
+        assert response.status_code == 200, \
+            f"GET /cache/json with the cache off expected 200, got {response.status_code}"
+        assert response.json().get("d") == [], \
+            "with the cache off /cache/json must return an empty entry list, not an error"
+
+        print("✓ /cache/json stays 200 with an empty list while the cache is disabled")
+
+    finally:
+        for port, was_enabled in original.items():
+            try:
+                api.set_port_cache(port, was_enabled)
+            except Exception as exc:
+                raise AssertionError(f"Failed to restore cache overlay on port {port}: {exc}")
+        print(f"✓ Cache overlays restored to {original}")
 
 
 def test_cache_server_enabled_toggle(api):
