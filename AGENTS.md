@@ -58,8 +58,7 @@ make qemu-collect-only
 
 ## Jenkins access
 
-CI lives at <https://jenkins.wirenboard.com>. Setup (API token in `.env`) and
-curl recipes for checking builds: see [docs/jenkins_wb.md](docs/jenkins_wb.md).
+CI lives at <https://jenkins.wirenboard.com>.
 
 ## Backend (Embedded C) Coding Standards
 
