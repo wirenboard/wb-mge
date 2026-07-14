@@ -11,11 +11,11 @@ static const char *TAG = "repeater";
 
 typedef struct { serial_desc_t *serial_desc; } repeater_ctx_t;
 
-static repeater_ctx_t s_ctx[BRIDGES_COUNT];
-static uint64_t s_bytes[BRIDGES_COUNT];   // s_bytes[i] = bytes forwarded FROM port i to its peer
-static uint64_t s_dropped[BRIDGES_COUNT]; // s_dropped[i] = bytes received on port i that were lost: forward failures plus RX-stage drops (receive-buffer / ring overflow)
-static unsigned s_active_count;           // number of ports currently in repeater mode
-static int64_t  s_active_since_us;         // esp_timer_get_time() snapshot when forwarding became active (s_active_count 0->1)
+static repeater_ctx_t s_ctx[BRIDGES_COUNT] = {0};
+static uint64_t s_bytes[BRIDGES_COUNT] = {0};   // s_bytes[i] = bytes forwarded FROM port i to its peer
+static uint64_t s_dropped[BRIDGES_COUNT] = {0}; // s_dropped[i] = bytes received on port i that were lost: forward failures plus RX-stage drops (receive-buffer / ring overflow)
+static unsigned s_active_count = 0;             // number of ports currently in repeater mode
+static int64_t  s_active_since_us = 0;          // esp_timer_get_time() snapshot when forwarding became active (s_active_count 0->1)
 
 // Repeater-global mutex guarding the per-port serial_desc pointers and the shared
 // counters/active accounting. It exists so a port's UART task can read its peer's
@@ -23,7 +23,7 @@ static int64_t  s_active_since_us;         // esp_timer_get_time() snapshot when
 // it from another context (HTTP set_mode handler or settings_update_task). Created
 // once by repeater_init() (called from port_manager_init), with a lazy fallback so
 // single-threaded unit tests that never call an init still work.
-static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_lock = NULL;
 
 static void repeater_lock(void)
 {
