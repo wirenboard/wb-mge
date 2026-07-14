@@ -4,9 +4,29 @@
 #include "esp_err.h"
 #include "serial.h"
 
-/* Maximum length of a single sniffed packet (bytes). */
-#define SNIFFER_MAX_PACKET_LEN 256
-/* Size of the JSON formatting buffer used by the sniffer WS task. */
+/* Maximum length of a single sniffed packet (bytes).
+ *
+ * The longest frame on the wire is a Fast Modbus packet with an encapsulated
+ * standard command (FD 46 08 / FD 46 09):
+ *
+ *   RTU ADU          256 = 1 (addr) + 253 (PDU) + 2 (CRC16)
+ *   FM wrapper         9 = FD + 46 + subcmd + serial(4) + CRC16(2)
+ *                    ---
+ *                    265 bytes
+ *
+ * Leading 0xFF arbitration bytes are not counted: strip_arbitration() removes
+ * them before the frame reaches the packet buffer.
+ *
+ * Rounded up to 272 (a multiple of 8) so that sniff_packet_t, whose uint64_t
+ * timestamp_us forces 8-byte alignment, has no tail padding — leaving 7 spare
+ * bytes. At 256 a full FM-encapsulated frame was silently truncated in the WS
+ * output (never an overflow: every memcpy is length-clamped, and crc_valid is
+ * computed over the real length before the copy).
+ */
+#define SNIFFER_MAX_PACKET_LEN 272
+/* Size of the JSON formatting buffer used by the sniffer WS task.
+ * Worst case: 272 * 2 = 544 hex chars + NUL, plus ~160 bytes of JSON scaffolding
+ * (keys, id, port, timestamp, slave_id, function, flags) ~= 705 bytes. */
 #define SNIFFER_JSON_BUF_SIZE  1200
 
 #ifndef __unittest_env__

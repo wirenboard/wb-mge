@@ -48,6 +48,9 @@
 #include "freertos/queue.h"
 #include "freertos/timers.h"
 
+/* modbus_crc16() — used to build CRC-valid fixtures */
+#include "modbus_helpers.h"
+
 /* ============================================================
  * Test fixtures — one serial descriptor per port
  * ============================================================ */
@@ -610,6 +613,49 @@ void test_rx_timeout_not_called_after_detach(void)
     sniffer_disable(0, SNIFF_REASON_DISPLAY);
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_set_rx_timeout_data.called,
         "serial_set_rx_timeout must NOT be called after sniffer_detach (disable)");
+}
+
+/* ============================================================
+ * TC-LEN1 — a maximum-length Fast Modbus frame with an encapsulated standard
+ * command (FD 46 08, 265 bytes) is captured in full, not truncated.
+ *
+ * 265 = RTU ADU 256 (1 addr + 253 PDU + 2 CRC) + FM wrapper 9
+ *       (FD + 46 + subcmd + serial(4) + CRC16(2)).
+ * With SNIFFER_MAX_PACKET_LEN at 256 the tail was silently cut off.
+ * ============================================================ */
+void test_max_length_fm_encapsulated_frame_not_truncated(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-LEN1: 265-byte FD 46 08 frame is captured whole (no truncation)");
+    LOG_MESSAGE();
+
+    /* The frame must be CRC-valid: an over-8-byte frame with a bad CRC is handed to
+     * stream_split() and broken up, which is a different code path than the one under
+     * test here. */
+    uint8_t frame[265];
+    frame[0] = 0xFD;  /* FM broadcast address */
+    frame[1] = 0x46;  /* FM command          */
+    frame[2] = 0x08;  /* subcmd: encapsulated standard command (master direction) */
+    for (size_t i = 3; i < sizeof(frame) - 2; i++) {
+        frame[i] = (uint8_t)i;
+    }
+    uint16_t crc = modbus_crc16(frame, (uint16_t)(sizeof(frame) - 2));
+    frame[sizeof(frame) - 2] = (uint8_t)(crc & 0xFF);        /* CRC low byte first */
+    frame[sizeof(frame) - 1] = (uint8_t)(crc >> 8);
+
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(sizeof(frame), SNIFFER_MAX_PACKET_LEN,
+        "SNIFFER_MAX_PACKET_LEN must fit the longest FM-encapsulated frame (265 bytes)");
+
+    SEND0(frame);
+
+    sniff_packet_t pkt = dequeue_packet();
+    TEST_ASSERT_EQUAL_MESSAGE(sizeof(frame), pkt.data_len,
+        "the whole 265-byte frame must be captured, not truncated");
+    TEST_ASSERT_TRUE_MESSAGE(pkt.crc_valid, "CRC must validate over the full frame");
+    TEST_ASSERT_TRUE_MESSAGE(pkt.is_master, "subcmd 0x08 is a master-side command");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(frame, pkt.data, sizeof(frame),
+        "captured bytes must match the frame byte for byte, including the trailing CRC");
 }
 
 /* ============================================================
@@ -1962,6 +2008,7 @@ int main(void)
     RUN_TEST(test_rx_timeout_enable_does_not_change_timeout);
     RUN_TEST(test_rx_timeout_disable_does_not_change_timeout);
     RUN_TEST(test_rx_timeout_not_called_after_detach);
+    RUN_TEST(test_max_length_fm_encapsulated_frame_not_truncated);
     RUN_TEST(test_tc17_recursive_stream_split_two_frames);
     RUN_TEST(test_cache_reason_does_not_change_timeout);
     RUN_TEST(test_clearing_last_reason_does_not_change_timeout);
