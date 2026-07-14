@@ -10,7 +10,6 @@
 #include <string.h>
 
 #define MODBUS_TCP_TRANSACTION_ID               0x1234
-#define MODBUS_TCP_PROTOCOL_ID                  0x0000
 #define MODBUS_MGE_DETECT_LENGTH                17
 #define MODBUS_MGE_DETECT_UID                   0x00
 #define MODBUS_MGE_DETECT_FCODE                 0x47
