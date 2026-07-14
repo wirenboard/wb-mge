@@ -100,7 +100,7 @@ size_t cache_modbus_server_build_register_response(
 
     /* Fill MBAP header fields */
     resp_hdr->transaction_id = transaction_id;
-    resp_hdr->protocol_id    = 0x0000;
+    resp_hdr->protocol_id    = MODBUS_TCP_PROTOCOL_ID;
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
 
@@ -180,7 +180,7 @@ size_t cache_modbus_server_build_coil_response(
 
     /* Fill MBAP header fields */
     resp_hdr->transaction_id = transaction_id;
-    resp_hdr->protocol_id    = 0x0000;
+    resp_hdr->protocol_id    = MODBUS_TCP_PROTOCOL_ID;
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
 
