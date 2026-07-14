@@ -345,18 +345,18 @@ esp_err_t setting_items_migrate_port_mode(void)
             continue;
         }
 
-        const char *mapped;
-        // The legacy on/off sentinel is the only value that is not a valid bridge_mode any
-        // more (validate_bridge_mode rejects it), i.e. the only stale record to clean up.
-        bool legacy_is_stale = false;
-        if (strncmp(legacy_value, LEGACY_BRIDGE_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            mapped = PORT_MODE_DISABLED_STR;
-            legacy_is_stale = true;
-        } else {
-            // "server"/"client" -> tcp_bridge; any unknown legacy value also maps to
-            // tcp_bridge because the port was active (not disabled) before the upgrade.
-            mapped = PORT_MODE_TCP_BRIDGE_STR;
-        }
+        // Derive the new lifecycle axis: only the legacy on/off sentinel means "port was
+        // off". Anything else (a valid role, or any unknown value an older firmware may
+        // have left) means the port was active, so it becomes a tcp_bridge.
+        const char *mapped = (strncmp(legacy_value, LEGACY_BRIDGE_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) == 0)
+                             ? PORT_MODE_DISABLED_STR
+                             : PORT_MODE_TCP_BRIDGE_STR;
+
+        // A legacy record is stale iff it is no longer a valid bridge_mode - that covers
+        // BOTH the on/off sentinel and any unknown value. Such a record must not survive:
+        // setting_items_set_defaults() only fills keys that are MISSING, so an invalid
+        // bridge_mode left in NVS would be handed to the bridge on the next read.
+        const bool legacy_is_stale = !validate_bridge_mode(legacy_value);
 
         // Write through setting_items_save() so the value is validated by
         // validate_port_mode before it lands in NVS.
@@ -373,9 +373,9 @@ esp_err_t setting_items_migrate_port_mode(void)
         // bridge_mode_N itself is NOT a legacy key - it still holds the TCP role - so a
         // value that is still a valid role ("server"/"client") must be kept as-is, otherwise
         // set_defaults() below would silently reset a user's role after an upgrade.
-        // Only the stale on/off sentinel is dropped, so it does not linger in NVS as an
-        // invalid record that later reads would hand to the bridge. setting_items_set_defaults(),
-        // which runs right after this migration, recreates the key with a valid default role.
+        // Every other value is dropped, so no invalid bridge_mode lingers in NVS.
+        // setting_items_set_defaults(), which runs right after this migration, recreates
+        // the erased key with a valid default role.
         if (!legacy_is_stale) {
             continue;
         }
