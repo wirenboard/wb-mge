@@ -145,6 +145,153 @@ def test_wb_test_leds_coupling(api):
             print(f"✓ clock_out restored to {original}")
 
 
+def test_clock_out_freezes_port_mode(api):
+    """clock_out freezes the ports: mode changes are rejected and NVS is untouched.
+
+    While the test runs, the LEDC owns the TX/DE pins of both ports, so a persisting
+    mode change (POST /ports/N/mode) must not go through: the firmware rejects it with
+    409 Conflict instead of handing the pins back to the UART. The runtime mode is
+    DISABLED for the duration, but that is deliberately NOT persisted — GET /settings
+    reads straight from NVS and must still show the mode configured before the test,
+    both during it and after it. On exit both ports come back up from NVS.
+
+    The baseline mode is "passive" (not the default "tcp_bridge"), so a rejected write
+    that leaked into NVS anyway would be visible instead of matching the default.
+    """
+    info = api.get_info().json()
+    original_1 = info.get("rs485_1", {}).get("port_mode", "tcp_bridge")
+    original_2 = info.get("rs485_2", {}).get("port_mode", "tcp_bridge")
+    original_clock_out = api.get_wb_test().json()["clock_out"]
+
+    try:
+        resp = api.set_port_mode(1, "passive")
+        assert resp.status_code == 200, \
+            f"Baseline set_port_mode(1, passive) expected 200, got {resp.status_code}"
+        nvs_before = api.get_settings().json().get("rs485_1", {}).get("port_mode")
+        assert nvs_before == "passive", \
+            f"Baseline: NVS rs485_1.port_mode expected 'passive', got {nvs_before!r}"
+
+        response = api.set_wb_test(True)
+        assert response.status_code == 200, \
+            f"POST /wb_test clock_out=true expected 200, got {response.status_code}"
+
+        try:
+            # (a) Both ports are frozen: a mode change is a conflict, not an error.
+            for port in (1, 2):
+                resp = api.set_port_mode(port, "repeater")
+                assert resp.status_code == 409, (
+                    f"POST /ports/{port}/mode during clock_out expected 409, "
+                    f"got {resp.status_code}: {resp.text}"
+                )
+            print("✓ POST /ports/{1,2}/mode during clock_out rejected with 409")
+
+            # The runtime mode is DISABLED while the LEDC drives the TX pins...
+            info_during = api.get_info().json()
+            assert info_during.get("rs485_1", {}).get("port_mode") == "disabled", \
+                f"clock_out=true must disable port 1, got {info_during.get('rs485_1')}"
+
+            # ...but NVS still holds the configured mode: neither the transient DISABLED
+            # nor the rejected "repeater" may reach it.
+            nvs_during = api.get_settings().json().get("rs485_1", {}).get("port_mode")
+            assert nvs_during == "passive", (
+                f"NVS rs485_1.port_mode must stay 'passive' during clock_out, "
+                f"got {nvs_during!r}"
+            )
+            print("✓ NVS port_mode untouched while clock_out is active")
+
+        finally:
+            response = api.set_wb_test(False)
+            assert response.status_code == 200, \
+                f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
+
+        time.sleep(0.5)
+
+        # (b) The mode in NVS is unchanged and the port is restored from it.
+        nvs_after = api.get_settings().json().get("rs485_1", {}).get("port_mode")
+        assert nvs_after == "passive", \
+            f"After clock_out, NVS rs485_1.port_mode must still be 'passive', got {nvs_after!r}"
+        mode_after = api.get_info().json().get("rs485_1", {}).get("port_mode")
+        assert mode_after == "passive", \
+            f"After clock_out, port 1 must be restored from NVS to 'passive', got {mode_after!r}"
+        print("✓ port_mode restored from NVS after clock_out (409 write never persisted)")
+
+    finally:
+        api.set_wb_test(original_clock_out)
+        restore_errors = []
+        for port_num, mode in [(1, original_1), (2, original_2)]:
+            resp = api.set_port_mode(port_num, mode)
+            if resp.status_code != 200:
+                restore_errors.append(f"port {port_num} -> {mode}: {resp.status_code}")
+        if restore_errors:
+            raise AssertionError("Port mode restore failed: " + "; ".join(restore_errors))
+
+
+@pytest.mark.qemu
+def test_clock_out_disables_io_bus(api):
+    """clock_out holds the MIO controller in reset, and POST /settings must not undo it.
+
+    On WB-MGE the MIO controller hangs off the same RS-485-2 pair the clock_out test
+    drives, and its reset is an expander pin (E08), independent of the port mode. So the
+    test takes the I/O bus down itself (E08 -> 0) and restores it from the io_bus setting
+    on exit.
+
+    A POST /settings while the test is running must NOT bring MIO back out of reset:
+    io_bus defaults to true, so an unconditional update_io_bus_control() would put the
+    MIO transceiver back on the bus the LEDC is driving at 100 kHz.
+    """
+    original_clock_out = api.get_wb_test().json()["clock_out"]
+    original_io_bus = api.get_settings().json().get("io_bus")
+
+    with IoBus() as bus:
+        bus.pump(0.5)
+        try:
+            # Precondition: the I/O bus must be ON, otherwise "off during the test" would
+            # be trivially true.
+            resp = api.update_settings({"io_bus": True})
+            assert resp.status_code == 200, \
+                f"Baseline POST /settings io_bus=true expected 200, got {resp.status_code}"
+            assert bus.wait_for("E08", 1, timeout=5.0), \
+                f"Baseline: io_bus=true must drive E08 high, got {bus.get('E08')}"
+
+            response = api.set_wb_test(True)
+            assert response.status_code == 200, \
+                f"POST /wb_test clock_out=true expected 200, got {response.status_code}"
+
+            # (c) The I/O bus is held down for the duration of the test.
+            assert bus.wait_for("E08", 0, timeout=5.0), \
+                f"clock_out=true must hold MIO in reset (E08 == 0), got {bus.get('E08')}"
+            print("✓ clock_out=true disabled the I/O bus (E08 == 0)")
+
+            # A settings write during the test must not re-enable it. Watch the event
+            # stream, not just the final level: an E08 pulse back to 1 would put the MIO
+            # transceiver on the live bus even if something later drove it low again.
+            first_new_event = len(bus.events)
+            resp = api.update_settings({"io_bus": True})
+            assert resp.status_code == 200, \
+                f"POST /settings during clock_out expected 200, got {resp.status_code}"
+            bus.pump(1.0)
+            assert ("E08", 1) not in bus.events[first_new_event:], \
+                "POST /settings during clock_out must not take MIO out of reset (E08 went high)"
+            assert bus.get("E08") == 0, \
+                f"I/O bus must stay disabled during clock_out, E08 == {bus.get('E08')}"
+            print("✓ POST /settings during clock_out did not re-enable the I/O bus")
+
+            response = api.set_wb_test(False)
+            assert response.status_code == 200, \
+                f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
+
+            # On exit the I/O bus is restored from the io_bus setting (true, written above).
+            assert bus.wait_for("E08", 1, timeout=5.0), \
+                f"clock_out=false must restore the I/O bus from the setting, got {bus.get('E08')}"
+            print("✓ clock_out=false restored the I/O bus (E08 == 1)")
+
+        finally:
+            api.set_wb_test(original_clock_out)
+            if original_io_bus is not None:
+                api.update_settings({"io_bus": original_io_bus})
+                print(f"✓ io_bus restored to {original_io_bus}")
+
+
 def test_sniffer_status(api):
     """Test GET /sniffer/status and verify it reflects the live WS sniffer overlay.
 
