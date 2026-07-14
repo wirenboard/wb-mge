@@ -765,8 +765,17 @@ SNIFFER_STATIC esp_err_t sniffer_ws_handler(httpd_req_t *req)
         /* Outside the mutex: httpd_sess_trigger_close() reaches into the httpd task
          * and must not run with our lock held. Skip when the fd is unchanged — httpd
          * can hand out the same fd number for the new session once the old one is
-         * already gone, and closing it would kill the client we just accepted. */
-        if (old_fd >= 0 && old_fd != new_fd && old_srv != NULL) {
+         * already gone, and closing it would kill the client we just accepted.
+         *
+         * ws_client_fd is cleared lazily (only sniffer_ws_dispatch() notices a dead
+         * fd, and only once a packet actually flows through the queue), so a client
+         * that closed its tab while the bus was silent leaves a stale fd here for an
+         * arbitrarily long time. That number can already have been recycled by the
+         * httpd layer for an unrelated plain-HTTP connection — closing it blind would
+         * kill a stranger's REST request or OTA upload. Same guard as the send path
+         * below: evict only what is still a WebSocket session. */
+        if (old_fd >= 0 && old_fd != new_fd && old_srv != NULL &&
+            httpd_ws_get_fd_info(old_srv, old_fd) == HTTPD_WS_CLIENT_WEBSOCKET) {
             ESP_LOGI(TAG, "WS client replaced, closing previous session fd=%d", old_fd);
             httpd_sess_trigger_close(old_srv, old_fd);
         }

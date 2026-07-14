@@ -607,6 +607,48 @@ void test_ws_handler_same_fd_reconnect_not_closed(void)
         "must NOT close the session we have just accepted onto the same fd");
 }
 
+/* ============================================================
+ * TC-WS-8: ws_client_fd is cleared lazily, so a client that closed its tab while
+ * the bus was silent leaves a stale fd behind. The httpd layer can recycle that fd
+ * number for an unrelated plain-HTTP connection (the UI polls /info constantly).
+ * Evicting it blind would tear down a STRANGER's HTTP session — an aborted REST
+ * request or a hung OTA upload in another tab. Only close what is still a WS client.
+ * ============================================================ */
+
+void test_ws_handler_eviction_skips_recycled_non_ws_fd(void)
+{
+    httpd_req_t first = {
+        .handle = (httpd_handle_t)0xCAFE,
+        .method = HTTP_GET,
+        .aux    = (void *)(intptr_t)42,
+    };
+    sniffer_ws_handler(&first);
+    TEST_ASSERT_EQUAL_MESSAGE(42, sniffer_test_get_ws_client_fd(),
+        "first client must occupy the single WS slot");
+
+    mock_esp_http_server_reset();
+
+    /* fd 42 is no longer ours: the client vanished and httpd handed the number to a
+     * plain-HTTP connection. */
+    mock_httpd_ws_get_fd_info_return = HTTPD_WS_CLIENT_HTTP;
+
+    httpd_req_t second = {
+        .handle = (httpd_handle_t)0xCAFE,
+        .method = HTTP_GET,
+        .aux    = (void *)(intptr_t)43,
+    };
+    sniffer_ws_handler(&second);
+
+    TEST_ASSERT_EQUAL_MESSAGE(43, sniffer_test_get_ws_client_fd(),
+        "the new client must still take over the WS slot");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_httpd_ws_get_fd_info_called,
+        "the old fd must be probed before being closed");
+    TEST_ASSERT_EQUAL_MESSAGE(42, mock_httpd_ws_get_fd_info_last_fd,
+        "it is the OLD fd whose kind must be checked");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_httpd_sess_trigger_close_called,
+        "an fd recycled for a plain-HTTP connection must NOT be closed");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -628,6 +670,7 @@ int main(void)
     RUN_TEST(test_ws_dispatch_slave_response_fed_all_read_fc);
     RUN_TEST(test_ws_handler_new_client_closes_previous_session);
     RUN_TEST(test_ws_handler_same_fd_reconnect_not_closed);
+    RUN_TEST(test_ws_handler_eviction_skips_recycled_non_ws_fd);
     RUN_TEST(test_ws_dispatch_slave_response_below_min_len_not_fed);
 
     return UNITY_END();
