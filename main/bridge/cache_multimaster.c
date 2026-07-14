@@ -132,6 +132,37 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
     return free_slot;  /* NULL when pool is full */
 }
 
+/**
+ * @brief Count used pool entries and the unique slave IDs (devices) among them.
+ *
+ * Single pass over the pool. Either output pointer may be NULL when the caller
+ * does not need that figure; both counts are 0 when the pool is not allocated.
+ *
+ * Caller must hold s_cache_mutex.
+ */
+static void cache_count_entries_and_devices(int *entries_out, int *devices_out)
+{
+    int entries = 0;
+    int devices = 0;
+
+    if (s_pool != NULL) {
+        /* Bitmap of slave IDs already counted: 256 bits = 32 bytes. */
+        uint8_t seen[32] = {0};
+        for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+            if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
+            entries++;
+            uint8_t sid = s_pool[i].slave_id;
+            if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
+                seen[sid >> 3] |= (1u << (sid & 7));
+                devices++;
+            }
+        }
+    }
+
+    if (entries_out != NULL) *entries_out = entries;
+    if (devices_out != NULL) *devices_out = devices;
+}
+
 
 /* ---- Background aging task ----------------------------------------------- */
 
@@ -547,20 +578,10 @@ void cache_multimaster_get_stats(cache_multimaster_stats_t *out)
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
-    /* Single pass: count unique slave IDs. Reading the stats counters under the
-     * same lock prevents torn 64-bit reads of s_last_packet_us / s_reset_us on
-     * Xtensa (64-bit volatile is NOT atomically readable without a mutex). */
-    uint8_t seen[32] = {0};
-    if (s_pool != NULL) {
-        for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-            if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
-            uint8_t sid = s_pool[i].slave_id;
-            if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
-                seen[sid >> 3] |= (1u << (sid & 7));
-                slaves++;
-            }
-        }
-    }
+    /* Reading the stats counters under the same lock as the pool scan prevents
+     * torn 64-bit reads of s_last_packet_us / s_reset_us on Xtensa (64-bit
+     * volatile is NOT atomically readable without a mutex). */
+    cache_count_entries_and_devices(NULL, &slaves);
     packets     = s_packets_processed;
     last_pkt_us = s_last_packet_us;
     reset_us    = s_reset_us;
@@ -604,22 +625,10 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
     if (s_cache_mutex != NULL) {
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
-        /* Single pass: count entries and unique slave IDs simultaneously.
-         * Reading the stats counters under the same lock prevents torn
-         * 64-bit reads of s_last_packet_us / s_reset_us on Xtensa
-         * (64-bit volatile is NOT atomically readable without a mutex). */
-        uint8_t seen[32] = {0};
-        if (s_pool != NULL) {
-            for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-                if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
-                entries++;
-                uint8_t sid = s_pool[i].slave_id;
-                if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
-                    seen[sid >> 3] |= (1u << (sid & 7));
-                    slaves++;
-                }
-            }
-        }
+        /* Reading the stats counters under the same lock as the pool scan
+         * prevents torn 64-bit reads of s_last_packet_us / s_reset_us on
+         * Xtensa (64-bit volatile is NOT atomically readable without a mutex). */
+        cache_count_entries_and_devices(&entries, &slaves);
         packets     = s_packets_processed;
         dropped     = s_entries_dropped;
         last_pkt_us = s_last_packet_us;
