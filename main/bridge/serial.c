@@ -171,7 +171,9 @@ static void uart_event_task(void *pvParameters)
     while(1) {
         uart_event_t event;
         BaseType_t result = xQueueReceive(desc->uart_queue, (void *)&event, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
-        if (result == pdPASS) {
+        // Skip event handling if the RX buffer failed to allocate; the loop still
+        // honours EVENT_TASK_EXIT_REQ below so serial_deinit() does not block forever.
+        if (result == pdPASS && buffer_ctx.data != NULL) {
             handle_uart_event(desc, event, &buffer_ctx);
         }
 
