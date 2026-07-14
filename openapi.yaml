@@ -384,6 +384,13 @@ paths:
                 properties:
                   success:
                     type: boolean
+                  warnings:
+                    type: array
+                    description: >-
+                      Non-fatal findings about the resulting configuration. Optional: omitted when there
+                      is nothing to report. A client may ignore it, but should surface it to the user.
+                    items:
+                      $ref: '#/components/schemas/SettingsWarning'
                 additionalProperties:
                   type: boolean
                   description: Individual field update status (true/false for each field)
@@ -1499,6 +1506,27 @@ components:
           type: boolean
           default: false
           description: "Permanently disable WiFi. Always present in GET; when true the response omits the wifi sub-object"
+
+    SettingsWarning:
+      type: object
+      description: >-
+        A non-fatal finding reported alongside a settings update. The request itself was processed
+        normally; the warning describes a property of the resulting configuration the user should
+        know about.
+      properties:
+        code:
+          type: string
+          enum: [port_collision]
+          description: >-
+            Machine-readable warning code.
+            port_collision — two TCP listeners (web_port, cache_modbus_port, an RS-485 bridge gateway
+            in server mode) share the same port in the saved configuration. The request is accepted
+            because it changes neither of them, but one of the two will fail to bind and stay down
+            until the ports are made distinct.
+        message:
+          type: string
+          maxLength: 255
+          description: "Human-readable description naming the listeners and the port involved"
 
     ErrorResponse:
       type: object

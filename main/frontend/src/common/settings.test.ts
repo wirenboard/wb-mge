@@ -214,4 +214,101 @@ describe('useSettings', () => {
         // Step 3: partialRefresh must not have called setHostname because hostname was not saved.
         expect(setHostnameMock).not.toHaveBeenCalled();
     });
+
+    // POST /settings answers 2xx with a "warnings" array when it ACCEPTED the write but the
+    // resulting configuration has a problem the user must know about — today: an inherited TCP
+    // port collision, where one of the two listeners will not bind. A green "data updated" toast
+    // would hide that; the only other trace is a line in the firmware log.
+    const setupWarningTest = (warnings: unknown) => {
+        const showAlertMock = vi.fn();
+        vi.doMock('@/common/hostname', () => ({ setHostname: vi.fn() }));
+        vi.doMock('@/common/alert', () => ({ useAlerts: () => ({ showAlert: showAlertMock }) }));
+
+        const apiMock = vi.fn().mockImplementation((_url: string, options?: { method?: string }) => {
+            if (options?.method === 'POST') {
+                return Promise.resolve(warnings === undefined ? { success: true } : { success: true, warnings });
+            }
+            return Promise.resolve(makeInitialSettings());
+        });
+        vi.doMock('@/utils/api', () => ({ api: apiMock }));
+
+        return showAlertMock;
+    };
+
+    it('ST-005: a warning in the response is shown as a warning alert instead of the success alert', async () => {
+        const showAlertMock = setupWarningTest([
+            {
+                code: 'port_collision',
+                message: 'web_port and rs485_1 are both configured on TCP port 80 in the saved configuration',
+            },
+        ]);
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ web_port: 502 } as any);
+
+        // The known code is translated, not shown as the firmware's raw English text.
+        expect(showAlertMock).toHaveBeenCalledWith(
+            'warning_port_collision',
+            expect.objectContaining({ type: 'warning' }),
+        );
+        // And the green "saved" toast must NOT appear: it would read as a clean save.
+        expect(showAlertMock).not.toHaveBeenCalledWith('data_updated', expect.anything());
+    });
+
+    it('ST-006: an unknown warning code falls back to the message the firmware sent', async () => {
+        const message = 'something the UI has never heard of';
+        const showAlertMock = setupWarningTest([{ code: 'from_a_newer_firmware', message }]);
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ web_port: 502 } as any);
+
+        expect(showAlertMock).toHaveBeenCalledWith(message, expect.objectContaining({ type: 'warning' }));
+    });
+
+    it('ST-007: every warning gets its own alert', async () => {
+        const showAlertMock = setupWarningTest([
+            { code: 'port_collision', message: 'first' },
+            { code: 'another_code', message: 'second' },
+        ]);
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ web_port: 502 } as any);
+
+        expect(showAlertMock).toHaveBeenCalledTimes(2);
+        expect(showAlertMock).toHaveBeenCalledWith('warning_port_collision', expect.objectContaining({ type: 'warning' }));
+        expect(showAlertMock).toHaveBeenCalledWith('second', expect.objectContaining({ type: 'warning' }));
+    });
+
+    it('ST-008: a response without warnings still shows the success alert', async () => {
+        const showAlertMock = setupWarningTest(undefined);
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ web_port: 502 } as any);
+
+        expect(showAlertMock).toHaveBeenCalledWith('data_updated', { type: 'success' });
+    });
+
+    it('ST-009: an empty warnings array is not a warning — the save was clean', async () => {
+        const showAlertMock = setupWarningTest([]);
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ web_port: 502 } as any);
+
+        expect(showAlertMock).toHaveBeenCalledWith('data_updated', { type: 'success' });
+    });
 });

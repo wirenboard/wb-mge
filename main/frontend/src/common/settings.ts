@@ -1,8 +1,21 @@
 import { ref } from 'vue';
 import { useAlerts } from '@/common/alert';
-import type { DeepPartial, Settings, UpdateSettingsResponse } from '@/common/types';
+import type { DeepPartial, Settings, SettingsWarning, UpdateSettingsResponse } from '@/common/types';
 import { api } from '@/utils/api';
 import { setHostname } from '@/common/hostname';
+
+// A warning stays up longer than the "saved" toast: it is the only place the user learns that the
+// accepted settings leave a service unable to bind its TCP port.
+const WARNING_ALERT_TIMEOUT_MS = 10000;
+
+// Firmware warning code -> i18n key. A code we do not know (older/newer firmware) falls back to the
+// English message the firmware sent, which is still far better than silence.
+const WARNING_MESSAGES: Record<string, string> = {
+  port_collision: 'warning_port_collision',
+};
+
+const warningAlertMessage = (warning: SettingsWarning): string =>
+  WARNING_MESSAGES[warning.code] ?? warning.message;
 
 const isDeepEqual = (a: any, b: any): boolean => {
   if (a === b) return true;
@@ -66,7 +79,17 @@ export const useSettings = () => {
     isLoading.value = true;
     const savedKeys = Object.keys(json) as Array<keyof Settings>; // capture before async
     return api<UpdateSettingsResponse>('settings', { method: 'POST', json })
-      .then(async () => {
+      .then(async (response) => {
+        // The settings WERE saved, so this is not an error — but a green "data updated" would hide
+        // the fact that the firmware flagged the result (e.g. two services on one TCP port, one of
+        // which will not come up). Show the warnings instead of the success toast.
+        const warnings = response?.warnings ?? [];
+        if (warnings.length > 0) {
+          warnings.forEach((warning) => {
+            showAlert(warningAlertMessage(warning), { type: 'warning', timeout: WARNING_ALERT_TIMEOUT_MS });
+          });
+          return;
+        }
         showAlert('data_updated', { type: 'success' });
       })
       .finally(async () => {

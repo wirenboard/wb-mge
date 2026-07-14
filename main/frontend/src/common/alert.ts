@@ -1,6 +1,8 @@
 import { reactive } from 'vue';
 
-type AlertType = 'success' | 'error';
+// 'warning' is for an ACCEPTED operation whose result still needs the user's attention — amber,
+// not green and not red: nothing failed, but it must not read as a clean success either.
+type AlertType = 'success' | 'error' | 'warning';
 
 interface Alert {
   message: string;

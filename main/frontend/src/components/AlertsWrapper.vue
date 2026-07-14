@@ -16,6 +16,7 @@ const { alerts } = useAlerts();
         :class="{
           'alert-success': alert.type === 'success',
           'alert-error': alert.type === 'error',
+          'alert-warning': alert.type === 'warning',
         }"
       >
         <i18n-t v-if="alert.interpolation" :keypath="alert.message">
@@ -47,6 +48,8 @@ const { alerts } = useAlerts();
   border-radius: var(--r-md);
   box-shadow: var(--shadow-md);
   width: fit-content;
+  /* Warnings carry a full sentence, unlike the one-line success/error toasts. */
+  max-width: min(420px, calc(100vw - 24px));
 }
 
 .alert-success {
@@ -55,5 +58,12 @@ const { alerts } = useAlerts();
 
 .alert-error {
   background: var(--danger-color);
+}
+
+/* Amber, with dark ink: the settings WERE saved, this is not a failure — but it must not read
+   as a clean success either. */
+.alert-warning {
+  background: var(--warn);
+  color: var(--text-color);
 }
 </style>

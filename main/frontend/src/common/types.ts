@@ -181,8 +181,19 @@ export interface LogoutResponse {
   logout: boolean;
 }
 
+// One advisory warning attached to an ACCEPTED settings write: the firmware saved the settings,
+// but something about the resulting configuration needs the user's attention (today: an inherited
+// TCP port collision — two services on one port, one of which will not bind).
+// `code` is the machine-readable identifier the UI translates; `message` is the firmware's own
+// English text, used as a fallback for codes this build does not know yet.
+export interface SettingsWarning {
+  code: string;
+  message: string;
+}
+
 export interface UpdateSettingsResponse {
   success: boolean;
+  warnings?: SettingsWarning[];
 }
 
 export interface CommandResponse {

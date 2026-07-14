@@ -15,6 +15,10 @@
 static const char *TAG = "settings_manager";
 
 #define SETTING_KEY_BUF_SIZE 64
+#define WARNING_MSG_BUF_SIZE 224
+
+// Machine-readable code of a warning reported in the response's "warnings" array.
+#define WARNING_CODE_PORT_COLLISION "port_collision"
 
 typedef struct {
     const char *json_key;
@@ -353,6 +357,29 @@ static bool json_has(cJSON *parent, const char *key)
     return (parent != NULL) && cJSON_HasObjectItem(parent, key);
 }
 
+// Append one {code, message} object to the warnings array. warnings may be NULL (the caller does
+// not collect warnings), and an allocation failure is silently ignored: a warning is advisory, so
+// losing it must never turn an otherwise valid request into a failure.
+static void add_warning(cJSON *warnings, const char *code, const char *message)
+{
+    if (warnings == NULL) {
+        return;
+    }
+
+    cJSON *entry = cJSON_CreateObject();
+    if (entry == NULL) {
+        return;
+    }
+
+    if ((cJSON_AddStringToObject(entry, "code", code) == NULL) ||
+        (cJSON_AddStringToObject(entry, "message", message) == NULL)) {
+        cJSON_Delete(entry);
+        return;
+    }
+
+    cJSON_AddItemToArray(warnings, entry);
+}
+
 // Cross-field validation: no two TCP services may listen on the same port. Allowing it leaves one
 // of them unable to bind (listen() -> EADDRINUSE errno 112) and, under repeated re-init without a
 // reboot, a stuck listen socket that permanently occupies the port.
@@ -374,7 +401,11 @@ static bool json_has(cJSON *parent, const char *key)
 // request: it would make EVERY subsequent POST fail, including one that only changes the Wi-Fi
 // password, and the device could never be repaired over the REST API field by field. The factory
 // defaults (80/502/503/504) do not collide, so a fresh device is never in that state.
-static bool validate_port_collisions(cJSON *request_json)
+//
+// An accepted inherited collision still leaves one of the two listeners unable to bind, so it is
+// also appended to the warnings array (when the caller supplies one) and travels back to the client
+// in the response — otherwise the dead port would only ever be visible in the firmware log.
+static bool validate_port_collisions(cJSON *request_json, cJSON *warnings)
 {
     static const char *const rs485_names[] = {"rs485_1", "rs485_2"};
     static const char *const port_mode_keys[] = {KEY_PORT_MODE1, KEY_PORT_MODE2};
@@ -436,6 +467,15 @@ static bool validate_port_collisions(cJSON *request_json)
                               "configuration; this request does not change either — accepting it",
                          listeners[i].name, listeners[i].port,
                          listeners[j].name, listeners[j].port);
+                // Worded as a plain statement of fact about the saved configuration: the same
+                // warning is attached whether the request as a whole ends up accepted or rejected
+                // by a later check.
+                char message[WARNING_MSG_BUF_SIZE];
+                snprintf(message, sizeof(message),
+                         "%s and %s are both configured on TCP port %d in the saved configuration; "
+                         "one of them will fail to bind and stay down until the conflict is resolved",
+                         listeners[i].name, listeners[j].name, listeners[i].port);
+                add_warning(warnings, WARNING_CODE_PORT_COLLISION, message);
                 continue;
             }
             ESP_LOGW(TAG, "Validation: %s (%d) collides with %s (%d)",
@@ -712,17 +752,36 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     }
 
     /* Phase 1: validate all fields before writing anything */
+    // Collects the non-fatal findings of the validation (currently only the inherited port
+    // collisions that are accepted rather than rejected). They are advisory, so an allocation
+    // failure here just means no warnings are reported, not a failed request.
+    cJSON *warnings = cJSON_CreateArray();
+
     // When wifi is permanently disabled, skip WiFi group validation entirely
     cJSON *wifi_group_for_validation = wifi_perm_disabled
         ? NULL
         : cJSON_GetObjectItem(request_json, "wifi");
-    if (!validate_top_level_settings(request_json) ||
-        !validate_group_settings(wifi_group_for_validation, wifi_mappings,
-                                 ARRAY_SIZE(wifi_mappings), NULL) ||
-        !validate_group_settings(cJSON_GetObjectItem(request_json, "ethernet"), ethernet_mappings,
-                                 ARRAY_SIZE(ethernet_mappings), NULL) ||
-        !validate_rs485_settings(request_json) ||
-        !validate_port_collisions(request_json)) {
+    // && instead of the negated || chain: validate_port_collisions() must still run when an
+    // earlier check has passed, because it is the one that collects the warnings.
+    bool settings_valid =
+        validate_top_level_settings(request_json) &&
+        validate_group_settings(wifi_group_for_validation, wifi_mappings,
+                                ARRAY_SIZE(wifi_mappings), NULL) &&
+        validate_group_settings(cJSON_GetObjectItem(request_json, "ethernet"), ethernet_mappings,
+                                ARRAY_SIZE(ethernet_mappings), NULL) &&
+        validate_rs485_settings(request_json) &&
+        validate_port_collisions(request_json, warnings);
+
+    // "warnings" is an OPTIONAL addition to the response: it is present only when there is
+    // something to report, so a clean request still gets exactly the response it got before and
+    // the API contract does not change for clients that never look at it.
+    if (cJSON_GetArraySize(warnings) > 0) {
+        cJSON_AddItemToObject(*response_json, "warnings", warnings);
+    } else {
+        cJSON_Delete(warnings);
+    }
+
+    if (!settings_valid) {
         ESP_LOGE(TAG, "Settings validation failed — rejecting request");
         cJSON_AddBoolToObject(*response_json, "success", false);
         cJSON_AddStringToObject(*response_json, "error", "Invalid settings value");

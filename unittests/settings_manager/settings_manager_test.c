@@ -88,6 +88,16 @@ static const char *response_error(const cJSON *resp)
     return item->valuestring;
 }
 
+// Extract the optional "warnings" array from a response JSON (returns NULL when absent).
+static cJSON *response_warnings(const cJSON *resp)
+{
+    cJSON *item = cJSON_GetObjectItem(resp, "warnings");
+    if (!item || !cJSON_IsArray(item)) {
+        return NULL;
+    }
+    return item;
+}
+
 // -------------------------------------------------------------------
 // setUp / tearDown
 // -------------------------------------------------------------------
@@ -1036,6 +1046,83 @@ void test_inherited_collision_does_not_block_unrelated_request(void)
     cJSON_Delete(resp);
 }
 
+// An accepted inherited collision leaves one of the two listeners unable to bind. The client gets
+// success:true, so the only way it can learn about the dead port is the optional "warnings" array
+// of the response — it must be there, and it must name both listeners and the contested port.
+void test_inherited_collision_reported_in_response_warnings(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "inherited bridge_port_1 == bridge_port_2 + request touches no port -> success:true + warnings");
+    LOG_MESSAGE();
+
+    // Saved (inherited) broken config: both bridge gateways already listen on 502.
+    setting_items_save(KEY_BRIDGE_PORT2, "502");
+
+    // A request that changes something unrelated entirely.
+    cJSON *req = cJSON_CreateObject();
+    cJSON *wifi = cJSON_CreateObject();
+    cJSON_AddStringToObject(wifi, "sta_pass", "new_password");
+    cJSON_AddItemToObject(req, "wifi", wifi);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "an inherited collision must not fail a request that does not touch it");
+
+    cJSON *warnings = response_warnings(resp);
+    TEST_ASSERT_NOT_NULL_MESSAGE(warnings,
+        "the accepted collision must be reported back to the client in a warnings array");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, cJSON_GetArraySize(warnings),
+        "exactly one colliding pair exists in the saved configuration");
+
+    cJSON *warning = cJSON_GetArrayItem(warnings, 0);
+    cJSON *code = cJSON_GetObjectItem(warning, "code");
+    cJSON *message = cJSON_GetObjectItem(warning, "message");
+
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsString(code), "warning must carry a machine-readable code");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("port_collision", code->valuestring,
+        "the code identifies the warning as a port collision");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsString(message), "warning must carry a human-readable message");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(message->valuestring, "rs485_1"),
+        "the message must name the first colliding listener");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(message->valuestring, "rs485_2"),
+        "the message must name the second colliding listener");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(message->valuestring, "502"),
+        "the message must name the contested TCP port");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// The warnings array is an OPTIONAL addition to the response: a request applied onto a clean
+// configuration must produce exactly the response it produced before — not even an empty array.
+void test_clean_request_reports_no_warnings(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "no collision in the saved configuration -> response carries no warnings field");
+    LOG_MESSAGE();
+
+    // NVS defaults (80/502/503/504) do not collide.
+    cJSON *req = make_request_string("hostname", "my-device");
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "a clean request must succeed");
+    TEST_ASSERT_FALSE_MESSAGE(cJSON_HasObjectItem(resp, "warnings"),
+        "warnings must be absent when there is nothing to warn about");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
 // The same inherited collision must still be rejected once the request touches one of the two
 // colliding listeners: it is then re-asserting the collision, not merely inheriting it.
 void test_inherited_collision_still_rejected_when_request_touches_a_port(void)
@@ -1267,6 +1354,8 @@ int main(void)
     RUN_TEST(test_bridge_port_equal_web_port_rejected);
     RUN_TEST(test_web_port_equal_cache_port_rejected);
     RUN_TEST(test_inherited_collision_does_not_block_unrelated_request);
+    RUN_TEST(test_inherited_collision_reported_in_response_warnings);
+    RUN_TEST(test_clean_request_reports_no_warnings);
     RUN_TEST(test_inherited_collision_still_rejected_when_request_touches_a_port);
     RUN_TEST(test_enabling_cache_server_onto_a_bridge_port_rejected);
 
