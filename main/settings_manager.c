@@ -704,7 +704,9 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         if (enabled && !running) {
             // Server should be running but isn't — start it.
             int port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
-            if (port <= 0) port = CACHE_MODBUS_SERVER_PORT;
+            if (port <= 0) {
+                port = CACHE_MODBUS_SERVER_PORT;
+            }
             esp_err_t ret = cache_modbus_server_init(port);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "cache_modbus_server_init failed: %s", esp_err_to_name(ret));
