@@ -436,7 +436,13 @@ esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t
     return ret;
 }
 
-esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
+// Shared implementation of the mode switch. When persist is true the new mode is
+// written to NVS after a successful init (the normal REST/settings path). When it
+// is false the switch is runtime-only: NVS keeps the user's configured mode, so a
+// reboot (or port_manager_apply_settings()) restores it. The transient path exists
+// for temporary overrides such as the factory 100 kHz test, which must not clobber
+// the persisted port configuration if power is lost while the test is running.
+static esp_err_t port_set_mode_impl(unsigned port_index, pm_mode_t mode, bool persist)
 {
     if (port_index >= BRIDGES_COUNT) {
         return ESP_ERR_INVALID_ARG;
@@ -459,8 +465,10 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
         // port_manager_check_settings_changed() would report a permanent
         // mismatch, making settings_update_task re-apply (and re-fail) on every
         // subsequent settings write.
-        esp_err_t save_ret = setting_items_save(port_mode_nvs_key(port_index),
-                                                port_manager_mode_to_str(mode));
+        esp_err_t save_ret = persist
+            ? setting_items_save(port_mode_nvs_key(port_index),
+                                 port_manager_mode_to_str(mode))
+            : ESP_OK;
         if (save_ret != ESP_OK) {
             ESP_LOGE(TAG, "Port[%u]: Failed to save port mode to NVS: %s",
                      port_index + 1, esp_err_to_name(save_ret));
@@ -494,6 +502,16 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
 
     pm_unlock(port_index);
     return init_ret;
+}
+
+esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
+{
+    return port_set_mode_impl(port_index, mode, true);
+}
+
+esp_err_t port_manager_set_mode_transient(unsigned port_index, pm_mode_t mode)
+{
+    return port_set_mode_impl(port_index, mode, false);
 }
 
 bool port_manager_get_cache(unsigned port_index)

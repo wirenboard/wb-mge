@@ -328,6 +328,75 @@ void test_set_mode_repeater_success(void)
     TEST_ASSERT_EQUAL(SERIAL_RX_TOUT_PROXY, mock_serial_set_rx_timeout_value[0]);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 4b. port_manager_set_mode_transient() — runtime-only, never persisted
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void test_set_mode_transient_invalid_index(void)
+{
+    esp_err_t ret = port_manager_set_mode_transient(BRIDGES_COUNT, PM_MODE_DISABLED);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, ret);
+}
+
+void test_set_mode_transient_applies_live_but_does_not_persist(void)
+{
+    /* Configured (persisted) mode is PASSIVE. */
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+
+    int saves_before = mock_setting_items_save_called;
+
+    /* The factory test disables the port transiently. */
+    esp_err_t ret = port_manager_set_mode_transient(0, PM_MODE_DISABLED);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+
+    /* Live mode changed... */
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "transient set_mode must apply the new mode at runtime");
+    /* ...but NVS was not touched at all: a power loss during the test must not
+     * wipe the configured port mode. */
+    TEST_ASSERT_EQUAL_MESSAGE(saves_before, mock_setting_items_save_called,
+        "transient set_mode must not call setting_items_save");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_PASSIVE_STR,
+        mock_setting_items_get_port_mode(0),
+        "transient set_mode must leave the persisted port mode untouched");
+}
+
+void test_set_mode_transient_restored_from_nvs_on_exit(void)
+{
+    /* Full factory-test cycle: PASSIVE -> transient DISABLED -> restore. */
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode_transient(0, PM_MODE_DISABLED));
+    TEST_ASSERT_EQUAL(PM_MODE_DISABLED, port_manager_get_mode(0));
+
+    /* Exit path used by wb_test: re-read the mode from NVS and re-init the port. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "exiting the test must restore the mode persisted in NVS");
+}
+
+void test_set_mode_transient_init_fail_rolls_back(void)
+{
+    /* Start from a working PASSIVE port. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_PASSIVE));
+    int saves_before = mock_setting_items_save_called;
+
+    /* A transient switch whose init fails must roll the runtime back and still
+     * leave NVS alone. */
+    mock_bridge_port_init_should_fail = true;
+    esp_err_t ret = port_manager_set_mode_transient(0, PM_MODE_TCP_BRIDGE);
+    TEST_ASSERT_NOT_EQUAL(ESP_OK, ret);
+    mock_bridge_port_init_should_fail = false;
+
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "failed transient switch must roll back to the previous mode");
+    TEST_ASSERT_EQUAL_MESSAGE(saves_before, mock_setting_items_save_called,
+        "failed transient switch must not call setting_items_save");
+}
+
 void test_switch_passive_repeater_disabled(void)
 {
     /* passive -> repeater -> disabled */
@@ -907,6 +976,11 @@ int port_manager_test(void)
     RUN_TEST(test_set_mode_tcp_bridge_success);
     RUN_TEST(test_set_mode_passive_success);
     RUN_TEST(test_set_mode_repeater_success);
+
+    RUN_TEST(test_set_mode_transient_invalid_index);
+    RUN_TEST(test_set_mode_transient_applies_live_but_does_not_persist);
+    RUN_TEST(test_set_mode_transient_restored_from_nvs_on_exit);
+    RUN_TEST(test_set_mode_transient_init_fail_rolls_back);
     /* U-P1/U-P2/U-P3/U-P4/U-P5/U-P6 — repeater integration */
     RUN_TEST(test_init_brings_up_repeater_from_nvs);
     RUN_TEST(test_init_unknown_nvs_mode_falls_back_to_disabled);

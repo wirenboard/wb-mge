@@ -65,6 +65,29 @@ esp_err_t port_manager_init(void);
 esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode);
 
 /**
+ * @brief Switch a port to a new operating mode WITHOUT persisting it to NVS.
+ *
+ * Behaves exactly like port_manager_set_mode() (deinit, init, rollback on init
+ * failure) except that the new mode is never written to NVS: the port_mode key
+ * keeps the user's configured value.
+ *
+ * Intended for temporary runtime overrides — the factory 100 kHz test disables
+ * both ports so the LEDC can take over their TX pins, and must not clobber the
+ * persisted configuration if power is lost while the test is running. Restore the
+ * configured mode afterwards with port_manager_apply_settings(), which re-reads
+ * the mode from NVS and re-initialises the port.
+ *
+ * Do NOT use this for REST/settings-driven mode changes — those must persist.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param mode        Target mode.
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         or the init error if the new mode failed to initialise (the previous
+ *         mode is rolled back).
+ */
+esp_err_t port_manager_set_mode_transient(unsigned port_index, pm_mode_t mode);
+
+/**
  * @brief Return the currently active mode for a port.
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).

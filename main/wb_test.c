@@ -38,8 +38,6 @@
 
 
 static bool clock_out_en = false;
-static pm_mode_t s_saved_port_mode = PM_MODE_TCP_BRIDGE;
-static pm_mode_t s_saved_port_mode_2 = PM_MODE_TCP_BRIDGE;
 
 static ledc_timer_config_t timer_config = {
     .speed_mode = LEDC_HIGH_SPEED_MODE,
@@ -155,13 +153,15 @@ static esp_err_t process_request_json(cJSON *request_json)
     if (cmd_item->valueint) {
         if (!clock_out_en) {
             clock_out_en = true;
-            s_saved_port_mode = port_manager_get_mode(BRIDGE_PORT_INDEX);
-            esp_err_t err = port_manager_set_mode(BRIDGE_PORT_INDEX, PM_MODE_DISABLED);
+            // Disable both ports so the LEDC can take over their TX pins, but do NOT
+            // persist the DISABLED mode: NVS must keep the user's configured mode so
+            // that losing power during the test cannot wipe the port configuration.
+            // The exit path below restores the ports straight from NVS.
+            esp_err_t err = port_manager_set_mode_transient(BRIDGE_PORT_INDEX, PM_MODE_DISABLED);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to disable port for clock_out: %s", esp_err_to_name(err));
             }
-            s_saved_port_mode_2 = port_manager_get_mode(BRIDGE_PORT_INDEX_2);
-            esp_err_t err2 = port_manager_set_mode(BRIDGE_PORT_INDEX_2, PM_MODE_DISABLED);
+            esp_err_t err2 = port_manager_set_mode_transient(BRIDGE_PORT_INDEX_2, PM_MODE_DISABLED);
             if (err2 != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to disable port 2 for clock_out: %s", esp_err_to_name(err2));
             }
@@ -178,11 +178,13 @@ static esp_err_t process_request_json(cJSON *request_json)
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
-            esp_err_t err = port_manager_set_mode(BRIDGE_PORT_INDEX, s_saved_port_mode);
+            // The test never touched NVS, so the configured mode is still there:
+            // re-read it and re-initialise both ports from the persisted settings.
+            esp_err_t err = port_manager_apply_settings(BRIDGE_PORT_INDEX);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to restore port mode after clock_out: %s", esp_err_to_name(err));
             }
-            esp_err_t err2 = port_manager_set_mode(BRIDGE_PORT_INDEX_2, s_saved_port_mode_2);
+            esp_err_t err2 = port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
             if (err2 != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to restore port 2 mode after clock_out: %s", esp_err_to_name(err2));
             }
