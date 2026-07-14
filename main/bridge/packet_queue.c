@@ -66,62 +66,6 @@ void packet_queue_clear(const packet_queue_handle handle)
 }
 
 
-esp_err_t packet_queue_push(const packet_queue_handle handle, const uint8_t* data, const size_t len)
-{
-    if (!handle) {
-        return ESP_FAIL;
-    }
-
-    UBaseType_t space_avail = uxQueueSpacesAvailable(handle);
-    if (!space_avail) {
-        ESP_LOGW(TAG, "No space in the queue");
-        return ESP_FAIL;
-    }
-
-    packet_queue_elem_t queue_elem = {0};
-    queue_elem.client_sock = -1;    // -1 signals "not applicable" per packet_queue_pop_with_client contract
-    queue_elem.data_buf = malloc(len);
-    if (!queue_elem.data_buf) {
-        ESP_LOGE(TAG, "Unable to allocate memory for packet data");
-        return ESP_FAIL;
-    }
-
-    memcpy(queue_elem.data_buf, data, len);
-    queue_elem.packet_len = len;
-
-    if (xQueueSend(handle, &queue_elem, 0) != pdPASS) {
-        ESP_LOGE(TAG, "Unable to push packet into queue");
-        free(queue_elem.data_buf);
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
-}
-
-
-size_t packet_queue_pop(const packet_queue_handle handle, uint8_t** buf_ptr, TickType_t timeout_ticks)
-{
-    if (!handle) {
-        return 0;
-    }
-
-    packet_queue_elem_t queue_elem = {0};
-    BaseType_t result = xQueueReceive(handle, &queue_elem, timeout_ticks);
-    if (result != pdPASS) {
-        return 0;
-    }
-
-    if (buf_ptr) {
-        *buf_ptr = queue_elem.data_buf;
-    } else {
-        ESP_LOGW(TAG, "Data discarded: buf_ptr is NULL, packet length: %zu", queue_elem.packet_len);
-        free(queue_elem.data_buf);
-    }
-
-    return queue_elem.packet_len;
-}
-
-
 esp_err_t packet_queue_push_with_client(const packet_queue_handle handle, const uint8_t* data, const size_t len, int client_sock)
 {
     if (!handle) {
