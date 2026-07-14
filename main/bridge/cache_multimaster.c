@@ -136,9 +136,15 @@ static inline uint16_t cache_fc_max_count(uint8_t fc)
  */
 static bool request_is_cacheable(uint8_t function, uint16_t start_reg, uint16_t count)
 {
-    if (!cache_fc_is_cacheable(function)) return false;
-    if (count == 0 || count > cache_fc_max_count(function)) return false;
-    if ((uint32_t)start_reg + (uint32_t)count > 0x10000u) return false;
+    if (!cache_fc_is_cacheable(function)) {
+        return false;
+    }
+    if (count == 0 || count > cache_fc_max_count(function)) {
+        return false;
+    }
+    if ((uint32_t)start_reg + (uint32_t)count > 0x10000u) {
+        return false;
+    }
     return true;
 }
 
@@ -166,7 +172,9 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
                                            uint8_t type_value, uint16_t address)
 {
     /* Pool not allocated yet — cache is disabled or enable() failed */
-    if (s_pool == NULL) return NULL;
+    if (s_pool == NULL) {
+        return NULL;
+    }
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         cache_entry_t *e = &s_pool[i];
@@ -209,7 +217,9 @@ static void cache_count_entries_and_devices(int *entries_out, int *devices_out)
         /* Bitmap of slave IDs already counted: 256 bits = 32 bytes. */
         uint8_t seen[32] = {0};
         for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-            if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
+            if (!(s_pool[i].type & CACHE_USED_BIT)) {
+                continue;
+            }
             entries++;
             uint8_t sid = s_pool[i].slave_id;
             if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
@@ -219,8 +229,12 @@ static void cache_count_entries_and_devices(int *entries_out, int *devices_out)
         }
     }
 
-    if (entries_out != NULL) *entries_out = entries;
-    if (devices_out != NULL) *devices_out = devices;
+    if (entries_out != NULL) {
+        *entries_out = entries;
+    }
+    if (devices_out != NULL) {
+        *devices_out = devices;
+    }
 }
 
 
@@ -249,7 +263,9 @@ static void cache_age_task(void *arg)
     (void)arg;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        if (s_cache_mutex == NULL) continue;
+        if (s_cache_mutex == NULL) {
+            continue;
+        }
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
         cache_age_tick_pool();
         xSemaphoreGive(s_cache_mutex);
@@ -274,7 +290,9 @@ esp_err_t cache_multimaster_init(void)
 
 void cache_multimaster_enable(void)
 {
-    if (s_cache_mutex == NULL) return;
+    if (s_cache_mutex == NULL) {
+        return;
+    }
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
@@ -385,7 +403,9 @@ bool cache_multimaster_is_enabled(void)
 
 void cache_multimaster_clear(void)
 {
-    if (s_cache_mutex == NULL) return;
+    if (s_cache_mutex == NULL) {
+        return;
+    }
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
     /* Only zero if the pool is allocated; do NOT free — that is done by disable(). */
     if (s_pool != NULL) {
@@ -410,7 +430,9 @@ void cache_multimaster_clear(void)
 void cache_multimaster_on_request(uint8_t port, uint8_t slave_id, uint8_t function,
                                   uint16_t start_reg, uint16_t count)
 {
-    if (port >= BRIDGES_COUNT) return;
+    if (port >= BRIDGES_COUNT) {
+        return;
+    }
 
     /* Only a spec-legal read request can ever yield a response worth storing.
      * A write, a zero/oversized count or a wrapping address range is recorded
@@ -426,31 +448,45 @@ void cache_multimaster_on_request(uint8_t port, uint8_t slave_id, uint8_t functi
      * task — so the single-writer assumption does not hold and these accesses
      * must be serialised under s_cache_mutex to avoid a torn read in
      * on_response on a dual-core SMP device (corr-5). */
-    if (s_cache_mutex != NULL) xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    if (s_cache_mutex != NULL) {
+        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    }
     s_pending[port].valid     = cacheable;
     s_pending[port].slave_id  = slave_id;
     s_pending[port].function  = function;
     s_pending[port].start_reg = start_reg;
     s_pending[port].count     = count;
-    if (s_cache_mutex != NULL) xSemaphoreGive(s_cache_mutex);
+    if (s_cache_mutex != NULL) {
+        xSemaphoreGive(s_cache_mutex);
+    }
 }
 
 void cache_multimaster_clear_pending(uint8_t port)
 {
-    if (port >= BRIDGES_COUNT) return;
+    if (port >= BRIDGES_COUNT) {
+        return;
+    }
     /* Serialise with the other s_pending writers (enable()/clear() reset it from
      * a different task) — see on_request (corr-5). */
-    if (s_cache_mutex != NULL) xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    if (s_cache_mutex != NULL) {
+        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    }
     s_pending[port].valid = false;
-    if (s_cache_mutex != NULL) xSemaphoreGive(s_cache_mutex);
+    if (s_cache_mutex != NULL) {
+        xSemaphoreGive(s_cache_mutex);
+    }
 }
 
 void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t function,
                                    const uint8_t *data, uint16_t data_len,
                                    uint64_t timestamp_us)
 {
-    if (port >= BRIDGES_COUNT) return;
-    if (data == NULL || data_len < 4) return;
+    if (port >= BRIDGES_COUNT) {
+        return;
+    }
+    if (data == NULL || data_len < 4) {
+        return;
+    }
 
     /* Read and consume the pending request under s_cache_mutex: s_pending is
      * also reset by enable()/clear() on another task, so reading these fields
@@ -459,7 +495,9 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
     bool     match      = false;
     uint16_t start_addr = 0;
     uint16_t count      = 0;
-    if (s_cache_mutex != NULL) xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    if (s_cache_mutex != NULL) {
+        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    }
     if (s_pending[port].valid &&
         s_pending[port].slave_id == slave_id &&
         s_pending[port].function == function) {
@@ -468,14 +506,20 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         count      = s_pending[port].count;
     }
     s_pending[port].valid = false; /* consume / reject the pending request */
-    if (s_cache_mutex != NULL) xSemaphoreGive(s_cache_mutex);
+    if (s_cache_mutex != NULL) {
+        xSemaphoreGive(s_cache_mutex);
+    }
 
-    if (!match) return;
+    if (!match) {
+        return;
+    }
 
     /* data layout: [0]=slave_id [1]=FC [2]=byte_count [3..N]=data */
     uint8_t byte_count = data[2];
 
-    if (s_cache_mutex == NULL) return;
+    if (s_cache_mutex == NULL) {
+        return;
+    }
 
     /* The entry type is the function code itself (see the type bit layout). */
     const uint8_t type_value = function;
@@ -627,10 +671,14 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
                                                uint16_t address, uint16_t *value_out,
                                                uint16_t value_timeout_s)
 {
-    if (s_cache_mutex == NULL || value_out == NULL) return CACHE_LOOKUP_NOT_FOUND;
+    if (s_cache_mutex == NULL || value_out == NULL) {
+        return CACHE_LOOKUP_NOT_FOUND;
+    }
 
     /* The entry type IS the function code — no mapping needed, just validation. */
-    if (!cache_fc_is_cacheable(function_code)) return CACHE_LOOKUP_NOT_FOUND;
+    if (!cache_fc_is_cacheable(function_code)) {
+        return CACHE_LOOKUP_NOT_FOUND;
+    }
     const uint8_t type_value = function_code;
 
     cache_lookup_result_t result = CACHE_LOOKUP_NOT_FOUND;
@@ -642,7 +690,9 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
 
             /* Dense-prefix invariant (see s_pool): the first free slot ends the
              * used region — nothing beyond it can match. */
-            if (!(e->type & CACHE_USED_BIT)) break;
+            if (!(e->type & CACHE_USED_BIT)) {
+                break;
+            }
 
             if (e->slave_id                 == slave_id &&
                 (e->type & CACHE_TYPE_MASK) == type_value &&
@@ -674,7 +724,9 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
 
 void cache_multimaster_get_stats(cache_multimaster_stats_t *out)
 {
-    if (out == NULL) return;
+    if (out == NULL) {
+        return;
+    }
     memset(out, 0, sizeof(*out));
 
     if (s_cache_mutex == NULL || s_pool == NULL) {
@@ -849,10 +901,14 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
          * the mutex was released for the previous chunk. Stopping here falls
          * through to the normal terminator below, so a partial stream is ended
          * cleanly rather than torn. */
-        if (s_pool == NULL || s_pool_generation != gen) break;
+        if (s_pool == NULL || s_pool_generation != gen) {
+            break;
+        }
 
         const cache_entry_t *e = &s_pool[i];
-        if (!(e->type & CACHE_USED_BIT)) continue;
+        if (!(e->type & CACHE_USED_BIT)) {
+            continue;
+        }
 
         const char *type_str;
         switch (e->type & CACHE_TYPE_MASK) {
@@ -873,7 +929,9 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
                            (unsigned)e->value,
                            (unsigned)e->age_s);
 
-        if (len < 0 || len >= (int)sizeof(line)) continue;
+        if (len < 0 || len >= (int)sizeof(line)) {
+            continue;
+        }
 
         /* Release the mutex while sending to avoid holding it during I/O */
         xSemaphoreGive(s_cache_mutex);
@@ -931,7 +989,9 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
     /* Send the JSON object header outside the mutex */
     const char *hdr = "{\"d\":[";
     esp_err_t ret = httpd_resp_send_chunk(req, hdr, (ssize_t)strlen(hdr));
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        return ret;
+    }
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
@@ -952,13 +1012,17 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
              * a failed send means the connection is broken, so report it instead of
              * telling the caller the response went out fine. */
             ret = httpd_resp_send_chunk(req, "]}", 2);
-            if (ret != ESP_OK) return ret;
+            if (ret != ESP_OK) {
+                return ret;
+            }
             httpd_resp_send_chunk(req, NULL, 0);
             return ESP_OK;
         }
 
         const cache_entry_t *e = &s_pool[i];
-        if (!(e->type & CACHE_USED_BIT)) continue;
+        if (!(e->type & CACHE_USED_BIT)) {
+            continue;
+        }
 
         /* Single-char type tag — shorter JSON, faster JS access */
         char type_ch;
@@ -1006,7 +1070,9 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
 
     /* Closing data array + closing object + terminate chunked transfer */
     ret = httpd_resp_send_chunk(req, "]}", 2);
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        return ret;
+    }
     httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
@@ -1036,10 +1102,14 @@ esp_err_t cache_multimaster_register_handlers(httpd_handle_t server)
     esp_err_t ret;
 
     ret = httpd_register_uri_handler(server, &cache_status_uri);
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        return ret;
+    }
 
     ret = httpd_register_uri_handler(server, &cache_csv_uri);
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        return ret;
+    }
 
     return httpd_register_uri_handler(server, &cache_json_uri);
 }
@@ -1104,10 +1174,14 @@ bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_cod
                                            uint16_t address, uint16_t age_s_val)
 {
     /* The entry type IS the function code — see the type bit layout. */
-    if (!cache_fc_is_cacheable(function_code)) return false;
+    if (!cache_fc_is_cacheable(function_code)) {
+        return false;
+    }
     const uint8_t type_value = function_code;
 
-    if (s_pool == NULL) return false;
+    if (s_pool == NULL) {
+        return false;
+    }
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         if ((s_pool[i].type & CACHE_USED_BIT) &&
             s_pool[i].slave_id == slave_id &&
@@ -1124,7 +1198,9 @@ bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_cod
  * cache_age_task() uses — tests the real production code, not a copy. */
 void cache_multimaster_test_tick_age(void)
 {
-    if (s_cache_mutex == NULL) return;
+    if (s_cache_mutex == NULL) {
+        return;
+    }
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
     cache_age_tick_pool();
     xSemaphoreGive(s_cache_mutex);

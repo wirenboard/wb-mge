@@ -77,13 +77,17 @@ static unsigned port_index_to_name(unsigned index) { return index + 1; }
  * Returns BRIDGES_COUNT if the name is out of range. */
 static unsigned port_name_to_index(unsigned name)
 {
-    if (name < 1 || name > BRIDGES_COUNT) return BRIDGES_COUNT;
+    if (name < 1 || name > BRIDGES_COUNT) {
+        return BRIDGES_COUNT;
+    }
     return name - 1;
 }
 
 SNIFFER_STATIC bool crc_check(const uint8_t *data, size_t len)
 {
-    if (len < 4) return false;
+    if (len < 4) {
+        return false;
+    }
     uint16_t crc_calc = modbus_crc16(data, (uint16_t)(len - 2));
     /* modbus_crc16 returns big-endian value; RTU appends CRC low byte first */
     uint8_t crc_lo = (uint8_t)(crc_calc & 0xFF);
@@ -183,7 +187,9 @@ SNIFFER_STATIC void strip_arbitration(const uint8_t *data, size_t len, const uin
 {
     *effective = data;
     *effective_len = len;
-    if (len == 0 || data[0] != 0xFF) return;
+    if (len == 0 || data[0] != 0xFF) {
+        return;
+    }
 
     /* fast_modbus_truncate_ff only advances the pointer; it does not write
      * through it, so casting away const here is safe. */
@@ -260,13 +266,21 @@ SNIFFER_STATIC pdu_direction_t classify_direction(const uint8_t *data, size_t le
     case 0x07: /* Read Exception Status */
         /* Request: addr(1)+FC(1)+CRC(2) = 4 bytes.
          * Response: addr(1)+FC(1)+output_data(1)+CRC(2) = 5 bytes (Modbus spec §6.7). */
-        if (len == 4) return DIRECTION_REQUEST;
-        if (len == 5) return DIRECTION_RESPONSE;
+        if (len == 4) {
+            return DIRECTION_REQUEST;
+        }
+        if (len == 5) {
+            return DIRECTION_RESPONSE;
+        }
         return DIRECTION_UNKNOWN;
 
     case 0x0B: /* Get Comm Event Counter */
-        if (len == 4) return DIRECTION_REQUEST;
-        if (len == 8) return DIRECTION_RESPONSE;
+        if (len == 4) {
+            return DIRECTION_REQUEST;
+        }
+        if (len == 8) {
+            return DIRECTION_RESPONSE;
+        }
         return DIRECTION_UNKNOWN;
 
     case 0x0F: /* Write Multiple Coils  */
@@ -275,13 +289,21 @@ SNIFFER_STATIC pdu_direction_t classify_direction(const uint8_t *data, size_t le
          * Response: fixed 8 bytes.
          * Request: 9 + data[6] bytes (bytecount at offset 6).
          */
-        if (len == 8) return DIRECTION_RESPONSE;
-        if (len >= 9 && len == (size_t)(9 + data[6])) return DIRECTION_REQUEST;
+        if (len == 8) {
+            return DIRECTION_RESPONSE;
+        }
+        if (len >= 9 && len == (size_t)(9 + data[6])) {
+            return DIRECTION_REQUEST;
+        }
         return DIRECTION_UNKNOWN;
 
     case 0x11: /* Report Server ID */
-        if (len == 4) return DIRECTION_REQUEST;
-        if (len >= 5 && len == (size_t)(5 + data[2])) return DIRECTION_RESPONSE;
+        if (len == 4) {
+            return DIRECTION_REQUEST;
+        }
+        if (len >= 5 && len == (size_t)(5 + data[2])) {
+            return DIRECTION_RESPONSE;
+        }
         return DIRECTION_UNKNOWN;
 
     default:
@@ -410,8 +432,12 @@ static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
     /* Run only when at least one reason (display and/or cache) is active. */
-    if (ctx->reasons == 0) return;
-    if (len < 4) return;
+    if (ctx->reasons == 0) {
+        return;
+    }
+    if (len < 4) {
+        return;
+    }
 
     /* Strip leading 0xFF arbitration bytes unconditionally.
      * If the packet starts with 0xFF and after stripping has a valid FM header
@@ -470,7 +496,9 @@ static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size
     /* Outside the lock: the packet copy, the queue and the timers. xTimerStop/Start are
      * not spinlock-safe anyway. Order is stop -> enqueue -> start, as before: a re-latched
      * request must end up with a freshly armed timer. */
-    if (d.stop_timer) xTimerStop(ctx->resp_timer, 0);
+    if (d.stop_timer) {
+        xTimerStop(ctx->resp_timer, 0);
+    }
 
     bool enqueued = true;
     if (d.emit) {
@@ -508,7 +536,9 @@ static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size
         return;
     }
 
-    if (d.start_timer) xTimerStart(ctx->resp_timer, 0);
+    if (d.start_timer) {
+        xTimerStart(ctx->resp_timer, 0);
+    }
 }
 
 /*
@@ -539,8 +569,12 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
     /* Run only when at least one reason (display and/or cache) is active. */
-    if (ctx->reasons == 0) return;
-    if (len < 4) return;
+    if (ctx->reasons == 0) {
+        return;
+    }
+    if (len < 4) {
+        return;
+    }
 
     const uint8_t *cur     = data;
     size_t         cur_len = len;
@@ -589,7 +623,9 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
             sniffer_process_frame(port_index, frames[fi].data, frames[fi].len);
         }
 
-        if (!tail_needs_split) return;
+        if (!tail_needs_split) {
+            return;
+        }
 
         /* Continue splitting the trailing remainder on the next loop iteration.
          * tail_len < cur_len always (earlier frames consumed >= 1 byte), so this loop
@@ -666,7 +702,9 @@ SNIFFER_STATIC void sniffer_ws_dispatch(sniff_packet_t *pkt)
     httpd_handle_t srv = ws_server;
     xSemaphoreGive(ws_mutex);
 
-    if (fd == -1 || srv == NULL) return;
+    if (fd == -1 || srv == NULL) {
+        return;
+    }
 
     /* When a WS client TCP-closes without an explicit cleanup the saved
      * fd can be recycled by the httpd layer for a subsequent plain-HTTP
@@ -790,12 +828,18 @@ SNIFFER_STATIC esp_err_t sniffer_ws_handler(httpd_req_t *req)
     ws_pkt.type = HTTPD_WS_TYPE_TEXT;
 
     esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        return ret;
+    }
 
-    if (ws_pkt.len == 0 || ws_pkt.type != HTTPD_WS_TYPE_TEXT) return ESP_OK;
+    if (ws_pkt.len == 0 || ws_pkt.type != HTTPD_WS_TYPE_TEXT) {
+        return ESP_OK;
+    }
 
     uint8_t *buf = malloc(ws_pkt.len + 1);
-    if (!buf) return ESP_ERR_NO_MEM;
+    if (!buf) {
+        return ESP_ERR_NO_MEM;
+    }
 
     ws_pkt.payload = buf;
     ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
@@ -808,7 +852,9 @@ SNIFFER_STATIC esp_err_t sniffer_ws_handler(httpd_req_t *req)
     cJSON *root = cJSON_Parse((char *)buf);
     free(buf);
 
-    if (!root) return ESP_OK;
+    if (!root) {
+        return ESP_OK;
+    }
 
     cJSON *cmd  = cJSON_GetObjectItem(root, "cmd");
     cJSON *port = cJSON_GetObjectItem(root, "port");
@@ -817,8 +863,11 @@ SNIFFER_STATIC esp_err_t sniffer_ws_handler(httpd_req_t *req)
         bool enable = (strcmp(cmd->valuestring, "start") == 0);
         unsigned idx = port_name_to_index((unsigned)port->valuedouble);
         if (idx < BRIDGES_COUNT) {
-            if (enable) sniffer_enable(idx, SNIFF_REASON_DISPLAY);
-            else        sniffer_disable(idx, SNIFF_REASON_DISPLAY);
+            if (enable) {
+                sniffer_enable(idx, SNIFF_REASON_DISPLAY);
+            } else {
+                sniffer_disable(idx, SNIFF_REASON_DISPLAY);
+            }
         }
     }
 
@@ -926,7 +975,9 @@ esp_err_t sniffer_init(void)
 
 void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
 {
-    if (port_index >= BRIDGES_COUNT || serial_desc == NULL) return;
+    if (port_index >= BRIDGES_COUNT || serial_desc == NULL) {
+        return;
+    }
     // Store the descriptor in the context before publishing the callback, so the
     // UART event task never sees sniff_handler set while serial_desc is still stale.
     sniff_ctx[port_index].serial_desc = serial_desc;
@@ -939,7 +990,9 @@ void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
 
 void sniffer_detach(unsigned port_index)
 {
-    if (port_index >= BRIDGES_COUNT) return;
+    if (port_index >= BRIDGES_COUNT) {
+        return;
+    }
     /* Fully disable: clear all reasons so framing state and RX timeout are reset. */
     sniffer_disable(port_index, SNIFF_REASON_DISPLAY);
     sniffer_disable(port_index, SNIFF_REASON_CACHE);
@@ -959,7 +1012,9 @@ void sniffer_detach(unsigned port_index)
 
 void sniffer_enable(unsigned port_index, sniff_reason_t reason)
 {
-    if (port_index >= BRIDGES_COUNT) return;
+    if (port_index >= BRIDGES_COUNT) {
+        return;
+    }
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
     /* The reasons bitmask is shared with other tasks (e.g. sniffer_ws_dispatch and
@@ -979,7 +1034,9 @@ void sniffer_enable(unsigned port_index, sniff_reason_t reason)
 
 void sniffer_disable(unsigned port_index, sniff_reason_t reason)
 {
-    if (port_index >= BRIDGES_COUNT) return;
+    if (port_index >= BRIDGES_COUNT) {
+        return;
+    }
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
     /* Perform the read-modify-write and non-zero -> 0 edge detection under the
@@ -1011,6 +1068,8 @@ void sniffer_disable(unsigned port_index, sniff_reason_t reason)
 esp_err_t sniffer_register_handlers(httpd_handle_t server)
 {
     esp_err_t ret = httpd_register_uri_handler(server, &sniffer_ws_uri);
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        return ret;
+    }
     return httpd_register_uri_handler(server, &sniffer_status_uri);
 }
