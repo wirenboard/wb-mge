@@ -55,7 +55,11 @@
 // port-2 driver ENABLED and put the meander from the DI line straight onto the bus. The
 // test therefore takes the pin and drives it LOW itself, and keeps driving it LOW on the
 // way out as well (see release_clock_out_hw): the pin is handed straight over to the UART
-// when the port is re-inited, never released to an internal pull-up.
+// when the port is re-inited, instead of being released to an internal pull-up for the
+// whole re-init window (tens of ms). The one moment the pad is not driven by us is the
+// capture itself: de_pin_latch_low_output() starts with gpio_reset_pin(), so between that
+// call and the gpio_set_direction() a few register writes later the pad sits on its
+// internal pull-up — microseconds, and only while we are taking the pin.
 #define CLK_OUT_EN_PIN          SERIAL_IO_PIN_1   // DE of port 1 — raised while the test runs
 #define CLK_OUT_DE_PARK_PIN     SERIAL_IO_PIN_2   // DE of port 2 — held LOW, never raised
 
@@ -107,6 +111,15 @@ static const char* TAG = "wb_test";
 // HIGH after driving half-duplex direction control. Enabling the output driver first
 // would then briefly assert DE and put a glitch on the RS-485-1 line. Same order as
 // serial_set_tx_disabled() in serial.c.
+//
+// The gpio_reset_pin() is how the pin is taken away from its current owner (the UART's
+// GPIO matrix routing, or a previous run of this test), and it costs a micro-window: the
+// pad is left in GPIO_MODE_DISABLE with the internal pull-up on until the direction is set
+// a few register writes later. So a DE line that we were already holding LOW dips
+// driven-LOW -> weakly-HIGH -> driven-LOW when the test is re-entered. That is a handful of
+// microseconds, versus the tens of ms the pad would spend pulled up if we reset it on the
+// way out instead (which is why release_clock_out_hw() does not) — and it is the same idiom
+// serial.c uses, so it stays as is.
 static void de_pin_latch_low_output(gpio_num_t pin)
 {
     gpio_reset_pin(pin);
@@ -163,9 +176,14 @@ static void release_clock_out_hw(void)
     // Holding the pin costs nothing: DE=0 is receive mode, i.e. the transceiver is not
     // driving the bus — the safe state. uart_set_pin() takes the pin back the moment the
     // port is re-inited; if the port stays DISABLED in NVS, the pin simply stays LOW, which
-    // is exactly what we want. Re-entering the test is unaffected either: the park in
+    // is exactly what we want. Re-entering the test still works: the park in
     // de_pin_latch_low_output() starts with gpio_reset_pin(), so it re-acquires the pin no
-    // matter who owns it by then — the UART, or us still holding it LOW.
+    // matter who owns it by then — the UART, or us still holding it LOW. That re-acquire is
+    // not perfectly seamless: the reset releases the pad to the internal pull-up for the few
+    // register writes until the direction is set again, so on a second entry the line dips
+    // driven-LOW -> weakly-HIGH -> driven-LOW (microseconds). We accept that: it is the price
+    // of the standard capture idiom, and it is orders of magnitude shorter than the tens of ms
+    // a gpio_reset_pin() here, on the exit path, would leave the pad pulled up for.
 }
 
 

@@ -244,12 +244,19 @@ def test_clock_out_keeps_rs485_2_de_low(api):
             assert bus.get("D15") == 1, \
                 f"RS-485-2 DE (G15) must be an OUTPUT once the UART owns it, D15 == {bus.get('D15')}"
 
-            # The invariant: the pin is never a released pad. wb_test.c must not
-            # gpio_reset_pin() it on the way out — that would put it in GPIO_MODE_DISABLE
-            # with the internal pull-up on, weakly asserting DE (= keying the driver on a
-            # bus we do not own) for the whole re-init window, with no external pulldown on
-            # WB-MGU to fight it. A released pad shows up on the bus as ("D15", 0), so from
-            # the moment the pin is parked to the moment the UART owns it there must be none.
+            # The invariant: once parked, the pin is never released back to a pad.
+            # wb_test.c must not gpio_reset_pin() it on the way out — that would put it in
+            # GPIO_MODE_DISABLE with the internal pull-up on, weakly asserting DE (= keying
+            # the driver on a bus we do not own) for the whole re-init window (an NVS read
+            # plus a UART init, tens of ms), with no external pulldown on WB-MGU to fight it.
+            # A released pad shows up on the bus as ("D15", 0), so from the parking record
+            # to the moment the UART owns it there must be none.
+            #
+            # "Once parked" is the honest bound, not "never": taking the pin in the first
+            # place goes through gpio_reset_pin() (de_pin_latch_low_output()), which does
+            # release the pad to its internal pull-up — but only for the handful of register
+            # writes until the direction is set back to OUTPUT, and that ("D15", 0) lands
+            # BEFORE the ("G15", 0) anchor this window starts at.
             assert ("D15", 0) not in bus.events[parked_at:], \
                 "RS-485-2 DE (G15) was released to a pulled-up pad instead of being held low " \
                 "until the UART took it back"
