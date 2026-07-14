@@ -14,6 +14,17 @@ from packet_injector import PacketInjector
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
+    # Snapshot the per-port cache overlays before arming our own. The overlay is persisted to
+    # NVS and, once on, costs a 32 KB cache pool plus a sniffer on the port
+    # (SNIFF_REASON_CACHE) — state this module must not hand to the next one.
+    resp = api.get_info()
+    assert resp.status_code == 200, f"_baseline: get_info failed: {resp.status_code} {resp.text}"
+    info = resp.json()
+    original_overlays = {
+        port: bool(info.get(f"rs485_{port}", {}).get("cache_enabled", False))
+        for port in (1, 2)
+    }
+
     resp = api.update_settings({
         "cache_modbus_server_enabled": True,   # tests expect the server to be enabled
         # Distinct from the RS-485 bridge gateway ports (502/503): the firmware now
@@ -36,6 +47,18 @@ def _baseline(api):
     # transport mode, so it coexists with tcp_bridge above.
     resp = api.set_port_cache(1, True)
     assert resp.status_code == 200, f"_baseline: set_port_cache(1, True) failed: {resp.status_code} {resp.text}"
+
+    yield
+
+    # Undo the overlay this fixture armed. It used to be cleared only as a side effect of the
+    # finally blocks in test_cache_multimaster / test_cache_json_fields, so running a subset
+    # (-k test_cache_endpoints), or having those two fail or skip, left the overlay on and
+    # leaked the cache pool plus the port-1 sniffer into every module that ran afterwards.
+    for port, was_enabled in original_overlays.items():
+        resp = api.set_port_cache(port, was_enabled)
+        assert resp.status_code == 200, \
+            f"_baseline teardown: set_port_cache({port}, {was_enabled}) failed: {resp.status_code} {resp.text}"
+    print(f"✓ _baseline: cache overlays restored to {original_overlays}")
 
 
 def test_cache_endpoints(api):
