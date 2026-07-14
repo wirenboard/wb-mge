@@ -182,7 +182,8 @@ esp_err_t transparent_tcp_init_port(unsigned index, serial_config_t *config,
             err = tcp_server_init(port, process_data_from_tcp, tcp_desc);
             if (err == ESP_OK) {
                 // Transparent mode routes to a single last_client_sock, so admit
-                // exactly one client at a time; a new connection preempts the previous.
+                // exactly one client at a time; while one is connected, a new
+                // connection is rejected rather than allowed to preempt it.
                 // Guard on success: on failure *tcp_desc is not set by tcp_server_init.
                 tcp_server_set_max_connections(*tcp_desc, 1);
                 // Invalidate last_client_sock when its connection closes, so a serial

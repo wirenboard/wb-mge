@@ -13,8 +13,9 @@
  * and cache_modbus_server_test_get_slot_exhausted() ended up implemented but never
  * declared in the header at all.)
  *
- * cache_modbus_server.c includes this file under __unittest_env__ so that its
- * definitions have prototypes (-Wmissing-prototypes).
+ * cache_modbus_server_shims.c (which #includes cache_modbus_server.c to reach
+ * its statics) includes this file so the shim definitions have prototypes
+ * (-Wmissing-prototypes). The production module itself no longer references it.
  */
 
 #ifdef __unittest_env__
