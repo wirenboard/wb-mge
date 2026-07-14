@@ -1246,6 +1246,67 @@ void test_migrate_port_mode_existing_value_preserved(void)
                                      "Existing port_mode_1 must be preserved, not overwritten by migration");
 }
 
+// Interrupted migration: port_mode_1 was already written by an earlier boot, but the
+// power was lost before the stale legacy bridge_mode_1 could be erased (they are two
+// independent NVS commits). The cleanup must therefore be idempotent and run on every
+// boot, not only on the boot that derives port_mode: set_defaults() only fills MISSING
+// keys, so an invalid bridge_mode left here would stay in NVS forever and
+// string_to_bridge_mode() would silently map it to BRIDGE_MODE_DISABLED, bringing a
+// tcp_bridge port up with no serial_desc.
+void test_migrate_port_mode_stale_legacy_cleaned_after_reboot(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - stale legacy cleaned on a later boot");
+    LOG_MESSAGE();
+
+    // NVS as an interrupted migration would leave it: port_mode_1 derived and saved,
+    // the invalid legacy bridge_mode_1 still there.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_DISABLED_STR),
+                                  "Pre-seeding already-migrated port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "disabled"),
+                                  "Pre-seeding stale legacy bridge_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_DISABLED_STR, value,
+                                     "An already-migrated port_mode must not be overwritten by the cleanup");
+
+    // The stale record is erased and set_defaults() recreates the key with the default
+    // role, so no invalid bridge_mode survives the reboot.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
+                                     "A stale legacy bridge_mode left by an interrupted migration must be cleaned up");
+}
+
+// Same interrupted-migration shape, but the surviving legacy value is still a VALID
+// role: the cleanup must leave it alone (erasing it would let set_defaults() reset the
+// user's role to "server"). Guards the idempotent cleanup against over-reach.
+void test_migrate_port_mode_valid_legacy_kept_after_reboot(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - valid legacy role kept on a later boot");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_TCP_BRIDGE_STR),
+                                  "Pre-seeding already-migrated port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, BRIDGE_MODE_CLIENT_STR),
+                                  "Pre-seeding valid bridge_mode_1 role should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_CLIENT_STR, value,
+                                     "A valid bridge role must survive the idempotent cleanup");
+}
+
 // Fresh device (neither key present). The migration is a no-op and the default
 // "tcp_bridge" is written by setting_items_set_defaults().
 void test_migrate_port_mode_fresh_device_default(void)
@@ -1311,6 +1372,8 @@ int main(void)
     RUN_TEST(test_migrate_port_mode_legacy_client);
     RUN_TEST(test_migrate_port_mode_legacy_unknown_value);
     RUN_TEST(test_migrate_port_mode_existing_value_preserved);
+    RUN_TEST(test_migrate_port_mode_stale_legacy_cleaned_after_reboot);
+    RUN_TEST(test_migrate_port_mode_valid_legacy_kept_after_reboot);
     RUN_TEST(test_migrate_port_mode_fresh_device_default);
 
     return UNITY_END();

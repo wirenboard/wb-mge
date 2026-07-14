@@ -71,8 +71,20 @@ static void settings_update_task(void *arg)
 
 esp_err_t settings_update(void)
 {
-    update_rs485_control();
-    update_io_bus_control();
+    // The factory clock_out test owns the RS-485 hardware while it runs: it holds the
+    // MIO controller in reset (it hangs off the same RS-485-2 pair the LEDC drives) and
+    // forces V-out on. Re-applying the settings here would undo both — io_bus_enabled
+    // defaults to true, so ANY POST /settings would take MIO out of reset on top of the
+    // running waveform, and the configured vout value would override the test's. Skip
+    // them while the ports are frozen, exactly as the port re-init below is skipped.
+    // wb_test's exit path calls update_rs485_control() + update_io_bus_control()
+    // itself, so settings written during the test are applied when the test ends.
+    if (!port_manager_ports_frozen()) {
+        update_rs485_control();
+        update_io_bus_control();
+    }
+    // tx_disabled is a pure software flag on the serial layer (no GPIO expander, no
+    // pins the LEDC owns), so it stays unconditional.
     update_serial_tx_disabled();
 
     if (update_task_handle != NULL) {
