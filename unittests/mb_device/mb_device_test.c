@@ -351,7 +351,7 @@ void test_fw_numeric_rc_suffix(void)
     TEST_ASSERT_EQUAL_HEX16(0x0301, resp_reg(buf, 0));
 }
 
-/* ---- MBDEV-U-008: FC04 statistics block (337..343) ----------------------- */
+/* ---- MBDEV-U-008: FC04 statistics block (528..534) ----------------------- */
 
 /* packets=120, last_age=7, map_age=60, devices=3, cache timeout=42.
  * poll ppm = 120*60/60 = 120. */
@@ -367,33 +367,49 @@ void test_stats_block(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             337u, 7u, 0u, buf, &exc);
+                                             528u, 7u, 0u, buf, &exc);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 14u, n);
-    TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 0)); /* 337 pkt proc hi      */
-    TEST_ASSERT_EQUAL_UINT16(120u, resp_reg(buf, 1)); /* 338 pkt proc lo      */
-    TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 2)); /* 339 last pkt age hi  */
-    TEST_ASSERT_EQUAL_UINT16(7u,   resp_reg(buf, 3)); /* 340 last pkt age lo  */
-    TEST_ASSERT_EQUAL_UINT16(3u,   resp_reg(buf, 4)); /* 341 devices on bus   */
-    TEST_ASSERT_EQUAL_UINT16(120u, resp_reg(buf, 5)); /* 342 poll freq ppm    */
-    TEST_ASSERT_EQUAL_UINT16(42u,  resp_reg(buf, 6)); /* 343 cache timeout    */
+    TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 0)); /* 528 pkt proc hi      */
+    TEST_ASSERT_EQUAL_UINT16(120u, resp_reg(buf, 1)); /* 529 pkt proc lo      */
+    TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 2)); /* 530 last pkt age hi  */
+    TEST_ASSERT_EQUAL_UINT16(7u,   resp_reg(buf, 3)); /* 531 last pkt age lo  */
+    TEST_ASSERT_EQUAL_UINT16(3u,   resp_reg(buf, 4)); /* 532 devices on bus   */
+    TEST_ASSERT_EQUAL_UINT16(120u, resp_reg(buf, 5)); /* 533 poll freq ppm    */
+    TEST_ASSERT_EQUAL_UINT16(42u,  resp_reg(buf, 6)); /* 534 cache timeout    */
 }
 
-/* Register 336 (0x0150) must stay undefined: it is the last register of the
- * standard WB bootloader-version field, so the gateway must not answer it. */
+/* The standard WB bootloader-version field is EIGHT registers read from address
+ * 330 (`modbus_client -t0x03 -r330 -c8`), i.e. 330..337. The gateway must claim
+ * NONE of them — on either function code, since that read uses FC03. */
 void test_bootloader_version_slot_not_claimed(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-008b: reg 336 (bootloader-version slot) is not claimed");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-008b: regs 330..337 (bootloader-version field) are not claimed");
     LOG_MESSAGE();
 
     uint8_t buf[260];
-    uint8_t exc = 0;
-    size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             336u, 1u, 0u, buf, &exc);
 
-    TEST_ASSERT_EQUAL_UINT(0u, n);
-    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
+    for (uint16_t addr = 330u; addr <= 337u; addr++) {
+        uint8_t exc = 0;
+        size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                                 addr, 1u, 0u, buf, &exc);
+        TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "FC04 must not answer a bootloader-version register");
+        TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
+
+        exc = 0;
+        n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                          addr, 1u, 0u, buf, &exc);
+        TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "FC03 must not answer a bootloader-version register");
+        TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
+    }
+
+    /* The whole 8-register field must fail as one read, the way WB tooling issues it. */
+    uint8_t exc_field = 0;
+    size_t n_field = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                                   330u, 8u, 0u, buf, &exc_field);
+    TEST_ASSERT_EQUAL_UINT(0u, n_field);
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc_field);
 }
 
 /* ---- MBDEV-U-009: FC04 RAM diagnostics (65505, 65506) -------------------- */
@@ -891,7 +907,7 @@ void test_reboot_reason_all(void)
     }
 }
 
-/* ---- MBDEV-U-027: poll-freq edge cases (REG_POLL_FREQ_PPM = 342) --------- */
+/* ---- MBDEV-U-027: poll-freq edge cases (REG_POLL_FREQ_PPM = 533) --------- */
 
 /* (a) map_age_s == 0 -> else branch -> 0.
  * (b) packets*60/map_age > 0xFFFF -> saturation clamp -> 0xFFFF. */
@@ -907,13 +923,13 @@ void test_poll_freq_edges(void)
     /* (a) map_age_s == 0 -> 0 (avoid divide-by-zero else branch). */
     mock_cache_stats_set(1000u, 0u, 0u, 0u);
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  342u, 1u, 0u, buf, &exc);
+                                  533u, 1u, 0u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT16(0u, resp_reg(buf, 0));
 
     /* (b) packets*60/map_age = 1e6*60/1 = 6e7 > 0xFFFF -> clamps to 0xFFFF. */
     mock_cache_stats_set(1000000u, 0u, 1u, 0u);
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  342u, 1u, 0u, buf, &exc);
+                                  533u, 1u, 0u, buf, &exc);
     TEST_ASSERT_EQUAL_HEX16(0xFFFFu, resp_reg(buf, 0));
 }
 

@@ -74,18 +74,22 @@
 #define REG_FW_VERSION_BE_HI  326u  /* 0x0146 big-endian word order, high word    */
 #define REG_FW_VERSION_BE_LO  327u  /* 0x0147 big-endian word order, low word     */
 
-/* Statistics block. Register 336 (0x0150) is deliberately left out: it is the
- * last register of the standard WB bootloader-version field (330..336,
- * 0x014A..0x0150), so reusing it would clash with the common WB register map.
- * The cache timeout therefore sits at 343, right after the rest of the block,
- * which keeps 337..343 contiguous for a single-request read. */
-#define REG_PKT_PROC_HI       337u  /* 0x0151 */
-#define REG_PKT_PROC_LO       338u  /* 0x0152 */
-#define REG_LAST_PKT_AGE_HI   339u  /* 0x0153 */
-#define REG_LAST_PKT_AGE_LO   340u  /* 0x0154 */
-#define REG_DEVICES_ON_BUS    341u  /* 0x0155 */
-#define REG_POLL_FREQ_PPM     342u  /* 0x0156 */
-#define REG_CACHE_TIMEOUT     343u  /* 0x0157 */
+/* The standard WB bootloader-version field occupies 330..337 (0x014A..0x0151):
+ * it is EIGHT registers read from address 330, which is how the WB tooling reads
+ * it (`modbus_client -t0x03 -r330 -c8`, see the Bootloader page on the WB wiki).
+ * The whole field is therefore left undefined here — nothing of ours may live in
+ * it, and least of all on FC03, which is the function code that read uses.
+ *
+ * The statistics block consequently sits well clear of the common WB register map,
+ * at 528..534 (0x0210..0x0216) — seven contiguous registers, readable in one
+ * request. */
+#define REG_PKT_PROC_HI       528u  /* 0x0210 */
+#define REG_PKT_PROC_LO       529u  /* 0x0211 */
+#define REG_LAST_PKT_AGE_HI   530u  /* 0x0212 */
+#define REG_LAST_PKT_AGE_LO   531u  /* 0x0213 */
+#define REG_DEVICES_ON_BUS    532u  /* 0x0214 */
+#define REG_POLL_FREQ_PPM     533u  /* 0x0215 */
+#define REG_CACHE_TIMEOUT     534u  /* 0x0216 */
 
 #define REG_MAX_STACK_USED    65504u /* 0xFFE0 */
 #define REG_FREE_RAM          65505u /* 0xFFE1 */

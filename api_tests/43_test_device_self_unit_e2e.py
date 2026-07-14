@@ -25,9 +25,9 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
                324-325 numeric version LE word order (324=low);
                326-327 numeric version BE word order (326=high);
                65504..65508 RAM/stack/reboot diagnostics;
-               337-338 packets u32; 339-340 last-pkt-age u32;
-               341 devices_on_bus; 342 bus poll ppm; 343 cache timeout s.
-               (336 is left undefined: last register of the WB bootloader-version field.)
+               528-529 packets u32; 530-531 last-pkt-age u32;
+               532 devices_on_bus; 533 bus poll ppm; 534 cache timeout s.
+               (330-337 stay undefined: the 8-register WB bootloader-version field.)
                290-301 signature string (MEM_8: 1 char/reg, in the LOW byte).
   FC03 holding: the SAME map. FC03 and FC04 share one address space — every
                address above, the signature included, answers on both function
@@ -492,7 +492,7 @@ def test_self_unit_ram_stack_diagnostics_kb(api, gateway_slave):
 
 @pytest.mark.qemu
 def test_self_unit_stats_block(api, gateway_slave):
-    """FC04 337..343 statistics block at unit 0xFF responds with sane u16 values.
+    """FC04 528..534 statistics block at unit 0xFF responds with sane u16 values.
 
     In gateway-only mode the multimaster cache is typically inactive, so the
     counters may legitimately be 0. The point of this test is that the whole
@@ -500,14 +500,14 @@ def test_self_unit_stats_block(api, gateway_slave):
     (devices_on_bus <= 247, cache timeout matches /settings when present).
     """
     _tid, unit_id, resp_fc, payload = read_self_regs(
-        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 337, 7
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 528, 7
     )
     assert not (resp_fc & 0x80), \
         f"stats block read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID, \
         f"echoed unit_id mismatch: expected 0x{SELF_UNIT_ID:02X}, got 0x{unit_id:02X}"
     regs = regs_from_payload(payload)
-    assert len(regs) == 7, f"expected 7 registers (337..343), got {regs}"
+    assert len(regs) == 7, f"expected 7 registers (528..534), got {regs}"
     pkt_hi, pkt_lo, age_hi, age_lo, devices, poll_ppm, cache_timeout = regs
 
     # u32 reconstructions (MSW-first). >= 0 is always true for a u16 combine —
@@ -518,21 +518,21 @@ def test_self_unit_stats_block(api, gateway_slave):
     assert age >= 0
 
     assert 0 <= devices <= 247, (
-        f"devices_on_bus reg 341 = {devices} out of range 0..247 (Modbus slave addresses)"
+        f"devices_on_bus reg 532 = {devices} out of range 0..247 (Modbus slave addresses)"
     )
     assert cache_timeout < 0xFFFF, (
-        f"cache timeout reg 343 = {cache_timeout} == 0xFFFF — implausible for a u16 setting"
+        f"cache timeout reg 534 = {cache_timeout} == 0xFFFF — implausible for a u16 setting"
     )
 
     # Cross-check against /settings when the key is present.
     cfg_timeout = api.get_settings().json().get("cache_value_timeout_s")
     if cfg_timeout is not None:
         assert cache_timeout == cfg_timeout, (
-            f"cache timeout reg 343 = {cache_timeout} != /settings "
+            f"cache timeout reg 534 = {cache_timeout} != /settings "
             f"cache_value_timeout_s = {cfg_timeout}"
         )
 
-    print("✓ self-unit stats block 337-343: timeout=%d packets=%d last_pkt_age=%d devices=%d poll_ppm=%d"
+    print("✓ self-unit stats block 528-534: timeout=%d packets=%d last_pkt_age=%d devices=%d poll_ppm=%d"
           % (cache_timeout, packets, age, devices, poll_ppm))
 
 
@@ -550,6 +550,38 @@ def test_self_unit_undefined_addr_exception(api, gateway_slave):
     assert payload[0] == 0x02, \
         f"expected exception code 0x02 (ILLEGAL_ADDRESS), got 0x{payload[0]:02X}"
     print("✓ self-unit FC04 addr=500 (undefined) -> exception 0x02")
+
+
+@pytest.mark.qemu
+def test_self_unit_bootloader_field_not_claimed(api, gateway_slave):
+    """FC03 330..337 (the WB bootloader-version field) is NOT claimed -> exception 0x02.
+
+    WB tooling reads the current bootloader version as EIGHT holding registers from
+    address 330 (`modbus_client -t0x03 -r330 -c8`), so the field spans 330..337 and
+    the gateway must answer none of it. The statistics block used to start at 337,
+    inside this field, and after the FC03/FC04 map was shared that register began
+    answering on the very function code the bootloader read uses. It now lives at
+    528..534. This is the regression guard for that.
+    """
+    _tid, _unit_id, resp_fc, payload = read_self_regs(
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x03, 330, 8
+    )
+    assert resp_fc & 0x80, (
+        "the bootloader-version field 330..337 must not be served by the gateway, "
+        f"but FC03 returned a valid response FC=0x{resp_fc:02X}"
+    )
+    assert payload[0] == 0x02, \
+        f"expected exception code 0x02 (ILLEGAL_ADDRESS), got 0x{payload[0]:02X}"
+
+    # 337 alone: the register the statistics block used to squat on.
+    _tid, _unit_id, resp_fc, payload = read_self_regs(
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x03, 337, 1
+    )
+    assert resp_fc & 0x80, \
+        f"register 337 is inside the bootloader-version field but FC03 answered it: 0x{resp_fc:02X}"
+    assert payload[0] == 0x02, \
+        f"expected exception code 0x02 (ILLEGAL_ADDRESS), got 0x{payload[0]:02X}"
+    print("✓ self-unit FC03 330-337 (bootloader-version field) -> exception 0x02")
 
 
 @pytest.mark.qemu
@@ -658,9 +690,9 @@ def test_self_unit_via_cache_server_uptime(api, cache_server):
 
 @pytest.mark.qemu
 def test_self_unit_cache_timeout_reg(api, cache_server):
-    """FC04 343 (cache timeout) at unit 0xFF reflects cache_value_timeout_s.
+    """FC04 534 (cache timeout) at unit 0xFF reflects cache_value_timeout_s.
 
-    Sets a known cache_value_timeout_s (33), reads register 343 on the cache
+    Sets a known cache_value_timeout_s (33), reads register 534 on the cache
     server, asserts they match, then restores the original timeout.
     """
     host, port = cache_server
@@ -676,16 +708,16 @@ def test_self_unit_cache_timeout_reg(api, cache_server):
         assert resp.status_code == 200 and resp.json().get("success") is True, \
             f"failed to set cache_value_timeout_s={KNOWN_TIMEOUT}: {resp.status_code} {resp.text}"
 
-        _tid, unit_id, resp_fc, payload = read_self_regs(host, port, 0x04, 343, 1)
+        _tid, unit_id, resp_fc, payload = read_self_regs(host, port, 0x04, 534, 1)
         assert not (resp_fc & 0x80), \
             f"cache timeout read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
         assert unit_id == SELF_UNIT_ID
         regs = regs_from_payload(payload)
         assert len(regs) == 1, f"expected 1 register, got {regs}"
         assert regs[0] == KNOWN_TIMEOUT, (
-            f"cache timeout reg 343 mismatch: got {regs[0]}, expected {KNOWN_TIMEOUT}"
+            f"cache timeout reg 534 mismatch: got {regs[0]}, expected {KNOWN_TIMEOUT}"
         )
-        print(f"✓ self-unit cache timeout FC04 343 == cache_value_timeout_s={KNOWN_TIMEOUT}")
+        print(f"✓ self-unit cache timeout FC04 534 == cache_value_timeout_s={KNOWN_TIMEOUT}")
     finally:
         restore = api.update_settings({"cache_value_timeout_s": original_timeout})
         # print instead of assert: an assert in teardown would mask a test failure.

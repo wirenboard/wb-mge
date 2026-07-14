@@ -87,11 +87,11 @@ TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (in
 | 323           | 0x0143        | 1    | s16    | Firmware version: SUFFIX (+N for `+wbN`, −N for `-rcN`, 0 if none)  |
 | 324–325       | 0x0144–0x0145 | 2    | u32    | Numeric firmware version (little-endian word order: 324 = low word) |
 | 326–327       | 0x0146–0x0147 | 2    | u32    | Numeric firmware version (big-endian word order: 326 = high word)   |
-| 337–338       | 0x0151–0x0152 | 2    | u32    | Packets processed (since last cache reset)                          |
-| 339–340       | 0x0153–0x0154 | 2    | u32    | Seconds since the last packet on the bus                            |
-| 341           | 0x0155        | 1    | u16    | Devices currently on the bus (unique slave_ids in cache)            |
-| 342           | 0x0156        | 1    | u16    | Average bus poll rate, polls/min                                    |
-| 343           | 0x0157        | 1    | u16    | Cache value timeout, seconds                                        |
+| 528–529       | 0x0210–0x0211 | 2    | u32    | Packets processed (since last cache reset)                          |
+| 530–531       | 0x0212–0x0213 | 2    | u32    | Seconds since the last packet on the bus                            |
+| 532           | 0x0214        | 1    | u16    | Devices currently on the bus (unique slave_ids in cache)            |
+| 533           | 0x0215        | 1    | u16    | Average bus poll rate, polls/min                                    |
+| 534           | 0x0216        | 1    | u16    | Cache value timeout, seconds                                        |
 | 65504         | 0xFFE0        | 1    | u16    | Maximum used stack, KB (0 = stack corrupted / unknown)              |
 | 65505         | 0xFFE1        | 1    | u16    | Free RAM, KB                                                        |
 | 65506         | 0xFFE2        | 1    | u16    | Used RAM, KB                                                        |
@@ -119,9 +119,10 @@ TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (in
 - **Reboot reason** (65508): 1 — LPWR (brownout / wake from sleep), 2 — WWDG (interrupt
   watchdog), 3 — IWDG (task / generic watchdog), 4 — SFT (software reset / panic), 5 — POR
   (power-on), 6 — PIN (external reset), 0 — unknown. Mapped from `esp_reset_reason()`.
-- **Bus statistics** (337–343) come from the multimaster cache; with the cache inactive these
-  fields read as 0. Register 336 (0x0150) is intentionally skipped: it is the last register of
-  the standard Wiren Board bootloader-version field (330–336), so it is left undefined here.
+- **Bus statistics** (528–534) come from the multimaster cache; with the cache inactive these
+  fields read as 0. The block sits at 528 to stay clear of the Wiren Board common register map —
+  in particular of the bootloader-version field, which is **8 holding registers from 330**
+  (330–337, `modbus_client -t0x03 -r330 -c8`) and is left undefined here.
 - Reading a range where at least one address is undefined returns exception **0x02** (illegal
   data address); a function other than FC03/FC04 returns exception **0x01** (illegal function).
 
