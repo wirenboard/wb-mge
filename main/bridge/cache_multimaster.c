@@ -251,7 +251,7 @@ void cache_multimaster_enable(void)
                                     NULL, tskIDLE_PRIORITY + 1, &s_age_task);
         if (rc != pdPASS) {
             /* Without the aging task age_s never increments, so the lookup
-             * staleness check (age_s > timeout) can never fire and stale values
+             * staleness check (age_s >= timeout) can never fire and stale values
              * would be served as fresh forever (mem-exhaust-2). Refuse to enable
              * a cache that cannot expire its data: roll back the pool allocation
              * and leave the cache disabled so callers fall back to live polling. */
