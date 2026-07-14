@@ -145,10 +145,15 @@ static void stop_clock_out(void)
     // DE lines back to the UART. Note that gpio_reset_pin() does not leave a pin
     // floating: it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON,
     // so a released DE pin is weakly pulled towards 1 — the "driver enabled" level.
-    // What actually keeps the transceiver in receive mode in this window is the
-    // external pulldown (R4) on the DE line, which overpowers the internal pull-up.
-    // The window is short (apply_settings re-inits the UART right after), and
-    // start_clock_out() re-latches the DE pins LOW before driving them rather than
+    // On the port-2 DE line the external pulldown (R4 on U4.DE) overpowers that
+    // internal pull-up and holds the transceiver in receive mode for the whole
+    // window. No such external pulldown is documented for the port-1 DE line, so the
+    // guarantee there is weaker: its driver may be weakly enabled until the UART
+    // re-attaches. What bounds the exposure is the window itself — it is short
+    // (apply_settings re-inits the UART right after) and the released TX pin is
+    // pulled to the idle level the UART holds between frames, so a briefly-enabled
+    // driver idles the line rather than corrupting traffic. On the way back in,
+    // start_clock_out() re-latches both DE pins LOW before driving them rather than
     // trusting whatever the previous owner left in the output latch.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
