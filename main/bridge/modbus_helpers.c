@@ -1,5 +1,7 @@
 #include "modbus_helpers.h"
 
+#include "freertos/FreeRTOS.h"
+
 #include <string.h>
 #include <esp_log.h>
 
@@ -210,4 +212,25 @@ void modbus_pdu_parse_read_request(const uint8_t *pdu, uint16_t *start_addr, uin
 {
     *start_addr = ((uint16_t)pdu[0] << 8) | pdu[1];
     *count      = ((uint16_t)pdu[2] << 8) | pdu[3];
+}
+
+// Reserve for packet reception with silence interval and Fast Modbus arbitration (in frames)
+#define MODBUS_RTU_RECV_RESERVE_LEN     10
+// Bits per UART frame: 8 data + start + 2 stop
+#define RS485_BITS_PER_FRAME            11
+// Extra reserve on the reception timeout, compensating FreeRTOS scheduling and log lag
+#define MODBUS_RTU_RECV_TOUT_RESERVE_MS 30
+
+unsigned modbus_rtu_response_timeout_ticks(unsigned baudrate)
+{
+    static const unsigned max_resp_len = MODBUS_RTU_MAX_FRAME_LEN + MODBUS_RTU_RECV_RESERVE_LEN;
+
+    unsigned bytes_rate = baudrate / RS485_BITS_PER_FRAME;
+    if (bytes_rate == 0) {
+        bytes_rate = 1;  /* guard against division by zero at very low baudrates */
+    }
+    unsigned timeout_ms = ((1000 * max_resp_len) + bytes_rate - 1) / bytes_rate;
+    timeout_ms += MODBUS_RTU_RECV_TOUT_RESERVE_MS;
+
+    return (timeout_ms * configTICK_RATE_HZ + 999) / 1000;
 }

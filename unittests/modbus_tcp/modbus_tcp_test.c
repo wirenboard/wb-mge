@@ -381,63 +381,6 @@ void test_push_bogus_length_too_small(void)
         "resync must retain the sub-header tail after flen < sizeof(header)");
 }
 
-/* ---- MBTCP-U-019: calc_response_timeout_ticks — 9600 baud >= 300 ms ------ */
-/* At 9600 baud, 11 bits/frame, 266 byte max response:
- *   bytes_rate = 9600/11 = 872 (integer)
- *   timeout_ms = ceil(266000/872) = 306 ms -> +30 reserve = 336 ms
- *   ticks = ceil(336*500/1000) = 168 ticks (configTICK_RATE_HZ=500)
- * 168 ticks * 2 ms/tick = 336 ms >= 300 ms: gateway must not time out too early. */
-void test_calc_timeout_9600_baud(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "MBTCP-U-019: calc_response_timeout_ticks(9600) >= 150 ticks (>= 300 ms at 500 Hz)");
-    LOG_MESSAGE();
-
-    unsigned ticks = modbus_tcp_test_calc_timeout(9600);
-    /* At configTICK_RATE_HZ=500, 300 ms = 150 ticks. */
-    TEST_ASSERT_GREATER_OR_EQUAL_UINT_MESSAGE(150u, ticks,
-        "9600 baud timeout must be at least 300 ms worth of ticks");
-    /* Sanity upper bound: must not exceed 10 seconds (5000 ticks at 500 Hz). */
-    TEST_ASSERT_LESS_THAN_UINT_MESSAGE(5000u, ticks,
-        "9600 baud timeout must be sane (< 10 s)");
-    printf("  9600 baud -> %u ticks (%u ms)\n", ticks, ticks * 2);
-}
-
-/* ---- MBTCP-U-020: calc_response_timeout_ticks — 115200 baud > 0 ---------- */
-/* At 115200 baud the timeout is much smaller but must still be positive so
- * that xEventGroupWaitBits() actually waits and does not immediately expire. */
-void test_calc_timeout_115200_baud(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "MBTCP-U-020: calc_response_timeout_ticks(115200) > 0");
-    LOG_MESSAGE();
-
-    unsigned ticks = modbus_tcp_test_calc_timeout(115200);
-    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(0u, ticks,
-        "115200 baud timeout must be > 0 ticks");
-    printf("  115200 baud -> %u ticks (%u ms)\n", ticks, ticks * 2);
-}
-
-/* ---- MBTCP-U-024: calc_response_timeout_ticks — baudrate=1, no division by zero -- */
-/* At baudrate=1, bytes_rate = 1/11 = 0 (integer division), which would cause
- * division by zero without the guard added in the production code fix.
- * After the fix (bytes_rate clamped to 1), the function must return a positive
- * (and very large) timeout without crashing. */
-void test_calc_timeout_very_low_baud(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "MBTCP-U-024: calc_response_timeout_ticks(1) must not divide by zero, returns > 0");
-    LOG_MESSAGE();
-
-    unsigned ticks = modbus_tcp_test_calc_timeout(1);
-    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(0u, ticks,
-        "baudrate=1 must return a positive timeout (no division by zero)");
-    printf("  baudrate=1 -> %u ticks\n", ticks);
-}
-
 /* ---- MBTCP-U-021: one-pass fallback — declared length > actual bytes ------ */
 /* In separate_and_push_one_pass(), when the declared req_len + pos > len the
  * loop breaks and the frame is skipped (not pushed, no crash). */
@@ -748,9 +691,6 @@ int main(void)
 
     RUN_TEST(test_push_bogus_length_too_small);
 
-    RUN_TEST(test_calc_timeout_9600_baud);
-    RUN_TEST(test_calc_timeout_115200_baud);
-    RUN_TEST(test_calc_timeout_very_low_baud);
     RUN_TEST(test_one_pass_fallback_short_data);
     RUN_TEST(test_one_pass_fallback_invalid_pid);
 

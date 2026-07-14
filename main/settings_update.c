@@ -107,15 +107,94 @@ static void cache_modbus_server_acquire(int released_port)
 }
 
 
+// ── HTTP server ──────────────────────────────────────────────────────────────
+// http_server provides its own check (http_server_check_settings_changed) and init/deinit, but
+// not the release/acquire pair the two-phase apply needs, so it is built here on top of that
+// public API — the same shape as the cache Modbus server's above.
+
+// Release half: give up the web UI's listening socket, so a subsystem that is moving onto
+// web_port can bind it in the acquire phase.
+static void http_server_release(void)
+{
+    esp_err_t ret = http_server_deinit();
+    if (ret != ESP_OK) {
+        // Defensive only: http_server_deinit() drops its handle whatever httpd_stop() says (and
+        // httpd_stop() can only fail on a NULL handle, which cannot happen here). So the server is
+        // NOT listening any more; we simply do not know what became of its socket.
+        ESP_LOGE(TAG, "http_server_deinit failed: %s", esp_err_to_name(ret));
+    }
+}
+
+// Acquire half: start the web UI on the port NVS asks for.
+static void http_server_acquire(void)
+{
+    esp_err_t ret = http_server_init();
+    if (ret != ESP_OK) {
+        // The result used to be discarded entirely, which is how a settings write could take the
+        // web interface down without a trace in the log.
+        ESP_LOGE(TAG, "http_server_init failed: %s", esp_err_to_name(ret));
+    }
+}
+
+
 static void settings_update_task(void *arg)
 {
     uint32_t flags = (uint32_t)(uintptr_t)arg;
     ESP_LOGI(TAG, "Updating settings...");
 
+    if (flags & (HTTP_SERVER_FLAG | ETHERNET_FLAG | WIFI_FLAG)) {
+        // Small delay to let the response to the current POST /settings reach the client. It has
+        // to happen BEFORE anything is torn down, because the web server itself is now released in
+        // the phase below: a delay placed after the teardown would come too late, and the client's
+        // POST would be answered by a closed socket.
+        vTaskDelay(pdMS_TO_TICKS(HTTP_NETWORK_UPDATE_DELAY_MS));
+    }
+
+    // Two-phase apply for every subsystem that owns a TCP listening socket — the web server
+    // (web_port), the cache Modbus TCP server and the RS-485 gateways: FIRST all of them give up
+    // the sockets that have to change (release), THEN all of them bind the new ones (acquire).
+    //
+    // Applying subsystem by subsystem could not express a port hand-over. Two reproducible ways to
+    // kill a port with a single POST /settings:
+    //   - {web_port: 8080, rs485_1.bridge.port: 80} while web=80 and bridge1=8080. Validation
+    //     compares the NEW values and passes. The port was then re-initialized while httpd was
+    //     still listening on 80 -> EADDRINUSE, and port_manager_apply_settings() has no rollback,
+    //     so RS-485-1 stayed dead until the next settings write or a reboot.
+    //   - {cache_modbus_port: 8080, rs485_1.bridge.port: 502} while cache=502 (on) and
+    //     bridge1=8080. Same thing in both directions at once: the cache server could not bind
+    //     8080 (the bridge still had it), rolled back to 502 — which the bridge was by then trying
+    //     to take. One dead port, one server on the wrong port, and NVS matching neither.
+    //
+    // The price, paid knowingly: the outage window is wider. Applying subsystem by subsystem
+    // brought port 1 back up before port 2 was even touched, and each subsystem was down only for
+    // its own restart. Now every subsystem whose settings changed is down for the WHOLE
+    // release->acquire window, so both RS-485 gateways, the cache server and the web UI can be off
+    // the air at the same time; traffic arriving in that window is lost (it was lost across the old
+    // per-subsystem restart too — the window is just longer now, on the order of the port re-init
+    // time, not a new class of loss).
+    //
+    // That is the unavoidable cost of a correct hand-over: a socket can only move between two
+    // subsystems if the giver closed it before the taker binds it, and nothing here can know which
+    // subsystems are trading ports without the release phase having happened first. A settings
+    // write is a rare, user-initiated event; a few hundred milliseconds of extra downtime on it is
+    // cheaper than a port that stays dead until the next one. Do not "optimise" this back into a
+    // per-subsystem apply.
+    if (flags & HTTP_SERVER_FLAG) {
+        ESP_LOGD(TAG, "Releasing the HTTP server socket");
+        http_server_release();
+    }
+
     int cache_released_port = 0;
     if (flags & CACHE_MODBUS_FLAG) {
         ESP_LOGD(TAG, "Releasing the cache Modbus TCP server socket");
         cache_released_port = cache_modbus_server_release();
+    }
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        if (flags & (BRIDGE_FLAGS_BASE << index)) {
+            ESP_LOGD(TAG, "Releasing port %u via port_manager", index + 1);
+            port_manager_release(index);
+        }
     }
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -130,20 +209,14 @@ static void settings_update_task(void *arg)
         cache_modbus_server_acquire(cache_released_port);
     }
 
+    if (flags & HTTP_SERVER_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to HTTP server");
+        http_server_acquire();
+    }
+
     if (flags & MDNS_FLAG) {
         ESP_LOGD(TAG, "Applying new settings to mDNS");
         network_update_mdns_settings();
-    }
-
-    if (flags & (HTTP_SERVER_FLAG | ETHERNET_FLAG | WIFI_FLAG)) {
-        // Small delay to allow the response to be sent to the client
-        vTaskDelay(pdMS_TO_TICKS(HTTP_NETWORK_UPDATE_DELAY_MS));
-    }
-
-    if (flags & HTTP_SERVER_FLAG) {
-        ESP_LOGD(TAG, "Applying new settings to HTTP server");
-        http_server_deinit();
-        http_server_init();
     }
 
     if (flags & ETHERNET_FLAG) {

@@ -17,6 +17,7 @@ AUX_SRC += $(UNITTEST_DIR)/mocks/esp_mac.c
 # Include directories
 INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
+INC += $(UNITTEST_DIR)/mocks/freertos
 INC += $(PROJ_DIR)/main
 INC += $(IDF_PATH)/components/esp_common/include
 

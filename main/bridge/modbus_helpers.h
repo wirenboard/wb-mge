@@ -90,6 +90,12 @@ size_t modbus_tcp_from_rtu(uint16_t transaction_id, const uint8_t *data, size_t 
 // Returns the total wire length (sizeof(mb_tcp_header_t) + 1).
 size_t modbus_pdu_build_exception(uint8_t *buf, uint16_t tid_net, uint8_t unit_id, uint8_t fc, uint8_t exc);
 
+// Calculate the RS-485 response timeout for a given port speed, in FreeRTOS ticks.
+// Sized from the time needed to receive a maximum-length Modbus RTU frame plus a
+// reserve for the silence interval and Fast Modbus arbitration.
+// baudrate 0 (or any value below one byte per second) is clamped, never divides by zero.
+unsigned modbus_rtu_response_timeout_ticks(unsigned baudrate);
+
 // Parse the big-endian start address and count from a Modbus read-request PDU
 // body (the 4 bytes immediately after the MBAP/RTU function byte:
 // [start_hi][start_lo][count_hi][count_lo]). Caller must ensure pdu has 4 bytes.

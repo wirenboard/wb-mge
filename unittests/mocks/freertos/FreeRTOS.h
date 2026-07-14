@@ -23,4 +23,11 @@ typedef unsigned UBaseType_t;
 #define CONFIG_FREERTOS_HZ      500u
 #endif
 
+/* The real FreeRTOSConfig.h derives configTICK_RATE_HZ from CONFIG_FREERTOS_HZ;
+ * mirror that here so code doing tick arithmetic compiles unchanged in tests.
+ * A suite may still override it on the command line (-D). */
+#ifndef configTICK_RATE_HZ
+#define configTICK_RATE_HZ      CONFIG_FREERTOS_HZ
+#endif
+
 #define pdTICKS_TO_MS(ticks)    ( (uint32_t)(ticks) * 1000u / CONFIG_FREERTOS_HZ )

@@ -523,6 +523,59 @@ void test_modbus_rtu_tcp_round_trip(void)
     );
 }
 
+/* ---- MH-TIMEOUT: modbus_rtu_response_timeout_ticks ----------------------- *
+ * Pure arithmetic over the port baudrate: how long the gateway must wait for an
+ * RS-485 response before giving up. It moved here out of modbus_tcp.c, which had
+ * to keep a test shim just to expose it (review #39).
+ * ========================================================================== */
+
+/* MH-TIMEOUT-1: at 9600 baud, 11 bits/frame, 266-byte worst-case response:
+ *   bytes_rate = 9600/11 = 872
+ *   timeout_ms = ceil(266000/872) = 306 -> +30 reserve = 336 ms
+ *   ticks      = ceil(336*500/1000) = 168   (configTICK_RATE_HZ = 500)
+ * 168 ticks * 2 ms = 336 ms >= 300 ms: the gateway must not give up too early. */
+void test_response_timeout_9600_baud(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MH-TIMEOUT-1: response_timeout_ticks(9600) >= 150 ticks (>= 300 ms at 500 Hz)");
+    LOG_MESSAGE();
+
+    unsigned ticks = modbus_rtu_response_timeout_ticks(9600);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT_MESSAGE(150u, ticks,
+        "9600 baud timeout must be at least 300 ms worth of ticks");
+    TEST_ASSERT_LESS_THAN_UINT_MESSAGE(5000u, ticks,
+        "9600 baud timeout must stay sane (< 10 s)");
+}
+
+/* MH-TIMEOUT-2: at 115200 baud the timeout is far smaller but must stay positive,
+ * or xEventGroupWaitBits() would expire immediately instead of waiting. */
+void test_response_timeout_115200_baud(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MH-TIMEOUT-2: response_timeout_ticks(115200) > 0");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(0u, modbus_rtu_response_timeout_ticks(115200),
+        "115200 baud timeout must be > 0 ticks");
+}
+
+/* MH-TIMEOUT-3: at baudrate 1, bytes_rate = 1/11 = 0 under integer division —
+ * the divisor guard must keep this from dividing by zero. */
+void test_response_timeout_very_low_baud(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MH-TIMEOUT-3: response_timeout_ticks(1) must not divide by zero");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(0u, modbus_rtu_response_timeout_ticks(1),
+        "baudrate=1 must return a positive timeout (no division by zero)");
+    TEST_ASSERT_GREATER_THAN_UINT_MESSAGE(0u, modbus_rtu_response_timeout_ticks(0),
+        "baudrate=0 must also be survivable and return a positive timeout");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -566,6 +619,10 @@ int main(void)
     RUN_TEST(test_modbus_rtu_check_response_exception_response_valid);
     RUN_TEST(test_modbus_rtu_check_response_exception_response_func_mismatch);
     RUN_TEST(test_modbus_rtu_tcp_round_trip);
+
+    RUN_TEST(test_response_timeout_9600_baud);
+    RUN_TEST(test_response_timeout_115200_baud);
+    RUN_TEST(test_response_timeout_very_low_baud);
 
     return UNITY_END();
 }

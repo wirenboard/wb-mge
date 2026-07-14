@@ -460,6 +460,51 @@ void test_frozen_apply_settings_does_not_bring_port_up(void)
         "a frozen port must not re-init its bridge");
 }
 
+/* The release half of settings_update's two-phase apply must be frozen exactly like the apply
+ * half. If it were not, a settings write landing during the factory test would tear the port down
+ * — and apply_settings(), being a no-op while frozen, would not bring it back: the port would stay
+ * dead until the test ended. */
+void test_frozen_release_does_not_tear_port_down(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+
+    /* Freeze WITHOUT the transient disable: the port is still up and running when the
+     * settings_update task reaches its release phase. */
+    port_manager_set_ports_frozen(true);
+
+    mock_bridge_reset();
+    mock_serial_reset();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, port_manager_release(0),
+        "release on a frozen port must succeed as a no-op");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "release must not tear a frozen port down (apply_settings would not bring it back)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_deinit_called[0],
+        "a frozen port must not have its serial closed (LEDC owns the TX pin)");
+
+    port_manager_set_ports_frozen(false);
+}
+
+/* The normal, unfrozen path: release() really does tear the port down, so the acquire phase can
+ * bind a socket another subsystem has just given up. */
+void test_release_deinits_running_port(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_release(0));
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "a released port is down until the acquire phase brings it back");
+
+    /* Releasing an already-released port is a no-op, not an error. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_release(0));
+
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, port_manager_release(BRIDGES_COUNT));
+}
+
 void test_frozen_ports_do_not_touch_nvs(void)
 {
     mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
@@ -1375,6 +1420,8 @@ int port_manager_test(void)
     /* factory-test port freeze (clock_out) */
     RUN_TEST(test_frozen_check_settings_changed_reports_no_change);
     RUN_TEST(test_frozen_apply_settings_does_not_bring_port_up);
+    RUN_TEST(test_frozen_release_does_not_tear_port_down);
+    RUN_TEST(test_release_deinits_running_port);
     RUN_TEST(test_frozen_ports_do_not_touch_nvs);
     RUN_TEST(test_frozen_set_mode_rejected);
     RUN_TEST(test_frozen_set_mode_transient_still_allowed);

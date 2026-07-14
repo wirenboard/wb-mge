@@ -36,7 +36,7 @@ uint16_t modbus_tcp_test_get_pending_tid(unsigned ctx_idx);
 uint8_t  modbus_tcp_test_get_pending_slave_id(unsigned ctx_idx);
 int      modbus_tcp_test_get_pending_client_sock(unsigned ctx_idx);
 
-/* Expose calc_response_timeout_ticks() for unit tests (R1). */
-unsigned modbus_tcp_test_calc_timeout(unsigned baudrate);
+/* The response-timeout arithmetic now lives in modbus_helpers
+ * (modbus_rtu_response_timeout_ticks) and is tested directly there. */
 
 #endif /* __unittest_env__ */

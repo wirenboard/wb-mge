@@ -198,11 +198,34 @@ void port_manager_set_ports_frozen(bool frozen);
 bool port_manager_ports_frozen(void);
 
 /**
+ * @brief Deinitialise a port, releasing its serial port and its TCP listening socket.
+ *
+ * Release half of the two-phase settings apply: settings_update() releases EVERY subsystem
+ * whose socket must change before ANY of them binds a new one, so that a TCP port can be
+ * handed over between subsystems — an RS-485 gateway moving onto the port the web server or
+ * the cache Modbus server is vacating, or the two gateways swapping ports — without the new
+ * bind() hitting EADDRINUSE. port_manager_apply_settings() has no rollback, so a bind that
+ * fails leaves the port dead until the next settings write or a reboot.
+ *
+ * Follow it with port_manager_apply_settings() to bring the port back up. Calling it on an
+ * already-released (disabled) port is a no-op.
+ *
+ * No-op (returns ESP_OK without touching the port) while the ports are frozen by the factory
+ * test — see port_manager_set_ports_frozen(). It has to be: apply_settings() is frozen too,
+ * so a port torn down here would stay down until the test ends.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range.
+ */
+esp_err_t port_manager_release(unsigned port_index);
+
+/**
  * @brief Re-apply settings for a port, re-reading mode and parameters from NVS.
  *
  * Deinitialises the current mode and re-initialises from the current NVS
  * settings, including the port mode.  Called by settings_update when any
- * serial, bridge, or mode parameters change.
+ * serial, bridge, or mode parameters change — as the acquire half of the
+ * two-phase apply, after port_manager_release().
  *
  * No-op (returns ESP_OK without touching the port) while the ports are frozen
  * by the factory test — see port_manager_set_ports_frozen().

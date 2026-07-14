@@ -632,6 +632,150 @@ void test_settings_update_cache_server_acquires_after_ports(void)
         "the cache server must bind its socket only after the ports have been re-applied");
 }
 
+// ===================================================================
+// Two-phase apply: release every TCP listening socket that must change BEFORE any subsystem
+// binds a new one, so a port can be handed over between them.
+// ===================================================================
+
+// Both ports change: every port must be released before ANY of them is re-initialized, so the two
+// RS-485 gateways can swap their TCP ports without colliding on bind().
+void test_settings_update_all_ports_released_before_any_reinit(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - all ports released before any re-init");
+    LOG_MESSAGE();
+
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        mock_port_manager_check_settings_changed_return_value[i] = true;
+    }
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_port_manager_release_called[i],
+            "every changed port must be released exactly once");
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_port_manager_apply_settings_called[i],
+            "every changed port must be re-applied exactly once");
+    }
+
+    for (unsigned released = 0; released < BRIDGES_COUNT; released++) {
+        for (unsigned applied = 0; applied < BRIDGES_COUNT; applied++) {
+            TEST_ASSERT_TRUE_MESSAGE(
+                mock_port_manager_release_call_seq[released] <
+                    mock_port_manager_apply_settings_call_seq[applied],
+                "every port must be released before any port is re-initialized");
+        }
+    }
+}
+
+// The web server owns a TCP listening socket too, so it takes part in the same two-phase apply.
+// web_port 80 -> 8080 while RS-485-1 moves its gateway onto 80: the web server must give 80 up
+// BEFORE port_manager binds it, otherwise the gateway's bind() hits EADDRINUSE and the RS-485 port
+// stays dead (port_manager_apply_settings has no rollback).
+void test_settings_update_http_released_before_ports(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - HTTP releases its port before the bridges");
+    LOG_MESSAGE();
+
+    mock_http_server_check_settings_changed_return_value = true;
+    mock_port_manager_check_settings_changed_return_value[0] = true;    // RS-485-1 wants 80 now
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_http_server_deinit_called,
+        "the web server must be stopped exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_http_server_init_called,
+        "the web server must be restarted exactly once");
+
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_http_server_deinit_call_seq < mock_port_manager_release_call_seq[0],
+        "the web server must give its socket up before the ports are released");
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_http_server_deinit_call_seq < mock_port_manager_apply_settings_call_seq[0],
+        "the web server must give its socket up before a bridge binds that port");
+}
+
+// The reverse hand-over: the web server moves onto the port an RS-485 gateway is vacating, so it
+// may only bind its new socket AFTER the ports have been re-applied.
+void test_settings_update_http_acquires_after_ports(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - HTTP takes its port after the bridges");
+    LOG_MESSAGE();
+
+    mock_http_server_check_settings_changed_return_value = true;
+    mock_port_manager_check_settings_changed_return_value[0] = true;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_port_manager_release_call_seq[0] < mock_http_server_init_call_seq,
+        "the bridge must release its socket before the web server binds it");
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_port_manager_apply_settings_call_seq[0] < mock_http_server_init_call_seq,
+        "the web server must bind its socket only after the ports have been re-applied");
+}
+
+// The client's POST /settings is answered over the very socket the web server is about to give up,
+// so the delay that lets the response go out must happen BEFORE the deinit — not, as it used to,
+// between the port re-init and the deinit.
+void test_settings_update_http_response_sent_before_deinit(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - the response is sent before the socket is dropped");
+    LOG_MESSAGE();
+
+    mock_http_server_check_settings_changed_return_value = true;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    verify_delay_before_network_updates();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_http_server_delays_before_deinit,
+        "the delay that lets the POST /settings response reach the client must precede the deinit");
+}
+
+// The factory clock-out test owns the ports' TX/DE pins. The "settings changed" flags are computed
+// synchronously in the HTTP task but applied later, in this async task, so a POST /wb_test landing
+// in between makes them stale. port_manager has the last word — under the port lock — and must
+// neither tear the port down nor bring it back up; the mock enforces that check where the real one
+// lives, so the whole two-phase apply has to come out as a no-op for the port.
+void test_settings_update_frozen_ports_are_neither_released_nor_reapplied(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - frozen ports survive the two-phase apply");
+    LOG_MESSAGE();
+
+    mock_port_manager_check_settings_changed_return_value[0] = true;
+    mock_network_check_mdns_settings_changed_return_value = true;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+
+    // The factory test starts after the flags were latched but before the task runs.
+    mock_port_manager_ports_frozen_return_value = true;
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_port_manager_release_called[0],
+        "a port held by the factory clock-out test must not be torn down");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_port_manager_apply_settings_called[0],
+        "a port held by the factory clock-out test must not be re-initialized");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_port_manager_release_skipped[0],
+        "the release must have been offered to port_manager and refused under the port lock");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_port_manager_apply_settings_skipped[0],
+        "the apply must have been offered to port_manager and refused under the port lock");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_network_update_mdns_settings_called,
+        "subsystems unrelated to the frozen ports must still be updated");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -658,6 +802,13 @@ int main(void)
     RUN_TEST(test_settings_update_cache_server_enable_and_port_change_applied_once);
     RUN_TEST(test_settings_update_cache_server_released_before_ports);
     RUN_TEST(test_settings_update_cache_server_acquires_after_ports);
+
+    // Two-phase apply (release everything, then acquire everything)
+    RUN_TEST(test_settings_update_all_ports_released_before_any_reinit);
+    RUN_TEST(test_settings_update_http_released_before_ports);
+    RUN_TEST(test_settings_update_http_acquires_after_ports);
+    RUN_TEST(test_settings_update_http_response_sent_before_deinit);
+    RUN_TEST(test_settings_update_frozen_ports_are_neither_released_nor_reapplied);
 
     return UNITY_END();
 }

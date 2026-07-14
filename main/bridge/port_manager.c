@@ -636,6 +636,33 @@ bool port_manager_ports_frozen(void)
     return ports_frozen();
 }
 
+esp_err_t port_manager_release(unsigned port_index)
+{
+    if (port_index >= BRIDGES_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    pm_lock(port_index);
+
+    // While the factory test owns the TX/DE pins, never tear a port down either. Checked INSIDE
+    // the lock for the same reason as in port_manager_apply_settings() below — and it must agree
+    // with it: apply_settings() is a no-op while frozen, so a release that went ahead anyway would
+    // leave the port down with nothing to bring it back up until the test ends.
+    // Nothing is lost by skipping: port_manager_check_settings_changed() already reports "no
+    // change" for a frozen port, and wb_test's exit path calls port_manager_apply_settings() for
+    // every port, which re-reads the mode and every serial/bridge parameter from NVS — including
+    // whatever this settings write persisted.
+    if (ports_frozen()) {
+        pm_unlock(port_index);
+        ESP_LOGW(TAG, "Port[%u]: release skipped, ports frozen by factory test", port_index + 1);
+        return ESP_OK;
+    }
+
+    port_deinit_mode(port_index);
+    pm_unlock(port_index);
+    return ESP_OK;
+}
+
 esp_err_t port_manager_apply_settings(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) {

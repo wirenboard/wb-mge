@@ -1,5 +1,4 @@
 #include "modbus_tcp.h"
-#include "modbus_tcp_internal.h"
 #include "mbtcp_reasm.h"
 #include <string.h>
 #include <esp_log.h>
@@ -10,6 +9,14 @@
 #include "mb_device.h"
 #include "freertos/semphr.h"
 #include <stddef.h>
+
+#ifdef __unittest_env__
+/* Prototypes for the non-static modbus_tcp_test_* hooks defined at the bottom of
+ * this file. The header lives with the tests (unittests/modbus_tcp) because it
+ * declares nothing the firmware uses — but it must still be visible here, or the
+ * definitions would have no prototype (-Wmissing-prototypes). */
+#include "modbus_tcp_internal.h"
+#endif
 
 
 #define MODBUS_TCP_TASK_STACK_SIZE          3072            // Stack size for each task
@@ -24,12 +31,6 @@
 #define EVENT_TASK_STARTED                  BIT8            // Event flag: task started
 #define EVENT_TASK_FINISHED                 BIT9            // Event flag: task finished
 #define EVENT_TASK_EXIT_REQ                 BIT16           // Event flag: task exit request
-
-#define MODBUS_RTU_MAX_PACKET_LEN           256             // Maximum Modbus RTU packet length (frames)
-#define MODBUS_RTU_RECV_RESERVE_LEN         10              // Reserve for packet reception with silence interval and Fast Modbus arbitration (frames)
-#define RS485_BITS_PER_FRAME                11              // Number of bits in UART frame (8 data bits + start bit + 2 stop bits)
-
-#define MODBUS_RTU_RECV_TOUT_RESERVE_MS     30              // Extra reserve for packet reception waiting timeout (compensate FreeRTOS and logs lag)
 
 #define WAIT_LOOP_DELAY_MS                  100             // Delay in wait loops, needed to periodically check exit request flag
 
@@ -468,35 +469,6 @@ static void modbus_tcp_server_task(void *arg)
 }
 
 
-// Calculate RTU response timeout based on port speed.
-// Calculation is based on time required to receive maximum length Modbus RTU packet
-// (256 bytes) + reserve for silence interval and Fast Modbus arbitration (10 bytes).
-// Frame size is considered maximum and most likely (11 bits)
-// Returns timeout value in FreeRTOS ticks.
-static unsigned calc_response_timeout_ticks(unsigned baudrate)
-{
-    static const unsigned max_resp_len = MODBUS_RTU_MAX_PACKET_LEN + MODBUS_RTU_RECV_RESERVE_LEN;
-
-    unsigned bytes_rate = baudrate / RS485_BITS_PER_FRAME;
-    if (bytes_rate == 0) {
-        bytes_rate = 1;  /* Guard against division by zero for very low baudrates. */
-    }
-    unsigned timeout_ms = ((1000 * max_resp_len) + bytes_rate - 1) / bytes_rate;
-    timeout_ms += MODBUS_RTU_RECV_TOUT_RESERVE_MS;
-    unsigned timeout_ticks = (timeout_ms * configTICK_RATE_HZ + 999) / 1000;
-
-    return timeout_ticks;
-}
-
-#ifdef __unittest_env__
-/* Test shim: expose calc_response_timeout_ticks() for unit tests. */
-unsigned modbus_tcp_test_calc_timeout(unsigned baudrate)
-{
-    return calc_response_timeout_ticks(baudrate);
-}
-#endif /* __unittest_env__ */
-
-
 esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
                                 bridge_mode_t mode, int port, uint32_t ip,
                                 serial_desc_t **serial_desc, tcp_desc_t **tcp_desc)
@@ -572,7 +544,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
     ctx->pending_tid = 0;
     ctx->pending_slave_id = 0;
     ctx->pending_client_sock = -1;
-    ctx->resp_timeout_ticks = calc_response_timeout_ticks(config->baudrate);
+    ctx->resp_timeout_ticks = modbus_rtu_response_timeout_ticks(config->baudrate);
 
     ESP_LOGD(TAG, "Port[%u] response timeout: %u ms", index + 1, (unsigned)pdTICKS_TO_MS(ctx->resp_timeout_ticks));
 
