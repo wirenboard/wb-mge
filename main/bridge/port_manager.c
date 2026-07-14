@@ -767,21 +767,13 @@ static esp_err_t port_send_handler(httpd_req_t *req, unsigned port_index)
         return json_utils_send_error(req, "Missing or invalid 'hex' field");
     }
 
-    const char *hex_str = hex_item->valuestring;
-    size_t hex_len = strlen(hex_str);
-
-    /* Max 512 hex chars = 256 bytes = MODBUS_RTU_MAX_FRAME_LEN */
-    if ((hex_len % 2) != 0) {
-        cJSON_Delete(req_json);
-        return json_utils_send_error(req, "Hex string length must be even");
-    }
-    if (hex_len > (MODBUS_RTU_MAX_FRAME_LEN * 2)) {
-        cJSON_Delete(req_json);
-        return json_utils_send_error(req, "Hex string too long (max 512 hex chars / 256 bytes)");
-    }
-
+    /* No length pre-checks here: hex_str_to_bytes() already rejects an odd length and anything
+     * that would not fit in out_max bytes (512 hex chars = 256 bytes = MODBUS_RTU_MAX_FRAME_LEN),
+     * and it is the only place that decides what a decodable hex string is. Duplicating its rules
+     * here bought two more specific error messages at the price of a second copy of the limits
+     * that has to be kept in step with it. */
     uint8_t bytes[MODBUS_RTU_MAX_FRAME_LEN];
-    int byte_count = hex_str_to_bytes(hex_str, bytes, sizeof(bytes));
+    int byte_count = hex_str_to_bytes(hex_item->valuestring, bytes, sizeof(bytes));
     if (byte_count < 0) {
         cJSON_Delete(req_json);
         return json_utils_send_error(req, "Invalid hex string");
