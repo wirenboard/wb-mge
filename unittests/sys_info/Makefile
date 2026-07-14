@@ -27,9 +27,19 @@ INC += $(IDF_PATH)/components/esp_app_format/include
 INC += $(IDF_PATH)/components/esp_common/include
 
 # List of tests
-TEST_LIST = sys_info_test
+# sys_info.c is built twice, once per board configuration, because the PSRAM
+# detection in sys_info_init() sits behind #if CONFIG_SPIRAM:
+#   sys_info_test         - CONFIG_SPIRAM=1, WB-MGU (mgu_v1): runtime detection via the esp_psram mock
+#   sys_info_nopsram_test - CONFIG_SPIRAM unset, WB-MGE (mge_v3): branch compiled out entirely
+# Each test gets its own build/<test>/ directory, so the two objects (and their
+# coverage data) never collide.
+TEST_LIST = sys_info_test sys_info_nopsram_test
 
 DEFS += CONFIG_EFUSE_VIRTUAL=n
+
+# Board-specific define, applied only to the PSRAM-enabled binary.
+# sys_info_nopsram_test is intentionally built without CONFIG_SPIRAM.
+sys_info_test: DEFS += CONFIG_SPIRAM=1
 
 # Include base unit test build system
 include $(PROJ_DIR)/unittests/build_unittests.mk
