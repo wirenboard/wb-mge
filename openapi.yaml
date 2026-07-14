@@ -1196,7 +1196,8 @@ paths:
       description: >
         Transmits a raw byte frame out of the given serial port.
         The payload is supplied as a hex string (two hex characters per byte).
-        Maximum frame length is 256 bytes (512 hex characters).
+        Maximum frame length is 265 bytes (530 hex characters): the longest frame on the bus is a
+        Fast Modbus command, which wraps a 256-byte RTU ADU in a 9-byte Fast Modbus envelope.
       parameters:
         - name: port_number
           in: path
@@ -1215,8 +1216,8 @@ paths:
                 hex:
                   type: string
                   pattern: '^([0-9A-Fa-f]{2})*$'
-                  maxLength: 512
-                  description: "Bytes to send, encoded as an even-length hex string (max 256 bytes / 512 hex characters)"
+                  maxLength: 530
+                  description: "Bytes to send, encoded as an even-length hex string (max 265 bytes / 530 hex characters: a Fast Modbus frame is a 256-byte RTU ADU plus a 9-byte Fast Modbus envelope)"
               required: [hex]
             example:
               hex: "01030000000A"
