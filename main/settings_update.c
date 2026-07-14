@@ -71,41 +71,46 @@ static void settings_update_task(void *arg)
 
 esp_err_t settings_update(void)
 {
-    // The factory clock_out test owns the RS-485 hardware while it runs: it holds the
-    // MIO controller in reset (it hangs off the same RS-485-2 pair the LEDC drives),
-    // forces V-out on, and drives the TX/DE pins of both ports with the LEDC. Re-applying
-    // the settings here would undo all of that:
-    //   - io_bus_enabled defaults to true, so ANY POST /settings would take MIO out of
-    //     reset on top of the running waveform, and the configured vout value would
-    //     override the test's;
+    // The factory clock_out test owns part of the RS-485 hardware while it runs: it forces
+    // V-out on and drives the TX pins of both ports plus the port-1 DE pin with the LEDC.
+    // Re-applying those two settings here would undo that:
+    //   - update_rs485_control() would push the configured vout value over the test's;
     //   - update_serial_tx_disabled() is NOT the pure software flag it looks like:
     //     serial_set_tx_disabled() does gpio_reset_pin()/gpio_set_level()/
     //     gpio_set_direction() on the port's dir_pin, which is exactly the DE pin
-    //     (SERIAL_IO_PIN_1/2) the test holds HIGH. Today it happens to be harmless only
+    //     (SERIAL_IO_PIN_1) the test holds HIGH. Today it happens to be harmless only
     //     because the frozen ports sit in PM_MODE_DISABLED, so port_manager_set_tx_disabled()
     //     finds no serial_desc and returns early — an accident of the disable order, not a
-    //     property of the call. Gate it like the other two rather than depend on that.
+    //     property of the call. Gate it rather than depend on that.
     // Skipped while the ports are frozen, exactly as the port re-init below is skipped.
-    // Nothing is lost: wb_test's exit path calls update_rs485_control() +
-    // update_io_bus_control() itself, and port_manager_apply_settings() re-applies
-    // tx_disabled from NVS when it brings each port back up — so settings written during
-    // the test take effect when the test ends.
+    // Nothing is lost: wb_test's exit path calls update_rs485_control() itself, and
+    // port_manager_apply_settings() re-applies tx_disabled from NVS when it brings each
+    // port back up — so settings written during the test take effect when the test ends.
+    //
+    // update_io_bus_control() is deliberately NOT gated. The MIO controller shares the
+    // RS-485-2 pair, but the test never drives that pair: it toggles only the logic-side
+    // TX (DI) line of port 2 to blink LED2 and leaves that transceiver's DE to the hardware
+    // pulldown, so MIO has the bus to itself and taking it in or out of reset collides with
+    // nothing. Gating it would only mean an io_bus_enabled written during the test never
+    // reached the hardware, since wb_test's exit path does not re-apply it.
     //
     // The flag is read here without any lock (see the locking contract in port_manager.c):
-    // unlike the port re-init below, these three calls do not touch pm_ctx, so there is no
+    // unlike the port re-init below, these calls do not touch pm_ctx, so there is no
     // pm_lock that would exclude them against wb_test. That leaves a narrow window — read
-    // false, get preempted, the test starts, resume and re-apply V-out / io_bus on top of
-    // it. settings_update() has three callers: the httpd task — POST /settings
+    // false, get preempted, the test starts, resume and re-apply V-out / tx_disabled on top
+    // of it. settings_update() has three callers: the httpd task — POST /settings
     // (settings_manager.c) and POST /cmd "set_default_settings" (cmd_handler.c) — and the
     // button task (main.c, factory reset on long press). So it is a real window, just a very
     // small one. Closing it needs a lock shared with wb_test's entry/exit sequences (held
-    // across "check frozen + apply" here and across "freeze + disable io_bus + start LEDC" there);
-    // it would take no other lock inside, so it cannot deadlock with pm_lock.
+    // across "check frozen + apply" here and across "freeze + disable the ports + start
+    // LEDC" there); it would take no other lock inside, so it cannot deadlock with pm_lock.
     if (!port_manager_ports_frozen()) {
         update_rs485_control();
-        update_io_bus_control();
         update_serial_tx_disabled();
     }
+
+    // Independent of the freeze: the I/O bus is not part of what the test owns.
+    update_io_bus_control();
 
     if (update_task_handle != NULL) {
         ESP_LOGW(TAG, "Previous settings have not yet been applied, waiting for setting update task finished");

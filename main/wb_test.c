@@ -8,15 +8,14 @@
 #include "bridge/port_manager.h"
 #include "esp_log.h"
 #include "indication.h"
-#include "mio_control.h"
 #include "rs485_control.h"
 #include "update_rs485_mio_gpio_states.h"
 
 
-// The clock-out test drives the TX and DE/RE lines of both serial ports directly.
-// The pins come from board_pins.h (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the GPIO numbers
-// differ per board, and hardcoding the WB-MGE ones drove the wrong pins on WB-MGU
-// (there GPIO4 is an input, the port-2 RX line).
+// The clock-out test drives the TX lines of both serial ports and the DE/RE line of
+// port 1 directly. The pins come from board_pins.h (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the
+// GPIO numbers differ per board, and hardcoding the WB-MGE ones drove the wrong pins on
+// WB-MGU (there GPIO4 is an input, the port-2 RX line).
 #define BRIDGE_PORT_INDEX       0   // port 1; freed so LEDC can reuse its TX pin
 #define BRIDGE_PORT_INDEX_2     1   // port 2; freed so LEDC can reuse its TX pin
 
@@ -25,25 +24,28 @@
 #define CLK_OUT_PWM_CHANNEL     LEDC_CHANNEL_0
 #define CLK_OUT_PWM_TIMER       LEDC_TIMER_0
 
-// Second 100 kHz output, on the port-2 TX line. Shares CLK_OUT_PWM_TIMER with the
-// port-1 output, so both ports carry the same waveform and both activity LEDs blink
-// in lockstep.
+// Second 100 kHz output, on the port-2 TX line — the logic-side DI input of the RS-485-2
+// transceiver. Shares CLK_OUT_PWM_TIMER with the port-1 output, so both ports carry the
+// same waveform and both activity LEDs blink in lockstep: on WB-MGE the RS-485-2 activity
+// LED (LED2) is tapped from that DI line via R36 and lights regardless of DE.
 #define CLK_OUT_PIN_2           SERIAL_OUTPUT_PIN_2
 #define CLK_OUT_PWM_CHANNEL_2   LEDC_CHANNEL_1
 
-// Transceiver driver-enable (DE/RE) pins. Both must be driven HIGH for the square
-// wave to actually reach the bus: with DE low the TX pin only toggles on the logic
+// Transceiver driver-enable (DE/RE) pin — port 1 ONLY. Driving it HIGH is what makes the
+// square wave actually reach the bus: with DE low the TX pin only toggles on the logic
 // side, so the activity LED lights but nothing is emitted on the line.
 //
-// On WB-MGE the port-2 bus is shared with the MIO transceiver, and the port mode has
-// no say over that: MIO is held out of reset by MIO_RESET_PIN on the GPIO expander
-// (mio_control_io_bus_onoff(), driven by the io_bus_enabled setting — default true),
-// which is completely independent of whether port 2 is DISABLED. So the test takes
-// the I/O bus down itself while the clock runs, and restores it from the setting on
-// exit; otherwise the MIO controller and our LEDC-driven transceiver could be driving
-// the shared RS-485-2 pair at the same time.
+// The RS-485-2 transceiver driver is intentionally left DISABLED, and SERIAL_IO_PIN_2 is
+// intentionally not configured here at all: on WB-MGE U4.DE (GPIO15) is held low by the
+// hardware pulldown R4, so no signal is emitted onto the RS-485-2 bus — which is shared
+// with the MIO transceiver U10 and wired out to the external RS-485-2 terminals. Driving
+// that pair would put the factory meander on a bus we do not own, in front of whatever is
+// wired to the terminals and alongside a live MIO controller (its reset is an expander
+// pin, not a UART pin, so disabling port 2 does not silence it). Review comment #30
+// ("emit the 100 kHz on the second RS-485 too, i.e. raise GPIO15") was considered and
+// DECLINED for exactly that reason: LED2 only needs the DI line, which we do drive.
+// Leaving the pin unconfigured leaves it to R4, which is its real owner.
 #define CLK_OUT_EN_PIN          SERIAL_IO_PIN_1
-#define CLK_OUT_EN_PIN_2        SERIAL_IO_PIN_2
 
 #define CLK_OUT_JSON_FIELD      "clock_out"
 
@@ -91,9 +93,8 @@ static const char* TAG = "wb_test";
 // clear the output latch (GPIO_OUT_REG), so on the second and later runs of the test
 // the latch still holds whatever the previous owner left there — the UART leaves it
 // HIGH after driving half-duplex direction control. Enabling the output driver first
-// would then briefly assert DE (on the WB-MGE port-2 line that is a pulse onto the
-// bus shared with the MIO transceiver). Same order as serial_set_tx_disabled() in
-// serial.c.
+// would then briefly assert DE and put a glitch on the RS-485-1 line. Same order as
+// serial_set_tx_disabled() in serial.c.
 static void de_pin_latch_low_output(gpio_num_t pin)
 {
     gpio_reset_pin(pin);
@@ -102,14 +103,14 @@ static void de_pin_latch_low_output(gpio_num_t pin)
 }
 
 
-// Tear the LEDC down and release the four pins the test owns (TX + DE of both ports).
-// Also used to roll back a half-configured LEDC when start_clock_out() fails midway:
-// the ledc_* calls simply report an error for a channel/timer that was never set up.
+// Tear the LEDC down and release the three pins the test owns (the TX line of both
+// ports plus the port-1 DE line). Also used to roll back a half-configured LEDC when
+// start_clock_out() fails midway: the ledc_* calls simply report an error for a
+// channel/timer that was never set up.
 static void release_clock_out_hw(void)
 {
-    // Disable both line drivers before tearing the waveform down.
+    // Disable the RS-485-1 line driver before tearing the waveform down.
     gpio_set_level(CLK_OUT_EN_PIN, 0);
-    gpio_set_level(CLK_OUT_EN_PIN_2, 0);
 
     ledc_stop(channel_config.speed_mode, channel_config.channel, 0);
     ledc_stop(channel_config_2.speed_mode, channel_config_2.channel, 0);
@@ -119,41 +120,39 @@ static void release_clock_out_hw(void)
     tim_conf.deconfigure = true;
     ledc_timer_config(&tim_conf);
 
-    // Release all four pins so port_manager_apply_settings() can hand the TX and
-    // DE lines back to the UART. Note that gpio_reset_pin() does not leave a pin
-    // floating: it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON,
-    // so a released DE pin is weakly pulled towards 1 — the "driver enabled" level.
-    // On WB-MGE the port-2 DE line (SERIAL_IO_PIN_2) has an external pulldown (R4 on
-    // U4.DE) that overpowers the internal pull-up and holds that transceiver in receive
-    // mode for the whole window. That is a WB-MGE schematic fact, not a portable one:
-    // on other boards SERIAL_IO_PIN_2 is a different net (on WB-MGU it is the WBE2 bus
-    // DE, not an RS-485-2 transceiver with R4), so there the guarantee is the same weak
-    // one as for port 1. And no external pulldown is documented for the port-1 DE line
-    // on any board: its driver may be weakly enabled until the UART re-attaches.
-    // What bounds the exposure is the window itself — it is short
-    // (apply_settings re-inits the UART right after) and the released TX pin is
-    // pulled to the idle level the UART holds between frames, so a briefly-enabled
+    // Release all three pins so port_manager_apply_settings() can hand the TX and DE
+    // lines back to the UART. Note that gpio_reset_pin() does not leave a pin floating:
+    // it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON, so the released
+    // port-1 DE pin is weakly pulled towards 1 — the "driver enabled" level — and no
+    // external pulldown is documented for that line on any board, so its driver may be
+    // weakly enabled until the UART re-attaches. What bounds the exposure is the window
+    // itself — it is short (apply_settings re-inits the UART right after) and the released
+    // TX pin is pulled to the idle level the UART holds between frames, so a briefly-enabled
     // driver idles the line rather than corrupting traffic. On the way back in,
-    // start_clock_out() re-latches both DE pins LOW before driving them rather than
-    // trusting whatever the previous owner left in the output latch.
+    // start_clock_out() re-latches the DE pin LOW before driving it rather than trusting
+    // whatever the previous owner left in the output latch.
+    //
+    // The port-2 DE line is not in this list because the test never took it: it is owned
+    // by the hardware pulldown (R4 on WB-MGE) throughout, so nothing has to be given back.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
-    gpio_reset_pin(CLK_OUT_EN_PIN_2);
 }
 
 
-// Bring the 100 kHz waveform up on the TX line of both ports and enable both line
-// drivers. The DE pins are raised ONLY once every LEDC call has succeeded: if the
-// waveform never started, enabling the drivers would put both transceivers into
-// transmit with a STATIC level on the line — including the RS-485-2 bus — while the
-// API happily reported success. On any error the half-configured LEDC is released and
-// the DE lines stay LOW (receive mode); the caller aborts the test entry.
+// Bring the 100 kHz waveform up on the TX line of both ports and enable the RS-485-1
+// line driver. The DE pin is raised ONLY once every LEDC call has succeeded: if the
+// waveform never started, enabling the driver would put the transceiver into transmit
+// with a STATIC level on the RS-485-1 line while the API happily reported success. On
+// any error the half-configured LEDC is released and the DE line stays LOW (receive
+// mode); the caller aborts the test entry.
+//
+// Port 2 gets the waveform on its TX (DI) line only — its driver stays disabled, so the
+// RS-485-2 pair stays silent (see CLK_OUT_EN_PIN above).
 static esp_err_t start_clock_out(void)
 {
-    // Keep both transceivers in receive mode until the waveform is running.
+    // Keep the RS-485-1 transceiver in receive mode until the waveform is running.
     de_pin_latch_low_output(CLK_OUT_EN_PIN);
-    de_pin_latch_low_output(CLK_OUT_EN_PIN_2);
 
     ledc_timer_config_t tim_conf = timer_config;
     tim_conf.deconfigure = false;
@@ -172,7 +171,7 @@ static esp_err_t start_clock_out(void)
         return err;
     }
 
-    // Port 2: drive its TX line with the same 100 kHz timer.
+    // Port 2: drive its TX (DI) line with the same 100 kHz timer, for LED2 only.
     ledc_channel_config_t ch_conf2 = channel_config_2;
     err = ledc_channel_config(&ch_conf2);
     if (err != ESP_OK) {
@@ -181,9 +180,9 @@ static esp_err_t start_clock_out(void)
         return err;
     }
 
-    // The waveform is running: enable both line drivers so it reaches both RS-485 buses.
+    // The waveform is running: enable the RS-485-1 line driver so it reaches that bus.
+    // The RS-485-2 driver stays off — its bus is not ours to drive.
     gpio_set_level(CLK_OUT_EN_PIN, 1);
-    gpio_set_level(CLK_OUT_EN_PIN_2, 1);
 
     ESP_LOGW(TAG, "100 kHz clock output on RS485-1/RS485-2 TX enabled (all indicator LEDs on)");
     return ESP_OK;
@@ -199,14 +198,13 @@ static void stop_clock_out(void)
 
 // Roll back a failed clock_out entry: the LEDC was never started, so the ports can be
 // unfrozen and brought straight back up from NVS (which also undoes any port this
-// attempt did manage to disable transiently), and the I/O bus is put back to whatever
-// io_bus_enabled says. Leaves the device exactly as it was before the request.
+// attempt did manage to disable transiently). Leaves the device exactly as it was before
+// the request — V-out and the I/O bus were never touched on the way in.
 static void abort_clock_out_entry(void)
 {
     port_manager_set_ports_frozen(false);
     port_manager_apply_settings(BRIDGE_PORT_INDEX);
     port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
-    update_io_bus_control();
 }
 
 
@@ -256,27 +254,18 @@ static esp_err_t process_request_json(cJSON *request_json)
                 abort_clock_out_entry();
                 return ESP_ERR_INVALID_STATE;
             }
-            // Hold the MIO controller in reset: it hangs off the same RS-485-2 pair we
-            // are about to drive, and disabling port 2 does nothing to it (its reset is
-            // an expander pin, not a UART pin). Restored from io_bus_enabled on exit.
-            esp_err_t io_bus_err = mio_control_io_bus_onoff(false);
-            if (io_bus_err != ESP_OK) {
-                // MIO is still out of reset on the pair the LEDC is about to drive —
-                // the very conflict this reset exists to prevent. Treat it like a port
-                // that could not be disabled and abort the entry instead of starting
-                // the waveform into a live MIO transceiver.
-                ESP_LOGE(TAG, "clock_out aborted: the I/O bus could not be disabled: %s",
-                         esp_err_to_name(io_bus_err));
-                abort_clock_out_entry();
-                return ESP_ERR_INVALID_STATE;
-            }
+            // The I/O bus is deliberately left alone. The MIO controller hangs off the
+            // RS-485-2 pair, but the test never drives that pair (the port-2 transceiver
+            // stays in receive mode, see CLK_OUT_EN_PIN), so there is nothing for MIO to
+            // contend with and no reason to reset it.
+            //
             // Both ports are down and the pins are free: start the waveform.
             esp_err_t clk_err = start_clock_out();
             if (clk_err != ESP_OK) {
-                // The LEDC never came up, so start_clock_out() left both DE lines LOW and
+                // The LEDC never came up, so start_clock_out() left the DE line LOW and
                 // released the pins. Reporting success here would leave the factory tester
                 // with a device that claims to emit a clock but does not. Abort the entry:
-                // unfreeze, restore both ports from NVS and put the I/O bus back.
+                // unfreeze and restore both ports from NVS.
                 ESP_LOGE(TAG, "clock_out aborted: the LEDC could not be set up");
                 abort_clock_out_entry();
                 return ESP_ERR_INVALID_STATE;
@@ -311,11 +300,9 @@ static esp_err_t process_request_json(cJSON *request_json)
                 ESP_LOGE(TAG, "Failed to restore port 2 mode after clock_out: %s", esp_err_to_name(err2));
             }
             // Factory test: return LEDs to normal indication and restore V-out state.
+            // The I/O bus needs no restoring: the test never touched it.
             indication_set_test_all_leds(false);
             update_rs485_control();         // restore V-out to the configured KEY_485_VOUT state
-            update_io_bus_control();        // restore MIO to the configured KEY_IO_BUS_ENABLED state
-                                            // (re-applies the setting, so an I/O bus that was
-                                            // already off before the test stays off)
         }
     }
 
@@ -374,11 +361,11 @@ esp_err_t wb_test_post_handler(httpd_req_t *req)
         } else if (res == ESP_ERR_INVALID_ARG) {
             return json_utils_send_error(req, "Incorrect command field value");
         } else if (res == ESP_ERR_INVALID_STATE) {
-            // The RS-485 ports or the I/O bus could not be freed, or the LEDC refused to
-            // produce the waveform, so the test never started and the entry was rolled
-            // back — 503: the request was valid, the device could not serve it.
+            // The RS-485 ports could not be freed, or the LEDC refused to produce the
+            // waveform, so the test never started and the entry was rolled back — 503:
+            // the request was valid, the device could not serve it.
             return json_utils_send_error_status(req, "503 Service Unavailable",
-                "Cannot start clock_out test: the RS-485 ports, the I/O bus or the clock generator could not be set up");
+                "Cannot start clock_out test: the RS-485 ports or the clock generator could not be set up");
         } else {
             return json_utils_send_error(req, "Failed to process request");
         }

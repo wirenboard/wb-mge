@@ -333,15 +333,20 @@ void test_settings_update_task_already_running(void)
     );
 }
 
-// The factory clock_out test holds the MIO controller in reset, forces V-out on and
-// drives the TX/DE pins of both ports with the LEDC. A POST /settings during the test
-// must not undo any of that: with the ports frozen, settings_update() must skip
-// update_rs485_control(), update_io_bus_control() AND update_serial_tx_disabled() —
-// the last one is not the pure software flag it looks like, it drives the port's
-// dir_pin, which is the very DE pin the test holds HIGH. wb_test re-applies the first
-// two when the test ends, and port_manager_apply_settings() re-applies tx_disabled from
-// NVS as it brings each port back up, so nothing written during the test is lost.
-void test_settings_update_ports_frozen_skips_rs485_io_bus_and_tx_disabled(void)
+// The factory clock_out test forces V-out on and drives the TX pins of both ports plus
+// the port-1 DE pin with the LEDC. A POST /settings during the test must not undo any of
+// that: with the ports frozen, settings_update() must skip update_rs485_control() AND
+// update_serial_tx_disabled() — the latter is not the pure software flag it looks like,
+// it drives the port's dir_pin, which is the very DE pin the test holds HIGH. wb_test
+// re-applies V-out when the test ends, and port_manager_apply_settings() re-applies
+// tx_disabled from NVS as it brings each port back up, so nothing written during the test
+// is lost.
+//
+// update_io_bus_control() must still run: the test does not drive the RS-485-2 pair (it
+// leaves that transceiver's DE to the hardware pulldown), so the MIO controller is not in
+// its way and io_bus_enabled has to reach the hardware right away — wb_test's exit path
+// does not re-apply it.
+void test_settings_update_ports_frozen_skips_rs485_and_tx_disabled(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - ports frozen (clock_out test active)");
@@ -354,10 +359,10 @@ void test_settings_update_ports_frozen_skips_rs485_io_bus_and_tx_disabled(void)
 
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_update_rs485_control_called,
         "update_rs485_control must not run while the ports are frozen (it would restore the configured V-out)");
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_update_io_bus_control_called,
-        "update_io_bus_control must not run while the ports are frozen (it would take MIO out of reset)");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_update_serial_tx_disabled_called,
         "update_serial_tx_disabled must not run while the ports are frozen (it drives the DE pin the test holds HIGH)");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_update_io_bus_control_called,
+        "update_io_bus_control must still run while the ports are frozen (the test does not own the I/O bus)");
 }
 
 int main(void)
@@ -365,7 +370,7 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_settings_update_no_changes);
-    RUN_TEST(test_settings_update_ports_frozen_skips_rs485_io_bus_and_tx_disabled);
+    RUN_TEST(test_settings_update_ports_frozen_skips_rs485_and_tx_disabled);
     RUN_TEST(test_settings_update_bridge_ports_changed);
     RUN_TEST(test_settings_update_mdns_changed);
     RUN_TEST(test_settings_update_http_server_changed);
