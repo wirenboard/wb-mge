@@ -2183,3 +2183,128 @@ describe('RM-I-20: export buttons gated on the device-confirmed cache state', ()
     wrapper.unmount();
   });
 });
+
+/**
+ * RM-I-21: enabling the cache must arm the export buttons as soon as the toggle lands,
+ * not up to 5 s later.
+ *
+ * cacheActive (the device-confirmed flag the export buttons are gated on) is only ever
+ * written by fetchCacheStats(). The watch on cacheEnabled fires one fetchCacheStats() the
+ * instant useOptimisticToggle flips the override to true — but that GET /cache/status is NOT
+ * serialised with the POST /ports/{n}/cache that is still in flight. When the GET wins the
+ * race the device honestly answers enabled:false, cacheActive stays false, and nothing
+ * re-fetches: the watch will not fire again (cacheEnabled did not change), so the buttons
+ * stay greyed out until the next 5 s stats-interval tick.
+ *
+ * This test pins the losing order explicitly: the status GET is served while the cache POST
+ * is still pending. toggleCaching() must re-fetch the stats after the toggle completes.
+ */
+describe('RM-I-21: export buttons arm immediately after the cache toggle lands', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+
+  beforeEach(() => {
+    infoRef.value = undefined;
+    fetchInfoMock.mockClear();
+    vi.resetModules();
+    vi.mocked(api).mockReset();
+    vi.mocked(api).mockResolvedValue({ d: [] } as never);
+  });
+
+  it('re-fetches cache/status after the enable POST resolves, without waiting for the interval', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    // The device's own view of the cache pool — what GET /cache/status reports.
+    let deviceCacheOn = false;
+    // Holds the enable POST open so the status GET provoked by the optimistic flip is
+    // guaranteed to be served first — the exact interleaving that used to strand the buttons.
+    let releasePost: () => void = () => {};
+    const postGate = new Promise<void>((resolve) => {
+      releasePost = resolve;
+    });
+
+    // First poll: port 1 has the cache overlay on, so listenPort1 initialises to true and
+    // the initial fetchEntries() settles `loading`.
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Now the cache is off on both ports (portsInitialized keeps listenPort1 = true).
+    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+    await flushPromises();
+
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'ports/1/cache') {
+        await postGate; // the device has not applied anything yet
+        deviceCacheOn = true;
+        infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+        return {} as never;
+      }
+      if (url === 'cache/status') {
+        return { enabled: deviceCacheOn } as never;
+      }
+      if (url === 'cache/json') {
+        return { d: [{ s: 1, t: 'h', a: 10, v: 100, age: 2 }] } as never;
+      }
+      return {} as never;
+    });
+    vi.mocked(api).mockClear();
+
+    // Click "Enable caching". The optimistic override flips cacheEnabled to true at once, so
+    // the watch fires a status GET while the POST above is still parked on postGate.
+    await wrapper.find('.rm-off button').trigger('click');
+    await flushPromises();
+
+    // The racing GET has been served and truthfully reported the cache as still off.
+    expect(vi.mocked(api)).toHaveBeenCalledWith('cache/status');
+    expect(deviceCacheOn).toBe(false);
+
+    // Let the device apply the change and the toggle finish.
+    releasePost();
+    await flushPromises();
+
+    // No timers advanced: the only thing that can have refreshed cacheActive is the fetch
+    // toggleCaching() runs after cacheToggle.run() settles. The export buttons must be live.
+    const exportButtons = wrapper.findAll('.rsp-btn-export');
+    expect(exportButtons.length).toBe(2);
+    for (const btn of exportButtons) {
+      expect(btn.attributes('disabled')).toBeUndefined();
+    }
+
+    wrapper.unmount();
+  });
+
+  it('disabling the cache issues no extra cache/status request', async () => {
+    const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
+
+    vi.mocked(api).mockImplementation(async (url: string) => {
+      if (url === 'ports/1/cache') {
+        infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+        return {} as never;
+      }
+      if (url === 'cache/status') {
+        return { enabled: true } as never;
+      }
+      return { d: [] } as never;
+    });
+
+    infoRef.value = makeInfo({ port1Mode: 'cache_bus', port2Mode: 'disabled', tcpPort: 504, timeout: 60 });
+
+    const wrapper = mount(RegisterMap, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    vi.mocked(api).mockClear();
+
+    // Turn the cache off via the header toggle.
+    await wrapper.find('.rm-caching-toggle').trigger('click');
+    await flushPromises();
+
+    // The trailing fetchCacheStats() must be a no-op on this path: it is gated on
+    // cacheEnabled, which the optimistic override has already driven to false. Polling the
+    // status of a cache we just switched off would be a wasted round-trip.
+    const statusCalls = vi.mocked(api).mock.calls.filter((c: unknown[]) => c[0] === 'cache/status');
+    expect(statusCalls.length).toBe(0);
+
+    wrapper.unmount();
+  });
+});

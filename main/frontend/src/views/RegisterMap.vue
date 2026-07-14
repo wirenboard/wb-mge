@@ -122,10 +122,10 @@ async function fetchEntries(): Promise<void> {
   }
 }
 
-function toggleCaching(): void {
+async function toggleCaching(): Promise<void> {
   // The composable owns the optimistic override, in-flight guard, revert-on-error
   // (which sets error.value via onError) and the trailing fetchInfo('low').
-  cacheToggle.run(async (wasEnabled) => {
+  await cacheToggle.run(async (wasEnabled) => {
     if (wasEnabled) {
       // Disable: turn off the cache overlay for every port that currently has it on.
       // The transport mode is left untouched so the port keeps running.
@@ -161,6 +161,15 @@ function toggleCaching(): void {
       await fetchEntries();
     }
   });
+  // Re-read the device-confirmed cache state now that the toggle has actually landed.
+  // The watch on cacheEnabled already fired one fetchCacheStats() the moment the optimistic
+  // override flipped to true, but that GET /cache/status raced the POST /ports/{n}/cache that
+  // was still in flight: when the GET won, the device still answered enabled:false, cacheActive
+  // stayed false, and the export buttons sat disabled for up to 5 s — the watch would not fire
+  // again (cacheEnabled never changed), so only the next stats interval tick could free them.
+  // Serialising the fetch after run() settles it. On the disable path this costs no request:
+  // fetchCacheStats() returns early while cacheEnabled reads false.
+  await fetchCacheStats();
 }
 
 function resetMap(): void {
