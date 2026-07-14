@@ -244,17 +244,22 @@ void test_uptime_tracks_elapsed_time(void)
     serial_desc_t *d0 = NULL;
     repeater_init_port(0, &cfg0, &d0);
 
-    // Advance esp_timer to 3,000,000 us. uptime_s = (now - start) / 1,000,000 = 3 s.
-    mock_esp_timer_get_time_value = 3000000;
+    // Advance esp_timer to 3,250,000 us: uptime_s = 3 s (truncated), uptime_ms = 3250 ms.
+    // The sub-second remainder is what tells the two fields apart — both are derived from
+    // the same snapshot, so uptime_s must be exactly uptime_ms truncated to whole seconds.
+    mock_esp_timer_get_time_value = 3250000;
 
     repeater_stats_t st = {0};
     repeater_get_stats(&st);
-    TEST_ASSERT_EQUAL_UINT64(3, st.uptime_s);
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(3, st.uptime_s, "uptime_s must be the whole-second value");
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(3250, st.uptime_ms,
+        "uptime_ms must keep the millisecond precision that uptime_s truncates away");
 
-    // After all ports are down, uptime reports 0.
+    // After all ports are down, both uptime fields report 0.
     repeater_deinit_port(0);
     repeater_get_stats(&st);
     TEST_ASSERT_EQUAL_UINT64(0, st.uptime_s);
+    TEST_ASSERT_EQUAL_UINT64(0, st.uptime_ms);
 }
 
 // ---------------------------------------------------------------------------

@@ -301,7 +301,12 @@ paths:
                         type: integer
                         format: int64
                         minimum: 0
-                        description: "Seconds since the repeater started forwarding (0 if inactive)"
+                        description: "Seconds since the repeater started forwarding (0 if inactive). Kept for backward compatibility — prefer uptime_ms"
+                      uptime_ms:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                        description: "Milliseconds since the repeater started forwarding (0 if inactive)"
                       bytes_1to2:
                         type: integer
                         format: int64

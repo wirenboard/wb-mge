@@ -43,6 +43,7 @@ static void repeater_unlock(void)
 }
 
 #define REPEATER_US_PER_SEC     1000000U
+#define REPEATER_US_PER_MS      1000U
 
 void repeater_init(void)
 {
@@ -195,9 +196,12 @@ void repeater_get_stats(repeater_stats_t *out)
     out->dropped_1  = s_dropped[0];
     out->dropped_2  = s_dropped[1];
     out->active     = (s_active_count >= BRIDGES_COUNT);
-    out->uptime_s   = (s_active_count > 0)
-                      ? (uint64_t)((esp_timer_get_time() - s_active_since_us) / REPEATER_US_PER_SEC)
-                      : 0;
+    // Both fields are derived from ONE microsecond snapshot, so they can never disagree:
+    // reading esp_timer_get_time() twice could put uptime_s a whole second ahead of, or behind,
+    // uptime_ms across a second boundary.
+    int64_t active_us = (s_active_count > 0) ? (esp_timer_get_time() - s_active_since_us) : 0;
+    out->uptime_s   = (uint64_t)(active_us / REPEATER_US_PER_SEC);
+    out->uptime_ms  = (uint64_t)(active_us / REPEATER_US_PER_MS);
     repeater_unlock();
 }
 

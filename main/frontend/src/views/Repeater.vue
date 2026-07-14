@@ -48,7 +48,14 @@ const forwardBytes = computed<number>(() => info.value?.repeater?.bytes_1to2 ?? 
 const reverseBytes = computed<number>(() => info.value?.repeater?.bytes_2to1 ?? 0); // Port 2 -> Port 1
 const dropped1 = computed<number>(() => info.value?.repeater?.dropped_1 ?? 0);
 const dropped2 = computed<number>(() => info.value?.repeater?.dropped_2 ?? 0);
-const uptimeS = computed<number>(() => info.value?.repeater?.uptime_s ?? 0);
+// Uptime comes from the device in milliseconds (uptime_ms). uptime_s is the legacy,
+// second-truncated field — used only as a fallback for firmware that predates uptime_ms.
+const uptimeMs = computed<number>(
+  () => info.value?.repeater?.uptime_ms ?? (info.value?.repeater?.uptime_s ?? 0) * 1000,
+);
+// Fractional seconds: keeps the millisecond precision for the throughput calculation,
+// while formatUptime() truncates it back to whole seconds for display.
+const uptimeS = computed<number>(() => uptimeMs.value / 1000);
 
 // Average throughput (B/s) over the active uptime, rounded to 1 decimal. Computed client-side.
 const avgBytesPerSec = computed<number>(() => computeAvgBytesPerSec(forwardBytes.value, reverseBytes.value, uptimeS.value));
