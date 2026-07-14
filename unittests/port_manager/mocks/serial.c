@@ -1,6 +1,7 @@
 #include "serial.h"
-#include "bridge.h"       /* for BRIDGES_COUNT */
-#include "bridge_mock.h"  /* for mock_serial_desc_instances[] */
+#include "bridge.h"          /* for BRIDGES_COUNT */
+#include "bridge_mock.h"     /* for mock_serial_desc_instances[] */
+#include "modbus_helpers.h"  /* for MODBUS_FAST_MAX_FRAME_LEN */
 #include <string.h>
 
 /* Call tracking variables exposed for test assertions */
@@ -10,9 +11,13 @@ int mock_serial_set_rx_timeout_called[BRIDGES_COUNT];
 uint8_t mock_serial_set_rx_timeout_value[BRIDGES_COUNT];
 serial_desc_t *mock_serial_deinit_desc[BRIDGES_COUNT];
 
-/* serial_send tracking */
+/* serial_send tracking.
+ * Sized for the longest frame the port can carry — a Fast Modbus command (265 B), not a plain
+ * RTU ADU (256 B). At 256 the capture below silently dropped the payload of any longer frame
+ * (last_len was still set, last_data stayed zeroed), so a test asserting on a max-length Fast
+ * Modbus send would compare against zeros and fail for a reason nowhere near the real cause. */
 int mock_serial_send_called;
-uint8_t mock_serial_send_last_data[256]; /* MODBUS_RTU_MAX_FRAME_LEN = 256 */
+uint8_t mock_serial_send_last_data[MODBUS_FAST_MAX_FRAME_LEN];
 size_t mock_serial_send_last_len;
 /* Return value the next serial_send() call(s) should yield. Default ESP_OK. */
 esp_err_t mock_serial_send_ret = ESP_OK;
@@ -29,7 +34,7 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 {
     (void)desc;
     mock_serial_send_called++;
-    if (data && len > 0 && len <= 256) {
+    if (data && len > 0 && len <= sizeof(mock_serial_send_last_data)) {
         memcpy(mock_serial_send_last_data, data, len);
     }
     mock_serial_send_last_len = len;
