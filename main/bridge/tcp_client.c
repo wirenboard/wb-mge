@@ -261,12 +261,14 @@ static void tcp_client_task(void *pvParameters)
         ESP_LOGW(TAG, "Disconnected from server: %s, port: %d", ip_str, desc->port);
         close_socket(desc->last_client_sock);
         desc->last_client_sock = -1;
-        delay_until_exit_req(desc, pdMS_TO_TICKS(reconnect_delay_ms));
         // Reset to 0 rather than decrement: only one client task writes this field,
         // so the single-writer property holds. Use an atomic store (matching the
         // __atomic_fetch_add above and the __ATOMIC_SEQ_CST invariant documented in
         // tcp_desc.h) to keep the access discipline on this field uniform.
+        // Clear it right after the socket is closed, before the backoff delay, so
+        // tcp_client_connected() does not report "connected" while we wait to reconnect.
         __atomic_store_n(&desc->active_connections, 0, __ATOMIC_SEQ_CST);
+        delay_until_exit_req(desc, pdMS_TO_TICKS(reconnect_delay_ms));
     }
 
     ESP_LOGI(TAG, "TCP client task finished");

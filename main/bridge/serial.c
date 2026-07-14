@@ -171,7 +171,9 @@ static void uart_event_task(void *pvParameters)
     while(1) {
         uart_event_t event;
         BaseType_t result = xQueueReceive(desc->uart_queue, (void *)&event, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
-        if (result == pdPASS) {
+        // Skip event handling if the RX buffer failed to allocate; the loop still
+        // honours EVENT_TASK_EXIT_REQ below so serial_deinit() does not block forever.
+        if (result == pdPASS && buffer_ctx.data != NULL) {
             handle_uart_event(desc, event, &buffer_ctx);
         }
 
@@ -375,8 +377,10 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
         // In QEMU the wrap shim mirrors these IDF calls onto the virtual native
         // GPIO so the host can observe the software-driven tx_disabled state.
         gpio_reset_pin(desc->dir_pin);
-        gpio_set_direction(desc->dir_pin, GPIO_MODE_OUTPUT);
+        // Set the safe level first, then switch to output, so the pin never
+        // drives an undefined level in the window between direction and level.
         gpio_set_level(desc->dir_pin, 0);
+        gpio_set_direction(desc->dir_pin, GPIO_MODE_OUTPUT);
         desc->tx_disabled = true;
         ESP_LOGI(TAG, "UART[%d] TX physically disabled (dir_pin=%d forced LOW)", desc->port_num, desc->dir_pin);
     } else {

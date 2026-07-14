@@ -901,8 +901,10 @@ esp_err_t sniffer_init(void)
 void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
 {
     if (port_index >= BRIDGES_COUNT || serial_desc == NULL) return;
-    serial_desc->sniff_handler = s_port_callbacks[port_index];
+    // Store the descriptor in the context before publishing the callback, so the
+    // UART event task never sees sniff_handler set while serial_desc is still stale.
     sniff_ctx[port_index].serial_desc = serial_desc;
+    serial_desc->sniff_handler = s_port_callbacks[port_index];
 }
 
 void sniffer_detach(unsigned port_index)
