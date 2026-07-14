@@ -7,6 +7,14 @@
 /* Maximum Modbus RTU ADU length: 1 slave + 253 PDU + 2 CRC = 256 bytes */
 #define MODBUS_RTU_MAX_FRAME_LEN 256u
 
+/* Maximum Fast Modbus frame length: a Fast Modbus command wraps an encapsulated
+ * standard command, and the wrapper costs 9 bytes on top of it —
+ * address (1) + 0x46 (1) + subcommand (1) + device serial (4) + CRC (2).
+ * So the longest frame that can appear on the bus is 256 + 9 = 265 bytes, NOT
+ * the 256 of a plain RTU ADU. Anything that scans or buffers Fast Modbus traffic
+ * must size against this, or it will truncate the largest frames. */
+#define MODBUS_FAST_MAX_FRAME_LEN 265u
+
 // Modbus RTU packet header
 typedef struct __attribute__((packed)) {
     uint8_t slave_id;

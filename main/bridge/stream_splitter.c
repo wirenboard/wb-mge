@@ -29,10 +29,13 @@ static size_t fm_expected_len(const uint8_t *buf, size_t avail)
 
     if (fc == 0x46) {
         switch (subcmd) {
-            case 0x01: result = 9;  break;
-            case 0x02: result = 9;  break;
+            /* 0x01 scan start / 0x02 scan continue / 0x04 scan end:
+             * addr + 0x46 + subcmd (3) + CRC (2) = 5 bytes */
+            case 0x01: result = 5;  break;
+            case 0x02: result = 5;  break;
+            /* 0x03 scan response: addr + 0x46 + 0x03 (3) + serial (4) + modbus addr (1) + CRC (2) */
             case 0x03: result = 10; break;
-            case 0x04: result = 9;  break;
+            case 0x04: result = 5;  break;
             /* 0x09 std-command response: server_id+0x46+0x09 (3) + serial (4) + inner standard
              * response PDU + CRC (2). Only inner read responses (FC 0x01-0x04) carry a byte-count
              * we can size from: total = 11 + inner_bytecount (buf[8]). Other inner FCs fall through
@@ -202,10 +205,13 @@ int stream_split(const uint8_t *buf, size_t len,
         }
 
         /* Level 3: CRC scan fallback — try every possible length from 4 up to
-         * rem_len, capped at MODBUS_RTU_MAX_FRAME_LEN to bound the O(N^2) scan
-         * regardless of input buffer size. No valid RTU frame exceeds 256 bytes. */
+         * rem_len, capped to bound the O(N^2) scan regardless of input buffer
+         * size. The cap is the Fast Modbus maximum (265), not the plain RTU one
+         * (256): this splitter also sees Fast Modbus frames, whose 9-byte wrapper
+         * around an encapsulated command pushes them past 256 bytes. Capping at
+         * 256 would make the longest FM frames unfindable by the scan. */
         if (frame_len == 0) {
-            size_t scan_limit = (rem_len < MODBUS_RTU_MAX_FRAME_LEN) ? rem_len : MODBUS_RTU_MAX_FRAME_LEN;
+            size_t scan_limit = (rem_len < MODBUS_FAST_MAX_FRAME_LEN) ? rem_len : MODBUS_FAST_MAX_FRAME_LEN;
             for (size_t try_len = 4; try_len <= scan_limit; try_len++) {
                 if (frame_crc_ok(rem, try_len)) {
                     frame_len = try_len;
