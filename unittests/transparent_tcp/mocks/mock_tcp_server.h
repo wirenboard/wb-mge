@@ -9,6 +9,9 @@ typedef struct {
     int connected_called;
     int deinit_called;
     bool init_should_fail;
+    // Observation of tcp_server_set_max_connections (transparent mode caps at 1).
+    int set_max_connections_called;
+    uint32_t set_max_connections_value;
     // Controllable return value of tcp_server_connected (ESP_OK by default).
     esp_err_t connected_ret;
     // Observation of tcp_server_send (used to verify serial -> TCP relay).

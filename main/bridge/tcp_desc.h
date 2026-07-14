@@ -21,6 +21,7 @@ typedef struct tcp_desc_t {
     int port;
     tcp_receive_handler_t receive_handler;
     tcp_close_handler_t close_handler;      // optional, may be NULL
+    uint32_t max_connections;   // 0 = unlimited. Only 1 is supported: the acceptor admits a new client by dropping the single previously-served one (see tcp_server_task).
     // Per-server active connection count (server mode only).
     // Updated via GCC atomic builtins (__atomic_fetch_add/sub, __ATOMIC_SEQ_CST); polled
     // through plain volatile reads in deinit, so the volatile qualifier must stay.
