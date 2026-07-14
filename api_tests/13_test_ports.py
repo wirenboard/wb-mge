@@ -176,11 +176,14 @@ def test_clock_out_keeps_rs485_2_de_low(api):
         UART's doing. Had the port stayed disabled, the pin would simply have stayed LOW,
         which is equally correct: DE=0 is receive mode, i.e. the bus is not driven.
 
-    The "no rise" window is anchored at the first G15 -> 0 record, not at the request:
-    entry runs gpio_reset_pin() on the pin, and the QEMU model seeds a fresh INPUT with
-    an idle-HIGH G record (virtual_io_qemu.c). That artifact re-states the level the UART
-    had already left on the line; it is not a rise this test drives. Everything after the
-    park must be flat 0.
+    Both windows below are anchored at the ("G15", 0) parking record itself, not at the
+    request and not at "wherever the event list happened to stand after the asserts above".
+    Entry captures the pin with gpio_reset_pin(), and the QEMU model reports that capture
+    as a fresh INPUT: a ("D15", 0) plus an idle-HIGH ("G15", 1) record (virtual_io_qemu.c).
+    Both are artifacts of taking the pin — the G record re-states the level the UART had
+    already left on the line, it is not a rise this test drives — and both land before the
+    park record, so anchoring there excludes them. Everything from the park onwards must be
+    a flat, driven 0.
     """
     original_clock_out = api.get_wb_test().json()["clock_out"]
     info = api.get_info().json()
@@ -223,7 +226,14 @@ def test_clock_out_keeps_rs485_2_de_low(api):
                 # It must stay low for the WHOLE test, not just settle low: watch the
                 # event stream, since even a momentary G15 -> 1 would key the RS-485-2
                 # driver and put the meander on a bus we do not own.
-                parked_at = len(bus.events)
+                #
+                # Anchor the window at the parking record itself, not at the current end of
+                # the event list: the asserts above ran a wait_for() and a get(), and the
+                # records that arrived while they did (the park's own D15 -> 1, the G04 rise)
+                # would otherwise fall into no window at all. The park is the last ("G15", 0)
+                # seen so far — the wait_for("G15", 0) above guarantees there is one, and no
+                # rise can have re-armed a second one.
+                parked_at = len(bus.events) - 1 - bus.events[::-1].index(("G15", 0))
                 bus.pump(2.0)
                 assert ("G15", 1) not in bus.events[parked_at:], \
                     "RS-485-2 DE (G15) went HIGH during clock_out: the port-2 driver was keyed"
@@ -244,12 +254,19 @@ def test_clock_out_keeps_rs485_2_de_low(api):
             assert bus.get("D15") == 1, \
                 f"RS-485-2 DE (G15) must be an OUTPUT once the UART owns it, D15 == {bus.get('D15')}"
 
-            # The invariant: the pin is never a released pad. wb_test.c must not
-            # gpio_reset_pin() it on the way out — that would put it in GPIO_MODE_DISABLE
-            # with the internal pull-up on, weakly asserting DE (= keying the driver on a
-            # bus we do not own) for the whole re-init window, with no external pulldown on
-            # WB-MGU to fight it. A released pad shows up on the bus as ("D15", 0), so from
-            # the moment the pin is parked to the moment the UART owns it there must be none.
+            # The invariant: once parked, the pin is never released back to a pad.
+            # wb_test.c must not gpio_reset_pin() it on the way out — that would put it in
+            # GPIO_MODE_DISABLE with the internal pull-up on, weakly asserting DE (= keying
+            # the driver on a bus we do not own) for the whole re-init window (an NVS read
+            # plus a UART init, tens of ms), with no external pulldown on WB-MGU to fight it.
+            # A released pad shows up on the bus as ("D15", 0), so from the parking record
+            # to the moment the UART owns it there must be none.
+            #
+            # "Once parked" is the honest bound, not "never": taking the pin in the first
+            # place goes through gpio_reset_pin() (de_pin_latch_low_output()), which does
+            # release the pad to its internal pull-up — but only for the handful of register
+            # writes until the direction is set back to OUTPUT, and that ("D15", 0) lands
+            # BEFORE the ("G15", 0) anchor this window starts at.
             assert ("D15", 0) not in bus.events[parked_at:], \
                 "RS-485-2 DE (G15) was released to a pulled-up pad instead of being held low " \
                 "until the UART took it back"

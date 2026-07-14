@@ -72,13 +72,18 @@ static void settings_update_task(void *arg)
 esp_err_t settings_update(void)
 {
     // The factory clock_out test owns part of the RS-485 hardware while it runs: it forces
-    // V-out on and drives the TX pins of both ports plus the port-1 DE pin with the LEDC.
+    // V-out on, drives the TX pins of BOTH ports with the LEDC, and holds the DE pin of
+    // both ports as a plain GPIO — port 1's HIGH (that driver transmits), port 2's LOW
+    // (that driver stays in receive, so the shared RS-485-2 pair is not driven).
     // Re-applying those two settings here would undo that:
     //   - update_rs485_control() would push the configured vout value over the test's;
     //   - update_serial_tx_disabled() is NOT the pure software flag it looks like:
     //     serial_set_tx_disabled() does gpio_reset_pin()/gpio_set_level()/
-    //     gpio_set_direction() on the port's dir_pin, which is exactly the DE pin
-    //     (SERIAL_IO_PIN_1) the test holds HIGH. Today it happens to be harmless only
+    //     gpio_set_direction() on the port's dir_pin (or, for tx_disabled=false,
+    //     uart_set_pin() back to the UART) — and those dir pins are exactly the DE pins
+    //     the test is holding: SERIAL_IO_PIN_1, kept HIGH for port 1, and SERIAL_IO_PIN_2,
+    //     parked LOW for port 2. It would drop the port-1 driver mid-waveform, or hand the
+    //     parked port-2 pin back to the UART. Today it happens to be harmless only
     //     because the frozen ports sit in PM_MODE_DISABLED, so port_manager_set_tx_disabled()
     //     finds no serial_desc and returns early — an accident of the disable order, not a
     //     property of the call. Gate it rather than depend on that.
@@ -89,10 +94,15 @@ esp_err_t settings_update(void)
     //
     // update_io_bus_control() is deliberately NOT gated. The MIO controller shares the
     // RS-485-2 pair, but the test never drives that pair: it toggles only the logic-side
-    // TX (DI) line of port 2 to blink LED2 and leaves that transceiver's DE to the hardware
-    // pulldown, so MIO has the bus to itself and taking it in or out of reset collides with
-    // nothing. Gating it would only mean an io_bus_enabled written during the test never
-    // reached the hardware, since wb_test's exit path does not re-apply it.
+    // TX (DI) line of port 2 to blink LED2, and it holds that transceiver's DE line
+    // (CLK_OUT_DE_PARK_PIN = SERIAL_IO_PIN_2) driven LOW for the whole test. That LOW is
+    // the FIRMWARE's doing, not the hardware's: disabling a port never releases its dir
+    // pin (serial_deinit() does not gpio_reset_pin() it), so the board's weak pulldown
+    // never gets a say — wb_test takes the pin and drives it. With DE low the port-2
+    // driver stays in receive, the RS-485-2 pair is silent, and MIO owns the bus alone, so
+    // taking MIO in or out of reset collides with nothing. Gating it would only mean an
+    // io_bus_enabled written during the test never reached the hardware, since wb_test's
+    // exit path does not re-apply it.
     //
     // The flag is read here without any lock (see the locking contract in port_manager.c):
     // unlike the port re-init below, these calls do not touch pm_ctx, so there is no

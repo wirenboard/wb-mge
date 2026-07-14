@@ -71,8 +71,10 @@ static const setting_mapping_t rs485_base_mappings[] = {
     // while the clock_out factory test runs, whereas port_mode via POST /settings is
     // accepted (200) even then. It is not an inconsistency:
     //   - POST /ports/N/mode APPLIES the mode immediately (port_manager_set_mode ->
-    //     deinit + re-init of the port). During the test that would hand the TX/DE pins
-    //     back to the UART while the LEDC is driving them, so it must be refused.
+    //     deinit + re-init of the port). During the test that would hand the TX and DE
+    //     pins back to the UART while the test is driving them — the TX pin from the
+    //     LEDC, the DE pin from the level the test holds it at (port 1 HIGH, port 2 LOW,
+    //     both plain GPIO) — so it must be refused.
     //   - POST /settings only WRITES NVS here; the applying step is settings_update(),
     //     and port_manager_apply_settings() is a no-op while the ports are frozen. The
     //     new mode simply takes effect when the test ends and wb_test restores both
