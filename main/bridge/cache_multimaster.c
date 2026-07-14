@@ -35,6 +35,7 @@ static const char *TAG = "cache_mm";
 #define CACHE_TYPE_INPUT     1u
 #define CACHE_TYPE_COIL      2u
 #define CACHE_TYPE_DISCRETE  3u
+#define CACHE_TYPE_MASK      0x03u /* bits 1:0 — register type */
 #define CACHE_USED_BIT       0x80u
 
 /* Saturating cap for age_s counter: ~18.2 hours in seconds */
@@ -110,9 +111,9 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         if ((s_pool[i].type & CACHE_USED_BIT) &&
-            s_pool[i].slave_id              == slave_id &&
-            (s_pool[i].type & 0x03u)        == type_value &&
-            s_pool[i].address               == address) {
+            s_pool[i].slave_id                 == slave_id &&
+            (s_pool[i].type & CACHE_TYPE_MASK) == type_value &&
+            s_pool[i].address                  == address) {
             return &s_pool[i];  /* existing entry found */
         }
         if (!(s_pool[i].type & CACHE_USED_BIT) && free_slot == NULL) {
@@ -506,9 +507,9 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
         for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
             const cache_entry_t *e = &s_pool[i];
             if ((e->type & CACHE_USED_BIT) &&
-                e->slave_id              == slave_id &&
-                (e->type & 0x03u)        == type_value &&
-                e->address               == address) {
+                e->slave_id                 == slave_id &&
+                (e->type & CACHE_TYPE_MASK) == type_value &&
+                e->address                  == address) {
                 *value_out = e->value;
                 result = CACHE_LOOKUP_FOUND;
 
@@ -711,7 +712,7 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
         if (!(e->type & CACHE_USED_BIT)) continue;
 
         const char *type_str;
-        switch (e->type & 0x03u) {
+        switch (e->type & CACHE_TYPE_MASK) {
             case CACHE_TYPE_HOLDING:  type_str = "holding";  break;
             case CACHE_TYPE_INPUT:    type_str = "input";    break;
             case CACHE_TYPE_COIL:     type_str = "coil";     break;
@@ -817,7 +818,7 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
 
         /* Single-char type tag — shorter JSON, faster JS access */
         char type_ch;
-        switch (e->type & 0x03u) {
+        switch (e->type & CACHE_TYPE_MASK) {
             case CACHE_TYPE_HOLDING:  type_ch = 'h'; break;
             case CACHE_TYPE_INPUT:    type_ch = 'i'; break;
             case CACHE_TYPE_COIL:     type_ch = 'c'; break;
@@ -978,7 +979,7 @@ bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_cod
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         if ((s_pool[i].type & CACHE_USED_BIT) &&
             s_pool[i].slave_id == slave_id &&
-            (s_pool[i].type & 0x03u) == type_value &&
+            (s_pool[i].type & CACHE_TYPE_MASK) == type_value &&
             s_pool[i].address == address) {
             s_pool[i].age_s = age_s_val;
             return true;
