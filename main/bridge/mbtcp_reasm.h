@@ -22,7 +22,16 @@
 #include <stdint.h>
 
 /* Maximum concurrent TCP clients tracked per reassembler.
- * Matches the per-server connection limit in tcp_server.c. */
+ *
+ * This is NOT backed by a connection limit in tcp_server.c: tcp_desc_t.max_connections
+ * defaults to 0 (unlimited) and only the transparent bridge ever sets it (to 1). The
+ * Modbus TCP gateway ports and the cache server therefore accept as many clients as
+ * lwIP allows, and the 9th one onwards gets no slot here.
+ *
+ * That is a graceful degradation, not a failure: feed() returns MBTCP_REASM_NO_SLOT and
+ * the caller falls back to parsing the recv() buffer unbuffered — a frame that arrives
+ * whole still works, one split across recvs on that connection does not. The condition
+ * is counted (slot_exhausted / mbtcp_reasm_slot_exhausted()). */
 #define MBTCP_REASM_MAX_CONNS  8
 
 /* Per-connection accumulation buffer size. A Modbus TCP ADU is at most
