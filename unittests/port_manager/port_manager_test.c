@@ -5,8 +5,14 @@
 #include "setting_items.h"
 #include "bridge_mock.h"
 #include "repeater_mock.h"
+#include "esp_http_server.h"      /* httpd_req_t, for the REST handler tests */
+#include "freertos/semphr.h"      /* mock_xSemaphoreTake_hook, for the pm_lock race tests */
 
 #include <string.h>
+
+/* Statics that port_manager.c exposes to the tests via PORT_MANAGER_STATIC */
+int hex_str_to_bytes(const char *hex, uint8_t *out, size_t out_max);
+esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index);
 
 /* ── Expose mock state from each mock file ─────────────────────────────── */
 
@@ -65,9 +71,11 @@ void mock_rs485_stats_reset_all(void);
 /* json_utils.c mock */
 extern int mock_json_utils_send_error_called;
 extern const char *mock_json_utils_send_error_last_msg;
+extern const char *mock_json_utils_send_error_last_status;
 extern int mock_json_utils_send_response_called;
 void mock_json_utils_reset(void);
 void mock_json_utils_inject_hex(const char *hex);
+void mock_json_utils_inject_mode(const char *mode);
 
 /* repeater.c mock state is declared in repeater_mock.h */
 
@@ -75,6 +83,7 @@ void mock_json_utils_inject_hex(const char *hex);
 
 void setUp(void)
 {
+    mock_xSemaphoreTake_hook = NULL;
     port_manager_reset_for_test();
     mock_bridge_reset();
     mock_sniffer_reset();
@@ -498,6 +507,163 @@ void test_unfreeze_picks_up_settings_written_during_test(void)
     TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
     TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_TCP_BRIDGE, port_manager_get_mode(0),
         "settings written during the test must be applied when it ends");
+}
+
+void test_frozen_set_mode_rejected(void)
+{
+    enter_clock_out_test_on_port0();
+
+    mock_bridge_reset();
+    mock_serial_reset();
+    int saves_before = mock_setting_items_save_called;
+
+    /* POST /ports/1/mode during the test: re-initialising the port would take the
+     * TX/DE pins back from the LEDC that is driving them. */
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_STATE,
+        port_manager_set_mode(0, PM_MODE_TCP_BRIDGE),
+        "a persisting set_mode must be refused while the ports are frozen");
+
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "a rejected set_mode must leave the frozen port DISABLED");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_called,
+        "a rejected set_mode must not re-init the port (LEDC owns the TX pin)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_serial_only_called,
+        "a rejected set_mode must not re-open the serial port");
+    TEST_ASSERT_EQUAL_MESSAGE(saves_before, mock_setting_items_save_called,
+        "a rejected set_mode must not write the new mode to NVS");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_PASSIVE_STR,
+        mock_setting_items_get_port_mode(0),
+        "a rejected set_mode must leave the persisted mode untouched");
+}
+
+void test_frozen_set_mode_transient_still_allowed(void)
+{
+    /* The test itself drives the ports through the transient path, so the freeze
+     * must not block it (that would make entering the test impossible). */
+    enter_clock_out_test_on_port0();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK,
+        port_manager_set_mode_transient(0, PM_MODE_DISABLED),
+        "the transient path must stay open while the ports are frozen");
+    TEST_ASSERT_EQUAL(PM_MODE_DISABLED, port_manager_get_mode(0));
+}
+
+void test_frozen_set_mode_handler_returns_409(void)
+{
+    enter_clock_out_test_on_port0();
+    mock_json_utils_reset();
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_mode(PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_mode_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_error_called,
+        "POST /ports/1/mode during the factory test must fail");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("409 Conflict",
+        mock_json_utils_send_error_last_status,
+        "a mode change blocked by the factory test is a state conflict, not a bad request");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_response_called,
+        "a rejected mode change must not report success");
+    TEST_ASSERT_EQUAL(PM_MODE_DISABLED, port_manager_get_mode(0));
+}
+
+void test_unfrozen_set_mode_handler_succeeds(void)
+{
+    /* Regression guard: the 409 path must not leak into normal operation. */
+    TEST_ASSERT_FALSE(port_manager_ports_frozen());
+    mock_json_utils_reset();
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_mode(PORT_MODE_PASSIVE_STR);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_mode_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_error_called,
+        "a mode change on unfrozen ports must not error out");
+    TEST_ASSERT_EQUAL(1, mock_json_utils_send_response_called);
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+}
+
+/* ── The freeze must be observed under pm_lock, not before it ───────────────
+ *
+ * The race: settings_update_task enters apply_settings(), reads the freeze flag as
+ * false, and is preempted before it can take pm_lock. wb_test then freezes the
+ * ports, disables them and starts the LEDC on their TX/DE pins. settings_update_task
+ * resumes, takes the lock and re-inits the port straight on top of the live waveform.
+ *
+ * The mutex mock lets us reproduce that window deterministically: the hook runs
+ * inside xSemaphoreTake(), i.e. exactly while the caller is "waiting for the lock",
+ * and freezes the ports there. A flag read before the lock still sees false and the
+ * port comes up; a flag read after the lock sees the freeze and the port stays down.
+ */
+static void freeze_ports_while_waiting_for_lock(void)
+{
+    /* One-shot: pm_lock is not the only mutex taken further down this call path. */
+    mock_xSemaphoreTake_hook = NULL;
+    port_manager_set_ports_frozen(true);
+}
+
+void test_freeze_landing_during_lock_wait_stops_apply_settings(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode_transient(0, PM_MODE_DISABLED));
+
+    mock_bridge_reset();
+    mock_serial_reset();
+
+    /* settings_update_task calls apply_settings() just as the factory test freezes. */
+    mock_xSemaphoreTake_hook = freeze_ports_while_waiting_for_lock;
+    esp_err_t ret = port_manager_apply_settings(0);
+    mock_xSemaphoreTake_hook = NULL;
+
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_TRUE(port_manager_ports_frozen());
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "a freeze that lands while apply_settings waits for pm_lock must still stop it");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_serial_only_called,
+        "the port must not be re-opened on top of the LEDC output");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_called,
+        "the port must not be re-inited on top of the LEDC output");
+}
+
+void test_freeze_landing_during_lock_wait_stops_check_settings_changed(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode_transient(0, PM_MODE_DISABLED));
+
+    /* Runtime is DISABLED, NVS says "passive": reported as changed only if the
+     * freeze is missed. */
+    mock_xSemaphoreTake_hook = freeze_ports_while_waiting_for_lock;
+    bool changed = port_manager_check_settings_changed(0);
+    mock_xSemaphoreTake_hook = NULL;
+
+    TEST_ASSERT_TRUE(port_manager_ports_frozen());
+    TEST_ASSERT_FALSE_MESSAGE(changed,
+        "a freeze that lands while check_settings_changed waits for pm_lock must be honoured");
+}
+
+void test_freeze_landing_during_lock_wait_stops_set_mode(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+
+    mock_bridge_reset();
+    int saves_before = mock_setting_items_save_called;
+
+    /* POST /ports/1/mode racing the start of the factory test. */
+    mock_xSemaphoreTake_hook = freeze_ports_while_waiting_for_lock;
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
+    mock_xSemaphoreTake_hook = NULL;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_STATE, ret,
+        "a freeze that lands while set_mode waits for pm_lock must reject the switch");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_called,
+        "the rejected switch must not init the new mode");
+    TEST_ASSERT_EQUAL_MESSAGE(saves_before, mock_setting_items_save_called,
+        "the rejected switch must not write to NVS");
 }
 
 void test_unfrozen_check_settings_changed_still_detects_mode_change(void)
@@ -1107,6 +1273,13 @@ int port_manager_test(void)
     RUN_TEST(test_frozen_check_settings_changed_reports_no_change);
     RUN_TEST(test_frozen_apply_settings_does_not_bring_port_up);
     RUN_TEST(test_frozen_ports_do_not_touch_nvs);
+    RUN_TEST(test_frozen_set_mode_rejected);
+    RUN_TEST(test_frozen_set_mode_transient_still_allowed);
+    RUN_TEST(test_frozen_set_mode_handler_returns_409);
+    RUN_TEST(test_unfrozen_set_mode_handler_succeeds);
+    RUN_TEST(test_freeze_landing_during_lock_wait_stops_apply_settings);
+    RUN_TEST(test_freeze_landing_during_lock_wait_stops_check_settings_changed);
+    RUN_TEST(test_freeze_landing_during_lock_wait_stops_set_mode);
     RUN_TEST(test_unfreeze_restores_mode_from_nvs);
     RUN_TEST(test_unfreeze_picks_up_settings_written_during_test);
     RUN_TEST(test_unfrozen_check_settings_changed_still_detects_mode_change);

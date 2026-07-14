@@ -8,6 +8,7 @@
 #include "bridge/port_manager.h"
 #include "esp_log.h"
 #include "indication.h"
+#include "mio_control.h"
 #include "rs485_control.h"
 #include "update_rs485_mio_gpio_states.h"
 
@@ -33,8 +34,14 @@
 // Transceiver driver-enable (DE/RE) pins. Both must be driven HIGH for the square
 // wave to actually reach the bus: with DE low the TX pin only toggles on the logic
 // side, so the activity LED lights but nothing is emitted on the line.
-// On WB-MGE the port-2 bus is shared with the MIO transceiver; it stays idle here
-// because both ports are held DISABLED for the duration of the test.
+//
+// On WB-MGE the port-2 bus is shared with the MIO transceiver, and the port mode has
+// no say over that: MIO is held out of reset by MIO_RESET_PIN on the GPIO expander
+// (mio_control_io_bus_onoff(), driven by the io_bus_enabled setting — default true),
+// which is completely independent of whether port 2 is DISABLED. So the test takes
+// the I/O bus down itself while the clock runs, and restores it from the setting on
+// exit; otherwise the MIO controller and our LEDC-driven transceiver could be driving
+// the shared RS-485-2 pair at the same time.
 #define CLK_OUT_EN_PIN          SERIAL_IO_PIN_1
 #define CLK_OUT_EN_PIN_2        SERIAL_IO_PIN_2
 
@@ -135,10 +142,14 @@ static void stop_clock_out(void)
     ledc_timer_config(&tim_conf);
 
     // Release all four pins so port_manager_apply_settings() can hand the TX and
-    // DE lines back to the UART. The DE pins were actively driven LOW just above,
-    // so nothing is asserted while they float back to their default input state;
-    // start_clock_out() re-latches them LOW anyway rather than trusting the latch
-    // left here, since the UART owns these pins in between two runs of the test.
+    // DE lines back to the UART. Note that gpio_reset_pin() does not leave a pin
+    // floating: it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON,
+    // so a released DE pin is weakly pulled towards 1 — the "driver enabled" level.
+    // What actually keeps the transceiver in receive mode in this window is the
+    // external pulldown (R4) on the DE line, which overpowers the internal pull-up.
+    // The window is short (apply_settings re-inits the UART right after), and
+    // start_clock_out() re-latches the DE pins LOW before driving them rather than
+    // trusting whatever the previous owner left in the output latch.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
@@ -168,7 +179,6 @@ static esp_err_t process_request_json(cJSON *request_json)
 
     if (cmd_item->valueint) {
         if (!clock_out_en) {
-            clock_out_en = true;
             // Freeze the ports first: from here on the runtime mode (DISABLED)
             // deliberately differs from the mode in NVS, and nothing but this test
             // may re-init the ports while the LEDC drives their TX/DE pins.
@@ -185,6 +195,28 @@ static esp_err_t process_request_json(cJSON *request_json)
             if (err2 != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to disable port 2 for clock_out: %s", esp_err_to_name(err2));
             }
+            if (err != ESP_OK || err2 != ESP_OK) {
+                // A port that could not be disabled was rolled back to its previous
+                // working mode by port_manager, i.e. its UART still owns the TX/DE
+                // pins. Starting the LEDC on top of that would have two drivers on the
+                // same pins, so abort the test entirely: unfreeze, restore both ports
+                // from NVS (undoing the one that did get disabled) and fail the request.
+                ESP_LOGE(TAG, "clock_out aborted: the RS-485 ports could not be disabled");
+                port_manager_set_ports_frozen(false);
+                port_manager_apply_settings(BRIDGE_PORT_INDEX);
+                port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
+                return ESP_ERR_INVALID_STATE;
+            }
+            // Hold the MIO controller in reset: it hangs off the same RS-485-2 pair we
+            // are about to drive, and disabling port 2 does nothing to it (its reset is
+            // an expander pin, not a UART pin). Restored from io_bus_enabled on exit.
+            esp_err_t io_bus_err = mio_control_io_bus_onoff(false);
+            if (io_bus_err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to disable I/O bus for clock_out test: %s",
+                         esp_err_to_name(io_bus_err));
+            }
+            // Both ports are down and the pins are free: the test is now on.
+            clock_out_en = true;
             start_clock_out();
             // Factory test: light all LEDs simultaneously with the test signal.
             indication_set_test_all_leds(true);
@@ -216,6 +248,9 @@ static esp_err_t process_request_json(cJSON *request_json)
             // Factory test: return LEDs to normal indication and restore V-out state.
             indication_set_test_all_leds(false);
             update_rs485_control();         // restore V-out to the configured KEY_485_VOUT state
+            update_io_bus_control();        // restore MIO to the configured KEY_IO_BUS_ENABLED state
+                                            // (re-applies the setting, so an I/O bus that was
+                                            // already off before the test stays off)
         }
     }
 
@@ -273,6 +308,11 @@ esp_err_t wb_test_post_handler(httpd_req_t *req)
             return json_utils_send_error(req, "Field 'clock_out' not found in request");
         } else if (res == ESP_ERR_INVALID_ARG) {
             return json_utils_send_error(req, "Incorrect command field value");
+        } else if (res == ESP_ERR_INVALID_STATE) {
+            // The ports could not be freed, so the test never started and nothing was
+            // left half-applied — 503: the request was valid, the device could not serve it.
+            return json_utils_send_error_status(req, "503 Service Unavailable",
+                "Cannot start clock_out test: the RS-485 ports could not be disabled");
         } else {
             return json_utils_send_error(req, "Failed to process request");
         }

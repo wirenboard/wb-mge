@@ -73,7 +73,8 @@ void json_utils_send_response(httpd_req_t *req, cJSON *req_json, cJSON *resp_jso
     json_utils_cleanup(req_json, resp_json);
 }
 
-esp_err_t json_utils_send_error(httpd_req_t *req, const char *error_message)
+esp_err_t json_utils_send_error_status(httpd_req_t *req, const char *status,
+                                       const char *error_message)
 {
     cJSON *resp_json = cJSON_CreateObject();
     if (resp_json == NULL) {
@@ -92,9 +93,14 @@ esp_err_t json_utils_send_error(httpd_req_t *req, const char *error_message)
         ESP_LOGW(TAG, "Sending generic error response");
     }
 
-    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_status(req, status);
     json_utils_send_response(req, NULL, resp_json);
     return ESP_OK;
+}
+
+esp_err_t json_utils_send_error(httpd_req_t *req, const char *error_message)
+{
+    return json_utils_send_error_status(req, "400 Bad Request", error_message);
 }
 
 void json_utils_cleanup(cJSON *req_json, cJSON *resp_json)
