@@ -65,6 +65,8 @@ static const setting_mapping_t rs485_base_mappings[] = {
     {"term", "485_term"},
     {"fail_safe", "485_fail_safe"},
     {"tx_disabled", "485_tx_dis"},
+    {"port_mode", "port_mode"},   // -> NVS port_mode_N (STRING, validate_port_mode)
+    {"cache_en", "cache_en"},     // -> NVS cache_en_N  (BOOL,   validate_bool)
 };
 
 static const setting_mapping_t rs485_bridge_mappings[] = {

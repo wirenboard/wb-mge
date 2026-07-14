@@ -67,7 +67,7 @@ def test_settings(api):
         rs485 = original_settings[port]
         rs485_fields = [
             "term", "fail_safe", "tx_disabled", "baudrate", "stopbits",
-            "parity", "databits", "bridge"
+            "parity", "databits", "port_mode", "cache_en", "bridge"
         ]
         for field in rs485_fields:
             assert field in rs485, f"Field {field} is missing"
@@ -84,6 +84,9 @@ def test_settings(api):
             f"Field parity has incorrect value: {rs485['parity']}"
         assert rs485["databits"] in ["5", "6", "7", "8"], \
             f"Field databits has incorrect value: {rs485['databits']}"
+        assert rs485["port_mode"] in ["disabled", "tcp_bridge", "passive", "repeater"], \
+            f"Field port_mode has incorrect value: {rs485['port_mode']}"
+        assert isinstance(rs485["cache_en"], bool), "Field cache_en has incorrect type"
 
         bridge = rs485["bridge"]
         bridge_fields = [
@@ -287,6 +290,53 @@ def test_settings(api):
             print(f"✗ Failed to restore original settings: HTTP {resp.status_code}")
         else:
             print("✓ Original settings restored")
+
+
+def test_port_mode_cache_en_round_trip(api):
+    """W8: port_mode (repeater) and cache_en export/import round-trip.
+
+    The per-port transport mode (port_mode) and cache overlay flag (cache_en)
+    must survive a POST /settings -> GET /settings round-trip — this is the
+    settings export/import path. Enabling repeater mode via POST and reading it
+    back via GET must return the saved values. An invalid port_mode must be
+    rejected (success=false) and must not be persisted.
+    """
+    original_response = api.get_settings()
+    assert original_response.status_code == 200
+    original = original_response.json()
+
+    try:
+        # Round-trip: enable repeater mode + cache overlay on port 1
+        response = api.update_settings(
+            {"rs485_1": {"port_mode": "repeater", "cache_en": True}}
+        )
+        assert response.status_code == 200
+        assert response.json().get("success") is True, \
+            f"port_mode=repeater + cache_en=true must be accepted: {response.json()}"
+
+        check = api.get_settings()
+        assert check.status_code == 200
+        current = check.json()
+        assert current["rs485_1"]["port_mode"] == "repeater", \
+            f"port_mode was not saved: {current['rs485_1'].get('port_mode')}"
+        assert current["rs485_1"]["cache_en"] is True, \
+            f"cache_en was not saved: {current['rs485_1'].get('cache_en')}"
+        print("✓ port_mode=repeater and cache_en=true round-tripped correctly")
+
+        # Negative: an invalid port_mode must be rejected and not saved
+        response = api.update_settings({"rs485_1": {"port_mode": "bogus"}})
+        assert response.status_code == 200
+        assert response.json().get("success") is False, \
+            f"Invalid port_mode must be rejected: {response.json()}"
+
+        check = api.get_settings()
+        assert check.status_code == 200
+        assert check.json()["rs485_1"]["port_mode"] == "repeater", \
+            "Invalid port_mode was saved (expected rejection; value must stay 'repeater')"
+        print("✓ Invalid port_mode rejected and not saved")
+    finally:
+        api.update_settings(original)
+        print("✓ Original settings restored")
 
 
 @pytest.mark.timeout(180)
