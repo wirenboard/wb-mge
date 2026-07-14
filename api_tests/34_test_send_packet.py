@@ -5,6 +5,7 @@ Tests that:
 2. With tx_disabled=True the API returns success but the packet does NOT appear in the log.
 3. An odd-length hex string produces an error response.
 4. An empty hex string results in sent=0 with 200 OK.
+5. A max-length Fast Modbus frame (265 bytes) is accepted; 266 bytes is rejected.
 """
 
 import queue
@@ -185,3 +186,24 @@ def test_send_packet_empty_hex(api):
     assert resp.status_code == 200
     data = resp.json()
     assert data.get("sent") == 0
+
+
+def test_send_packet_fast_modbus_max_frame(api):
+    """A max-length Fast Modbus frame (265 bytes) must be sendable through the API.
+
+    A Fast Modbus command wraps an encapsulated standard command, so the longest frame
+    on the bus is MODBUS_FAST_MAX_FRAME_LEN = 265 bytes, not the 256 of a plain RTU ADU.
+    The handler's decode buffer used to be sized for RTU, which made frames of 257..265
+    bytes impossible to send at all — hex_str_to_bytes() rejected them as "invalid hex".
+    """
+    resp = api.send_packet(1, "AB" * 265)
+    assert resp.status_code == 200, \
+        f"a 265-byte Fast Modbus frame must be accepted, got {resp.status_code}: {resp.text}"
+    assert resp.json().get("sent") == 265, \
+        f"expected sent=265, got: {resp.json()}"
+
+    # One byte past the maximum is still rejected — the buffer grew, it did not vanish.
+    resp = api.send_packet(1, "AB" * 266)
+    data = resp.json()
+    assert "error" in data or resp.status_code != 200, \
+        f"a 266-byte frame exceeds MODBUS_FAST_MAX_FRAME_LEN and must be rejected, got: {data}"

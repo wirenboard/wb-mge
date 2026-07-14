@@ -795,11 +795,15 @@ static esp_err_t port_send_handler(httpd_req_t *req, unsigned port_index)
     }
 
     /* No length pre-checks here: hex_str_to_bytes() already rejects an odd length and anything
-     * that would not fit in out_max bytes (512 hex chars = 256 bytes = MODBUS_RTU_MAX_FRAME_LEN),
+     * that would not fit in out_max bytes (530 hex chars = 265 bytes = MODBUS_FAST_MAX_FRAME_LEN),
      * and it is the only place that decides what a decodable hex string is. Duplicating its rules
      * here bought two more specific error messages at the price of a second copy of the limits
-     * that has to be kept in step with it. */
-    uint8_t bytes[MODBUS_RTU_MAX_FRAME_LEN];
+     * that has to be kept in step with it.
+     *
+     * Sized for Fast Modbus, not plain RTU: a Fast Modbus command wraps an encapsulated standard
+     * command and runs to 265 bytes. At MODBUS_RTU_MAX_FRAME_LEN (256) the longest such frames
+     * could not be sent through this endpoint at all — hex_str_to_bytes() rejected them. */
+    uint8_t bytes[MODBUS_FAST_MAX_FRAME_LEN];
     int byte_count = hex_str_to_bytes(hex_item->valuestring, bytes, sizeof(bytes));
     if (byte_count < 0) {
         cJSON_Delete(req_json);
