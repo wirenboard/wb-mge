@@ -162,12 +162,19 @@ def test_clock_out_keeps_rs485_2_de_low(api):
 
     Asserted over the QEMU IO bus:
       * baseline: both DE lines idle HIGH (RTS-attached, TX-enabled);
-      * during the test: G15 drops to 0 and no ("G15", 1) record appears afterwards —
-        the driver is off for the whole run, not just at the end;
+      * during the test: G15 drops to 0, as a driven OUTPUT (D15 == 1), and no ("G15", 1)
+        record appears afterwards — the driver is off for the whole run, not just at the end;
       * positive control: G04 (port-1 DE) is HIGH, i.e. the RS-485-1 driver IS enabled
         and the meander really does reach that bus. The asymmetry is the point;
-      * after the test: G15 goes back to 1, proving the parked pin was handed back to
-        the UART instead of being left driven.
+      * on exit: the pin is HANDED OVER, not released. wb_test.c deliberately does not
+        gpio_reset_pin() it — a reset pad carries the internal pull-up, which would tug the
+        DE line towards "driver enabled" for the whole port re-init window (an NVS read plus
+        a UART init), and WB-MGU has no external pulldown to fight it. So no ("D15", 0)
+        record may appear after the park: the pin goes straight from our driven LOW to the
+        UART's OUTPUT. Port 2 is configured tcp_bridge here, so the exit path re-inits it and
+        uart_set_pin() puts the line back at its idle HIGH — that final G15 == 1 is the
+        UART's doing. Had the port stayed disabled, the pin would simply have stayed LOW,
+        which is equally correct: DE=0 is receive mode, i.e. the bus is not driven.
 
     The "no rise" window is anchored at the first G15 -> 0 record, not at the request:
     entry runs gpio_reset_pin() on the pin, and the QEMU model seeds a fresh INPUT with
@@ -229,11 +236,24 @@ def test_clock_out_keeps_rs485_2_de_low(api):
                 assert response.status_code == 200, \
                     f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
 
-            # Exit must hand the parked pin back: port 2 comes up from NVS (tcp_bridge)
-            # and its DE line returns to the UART's TX-enabled idle level.
+            # Exit hands the parked pin OVER, it never releases it: port 2 comes up from
+            # NVS (tcp_bridge) and uart_set_pin() re-attaches its RTS, which is the only
+            # thing that puts the DE line back at the UART's TX-enabled idle level.
             assert bus.wait_for("G15", 1, timeout=5.0), \
-                f"clock_out=false must release the RS-485-2 DE line back to the UART, got {bus.get('G15')}"
-            print("✓ clock_out=false released the RS-485-2 DE line back to the UART (G15 == 1)")
+                f"port 2 coming back up must hand the RS-485-2 DE line to the UART, got {bus.get('G15')}"
+            assert bus.get("D15") == 1, \
+                f"RS-485-2 DE (G15) must be an OUTPUT once the UART owns it, D15 == {bus.get('D15')}"
+
+            # The invariant: the pin is never a released pad. wb_test.c must not
+            # gpio_reset_pin() it on the way out — that would put it in GPIO_MODE_DISABLE
+            # with the internal pull-up on, weakly asserting DE (= keying the driver on a
+            # bus we do not own) for the whole re-init window, with no external pulldown on
+            # WB-MGU to fight it. A released pad shows up on the bus as ("D15", 0), so from
+            # the moment the pin is parked to the moment the UART owns it there must be none.
+            assert ("D15", 0) not in bus.events[parked_at:], \
+                "RS-485-2 DE (G15) was released to a pulled-up pad instead of being held low " \
+                "until the UART took it back"
+            print("✓ RS-485-2 DE line stayed driven until the UART took it back (no D15 -> 0)")
 
     finally:
         api.set_wb_test(original_clock_out)
