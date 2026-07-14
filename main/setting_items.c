@@ -435,16 +435,11 @@ esp_err_t setting_items_save(const char *key, const char *value)
         return ESP_ERR_INVALID_ARG;
     }
 
-    const setting_item_t *item = find_setting_item(key);
-    if (!item) {
-        ESP_LOGE(TAG, "Unknown setting key: %s", key);
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    // Validate value if validator exists
-    if (item->validator && !item->validator(value)) {
-        ESP_LOGE(TAG, "Invalid value '%s' for setting '%s'", value, key);
-        return ESP_ERR_INVALID_ARG;
+    // Key lookup and value validation are identical to setting_items_validate(),
+    // so reuse it here instead of duplicating them.
+    esp_err_t validate_ret = setting_items_validate(key, value);
+    if (validate_ret != ESP_OK) {
+        return validate_ret;
     }
 
     esp_err_t result = storage_iface->write_str(key, value);
