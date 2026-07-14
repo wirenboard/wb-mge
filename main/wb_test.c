@@ -159,6 +159,19 @@ static void stop_clock_out(void)
 }
 
 
+// Roll back a failed clock_out entry: the LEDC was never started, so the ports can be
+// unfrozen and brought straight back up from NVS (which also undoes any port this
+// attempt did manage to disable transiently), and the I/O bus is put back to whatever
+// io_bus_enabled says. Leaves the device exactly as it was before the request.
+static void abort_clock_out_entry(void)
+{
+    port_manager_set_ports_frozen(false);
+    port_manager_apply_settings(BRIDGE_PORT_INDEX);
+    port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
+    update_io_bus_control();
+}
+
+
 static esp_err_t process_request_json(cJSON *request_json)
 {
     if (request_json == NULL) {
@@ -202,9 +215,7 @@ static esp_err_t process_request_json(cJSON *request_json)
                 // same pins, so abort the test entirely: unfreeze, restore both ports
                 // from NVS (undoing the one that did get disabled) and fail the request.
                 ESP_LOGE(TAG, "clock_out aborted: the RS-485 ports could not be disabled");
-                port_manager_set_ports_frozen(false);
-                port_manager_apply_settings(BRIDGE_PORT_INDEX);
-                port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
+                abort_clock_out_entry();
                 return ESP_ERR_INVALID_STATE;
             }
             // Hold the MIO controller in reset: it hangs off the same RS-485-2 pair we
@@ -212,8 +223,14 @@ static esp_err_t process_request_json(cJSON *request_json)
             // an expander pin, not a UART pin). Restored from io_bus_enabled on exit.
             esp_err_t io_bus_err = mio_control_io_bus_onoff(false);
             if (io_bus_err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to disable I/O bus for clock_out test: %s",
+                // MIO is still out of reset on the pair the LEDC is about to drive —
+                // the very conflict this reset exists to prevent. Treat it like a port
+                // that could not be disabled and abort the entry instead of starting
+                // the waveform into a live MIO transceiver.
+                ESP_LOGE(TAG, "clock_out aborted: the I/O bus could not be disabled: %s",
                          esp_err_to_name(io_bus_err));
+                abort_clock_out_entry();
+                return ESP_ERR_INVALID_STATE;
             }
             // Both ports are down and the pins are free: the test is now on.
             clock_out_en = true;
@@ -309,10 +326,11 @@ esp_err_t wb_test_post_handler(httpd_req_t *req)
         } else if (res == ESP_ERR_INVALID_ARG) {
             return json_utils_send_error(req, "Incorrect command field value");
         } else if (res == ESP_ERR_INVALID_STATE) {
-            // The ports could not be freed, so the test never started and nothing was
-            // left half-applied — 503: the request was valid, the device could not serve it.
+            // The RS-485 ports or the I/O bus could not be freed, so the test never
+            // started and the entry was rolled back — 503: the request was valid, the
+            // device could not serve it.
             return json_utils_send_error_status(req, "503 Service Unavailable",
-                "Cannot start clock_out test: the RS-485 ports could not be disabled");
+                "Cannot start clock_out test: the RS-485 ports or the I/O bus could not be disabled");
         } else {
             return json_utils_send_error(req, "Failed to process request");
         }
