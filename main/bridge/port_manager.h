@@ -35,6 +35,22 @@ typedef enum {
 } pm_mode_t;
 
 /**
+ * @brief port_manager_set_mode() refused the change: the ports are frozen by the
+ *        factory clock_out test (see port_manager_set_ports_frozen()).
+ *
+ * A dedicated code, NOT ESP_ERR_INVALID_STATE: that one is not exclusive to the
+ * freeze — bridge_port_init() returns exactly ESP_ERR_INVALID_STATE for a port
+ * whose bridge_mode is invalid/legacy, and it reaches the caller through
+ * port_init_mode(). Mapping ESP_ERR_INVALID_STATE to 409 "clock_out test active"
+ * would answer a corrupt-NVS device with a conflict about a test that is not
+ * running. Only this code means "frozen".
+ *
+ * 0x10000 is above every base the IDF hands out in esp_err.h and its components
+ * (the highest is ESP_ERR_MEMPROT_BASE, 0xd000), so it cannot alias a real code.
+ */
+#define PM_ERR_PORTS_FROZEN  ((esp_err_t)0x10000)
+
+/**
  * @brief Initialize the port manager.
  *
  * Reads the active mode for each port from NVS and brings up the appropriate
@@ -54,17 +70,19 @@ esp_err_t port_manager_init(void);
  * Deinitialises the current mode, saves the new mode to NVS, then initialises
  * the new mode.
  *
- * Rejected with ESP_ERR_INVALID_STATE while the ports are frozen by the factory
+ * Rejected with PM_ERR_PORTS_FROZEN while the ports are frozen by the factory
  * test (see port_manager_set_ports_frozen()): re-initialising the port would take
  * the TX/DE pins back from the LEDC that is driving them.
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @param mode        Target mode.
  * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
- *         ESP_ERR_INVALID_STATE if the ports are frozen by the factory test
+ *         PM_ERR_PORTS_FROZEN if the ports are frozen by the factory test
  *         (nothing is changed, neither live nor in NVS);
  *         the init error if the new mode failed to initialise (the previous mode
- *         is rolled back); or the NVS save error if the mode initialised live
+ *         is rolled back) — note that this can itself be ESP_ERR_INVALID_STATE,
+ *         e.g. a tcp_bridge whose bridge_mode is invalid/legacy;
+ *         or the NVS save error if the mode initialised live
  *         but could not be persisted — in that case the mode is applied now but
  *         not persisted (persist-6).
  */
@@ -148,8 +166,8 @@ bool port_manager_get_cache(unsigned port_index);
  * While frozen:
  *   - port_manager_check_settings_changed() always reports false;
  *   - port_manager_apply_settings() is a no-op returning ESP_OK;
- *   - port_manager_set_mode() is rejected with ESP_ERR_INVALID_STATE (the REST
- *     handler turns that into 409 Conflict);
+ *   - port_manager_set_mode() is rejected with PM_ERR_PORTS_FROZEN (the REST
+ *     handler turns that — and only that — into 409 Conflict);
  *   - port_manager_set_mode_transient() still works — it is how the test itself
  *     puts the ports into PM_MODE_DISABLED.
  *

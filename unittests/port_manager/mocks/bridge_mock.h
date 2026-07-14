@@ -16,6 +16,10 @@ typedef struct {
 
 extern mock_bridge_calls_t mock_bridge_calls[BRIDGES_COUNT];
 extern bool mock_bridge_port_init_should_fail;
+/* Error bridge_port_init() returns when mock_bridge_port_init_should_fail is set.
+ * Defaults to ESP_FAIL; set to ESP_ERR_INVALID_STATE to reproduce the real
+ * "invalid/legacy bridge_mode for tcp_bridge" refusal (bridge.c). */
+extern esp_err_t mock_bridge_port_init_fail_err;
 extern bool mock_bridge_port_init_serial_only_should_fail;
 extern serial_desc_t *mock_bridge_serial_desc[BRIDGES_COUNT];
 /* Raw descriptor instances — exposed so serial.c mock can map desc → port index */

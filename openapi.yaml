@@ -1072,7 +1072,8 @@ paths:
           description: >
             Port mode is locked: the clock_out factory test is active and owns the
             RS-485 TX/DE lines of both ports. The request body was valid — retry once
-            the test has been switched off.
+            the test has been switched off. Returned ONLY for that conflict; a port
+            that fails to initialize for any other reason returns 500.
           content:
             application/json:
               schema:
@@ -1080,6 +1081,18 @@ paths:
               example:
                 success: false
                 error: "Port mode is locked while the clock_out factory test is active"
+        '500':
+          description: >
+            The requested mode is valid but the port could not be brought up in it —
+            most commonly a "tcp_bridge" whose persisted bridge_mode is invalid or
+            left over from a legacy firmware. The port keeps its previous mode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Port failed to initialize in the requested mode (check the persisted bridge_mode)"
 
   /ports/{port_number}/send:
     post:

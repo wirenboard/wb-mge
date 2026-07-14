@@ -480,14 +480,18 @@ static esp_err_t port_set_mode_impl(unsigned port_index, pm_mode_t mode, bool pe
     // While the factory test owns the TX/DE pins, a persisting mode change
     // (POST /ports/N/mode) must not go through: port_init_mode() would hand the
     // pins the LEDC is driving back to the UART, and the new mode would be written
-    // to NVS on top of the user's configuration. Reject it — the REST handler maps
-    // this to 409. The transient path stays open: it is how the test disables the
-    // ports in the first place.
+    // to NVS on top of the user's configuration. Reject it with the dedicated
+    // PM_ERR_PORTS_FROZEN — the REST handler maps that (and only that) to 409.
+    // A generic ESP_ERR_INVALID_STATE would not do: port_init_mode() can return the
+    // same code for an unrelated reason (bridge_port_init() refuses a tcp_bridge with
+    // an invalid/legacy bridge_mode), and that must not be reported as a test conflict.
+    // The transient path stays open: it is how the test disables the ports in the
+    // first place.
     if (persist && ports_frozen()) {
         pm_unlock(port_index);
         ESP_LOGW(TAG, "Port[%u]: mode change rejected, ports frozen by factory test",
                  port_index + 1);
-        return ESP_ERR_INVALID_STATE;
+        return PM_ERR_PORTS_FROZEN;
     }
 
     // Remember the current (presumed-working) mode so we can roll back if the
@@ -812,13 +816,27 @@ PORT_MANAGER_STATIC esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned p
     }
 
     esp_err_t ret = port_manager_set_mode(port_index, new_mode);
-    if (ret == ESP_ERR_INVALID_STATE) {
+    if (ret == PM_ERR_PORTS_FROZEN) {
         // The factory clock-out test owns the port's TX/DE pins right now, so the
         // port cannot be reconfigured. 409: the request is fine, the resource state
-        // is not — retry once the test is switched off (POST /test {"clock_out":false}).
+        // is not — retry once the test is switched off (POST /wb_test {"clock_out":false}).
+        // Only the dedicated freeze code lands here. ESP_ERR_INVALID_STATE must NOT:
+        // port_init_mode() returns it for an unrelated reason too (a tcp_bridge whose
+        // persisted bridge_mode is invalid/legacy — bridge.c), and answering that with
+        // "the clock_out test is active" would be a false status and a false diagnosis.
         cJSON_Delete(req_json);
         return json_utils_send_error_status(req, "409 Conflict",
             "Port mode is locked while the clock_out factory test is active");
+    }
+    if (ret == ESP_ERR_INVALID_STATE) {
+        // The requested mode is valid, but the port refused to initialise in it. The
+        // only source today is bridge_port_init() rejecting a tcp_bridge whose
+        // persisted bridge_mode is invalid/legacy; the port has already been rolled
+        // back to its previous mode. That is a device-configuration fault, not a bad
+        // request — report 500 and name the real cause.
+        cJSON_Delete(req_json);
+        return json_utils_send_error_status(req, "500 Internal Server Error",
+            "Port failed to initialize in the requested mode (check the persisted bridge_mode)");
     }
     if (ret != ESP_OK) {
         cJSON_Delete(req_json);

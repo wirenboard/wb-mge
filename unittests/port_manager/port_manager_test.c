@@ -518,8 +518,9 @@ void test_frozen_set_mode_rejected(void)
     int saves_before = mock_setting_items_save_called;
 
     /* POST /ports/1/mode during the test: re-initialising the port would take the
-     * TX/DE pins back from the LEDC that is driving them. */
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_STATE,
+     * TX/DE pins back from the LEDC that is driving them. The refusal carries the
+     * dedicated freeze code, not a generic ESP_ERR_INVALID_STATE. */
+    TEST_ASSERT_EQUAL_MESSAGE(PM_ERR_PORTS_FROZEN,
         port_manager_set_mode(0, PM_MODE_TCP_BRIDGE),
         "a persisting set_mode must be refused while the ports are frozen");
 
@@ -583,6 +584,38 @@ void test_unfrozen_set_mode_handler_succeeds(void)
         "a mode change on unfrozen ports must not error out");
     TEST_ASSERT_EQUAL(1, mock_json_utils_send_response_called);
     TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+}
+
+/* ESP_ERR_INVALID_STATE is NOT exclusive to the freeze: bridge_port_init() returns
+ * exactly that code for a tcp_bridge whose persisted bridge_mode is invalid/legacy
+ * (bridge.c), and it reaches the handler through port_init_mode(). On a device with a
+ * corrupt bridge_mode in NVS, an ordinary POST /ports/1/mode must NOT be answered with
+ * 409 "the clock_out factory test is active" — that is a false status and a false
+ * diagnosis of a test that is not even running. */
+void test_init_fail_invalid_state_is_not_reported_as_409(void)
+{
+    TEST_ASSERT_FALSE(port_manager_ports_frozen());
+    mock_json_utils_reset();
+
+    /* Corrupt/legacy bridge_mode: bridge_port_init() refuses with ESP_ERR_INVALID_STATE. */
+    mock_bridge_port_init_should_fail = true;
+    mock_bridge_port_init_fail_err = ESP_ERR_INVALID_STATE;
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_mode(PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_mode_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_error_called,
+        "a mode change whose init fails must be reported as an error");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0,
+        strcmp(mock_json_utils_send_error_last_status, "409 Conflict"),
+        "a failed init must not be reported as a clock_out test conflict");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("500 Internal Server Error",
+        mock_json_utils_send_error_last_status,
+        "a valid mode the device cannot bring up is a server-side fault, not a conflict");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_response_called,
+        "a failed mode change must not report success");
 }
 
 /* ── The freeze must be observed under pm_lock, not before it ───────────────
@@ -658,7 +691,7 @@ void test_freeze_landing_during_lock_wait_stops_set_mode(void)
     esp_err_t ret = port_manager_set_mode(0, PM_MODE_TCP_BRIDGE);
     mock_xSemaphoreTake_hook = NULL;
 
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_STATE, ret,
+    TEST_ASSERT_EQUAL_MESSAGE(PM_ERR_PORTS_FROZEN, ret,
         "a freeze that lands while set_mode waits for pm_lock must reject the switch");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_called,
         "the rejected switch must not init the new mode");
@@ -1277,6 +1310,7 @@ int port_manager_test(void)
     RUN_TEST(test_frozen_set_mode_transient_still_allowed);
     RUN_TEST(test_frozen_set_mode_handler_returns_409);
     RUN_TEST(test_unfrozen_set_mode_handler_succeeds);
+    RUN_TEST(test_init_fail_invalid_state_is_not_reported_as_409);
     RUN_TEST(test_freeze_landing_during_lock_wait_stops_apply_settings);
     RUN_TEST(test_freeze_landing_during_lock_wait_stops_check_settings_changed);
     RUN_TEST(test_freeze_landing_during_lock_wait_stops_set_mode);
