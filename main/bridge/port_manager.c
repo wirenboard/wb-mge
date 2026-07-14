@@ -348,19 +348,22 @@ static void port_deinit_mode(unsigned index)
         break;
 
     case PM_MODE_TCP_BRIDGE:
-        // Detach sniffer (clears all reasons incl. CACHE) before the serial port
-        // is destroyed to prevent use-after-free.
-        sniffer_detach(index);
+        // Tear the transport down first: bridge_port_deinit() joins the TCP receiver
+        // tasks and the UART event task (via serial_deinit), so no reader of
+        // sniff_handler survives. Only then detach the sniffer — the descriptor is
+        // already freed, so detaching earlier would race live readers / use-after-free.
         bridge_port_deinit(index);
+        sniffer_detach(index);
         // bridge_port_deinit() clears bridge_ctx[index].serial_desc internally.
         rs485_busy_monitor_reset(index);
         rs485_stats_reset(index);
         break;
 
     case PM_MODE_PASSIVE:
-        // sniffer_detach() clears all reasons and the sniff_handler pointer.
-        sniffer_detach(index);
+        // serial_deinit() joins the UART event task (the only sniff_handler reader in
+        // passive mode) before freeing the descriptor; detach the sniffer afterwards.
         serial_deinit(pm_ctx[index].serial_desc);
+        sniffer_detach(index);
         pm_ctx[index].serial_desc = NULL;
         memset(&pm_ctx[index].serial_cfg_at_init, 0, sizeof(pm_ctx[index].serial_cfg_at_init));
         rs485_busy_monitor_reset(index);
@@ -368,8 +371,11 @@ static void port_deinit_mode(unsigned index)
         break;
 
     case PM_MODE_REPEATER:
-        sniffer_detach(index);
+        // repeater_deinit_port() detaches the peer under the lock and joins the UART
+        // event task (via serial_deinit) before freeing the descriptor; detach the
+        // sniffer afterwards.
         repeater_deinit_port(index);
+        sniffer_detach(index);
         pm_ctx[index].serial_desc = NULL;
         memset(&pm_ctx[index].serial_cfg_at_init, 0, sizeof(pm_ctx[index].serial_cfg_at_init));
         rs485_busy_monitor_reset(index);
@@ -387,8 +393,9 @@ static void port_deinit_mode(unsigned index)
 
     // The global cache pool is intentionally NOT freed here. cache_overlay is
     // unchanged, so the pool (and its accumulated data) must persist across a
-    // transport re-init. sniffer_detach(index) above already cleared this port's
-    // CACHE reason, stopping data flow while serial is down — that is sufficient.
+    // transport re-init. sniffer_detach(index) in the branch above already cleared
+    // this port's CACHE reason, and the serial port is down, so no data flows — that
+    // is sufficient.
 }
 
 // ────────────────────────────────────────────────────────────────

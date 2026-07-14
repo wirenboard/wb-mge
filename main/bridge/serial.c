@@ -97,17 +97,14 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             // forwards. The sniffer_process()/cache work it triggers is gated
             // by the reasons bitmask, so an idle bridge with no overlay does no real work.
             //
-            // sniff_handler is published by sniffer_attach() with a release store and cleared
-            // by sniffer_detach() with a release store; load it ONCE with a matching acquire
-            // load and use only the local copy for both the NULL check and the call. Reading
-            // desc->sniff_handler twice would let the compiler reload it after the memcpy
-            // (which may alias the descriptor), so a detach landing in between could turn the
-            // checked-non-NULL pointer into a NULL call.
-            // NOTE: this only makes the pointer read itself safe. It does NOT fully close the
-            // detach race: port_manager calls sniffer_detach() while this task is still
-            // running, so a handler that was non-NULL at load time can still be executing (or
-            // start executing) while the sniffer tears its state down. Closing that hole
-            // requires stopping/joining the transport tasks before detach — tracked separately.
+            // sniff_handler is published by sniffer_attach() with a release store; load it
+            // ONCE with a matching acquire load and use only the local copy for both the NULL
+            // check and the call. Reading desc->sniff_handler twice would let the compiler
+            // reload it after the memcpy (which may alias the descriptor).
+            // The teardown ordering makes this fully safe: port_manager calls sniffer_detach()
+            // only AFTER serial_deinit() has joined this task, so the sniffer state is never
+            // torn down while this task is still running. The acquire-load here still matters
+            // for correctness against sniffer_attach()'s release store while the port is live.
             serial_receive_handler_t sniff_handler = __atomic_load_n(&desc->sniff_handler, __ATOMIC_ACQUIRE);
             if (sniff_handler && buffer_ctx->sniff_data) {
                 if (buffer_ctx->sniff_len + event.size > SERIAL_BUF_SIZE) {
@@ -368,8 +365,9 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
     // is safe and adds no lock-ordering hazard. Only reached when the data was actually
     // transmitted (tx_disabled returns early above; partial writes return ESP_FAIL above).
     // Same rule as the RX path: acquire-load the handler ONCE into a local, then check and
-    // call only that copy, so a concurrent sniffer_detach() cannot turn the checked pointer
-    // into a NULL call. (This does not by itself close the detach race — see the RX note.)
+    // call only that copy. sniffer_detach() runs only after the transport tasks (this one
+    // included) have been joined and the descriptor freed, so no detach can land here
+    // concurrently — see the RX note.
     serial_receive_handler_t sniff_handler = __atomic_load_n(&desc->sniff_handler, __ATOMIC_ACQUIRE);
     if (sniff_handler) {
         sniff_handler(desc, data, len);

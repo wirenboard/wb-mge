@@ -996,17 +996,13 @@ void sniffer_detach(unsigned port_index)
     /* Fully disable: clear all reasons so framing state and RX timeout are reset. */
     sniffer_disable(port_index, SNIFF_REASON_DISPLAY);
     sniffer_disable(port_index, SNIFF_REASON_CACHE);
-    // Retract the callback with a release store, symmetric to the release store in
-    // sniffer_attach(): the readers (serial.c UART event task / serial_send) acquire-load
-    // this pointer once into a local, so once they observe NULL they stop calling us.
-    // This does NOT make detach race-free: the transport tasks are still running here
-    // (port_manager calls sniffer_detach() before bridge_port_deinit()/serial_deinit()),
-    // so a reader that loaded the handler just before this store may still be inside it.
-    // Making detach truly safe requires stopping/joining those tasks first — open issue,
-    // deliberately out of scope for this change.
-    if (sniff_ctx[port_index].serial_desc) {
-        __atomic_store_n(&sniff_ctx[port_index].serial_desc->sniff_handler, NULL, __ATOMIC_RELEASE);
-    }
+    // Do NOT clear serial_desc->sniff_handler here. port_manager now calls
+    // sniffer_detach() AFTER the transport is torn down (bridge_port_deinit() /
+    // serial_deinit() / repeater_deinit_port()). By this point every task that could
+    // read sniff_handler — the UART event task and any serial_send() caller — has been
+    // joined, and serial_desc itself has already been freed. There are no readers left
+    // to retract the callback for, and touching the freed descriptor would be a
+    // use-after-free. Just drop our own reference to it.
     sniff_ctx[port_index].serial_desc = NULL;
 }
 

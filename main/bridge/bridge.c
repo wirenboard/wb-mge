@@ -261,8 +261,8 @@ esp_err_t bridge_port_deinit(unsigned index)
     bridge_config_t* cfg = &bridge_current_cfg[index];
 
     ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
-    // Note: sniffer_detach() is now called by port_manager before bridge_port_deinit(),
-    // so it is not called here to avoid double-detach.
+    // Note: sniffer_detach() is called by port_manager after bridge_port_deinit()
+    // returns (so the transport tasks are already joined), not here — avoids double-detach.
     if (cfg->bridge_mb) {
         modbus_tcp_deinit_port(index);
     } else {
