@@ -132,6 +132,9 @@ void test_receiver_calls_receive_handler_with_data(void)
     desc.close_handler = stub_close_handler;
     desc.active_connections = 1;
     desc.port = 502;
+    /* Non-NULL handle: run_receiver checks the exit flag after each packet via
+     * check_task_exit_req(); the mock returns 0 (no exit) so the loop continues. */
+    desc.event_group = (EventGroupHandle_t)0xDEADBEEF;
 
     /* Set data bytes in the buffer */
     mock_recv_data[0] = 0xAB;
@@ -175,6 +178,9 @@ void test_receiver_sequence_data_then_disconnect(void)
     desc.close_handler = stub_close_handler;
     desc.active_connections = 1;
     desc.port = 502;
+    /* Non-NULL handle: run_receiver checks the exit flag after each packet via
+     * check_task_exit_req(); the mock returns 0 (no exit) so the loop continues. */
+    desc.event_group = (EventGroupHandle_t)0xDEADBEEF;
 
     mock_recv_data[0] = 0x01;
     mock_recv_data_len = 1;
@@ -472,6 +478,9 @@ void test_receiver_records_last_client_sock_on_data(void)
     desc.active_connections = 1;
     desc.port = 502;
     desc.last_client_sock = -1;
+    /* Non-NULL handle: run_receiver checks the exit flag after each packet via
+     * check_task_exit_req(); the mock returns 0 (no exit) so the loop continues. */
+    desc.event_group = (EventGroupHandle_t)0xDEADBEEF;
 
     mock_recv_data[0] = 0xAB;
     mock_recv_data_len = 1;

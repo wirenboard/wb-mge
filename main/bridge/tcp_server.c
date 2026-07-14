@@ -14,6 +14,7 @@
 #define RX_BUFFER_SIZE                  1024
 #define TCP_SERVER_TASK_STACK_SIZE      4096
 #define TCP_SERVER_TASK_PRIORITY        5
+#define TCP_SERVER_LISTEN_BACKLOG       5
 
 #define EVENT_TASK_FINISHED             BIT1
 #define EVENT_TASK_EXIT_REQ             BIT8
@@ -77,7 +78,7 @@ static int create_listen_socket(int port)
             return -1;
         }
 
-        if (listen(listen_sock, 5) != 0) {
+        if (listen(listen_sock, TCP_SERVER_LISTEN_BACKLOG) != 0) {
             int e = errno;
             close(listen_sock);
             if (attempt + 1 < max_attempts) {
@@ -152,15 +153,10 @@ typedef struct {
 } receiver_task_args_t;
 
 
-// Per-client receiver task: reads data from one client socket and invokes receive_handler.
-// Terminates when the client disconnects or an error occurs.
-static void receiver_task(void *pvParameters)
+// Runs the recv/dispatch/close lifecycle for one accepted connection.
+// Shared by receiver_task (production) and the unit-test entry point.
+static void run_receiver(tcp_desc_t *desc, int client_sock)
 {
-    receiver_task_args_t *args = (receiver_task_args_t *)pvParameters;
-    tcp_desc_t *desc = args->desc;
-    int client_sock = args->client_sock;
-    free(args);
-
     char rx_buffer[RX_BUFFER_SIZE];
     int len;
 
@@ -213,6 +209,20 @@ static void receiver_task(void *pvParameters)
     // deinit() waits for active_connections to reach 0 before freeing desc.
     ESP_LOGD(TAG, "Port %d receiver task finished", desc->port);
     __atomic_fetch_sub(&desc->active_connections, 1, __ATOMIC_SEQ_CST);
+}
+
+
+// Per-client receiver task: reads data from one client socket and invokes receive_handler.
+// Terminates when the client disconnects or an error occurs.
+static void receiver_task(void *pvParameters)
+{
+    receiver_task_args_t *args = (receiver_task_args_t *)pvParameters;
+    tcp_desc_t *desc = args->desc;
+    int client_sock = args->client_sock;
+    free(args);
+
+    run_receiver(desc, client_sock);
+
     vTaskDelete(NULL);
 }
 
@@ -443,28 +453,6 @@ esp_err_t tcp_server_deinit(tcp_desc_t *desc)
  * without requiring full task infrastructure. */
 void tcp_server_run_receiver_for_test(tcp_desc_t *desc, int client_sock)
 {
-    char rx_buffer[RX_BUFFER_SIZE];
-    int len;
-
-    do {
-        len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-        if (len < 0) {
-            /* Error path — just break */
-            break;
-        } else if (len == 0) {
-            /* Connection closed */
-        } else {
-            desc->last_client_sock = client_sock;
-            desc->receive_handler(desc, client_sock, (uint8_t *)rx_buffer, len);
-        }
-    } while (len > 0);
-
-    if (desc->close_handler) {
-        desc->close_handler(desc, client_sock);
-    }
-
-    shutdown(client_sock, SHUT_RDWR);
-    close(client_sock);
-    __atomic_fetch_sub(&desc->active_connections, 1, __ATOMIC_SEQ_CST);
+    run_receiver(desc, client_sock);
 }
 #endif /* __unittest_env__ */
