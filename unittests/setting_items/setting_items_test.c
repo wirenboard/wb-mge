@@ -1194,6 +1194,35 @@ void test_migrate_port_mode_legacy_client(void)
                                      "A still-valid bridge role must be preserved by the migration");
 }
 
+// Upgraded device carrying an UNKNOWN legacy bridge_mode_1 (junk from some older
+// build). The port was not "disabled", so it becomes a tcp_bridge - but the value
+// itself is not a valid bridge_mode, so it must be erased just like the sentinel:
+// set_defaults() only fills MISSING keys, so leaving it would hand an invalid role
+// to the bridge on the next read.
+void test_migrate_port_mode_legacy_unknown_value(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - unknown legacy bridge_mode");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "bogus_mode"),
+                                  "Pre-seeding legacy bridge_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
+                                     "A non-disabled legacy value means the port was active");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
+                                     "An invalid legacy bridge_mode must be replaced by the default role");
+}
+
 // Both keys already present (e.g. user already set port_mode_1="passive"). The
 // migration must NOT overwrite an existing port_mode value.
 void test_migrate_port_mode_existing_value_preserved(void)
@@ -1280,6 +1309,7 @@ int main(void)
 
     RUN_TEST(test_migrate_port_mode_legacy_disabled);
     RUN_TEST(test_migrate_port_mode_legacy_client);
+    RUN_TEST(test_migrate_port_mode_legacy_unknown_value);
     RUN_TEST(test_migrate_port_mode_existing_value_preserved);
     RUN_TEST(test_migrate_port_mode_fresh_device_default);
 

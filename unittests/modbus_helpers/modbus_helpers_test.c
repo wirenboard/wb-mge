@@ -7,7 +7,6 @@
 #include <string.h>
 
 #define MODBUS_EXCEPTION_FLAG                       0x80
-#define MODBUS_TCP_PROTOCOL_ID                      0x0000
 
 #define MODBUS_RTU_CRC_BASE                         0xFFFF
 #define MODBUS_RTU_CRC16_LEN                        sizeof(uint16_t)

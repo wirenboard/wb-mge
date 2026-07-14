@@ -1,4 +1,5 @@
 #include "setting_validators.h"
+#include "setting_items.h"
 #include <string.h>
 
 bool mock_validate_hostname_called = false;
@@ -118,7 +119,15 @@ bool validate_wifi_auth(const char *value)
 bool validate_bridge_mode(const char *value)
 {
     mock_validate_bridge_mode_called = true;
-    return true;
+
+    // Unlike the other mocks this one must mirror the real accept-list from
+    // setting_validators.c: the legacy port_mode migration in setting_items.c uses the
+    // RESULT of this validator to decide whether a legacy bridge_mode record is stale.
+    if (value == NULL) {
+        return false;
+    }
+    return (strncmp(value, BRIDGE_MODE_SERVER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) ||
+           (strncmp(value, BRIDGE_MODE_CLIENT_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
 }
 
 bool validate_port_mode(const char *value)

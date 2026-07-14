@@ -23,9 +23,11 @@ typedef struct __attribute__((packed)) {
 } mb_tcp_header_t;
 
 // Canonical Modbus TCP protocol ID (shared across the gateway): always 0.
-// Keep the literal spelled exactly as 0x0000 — some unit tests still define this
-// macro locally, and an identical replacement list keeps that redefinition benign.
 #define MODBUS_TCP_PROTOCOL_ID 0x0000
+
+/* Maximum Modbus TCP ADU length: 6 (MBAP) + 1 (unit) + 1 (FC) + 252 (data).
+ * Every buffer that must hold a complete Modbus TCP frame is sized with this. */
+#define MODBUS_TCP_MAX_ADU_LEN 260u
 
 // Canonical Modbus exception codes (shared across the gateway)
 #define MODBUS_EXC_ILLEGAL_FUNCTION   0x01u  // Illegal function
