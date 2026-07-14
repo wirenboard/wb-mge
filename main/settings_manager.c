@@ -291,42 +291,160 @@ static bool validate_top_level_settings(cJSON *request_json)
     return true;
 }
 
-// Cross-field validation: the cache Modbus server port must not collide with either
-// RS-485 bridge gateway port. Two TCP services cannot listen on the same port; allowing
-// it leaves one unable to bind (listen() -> EADDRINUSE errno 112) and, under repeated
-// re-init without a reboot, a stuck listen socket that permanently occupies the port.
-// "Effective" value = the value in this request if present, otherwise the current NVS
-// value, so the check covers changing either side (or only one side) of the pair.
+// "Effective" value of a setting = the value carried by this request if present, otherwise the
+// current NVS value. Using it lets the cross-field checks below cover a request that changes only
+// one side of a colliding pair. parent may be NULL (the group is absent from the request) — the
+// NVS value is then used.
+//
+// The parent == NULL case returns early instead of feeding a NULL item to cJSON_Is*(): those
+// calls do handle NULL, but the static analyser cannot see that through the opaque declaration
+// and reports the ternary's NULL branch as a null dereference of ->valueint / ->valuestring.
+
+static int effective_int(cJSON *parent, const char *json_key, const char *nvs_key)
+{
+    if (parent == NULL) {
+        return setting_items_read_int(nvs_key);
+    }
+    cJSON *item = cJSON_GetObjectItem(parent, json_key);
+    return cJSON_IsNumber(item) ? item->valueint : setting_items_read_int(nvs_key);
+}
+
+static bool effective_bool(cJSON *parent, const char *json_key, const char *nvs_key)
+{
+    if (parent == NULL) {
+        return setting_items_read_bool(nvs_key);
+    }
+    cJSON *item = cJSON_GetObjectItem(parent, json_key);
+    return cJSON_IsBool(item) ? cJSON_IsTrue(item) : setting_items_read_bool(nvs_key);
+}
+
+static bool nvs_str_equals(const char *nvs_key, const char *expected)
+{
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    if (setting_items_read(nvs_key, value) != ESP_OK) {
+        return false;
+    }
+    return strncmp(value, expected, SETTING_ITEM_MAX_STR_LEN) == 0;
+}
+
+static bool effective_str_equals(cJSON *parent, const char *json_key, const char *nvs_key,
+                                 const char *expected)
+{
+    if (parent == NULL) {
+        return nvs_str_equals(nvs_key, expected);
+    }
+    cJSON *item = cJSON_GetObjectItem(parent, json_key);
+    if (cJSON_IsString(item)) {
+        return strncmp(item->valuestring, expected, SETTING_ITEM_MAX_STR_LEN) == 0;
+    }
+    return nvs_str_equals(nvs_key, expected);
+}
+
+// Return parent's child object, or NULL if absent / not an object. parent may be NULL.
+static cJSON *get_object_or_null(cJSON *parent, const char *key)
+{
+    cJSON *obj = parent ? cJSON_GetObjectItem(parent, key) : NULL;
+    return (obj && cJSON_IsObject(obj)) ? obj : NULL;
+}
+
+// True when the request carries this key (parent may be NULL — group absent from the request).
+static bool json_has(cJSON *parent, const char *key)
+{
+    return (parent != NULL) && cJSON_HasObjectItem(parent, key);
+}
+
+// Cross-field validation: no two TCP services may listen on the same port. Allowing it leaves one
+// of them unable to bind (listen() -> EADDRINUSE errno 112) and, under repeated re-init without a
+// reboot, a stuck listen socket that permanently occupies the port.
+//
+// Only ports that are actually bound LOCALLY take part in the check:
+//   web_port          — always (the config web server always listens);
+//   cache_modbus_port — only when the cache Modbus server is enabled;
+//   bridge_port_N     — only when port_mode_N == tcp_bridge AND bridge_mode_N == server; in client
+//                       mode the port belongs to the REMOTE peer, so nothing is bound locally and
+//                       a "collision" with it is harmless.
+// Every pair of them is compared, which is what the old check was missing: it only compared
+// cache_modbus_port against the two bridge ports, so bridge_port_1 == bridge_port_2, and anything
+// colliding with web_port (default 80), went straight through.
+//
+// Only collisions this request has a hand in are rejected. A listener counts as "touched" when the
+// request carries any of the fields that define it — its port, or the fields that make it a local
+// listener at all. A collision between two UNTOUCHED listeners is inherited from the saved
+// configuration (older firmware validated fewer pairs, so such devices exist) and must NOT fail the
+// request: it would make EVERY subsequent POST fail, including one that only changes the Wi-Fi
+// password, and the device could never be repaired over the REST API field by field. The factory
+// defaults (80/502/503/504) do not collide, so a fresh device is never in that state.
 static bool validate_port_collisions(cJSON *request_json)
 {
-    // A disabled cache Modbus server binds no socket, so its configured port cannot
-    // collide with a bridge gateway. Only an (effectively) enabled cache server can.
-    cJSON *en = cJSON_GetObjectItem(request_json, "cache_modbus_server_enabled");
-    bool cache_enabled = cJSON_IsBool(en) ? cJSON_IsTrue(en)
-                                          : setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
-    if (!cache_enabled) {
-        return true;
+    static const char *const rs485_names[] = {"rs485_1", "rs485_2"};
+    static const char *const port_mode_keys[] = {KEY_PORT_MODE1, KEY_PORT_MODE2};
+    static const char *const bridge_mode_keys[] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
+    static const char *const bridge_port_keys[] = {KEY_BRIDGE_PORT1, KEY_BRIDGE_PORT2};
+
+    typedef struct {
+        const char *name;    // human-readable source of the port, used in the log
+        int         port;
+        bool        touched; // this request carries one of the fields that define this listener
+    } listener_t;
+
+    // web_port + cache_modbus_port + one bridge gateway per RS-485 port.
+    listener_t listeners[2 + ARRAY_SIZE(rs485_names)];
+    size_t count = 0;
+
+    listeners[count].name = "web_port";
+    listeners[count].port = effective_int(request_json, "web_port", KEY_WEB_PORT);
+    listeners[count].touched = json_has(request_json, "web_port");
+    count++;
+
+    if (effective_bool(request_json, "cache_modbus_server_enabled", KEY_CACHE_MODBUS_SERVER_ENABLED)) {
+        listeners[count].name = "cache_modbus_port";
+        listeners[count].port = effective_int(request_json, "cache_modbus_port", KEY_CACHE_MODBUS_PORT);
+        // Enabling the server is what makes it a listener, so that counts as touching it too.
+        listeners[count].touched = json_has(request_json, "cache_modbus_port") ||
+                                   json_has(request_json, "cache_modbus_server_enabled");
+        count++;
     }
 
-    cJSON *cp = cJSON_GetObjectItem(request_json, "cache_modbus_port");
-    int cache_port = cJSON_IsNumber(cp) ? cp->valueint
-                                        : setting_items_read_int(KEY_CACHE_MODBUS_PORT);
+    for (size_t i = 0; i < ARRAY_SIZE(rs485_names); i++) {
+        cJSON *rs485 = get_object_or_null(request_json, rs485_names[i]);
+        cJSON *bridge = get_object_or_null(rs485, "bridge");
 
-    const char *rs485_names[] = {"rs485_1", "rs485_2"};
-    const char *bridge_port_keys[] = {KEY_BRIDGE_PORT1, KEY_BRIDGE_PORT2};
-    for (int i = 0; i < 2; ++i) {
-        // The bridge gateway port lives at rs485_N.bridge.port in the request JSON.
-        cJSON *rs = cJSON_GetObjectItem(request_json, rs485_names[i]);
-        cJSON *bridge = (rs && cJSON_IsObject(rs)) ? cJSON_GetObjectItem(rs, "bridge") : NULL;
-        cJSON *bp = (bridge && cJSON_IsObject(bridge)) ? cJSON_GetObjectItem(bridge, "port") : NULL;
-        int bridge_port = cJSON_IsNumber(bp) ? bp->valueint
-                                             : setting_items_read_int(bridge_port_keys[i]);
-        if (cache_port == bridge_port) {
-            ESP_LOGW(TAG, "Validation: cache_modbus_port (%d) collides with %s bridge port (%d)",
-                     cache_port, rs485_names[i], bridge_port);
+        if (!effective_str_equals(rs485, "port_mode", port_mode_keys[i], PORT_MODE_TCP_BRIDGE_STR)) {
+            continue;   // port is disabled / passive / repeater — no TCP gateway
+        }
+        if (!effective_str_equals(bridge, "mode", bridge_mode_keys[i], BRIDGE_MODE_SERVER_STR)) {
+            continue;   // client mode — the port is remote, nothing is bound locally
+        }
+
+        listeners[count].name = rs485_names[i];
+        listeners[count].port = effective_int(bridge, "port", bridge_port_keys[i]);
+        // port_mode / bridge mode turn the gateway into a local listener, so they count as
+        // touching it as well; the other bridge/serial fields (baudrate, ip, ...) do not.
+        listeners[count].touched = json_has(bridge, "port") ||
+                                   json_has(rs485, "port_mode") ||
+                                   json_has(bridge, "mode");
+        count++;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        for (size_t j = i + 1; j < count; j++) {
+            if (listeners[i].port != listeners[j].port) {
+                continue;
+            }
+            if (!listeners[i].touched && !listeners[j].touched) {
+                ESP_LOGW(TAG, "Validation: %s (%d) already collides with %s (%d) in the saved "
+                              "configuration; this request does not change either — accepting it",
+                         listeners[i].name, listeners[i].port,
+                         listeners[j].name, listeners[j].port);
+                continue;
+            }
+            ESP_LOGW(TAG, "Validation: %s (%d) collides with %s (%d)",
+                     listeners[i].name, listeners[i].port,
+                     listeners[j].name, listeners[j].port);
             return false;
         }
     }
+
     return true;
 }
 

@@ -765,7 +765,7 @@ void test_cache_server_uses_default_port_when_configured_port_zero(void)
 }
 
 // -------------------------------------------------------------------
-// Port-collision validation (cache Modbus server vs RS-485 bridge gateway)
+// Port-collision validation (web server, cache Modbus server, RS-485 bridge gateways)
 // -------------------------------------------------------------------
 
 // cache_modbus_port equal to an RS-485 bridge port (taken from NVS) must be rejected:
@@ -866,6 +866,230 @@ void test_cache_port_equal_bridge_when_server_disabled_accepted(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
     TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
         "cache_modbus_port may equal a bridge port when the cache server is disabled");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// The two RS-485 bridge gateways cannot both listen on the same port either — a pair the
+// old check never compared.
+void test_bridge_ports_equal_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "bridge_port_1 == bridge_port_2 (both tcp_bridge servers) -> success:false");
+    LOG_MESSAGE();
+
+    // NVS defaults: both ports are tcp_bridge + server; move port 2 onto port 1's port.
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON *bridge = cJSON_CreateObject();
+    cJSON_AddNumberToObject(bridge, "port", 502);   // == bridge_port_1 (NVS default)
+    cJSON_AddItemToObject(rs485, "bridge", bridge);
+    cJSON_AddItemToObject(req, "rs485_2", rs485);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "two RS-485 bridge servers on the same TCP port must be rejected");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// A bridge gateway in CLIENT mode connects out to a remote port; it binds nothing locally,
+// so its port may equal another listener's port.
+void test_bridge_ports_equal_accepted_when_one_is_client(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "bridge_port_2 == bridge_port_1 but port 2 is a TCP client -> success:true");
+    LOG_MESSAGE();
+
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON *bridge = cJSON_CreateObject();
+    cJSON_AddStringToObject(bridge, "mode", BRIDGE_MODE_CLIENT_STR);
+    cJSON_AddNumberToObject(bridge, "port", 502);   // remote port, nothing bound locally
+    cJSON_AddItemToObject(rs485, "bridge", bridge);
+    cJSON_AddItemToObject(req, "rs485_2", rs485);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "a TCP client bridge port is remote and must not be treated as a local listener");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// A port that is not in tcp_bridge mode runs no TCP gateway, so its stored bridge port
+// cannot collide with anything.
+void test_cache_port_equal_bridge_port_of_non_tcp_bridge_port_accepted(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "cache_modbus_port == bridge_port_1 but port 1 is in repeater mode -> success:true");
+    LOG_MESSAGE();
+
+    setting_items_save(KEY_PORT_MODE1, PORT_MODE_REPEATER_STR);
+    cJSON *req = make_request_int("cache_modbus_port", 502);  // == bridge_port_1, gateway not running
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "the bridge port of a non-tcp_bridge port must not be treated as a local listener");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// The web server port is always bound: a bridge gateway must not be moved onto it.
+void test_bridge_port_equal_web_port_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "bridge_port_1 == web_port -> success:false");
+    LOG_MESSAGE();
+
+    // NVS default web_port = 80.
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON *bridge = cJSON_CreateObject();
+    cJSON_AddNumberToObject(bridge, "port", 80);
+    cJSON_AddItemToObject(rs485, "bridge", bridge);
+    cJSON_AddItemToObject(req, "rs485_1", rs485);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "an RS-485 bridge gateway must not listen on the web server port");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// ... and the web server must not be moved onto the cache Modbus server port either.
+void test_web_port_equal_cache_port_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "web_port == cache_modbus_port -> success:false");
+    LOG_MESSAGE();
+
+    // NVS defaults: cache_mb_port = 504, cache server enabled.
+    cJSON *req = make_request_int("web_port", 504);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "the web server must not share its port with the cache Modbus server");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// A collision that ALREADY exists in the saved configuration (older firmware validated fewer
+// pairs, so such devices are in the field) must not fail a request that touches neither of the
+// colliding listeners — otherwise EVERY POST fails, including one that only changes a Wi-Fi
+// password, and the device could never be repaired over the REST API field by field.
+void test_inherited_collision_does_not_block_unrelated_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "inherited bridge_port_1 == bridge_port_2 + request touches no port -> success:true");
+    LOG_MESSAGE();
+
+    // Saved (inherited) broken config: both bridge gateways already listen on 502.
+    setting_items_save(KEY_BRIDGE_PORT2, "502");
+
+    // A request that changes something unrelated entirely.
+    cJSON *req = cJSON_CreateObject();
+    cJSON *wifi = cJSON_CreateObject();
+    cJSON_AddStringToObject(wifi, "sta_pass", "new_password");
+    cJSON_AddItemToObject(req, "wifi", wifi);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "a collision already saved in NVS must not block a request that does not touch it");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// The same inherited collision must still be rejected once the request touches one of the two
+// colliding listeners: it is then re-asserting the collision, not merely inheriting it.
+void test_inherited_collision_still_rejected_when_request_touches_a_port(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "inherited bridge_port_1 == bridge_port_2 + request re-sends bridge_port_2 -> success:false");
+    LOG_MESSAGE();
+
+    setting_items_save(KEY_BRIDGE_PORT2, "502");   // inherited collision with bridge_port_1
+
+    // The request re-asserts the colliding port instead of leaving it alone.
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON *bridge = cJSON_CreateObject();
+    cJSON_AddNumberToObject(bridge, "port", 502);
+    cJSON_AddItemToObject(rs485, "bridge", bridge);
+    cJSON_AddItemToObject(req, "rs485_2", rs485);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "a request that carries one of the colliding ports must still be rejected");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// Turning a listener ON counts as touching it: enabling the cache Modbus server on a port that
+// already equals a bridge port introduces the collision even though the request carries no port
+// value at all.
+void test_enabling_cache_server_onto_a_bridge_port_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "cache_modbus_server_enabled:true with cache port == bridge port -> success:false");
+    LOG_MESSAGE();
+
+    // Server off and parked on the port bridge 1 listens on (no collision while it is off).
+    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "false");
+    setting_items_save(KEY_CACHE_MODBUS_PORT, "502");   // == bridge_port_1 (NVS default)
+
+    cJSON *req = make_request_bool("cache_modbus_server_enabled", true);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "enabling the cache server onto a port a bridge gateway already uses must be rejected");
 
     cJSON_Delete(req);
     cJSON_Delete(resp);
@@ -1037,6 +1261,14 @@ int main(void)
     RUN_TEST(test_cache_and_bridge_same_port_one_request_rejected);
     RUN_TEST(test_cache_port_distinct_from_bridge_accepted);
     RUN_TEST(test_cache_port_equal_bridge_when_server_disabled_accepted);
+    RUN_TEST(test_bridge_ports_equal_rejected);
+    RUN_TEST(test_bridge_ports_equal_accepted_when_one_is_client);
+    RUN_TEST(test_cache_port_equal_bridge_port_of_non_tcp_bridge_port_accepted);
+    RUN_TEST(test_bridge_port_equal_web_port_rejected);
+    RUN_TEST(test_web_port_equal_cache_port_rejected);
+    RUN_TEST(test_inherited_collision_does_not_block_unrelated_request);
+    RUN_TEST(test_inherited_collision_still_rejected_when_request_touches_a_port);
+    RUN_TEST(test_enabling_cache_server_onto_a_bridge_port_rejected);
 
     // W8: port_mode / cache_en export & import round-trip
     RUN_TEST(test_build_response_includes_port_mode_and_cache_en);
