@@ -7,10 +7,14 @@ PROJ_DIR = ../..
 # Unit test directory
 UNITTEST_DIR = ..
 
-# Source files to be checked
-TESTED_SRC += $(PROJ_DIR)/main/bridge/cache_modbus_server.c
+# Source files to be checked.
+# cache_modbus_server.c is compiled via cache_modbus_server_shims.c, which #includes
+# it so the test-only shims can reach its statics (not compiled separately -> not
+# listed here, or the linker would see duplicate symbols).
+TESTED_SRC +=
 
 # Auxiliary source files used in this test
+AUX_SRC += cache_modbus_server_shims.c
 AUX_SRC += mocks/cache_multimaster.c
 AUX_SRC += mocks/setting_items.c
 AUX_SRC += mocks/tcp_server.c
