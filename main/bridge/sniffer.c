@@ -746,11 +746,31 @@ SNIFFER_STATIC esp_err_t sniffer_ws_handler(httpd_req_t *req)
             httpd_sess_trigger_close(req->handle, httpd_req_to_sockfd(req));
             return ESP_OK;
         }
+        /* The sniffer has a single client slot. Remember the client we are about to
+         * evict so its httpd session can be closed below: overwriting ws_client_fd
+         * alone drops our reference but leaves the old session open forever. With
+         * MAX_OPEN_SOCKETS = 12, lru_purge_enable = false and no WS idle timeout,
+         * such orphans accumulate (second tab, reconnect after a Wi-Fi drop that
+         * never produced a clean TCP close) until httpd stops accepting ANY
+         * connection and the whole web UI goes dark.
+         * Policy — one client, the newest wins — matches the transparent TCP bridge. */
         xSemaphoreTake(ws_mutex, portMAX_DELAY);
+        int            old_fd  = ws_client_fd;
+        httpd_handle_t old_srv = ws_server;
         ws_server    = req->handle;
         ws_client_fd = httpd_req_to_sockfd(req);
         int new_fd   = ws_client_fd; // capture under mutex to avoid race in log
         xSemaphoreGive(ws_mutex);
+
+        /* Outside the mutex: httpd_sess_trigger_close() reaches into the httpd task
+         * and must not run with our lock held. Skip when the fd is unchanged — httpd
+         * can hand out the same fd number for the new session once the old one is
+         * already gone, and closing it would kill the client we just accepted. */
+        if (old_fd >= 0 && old_fd != new_fd && old_srv != NULL) {
+            ESP_LOGI(TAG, "WS client replaced, closing previous session fd=%d", old_fd);
+            httpd_sess_trigger_close(old_srv, old_fd);
+        }
+
         ESP_LOGI(TAG, "WS client connected, fd=%d", new_fd);
         return ESP_OK;
     }

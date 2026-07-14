@@ -20,6 +20,7 @@ AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
 AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 
 # Include directories (order matters: mocks first to override ESP-IDF headers)
+INC += .
 INC += mocks
 INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks

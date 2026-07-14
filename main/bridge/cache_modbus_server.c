@@ -5,13 +5,19 @@
 #include "tcp_server.h"
 #include "tcp_desc.h"
 #include "setting_items.h"
-#include "cache_modbus_server_internal.h"
+#include "cache_modbus_server_priv.h"
+
+#ifdef __unittest_env__
+/* Prototypes for the test-only shims defined at the bottom of this file. */
+#include "cache_modbus_server_test_api.h"
+#endif
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <string.h>
 #include <arpa/inet.h>
 
@@ -250,19 +256,17 @@ size_t cache_modbus_server_build_coil_response(
 static void process_one_frame(tcp_desc_t *desc, int client_sock,
                                uint8_t *data, size_t len)
 {
-    /* ---- 1. Basic length check ------------------------------------------ */
-    if (len < sizeof(mb_tcp_header_t)) {
-        ESP_LOGW(TAG, "sock=%d: request too short (%u bytes)", client_sock, (unsigned)len);
-        return;
-    }
-
-    /* ---- 2. Validate Modbus TCP framing (protocol_id, length field) ------- */
+    /* ---- 1. Validate Modbus TCP framing ----------------------------------
+     * modbus_tcp_check_request() starts with the very length check that used to
+     * be duplicated here (len >= sizeof(mb_tcp_header_t)), then validates the
+     * protocol id and the MBAP length field. One call covers all of it. */
     if (modbus_tcp_check_request(data, len) != ESP_OK) {
-        ESP_LOGW(TAG, "sock=%d: invalid Modbus TCP framing", client_sock);
+        ESP_LOGW(TAG, "sock=%d: invalid Modbus TCP framing (%u bytes)",
+                 client_sock, (unsigned)len);
         return;
     }
 
-    /* ---- 3. Parse MBAP header -------------------------------------------- */
+    /* ---- 2. Parse MBAP header -------------------------------------------- */
     mb_tcp_header_t req_hdr;
     memcpy(&req_hdr, data, sizeof(req_hdr));
 
@@ -273,17 +277,18 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
     /* Requests addressed to the gateway itself (Unit ID 0xFF) are served from the
      * built-in device-info register map, independently of the cache state. */
     if (mb_device_is_self(unit_id)) {
-        /* Cache server task runs inside tcp_server's receiver_task; its stack is
-         * TCP_SERVER_TASK_STACK_SIZE (see bridge/tcp_server.c). */
-        #define CACHE_SRV_TASK_STACK_BYTES 4096u
+        /* This callback runs inside tcp_server's per-connection receiver task, so
+         * the stack the device registers report is tcp_server's own — take it from
+         * tcp_server.h rather than keeping a copy that can drift out of sync and
+         * make REG_STACK_SIZE / REG_MAX_STACK_USED lie. */
         uint8_t dev_resp[MODBUS_TCP_MAX_ADU_LEN];
         size_t dev_len = mb_device_handle_self_request(data, len,
-                                                       CACHE_SRV_TASK_STACK_BYTES, dev_resp);
+                                                       TCP_SERVER_TASK_STACK_SIZE, dev_resp);
         tcp_server_send(desc, client_sock, dev_resp, dev_len);
         return;
     }
 
-    /* ---- 4. Check that the cache is enabled -------------------------------- */
+    /* ---- 3. Check that the cache is enabled -------------------------------- */
     if (!cache_multimaster_is_enabled()) {
         ESP_LOGD(TAG, "sock=%d: cache disabled, returning exception 0x02", client_sock);
         send_exception(desc, client_sock, transaction_id, unit_id, fc,
@@ -295,7 +300,7 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
      * 0 means no timeout (always return cached value). */
     uint16_t value_timeout_s = (uint16_t)setting_items_read_int(KEY_CACHE_VALUE_TIMEOUT_S);
 
-    /* ---- 5. Filter supported function codes -------------------------------- */
+    /* ---- 4. Filter supported function codes -------------------------------- */
     if (fc != MB_FC_READ_COILS        &&
         fc != MB_FC_READ_DISCRETE_INPUTS &&
         fc != MB_FC_READ_HOLDING_REGS &&
@@ -306,7 +311,7 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
         return;
     }
 
-    /* ---- 6. Require at least 4 PDU bytes after the MBAP header ------------ */
+    /* ---- 5. Require at least 4 PDU bytes after the MBAP header ------------ */
     /* PDU after MBAP header: [FC][start_hi][start_lo][count_hi][count_lo]
      * The header already consumed fc, so we need 4 more bytes in data.       */
     if (len < sizeof(mb_tcp_header_t) + 4) {
@@ -323,51 +328,38 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
     uint16_t count      = 0;
     modbus_pdu_parse_read_request(pdu, &start_addr, &count);
 
-    /* ---- 7. Validate count ------------------------------------------------- */
-    if (fc == MB_FC_READ_HOLDING_REGS || fc == MB_FC_READ_INPUT_REGS) {
-        if (count == 0 || count > MB_MAX_REGISTERS) {
-            send_exception(desc, client_sock, transaction_id, unit_id, fc,
-                           MB_EX_ILLEGAL_DATA_VALUE);
-            return;
-        }
-    } else {
-        /* FC01 / FC02 coils */
-        if (count == 0 || count > MB_MAX_COILS) {
-            send_exception(desc, client_sock, transaction_id, unit_id, fc,
-                           MB_EX_ILLEGAL_DATA_VALUE);
-            return;
-        }
+    /* The register and coil paths differ only in their count limit and in which
+     * builder assembles the response — everything around that is identical, so
+     * select both here and run a single validate-build-send path below. */
+    const bool is_reg = (fc == MB_FC_READ_HOLDING_REGS || fc == MB_FC_READ_INPUT_REGS);
+    const uint16_t max_count = is_reg ? MB_MAX_REGISTERS : MB_MAX_COILS;
+    const cache_mb_response_builder_t build = is_reg
+                                              ? cache_modbus_server_build_register_response
+                                              : cache_modbus_server_build_coil_response;
+
+    /* ---- 6. Validate count ------------------------------------------------- */
+    if (count == 0 || count > max_count) {
+        send_exception(desc, client_sock, transaction_id, unit_id, fc,
+                       MB_EX_ILLEGAL_DATA_VALUE);
+        return;
     }
 
-    /* ---- 8. Build response ------------------------------------------------- */
+    /* ---- 7. Build response ------------------------------------------------- */
     /* Maximum response buffer:
      *   MBAP header  = 8 bytes
      *   byte_count   = 1 byte
      *   data payload = max 250 bytes (125 regs × 2) or ceil(2000/8)=250 bytes
      * 512 bytes is more than enough.                                         */
     uint8_t resp_buf[512];
+    uint8_t exception_code = MB_EX_ILLEGAL_ADDRESS; /* safe default if builder forgot to set */
 
-    if (fc == MB_FC_READ_HOLDING_REGS || fc == MB_FC_READ_INPUT_REGS) {
-        uint8_t exception_code = MB_EX_ILLEGAL_ADDRESS; /* safe default if builder forgot to set */
-        size_t resp_len = cache_modbus_server_build_register_response(
-            unit_id, fc, transaction_id, start_addr, count, value_timeout_s,
-            resp_buf, &exception_code);
-        if (resp_len == 0) {
-            send_exception(desc, client_sock, transaction_id, unit_id, fc, exception_code);
-            return;
-        }
-        tcp_server_send(desc, client_sock, resp_buf, resp_len);
-    } else {
-        uint8_t exception_code = MB_EX_ILLEGAL_ADDRESS; /* safe default if builder forgot to set */
-        size_t resp_len = cache_modbus_server_build_coil_response(
-            unit_id, fc, transaction_id, start_addr, count, value_timeout_s,
-            resp_buf, &exception_code);
-        if (resp_len == 0) {
-            send_exception(desc, client_sock, transaction_id, unit_id, fc, exception_code);
-            return;
-        }
-        tcp_server_send(desc, client_sock, resp_buf, resp_len);
+    size_t resp_len = build(unit_id, fc, transaction_id, start_addr, count,
+                            value_timeout_s, resp_buf, &exception_code);
+    if (resp_len == 0) {
+        send_exception(desc, client_sock, transaction_id, unit_id, fc, exception_code);
+        return;
     }
+    tcp_server_send(desc, client_sock, resp_buf, resp_len);
 }
 
 /* ====================================================================== *

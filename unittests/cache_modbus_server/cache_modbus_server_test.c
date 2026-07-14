@@ -9,14 +9,8 @@
 #include <string.h>
 #include <arpa/inet.h>
 
-#include "cache_modbus_server_internal.h"
-
-/* Test shim: exposes the static process_data_from_tcp() for unit tests */
-void cache_modbus_server_test_process(tcp_desc_t *desc, int client_sock,
-                                       uint8_t *data, size_t len);
-/* Test shims for the reassembly-slot lifecycle (cache-mb-framing-2) */
-void     cache_modbus_server_test_close(int client_sock);
-uint32_t cache_modbus_server_test_get_slot_exhausted(void);
+#include "cache_modbus_server_priv.h"       /* production builders under test */
+#include "cache_modbus_server_test_api.h"  /* test-only shims into the module */
 
 /* ---- Mock state variables exposed by mocks/cache_multimaster.c ----------- */
 
