@@ -48,6 +48,38 @@ void mock_serial_reset(void);
 /* A static tcp_desc used so on_tcp_conn_close can find the ctx */
 static tcp_desc_t s_test_tcp_desc;
 
+/* ---- Reassembly state, via the real mbtcp_reasm API ---------------------- */
+/* Stream reassembly lives in bridge/mbtcp_reasm and is covered end-to-end by
+ * unittests/mbtcp_reasm. The tests here are about what modbus_tcp does with the
+ * frames that come OUT of it (queueing, fallback, close handling), so they only
+ * need to see the port's reassembler — hence one accessor, not a shim per call. */
+
+static bool discard_frame_cb(void *user_ctx, int sock, const uint8_t *frame, size_t len)
+{
+    (void)user_ctx; (void)sock; (void)frame; (void)len;
+    return false;
+}
+
+static int reasm_has_slot(int sock)
+{
+    return mbtcp_reasm_has_slot(modbus_tcp_test_get_reasm(TEST_CTX_IDX), sock) ? 1 : 0;
+}
+
+static size_t reasm_pending_bytes(int sock)
+{
+    return mbtcp_reasm_pending(modbus_tcp_test_get_reasm(TEST_CTX_IDX), sock);
+}
+
+/* Claim a reassembly slot for sock. Feeding one byte allocates the slot and
+ * yields no frame — enough to fill the table and drive the exhaustion fallback. */
+static int reasm_occupy(int sock)
+{
+    const uint8_t stub = 0x00;
+    int rc = mbtcp_reasm_feed(modbus_tcp_test_get_reasm(TEST_CTX_IDX), sock,
+                              &stub, 1, discard_frame_cb, NULL);
+    return (rc != MBTCP_REASM_NO_SLOT) ? 1 : 0;
+}
+
 /* ---- setUp / tearDown --------------------------------------------------- */
 void setUp(void)
 {
@@ -76,124 +108,6 @@ static void build_fc03_request(uint8_t *buf, uint16_t txid, uint8_t unit_id,
     buf[9]  = (uint8_t)(start & 0xFF);
     buf[10] = (uint8_t)(count >> 8);
     buf[11] = (uint8_t)(count & 0xFF);
-}
-
-/* ---- MBTCP-U-001: mbtcp_reasm_get — allocate new slot ------------------- */
-void test_reasm_get_allocates_new_slot(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBTCP-U-001: reasm_get allocates new slot for new sock");
-    LOG_MESSAGE();
-
-    /* Initially no slot for sock 42 */
-    TEST_ASSERT_EQUAL_INT(0, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 42));
-
-    /* After get, slot exists */
-    int result = modbus_tcp_test_reasm_get(TEST_CTX_IDX, 42);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, result, "reasm_get must return 1 for new sock");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 42),
-        "slot must exist after reasm_get");
-}
-
-/* ---- MBTCP-U-002: mbtcp_reasm_get — find existing slot ------------------ */
-void test_reasm_get_finds_existing_slot(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBTCP-U-002: reasm_get finds existing slot for same sock");
-    LOG_MESSAGE();
-
-    /* Allocate slot once */
-    modbus_tcp_test_reasm_get(TEST_CTX_IDX, 55);
-    TEST_ASSERT_EQUAL_INT(1, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 55));
-
-    /* Second call must also succeed (same slot) */
-    int result = modbus_tcp_test_reasm_get(TEST_CTX_IDX, 55);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, result, "reasm_get must return 1 for existing sock");
-
-    /* Still only one slot exists (no duplication) */
-    int count = 0;
-    for (int s = 50; s <= 60; s++) {
-        count += modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, s);
-    }
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, count, "exactly one slot must exist for sock 55");
-}
-
-/* ---- MBTCP-U-003: mbtcp_reasm_get — table full returns 0 ---------------- */
-void test_reasm_get_table_full_returns_zero(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBTCP-U-003: reasm_get returns 0 when table full (8 sockets)");
-    LOG_MESSAGE();
-
-    /* Fill all 8 slots */
-    for (int i = 1; i <= 8; i++) {
-        int res = modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
-        TEST_ASSERT_EQUAL_INT_MESSAGE(1, res, "first 8 allocations must succeed");
-    }
-
-    /* 9th socket must fail */
-    int result = modbus_tcp_test_reasm_get(TEST_CTX_IDX, 9);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, result, "reasm_get must return 0 when table is full");
-}
-
-/* ---- MBTCP-U-004: mbtcp_reasm_free — free existing slot ----------------- */
-void test_reasm_free_removes_slot(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBTCP-U-004: reasm_free removes slot");
-    LOG_MESSAGE();
-
-    modbus_tcp_test_reasm_get(TEST_CTX_IDX, 77);
-    TEST_ASSERT_EQUAL_INT(1, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 77));
-
-    modbus_tcp_test_reasm_free(TEST_CTX_IDX, 77);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 77),
-        "slot must be gone after reasm_free");
-}
-
-/* ---- MBTCP-U-005: mbtcp_reasm_free — idempotent (free non-existent) ----- */
-void test_reasm_free_nonexistent_no_crash(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBTCP-U-005: reasm_free of non-existent sock does not crash");
-    LOG_MESSAGE();
-
-    /* sock 99 was never allocated */
-    modbus_tcp_test_reasm_free(TEST_CTX_IDX, 99);   /* must not crash */
-
-    /* All slots still clean */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 99),
-        "no slot for sock 99 after free of non-existent");
-}
-
-/* ---- MBTCP-U-006: mbtcp_frame_total_len — correct MBAP length parsing --- */
-void test_frame_total_len_parsing(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBTCP-U-006: mbtcp_frame_total_len parses MBAP length correctly");
-    LOG_MESSAGE();
-
-    uint8_t buf[8] = {0};
-
-    /* MBAP length = 6 -> total = 6 + 6 = 12 */
-    buf[4] = 0x00; buf[5] = 0x06;
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(12u, modbus_tcp_test_frame_total_len(buf),
-        "length=6 -> total must be 12");
-
-    /* MBAP length = 254 -> total = 254 + 6 = 260 */
-    buf[4] = 0x00; buf[5] = 0xFE;
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(260u, modbus_tcp_test_frame_total_len(buf),
-        "length=254 -> total must be 260");
-
-    /* MBAP length = 0 -> total = 0 + 6 = 6 */
-    buf[4] = 0x00; buf[5] = 0x00;
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(6u, modbus_tcp_test_frame_total_len(buf),
-        "length=0 -> total must be 6");
-
-    /* MBAP length = 0x0102 (258) -> total = 264; tests big-endian parsing */
-    buf[4] = 0x01; buf[5] = 0x02;
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(264u, modbus_tcp_test_frame_total_len(buf),
-        "length=0x0102 -> total must be 264 (big-endian field)");
 }
 
 /* ---- MBTCP-U-007: single complete frame pushed to queue ----------------- */
@@ -229,14 +143,14 @@ void test_push_split_frame_two_calls(void)
     unsigned pushed1 = modbus_tcp_test_push_data(TEST_CTX_IDX, 20, req, 6);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, pushed1, "first half: no frames pushed yet");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count, "no push call after first half");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(6u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 20),
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(6u, reasm_pending_bytes(20),
         "6 bytes must be pending after first half");
 
     /* Remaining 6 bytes: frame completes */
     unsigned pushed2 = modbus_tcp_test_push_data(TEST_CTX_IDX, 20, req + 6, 6);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed2, "second half: frame must be pushed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count, "push called once after second half");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 20),
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, reasm_pending_bytes(20),
         "no pending bytes after frame dispatched");
 }
 
@@ -277,7 +191,7 @@ void test_push_one_and_half_frames(void)
     unsigned pushed1 = modbus_tcp_test_push_data(TEST_CTX_IDX, 40, buf, 18);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed1, "first 18 bytes: only frame1 pushed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count, "one push call after 18 bytes");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(6u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 40),
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(6u, reasm_pending_bytes(40),
         "6 bytes (half of frame2) must be pending");
 
     /* Send remaining 6 bytes of frame2 */
@@ -285,15 +199,19 @@ void test_push_one_and_half_frames(void)
     unsigned pushed2 = modbus_tcp_test_push_data(TEST_CTX_IDX, 40, buf + 18, 6);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed2, "frame2 must be pushed on second recv");
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count, "one more push call for frame2");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 40),
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, reasm_pending_bytes(40),
         "no pending bytes after frame2 dispatched");
 }
 
-/* ---- MBTCP-U-011: bogus length field -> resync/drop ---------------------- */
+/* ---- MBTCP-U-011: bogus length field -> byte-wise resync, nothing pushed -- */
+/* The reassembler resyncs ONE BYTE at a time on a bad header rather than
+ * discarding the buffer (see mbtcp_reasm). Nothing may be pushed; the bytes that
+ * are still too few to hold a header stay buffered, because a real frame could
+ * begin inside them and continue in the next recv(). MBTCP-U-011b proves that. */
 void test_push_bogus_length_drops(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBTCP-U-011: bogus MBAP length -> resync (drop, no push)");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBTCP-U-011: bogus MBAP length -> resync, no push");
     LOG_MESSAGE();
 
     /* Build packet with length = 0xFFFF (total = 65535 + 6 = 65541 > 300) */
@@ -305,9 +223,38 @@ void test_push_bogus_length_drops(void)
     unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 50, buf, 12);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, pushed, "bogus length: no frames pushed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count, "no push call for bogus frame");
-    /* Buffer must be cleared (resync) */
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 50),
-        "buffer must be cleared after bogus length (resync)");
+
+    /* The scan advanced a byte at a time until fewer than a header's worth of
+     * bytes remained: 12 - 5 = 7 unscannable bytes are held for the next recv. */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(7u, reasm_pending_bytes(50),
+        "resync must retain the sub-header tail, not discard the buffer");
+}
+
+/* ---- MBTCP-U-011b: a valid frame behind a bogus one must survive ---------- */
+/* This is why the resync is byte-wise. The old gateway did `pos = c->len` on a
+ * bad header, throwing away the ENTIRE buffer — including a perfectly good frame
+ * that happened to be coalesced behind the bad one in the same recv(). */
+void test_push_valid_frame_behind_bogus_header_survives(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-011b: garbage followed by a valid frame -> the valid frame is still pushed");
+    LOG_MESSAGE();
+
+    uint8_t buf[4 + 12];
+    /* 4 bytes of garbage that cannot start a frame (protocol_id != 0) */
+    buf[0] = 0xDE; buf[1] = 0xAD; buf[2] = 0xBE; buf[3] = 0xEF;
+    /* ...immediately followed by a well-formed FC03 request */
+    build_fc03_request(&buf[4], 0x0031, 1, 0, 1);
+
+    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 51, buf, sizeof(buf));
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed,
+        "the valid frame behind the garbage must be recovered by the resync");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count, "exactly one frame pushed");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(12u, mock_pq_packets[0].len, "the pushed frame is the 12-byte request");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, reasm_pending_bytes(51),
+        "nothing left buffered once the frame is consumed");
 }
 
 /* ---- MBTCP-U-012: queue full -> frame consumed but not counted ----------- */
@@ -328,7 +275,7 @@ void test_push_queue_full_frame_consumed(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count,
         "push_with_client must be called even though queue is full");
     /* Buffer consumed — no pending bytes */
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 60),
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, reasm_pending_bytes(60),
         "frame bytes must be consumed even when queue full");
 }
 
@@ -341,7 +288,7 @@ void test_push_table_full_falls_back_to_one_pass(void)
 
     /* Fill all 8 slots */
     for (int i = 1; i <= 8; i++) {
-        modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
+        reasm_occupy(i);
     }
 
     /* Now push a complete frame as sock 9 (table full -> fallback) */
@@ -364,12 +311,12 @@ void test_conn_close_frees_slot(void)
     uint8_t req[12];
     build_fc03_request(req, 0x0060, 1, 0, 1);
     modbus_tcp_test_push_data(TEST_CTX_IDX, 70, req, 6);   /* half frame -> slot allocated, pending */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 70),
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, reasm_has_slot(70),
         "slot must exist after partial push");
 
     /* Close connection */
     modbus_tcp_test_conn_close(TEST_CTX_IDX, 70);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 70),
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, reasm_has_slot(70),
         "slot must be freed after on_tcp_conn_close");
 }
 
@@ -395,7 +342,7 @@ void test_push_independent_sockets(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count, "sock 80: one push call");
 
     /* Sock 81 still has partial frame pending */
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(6u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 81),
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(6u, reasm_pending_bytes(81),
         "sock 81 must still have 6 pending bytes (unaffected by sock 80)");
 
     mock_packet_queue_reset();
@@ -411,8 +358,9 @@ void test_push_independent_sockets(void)
 }
 
 /* ---- MBTCP-U-016: flen < sizeof(mb_tcp_header_t) -> bogus path ---------- */
-/* MBAP length=0 gives flen=6 < 8 (sizeof header): triggers the bogus-length
- * branch (same branch as flen > MBTCP_REASM_FRAME_MAX).  Buffer cleared. */
+/* MBAP length=0 gives flen=6 < 8 (sizeof header): the same bad-header branch as
+ * flen > MBTCP_REASM_FRAME_MAX. Nothing is pushed and the stream resyncs a byte
+ * at a time, leaving only the sub-header tail buffered. */
 void test_push_bogus_length_too_small(void)
 {
     LOG_MESSAGE();
@@ -429,86 +377,8 @@ void test_push_bogus_length_too_small(void)
     unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 90, buf, 12);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, pushed, "flen=6<8: no frames pushed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count, "no push call for too-small flen");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 90),
-        "buffer must be cleared (resync) after flen < sizeof(header)");
-}
-
-/* ---- MBTCP-U-017: mbtcp_reasm_get — sock < 0 returns 0 (guard) ---------- */
-/* The free-slot sentinel is sock=-1. Calling reasm_get with a negative sock
- * must not accidentally match a free slot and must return 0 (NULL internally).
- * After the call, all 8 table slots must remain unallocated (still available). */
-void test_reasm_get_negative_sock_returns_zero(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "MBTCP-U-017: reasm_get with sock=-1 must return 0 (guard against free-slot collision)");
-    LOG_MESSAGE();
-
-    /* Table is empty: all slots have sock=-1 (the sentinel for free). */
-    int result = modbus_tcp_test_reasm_get(TEST_CTX_IDX, -1);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, result,
-        "reasm_get must return 0 for sock=-1 (invalid socket fd)");
-
-    /* After the failed get, all 8 table slots must still be allocatable for
-     * legitimate sockets — meaning the guard did not consume a free slot. */
-    for (int i = 1; i <= 8; i++) {
-        int res = modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
-        TEST_ASSERT_EQUAL_INT_MESSAGE(1, res,
-            "all 8 slots must still be free after rejected sock=-1 call");
-    }
-}
-
-/* ---- MBTCP-U-018: mbtcp_frame_total_len boundary off-by-one -------------- */
-/* MBTCP_REASM_FRAME_MAX = 300.
- * MBAP length=294 -> flen=300 (exactly at limit, accepted and pushed).
- * MBAP length=295 -> flen=301 (one over the limit, triggers bogus/resync path). */
-void test_frame_total_len_boundary(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "MBTCP-U-018: flen=300 (MBAP len=294) accepted; flen=301 (MBAP len=295) dropped");
-    LOG_MESSAGE();
-
-    /* Build a synthetic frame large enough: 300 bytes total.
-     * MBAP length field = 294, so bytes [0..5] are MBAP header (6 bytes),
-     * bytes [6..299] are PDU (294 bytes).  unit_id=1, FC=0x03, rest zeroes.
-     * The exact PDU content does not matter for the length check. */
-    uint8_t big_buf[302];
-    memset(big_buf, 0, sizeof(big_buf));
-
-    /* --- Case A: MBAP length=294 -> flen=300 <= MBTCP_REASM_FRAME_MAX -> push succeeds --- */
-    /* Transaction ID = 0x0100, protocol_id = 0x0000, length = 294 */
-    big_buf[0] = 0x01; big_buf[1] = 0x00;   /* txid */
-    big_buf[2] = 0x00; big_buf[3] = 0x00;   /* protocol_id = 0 */
-    big_buf[4] = 0x01; big_buf[5] = 0x26;   /* length = 294 = 0x0126 */
-    big_buf[6] = 0x01;                       /* unit_id */
-    big_buf[7] = 0x03;                       /* FC03 */
-    /* bytes [8..299] remain 0 (register address + count + padding) */
-
-    /* Verify frame_total_len returns 300 */
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(300u, modbus_tcp_test_frame_total_len(big_buf),
-        "MBAP length=294 must give flen=300");
-
-    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 91, big_buf, 300);
-    TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed,
-        "flen=300 (==MBTCP_REASM_FRAME_MAX): frame must be accepted and pushed");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count,
-        "push_with_client must be called once for flen=300 frame");
-
-    /* --- Case B: MBAP length=295 -> flen=301 > MBTCP_REASM_FRAME_MAX -> bogus/drop --- */
-    mock_packet_queue_reset();
-    memset(big_buf, 0, sizeof(big_buf));
-    big_buf[0] = 0x01; big_buf[1] = 0x01;   /* txid */
-    big_buf[2] = 0x00; big_buf[3] = 0x00;   /* protocol_id = 0 */
-    big_buf[4] = 0x01; big_buf[5] = 0x27;   /* length = 295 = 0x0127 */
-    big_buf[6] = 0x01;                       /* unit_id */
-    big_buf[7] = 0x03;                       /* FC03 */
-
-    unsigned pushed2 = modbus_tcp_test_push_data(TEST_CTX_IDX, 92, big_buf, 301);
-    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, pushed2,
-        "flen=301 (>MBTCP_REASM_FRAME_MAX): frame must be dropped (bogus path)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count,
-        "no push_with_client call for oversized frame");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(7u, reasm_pending_bytes(90),
+        "resync must retain the sub-header tail after flen < sizeof(header)");
 }
 
 /* ---- MBTCP-U-019: calc_response_timeout_ticks — 9600 baud >= 300 ms ------ */
@@ -580,7 +450,7 @@ void test_one_pass_fallback_short_data(void)
 
     /* Fill all 8 reassembly slots so that socket 9 falls back to one-pass. */
     for (int i = 1; i <= 8; i++) {
-        modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
+        reasm_occupy(i);
     }
 
     /* Build a frame that declares MBAP length = 6 (total = 12 bytes)
@@ -612,7 +482,7 @@ void test_one_pass_fallback_invalid_pid(void)
 
     /* Fill all 8 reassembly slots so that socket 9 uses one-pass fallback. */
     for (int i = 1; i <= 8; i++) {
-        modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
+        reasm_occupy(i);
     }
 
     /* Build a complete 12-byte frame but with protocol_id = 0x0001 (invalid). */
@@ -632,9 +502,11 @@ void test_one_pass_fallback_invalid_pid(void)
         "no push call for frame with invalid protocol ID");
 }
 
-/* ---- MBTCP-U-023: reasm path — protocol_id != 0 -> dropped by check_request */
-/* When a frame with protocol_id != 0x0000 arrives via the normal reassembly
- * path, modbus_tcp_check_request() must reject it and it must not be pushed. */
+/* ---- MBTCP-U-023: reasm path — protocol_id != 0 -> never framed ----------- */
+/* protocol_id is part of the reassembler's frame-boundary test: a header with a
+ * non-zero protocol id is not a header at all, so the frame is never even
+ * dispatched (previously it was framed, then rejected downstream by
+ * modbus_tcp_check_request). Either way nothing reaches the queue. */
 void test_reasm_invalid_pid_dropped(void)
 {
     LOG_MESSAGE();
@@ -658,10 +530,10 @@ void test_reasm_invalid_pid_dropped(void)
         "reasm path: protocol_id=0xFFFF must be dropped");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_pq_push_count,
         "no push call for frame with invalid protocol ID in reasm path");
-    /* After dropping, the buffer must be empty — the invalid frame was consumed. */
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u,
-        modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 100),
-        "buffer must be empty after invalid-PID frame consumed/dropped");
+    /* Not a valid header -> byte-wise resync, sub-header tail retained. */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(7u,
+        reasm_pending_bytes(100),
+        "invalid protocol id is a bad header: resync retains the sub-header tail");
 }
 
 /* ---- MBTCP-U-025: exact-header-size frame dispatched (MUT-10) ----------- */
@@ -683,7 +555,7 @@ void test_push_exact_header_size_frame(void)
     buf[6] = 0x01;                   /* unit id */
     buf[7] = 0x03;                   /* FC03 */
 
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(8u, modbus_tcp_test_frame_total_len(buf),
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(8u, mbtcp_reasm_frame_total_len(buf),
         "MBAP length=2 must give flen=8");
 
     unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 110, buf, 8);
@@ -692,39 +564,8 @@ void test_push_exact_header_size_frame(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count, "push_with_client called once");
     TEST_ASSERT_EQUAL_size_t_MESSAGE(8u, mock_pq_packets[0].len, "pushed frame length must be 8");
     TEST_ASSERT_EQUAL_INT_MESSAGE(110, mock_pq_packets[0].sock, "pushed frame must carry client sock 110");
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, modbus_tcp_test_reasm_pending_bytes(TEST_CTX_IDX, 110),
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, reasm_pending_bytes(110),
         "no bytes must remain pending");
-}
-
-/* ---- MBTCP-U-026: mbtcp_reasm_get full-table probe — no OOB scan (MUT-02) */
-/* mbtcp_reasm_get scans for (i = 0; i < MBTCP_REASM_MAX_CONNS; i++). With the
- * table full of non-matching, non-free socks, a probe for an absent sock must
- * return 0 (NULL) without reading past reasm[7]. The mutant (i <= MAX) reads
- * reasm[8], which aliases reasm_mutex (NULL in tests -> low int == 0); probing
- * sock=0 would then spuriously match that OOB slot and return 1. */
-void test_reasm_get_full_table_no_overrun(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "MBTCP-U-026: reasm_get sock=0 on full table -> 0 (no OOB scan past slot 7)");
-    LOG_MESSAGE();
-
-    /* Fill all 8 slots with non-zero socks (none == 0, none free). */
-    for (int i = 1; i <= 8; i++) {
-        int res = modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
-        TEST_ASSERT_EQUAL_INT_MESSAGE(1, res, "first 8 allocations must succeed");
-    }
-
-    /* Probe for sock 0: not present, no free slot -> must return 0. The mutant
-     * would read reasm[8] (aliasing the NULL reasm_mutex, low int == 0), match
-     * sock 0, and return 1. */
-    int result = modbus_tcp_test_reasm_get(TEST_CTX_IDX, 0);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, result,
-        "reasm_get(0) on full table must return 0 (must not scan reasm[8])");
-
-    /* No new slot for sock 0 may have appeared within the valid table range. */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, modbus_tcp_test_reasm_has_slot(TEST_CTX_IDX, 0),
-        "no slot for sock 0 must exist after rejected full-table probe");
 }
 
 /* ---- MBTCP-U-027: one-pass fallback — short trailing fragment, no OOB read -- */
@@ -742,7 +583,7 @@ void test_one_pass_fallback_short_trailing_fragment(void)
 
     /* Fill all 8 reassembly slots so that socket 9 falls back to one-pass. */
     for (int i = 1; i <= 8; i++) {
-        modbus_tcp_test_reasm_get(TEST_CTX_IDX, i);
+        reasm_occupy(i);
     }
 
     /* One complete 8-byte frame (MBAP length = 2 -> total = 8) followed by a
@@ -892,20 +733,13 @@ int main(void)
 {
     UNITY_BEGIN();
 
-    RUN_TEST(test_reasm_get_allocates_new_slot);
-    RUN_TEST(test_reasm_get_finds_existing_slot);
-    RUN_TEST(test_reasm_get_table_full_returns_zero);
-
-    RUN_TEST(test_reasm_free_removes_slot);
-    RUN_TEST(test_reasm_free_nonexistent_no_crash);
-
-    RUN_TEST(test_frame_total_len_parsing);
 
     RUN_TEST(test_push_single_complete_frame);
     RUN_TEST(test_push_split_frame_two_calls);
     RUN_TEST(test_push_two_coalesced_frames);
     RUN_TEST(test_push_one_and_half_frames);
     RUN_TEST(test_push_bogus_length_drops);
+    RUN_TEST(test_push_valid_frame_behind_bogus_header_survives);
     RUN_TEST(test_push_queue_full_frame_consumed);
     RUN_TEST(test_push_table_full_falls_back_to_one_pass);
 
@@ -913,21 +747,16 @@ int main(void)
     RUN_TEST(test_push_independent_sockets);
 
     RUN_TEST(test_push_bogus_length_too_small);
-    RUN_TEST(test_reasm_get_negative_sock_returns_zero);
-
-    RUN_TEST(test_frame_total_len_boundary);
 
     RUN_TEST(test_calc_timeout_9600_baud);
     RUN_TEST(test_calc_timeout_115200_baud);
     RUN_TEST(test_calc_timeout_very_low_baud);
-
     RUN_TEST(test_one_pass_fallback_short_data);
     RUN_TEST(test_one_pass_fallback_invalid_pid);
 
     RUN_TEST(test_reasm_invalid_pid_dropped);
 
     RUN_TEST(test_push_exact_header_size_frame);
-    RUN_TEST(test_reasm_get_full_table_no_overrun);
 
     RUN_TEST(test_one_pass_fallback_short_trailing_fragment);
 

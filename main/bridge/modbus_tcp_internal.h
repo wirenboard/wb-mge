@@ -5,25 +5,16 @@
 #include <stddef.h>
 #include "packet_queue.h"
 #include "tcp_desc.h"
+#include "mbtcp_reasm.h"
 
 /* Initialize ctx[ctx_idx]: clear reasm slots, set queue handle and tcp_desc, no mutex. */
 void modbus_tcp_test_init_ctx(unsigned ctx_idx, packet_queue_handle queue, tcp_desc_t *tcp_desc);
 
-/* Try to get/allocate reasm slot for sock in ctx[ctx_idx].
- * Returns 1 on success (slot found or created), 0 if table is full. */
-int modbus_tcp_test_reasm_get(unsigned ctx_idx, int sock);
-
-/* Free reasm slot for sock in ctx[ctx_idx]. No-op if not found. */
-void modbus_tcp_test_reasm_free(unsigned ctx_idx, int sock);
-
-/* Returns 1 if a reasm slot for sock exists in ctx[ctx_idx], 0 if not. */
-int modbus_tcp_test_reasm_has_slot(unsigned ctx_idx, int sock);
-
-/* Returns number of accumulated bytes for sock in ctx[ctx_idx], 0 if no slot. */
-size_t modbus_tcp_test_reasm_pending_bytes(unsigned ctx_idx, int sock);
-
-/* Parse MBAP header at buf (must have >= 6 bytes) and return total ADU length. */
-size_t modbus_tcp_test_frame_total_len(const uint8_t *buf);
+/* Slot allocation, slot release, buffered-byte accounting and MBAP length parsing
+ * live in bridge/mbtcp_reasm and are covered by unittests/mbtcp_reasm. Tests that
+ * need to inspect a port's reassembly state reach it through this accessor and
+ * call the real mbtcp_reasm API — no per-function shims. */
+mbtcp_reasm_t *modbus_tcp_test_get_reasm(unsigned ctx_idx);
 
 /* Call separate_and_push_requests_from_tcp_with_client for ctx[ctx_idx].
  * Returns number of frames successfully pushed to queue. */

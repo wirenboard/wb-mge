@@ -7,6 +7,7 @@
 #include "network.h"
 #include "http_server.h"
 #include "update_rs485_mio_gpio_states.h"
+#include "cache_modbus_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -17,6 +18,22 @@
 
 void settings_update_reset(void);
 
+// Symbols exported by the setting_items / cache_modbus_server mocks
+extern bool mock_setting_items_cache_server_enabled;
+extern int  mock_setting_items_cache_port;
+void        mock_setting_items_reset(void);
+
+extern int       mock_cache_modbus_server_init_call_count;
+extern int       mock_cache_modbus_server_deinit_call_count;
+extern int       mock_cache_modbus_server_init_last_port;
+extern int       mock_cache_modbus_server_init_fail_port;   // per-port init failure injection (0 = off)
+extern esp_err_t mock_cache_modbus_server_init_fail_error;  // error returned for the failing port
+extern int       mock_cache_modbus_server_init_ports[];     // ordered log of init() ports since reset
+extern unsigned  mock_cache_modbus_server_init_call_seq;    // call id of the first init() since reset
+extern unsigned  mock_cache_modbus_server_deinit_call_seq;  // call id of the first deinit() since reset
+void             mock_cache_modbus_server_reset(void);
+void             mock_cache_modbus_server_set_running_port(int port);
+
 void setUp(void)
 {
     mock_bridge_reset();
@@ -25,6 +42,8 @@ void setUp(void)
     mock_http_server_reset();
     mock_update_rs485_mio_gpio_states_reset();
     mock_freertos_task_reset();
+    mock_setting_items_reset();
+    mock_cache_modbus_server_reset();
     settings_update_reset();
 }
 

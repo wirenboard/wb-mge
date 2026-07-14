@@ -4,6 +4,7 @@
 #include "modbus_helpers.h"
 #include "tcp_server.h"
 #include "tcp_desc.h"
+#include "mbtcp_reasm.h"
 #include "setting_items.h"
 #include "cache_modbus_server_priv.h"
 
@@ -362,154 +363,33 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
     tcp_server_send(desc, client_sock, resp_buf, resp_len);
 }
 
-/* ====================================================================== *
- * Bug 07 fix: TCP stream reassembly into whole Modbus frames.
- *
- * TCP is a byte stream: one recv() may deliver a partial frame OR several
- * frames coalesced. The old code assumed one recv() == one frame.
- * We keep a small per-connection accumulation buffer, parse the MBAP
- * length field to find frame boundaries, dispatch every complete frame,
- * and carry the remainder over to the next recv().
- * ====================================================================== */
+/* ---- TCP receive path ----------------------------------------------------- *
+ * TCP is a byte stream: one recv() may deliver a partial frame or several
+ * coalesced. Stream reassembly lives in bridge/mbtcp_reasm — the same module the
+ * Modbus TCP gateway uses, so both servers frame identically.
+ * ========================================================================== */
 
-#define CACHE_MB_MAX_CONNS  8
-#define CACHE_MB_FRAME_MAX  300   /* > any Modbus TCP ADU we accept */
+static mbtcp_reasm_t s_reasm;
 
-typedef struct {
-    int     sock;                        /* -1 == free slot */
-    size_t  len;
-    uint8_t buf[CACHE_MB_FRAME_MAX];
-} conn_reasm_t;
-
-static conn_reasm_t      s_reasm[CACHE_MB_MAX_CONNS];
-static SemaphoreHandle_t s_reasm_mutex = NULL;   /* guards slot alloc/free only */
-
-/* Count of recv() CALLBACKS (not connections) that found no free reassembly
- * slot — i.e. more than CACHE_MB_MAX_CONNS simultaneous connections. Such recvs
- * fall back to best-effort single-frame processing with NO stream reassembly,
- * so a frame split across recvs on the 9th+ connection is mishandled
- * (cache-mb-framing-2). Exposed so the condition is observable rather than
- * silent. Best-effort: incremented with a plain ++ outside s_reasm_mutex, so it
- * may slightly undercount under concurrent exhaustion — it is a diagnostic
- * signal, not an exact metric. One active 9th connection bumps it once per
- * recv, not once per connection. */
-static volatile uint32_t s_reasm_slot_exhausted = 0;
-
-/* Find (or allocate) the reassembly slot for a socket. */
-static conn_reasm_t *reasm_get(int sock)
+/* Reassembler callback: one complete Modbus TCP ADU. user_ctx is the tcp_desc. */
+static bool on_reasm_frame(void *user_ctx, int sock, const uint8_t *frame, size_t len)
 {
-    conn_reasm_t *slot = NULL;
-    if (s_reasm_mutex) { xSemaphoreTake(s_reasm_mutex, portMAX_DELAY); }
-    conn_reasm_t *free_slot = NULL;
-    for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
-        if (s_reasm[i].sock == sock) { slot = &s_reasm[i]; break; }
-        if ((free_slot == NULL) && (s_reasm[i].sock == -1)) { free_slot = &s_reasm[i]; }
-    }
-    if ((slot == NULL) && free_slot) {
-        free_slot->sock = sock;
-        free_slot->len  = 0;
-        slot = free_slot;
-    }
-    if (s_reasm_mutex) { xSemaphoreGive(s_reasm_mutex); }
-    return slot;
-}
-
-static void reasm_free(int sock)
-{
-    if (s_reasm_mutex) { xSemaphoreTake(s_reasm_mutex, portMAX_DELAY); }
-    for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
-        if (s_reasm[i].sock == sock) {
-            s_reasm[i].sock = -1;
-            s_reasm[i].len  = 0;
-            break;
-        }
-    }
-    if (s_reasm_mutex) { xSemaphoreGive(s_reasm_mutex); }
-}
-
-/* Total ADU length declared by the MBAP header (needs >= 6 bytes available). */
-static size_t frame_total_len(const uint8_t *buf)
-{
-    uint16_t mbap_len = ((uint16_t)buf[4] << 8) | buf[5]; /* length field, big-endian */
-    return (size_t)mbap_len + offsetof(mb_tcp_header_t, unit_id); /* +6 */
+    process_one_frame((tcp_desc_t *)user_ctx, sock, (uint8_t *)frame, len);
+    return true;
 }
 
 /* TCP receive callback: reassemble the byte stream into whole Modbus frames. */
 static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
                                   uint8_t *data, size_t len)
 {
-    conn_reasm_t *c = reasm_get(client_sock);
-    if (c == NULL) {
-        /* No free reassembly slot (> CACHE_MB_MAX_CONNS simultaneous
-         * connections). Best effort: process the buffer as a single frame —
-         * a complete frame in one recv() still works, but a frame split across
-         * recvs on this connection is NOT reassembled. Count it so slot
-         * exhaustion is observable instead of silent (cache-mb-framing-2). */
-        s_reasm_slot_exhausted++;
-        ESP_LOGW(TAG, "sock=%d: no reassembly slot (>%d conns), processing without reassembly",
-                 client_sock, CACHE_MB_MAX_CONNS);
+    int rc = mbtcp_reasm_feed(&s_reasm, client_sock, data, len, on_reasm_frame, desc);
+
+    if (rc == MBTCP_REASM_NO_SLOT) {
+        /* More simultaneous connections than the reassembler can track. Best
+         * effort: treat this recv() as one whole frame. A frame that arrives
+         * complete still works; one split across recvs on this connection does
+         * not. mbtcp_reasm counts the condition (cache-mb-framing-2). */
         process_one_frame(desc, client_sock, data, len);
-        return;
-    }
-
-    size_t off = 0;
-    while (off < len) {
-        size_t space = CACHE_MB_FRAME_MAX - c->len;
-        size_t chunk = len - off;
-        if (chunk > space) { chunk = space; }
-        memcpy(c->buf + c->len, data + off, chunk);
-        c->len += chunk;
-        off    += chunk;
-
-        /* Dispatch every complete frame currently buffered.
-         *
-         * cache-mb-framing-1/4: on a bogus MBAP header the previous code did
-         * `pos = c->len` — discarding the ENTIRE buffer, including any valid
-         * frame coalesced behind the bad one in the same recv(). Instead we
-         * resync one byte at a time. Modbus TCP has no sync marker, so to avoid
-         * misparsing garbage we (a) require protocol_id == 0 (the audit noted it
-         * was never checked) and (b) while resyncing, trust ONLY a fully
-         * buffered valid frame to re-establish alignment — an incomplete
-         * candidate during resync may just be garbage that happens to look like
-         * a header, so we keep scanning rather than stalling on it. */
-        /* `resyncing` is intentionally local to this call: the scan always
-         * restarts at pos=0, so each recv() re-derives the desync state from
-         * the buffer contents — no cross-recv state needs to persist. */
-        size_t pos       = 0;
-        bool   resyncing = false;
-        while ((c->len - pos) >= sizeof(mb_tcp_header_t)) {
-            const uint8_t *h     = c->buf + pos;
-            uint16_t       proto = ((uint16_t)h[2] << 8) | h[3];
-            size_t         flen  = frame_total_len(h);
-            bool header_ok = (proto == 0u) &&
-                             (flen >= sizeof(mb_tcp_header_t)) &&
-                             (flen <= CACHE_MB_FRAME_MAX);
-            if (!header_ok) {
-                pos      += 1;      /* bad header: resync by one byte */
-                resyncing = true;
-                continue;
-            }
-            if ((c->len - pos) < flen) {
-                /* Valid-looking header but the frame is not fully buffered. */
-                if (resyncing) {
-                    pos += 1;       /* unverified during resync — keep scanning */
-                    continue;
-                }
-                break;              /* legitimate carry-over of a partial frame */
-            }
-            process_one_frame(desc, client_sock, c->buf + pos, flen);
-            pos      += flen;
-            resyncing = false;      /* a complete frame re-establishes alignment */
-        }
-        if (pos > 0) {
-            memmove(c->buf, c->buf + pos, c->len - pos);
-            c->len -= pos;
-        }
-        /* Buffer full but no complete frame -> desynced/oversized; drop. */
-        if (c->len == CACHE_MB_FRAME_MAX) {
-            ESP_LOGW(TAG, "sock=%d: reassembly buffer full, resync (drop)", client_sock);
-            c->len = 0;
-        }
     }
 }
 
@@ -517,7 +397,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock,
 static void on_conn_close(tcp_desc_t *desc, int client_sock)
 {
     (void)desc;
-    reasm_free(client_sock);
+    mbtcp_reasm_close(&s_reasm, client_sock);
 }
 
 /* ---- Public API ---------------------------------------------------------- */
@@ -547,29 +427,28 @@ esp_err_t cache_modbus_server_init(int port)
 
     ESP_LOGI(TAG, "Starting cache Modbus TCP server on port %d", port);
 
-    /* Init per-connection reassembly state (bug 07 fix). */
-    for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
-        s_reasm[i].sock = -1;
-        s_reasm[i].len  = 0;
-    }
-    s_reasm_slot_exhausted = 0;
-    if (s_reasm_mutex == NULL) {
-        s_reasm_mutex = xSemaphoreCreateMutex();
+    if (!mbtcp_reasm_init(&s_reasm, TAG)) {
+        ESP_LOGE(TAG, "Failed to create the reassembly mutex");
+        return ESP_ERR_NO_MEM;
     }
 
     esp_err_t ret = tcp_server_init(port, process_data_from_tcp, &s_tcp_desc);
-    if (ret == ESP_OK) {
-        s_port = port;
-        s_tcp_desc->close_handler = on_conn_close;   /* free reassembly slot on close */
+    if (ret != ESP_OK) {
+        mbtcp_reasm_deinit(&s_reasm);
+        return ret;
     }
-    return ret;
+    s_port = port;
+    s_tcp_desc->close_handler = on_conn_close;   /* free reassembly slot on close */
+    return ESP_OK;
 }
 
 esp_err_t cache_modbus_server_deinit(void)
 {
     if (s_tcp_desc == NULL) return ESP_OK;
-    esp_err_t ret = tcp_server_deinit(s_tcp_desc);
+    esp_err_t ret = tcp_server_deinit(s_tcp_desc);   /* waits for the receiver tasks to exit */
     if (ret == ESP_OK) {
+        /* Safe now: no task can still be inside mbtcp_reasm_feed(). */
+        mbtcp_reasm_deinit(&s_reasm);
         s_tcp_desc = NULL;
         s_port = 0;
     }
@@ -598,19 +477,20 @@ void cache_modbus_server_test_close(int client_sock)
 
 void cache_modbus_server_test_reset(void)
 {
-    for (int i = 0; i < CACHE_MB_MAX_CONNS; i++) {
-        s_reasm[i].sock = -1;
-        s_reasm[i].len  = 0;
+    memset(&s_reasm, 0, sizeof(s_reasm));
+    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
+        s_reasm.slots[i].sock = -1;
+        s_reasm.slots[i].len  = 0;
     }
-    s_reasm_mutex = NULL;
+    s_reasm.mutex = NULL;   /* no mutex in unit tests: single-threaded */
+    s_reasm.tag   = TAG;
     s_tcp_desc    = NULL;
     s_port        = 0;
-    s_reasm_slot_exhausted = 0;
 }
 
 /* Number of recv callbacks that found no free reassembly slot since reset. */
 uint32_t cache_modbus_server_test_get_slot_exhausted(void)
 {
-    return s_reasm_slot_exhausted;
+    return mbtcp_reasm_slot_exhausted(&s_reasm);
 }
 #endif /* __unittest_env__ */

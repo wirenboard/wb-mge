@@ -1,5 +1,6 @@
 #include "modbus_tcp.h"
 #include "modbus_tcp_internal.h"
+#include "mbtcp_reasm.h"
 #include <string.h>
 #include <esp_log.h>
 #include "tcp_server.h"
@@ -32,19 +33,6 @@
 
 #define WAIT_LOOP_DELAY_MS                  100             // Delay in wait loops, needed to periodically check exit request flag
 
-/* ---- TCP stream reassembly (bug 07 fix) ---------------------------------- */
-/* Maximum concurrent TCP clients per gateway port; matches tcp_server.c limit. */
-#define MBTCP_REASM_MAX_CONNS  8
-/* Maximum Modbus TCP ADU size: 6 (MBAP) + 1 (unit) + 1 (FC) + 252 (data) = 260.
- * Round up to 300 for safety margin. */
-#define MBTCP_REASM_FRAME_MAX  300
-
-typedef struct {
-    int     sock;                          /* -1 = free slot */
-    size_t  len;
-    uint8_t buf[MBTCP_REASM_FRAME_MAX];
-} mbtcp_reasm_t;
-
 typedef struct {
     bool initialized;
     unsigned index;
@@ -58,9 +46,8 @@ typedef struct {
     uint8_t pending_slave_id;
     unsigned resp_timeout_ticks;
     int pending_client_sock;    // client socket that sent the current pending RTU request
-    /* Per-connection TCP stream reassembly buffers (bug 07 fix). */
-    mbtcp_reasm_t reasm[MBTCP_REASM_MAX_CONNS];
-    SemaphoreHandle_t reasm_mutex;        /* guards reasm[] slot alloc/free only */
+    /* Per-connection TCP stream reassembly (bridge/mbtcp_reasm). */
+    mbtcp_reasm_t reasm;
 } mb_tcp_task_ctx_t;
 
 static const char *TAG = "modbus_tcp";
@@ -99,64 +86,6 @@ static mb_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
     return 0;
 }
 
-
-/* Find (or allocate) the reassembly slot for a client socket within a port context.
- * The mutex protects slot alloc/free; per-connection buf/len is single-task after
- * allocation (one receiver_task per connection). Returns NULL if table is full. */
-static mbtcp_reasm_t *mbtcp_reasm_get(mb_tcp_task_ctx_t *ctx, int sock)
-{
-    /* Reject invalid socket descriptors: -1 is used as the "free slot" sentinel
-     * and must never match a real client socket. */
-    if (sock < 0) { return NULL; }
-    mbtcp_reasm_t *slot = NULL;
-    if (ctx->reasm_mutex) { xSemaphoreTake(ctx->reasm_mutex, portMAX_DELAY); }
-    mbtcp_reasm_t *free_slot = NULL;
-    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
-        if (ctx->reasm[i].sock == sock) { slot = &ctx->reasm[i]; break; }
-        if ((free_slot == NULL) && (ctx->reasm[i].sock == -1)) { free_slot = &ctx->reasm[i]; }
-    }
-    if ((slot == NULL) && free_slot) {
-        free_slot->sock = sock;
-        free_slot->len  = 0;
-        slot = free_slot;
-    }
-    if (ctx->reasm_mutex) { xSemaphoreGive(ctx->reasm_mutex); }
-    return slot;
-}
-
-/* Look up an existing reassembly slot for sock without allocating a new one.
- * Returns NULL if no slot exists for this socket. Safe to call from any task
- * that holds no other lock. */
-static mbtcp_reasm_t *mbtcp_reasm_find(mb_tcp_task_ctx_t *ctx, int sock)
-{
-    mbtcp_reasm_t *slot = NULL;
-    if (ctx->reasm_mutex) { xSemaphoreTake(ctx->reasm_mutex, portMAX_DELAY); }
-    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
-        if (ctx->reasm[i].sock == sock) { slot = &ctx->reasm[i]; break; }
-    }
-    if (ctx->reasm_mutex) { xSemaphoreGive(ctx->reasm_mutex); }
-    return slot;
-}
-
-static void mbtcp_reasm_free(mb_tcp_task_ctx_t *ctx, int sock)
-{
-    if (ctx->reasm_mutex) { xSemaphoreTake(ctx->reasm_mutex, portMAX_DELAY); }
-    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
-        if (ctx->reasm[i].sock == sock) {
-            ctx->reasm[i].sock = -1;
-            ctx->reasm[i].len  = 0;
-            break;
-        }
-    }
-    if (ctx->reasm_mutex) { xSemaphoreGive(ctx->reasm_mutex); }
-}
-
-/* Total ADU length declared by the MBAP header (requires >= 6 bytes in buf). */
-static size_t mbtcp_frame_total_len(const uint8_t *buf)
-{
-    uint16_t mbap_len = ((uint16_t)buf[4] << 8) | buf[5]; /* big-endian length field */
-    return (size_t)mbap_len + offsetof(mb_tcp_header_t, unit_id); /* + 6 */
-}
 
 
 // Callback function for receiving data from serial port
@@ -262,78 +191,43 @@ static unsigned separate_and_push_one_pass(
     return count;
 }
 
+/* Reassembler callback: one complete Modbus TCP ADU from a client.
+ * Validates the framing and queues it for the RS-485 side. Returns true when the
+ * frame made it onto the queue — mbtcp_reasm_feed() counts those. */
+static bool on_reasm_frame(void *user_ctx, int sock, const uint8_t *frame, size_t len)
+{
+    mb_tcp_task_ctx_t *ctx = (mb_tcp_task_ctx_t *)user_ctx;
+
+    if (modbus_tcp_check_request(frame, len) != ESP_OK) {
+        ESP_LOGW(TAG, "Port[%u]: sock=%d: invalid Modbus TCP framing, dropping",
+                 ctx->index + 1, sock);
+        return false;
+    }
+
+    return packet_queue_push_with_client(ctx->tcp_queue, frame, len, sock) == ESP_OK;
+}
+
 /* TCP stream reassembly for the gateway: accumulates bytes per connection,
  * dispatches each complete Modbus TCP ADU to the packet queue, and carries
  * any partial tail over to the next recv() call. */
 static unsigned separate_and_push_requests_from_tcp_with_client(
     mb_tcp_task_ctx_t *ctx, int client_sock, const uint8_t *data, size_t len)
 {
-    mbtcp_reasm_t *c = mbtcp_reasm_get(ctx, client_sock);
-    if (c == NULL) {
-        /* Reassembly table full — fall back to single-pass (old behaviour). */
+    int pushed = mbtcp_reasm_feed(&ctx->reasm, client_sock, data, len,
+                                  on_reasm_frame, ctx);
+
+    if (pushed == MBTCP_REASM_NO_SLOT) {
+        /* Reassembly table full — fall back to a single unbuffered pass. */
         ESP_LOGW(TAG, "Port[%u]: reasm table full for sock=%d, fallback mode",
                  ctx->index + 1, client_sock);
         return separate_and_push_one_pass(ctx, client_sock, data, len);
     }
 
-    unsigned total_count = 0;
-    size_t   off         = 0;
-
-    while (off < len) {
-        /* Copy as many bytes as fit into the accumulation buffer. */
-        size_t space = MBTCP_REASM_FRAME_MAX - c->len;
-        size_t chunk = len - off;
-        if (chunk > space) { chunk = space; }
-        memcpy(c->buf + c->len, data + off, chunk);
-        c->len += chunk;
-        off    += chunk;
-
-        /* Dispatch every complete frame currently in the buffer. */
-        size_t pos = 0;
-        while ((c->len - pos) >= sizeof(mb_tcp_header_t)) {
-            size_t flen = mbtcp_frame_total_len(c->buf + pos);
-            if ((flen < sizeof(mb_tcp_header_t)) || (flen > MBTCP_REASM_FRAME_MAX)) {
-                /* Bogus length field — resync by dropping buffered bytes. */
-                pos = c->len;
-                break;
-            }
-            if ((c->len - pos) < flen) { break; }   /* frame not yet complete */
-
-            /* Validate and push the complete frame. */
-            const uint8_t *frame = c->buf + pos;
-            if (modbus_tcp_check_request(frame, flen) != ESP_OK) {
-                ESP_LOGW(TAG, "Port[%u]: sock=%d: invalid Modbus TCP framing, dropping",
-                         ctx->index + 1, client_sock);
-            } else {
-                esp_err_t qres = packet_queue_push_with_client(
-                    ctx->tcp_queue, frame, flen, client_sock);
-                if (qres == ESP_OK) {
-                    total_count++;
-                }
-            }
-            pos += flen;
-        }
-
-        /* Shift any remaining partial frame to the front of the buffer. */
-        if (pos > 0) {
-            memmove(c->buf, c->buf + pos, c->len - pos);
-            c->len -= pos;
-        }
-
-        /* If the buffer is full but no complete frame was found, the stream is
-         * desynced or the ADU is oversized — drop and resync. */
-        if (c->len == MBTCP_REASM_FRAME_MAX) {
-            ESP_LOGW(TAG, "Port[%u]: sock=%d: reasm buffer full, resync (drop)",
-                     ctx->index + 1, client_sock);
-            c->len = 0;
-        }
-    }
-
-    if (total_count == 0) {
+    if (pushed == 0) {
         ESP_LOGD(TAG, "Port[%u]: sock=%d: no complete frames yet (%zu bytes buffered)",
-                 ctx->index + 1, client_sock, c->len);
+                 ctx->index + 1, client_sock, mbtcp_reasm_pending(&ctx->reasm, client_sock));
     }
-    return total_count;
+    return (unsigned)pushed;
 }
 
 /* Connection-close hook: release this socket's reassembly slot. */
@@ -341,7 +235,7 @@ static void on_tcp_conn_close(tcp_desc_t *desc, int client_sock)
 {
     mb_tcp_task_ctx_t *ctx = find_ctx_by_tcp_desc(desc);
     if (ctx) {
-        mbtcp_reasm_free(ctx, client_sock);
+        mbtcp_reasm_close(&ctx->reasm, client_sock);
         /* Clear stale pending state if the disconnected client was the one
          * whose RTU request is currently in flight. Without this, the next
          * client receives a response with the disconnected client's TID.
@@ -378,8 +272,7 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock, uint8_t *da
          * segment of a split frame arrives and gets buffered for reassembly.
          * Only treat it as a failure when the reassembly slot has no pending bytes
          * (i.e. data was truly rejected, not merely accumulated). */
-        mbtcp_reasm_t *slot = mbtcp_reasm_find(ctx, client_sock);
-        bool has_pending = (slot != NULL) && (slot->len > 0);
+        bool has_pending = (mbtcp_reasm_pending(&ctx->reasm, client_sock) > 0);
         if (!has_pending) {
             rs485_stats_update(ctx->index, false);
         }
@@ -627,12 +520,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
     ESP_LOGD(TAG, "Port[%u]: Initializing in Modbus TCP mode...", index + 1);
 
     /* Initialize per-connection reassembly state. */
-    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
-        ctx->reasm[i].sock = -1;
-        ctx->reasm[i].len  = 0;
-    }
-    ctx->reasm_mutex = xSemaphoreCreateMutex();
-    if (ctx->reasm_mutex == NULL) {
+    if (!mbtcp_reasm_init(&ctx->reasm, TAG)) {
         ESP_LOGE(TAG, "Port[%u]: Failed to create reassembly mutex", index + 1);
         return ESP_ERR_NO_MEM;
     }
@@ -640,8 +528,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
     EventGroupHandle_t event_group = xEventGroupCreate();
     if (!event_group) {
         ESP_LOGE(TAG, "Port[%u]: Unable to create event group", index + 1);
-        vSemaphoreDelete(ctx->reasm_mutex);
-        ctx->reasm_mutex = NULL;
+        mbtcp_reasm_deinit(&ctx->reasm);
         return ESP_FAIL;
     }
 
@@ -649,8 +536,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
     if (!*serial_desc) {
         ESP_LOGE(TAG, "Port[%u]: Error while initializing serial port", index + 1);
         vEventGroupDelete(event_group);
-        vSemaphoreDelete(ctx->reasm_mutex);
-        ctx->reasm_mutex = NULL;
+        mbtcp_reasm_deinit(&ctx->reasm);
         return ESP_FAIL;
     }
     (*serial_desc)->wait_for_idle = true;  // Modbus gateway must assemble complete RTU frames before forwarding
@@ -660,8 +546,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
         ESP_LOGE(TAG, "Port[%u]: Unable to create TCP packets queue", index + 1);
         serial_deinit(*serial_desc);
         vEventGroupDelete(event_group);
-        vSemaphoreDelete(ctx->reasm_mutex);
-        ctx->reasm_mutex = NULL;
+        mbtcp_reasm_deinit(&ctx->reasm);
         return ESP_FAIL;
     }
 
@@ -671,8 +556,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
         serial_deinit(*serial_desc);
         vEventGroupDelete(event_group);
         packet_queue_delete(queue_handle);
-        vSemaphoreDelete(ctx->reasm_mutex);
-        ctx->reasm_mutex = NULL;
+        mbtcp_reasm_deinit(&ctx->reasm);
         return err;
     }
 
@@ -700,8 +584,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
         serial_deinit(*serial_desc);
         vEventGroupDelete(event_group);
         packet_queue_delete(queue_handle);
-        vSemaphoreDelete(ctx->reasm_mutex);
-        ctx->reasm_mutex = NULL;
+        mbtcp_reasm_deinit(&ctx->reasm);
         return ESP_FAIL;
     }
 
@@ -742,10 +625,7 @@ esp_err_t modbus_tcp_deinit_port(unsigned index)
     packet_queue_delete(ctx->tcp_queue);
 
     /* Safe to delete now: all receiver tasks have exited and no one takes the mutex. */
-    if (ctx->reasm_mutex) {
-        vSemaphoreDelete(ctx->reasm_mutex);
-        ctx->reasm_mutex = NULL;
-    }
+    mbtcp_reasm_deinit(&ctx->reasm);
 
     ESP_LOGD(TAG, "Port[%u]: Deinitialized", index + 1);
     return ESP_OK;
@@ -761,44 +641,20 @@ void modbus_tcp_test_init_ctx(unsigned ctx_idx, packet_queue_handle queue, tcp_d
     ctx->index       = ctx_idx;
     ctx->tcp_queue   = queue;
     ctx->tcp_desc    = tcp_desc;
-    ctx->reasm_mutex = NULL;   /* no mutex in unit tests: single-threaded */
+    /* No mutex in unit tests: the harness is single-threaded. */
+    ctx->reasm.mutex = NULL;
+    ctx->reasm.tag   = TAG;
     for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
-        ctx->reasm[i].sock = -1;
-        ctx->reasm[i].len  = 0;
+        ctx->reasm.slots[i].sock = -1;
+        ctx->reasm.slots[i].len  = 0;
     }
 }
 
-int modbus_tcp_test_reasm_get(unsigned ctx_idx, int sock)
+/* Hand the test the port's reassembler so it can query it through the real
+ * mbtcp_reasm API instead of re-exporting each function as its own shim. */
+mbtcp_reasm_t *modbus_tcp_test_get_reasm(unsigned ctx_idx)
 {
-    return (mbtcp_reasm_get(&mb_tcp_task_ctx[ctx_idx], sock) != NULL) ? 1 : 0;
-}
-
-void modbus_tcp_test_reasm_free(unsigned ctx_idx, int sock)
-{
-    mbtcp_reasm_free(&mb_tcp_task_ctx[ctx_idx], sock);
-}
-
-int modbus_tcp_test_reasm_has_slot(unsigned ctx_idx, int sock)
-{
-    mb_tcp_task_ctx_t *ctx = &mb_tcp_task_ctx[ctx_idx];
-    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
-        if (ctx->reasm[i].sock == sock) { return 1; }
-    }
-    return 0;
-}
-
-size_t modbus_tcp_test_reasm_pending_bytes(unsigned ctx_idx, int sock)
-{
-    mb_tcp_task_ctx_t *ctx = &mb_tcp_task_ctx[ctx_idx];
-    for (int i = 0; i < MBTCP_REASM_MAX_CONNS; i++) {
-        if (ctx->reasm[i].sock == sock) { return ctx->reasm[i].len; }
-    }
-    return 0;
-}
-
-size_t modbus_tcp_test_frame_total_len(const uint8_t *buf)
-{
-    return mbtcp_frame_total_len(buf);
+    return &mb_tcp_task_ctx[ctx_idx].reasm;
 }
 
 unsigned modbus_tcp_test_push_data(unsigned ctx_idx, int client_sock,

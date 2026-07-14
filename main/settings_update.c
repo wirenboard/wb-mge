@@ -5,7 +5,9 @@
 #include "http_server.h"
 #include "port_manager.h"
 #include "network.h"
+#include "setting_items.h"
 #include "update_rs485_mio_gpio_states.h"
+#include "cache_modbus_server.h"
 
 
 #define SETTINGS_UPDATE_TASK_STACK_SIZE     (6 * 1024)
@@ -16,6 +18,7 @@
 #define HTTP_SERVER_FLAG                    BIT9
 #define ETHERNET_FLAG                       BIT10
 #define WIFI_FLAG                           BIT11
+#define CACHE_MODBUS_FLAG                   BIT12
 
 #define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
@@ -25,16 +28,106 @@ static const char *TAG = "settings_update";
 static TaskHandle_t update_task_handle = NULL;
 
 
+// ── Cache Modbus TCP server ──────────────────────────────────────────────────
+// cache_modbus_server exposes init/deinit/get_port, so its check/release/acquire trio is built
+// here on top of that public API — the same shape port_manager and http_server provide for
+// themselves. The lifecycle used to live inline in the POST /settings handler
+// (settings_manager.c), which ran it BEFORE settings_update() had touched the RS-485 ports or the
+// web server: no port could ever be handed over between them.
+
+// The port NVS asks the server to listen on; 0 means "must be stopped". That is also what
+// cache_modbus_server_get_port() reports for a stopped server, so one comparison of the two covers
+// every transition there is: start, stop and port change.
+static int cache_modbus_wanted_port(void)
+{
+    if (!setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED)) {
+        return 0;
+    }
+    int port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
+    if (port <= 0) {
+        port = CACHE_MODBUS_SERVER_PORT;    // unset / invalid: the compiled-in default
+    }
+    return port;
+}
+
+static bool cache_modbus_server_check_settings_changed(void)
+{
+    return cache_modbus_wanted_port() != cache_modbus_server_get_port();
+}
+
+// Release half: give up the listening socket when the server must stop or move to another port.
+// Returns the port that was released, or 0 when the server keeps (or never had) its socket. The
+// released port is handed to cache_modbus_server_acquire() so a failed start can roll back to it.
+static int cache_modbus_server_release(void)
+{
+    int running_port = cache_modbus_server_get_port();
+
+    if (running_port <= 0 || running_port == cache_modbus_wanted_port()) {
+        return 0;       // not running, or already listening where it should — nothing to give up
+    }
+
+    esp_err_t ret = cache_modbus_server_deinit();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "cache_modbus_server_deinit failed: %s", esp_err_to_name(ret));
+        return 0;       // still listening on running_port; acquire() detects that and stays away
+    }
+    return running_port;
+}
+
+// Acquire half: start the server on the port NVS asks for. released_port is what
+// cache_modbus_server_release() stopped (0 = nothing was stopped).
+static void cache_modbus_server_acquire(int released_port)
+{
+    int wanted_port = cache_modbus_wanted_port();
+    int running_port = cache_modbus_server_get_port();
+
+    if (wanted_port == 0 || wanted_port == running_port) {
+        return;         // must stay stopped, or already listening on the wanted port
+    }
+
+    if (running_port > 0) {
+        // The release phase failed to stop the old listener. Starting a second one would orphan it
+        // (deinit only frees the latest descriptor), so leave the server as it is.
+        ESP_LOGE(TAG, "cache Modbus server still listening on port %d, not starting it on %d",
+                 running_port, wanted_port);
+        return;
+    }
+
+    esp_err_t ret = cache_modbus_server_init(wanted_port);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "cache_modbus_server_init(%d) failed: %s", wanted_port, esp_err_to_name(ret));
+        // Roll back to the port the server was serving so it does not stay down entirely.
+        if (released_port > 0) {
+            esp_err_t rb = cache_modbus_server_init(released_port);
+            if (rb != ESP_OK) {
+                ESP_LOGE(TAG, "Rollback to port %d also failed: %s", released_port, esp_err_to_name(rb));
+            }
+        }
+    }
+}
+
+
 static void settings_update_task(void *arg)
 {
     uint32_t flags = (uint32_t)(uintptr_t)arg;
     ESP_LOGI(TAG, "Updating settings...");
+
+    int cache_released_port = 0;
+    if (flags & CACHE_MODBUS_FLAG) {
+        ESP_LOGD(TAG, "Releasing the cache Modbus TCP server socket");
+        cache_released_port = cache_modbus_server_release();
+    }
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         if (flags & (BRIDGE_FLAGS_BASE << index)) {
             ESP_LOGD(TAG, "Applying new settings to port %u via port_manager", index + 1);
             port_manager_apply_settings(index);
         }
+    }
+
+    if (flags & CACHE_MODBUS_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to the cache Modbus TCP server");
+        cache_modbus_server_acquire(cache_released_port);
     }
 
     if (flags & MDNS_FLAG) {
@@ -136,6 +229,11 @@ esp_err_t settings_update(void)
             ESP_LOGD(TAG, "Port %u settings were changed", index + 1);
             flags |= BRIDGE_FLAGS_BASE << index;
         }
+    }
+
+    if (cache_modbus_server_check_settings_changed()) {
+        ESP_LOGD(TAG, "Cache Modbus TCP server settings were changed");
+        flags |= CACHE_MODBUS_FLAG;
     }
 
     if (network_check_mdns_settings_changed()) {

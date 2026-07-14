@@ -3,7 +3,6 @@
 
 #include "settings_manager.h"
 #include "setting_items.h"
-#include "cache_modbus_server.h"
 
 #include "cJSON.h"
 #include "nvs.h"
@@ -19,17 +18,6 @@ extern esp_err_t mock_setting_items_validate_error;
 extern int       mock_setting_items_save_call_count;
 void             mock_setting_items_reset(void);
 
-extern esp_err_t mock_cache_modbus_server_init_error;
-extern esp_err_t mock_cache_modbus_server_deinit_error;
-extern int       mock_cache_modbus_server_init_call_count;
-extern int       mock_cache_modbus_server_deinit_call_count;
-extern int       mock_cache_modbus_server_init_last_port;
-extern int       mock_cache_modbus_server_init_fail_port;   // per-port init failure injection (0 = off)
-extern esp_err_t mock_cache_modbus_server_init_fail_error;  // error returned for the failing port
-extern int       mock_cache_modbus_server_init_ports[];     // ordered log of init() ports since reset
-void             mock_cache_modbus_server_reset(void);
-void             mock_cache_modbus_server_set_running_port(int port);
-
 extern int mock_settings_update_call_count;
 void       mock_settings_update_reset(void);
 
@@ -40,7 +28,6 @@ void       mock_settings_update_reset(void);
 static void reset_all(void)
 {
     mock_setting_items_reset();
-    mock_cache_modbus_server_reset();
     mock_settings_update_reset();
 }
 
@@ -564,213 +551,6 @@ void test_build_response_wifi_perm_disable_false_includes_wifi(void)
     TEST_ASSERT_TRUE_MESSAGE(cJSON_HasObjectItem(wifi, "mode"),
         "wifi object must contain the mapped fields (e.g. mode)");
 
-    cJSON_Delete(resp);
-}
-
-// ===================================================================
-// Tests for cache server TOCTOU fix
-// ===================================================================
-
-// When the server is not running and the request enables it, init must be called
-// exactly once with the configured port (verifies the single snapshot is used).
-void test_cache_server_started_when_enabled_and_not_running(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "Cache server enabled and not running → init called once with correct port");
-    LOG_MESSAGE();
-
-    // Server is currently stopped (running_port == 0 from reset)
-    // NVS says: enabled=true, port=504
-    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "false");
-    setting_items_save(KEY_CACHE_MODBUS_PORT, "504");
-
-    cJSON *req = make_request_bool("cache_modbus_server_enabled", true);
-    cJSON *resp = NULL;
-
-    // Simulate a concurrent enable: NVS now says enabled, server not running
-    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
-
-    esp_err_t ret = settings_process_request_json(req, &resp);
-
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
-    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
-    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
-        "cache_modbus_server_init must be called exactly once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(504, mock_cache_modbus_server_init_last_port,
-        "cache_modbus_server_init must be called with the configured port");
-
-    cJSON_Delete(req);
-    cJSON_Delete(resp);
-}
-
-// When the server is running and the request disables it, deinit must be called
-// exactly once (verifies the single snapshot is used).
-void test_cache_server_stopped_when_disabled_and_running(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "Cache server disabled and currently running → deinit called exactly once");
-    LOG_MESSAGE();
-
-    // Server is currently running on port 504
-    mock_cache_modbus_server_set_running_port(504);
-    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "false");
-
-    cJSON *req = make_request_bool("cache_modbus_server_enabled", false);
-    cJSON *resp = NULL;
-
-    esp_err_t ret = settings_process_request_json(req, &resp);
-
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
-    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
-    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
-        "cache_modbus_server_deinit must be called exactly once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_init_call_count,
-        "cache_modbus_server_init must not be called when disabling the server");
-
-    cJSON_Delete(req);
-    cJSON_Delete(resp);
-}
-
-// When the server is already running and the request enables it again, neither
-// init nor deinit should be called (server already in the desired state).
-void test_cache_server_no_op_when_already_running_and_enabled(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "Cache server already running and enabled → no init/deinit calls");
-    LOG_MESSAGE();
-
-    mock_cache_modbus_server_set_running_port(504);
-    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
-
-    cJSON *req = make_request_bool("cache_modbus_server_enabled", true);
-    cJSON *resp = NULL;
-
-    esp_err_t ret = settings_process_request_json(req, &resp);
-
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
-    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_init_call_count,
-        "init must not be called when server is already running");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_cache_modbus_server_deinit_call_count,
-        "deinit must not be called when server should keep running");
-
-    cJSON_Delete(req);
-    cJSON_Delete(resp);
-}
-
-// When the cache server is enabled and the port changes, the server must be
-// restarted: deinit followed by init on the NEW port.
-void test_cache_server_restarted_on_port_change_when_enabled(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "Cache server enabled, port changed → deinit+init on the new port");
-    LOG_MESSAGE();
-
-    // Use ports distinct from the RS-485 bridge gateway defaults (502/503): the cache
-    // server cannot share a port with a bridge gateway (validate_port_collisions), so a
-    // port-change restart test must move between two non-bridge ports.
-    mock_cache_modbus_server_set_running_port(1502);
-    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
-    setting_items_save(KEY_CACHE_MODBUS_PORT, "1502");
-
-    cJSON *req = make_request_int("cache_modbus_port", 1503);
-    cJSON *resp = NULL;
-
-    esp_err_t ret = settings_process_request_json(req, &resp);
-
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
-    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
-    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
-        "cache_modbus_server_deinit must be called exactly once when the port changes");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
-        "cache_modbus_server_init must be called exactly once when the port changes");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1503, mock_cache_modbus_server_init_last_port,
-        "cache_modbus_server_init must be called with the NEW port");
-
-    cJSON_Delete(req);
-    cJSON_Delete(resp);
-}
-
-// When the cache server port changes and init(new_port) fails, the code must roll
-// back by calling init(old_port). Drives per-port failure injection so init fails on
-// the new port and succeeds on the old port. settings_manager.c:684-695
-void test_cache_server_port_change_init_failure_rolls_back_to_old_port(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "Cache server port change, init(new) fails -> rollback init(old)");
-    LOG_MESSAGE();
-
-    // Server currently running on old port 1502; request moves it to 1503.
-    // Ports avoid the RS-485 bridge defaults (502/503) to clear validate_port_collisions.
-    mock_cache_modbus_server_set_running_port(1502);
-    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
-    setting_items_save(KEY_CACHE_MODBUS_PORT, "1502");
-
-    // Arm per-port failure: init(1503) fails, init(1502) (rollback) succeeds.
-    mock_cache_modbus_server_init_fail_port  = 1503;
-    mock_cache_modbus_server_init_fail_error = ESP_FAIL;
-
-    cJSON *req = make_request_int("cache_modbus_port", 1503);
-    cJSON *resp = NULL;
-
-    esp_err_t ret = settings_process_request_json(req, &resp);
-
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
-    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
-
-    // The server is torn down once and re-init attempted on the new port.
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_deinit_call_count,
-        "cache_modbus_server_deinit must be called exactly once for the restart");
-
-    // Two init() calls in order: the failing init(new) then the rollback init(old).
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_cache_modbus_server_init_call_count,
-        "init must be called twice: failed new-port attempt + rollback to old port");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1503, mock_cache_modbus_server_init_ports[0],
-        "first init must target the NEW port (1503)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1502, mock_cache_modbus_server_init_ports[1],
-        "second init must roll back to the OLD port (1502)");
-
-    cJSON_Delete(req);
-    cJSON_Delete(resp);
-}
-
-// When the cache server is enabled with a configured port of 0, init must fall
-// back to the default CACHE_MODBUS_SERVER_PORT.
-void test_cache_server_uses_default_port_when_configured_port_zero(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "Cache server enabled with configured port 0 -> init called with default port");
-    LOG_MESSAGE();
-
-    setting_items_save(KEY_CACHE_MODBUS_SERVER_ENABLED, "true");
-    setting_items_save(KEY_CACHE_MODBUS_PORT, "0");
-
-    cJSON *req = make_request_bool("cache_modbus_server_enabled", true);
-    cJSON *resp = NULL;
-
-    esp_err_t ret = settings_process_request_json(req, &resp);
-
-    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "must return ESP_OK");
-    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
-    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_cache_modbus_server_init_call_count,
-        "cache_modbus_server_init must be called exactly once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_MODBUS_SERVER_PORT, mock_cache_modbus_server_init_last_port,
-        "configured port 0 must fall back to CACHE_MODBUS_SERVER_PORT");
-
-    cJSON_Delete(req);
     cJSON_Delete(resp);
 }
 
@@ -1336,12 +1116,6 @@ int main(void)
     RUN_TEST(test_build_response_wifi_perm_disable_false_includes_wifi);
 
     // Cache server TOCTOU fix
-    RUN_TEST(test_cache_server_started_when_enabled_and_not_running);
-    RUN_TEST(test_cache_server_stopped_when_disabled_and_running);
-    RUN_TEST(test_cache_server_no_op_when_already_running_and_enabled);
-    RUN_TEST(test_cache_server_restarted_on_port_change_when_enabled);
-    RUN_TEST(test_cache_server_port_change_init_failure_rolls_back_to_old_port);
-    RUN_TEST(test_cache_server_uses_default_port_when_configured_port_zero);
 
     // Port-collision validation (cache Modbus server vs RS-485 bridge gateway)
     RUN_TEST(test_cache_port_equal_bridge_port_from_nvs_rejected);

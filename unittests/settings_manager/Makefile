@@ -12,7 +12,6 @@ TESTED_SRC += $(PROJ_DIR)/main/settings_manager.c
 
 # Auxiliary source files used in this test
 AUX_SRC += mocks/setting_items.c
-AUX_SRC += mocks/cache_modbus_server.c
 AUX_SRC += mocks/settings_update.c
 AUX_SRC += mocks/settings_save_timer.c
 AUX_SRC += mocks/auth.c

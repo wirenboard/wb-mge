@@ -5,7 +5,6 @@
 #include "array_size.h"
 #include "settings_update.h"
 #include "settings_save_timer.h"
-#include "bridge/cache_modbus_server.h"
 
 #include <esp_log.h>
 #include <string.h>
@@ -725,10 +724,6 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         return ESP_FAIL;
     }
 
-    // Save current cache server port before applying new settings.
-    // Used later to detect a real port change and to enable rollback on init failure.
-    int old_cache_port = cache_modbus_server_get_port();
-
     // --- Phase 0: determine wifi_perm_disable intent (do NOT write to NVS yet) ---
     bool wifi_perm_disabled = setting_items_read_bool(KEY_WIFI_PERM_DISABLE);
     bool should_set_wifi_perm_disable = false;
@@ -857,62 +852,11 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         return ESP_OK; // Return OK so HTTP layer sends the error JSON
     }
 
-    // If cache_modbus_port was in the request, check whether the validated NVS value
-    // differs from the port active before this request and restart the server if needed.
-    // Only restart when the server is enabled — if disabled, the port is saved to NVS
-    // but the server stays stopped.
-    if (cJSON_HasObjectItem(request_json, "cache_modbus_port")) {
-        int new_port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
-        bool server_enabled = setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
-        // Only restart the server if it is enabled and the port actually changed.
-        // If the server is disabled, the port is saved to NVS but the server stays stopped.
-        if (server_enabled && new_port > 0 && new_port != old_cache_port) {
-            esp_err_t ret = cache_modbus_server_deinit();
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "cache_modbus_server_deinit failed: %s", esp_err_to_name(ret));
-            } else {
-                ret = cache_modbus_server_init(new_port);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "cache_modbus_server_init(%d) failed: %s", new_port, esp_err_to_name(ret));
-                    // Attempt rollback to the previous port.
-                    if (old_cache_port > 0) {
-                        esp_err_t rb = cache_modbus_server_init(old_cache_port);
-                        if (rb != ESP_OK) {
-                            ESP_LOGE(TAG, "Rollback to port %d also failed: %s", old_cache_port, esp_err_to_name(rb));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // If cache_modbus_server_enabled was in the request, start or stop the server accordingly.
-    // cache_modbus_server_get_port() is called exactly once and stored in running_port so that
-    // both the "is running?" check and the stop branch use the same snapshot — calling it twice
-    // would be a TOCTOU: the server state could change between the two calls.
-    if (cJSON_HasObjectItem(request_json, "cache_modbus_server_enabled")) {
-        bool enabled = setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
-        int running_port = cache_modbus_server_get_port();
-        bool running = (running_port > 0);
-        if (enabled && !running) {
-            // Server should be running but isn't — start it.
-            int port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
-            if (port <= 0) {
-                port = CACHE_MODBUS_SERVER_PORT;
-            }
-            esp_err_t ret = cache_modbus_server_init(port);
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "cache_modbus_server_init failed: %s", esp_err_to_name(ret));
-            }
-        } else if (!enabled && running) {
-            // Server is running but should be stopped.
-            esp_err_t ret = cache_modbus_server_deinit();
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "cache_modbus_server_deinit failed: %s", esp_err_to_name(ret));
-            }
-        }
-    }
-
+    // Applying the new settings to the live subsystems — including starting, stopping and moving
+    // the cache Modbus TCP server — is settings_update()'s job: it compares each subsystem's
+    // running state against NVS and reconciles the ones that actually changed. Doing it here, in
+    // the HTTP handler, meant the cache server was restarted BEFORE settings_update() re-applied
+    // the RS-485 ports and the web server, so no port could be handed over between them.
     settings_update();
 
     // Add success flag
