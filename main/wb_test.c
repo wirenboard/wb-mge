@@ -142,10 +142,14 @@ static void stop_clock_out(void)
     ledc_timer_config(&tim_conf);
 
     // Release all four pins so port_manager_apply_settings() can hand the TX and
-    // DE lines back to the UART. The DE pins were actively driven LOW just above,
-    // so nothing is asserted while they float back to their default input state;
-    // start_clock_out() re-latches them LOW anyway rather than trusting the latch
-    // left here, since the UART owns these pins in between two runs of the test.
+    // DE lines back to the UART. Note that gpio_reset_pin() does not leave a pin
+    // floating: it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON,
+    // so a released DE pin is weakly pulled towards 1 — the "driver enabled" level.
+    // What actually keeps the transceiver in receive mode in this window is the
+    // external pulldown (R4) on the DE line, which overpowers the internal pull-up.
+    // The window is short (apply_settings re-inits the UART right after), and
+    // start_clock_out() re-latches the DE pins LOW before driving them rather than
+    // trusting whatever the previous owner left in the output latch.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
