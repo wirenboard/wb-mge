@@ -12,3 +12,4 @@ void rams_init(void);
 bool rams_has_key(const char* key);
 int rams_write_str(const char* key, const char* value);
 int rams_read_str(const char* key, char* value);
+int rams_erase_key(const char* key);

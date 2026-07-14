@@ -18,6 +18,7 @@ setting_storage_iface_t test_storage = {
     .has_key = rams_has_key,
     .write_str = rams_write_str,
     .read_str = rams_read_str,
+    .erase_key = rams_erase_key,
 };
 
 typedef struct {
@@ -1149,6 +1150,14 @@ void test_migrate_port_mode_legacy_disabled(void)
                                   "Reading port_mode_1 should succeed");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_DISABLED_STR, value,
                                      "Legacy disabled bridge should migrate to port_mode 'disabled'");
+
+    // The legacy "disabled" sentinel is not a valid bridge_mode any more: it must be erased
+    // after migration so it does not linger in NVS. set_defaults() then restores the default
+    // role (DEFAULT_BRIDGE_MODE == BRIDGE_MODE_SERVER_STR).
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
+                                     "Stale legacy bridge_mode must be replaced by the default role");
 }
 
 // Upgraded device, port was an active bridge: legacy bridge_mode_1="server",
@@ -1170,6 +1179,13 @@ void test_migrate_port_mode_legacy_server(void)
                                   "Reading port_mode_1 should succeed");
     TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
                                      "Legacy server bridge should migrate to port_mode 'tcp_bridge'");
+
+    // "server" is still a valid TCP role, so the migration must NOT erase it - otherwise
+    // set_defaults() would silently reset a user's role (e.g. "client") after an upgrade.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
+                                     "A still-valid bridge role must be preserved by the migration");
 }
 
 // Both keys already present (e.g. user already set port_mode_1="passive"). The
