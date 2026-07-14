@@ -93,6 +93,36 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 }
 
 
+// Callback invoked by the TCP server's receiver task when a client connection closes.
+//
+// desc->last_client_sock is written only when a client sends data (tcp_server.c) and is
+// reset only in tcp_server_init() — a closing connection used to leave it pointing at a
+// dead fd. process_data_from_serial() above routes every RS-485 reply to that fd, gated
+// only by tcp_server_connected() (which merely checks active_connections != 0), so:
+//
+//   (a) old client drops, a new one connects and stays silent -> the reply goes to the
+//       stale fd; once lwIP recycles that fd number, it goes to a COMPLETELY unrelated
+//       socket (httpd, another port's tcp_client);
+//   (b) with max_connections = 1 the acceptor allocates the new client's fd BEFORE
+//       closing the old one, which guarantees active_connections == 1 paired with a
+//       stale last_client_sock.
+//
+// Clearing it here closes both windows: tcp_server.c invokes close_handler BEFORE
+// shutdown()/close(), so there is no window where the fd is dead but the field still
+// looks valid. Mirrors modbus_tcp's on_tcp_conn_close().
+static void on_tcp_conn_close(tcp_desc_t *desc, int client_sock)
+{
+    if (!desc) {
+        return;
+    }
+    // Only clear when the closing socket is the one we would reply to: a different
+    // client may already have taken the slot.
+    if (desc->last_client_sock == client_sock) {
+        desc->last_client_sock = -1;
+    }
+}
+
+
 // Callback function for receiving data from TCP socket
 static void process_data_from_tcp(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
 {
@@ -155,6 +185,9 @@ esp_err_t transparent_tcp_init_port(unsigned index, serial_config_t *config,
                 // exactly one client at a time; a new connection preempts the previous.
                 // Guard on success: on failure *tcp_desc is not set by tcp_server_init.
                 tcp_server_set_max_connections(*tcp_desc, 1);
+                // Invalidate last_client_sock when its connection closes, so a serial
+                // reply is never routed to a dead — or worse, recycled — fd.
+                (*tcp_desc)->close_handler = on_tcp_conn_close;
             }
             tcp_send_func = tcp_server_send;
             tcp_connected_func = tcp_server_connected;

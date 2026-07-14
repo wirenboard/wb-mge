@@ -582,6 +582,65 @@ void test_tcp_to_serial_forwards_only_when_context_initialized(void)
 }
 
 // ---------------------------------------------------------------------------
+// #74: a closing TCP connection must invalidate last_client_sock.
+//
+// last_client_sock is written only when a client sends data and was never reset on
+// close, so a serial reply could be routed to a dead fd — or, once lwIP recycled the
+// fd number, to a completely unrelated socket. transparent_tcp must therefore register
+// a close_handler (server mode only; tcp_client manages last_client_sock itself).
+// ---------------------------------------------------------------------------
+void test_close_handler_clears_last_client_sock(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test: connection close clears last_client_sock (#74)");
+    LOG_MESSAGE();
+
+    tcp_desc_t *tcp_desc = NULL;
+    init_server_and_capture(NULL, &tcp_desc);
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(tcp_desc->close_handler,
+        "transparent_tcp must register a close_handler in server mode");
+
+    // A client sends data: the receiver task records it as last_client_sock.
+    uint8_t payload[3] = { 0x11, 0x22, 0x33 };
+    tcp_desc->last_client_sock = 7;
+    mock_tcp_server_registered_handler(tcp_desc, 7, payload, sizeof(payload));
+
+    // That client disconnects.
+    tcp_desc->close_handler(tcp_desc, 7);
+    TEST_ASSERT_EQUAL_MESSAGE(-1, tcp_desc->last_client_sock,
+        "last_client_sock must be invalidated when its connection closes");
+
+    // A serial reply arriving after the close must not be sent to the dead fd.
+    mock_tcp_server_calls.connected_ret = ESP_OK;   // active_connections != 0 (new silent client)
+    serial_desc_t *serial_desc = mock_serial_get_desc();
+    mock_serial_registered_handler(serial_desc, payload, sizeof(payload));
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(7, mock_tcp_server_calls.send_last_client_sock,
+        "a serial reply must never be routed to the closed fd");
+}
+
+// A close on a socket that is NOT the current last_client_sock must leave it alone:
+// with the one-client cap the acceptor allocates the new client's fd before closing
+// the old one, so the close callback can arrive after the slot already moved on.
+void test_close_handler_ignores_other_socket(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test: closing a non-current socket does not clear last_client_sock (#74)");
+    LOG_MESSAGE();
+
+    tcp_desc_t *tcp_desc = NULL;
+    init_server_and_capture(NULL, &tcp_desc);
+
+    tcp_desc->last_client_sock = 9;      // the new client already owns the slot
+    tcp_desc->close_handler(tcp_desc, 7); // the old connection closes late
+
+    TEST_ASSERT_EQUAL_MESSAGE(9, tcp_desc->last_client_sock,
+        "an unrelated close must not clear the current client's fd");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 int main(void)
@@ -605,6 +664,8 @@ int main(void)
     RUN_TEST(test_serial_to_tcp_forwarding_gated_by_connection);
     RUN_TEST(test_tcp_to_serial_client_sock_zero_is_valid);
     RUN_TEST(test_tcp_to_serial_forwards_only_when_context_initialized);
+    RUN_TEST(test_close_handler_clears_last_client_sock);
+    RUN_TEST(test_close_handler_ignores_other_socket);
 
     return UNITY_END();
 }
