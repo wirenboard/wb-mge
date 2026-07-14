@@ -504,7 +504,7 @@ static esp_err_t port_set_mode_impl(unsigned port_index, pm_mode_t mode, bool pe
 
     // While the factory test owns the TX/DE pins, a persisting mode change
     // (POST /ports/N/mode) must not go through: port_init_mode() would hand the
-    // pins the LEDC is driving back to the UART, and the new mode would be written
+    // pins the test is driving back to the UART, and the new mode would be written
     // to NVS on top of the user's configuration. Reject it with the dedicated
     // PM_ERR_PORTS_FROZEN — the REST handler maps that (and only that) to 409.
     // A generic ESP_ERR_INVALID_STATE would not do: port_init_mode() can return the

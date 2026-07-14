@@ -72,13 +72,18 @@ static void settings_update_task(void *arg)
 esp_err_t settings_update(void)
 {
     // The factory clock_out test owns part of the RS-485 hardware while it runs: it forces
-    // V-out on and drives the TX pins of both ports plus the port-1 DE pin with the LEDC.
+    // V-out on, drives the TX pins of BOTH ports with the LEDC, and holds the DE pin of
+    // both ports as a plain GPIO — port 1's HIGH (that driver transmits), port 2's LOW
+    // (that driver stays in receive, so the shared RS-485-2 pair is not driven).
     // Re-applying those two settings here would undo that:
     //   - update_rs485_control() would push the configured vout value over the test's;
     //   - update_serial_tx_disabled() is NOT the pure software flag it looks like:
     //     serial_set_tx_disabled() does gpio_reset_pin()/gpio_set_level()/
-    //     gpio_set_direction() on the port's dir_pin, which is exactly the DE pin
-    //     (SERIAL_IO_PIN_1) the test holds HIGH. Today it happens to be harmless only
+    //     gpio_set_direction() on the port's dir_pin (or, for tx_disabled=false,
+    //     uart_set_pin() back to the UART) — and those dir pins are exactly the DE pins
+    //     the test is holding: SERIAL_IO_PIN_1, kept HIGH for port 1, and SERIAL_IO_PIN_2,
+    //     parked LOW for port 2. It would drop the port-1 driver mid-waveform, or hand the
+    //     parked port-2 pin back to the UART. Today it happens to be harmless only
     //     because the frozen ports sit in PM_MODE_DISABLED, so port_manager_set_tx_disabled()
     //     finds no serial_desc and returns early — an accident of the disable order, not a
     //     property of the call. Gate it rather than depend on that.

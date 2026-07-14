@@ -72,7 +72,9 @@ esp_err_t port_manager_init(void);
  *
  * Rejected with PM_ERR_PORTS_FROZEN while the ports are frozen by the factory
  * test (see port_manager_set_ports_frozen()): re-initialising the port would take
- * the TX/DE pins back from the LEDC that is driving them.
+ * its TX and DE pins back from the test — the TX pins from the LEDC that is driving
+ * the waveform, the DE pins from the plain-GPIO levels the test holds them at
+ * (port 1 HIGH, port 2 LOW).
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @param mode        Target mode.
@@ -155,9 +157,11 @@ bool port_manager_get_cache(unsigned port_index);
 /**
  * @brief Freeze / unfreeze all ports for the duration of the factory test.
  *
- * The factory 100 kHz clock-out test drives the RS-485 TX/DE pins directly with
- * the LEDC peripheral, after transiently forcing both ports to PM_MODE_DISABLED
- * (runtime only — NVS keeps the user's configured mode). That mismatch between
+ * The factory 100 kHz clock-out test drives the RS-485 pins directly, after
+ * transiently forcing both ports to PM_MODE_DISABLED (runtime only — NVS keeps
+ * the user's configured mode): the TX pin of both ports carries the LEDC waveform,
+ * and the DE pin of both ports is held as a plain GPIO — port 1 HIGH (its driver
+ * transmits), port 2 LOW (its driver stays in receive). That mismatch between
  * the runtime mode and NVS would otherwise make port_manager_check_settings_changed()
  * report "changed" for every port, so any unrelated POST /settings would run
  * port_manager_apply_settings() and re-init the ports on top of the running
@@ -174,9 +178,9 @@ bool port_manager_get_cache(unsigned port_index);
  * Note that POST /settings may still write a new port_mode to NVS during the test and
  * is answered 200, while POST /ports/N/mode is answered 409. That is the intended
  * split, not an inconsistency: /ports/N/mode applies the mode immediately (a deinit +
- * re-init of a port whose pins the LEDC is driving), whereas /settings only records it
- * — apply_settings() is frozen, and the value takes effect when the test ends. See the
- * port_mode entry in settings_manager.c's rs485_base_mappings.
+ * re-init of a port whose TX and DE pins the test is driving), whereas /settings only
+ * records it — apply_settings() is frozen, and the value takes effect when the test ends.
+ * See the port_mode entry in settings_manager.c's rs485_base_mappings.
  *
  * NVS is not affected either way. Unfreeze first, then call
  * port_manager_apply_settings() for each port to bring them back up from NVS
