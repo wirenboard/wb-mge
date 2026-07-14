@@ -158,6 +158,15 @@ static void uart_event_task(void *pvParameters)
 
     uint8_t *dtmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
     uint8_t *sniff_tmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
+    if (dtmp == NULL || sniff_tmp == NULL) {
+        // Do NOT return early: the task must keep servicing EVENT_TASK_EXIT_REQ below,
+        // otherwise serial_deinit() would block on EVENT_TASK_FINISHED forever. The NULL
+        // guards (here, and on sniff_data in handle_uart_event) keep it from dereferencing
+        // the failed buffer -- but that means RX is inoperative on this port, so say so
+        // loudly instead of silently discarding every received byte.
+        ESP_LOGE(TAG, "UART[%d] failed to allocate RX buffers (%d bytes each): RX inoperative on this port",
+                 desc->port_num, SERIAL_BUF_SIZE);
+    }
     buffer_ctx_t buffer_ctx = {
         .data = dtmp,
         .data_len = 0,
