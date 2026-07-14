@@ -125,8 +125,6 @@ TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (in
 ## CI
 
 Builds run on Jenkins at <https://jenkins.wirenboard.com/job/wirenboard/job/wb-mge/>.
-See [docs/jenkins_wb.md](docs/jenkins_wb.md) for API token setup and commands
-to query build status / logs from the shell.
 
 ## Manual UI Test Procedures
 
