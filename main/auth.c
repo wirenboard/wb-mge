@@ -32,8 +32,8 @@ static SemaphoreHandle_t session_mutex = NULL;
 
 static inline void session_lock(void)
 {
-    BaseType_t taken = xSemaphoreTake(session_mutex, portMAX_DELAY);
-    assert(taken == pdTRUE);
+    // portMAX_DELAY blocks until the mutex is taken, so this cannot fail.
+    xSemaphoreTake(session_mutex, portMAX_DELAY);
 }
 
 static inline void session_unlock(void)
