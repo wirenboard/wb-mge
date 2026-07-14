@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "esp_bit_defs.h"    // BIT<n>, expanded by the SOC_GPIO_VALID_*_MASK macros
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -10,6 +11,7 @@
 #include "lwip/errno.h"
 #include "lwip/sockets.h"
 #include "soc/gpio_num.h"
+#include "soc/soc_caps.h"   // SOC_GPIO_VALID_OUTPUT_GPIO_MASK (input-only pads)
 
 // Virtual IO state bus for the QEMU build.
 //
@@ -21,20 +23,36 @@
 //     /  : literal separator, always at index 3
 //     X  : for 'E'/'G' the RAW physical pin level ('0'/'1'); for 'D' the
 //          direction ('1' OUTPUT, '0' INPUT); for 'V' the violation cause
-//          ('0' host wrote OUTPUT, '1' firmware wrote INPUT, '2' operate
-//          uninitialized pin)
+//          ('0' host wrote OUTPUT, '1' firmware drove an input-only pin,
+//          '2' host operated an uninitialized pin)
 // A single optional trailing '\n' is tolerated. Parsing is positional.
 //
-// Native GPIO direction model: a generic per-GPIO table indexed by GPIO number
-// holds {dir_state, level}. The direction is NOT hardcoded: it is driven solely
-// by the firmware's real ESP-IDF GPIO calls, transparently intercepted by the
-// linker --wrap shim (main/qemu/gpio_shim_qemu.c) which forwards them here. A
-// pin starts UNCONFIGURED and only becomes INPUT/OUTPUT once the firmware
+// Native GPIO model: a generic per-GPIO table indexed by GPIO number holds
+// {dir_state, level, out_latch}. The direction is NOT hardcoded: it is driven
+// solely by the firmware's real ESP-IDF GPIO calls, transparently intercepted by
+// the linker --wrap shim (main/qemu/gpio_shim_qemu.c) which forwards them here.
+// A pin starts UNCONFIGURED and only becomes INPUT/OUTPUT once the firmware
 // configures it. 'D' records are emitted on a direction change and in the full
-// dump (only for pins currently INPUT or OUTPUT). A 'V' record is emitted
-// (NON-fatally) whenever a write violates the model: the host driving an OUTPUT
-// pin (V/0), the firmware driving an INPUT pin (V/1), or either side operating
-// an UNCONFIGURED pin (V/2). On a violation the level is REJECTED (unchanged).
+// dump (only for pins currently INPUT or OUTPUT).
+//
+// The model mirrors the silicon's two distinct pieces of per-pad state:
+//   out_latch : the output data register. gpio_set_level() writes it REGARDLESS
+//               of the pad direction — that is what makes the glitch-free
+//               "set the level, then switch to OUTPUT" idiom work on real
+//               hardware (see serial.c: dir_pin forced LOW without a glitch).
+//               A latch write on a pad that is not an output changes nothing on
+//               the line and is NOT a violation.
+//   level     : what is actually on the line, i.e. what the host observes and
+//               what gpio_get_level() returns. An OUTPUT pad drives level from
+//               out_latch (the latch is applied on the INPUT/UNCONFIGURED ->
+//               OUTPUT transition); an INPUT pad's level comes from the host.
+//
+// A 'V' record is emitted (NON-fatally) when the model is actually violated:
+//   V/0 the host drove a firmware-owned OUTPUT pin           -> write rejected;
+//   V/1 the firmware configured an input-only pad as OUTPUT  -> config rejected
+//       (ESP32 GPIO34..39 physically cannot drive a line, so firmware driving
+//        one is a real bug the model must catch);
+//   V/2 the host operated an UNCONFIGURED pin                -> write rejected.
 // Expander ('E') pins have no direction model (all behave as outputs).
 //
 // QEMU usermode networking (-nic user + hostfwd) only NATs host->guest, so
@@ -60,14 +78,18 @@ static const char *TAG = "virtual_io_qemu";
 
 // Violation cause codes (matches the on-the-wire 'V' record).
 #define VIOLATION_HOST_WROTE_OUTPUT     0   // host drove an OUTPUT pin
-#define VIOLATION_FW_WROTE_INPUT        1   // firmware drove an INPUT pin
+#define VIOLATION_FW_WROTE_INPUT        1   // firmware drove an input-only pad
 #define VIOLATION_OPERATE_UNINIT        2   // operate an UNCONFIGURED pin
 
-// Per-GPIO model entry. dir_state is one of VIO_DIR_*; level is the last
-// known shadow level (only meaningful once configured).
+// Per-GPIO model entry:
+//   dir_state - one of VIO_DIR_*, learned from the firmware's gpio calls;
+//   level     - what is on the line (host-observable, gpio_get_level());
+//   out_latch - the output data register, written by gpio_set_level() in ANY
+//               direction and applied to the line when the pad becomes OUTPUT.
 typedef struct {
     vio_dir_state_t dir_state;
     int level;
+    int out_latch;
 } native_pin_t;
 
 static struct {
@@ -118,6 +140,15 @@ static void send_record_locked(char type, int num, int value)
 static bool native_index_valid(int gpio_num)
 {
     return (gpio_num >= 0) && (gpio_num < VIRTUAL_IO_NATIVE_GPIO_COUNT);
+}
+
+// True if the pad can physically drive a line. On the ESP32 GPIO34..39 are
+// input-only, so configuring one as an OUTPUT is a firmware bug the model must
+// flag (V/1) rather than emulate. Taken from the SoC caps, so it stays correct
+// if the target ever changes.
+static bool native_pin_output_capable(int gpio_num)
+{
+    return (SOC_GPIO_VALID_OUTPUT_GPIO_MASK & (1ULL << gpio_num)) != 0;
 }
 
 // Emit a full dump of all tracked signals to the (just-learned) peer.
@@ -226,10 +257,27 @@ esp_err_t gpio_expander_get_level(uint32_t pin_num_mask, uint32_t *level_mask)
 
 // --- Native virtual GPIO (driven ONLY by the wrap shim + RX) --------------------
 
+// Apply the output latch to the line on a transition to OUTPUT. Caller MUST hold
+// the mutex (pre-init callers hold nothing, but then send_record_locked() is a
+// no-op: no peer is known yet). This is the model half of the hardware's
+// glitch-free idiom: the pad starts driving whatever the output data register
+// already holds, so a gpio_set_level() done BEFORE the direction switch takes
+// effect the moment the pad becomes an output. Emits G only on a real change.
+static void native_apply_latch_locked(int gpio_num)
+{
+    int latched = s_ctx.native[gpio_num].out_latch;
+    if (s_ctx.native[gpio_num].level == latched) {
+        return;
+    }
+    s_ctx.native[gpio_num].level = latched;
+    send_record_locked('G', gpio_num, latched);
+}
+
 // Set the model direction for a native GPIO. Called from the wrap shim when the
 // firmware configures a pin (gpio_config / gpio_set_direction / gpio_reset_pin /
 // uart_set_pin). On a change to INPUT/OUTPUT a 'D' record is emitted; switching
 // to UNCONFIGURED/DISABLE emits nothing (there is no 'D' for an unconfigured pin).
+// Configuring an input-only pad as OUTPUT is rejected with a V/1 violation.
 void vio_native_set_direction(int gpio_num, vio_dir_state_t dir)
 {
     if (!native_index_valid(gpio_num)) {
@@ -239,14 +287,31 @@ void vio_native_set_direction(int gpio_num, vio_dir_state_t dir)
     if (s_ctx.mutex == NULL) {
         // Pre-init: just update the model, skip the send. Seed idle-HIGH on a
         // fresh transition to INPUT (see the locked branch below for rationale).
-        if ((dir == VIO_DIR_INPUT) && (s_ctx.native[gpio_num].dir_state != VIO_DIR_INPUT)) {
-            s_ctx.native[gpio_num].level = 1;
+        if ((dir == VIO_DIR_OUTPUT) && !native_pin_output_capable(gpio_num)) {
+            return; // input-only pad cannot become an output
         }
-        s_ctx.native[gpio_num].dir_state = dir;
+        if (s_ctx.native[gpio_num].dir_state != dir) {
+            s_ctx.native[gpio_num].dir_state = dir;
+            if (dir == VIO_DIR_INPUT) {
+                s_ctx.native[gpio_num].level = 1;
+            } else if (dir == VIO_DIR_OUTPUT) {
+                native_apply_latch_locked(gpio_num);
+            }
+        }
         return;
     }
 
     xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
+    if ((dir == VIO_DIR_OUTPUT) && !native_pin_output_capable(gpio_num)) {
+        // The firmware asked an input-only pad (ESP32 GPIO34..39) to drive the
+        // line. Real silicon simply cannot: the pad has no output driver. Flag it
+        // and keep the pin's current direction, so the bug is visible to the host
+        // instead of being silently emulated.
+        ESP_LOGE(TAG, "Direction violation: firmware configured input-only pin G%02d as OUTPUT (rejected)", gpio_num);
+        send_record_locked('V', gpio_num, VIOLATION_FW_WROTE_INPUT);
+        xSemaphoreGive(s_ctx.mutex);
+        return;
+    }
     if (s_ctx.native[gpio_num].dir_state != dir) {
         s_ctx.native[gpio_num].dir_state = dir;
         if (dir == VIO_DIR_INPUT) {
@@ -259,21 +324,33 @@ void vio_native_set_direction(int gpio_num, vio_dir_state_t dir)
             // triggers the long-press factory reset. We seed level=1 only on the
             // UNCONFIGURED/OUTPUT -> INPUT transition (this branch runs only when
             // dir_state actually changed), so a pin already INPUT and driven by the
-            // host is NOT force-reset by a redundant reconfigure.
+            // host is NOT force-reset by a redundant reconfigure. The output latch
+            // is deliberately left alone: on real hardware it keeps its value while
+            // the pad is an input.
             s_ctx.native[gpio_num].level = 1;
             send_record_locked('G', gpio_num, 1);
         } else if (dir == VIO_DIR_OUTPUT) {
             send_record_locked('D', gpio_num, NATIVE_DIR_OUTPUT);
+            // The pad now drives the value already held in the output latch.
+            native_apply_latch_locked(gpio_num);
         }
         // UNCONFIGURED/DISABLE: no 'D' record emitted.
     }
     xSemaphoreGive(s_ctx.mutex);
 }
 
-// FIRMWARE write path (gpio_set_level via the wrap shim). Rules:
-//   OUTPUT       -> legal: update level, emit G on change.
-//   INPUT        -> violation V/1 (firmware drove an input): log, emit, REJECT.
-//   UNCONFIGURED -> violation V/2 (operate uninitialized): log, emit, REJECT.
+// FIRMWARE write path (gpio_set_level via the wrap shim). Rules (matching the
+// silicon, where gpio_set_level() writes the output data register no matter what
+// the pad direction is):
+//   ALWAYS       -> update out_latch.
+//   OUTPUT       -> the pad drives the line: update level, emit G on change.
+//   INPUT        -> latch-only: the pad does not drive the line, so the level is
+//                   unchanged and NO record is emitted. This is legal, NOT a
+//                   violation: it is exactly the glitch-free "set level, then
+//                   switch to OUTPUT" idiom (serial.c forcing dir_pin LOW).
+//   UNCONFIGURED -> latch-only, same as INPUT.
+// A firmware bug that actually drives an input line is caught at configuration
+// time instead (V/1 on an input-only pad, see vio_native_set_direction).
 void vio_native_fw_set_level(int gpio_num, int level)
 {
     if (!native_index_valid(gpio_num)) {
@@ -282,24 +359,22 @@ void vio_native_fw_set_level(int gpio_num, int level)
     int bit_level = level ? 1 : 0;
 
     if (s_ctx.mutex == NULL) {
-        // Pre-init: update the shadow only (no enforcement, no peer to notify).
-        s_ctx.native[gpio_num].level = bit_level;
+        // Pre-init: update the latch (and the line if the pad already drives it);
+        // no peer to notify yet.
+        s_ctx.native[gpio_num].out_latch = bit_level;
+        if (s_ctx.native[gpio_num].dir_state == VIO_DIR_OUTPUT) {
+            s_ctx.native[gpio_num].level = bit_level;
+        }
         return;
     }
 
     xSemaphoreTake(s_ctx.mutex, portMAX_DELAY);
-    vio_dir_state_t dir = s_ctx.native[gpio_num].dir_state;
-    if (dir == VIO_DIR_OUTPUT) {
+    s_ctx.native[gpio_num].out_latch = bit_level;
+    if (s_ctx.native[gpio_num].dir_state == VIO_DIR_OUTPUT) {
         if (s_ctx.native[gpio_num].level != bit_level) {
             s_ctx.native[gpio_num].level = bit_level;
             send_record_locked('G', gpio_num, bit_level);
         }
-    } else if (dir == VIO_DIR_INPUT) {
-        ESP_LOGE(TAG, "Direction violation: firmware drove INPUT pin G%02d (rejected)", gpio_num);
-        send_record_locked('V', gpio_num, VIOLATION_FW_WROTE_INPUT);
-    } else { // VIO_DIR_UNCONFIGURED
-        ESP_LOGE(TAG, "Direction violation: firmware operated UNCONFIGURED pin G%02d (rejected)", gpio_num);
-        send_record_locked('V', gpio_num, VIOLATION_OPERATE_UNINIT);
     }
     xSemaphoreGive(s_ctx.mutex);
 }
