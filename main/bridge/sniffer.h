@@ -13,10 +13,12 @@
 #include "esp_http_server.h"
 #else
 typedef void* httpd_handle_t;
+#endif
 
-/* Internal packet structure; exposed here only for unit test builds so that
- * format_packet_json can be tested without including
- * the full FreeRTOS / ESP-IDF headers. */
+/* One sniffed frame as it travels from the state machine to the WS task.
+ * Declared here (not in sniffer.c) so production code and unit tests share a
+ * single definition: the previous per-build duplicate could drift silently.
+ * Depends only on stdint/stdbool and SNIFFER_MAX_PACKET_LEN above. */
 typedef struct {
     uint8_t  port;
     uint64_t timestamp_us;
@@ -29,26 +31,20 @@ typedef struct {
     uint16_t data_len;
 } sniff_packet_t;
 
-/* Direction classification result; exported for unit tests so that tests can
- * use the same enum values as the production classify_direction() function
- * without duplicating the definition and risking value drift. */
+/* Direction classification result for a standard Modbus RTU PDU.
+ * Shared with the tests for the same reason as sniff_packet_t above: one
+ * definition, no value drift between the production and test builds. */
 typedef enum {
-    DIRECTION_REQUEST  = 0,
-    DIRECTION_RESPONSE = 1,
-    DIRECTION_UNKNOWN  = 2,
+    DIRECTION_REQUEST  = 0, /* Packet is unambiguously a master request */
+    DIRECTION_RESPONSE = 1, /* Packet is unambiguously a slave response  */
+    DIRECTION_UNKNOWN  = 2, /* Cannot determine direction from length/FC alone */
 } pdu_direction_t;
 
-/* Forward-declare httpd_req_t so the test-only prototypes below compile without
- * pulling in the full esp_http_server mock header (which is not on every test
- * suite's include path). The complete definition is provided by esp_http_server.h
- * which sniffer.c includes directly in __unittest_env__ builds. */
-struct httpd_req;
-
-/* Test-only accessors and forward declarations — not available in production builds */
-void sniffer_ws_dispatch(sniff_packet_t *pkt);
-esp_err_t sniffer_ws_handler(struct httpd_req *req);
-int sniffer_test_get_ws_client_fd(void);
-#endif
+/* Per-port framing state of the request/response state machine. */
+typedef enum {
+    SNIFF_IDLE = 0,
+    SNIFF_RES_WAIT,
+} sniff_state_t;
 
 /**
  * @brief Reasons that keep the sniffer pipeline running for a port.

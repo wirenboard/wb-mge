@@ -40,26 +40,8 @@ static const char *TAG = "sniffer";
 #define SNIFFER_WS_TASK_STACK   (1024 * 5)
 #define SNIFFER_WS_TASK_PRIO    3
 
-typedef enum {
-    SNIFF_IDLE = 0,
-    SNIFF_RES_WAIT,
-} sniff_state_t;
-
-/* In unit test builds sniff_packet_t is declared in sniffer.h under
- * #ifdef __unittest_env__ to allow tests to access it without duplication. */
-#ifndef __unittest_env__
-typedef struct {
-    uint8_t  port;
-    uint64_t timestamp_us;
-    bool     is_master;
-    bool     crc_valid;
-    bool     is_timeout;
-    uint8_t  slave_id;
-    uint8_t  function;
-    uint8_t  data[SNIFFER_MAX_PACKET_LEN];
-    uint16_t data_len;
-} sniff_packet_t;
-#endif
+/* sniff_packet_t, pdu_direction_t and sniff_state_t are declared in sniffer.h —
+ * one definition shared by the production and the unit-test builds. */
 
 typedef struct {
     sniff_state_t  state;
@@ -209,17 +191,6 @@ SNIFFER_STATIC bool fm_is_slave_subcmd(uint8_t subcmd)
     return (subcmd == 0x03 || subcmd == 0x04 ||
             subcmd == 0x09 || subcmd == 0x11 || subcmd == 0x12);
 }
-
-/* Direction classification result for standard Modbus RTU PDUs.
- * In __unittest_env__ this typedef is declared in sniffer.h to allow tests
- * to use symbolic names; in production builds it is defined here. */
-#ifndef __unittest_env__
-typedef enum {
-    DIRECTION_REQUEST  = 0, /* Packet is unambiguously a master request */
-    DIRECTION_RESPONSE = 1, /* Packet is unambiguously a slave response  */
-    DIRECTION_UNKNOWN  = 2, /* Cannot determine direction from length/FC alone */
-} pdu_direction_t;
-#endif
 
 /*
  * classify_direction — heuristic to decide whether a Modbus RTU packet is a

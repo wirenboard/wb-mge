@@ -6,7 +6,7 @@
 #include <string.h>
 #include <limits.h>
 
-/* sniff_packet_t is declared in sniffer.h when __unittest_env__ is defined */
+/* sniff_packet_t is declared in sniffer.h (shared by production and test builds). */
 #include "sniffer.h"
 
 /* Forward declarations for the 4 helper functions exposed via SNIFFER_STATIC
@@ -20,8 +20,7 @@ bool     fm_is_slave_subcmd(uint8_t subcmd);
 /* Forward declarations for JSON formatter functions */
 int      format_packet_json(char *buf, size_t buf_size, uint32_t id, const sniff_packet_t *pkt);
 
-/* pdu_direction_t is now exported from sniffer.h under __unittest_env__,
- * so no local typedef is needed here. */
+/* pdu_direction_t comes from sniffer.h, so no local typedef is needed here. */
 
 /* Forward declaration for classify_direction exposed via SNIFFER_STATIC */
 pdu_direction_t classify_direction(const uint8_t *data, size_t len);

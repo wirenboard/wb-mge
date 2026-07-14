@@ -15,8 +15,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-/* sniff_packet_t, sniffer_ws_handler, sniffer_ws_dispatch, sniffer_test_get_ws_client_fd
- * are all declared in sniffer.h under __unittest_env__. */
+/* sniff_packet_t is declared in sniffer.h (shared by production and test builds). */
 #include "sniffer.h"
 #include "serial_mock.h"
 
@@ -24,8 +23,15 @@
 #include "freertos/queue.h"
 #include "freertos/timers.h"
 
-/* esp_http_server mock controls */
+/* esp_http_server mock controls (provides httpd_req_t used below) */
 #include "esp_http_server.h"
+
+/* Internals under test. These are static in production and given external linkage
+ * only in __unittest_env__ builds (via SNIFFER_STATIC / #ifdef in sniffer.c), so
+ * they are declared here rather than in the production header. */
+void      sniffer_ws_dispatch(sniff_packet_t *pkt);
+esp_err_t sniffer_ws_handler(httpd_req_t *req);
+int       sniffer_test_get_ws_client_fd(void);
 
 /* cache_multimaster recording mock controls */
 extern bool     mock_cache_multimaster_enabled;

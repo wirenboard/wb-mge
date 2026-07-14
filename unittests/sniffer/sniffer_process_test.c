@@ -36,7 +36,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-/* sniff_packet_t is declared in sniffer.h under __unittest_env__.
+/* sniff_packet_t is declared in sniffer.h (shared by production and test builds).
  * serial_desc_t is provided by the mock serial.h (unittests/sniffer/mocks/serial.h)
  * which is included transitively via sniffer.h — do NOT include serial.h directly
  * here to avoid conflict between the mock typedef and the production header.
