@@ -209,12 +209,10 @@ static void run_receiver(tcp_desc_t *desc, int client_sock)
     // Log before decrementing so desc->port is accessed while desc is still valid.
     // deinit() waits for active_connections to reach 0 before freeing desc.
     ESP_LOGD(TAG, "Port %d receiver task finished", desc->port);
-    // Decrement before close(): the fd must stay allocated while this server's
-    // connection count still reads >= max_connections. Otherwise the freed fd
-    // could be recycled by another tcp_server instance in the window before the
-    // decrement, and the acceptor's drop-old preemption would shutdown() a socket
-    // that no longer belongs to this server. close() touches no desc fields, so it
-    // is safe to run after the decrement (deinit may free desc once it hits 0).
+    // Decrement before close(): decrementing first lets the acceptor admit the next
+    // client (once the count drops below max_connections) the moment this connection
+    // is done. close() touches no desc fields, so it is safe to run after the
+    // decrement (deinit may free desc once the count hits 0).
     __atomic_fetch_sub(&desc->active_connections, 1, __ATOMIC_SEQ_CST);
     close(client_sock);
 }
@@ -240,8 +238,6 @@ static void tcp_server_task(void *pvParameters)
 {
     tcp_desc_t *desc = (tcp_desc_t *)pvParameters;
     ESP_LOGD(TAG, "TCP server acceptor task started");
-
-    int prev_client_sock = -1;
 
     while (1) {
         if (check_task_exit_req(desc)) {
@@ -293,31 +289,15 @@ static void tcp_server_task(void *pvParameters)
         }
         ESP_LOGI(TAG, "Socket on port %d accepted connection from %s, port: %d", desc->port, addr_str, htons(source_addr.sin_port));
 
-        // Enforce the per-server connection cap by dropping the previously-served
-        // client so the new one takes over. Only max_connections == 1 is supported
-        // (used by the transparent bridge, which serves exactly one client): a single
-        // prev_client_sock is tracked, so this preempts one client, not the oldest of
-        // many. The acceptor is the only task that spawns receivers, so prev_client_sock
-        // (this task's local) reliably identifies the currently-served socket.
+        // Enforce the per-server connection cap by rejecting the newcomer and keeping
+        // the client already being served. The transparent bridge uses
+        // max_connections == 1, so this keeps one master on the serial line instead of
+        // letting a second one in. modbus/cache use max_connections == 0 (no cap), so
+        // this branch never fires for them.
         if (desc->max_connections != 0 && desc->active_connections >= desc->max_connections) {
-            // run_receiver closes the old fd only AFTER decrementing active_connections,
-            // so while the counter still reads >= max the old fd is guaranteed open and
-            // cannot equal client_sock; the prev_client_sock != client_sock check is kept
-            // as cheap defensive guarding of the fd-reuse case regardless.
-            if (prev_client_sock >= 0 && prev_client_sock != client_sock) {
-                ESP_LOGI(TAG, "Port %d: connection limit reached, dropping previous client to admit the new one", desc->port);
-                shutdown(prev_client_sock, SHUT_RDWR);  // unblocks the old receiver's recv(); it then decrements active_connections and closes the fd
-            }
-            // Wait for the preempted receiver to fully exit before admitting the new client.
-            bool exiting = false;
-            while (desc->active_connections >= desc->max_connections) {
-                if (check_task_exit_req(desc)) { exiting = true; break; }
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-            if (exiting) {
-                close(client_sock);
-                break;   // deinit requested — leave the acceptor loop
-            }
+            ESP_LOGI(TAG, "Port %d: connection limit reached, rejecting new client", desc->port);
+            close(client_sock);
+            continue;
         }
 
         // Allocate args for receiver_task on the heap; freed by receiver_task itself
@@ -342,9 +322,6 @@ static void tcp_server_task(void *pvParameters)
             free(args);
             close(client_sock);
             __atomic_fetch_sub(&desc->active_connections, 1, __ATOMIC_SEQ_CST);
-        } else {
-            // Record the now-served socket so the next over-limit accept preempts it.
-            prev_client_sock = client_sock;
         }
     }
 

@@ -134,7 +134,8 @@ void test_init_server_mode_success(void)
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.init_called, "tcp_server_init must be called once");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.init_called, "serial_init must be called once");
 
-    // C7: transparent server caps connections at exactly 1 (drop-old policy).
+    // C7: transparent server caps connections at exactly 1 (block-new policy:
+    // once one client is served, new connections are rejected).
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.set_max_connections_called,
         "tcp_server_set_max_connections must be called once in server mode");
     TEST_ASSERT_EQUAL_MESSAGE(1, (int)mock_tcp_server_calls.set_max_connections_value,
@@ -621,8 +622,9 @@ void test_close_handler_clears_last_client_sock(void)
 }
 
 // A close on a socket that is NOT the current last_client_sock must leave it alone:
-// with the one-client cap the acceptor allocates the new client's fd before closing
-// the old one, so the close callback can arrive after the slot already moved on.
+// the guard is defensive — close_handler clears the cached fd only when the closing
+// socket matches, so a late or duplicate close for a socket that is no longer the
+// active one cannot wipe the current client's fd.
 void test_close_handler_ignores_other_socket(void)
 {
     LOG_MESSAGE();

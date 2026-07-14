@@ -9,8 +9,8 @@ Coverage:
 13. Multiple clients — last-writer routing: last client's bytes are echoed back to it.
 14. Zero-byte edge case — null byte + real data; connection stays open throughout.
 15. Client mode — firmware connects outbound to a Python TCP echo server on the host.
-16. Single-client cap (C7) — a second client preempts the first (drop-old): B is
-    served while A is disconnected (EOF).
+16. Single-client cap (C7) — a second client is rejected (block-new): A keeps being
+    served while B is disconnected (EOF).
 """
 
 import socket
@@ -561,7 +561,7 @@ def test_transparent_client_mode(api):
 
 
 # ---------------------------------------------------------------------------
-# Test #16: Single-client cap (C7) — a new client preempts the previous one
+# Test #16: Single-client cap (C7) — a new client is rejected, the old one stays
 # ---------------------------------------------------------------------------
 #
 # NOTE: like every test in this module this needs QEMU (UART1 chardev on port
@@ -570,17 +570,17 @@ def test_transparent_client_mode(api):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(120)
-def test_transparent_single_client_cap_drop_old(transparent_bridge):
-    """A second client evicts the first: transparent server admits exactly one client.
+def test_transparent_single_client_cap_block_new(transparent_bridge):
+    """A second client is rejected: transparent server keeps the client it already serves.
 
-    C7 policy (drop-old): the transparent bridge routes to a single socket, so the
-    acceptor caps connections at 1 and the newest connection preempts the oldest.
+    C7 policy (block-new): the transparent bridge routes to a single socket, so the
+    acceptor caps connections at 1 and rejects any newcomer while a client is served.
 
     Sequential scenario:
     1. Client A connects and is the sole (served) client.
-    2. Client B connects — the firmware drops A (shutdown+close) to admit B.
-    3. A observes the disconnect: recv() returns b'' (clean EOF) or ConnectionReset.
-    4. B is fully functional: its bytes round-trip TCP -> serial -> TCP via the echo.
+    2. Client B connects — the firmware rejects B (close) and keeps A.
+    3. B observes the rejection: recv() returns b'' (clean EOF) or ConnectionReset.
+    4. A stays fully functional: its bytes round-trip TCP -> serial -> TCP via the echo.
     """
     probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
     if probe is None:
@@ -600,42 +600,42 @@ def test_transparent_single_client_cap_drop_old(transparent_bridge):
         sock_a.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
         time.sleep(0.2)   # let the firmware accept A and spawn its receiver
 
-        # 2. Client B connects — the firmware must drop A to admit B.
+        # 2. Client B connects — the firmware must reject B and keep A.
         sock_b.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
-        time.sleep(0.3)   # let the firmware preempt A and accept B
+        time.sleep(0.3)   # let the firmware reject B
 
-        # 3. A must observe the eviction: EOF (b'') or a reset. A timeout here
-        #    would mean A is still connected → the single-client cap failed.
-        sock_a.settimeout(3.0)
-        a_dropped = False
+        # 3. B must observe the rejection: EOF (b'') or a reset. A timeout here
+        #    would mean B was admitted → the single-client cap failed.
+        sock_b.settimeout(3.0)
+        b_rejected = False
         try:
-            data_a = sock_a.recv(64)
-            a_dropped = (data_a == b'')   # clean EOF from shutdown()+close()
+            data_b = sock_b.recv(64)
+            b_rejected = (data_b == b'')   # clean EOF from the acceptor's close()
         except ConnectionResetError:
-            a_dropped = True             # RST is also an acceptable eviction signal
+            b_rejected = True              # RST is also an acceptable rejection signal
         except socket.timeout:
-            a_dropped = False
-        assert a_dropped, "Client A must be disconnected once client B connects (drop-old)"
+            b_rejected = False
+        assert b_rejected, "Client B must be rejected while client A is still served (block-new)"
 
-        # 4. B must be fully served: its bytes round-trip through the bridge.
-        data_b = b'\x51\x52\x53\x54'
-        sock_b.sendall(data_b)
+        # 4. A must stay fully served: its bytes round-trip through the bridge.
+        data_a = b'\x51\x52\x53\x54'
+        sock_a.sendall(data_a)
 
-        received_b = b''
+        received_a = b''
         deadline = time.monotonic() + 3.0
-        while len(received_b) < len(data_b) and time.monotonic() < deadline:
+        while len(received_a) < len(data_a) and time.monotonic() < deadline:
             try:
-                chunk = sock_b.recv(64)
+                chunk = sock_a.recv(64)
                 if not chunk:
                     break
-                received_b += chunk
+                received_a += chunk
             except socket.timeout:
                 continue
 
-        assert received_b == data_b, (
-            f"Client B (the admitted client) did not round-trip its data: got {received_b.hex()!r}"
+        assert received_a == data_a, (
+            f"Client A (the retained client) did not round-trip its data: got {received_a.hex()!r}"
         )
-        print("✓ Single-client cap (C7): B admitted and served, A evicted")
+        print("✓ Single-client cap (C7): A retained and served, B rejected")
     finally:
         sock_a.close()
         sock_b.close()
