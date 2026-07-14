@@ -17,7 +17,9 @@ Requires QEMU launched with:
 
 Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
   FC04 input:  104-105 uptime_s (u32 MSW-first); 121 supply mV;
-               200-219 model string; 220-244 git info; 250-265 fw version;
+               200-219 model string (MEM_8: 1 char/reg, in the LOW byte);
+               220-244 git info (2 chars/reg, FIRST char in the LOW byte);
+               250-265 fw version string (MEM_8: 1 char/reg, in the LOW byte);
                266-269 serial ext u64 MSW-first; 270-271 serial low u32 MSW-first;
                320 MAJOR, 321 MINOR, 322 PATCH, 323 SUFFIX(s16);
                324-325 numeric version LE word order (324=low);
@@ -26,7 +28,10 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
                337-338 packets u32; 339-340 last-pkt-age u32;
                341 devices_on_bus; 342 bus poll ppm; 343 cache timeout s.
                (336 is left undefined: last register of the WB bootloader-version field.)
-  FC03 holding: 290-301 signature string. Other holding addrs -> exception 0x02.
+  FC03 holding: 290-301 signature string (MEM_8: 1 char/reg, in the LOW byte),
+               plus the whole input map above — a holding read falls back to the
+               input-register map, so FC03 answers every FC04 address as well.
+  An address defined in neither map -> exception 0x02.
   Any fc not in {0x03,0x04} on unit 0xFF -> exception 0x01.
 """
 
@@ -84,14 +89,36 @@ def read_self_regs(host, port, fc, start, count, timeout=5.0):
     return tid, unit_id, resp_fc, payload
 
 
-def decode_reg_string(values):
-    """Decode a packed register string: each 16-bit reg -> [hi, lo] bytes,
-    big-endian; concatenate, strip trailing NULs, decode latin-1.
+def decode_mem8(values):
+    """Decode a MEM_8 string field: ONE character per register, in the LOW byte.
+
+    This is the WB reference layout for the model (200-219), the firmware-version
+    string (250-265) and the signature (290-301) — each field's register count
+    equals its character count. The high byte must be 0x00; asserting that is what
+    catches a field packed with the wrong layout (WB tooling would read garbage).
+    Strips trailing NULs and decodes latin-1.
     """
     raw = bytearray()
     for v in values:
-        raw.append((v >> 8) & 0xFF)
+        assert (v >> 8) == 0x00, (
+            f"MEM_8 field register 0x{v:04X} has a non-zero high byte: the field is "
+            "not packed 1 character per register and WB tooling would read garbage"
+        )
         raw.append(v & 0xFF)
+    return raw.rstrip(b"\x00").decode("latin-1")
+
+
+def decode_git_string(values):
+    """Decode the git-info field (220-244): TWO characters per register, the first
+    character of the pair in the LOW byte and the second in the HIGH byte.
+
+    On the wire a register arrives as (hi, lo), i.e. [2nd char, 1st char], so the
+    two bytes of every pair must be swapped back. Strips trailing NULs, latin-1.
+    """
+    raw = bytearray()
+    for v in values:
+        raw.append(v & 0xFF)         # first character of the pair
+        raw.append((v >> 8) & 0xFF)  # second character of the pair
     return raw.rstrip(b"\x00").decode("latin-1")
 
 
@@ -228,7 +255,7 @@ def test_self_unit_model_matches_info(api, gateway_slave):
     assert not (resp_fc & 0x80), \
         f"model read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID
-    model = decode_reg_string(regs_from_payload(payload))
+    model = decode_mem8(regs_from_payload(payload))
     assert model == expected, \
         f"model string mismatch: register={model!r}, /info device_name={expected!r}"
     print(f"✓ self-unit model FC04 200-219 == /info device_name: {model!r}")
@@ -246,10 +273,34 @@ def test_self_unit_firmware_matches_info(api, gateway_slave):
     assert not (resp_fc & 0x80), \
         f"firmware read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID
-    fw = decode_reg_string(regs_from_payload(payload))
+    fw = decode_mem8(regs_from_payload(payload))
     assert fw == expected, \
         f"firmware string mismatch: register={fw!r}, /info firmware={expected!r}"
     print(f"✓ self-unit firmware FC04 250-265 == /info firmware: {fw!r}")
+
+
+@pytest.mark.qemu
+def test_self_unit_git_info_matches_info(api, gateway_slave):
+    """FC04 220..244 git-info string at unit 0xFF equals /info git_info.
+
+    The git-info field is the one string field packed TWO characters per register,
+    with the FIRST character of each pair in the LOW byte — the byte order inside a
+    pair is swapped relative to the wire order. decode_git_string() undoes that; a
+    naive big-endian decode would come back with every character pair transposed.
+    """
+    info = api.get_info().json()
+    expected = info["git_info"]
+
+    _tid, unit_id, resp_fc, payload = read_self_regs(
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 220, 25
+    )
+    assert not (resp_fc & 0x80), \
+        f"git info read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
+    assert unit_id == SELF_UNIT_ID
+    git_info = decode_git_string(regs_from_payload(payload))
+    assert git_info == expected, \
+        f"git info mismatch: register={git_info!r}, /info git_info={expected!r}"
+    print(f"✓ self-unit git info FC04 220-244 == /info git_info: {git_info!r}")
 
 
 @pytest.mark.qemu
@@ -349,7 +400,7 @@ def test_self_unit_signature_fc03(api, gateway_slave):
         f"signature read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID
     assert resp_fc == 0x03, f"FC mismatch: expected 0x03, got 0x{resp_fc:02X}"
-    signature = decode_reg_string(regs_from_payload(payload))
+    signature = decode_mem8(regs_from_payload(payload))
     assert signature == expected, \
         f"signature mismatch: register={signature!r}, /info signature={expected!r}"
     print(f"✓ self-unit signature FC03 290-301 == /info signature: {signature!r}")
@@ -581,7 +632,7 @@ def test_self_unit_via_cache_server_model(api, cache_server):
     assert not (resp_fc & 0x80), \
         f"cache-server model read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID
-    model = decode_reg_string(regs_from_payload(payload))
+    model = decode_mem8(regs_from_payload(payload))
     assert model == expected, \
         f"cache-server model mismatch: register={model!r}, /info device_name={expected!r}"
     print(f"✓ self-unit via cache server: model FC04 200-219 == /info device_name: {model!r}")
