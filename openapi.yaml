@@ -663,9 +663,11 @@ paths:
                     description: >-
                       Current state: when true, the 100 kHz clock_out factory test is
                       running — a 100 kHz square wave is driven on the TX line of BOTH
-                      RS-485 ports with both transceivers enabled for transmission, so
-                      the signal is really present on the RS-485-1 and RS-485-2 buses;
-                      all front-panel LEDs (Wi-Fi, Eth, Status, V-out) are lit.
+                      RS-485 ports, but only the RS-485-1 transceiver is enabled for
+                      transmission, so the signal reaches the RS-485-1 bus while the
+                      RS-485-2 bus stays silent (its TX line only blinks the RS-485-2
+                      activity LED); all front-panel LEDs (Wi-Fi, Eth, Status, V-out)
+                      are lit.
         '400':
           description: Bad request
           content:
@@ -686,20 +688,27 @@ paths:
         Factory production test. While it is on, the firmware owns the RS-485 hardware:
 
         * a 100 kHz square wave is driven by the LEDC on the TX line of BOTH RS-485
-          ports, and both transceivers are enabled for transmission (DE high), so the
-          signal really is emitted on the RS-485-1 AND RS-485-2 buses — do not run it
-          with live devices attached;
+          ports, but only the RS-485-1 transceiver is enabled for transmission (DE
+          high), so the signal is emitted on the RS-485-1 bus — do not run it with live
+          devices attached to RS-485-1;
 
-        * both ports are forced to "disabled" at runtime so the LEDC can own their
-          TX/DE pins. This is NOT persisted: NVS keeps the configured port_mode, and
-          both ports are restored from it when the test is switched off;
+        * the RS-485-2 bus stays silent on purpose: its transceiver driver is left
+          disabled (the DE line is held low in hardware), so the port-2 TX line only
+          toggles on the logic side and blinks the RS-485-2 activity LED. Nothing is
+          emitted on the RS-485-2 pair, which is shared with the MIO transceiver and
+          wired out to the RS-485-2 terminals;
 
-        * the MIO controller is held in reset for the duration of the test (on WB-MGE
-          it hangs off the same RS-485-2 pair), regardless of the io_bus_enabled
-          setting, and is restored from that setting on exit;
+        * both ports are forced to "disabled" at runtime so the LEDC can own their TX
+          pins (and the RS-485-1 DE pin). This is NOT persisted: NVS keeps the
+          configured port_mode, and both ports are restored from it when the test is
+          switched off;
+
+        * the I/O bus is NOT touched: the MIO controller keeps whatever state
+          io_bus_enabled put it in, during the test and after it, and a POST /settings
+          that changes io_bus_enabled still takes effect immediately;
 
         * port_mode is frozen: POST /ports/{n}/mode is refused with 409 while the test
-          runs, and the io_bus_enabled / vout settings are not re-applied. POST
+          runs, and the vout / serial tx_disabled settings are not re-applied. POST
           /settings still accepts and persists any setting, including port_mode — it
           only writes NVS, and the values take effect when the test ends;
 
@@ -716,7 +725,7 @@ paths:
                   type: boolean
                   description: >-
                     true starts the test described above, false stops it and restores
-                    the ports, the I/O bus and V-out from the persisted settings.
+                    the ports and V-out from the persisted settings.
               required: [clock_out]
       responses:
         '200':
@@ -745,20 +754,19 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: >
-            The test could not be started: either the RS-485 ports or the I/O bus could
-            not be freed (driving the TX/DE pins would have collided with a live UART or
-            a live MIO transceiver on the shared RS-485-2 pair), or the LEDC refused to
-            produce the waveform. The entry is rolled back (ports and I/O bus restored
-            from the persisted settings, the transceivers left in receive mode) and the
-            test stays off — the device is left exactly as it was. The request itself was
-            valid, so the same request may succeed on retry.
+            The test could not be started: either an RS-485 port could not be disabled
+            (driving its TX/DE pins would have collided with the UART that still owns
+            them), or the LEDC refused to produce the waveform. The entry is rolled back
+            (both ports restored from the persisted settings, the transceivers left in
+            receive mode) and the test stays off — the device is left exactly as it was.
+            The request itself was valid, so the same request may succeed on retry.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 success: false
-                error: "Cannot start clock_out test: the RS-485 ports, the I/O bus or the clock generator could not be set up"
+                error: "Cannot start clock_out test: the RS-485 ports or the clock generator could not be set up"
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -1119,9 +1127,9 @@ paths:
         '409':
           description: >
             Port mode is locked: the clock_out factory test is active and owns the
-            RS-485 TX/DE lines of both ports. The request body was valid — retry once
-            the test has been switched off. Returned ONLY for that conflict; a port
-            that fails to initialize for any other reason returns 500.
+            RS-485 TX lines of both ports (plus the RS-485-1 DE line). The request body
+            was valid — retry once the test has been switched off. Returned ONLY for that
+            conflict; a port that fails to initialize for any other reason returns 500.
 
 
             This endpoint applies the mode immediately, which is why it is refused. To
