@@ -204,6 +204,26 @@ static inline bool set_cookie_session_id(httpd_req_t *req, uint32_t session_id, 
 
 esp_err_t auth_init(void)
 {
+    // Idempotent. http_server_init() calls auth_init() on EVERY web server start, and the web
+    // server is restarted at runtime whenever web_port changes (and once more per fallback
+    // attempt when the new port will not bind). Everything below must therefore run exactly
+    // once, on the first (boot) call:
+    //   - the mutex: xSemaphoreCreateMutex() would hand back a NEW handle and drop the old one on
+    //     the floor. There is no auth_deinit(), and http_server_deinit() does not call one, so
+    //     every web server restart leaked one mutex, forever — and a settings write that keeps
+    //     failing to move the web UI repeats that on every single write.
+    //   - the session buffer: sessions must SURVIVE an HTTP server restart. Changing web_port (or
+    //     the Wi-Fi password) must not log the operator out. Re-running the restore would be at
+    //     best a no-op and at worst — on a non-SW reset — a lie about what was restored: it would
+    //     wipe the live sessions and report "auth sessions were reset". The in-RAM buffer is the
+    //     truth from the first call on.
+    // Deinitialising instead of skipping was the other option and is worse: it would have to
+    // destroy a mutex that requests still in flight can be holding.
+    if (session_mutex != NULL) {
+        ESP_LOGD(TAG, "Auth already initialized, keeping the sessions and the mutex");
+        return ESP_OK;
+    }
+
     esp_reset_reason_t reset_reason = esp_reset_reason();
     ESP_LOGD(TAG, "Reset reason: %d", reset_reason);
 
@@ -320,3 +340,13 @@ esp_err_t auth_session_check_handler(httpd_req_t *req)
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
+
+#ifdef __unittest_env__
+void auth_reset_for_test(void)
+{
+    memset(&session_buffer, 0, sizeof(session_buffer));
+    memset(&backup_session_ids[0], 0, sizeof(backup_session_ids));
+    backup_current_index = 0;
+    session_mutex = NULL;   // "not initialized yet": the next auth_init() runs the full boot path
+}
+#endif /* __unittest_env__ */
