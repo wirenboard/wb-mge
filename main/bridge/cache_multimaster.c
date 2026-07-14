@@ -808,20 +808,24 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
-    if (s_pool == NULL) {
-        xSemaphoreGive(s_cache_mutex);
-        ret = httpd_resp_send_chunk(req, "]}", 2);
-        if (ret != ESP_OK) return ret;
-        httpd_resp_send_chunk(req, NULL, 0);
-        return ESP_OK;
-    }
-
     /* Snapshot the pool generation: abort cleanly if it changes mid-stream
      * (concurrent clear()/disable()+enable()) to avoid a torn snapshot
      * (cache-concurrency-1). */
     uint32_t gen = s_pool_generation;
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+        /* Guards every s_pool dereference below. Covers both a pool that was
+         * never allocated (cache disabled on entry) and one freed by disable()
+         * or wholesale-changed by clear()/disable+enable while the mutex was
+         * released to send the previous chunk. Close the array/object and stop
+         * rather than emit a torn snapshot (cache-concurrency-1). */
+        if (s_pool == NULL || s_pool_generation != gen) {
+            xSemaphoreGive(s_cache_mutex);
+            httpd_resp_send_chunk(req, "]}", 2);
+            httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_OK;
+        }
+
         const cache_entry_t *e = &s_pool[i];
         if (!(e->type & CACHE_USED_BIT)) continue;
 
@@ -863,16 +867,8 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
             xSemaphoreGive(s_cache_mutex);
             return ret;
         }
-
-        if (s_pool == NULL || s_pool_generation != gen) {
-            /* Pool was freed by disable() or wholesale-changed (clear()/
-             * disable+enable) while we were sending — close the array/object and
-             * stop rather than emit a torn snapshot (cache-concurrency-1). */
-            xSemaphoreGive(s_cache_mutex);
-            httpd_resp_send_chunk(req, "]}", 2);
-            httpd_resp_send_chunk(req, NULL, 0);
-            return ESP_OK;
-        }
+        /* No pool re-check here: the top of the next iteration re-checks before
+         * the next s_pool dereference, and nothing dereferences it in between. */
     }
 
     xSemaphoreGive(s_cache_mutex);
