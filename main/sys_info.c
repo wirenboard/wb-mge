@@ -1,5 +1,10 @@
 #include "sys_info.h"
 
+// Explicit: the PSRAM detection below is guarded by #if CONFIG_SPIRAM. Relying on a
+// transitive sdkconfig.h would silently disable detection on mgu_v1 if header order
+// ever changed, and the host tests (which pass CONFIG_SPIRAM via -D) would not catch it.
+#include "sdkconfig.h"
+
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "nv_storage.h"
