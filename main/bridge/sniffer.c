@@ -89,9 +89,15 @@ SNIFFER_STATIC bool crc_check(const uint8_t *data, size_t len)
 
 SNIFFER_STATIC void bytes_to_hex(const uint8_t *data, uint16_t len, char *out, size_t out_size)
 {
+    /* Nibble lookup instead of snprintf("%02X"): the previous version ran a full
+     * vfprintf per byte (one per packet byte, on every packet) on the sniffer WS task.
+     * Semantics are unchanged: uppercase hex, same (pos + 2) < out_size truncation
+     * boundary, always NUL-terminated. */
+    static const char hx[] = "0123456789ABCDEF";
     size_t pos = 0;
     for (uint16_t i = 0; i < len && (pos + 2) < out_size; i++) {
-        snprintf(out + pos, 3, "%02X", data[i]);
+        out[pos]     = hx[data[i] >> 4];
+        out[pos + 1] = hx[data[i] & 0x0F];
         pos += 2;
     }
     out[pos] = '\0';

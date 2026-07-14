@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <limits.h>
 
@@ -139,6 +140,29 @@ void test_bytes_to_hex_no_overflow_at_tight_boundary(void)
 
     TEST_ASSERT_EQUAL_STRING("01", buf.out);
     TEST_ASSERT_EQUAL_HEX8(0x7E, buf.canary);
+}
+
+/* Exhaustively check every byte value against the reference snprintf("%02X")
+ * formatting. Pins the nibble lookup table down: a swapped nibble order, a
+ * lowercase table or an off-by-one in the digit/letter transition would fail here. */
+void test_bytes_to_hex_all_byte_values_match_printf(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bytes_to_hex - all 256 byte values match %%02X");
+    LOG_MESSAGE();
+
+    uint8_t all[256];
+    for (int i = 0; i < 256; i++) all[i] = (uint8_t)i;
+
+    char expected[256 * 2 + 1];
+    for (int i = 0; i < 256; i++) {
+        snprintf(expected + i * 2, 3, "%02X", all[i]);
+    }
+
+    char out[256 * 2 + 1];
+    bytes_to_hex(all, 256, out, sizeof(out));
+
+    TEST_ASSERT_EQUAL_STRING(expected, out);
 }
 
 /* ============================================================
@@ -916,6 +940,7 @@ int main(void)
     RUN_TEST(test_bytes_to_hex_buffer_exact_fit);
     RUN_TEST(test_bytes_to_hex_truncation);
     RUN_TEST(test_bytes_to_hex_no_overflow_at_tight_boundary);
+    RUN_TEST(test_bytes_to_hex_all_byte_values_match_printf);
 
     /* crc_check tests */
     RUN_TEST(test_crc_check_len_0);
