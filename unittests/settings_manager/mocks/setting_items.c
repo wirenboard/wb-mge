@@ -212,6 +212,8 @@ static const mock_type_entry_t type_table[] = {
     { "bridge_modbus_2",    SETTING_ITEM_TYPE_BOOL,   "false"             },
     { "port_mode_1",        SETTING_ITEM_TYPE_STRING, "tcp_bridge"        },
     { "port_mode_2",        SETTING_ITEM_TYPE_STRING, "tcp_bridge"        },
+    { "cache_en_1",         SETTING_ITEM_TYPE_BOOL,   "false"             },
+    { "cache_en_2",         SETTING_ITEM_TYPE_BOOL,   "false"             },
     { "cache_mb_port",      SETTING_ITEM_TYPE_INT,    "504"               },
     { "cache_mb_srv_en",    SETTING_ITEM_TYPE_BOOL,   "true"              },
     { "cache_val_tout",     SETTING_ITEM_TYPE_INT,    "60"                },

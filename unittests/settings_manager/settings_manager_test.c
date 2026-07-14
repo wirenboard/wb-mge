@@ -15,6 +15,7 @@
 // Symbols exported by mocks
 // -------------------------------------------------------------------
 extern esp_err_t mock_setting_items_save_error;
+extern esp_err_t mock_setting_items_validate_error;
 extern int       mock_setting_items_save_call_count;
 void             mock_setting_items_reset(void);
 
@@ -871,6 +872,128 @@ void test_cache_port_equal_bridge_when_server_disabled_accepted(void)
 }
 
 // -------------------------------------------------------------------
+// W8: port_mode / cache_en export & import round-trip
+// -------------------------------------------------------------------
+
+// settings_build_response_json (GET /settings, i.e. the settings export) must
+// expose each port's transport mode (port_mode, string) and cache overlay flag
+// (cache_en, bool) at the TOP LEVEL of rs485_N — next to baudrate/tx_disabled —
+// and NOT inside the bridge sub-object. Without this the repeater mode is dropped
+// from exported JSON (regression W8).
+void test_build_response_includes_port_mode_and_cache_en(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "build_response: rs485_N carries port_mode (string) and cache_en (bool) at top level");
+    LOG_MESSAGE();
+
+    cJSON *resp = NULL;
+    esp_err_t ret = settings_build_response_json(&resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_build_response_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+
+    const char *ports[] = {"rs485_1", "rs485_2"};
+    for (int i = 0; i < 2; i++) {
+        cJSON *rs = cJSON_GetObjectItem(resp, ports[i]);
+        TEST_ASSERT_NOT_NULL_MESSAGE(rs, "rs485_N object must be present");
+
+        cJSON *pm = cJSON_GetObjectItem(rs, "port_mode");
+        TEST_ASSERT_NOT_NULL_MESSAGE(pm, "port_mode must be present in rs485_N");
+        TEST_ASSERT_TRUE_MESSAGE(cJSON_IsString(pm), "port_mode must be a string");
+        TEST_ASSERT_EQUAL_STRING_MESSAGE("tcp_bridge", pm->valuestring,
+            "port_mode must reflect the stored NVS value (default tcp_bridge)");
+
+        cJSON *ce = cJSON_GetObjectItem(rs, "cache_en");
+        TEST_ASSERT_NOT_NULL_MESSAGE(ce, "cache_en must be present in rs485_N");
+        TEST_ASSERT_TRUE_MESSAGE(cJSON_IsBool(ce), "cache_en must be a boolean");
+
+        // Both fields must live at the top level, not inside the bridge sub-object.
+        cJSON *bridge = cJSON_GetObjectItem(rs, "bridge");
+        TEST_ASSERT_NOT_NULL_MESSAGE(bridge, "bridge sub-object must be present");
+        TEST_ASSERT_FALSE_MESSAGE(cJSON_HasObjectItem(bridge, "port_mode"),
+            "port_mode must NOT live inside the bridge sub-object");
+        TEST_ASSERT_FALSE_MESSAGE(cJSON_HasObjectItem(bridge, "cache_en"),
+            "cache_en must NOT live inside the bridge sub-object");
+    }
+
+    cJSON_Delete(resp);
+}
+
+// POST /settings (the settings import) carrying rs485_1.port_mode="repeater" and
+// rs485_1.cache_en=true must persist both to NVS. This is the round-trip half that
+// makes an exported repeater configuration actually restore on import (W8).
+void test_rs485_port_mode_and_cache_en_saved_to_nvs(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: rs485_1.port_mode=repeater + cache_en=true -> persisted to NVS");
+    LOG_MESSAGE();
+
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON_AddStringToObject(rs485, "port_mode", "repeater");
+    cJSON_AddBoolToObject(rs485, "cache_en", true);
+    cJSON_AddItemToObject(req, "rs485_1", rs485);
+
+    cJSON *resp = NULL;
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
+
+    char pm[SETTING_ITEM_MAX_STR_LEN] = { 0 };
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, pm),
+        "port_mode_1 must be readable from NVS mock after the write");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("repeater", pm,
+        "port_mode_1 must be persisted as 'repeater'");
+    TEST_ASSERT_TRUE_MESSAGE(setting_items_read_bool(KEY_CACHE_EN_1),
+        "cache_en_1 must be persisted as true");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// An invalid port_mode must be rejected in Phase 1 validation (success:false) and
+// must not be written to NVS. The mock's validator returns the injected error, so
+// this also proves port_mode is actually routed through validate_setting_from_json:
+// were it missing from the mapping table, the field would be ignored and the
+// request would succeed despite the injected validator error.
+void test_rs485_invalid_port_mode_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: rs485_1.port_mode=bogus rejected by validation -> success:false");
+    LOG_MESSAGE();
+
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON_AddStringToObject(rs485, "port_mode", "bogus");
+    cJSON_AddItemToObject(req, "rs485_1", rs485);
+
+    cJSON *resp = NULL;
+
+    // Simulate validate_port_mode rejecting the value.
+    mock_setting_items_validate_error = ESP_ERR_INVALID_ARG;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "settings_process_request_json must return ESP_OK so HTTP layer sends the error JSON");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "an invalid port_mode must be rejected");
+
+    // Validation happens in Phase 1, before any NVS write.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_setting_items_save_call_count,
+        "No NVS write should occur when port_mode fails validation");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// -------------------------------------------------------------------
 // Test runner
 // -------------------------------------------------------------------
 
@@ -914,6 +1037,11 @@ int main(void)
     RUN_TEST(test_cache_and_bridge_same_port_one_request_rejected);
     RUN_TEST(test_cache_port_distinct_from_bridge_accepted);
     RUN_TEST(test_cache_port_equal_bridge_when_server_disabled_accepted);
+
+    // W8: port_mode / cache_en export & import round-trip
+    RUN_TEST(test_build_response_includes_port_mode_and_cache_en);
+    RUN_TEST(test_rs485_port_mode_and_cache_en_saved_to_nvs);
+    RUN_TEST(test_rs485_invalid_port_mode_rejected);
 
     return UNITY_END();
 }
