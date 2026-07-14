@@ -35,6 +35,13 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t handler, tcp_desc_t **
     return ESP_OK;
 }
 
+void tcp_server_set_max_connections(tcp_desc_t *desc, uint32_t max_connections)
+{
+    (void)desc;
+    mock_tcp_server_calls.set_max_connections_called++;
+    mock_tcp_server_calls.set_max_connections_value = max_connections;
+}
+
 esp_err_t tcp_server_send(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
 {
     (void)desc;

@@ -9,6 +9,8 @@ Coverage:
 13. Multiple clients — last-writer routing: last client's bytes are echoed back to it.
 14. Zero-byte edge case — null byte + real data; connection stays open throughout.
 15. Client mode — firmware connects outbound to a Python TCP echo server on the host.
+16. Single-client cap (C7) — a second client preempts the first (drop-old): B is
+    served while A is disconnected (EOF).
 """
 
 import socket
@@ -556,3 +558,86 @@ def test_transparent_client_mode(api):
             _teardown_client_mode_bridge(api, 1, original_settings, rs485_key)
         echo_server.stop()
         echo_server.join(timeout=3.0)
+
+
+# ---------------------------------------------------------------------------
+# Test #16: Single-client cap (C7) — a new client preempts the previous one
+# ---------------------------------------------------------------------------
+#
+# NOTE: like every test in this module this needs QEMU (UART1 chardev on port
+# 5561 + the transparent-bridge hostfwd). It was NOT executed in the C7 change
+# environment — added and py_compile-checked only; run under the QEMU harness.
+
+@pytest.mark.qemu
+@pytest.mark.timeout(120)
+def test_transparent_single_client_cap_drop_old(transparent_bridge):
+    """A second client evicts the first: transparent server admits exactly one client.
+
+    C7 policy (drop-old): the transparent bridge routes to a single socket, so the
+    acceptor caps connections at 1 and the newest connection preempts the oldest.
+
+    Sequential scenario:
+    1. Client A connects and is the sole (served) client.
+    2. Client B connects — the firmware drops A (shutdown+close) to admit B.
+    3. A observes the disconnect: recv() returns b'' (clean EOF) or ConnectionReset.
+    4. B is fully functional: its bytes round-trip TCP -> serial -> TCP via the echo.
+    """
+    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
+    if probe is None:
+        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
+    probe.close()
+
+    echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
+    echo_thread.start()
+    assert echo_thread.wait_connected(timeout=5.0), "Echo thread failed to connect"
+
+    sock_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock_a.settimeout(5.0)
+    sock_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock_b.settimeout(5.0)
+    try:
+        # 1. Client A connects and becomes the served socket (on accept).
+        sock_a.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
+        time.sleep(0.2)   # let the firmware accept A and spawn its receiver
+
+        # 2. Client B connects — the firmware must drop A to admit B.
+        sock_b.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
+        time.sleep(0.3)   # let the firmware preempt A and accept B
+
+        # 3. A must observe the eviction: EOF (b'') or a reset. A timeout here
+        #    would mean A is still connected → the single-client cap failed.
+        sock_a.settimeout(3.0)
+        a_dropped = False
+        try:
+            data_a = sock_a.recv(64)
+            a_dropped = (data_a == b'')   # clean EOF from shutdown()+close()
+        except ConnectionResetError:
+            a_dropped = True             # RST is also an acceptable eviction signal
+        except socket.timeout:
+            a_dropped = False
+        assert a_dropped, "Client A must be disconnected once client B connects (drop-old)"
+
+        # 4. B must be fully served: its bytes round-trip through the bridge.
+        data_b = b'\x51\x52\x53\x54'
+        sock_b.sendall(data_b)
+
+        received_b = b''
+        deadline = time.monotonic() + 3.0
+        while len(received_b) < len(data_b) and time.monotonic() < deadline:
+            try:
+                chunk = sock_b.recv(64)
+                if not chunk:
+                    break
+                received_b += chunk
+            except socket.timeout:
+                continue
+
+        assert received_b == data_b, (
+            f"Client B (the admitted client) did not round-trip its data: got {received_b.hex()!r}"
+        )
+        print("✓ Single-client cap (C7): B admitted and served, A evicted")
+    finally:
+        sock_a.close()
+        sock_b.close()
+        echo_thread.stop()
+        echo_thread.join(timeout=3.0)

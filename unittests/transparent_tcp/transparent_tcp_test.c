@@ -134,6 +134,12 @@ void test_init_server_mode_success(void)
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.init_called, "tcp_server_init must be called once");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.init_called, "serial_init must be called once");
 
+    // C7: transparent server caps connections at exactly 1 (drop-old policy).
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.set_max_connections_called,
+        "tcp_server_set_max_connections must be called once in server mode");
+    TEST_ASSERT_EQUAL_MESSAGE(1, (int)mock_tcp_server_calls.set_max_connections_value,
+        "transparent server must cap connections at 1");
+
     // No teardown should have happened during a successful init
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_tcp_server_calls.deinit_called, "tcp_server_deinit must not be called on success");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_calls.deinit_called, "serial_deinit must not be called on success");
@@ -175,6 +181,9 @@ void test_init_client_mode_success(void)
 
     // Server-side calls must be zero
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_tcp_server_calls.init_called, "tcp_server_init must not be called in client mode");
+    // C7: the connection cap is a server-only concern; no server is started in client mode.
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_tcp_server_calls.set_max_connections_called,
+        "tcp_server_set_max_connections must not be called in client mode");
 }
 
 // ---------------------------------------------------------------------------
