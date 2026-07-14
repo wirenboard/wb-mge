@@ -324,7 +324,7 @@ void test_fw_numeric_rc_suffix(void)
     TEST_ASSERT_EQUAL_HEX16(0x0301, resp_reg(buf, 0));
 }
 
-/* ---- MBDEV-U-008: FC04 statistics block (336..342) ----------------------- */
+/* ---- MBDEV-U-008: FC04 statistics block (337..343) ----------------------- */
 
 /* packets=120, last_age=7, map_age=60, devices=3, cache timeout=42.
  * poll ppm = 120*60/60 = 120. */
@@ -340,16 +340,33 @@ void test_stats_block(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             336u, 7u, 0u, buf, &exc);
+                                             337u, 7u, 0u, buf, &exc);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 14u, n);
-    TEST_ASSERT_EQUAL_UINT16(42u,  resp_reg(buf, 0)); /* 336 cache timeout    */
-    TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 1)); /* 337 pkt proc hi      */
-    TEST_ASSERT_EQUAL_UINT16(120u, resp_reg(buf, 2)); /* 338 pkt proc lo      */
-    TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 3)); /* 339 last pkt age hi  */
-    TEST_ASSERT_EQUAL_UINT16(7u,   resp_reg(buf, 4)); /* 340 last pkt age lo  */
-    TEST_ASSERT_EQUAL_UINT16(3u,   resp_reg(buf, 5)); /* 341 devices on bus   */
-    TEST_ASSERT_EQUAL_UINT16(120u, resp_reg(buf, 6)); /* 342 poll freq ppm    */
+    TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 0)); /* 337 pkt proc hi      */
+    TEST_ASSERT_EQUAL_UINT16(120u, resp_reg(buf, 1)); /* 338 pkt proc lo      */
+    TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 2)); /* 339 last pkt age hi  */
+    TEST_ASSERT_EQUAL_UINT16(7u,   resp_reg(buf, 3)); /* 340 last pkt age lo  */
+    TEST_ASSERT_EQUAL_UINT16(3u,   resp_reg(buf, 4)); /* 341 devices on bus   */
+    TEST_ASSERT_EQUAL_UINT16(120u, resp_reg(buf, 5)); /* 342 poll freq ppm    */
+    TEST_ASSERT_EQUAL_UINT16(42u,  resp_reg(buf, 6)); /* 343 cache timeout    */
+}
+
+/* Register 336 (0x0150) must stay undefined: it is the last register of the
+ * standard WB bootloader-version field, so the gateway must not answer it. */
+void test_bootloader_version_slot_not_claimed(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-008b: reg 336 (bootloader-version slot) is not claimed");
+    LOG_MESSAGE();
+
+    uint8_t buf[260];
+    uint8_t exc = 0;
+    size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                             336u, 1u, 0u, buf, &exc);
+
+    TEST_ASSERT_EQUAL_UINT(0u, n);
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
 }
 
 /* ---- MBDEV-U-009: FC04 RAM diagnostics (65505, 65506) -------------------- */
@@ -923,6 +940,7 @@ int main(void)
     RUN_TEST(test_fw_numeric_plus_suffix);
     RUN_TEST(test_fw_numeric_rc_suffix);
     RUN_TEST(test_stats_block);
+    RUN_TEST(test_bootloader_version_slot_not_claimed);
     RUN_TEST(test_ram_diagnostics);
     RUN_TEST(test_ram_used_clamp);
     RUN_TEST(test_stack_diagnostics);
