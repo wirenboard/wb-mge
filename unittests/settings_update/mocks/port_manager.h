@@ -16,7 +16,11 @@ extern int mock_port_manager_apply_settings_called[BRIDGES_COUNT];
 extern unsigned mock_port_manager_apply_settings_index[BRIDGES_COUNT];
 extern esp_err_t mock_port_manager_apply_settings_return_value[BRIDGES_COUNT];
 
+extern int mock_port_manager_ports_frozen_called;
+extern bool mock_port_manager_ports_frozen_return_value;
+
 bool port_manager_check_settings_changed(unsigned port_index);
 esp_err_t port_manager_apply_settings(unsigned port_index);
+bool port_manager_ports_frozen(void);
 
 void mock_port_manager_reset(void);
