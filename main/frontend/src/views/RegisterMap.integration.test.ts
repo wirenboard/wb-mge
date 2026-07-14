@@ -2115,10 +2115,6 @@ describe('RM-I-20: export buttons gated on the device-confirmed cache state', ()
     vi.mocked(api).mockResolvedValue({ d: [] } as never);
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it('disables both export buttons while cache/status reports enabled:false', async () => {
     const { default: RegisterMap } = await import('@/views/RegisterMap.vue');
 
@@ -2147,11 +2143,17 @@ describe('RM-I-20: export buttons gated on the device-confirmed cache state', ()
       expect(btn.attributes('title')).toBeTruthy();
     }
 
-    // Clicking a disabled CSV button must not open a tab on the 409.
-    const openMock = vi.fn();
-    vi.stubGlobal('open', openMock);
-    await exportButtons[0].trigger('click');
-    expect(openMock).not.toHaveBeenCalled();
+    // Pin the premise that gives the assertions above their meaning: the OPTIMISTIC flag reads
+    // ON at this very moment (the header toggle says so, and the map panel is what rendered the
+    // buttons at all), yet the buttons are dead. That is only true if they are gated on the
+    // device-confirmed cacheActive; wire them to cacheEnabled and this scenario arms them.
+    //
+    // Deliberately not asserted: that clicking a disabled button does not call window.open.
+    // The gate IS the disabled attribute — neither a browser nor @vue/test-utils dispatches a
+    // click on a disabled element, and openUrl() opens whatever URL it is handed — so such a
+    // check only restates the attribute assertion above and would pass no matter what the
+    // component did.
+    expect(wrapper.find('.rm-caching-state').classes()).toContain('on');
 
     wrapper.unmount();
   });
