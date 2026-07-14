@@ -1102,11 +1102,18 @@ paths:
               example:
                 mode: "repeater"
         '400':
-          description: Bad request
+          description: >
+            Bad request: the body is not valid JSON, the "mode" field is missing or is
+            not a string, or its value is not one of the modes listed above. Returned
+            ONLY for a malformed request — a valid request the device fails to carry out
+            returns 500.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Unknown mode value"
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '409':
@@ -1129,16 +1136,20 @@ paths:
                 error: "Port mode is locked while the clock_out factory test is active"
         '500':
           description: >
-            The requested mode is valid but the port could not be brought up in it —
-            most commonly a "tcp_bridge" whose persisted bridge_mode is invalid or
-            left over from a legacy firmware. The port keeps its previous mode.
+            The request was valid but the device could not carry it out. Either the port
+            refused to initialize in the requested mode — a "tcp_bridge" whose persisted
+            bridge_mode is invalid or left over from a legacy firmware, a serial port that
+            could not be opened, out of memory — in which case the port keeps its previous
+            mode; or the mode was applied but could not be written to NVS, in which case it
+            is live now but will be reverted to the persisted one on the next settings cycle
+            or reboot. The error field carries the underlying esp_err_t name.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 success: false
-                error: "Port failed to initialize in the requested mode (check the persisted bridge_mode)"
+                error: "ESP_ERR_INVALID_STATE"
 
   /ports/{port_number}/send:
     post:

@@ -41,9 +41,8 @@ void update_io_bus_control(void)
 }
 
 // Applies the tx_disabled setting to the running serial ports for both RS-485 ports.
-// Unlike update_rs485_control() it does not touch the GPIO expander, so it must run in
-// QEMU builds as well — but it is not a purely software flag either: down in
-// serial_set_tx_disabled() it takes the port's dir_pin (the SoC-side DE/RE line,
+// It does not touch the GPIO expander, but it is not a purely software flag either:
+// down in serial_set_tx_disabled() it takes the port's dir_pin (the SoC-side DE/RE line,
 // SERIAL_IO_PIN_1/2) away from the UART and drives it LOW. Callers that share those
 // pins with something else (the factory clock_out test drives them with the LEDC) must
 // not call this while that other owner is active.

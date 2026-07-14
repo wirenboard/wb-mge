@@ -95,10 +95,11 @@ esp_err_t settings_update(void)
     // unlike the port re-init below, these three calls do not touch pm_ctx, so there is no
     // pm_lock that would exclude them against wb_test. That leaves a narrow window — read
     // false, get preempted, the test starts, resume and re-apply V-out / io_bus on top of
-    // it. settings_update() runs from the httpd task (POST /settings) and from the button
-    // task (main.c, factory reset on long press), so it is a real window, just a very small
-    // one. Closing it needs a lock shared with wb_test's entry/exit sequences (held across
-    // "check frozen + apply" here and across "freeze + disable io_bus + start LEDC" there);
+    // it. settings_update() has three callers: the httpd task — POST /settings
+    // (settings_manager.c) and POST /cmd "set_default_settings" (cmd_handler.c) — and the
+    // button task (main.c, factory reset on long press). So it is a real window, just a very
+    // small one. Closing it needs a lock shared with wb_test's entry/exit sequences (held
+    // across "check frozen + apply" here and across "freeze + disable io_bus + start LEDC" there);
     // it would take no other lock inside, so it cannot deadlock with pm_lock.
     if (!port_manager_ports_frozen()) {
         update_rs485_control();

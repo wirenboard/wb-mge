@@ -57,8 +57,8 @@ static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
 // ports, so ANY unrelated POST /settings would run apply_settings() and re-init
 // the ports — re-grabbing the TX/DE pins that the LEDC is currently driving.
 // While frozen, check_settings_changed() reports no change, apply_settings() is a
-// no-op and a persisting set_mode() (POST /ports/N/mode) is refused with
-// ESP_ERR_INVALID_STATE, so the ports stay down for the whole test. Only the
+// no-op and a persisting set_mode() (POST /ports/N/mode) is refused with the
+// dedicated PM_ERR_PORTS_FROZEN, so the ports stay down for the whole test. Only the
 // transient set_mode path stays open — that is how the test disables them. The
 // test clears the flag on exit and then calls apply_settings() itself to restore
 // both ports from NVS (which also picks up any settings written during the test).
@@ -850,19 +850,19 @@ PORT_MANAGER_STATIC esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned p
         return json_utils_send_error_status(req, "409 Conflict",
             "Port mode is locked while the clock_out factory test is active");
     }
-    if (ret == ESP_ERR_INVALID_STATE) {
-        // The requested mode is valid, but the port refused to initialise in it. The
-        // only source today is bridge_port_init() rejecting a tcp_bridge whose
-        // persisted bridge_mode is invalid/legacy; the port has already been rolled
-        // back to its previous mode. That is a device-configuration fault, not a bad
-        // request — report 500 and name the real cause.
+    if (ret != ESP_OK) {
+        // The request body was fully validated above (the port index comes from the URI
+        // registration, an unknown mode string was already rejected with 400), so any
+        // remaining failure is server-side, not a bad request. Sources: the port refused
+        // to initialise in the requested mode (bridge_port_init() rejecting a tcp_bridge
+        // whose persisted bridge_mode is invalid/legacy, serial_init() failing with
+        // "UART driver already installed", repeater_init_port(), ESP_ERR_NO_MEM), or the
+        // mode was applied but could not be persisted to NVS (persist-6). The port has
+        // already been rolled back to its previous mode. Report 500 and name the real
+        // cause — never 400.
         cJSON_Delete(req_json);
         return json_utils_send_error_status(req, "500 Internal Server Error",
-            "Port failed to initialize in the requested mode (check the persisted bridge_mode)");
-    }
-    if (ret != ESP_OK) {
-        cJSON_Delete(req_json);
-        return json_utils_send_error(req, esp_err_to_name(ret));
+                                            esp_err_to_name(ret));
     }
 
     cJSON *resp = cJSON_CreateObject();
