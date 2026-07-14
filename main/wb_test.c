@@ -1,5 +1,6 @@
 #include "esp_err.h"
 #include <esp_http_server.h>
+#include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "auth.h"
 #include "json_utils.h"
@@ -72,23 +73,29 @@ static ledc_channel_config_t channel_config_2 = {
     .flags.output_invert = 0
 };
 
-gpio_config_t gpio_clk_en_config = {
-    .pin_bit_mask = (1ULL << CLK_OUT_EN_PIN) | (1ULL << CLK_OUT_EN_PIN_2),
-    .mode = GPIO_MODE_OUTPUT,
-    .pull_up_en = GPIO_PULLUP_DISABLE,
-    .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    .intr_type = GPIO_INTR_DISABLE
-};
-
 static const char* TAG = "wb_test";
+
+
+// Put a DE/RE pin into a driven-LOW output state (transceiver in receive mode).
+// The level is latched BEFORE the pin becomes an output: gpio_reset_pin() does not
+// clear the output latch (GPIO_OUT_REG), so on the second and later runs of the test
+// the latch still holds whatever the previous owner left there — the UART leaves it
+// HIGH after driving half-duplex direction control. Enabling the output driver first
+// would then briefly assert DE (on RS-485-2 that is a pulse onto the bus shared with
+// the MIO transceiver). Same order as serial_set_tx_disabled() in serial.c.
+static void de_pin_latch_low_output(gpio_num_t pin)
+{
+    gpio_reset_pin(pin);
+    gpio_set_level(pin, 0);
+    gpio_set_direction(pin, GPIO_MODE_OUTPUT);
+}
 
 
 static void start_clock_out(void)
 {
-    gpio_config(&gpio_clk_en_config);
     // Keep both transceivers in receive mode until the waveform is running.
-    gpio_set_level(CLK_OUT_EN_PIN, 0);
-    gpio_set_level(CLK_OUT_EN_PIN_2, 0);
+    de_pin_latch_low_output(CLK_OUT_EN_PIN);
+    de_pin_latch_low_output(CLK_OUT_EN_PIN_2);
 
     ledc_timer_config_t tim_conf = timer_config;
     tim_conf.deconfigure = false;
@@ -123,6 +130,11 @@ static void stop_clock_out(void)
     tim_conf.deconfigure = true;
     ledc_timer_config(&tim_conf);
 
+    // Release all four pins so port_manager_apply_settings() can hand the TX and
+    // DE lines back to the UART. The DE pins were actively driven LOW just above,
+    // so nothing is asserted while they float back to their default input state;
+    // start_clock_out() re-latches them LOW anyway rather than trusting the latch
+    // left here, since the UART owns these pins in between two runs of the test.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
