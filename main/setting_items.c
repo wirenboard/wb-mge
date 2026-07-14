@@ -39,6 +39,7 @@ static const setting_storage_iface_t nvs_storage_iface = {
     .has_key = nvs_has_key,
     .write_str = nvs_write_str,
     .read_str = nvs_read_str,
+    .erase_key = nvs_erase_str,
 };
 
 static bool password_generated = false;
@@ -206,8 +207,8 @@ static const setting_item_t setting_items[] = {
     {KEY_DATABITS1, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
     {KEY_485_TERM_1, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_FAIL_SAFE_1, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_485_TX_DISABLED_1, "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_CACHE_EN_1, "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_TX_DISABLED_1, DEFAULT_485_TX_DISABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_CACHE_EN_1, DEFAULT_CACHE_EN, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_BRIDGE_MODE1, DEFAULT_BRIDGE_MODE, validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_PORT1, DEFAULT_BRIDGE_PORT, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP1, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
@@ -220,8 +221,8 @@ static const setting_item_t setting_items[] = {
     {KEY_DATABITS2, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
     {KEY_485_TERM_2, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_FAIL_SAFE_2, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_485_TX_DISABLED_2, "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_CACHE_EN_2, "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_TX_DISABLED_2, DEFAULT_485_TX_DISABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_CACHE_EN_2, DEFAULT_CACHE_EN, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_BRIDGE_MODE2, DEFAULT_BRIDGE_MODE, validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
@@ -345,8 +346,12 @@ esp_err_t setting_items_migrate_port_mode(void)
         }
 
         const char *mapped;
+        // The legacy on/off sentinel is the only value that is not a valid bridge_mode any
+        // more (validate_bridge_mode rejects it), i.e. the only stale record to clean up.
+        bool legacy_is_stale = false;
         if (strncmp(legacy_value, LEGACY_BRIDGE_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
             mapped = PORT_MODE_DISABLED_STR;
+            legacy_is_stale = true;
         } else {
             // "server"/"client" -> tcp_bridge; any unknown legacy value also maps to
             // tcp_bridge because the port was active (not disabled) before the upgrade.
@@ -363,6 +368,33 @@ esp_err_t setting_items_migrate_port_mode(void)
         }
         ESP_LOGI(TAG, "Migration: derived %s = %s from legacy %s = %s",
                  port_mode_key, mapped, bridge_mode_key, legacy_value);
+
+        // The legacy value has now served its only purpose (deriving port_mode above).
+        // bridge_mode_N itself is NOT a legacy key - it still holds the TCP role - so a
+        // value that is still a valid role ("server"/"client") must be kept as-is, otherwise
+        // set_defaults() below would silently reset a user's role after an upgrade.
+        // Only the stale on/off sentinel is dropped, so it does not linger in NVS as an
+        // invalid record that later reads would hand to the bridge. setting_items_set_defaults(),
+        // which runs right after this migration, recreates the key with a valid default role.
+        if (!legacy_is_stale) {
+            continue;
+        }
+
+        if (!storage_iface->erase_key) {
+            ESP_LOGW(TAG, "Migration: storage cannot erase, stale legacy %s = %s left in place",
+                     bridge_mode_key, legacy_value);
+            continue;
+        }
+
+        // Best-effort: port_mode is already migrated, so a failed erase only leaves a
+        // stale record behind and must not abort the remaining ports.
+        esp_err_t erase_ret = storage_iface->erase_key(bridge_mode_key);
+        if (erase_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Migration: failed to erase stale legacy %s (%s)",
+                     bridge_mode_key, esp_err_to_name(erase_ret));
+            continue;
+        }
+        ESP_LOGI(TAG, "Migration: erased stale legacy %s = %s", bridge_mode_key, legacy_value);
     }
 
     return ESP_OK;
@@ -403,16 +435,11 @@ esp_err_t setting_items_save(const char *key, const char *value)
         return ESP_ERR_INVALID_ARG;
     }
 
-    const setting_item_t *item = find_setting_item(key);
-    if (!item) {
-        ESP_LOGE(TAG, "Unknown setting key: %s", key);
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    // Validate value if validator exists
-    if (item->validator && !item->validator(value)) {
-        ESP_LOGE(TAG, "Invalid value '%s' for setting '%s'", value, key);
-        return ESP_ERR_INVALID_ARG;
+    // Key lookup and value validation are identical to setting_items_validate(),
+    // so reuse it here instead of duplicating them.
+    esp_err_t validate_ret = setting_items_validate(key, value);
+    if (validate_ret != ESP_OK) {
+        return validate_ret;
     }
 
     esp_err_t result = storage_iface->write_str(key, value);

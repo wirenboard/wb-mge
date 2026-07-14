@@ -18,6 +18,7 @@
 #define DEFAULT_DATABITS            UART_DATA_8_BITS_STR
 #define DEFAULT_485_TERM            "true"
 #define DEFAULT_485_FAIL_SAFE       "true"
+#define DEFAULT_485_TX_DISABLED     "false"
 #define DEFAULT_485_VOUT            "true"
 #define DEFAULT_IO_BUS_ENABLED      "true"
 
@@ -45,6 +46,8 @@
 #define DEFAULT_BRIDGE_IP           "192.168.5.2"
 #define DEFAULT_BRIDGE_PORT2        "503"
 #define DEFAULT_BRIDGE_MB           "false"
+// Per-port cache overlay enable flag (cache_en_N)
+#define DEFAULT_CACHE_EN                    "false"
 #define DEFAULT_CACHE_MODBUS_PORT           "504"
 #define DEFAULT_CACHE_MODBUS_SERVER_ENABLED "true"
 #define DEFAULT_CACHE_VALUE_TIMEOUT_S       "60"

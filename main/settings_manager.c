@@ -77,6 +77,7 @@ static const setting_mapping_t rs485_bridge_mappings[] = {
 };
 
 static esp_err_t add_rs485_settings_to_json(cJSON *parent);
+static bool validate_setting_from_json(cJSON *item, const char *setting_key);
 
 // Helper function to add setting to JSON using automatic type detection
 static bool add_setting_to_json(cJSON *parent, const char *setting_key, const char *json_key) {
@@ -104,36 +105,25 @@ static bool add_setting_to_json(cJSON *parent, const char *setting_key, const ch
     }
 }
 
-// Helper function to save JSON value using automatic type detection
+// Helper function to save JSON value using automatic type detection.
+// The JSON type checks, the INT range check and the value validation are exactly those of
+// validate_setting_from_json(), so reuse it here instead of duplicating them: what remains
+// is only the type-specific write itself.
 static bool save_setting_from_json(cJSON *item, const char *setting_key) {
+    if (!validate_setting_from_json(item, setting_key)) {
+        return false;
+    }
+
     setting_item_type_t type = setting_items_get_type(setting_key);
 
     switch (type) {
     case SETTING_ITEM_TYPE_STRING:
-        if (!cJSON_IsString(item)) {
-            ESP_LOGE(TAG, "Expected string for setting %s", setting_key);
-            return false;
-        }
         return setting_items_save(setting_key, item->valuestring) == ESP_OK;
 
     case SETTING_ITEM_TYPE_BOOL:
-        if (!cJSON_IsBool(item)) {
-            ESP_LOGE(TAG, "Expected boolean for setting %s", setting_key);
-            return false;
-        }
         return setting_items_save_bool(setting_key, cJSON_IsTrue(item)) == ESP_OK;
 
     case SETTING_ITEM_TYPE_INT:
-        if (!cJSON_IsNumber(item)) {
-            ESP_LOGE(TAG, "Expected number for setting %s", setting_key);
-            return false;
-        }
-        // Casting a double outside [INT_MIN, INT_MAX] to int is undefined behaviour;
-        // reject the value before the cast.
-        if ((item->valuedouble < (double)INT_MIN) || (item->valuedouble > (double)INT_MAX)) {
-            ESP_LOGE(TAG, "Integer value out of range for setting %s: %f", setting_key, item->valuedouble);
-            return false;
-        }
         return setting_items_save_int(setting_key, (int)item->valuedouble) == ESP_OK;
 
     default:
@@ -383,6 +373,18 @@ static bool validate_rs485_settings(cJSON *request_json)
     return true;
 }
 
+// Add the wifi_perm_disable flag to the response. On failure the response JSON is freed,
+// so the caller only has to propagate the error.
+static esp_err_t add_wifi_perm_disable_flag(cJSON *response_json, bool value)
+{
+    if (!cJSON_AddBoolToObject(response_json, "wifi_perm_disable", value)) {
+        ESP_LOGE(TAG, "Failed to add wifi_perm_disable flag to JSON");
+        cJSON_Delete(response_json);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
 esp_err_t settings_build_response_json(cJSON **response_json)
 {
     if (response_json == NULL) {
@@ -401,20 +403,13 @@ esp_err_t settings_build_response_json(cJSON **response_json)
                            top_level_mappings[i].json_key);
     }
 
-    // Add WiFi settings group (omitted when WiFi is permanently disabled)
-    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
-        // WiFi is permanently disabled — report only the flag, no wifi sub-object
-        if (!cJSON_AddBoolToObject(*response_json, "wifi_perm_disable", true)) {
-            ESP_LOGE(TAG, "Failed to add wifi_perm_disable flag to JSON");
-            cJSON_Delete(*response_json);
-            return ESP_FAIL;
-        }
-    } else {
-        if (!cJSON_AddBoolToObject(*response_json, "wifi_perm_disable", false)) {
-            ESP_LOGE(TAG, "Failed to add wifi_perm_disable flag to JSON");
-            cJSON_Delete(*response_json);
-            return ESP_FAIL;
-        }
+    // Report the wifi_perm_disable flag, then add the WiFi settings group - the group is
+    // omitted when WiFi is permanently disabled, leaving only the flag.
+    bool wifi_perm_disabled = setting_items_read_bool(KEY_WIFI_PERM_DISABLE);
+    if (add_wifi_perm_disable_flag(*response_json, wifi_perm_disabled) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    if (!wifi_perm_disabled) {
         if (add_group_to_json(*response_json, "wifi", wifi_mappings, ARRAY_SIZE(wifi_mappings)) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to add WiFi settings to JSON");
             cJSON_Delete(*response_json);
@@ -709,7 +704,9 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         if (enabled && !running) {
             // Server should be running but isn't — start it.
             int port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
-            if (port <= 0) port = CACHE_MODBUS_SERVER_PORT;
+            if (port <= 0) {
+                port = CACHE_MODBUS_SERVER_PORT;
+            }
             esp_err_t ret = cache_modbus_server_init(port);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "cache_modbus_server_init failed: %s", esp_err_to_name(ret));

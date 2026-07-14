@@ -74,6 +74,21 @@ int rams_write_str(const char* key, const char* value)
     return ESP_ERR_NO_MEM;
 }
 
+int rams_erase_key(const char* key)
+{
+    if (!key) return ESP_ERR_INVALID_ARG;
+
+    for (int i = 0; i < MAX_ITEM_NUM; i++) {
+        if (strncmp(storage[i].key, key, MAX_KEY_LEN) == 0) {
+            storage[i].key[0] = '\0';
+            storage[i].value[0] = '\0';
+            return ESP_OK;
+        }
+    }
+    // Absent key is not an error, matching nvs_erase_str()
+    return ESP_OK;
+}
+
 int rams_read_str(const char* key, char* value)
 {
     if (mock_storage_read_error_code != ESP_OK) {
