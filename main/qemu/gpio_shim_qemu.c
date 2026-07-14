@@ -75,10 +75,15 @@ esp_err_t __wrap_gpio_reset_pin(gpio_num_t gpio_num)
 IRAM_ATTR esp_err_t __wrap_gpio_set_level(gpio_num_t gpio_num, uint32_t level)
 {
     if (!vio_native_is_tracked((int)gpio_num)) {
+        // Untracked = the pin was never configured. The model is deliberately NOT
+        // called here, so its out_latch stays put — unlike real silicon, where the
+        // data register is written in any direction. Calling it would mean taking the
+        // model's mutex on every gpio_set_level() in the firmware, which is exactly
+        // what this gate keeps off the hot dispatch path. The divergence is
+        // unreachable in practice: the firmware configures a pin before driving it.
         return __real_gpio_set_level(gpio_num, level);
     }
-    // Tracked pin: enforce "firmware may write only OUTPUT pins" and mirror the
-    // level into the model (emits G on change, or a V violation if illegal).
+    // Tracked pin: mirror the level into the model (emits G on change).
     vio_native_fw_set_level((int)gpio_num, (int)level);
     // Forward to the real call too (harmless on the QEMU GPIO stub).
     return __real_gpio_set_level(gpio_num, level);

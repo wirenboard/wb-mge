@@ -57,6 +57,16 @@ void vio_native_set_direction(int gpio_num, vio_dir_state_t dir);
 // the line -> update level + emit G on change. INPUT/UNCONFIGURED: latch-only,
 // the line is untouched and nothing is emitted — legal, not a violation (this is
 // the glitch-free "set level, then switch to OUTPUT" idiom).
+//
+// NOTE: the UNCONFIGURED case is a defensive contract of this function, not a
+// path the firmware can actually reach: __wrap_gpio_set_level() only calls the
+// model for a TRACKED pin (see vio_native_is_tracked), so a gpio_set_level() on a
+// pin that was never configured does NOT update out_latch here, unlike on real
+// silicon. That gate is deliberate — calling the model unconditionally would take
+// its mutex on every gpio_set_level() in the firmware, including the IRAM/ISR-ish
+// dispatch path the wrapper is optimized for. It is harmless in practice: the
+// firmware always configures a pin before driving it (serial.c's glitch-free idiom
+// goes through gpio_reset_pin() -> INPUT, which IS tracked).
 void vio_native_fw_set_level(int gpio_num, int level);
 
 // Return the model level for a native GPIO (for gpio_get_level on a tracked pin).

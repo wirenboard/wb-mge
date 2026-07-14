@@ -55,6 +55,20 @@
 //   V/2 the host operated an UNCONFIGURED pin                -> write rejected.
 // Expander ('E') pins have no direction model (all behave as outputs).
 //
+// What this enforcement does NOT catch (known limits, stated so nobody reads more
+// safety into the model than it has):
+//   - "the firmware grabbed a line that should stay an input" is only caught when
+//     the pad is INPUT-ONLY (GPIO34..39 -> V/1 at configuration time). On a normal
+//     output-capable pad, configuring it as OUTPUT is legal by construction, and a
+//     gpio_set_level() while it is an INPUT is latch-only (see below) — so neither
+//     raises a violation. Since the firmware never configures GPIO34..39 as OUTPUT,
+//     V/1 is effectively unreachable today: it is a guard, not active coverage.
+//   - a gpio_set_level() on a pin that was never configured does not reach the
+//     model at all: __wrap_gpio_set_level() gates on vio_native_is_tracked(), so
+//     out_latch is NOT updated for an UNCONFIGURED pin the way real silicon would.
+//     Harmless here (the firmware configures a pin before driving it), and the gate
+//     is what keeps the model's mutex off every gpio_set_level() call site.
+//
 // QEMU usermode networking (-nic user + hostfwd) only NATs host->guest, so
 // unsolicited guest->host UDP does not arrive. The guest therefore LEARNS the
 // host's address from the first received datagram (recvfrom source address) and

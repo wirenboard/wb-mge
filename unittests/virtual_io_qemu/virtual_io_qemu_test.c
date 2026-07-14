@@ -218,16 +218,24 @@ static void test_fw_write_to_input_is_latch_only(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, s_ctx.native[4].out_latch, "the write must land in the output latch");
 }
 
-static void test_fw_write_to_unconfigured_is_latch_only(void)
+/* Defensive contract of the model API only — NOT a property of the firmware's
+ * gpio_set_level() path: __wrap_gpio_set_level() gates on vio_native_is_tracked(),
+ * so an UNCONFIGURED pin never reaches vio_native_fw_set_level() at all (that gate
+ * is pinned by test_wrap_gpio_set_level_untracked in gpio_shim_qemu_test.c). This
+ * test therefore only asserts that a direct model call is inert and non-violating;
+ * it deliberately does NOT claim that gpio_set_level() latches an unconfigured pin
+ * the way real silicon does. See virtual_io_qemu.h for why the gate stays. */
+static void test_model_write_to_unconfigured_is_inert(void)
 {
     /* pin 5 is UNCONFIGURED after setUp. */
     vio_native_fw_set_level(5, 1);
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_sendto_count,
-                                  "latch write on an UNCONFIGURED pin must emit nothing");
+                                  "a model write on an UNCONFIGURED pin must emit nothing (no G, no V)");
     TEST_ASSERT_EQUAL_INT_MESSAGE(VIO_DIR_UNCONFIGURED, s_ctx.native[5].dir_state,
                                   "a latch write must not configure the pin");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, s_ctx.native[5].out_latch, "the write must land in the output latch");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, vio_native_get_level(5),
+                                  "an UNCONFIGURED pad does not drive the line: level must stay 0");
 }
 
 static void test_latch_applied_on_transition_to_output(void)
@@ -439,7 +447,7 @@ int main(void)
     RUN_TEST(test_dir_redundant_input_no_reset);
     RUN_TEST(test_fw_output_legal_and_change_detect);
     RUN_TEST(test_fw_write_to_input_is_latch_only);
-    RUN_TEST(test_fw_write_to_unconfigured_is_latch_only);
+    RUN_TEST(test_model_write_to_unconfigured_is_inert);
     RUN_TEST(test_latch_applied_on_transition_to_output);
     RUN_TEST(test_fw_output_on_input_only_pad_violation);
     RUN_TEST(test_host_drives_output_violation);
