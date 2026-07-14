@@ -53,8 +53,9 @@
 // level the UART left there — HIGH, the TX-enabled idle level. A weak external pulldown
 // (R4 on WB-MGE) cannot pull down a driven pad, so leaving the pin alone would leave the
 // port-2 driver ENABLED and put the meander from the DI line straight onto the bus. The
-// test therefore takes the pin and drives it LOW itself; R4 is only a backstop for the
-// short window in which the pin is released.
+// test therefore takes the pin and drives it LOW itself, and keeps driving it LOW on the
+// way out as well (see release_clock_out_hw): the pin is handed straight over to the UART
+// when the port is re-inited, never released to an internal pull-up.
 #define CLK_OUT_EN_PIN          SERIAL_IO_PIN_1   // DE of port 1 — raised while the test runs
 #define CLK_OUT_DE_PARK_PIN     SERIAL_IO_PIN_2   // DE of port 2 — held LOW, never raised
 
@@ -114,11 +115,14 @@ static void de_pin_latch_low_output(gpio_num_t pin)
 }
 
 
-// Tear the LEDC down and release the four pins the test owns (the TX line of both ports,
-// the raised port-1 DE line and the parked-LOW port-2 DE line). Also used to roll back a
+// Tear the LEDC down and release three of the four pins the test owns: the TX line of both
+// ports and the raised port-1 DE line. The parked port-2 DE line is deliberately NOT
+// released — it stays a driven-LOW output (see below). Also used to roll back a
 // half-configured LEDC when start_clock_out() fails midway: the ledc_* calls simply
 // report an error for a channel/timer that was never set up, and gpio_reset_pin() is
-// harmless on a pin this attempt never got as far as configuring.
+// harmless on a pin this attempt never got as far as configuring. Both DE pins are latched
+// LOW at the very top of start_clock_out(), before any LEDC call, so on every path through
+// here the port-2 DE pin is already an output we drive.
 static void release_clock_out_hw(void)
 {
     // Disable the RS-485-1 line driver before tearing the waveform down.
@@ -132,29 +136,36 @@ static void release_clock_out_hw(void)
     tim_conf.deconfigure = true;
     ledc_timer_config(&tim_conf);
 
-    // Release all four pins so port_manager_apply_settings() can hand the TX and DE lines
-    // back to the UART. Note that gpio_reset_pin() does not leave a pin floating: it puts
-    // the pad in GPIO_MODE_DISABLE with the internal pull-up ON, so a released DE pin is
-    // weakly pulled towards 1 — the "driver enabled" level — and its driver may be weakly
-    // enabled until the UART re-attaches. What bounds the exposure is the window itself —
-    // it is short (apply_settings re-inits the UART right after) and the released TX pin is
-    // pulled to the idle level the UART holds between frames, so a briefly-enabled driver
-    // idles the line rather than corrupting traffic. On the way back in, start_clock_out()
-    // re-latches both DE pins LOW before driving them rather than trusting whatever the
-    // previous owner left in the output latch.
-    //
-    // The port-2 DE line is released here as well: for the whole test it was an output
-    // driven LOW by us (see CLK_OUT_DE_PARK_PIN), so it has to be given back like any
-    // other pin the test owns. In that short release window the WB-MGE pulldown R4 fights
-    // the internal pull-up — a weak-vs-weak contention, unlike the driven HIGH the UART
-    // would otherwise have kept on the pin for the entire test. That backstop is
-    // WB-MGE-specific and must not be assumed elsewhere: on WB-MGU SERIAL_IO_PIN_2 is
-    // GPIO13, the DE line of the WBE2 bus, with no R4 — there the window is bounded only
-    // by its own length, exactly like the port-1 DE line above.
+    // Release the two TX lines and the port-1 DE line so port_manager_apply_settings() can
+    // hand them back to the UART. Note that gpio_reset_pin() does not leave a pin floating:
+    // it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON, so a released pin
+    // is weakly pulled towards 1 until the UART re-attaches. For the TX lines that is the
+    // idle level the UART holds between frames anyway. For the port-1 DE line it is a weak
+    // pull towards "driver enabled" — acceptable there and only there: that driver was
+    // deliberately ON for the whole test (the RS-485-1 pair is the one we are allowed to
+    // drive), so a weakly-enabled driver idling the line for the length of the re-init
+    // window changes nothing about which buses the test touches.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
-    gpio_reset_pin(CLK_OUT_DE_PARK_PIN);
+
+    // CLK_OUT_DE_PARK_PIN (port-2 DE) is deliberately left DRIVEN LOW — no gpio_reset_pin()
+    // here. Resetting it would put the pad in GPIO_MODE_DISABLE with the internal pull-up
+    // ON, i.e. weakly pulled towards 1 — the "driver enabled" level — for the whole window
+    // between here and the uart_set_pin() inside port_manager_apply_settings(), which is an
+    // NVS read plus a port init, tens of ms. The entire point of the park is that the
+    // RS-485-2 pair stays silent (it is shared with the MIO transceiver and wired out to the
+    // terminals); releasing the pin to a pull-up would re-open exactly the window we just
+    // spent the test closing. On WB-MGE the external pulldown R4 would fight that pull-up,
+    // but that backstop is board-specific and must not be relied on: on WB-MGU
+    // SERIAL_IO_PIN_2 is GPIO13, the DE line of the WBE2 bus, with no pulldown at all.
+    //
+    // Holding the pin costs nothing: DE=0 is receive mode, i.e. the transceiver is not
+    // driving the bus — the safe state. uart_set_pin() takes the pin back the moment the
+    // port is re-inited; if the port stays DISABLED in NVS, the pin simply stays LOW, which
+    // is exactly what we want. Re-entering the test is unaffected either: the park in
+    // de_pin_latch_low_output() starts with gpio_reset_pin(), so it re-acquires the pin no
+    // matter who owns it by then — the UART, or us still holding it LOW.
 }
 
 
@@ -288,8 +299,9 @@ static esp_err_t process_request_json(cJSON *request_json)
             // Both ports are down and the pins are free: start the waveform.
             esp_err_t clk_err = start_clock_out();
             if (clk_err != ESP_OK) {
-                // The LEDC never came up, so start_clock_out() left the DE line LOW and
-                // released the pins. Reporting success here would leave the factory tester
+                // The LEDC never came up, so start_clock_out() left both DE lines LOW and
+                // released the pins it took (the port-2 DE line stays driven LOW until the
+                // UART takes it back). Reporting success here would leave the factory tester
                 // with a device that claims to emit a clock but does not. Abort the entry:
                 // unfreeze and restore both ports from NVS.
                 ESP_LOGE(TAG, "clock_out aborted: the LEDC could not be set up");
@@ -310,9 +322,10 @@ static esp_err_t process_request_json(cJSON *request_json)
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
-            // stop_clock_out() has released the TX and DE pins, so the ports may be
-            // brought up again: release the freeze before apply_settings, which is a
-            // no-op while the ports are frozen.
+            // stop_clock_out() has released the TX lines and the port-1 DE line, so the
+            // ports may be brought up again: release the freeze before apply_settings,
+            // which is a no-op while the ports are frozen. The port-2 DE line is still
+            // driven LOW by us — apply_settings() is what hands it back, via uart_set_pin().
             port_manager_set_ports_frozen(false);
             // The test never touched NVS, so the configured mode is still there:
             // re-read it and re-initialise both ports from the persisted settings.
