@@ -19,6 +19,9 @@ extern int mock_xTimerStart_called;
 extern TimerHandle_t mock_xTimerStart_xTimer;
 extern TickType_t mock_xTimerStart_xTicksToWait;
 
+extern int mock_xTimerDelete_called;
+extern TimerHandle_t mock_xTimerDelete_xTimer;
+
 void mock_freertos_timers_reset(void);
 
 TimerHandle_t xTimerCreate(const char * const pcTimerName,
@@ -28,4 +31,6 @@ TimerHandle_t xTimerCreate(const char * const pcTimerName,
                           TimerCallbackFunction_t pxCallbackFunction);
 
 BaseType_t xTimerStart(TimerHandle_t xTimer, TickType_t xTicksToWait);
+
+BaseType_t xTimerDelete(TimerHandle_t xTimer, TickType_t xTicksToWait);
 

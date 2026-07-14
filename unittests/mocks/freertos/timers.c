@@ -13,6 +13,9 @@ int mock_xTimerStart_called = 0;
 TimerHandle_t mock_xTimerStart_xTimer = NULL;
 TickType_t mock_xTimerStart_xTicksToWait = 0;
 
+int mock_xTimerDelete_called = 0;
+TimerHandle_t mock_xTimerDelete_xTimer = NULL;
+
 TimerHandle_t xTimerCreate(const char * const pcTimerName,
                           const TickType_t xTimerPeriod,
                           const BaseType_t xAutoReload,
@@ -36,6 +39,14 @@ BaseType_t xTimerStart(TimerHandle_t xTimer, TickType_t xTicksToWait)
     return pdPASS;
 }
 
+BaseType_t xTimerDelete(TimerHandle_t xTimer, TickType_t xTicksToWait)
+{
+    (void)xTicksToWait;
+    mock_xTimerDelete_xTimer = xTimer;
+    mock_xTimerDelete_called++;
+    return pdPASS;
+}
+
 void mock_freertos_timers_reset(void)
 {
     mock_xTimerCreate_called = 0;
@@ -49,4 +60,7 @@ void mock_freertos_timers_reset(void)
     mock_xTimerStart_called = 0;
     mock_xTimerStart_xTimer = NULL;
     mock_xTimerStart_xTicksToWait = 0;
+
+    mock_xTimerDelete_called = 0;
+    mock_xTimerDelete_xTimer = NULL;
 }

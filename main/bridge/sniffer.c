@@ -827,6 +827,27 @@ static const httpd_uri_t sniffer_status_uri = {
 };
 
 
+/* Release everything sniffer_init() has created so far. Safe to call at any early
+ * exit: every handle is NULL-checked and cleared, so a partially built state is
+ * torn down exactly once and a later sniffer_init() starts from a clean slate. */
+static void sniffer_init_cleanup(void)
+{
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        if (sniff_ctx[i].resp_timer) {
+            xTimerDelete(sniff_ctx[i].resp_timer, 0);
+            sniff_ctx[i].resp_timer = NULL;
+        }
+    }
+    if (sniff_queue) {
+        vQueueDelete(sniff_queue);
+        sniff_queue = NULL;
+    }
+    if (ws_mutex) {
+        vSemaphoreDelete(ws_mutex);
+        ws_mutex = NULL;
+    }
+}
+
 esp_err_t sniffer_init(void)
 {
     ws_mutex = xSemaphoreCreateMutex();
@@ -838,6 +859,7 @@ esp_err_t sniffer_init(void)
     sniff_queue = xQueueCreate(SNIFFER_QUEUE_LEN, sizeof(sniff_packet_t));
     if (!sniff_queue) {
         ESP_LOGE(TAG, "Failed to create sniffer queue");
+        sniffer_init_cleanup();
         return ESP_ERR_NO_MEM;
     }
 
@@ -856,6 +878,7 @@ esp_err_t sniffer_init(void)
             resp_timer_cb);
         if (!sniff_ctx[i].resp_timer) {
             ESP_LOGE(TAG, "Failed to create resp_timer for port %u", i);
+            sniffer_init_cleanup();
             return ESP_ERR_NO_MEM;
         }
     }
@@ -864,6 +887,7 @@ esp_err_t sniffer_init(void)
         SNIFFER_WS_TASK_STACK, NULL, SNIFFER_WS_TASK_PRIO, NULL);
     if (res != pdPASS) {
         ESP_LOGE(TAG, "Failed to create sniffer WS task");
+        sniffer_init_cleanup();
         return ESP_FAIL;
     }
 

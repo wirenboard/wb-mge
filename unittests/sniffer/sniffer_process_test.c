@@ -47,6 +47,13 @@
 /* FreeRTOS queue and timer mocks */
 #include "freertos/queue.h"
 #include "freertos/timers.h"
+/* Task and semaphore mocks — needed by the sniffer_init() cleanup tests, which
+ * force xTaskCreate/xQueueCreate failures and assert the resources are released. */
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+
+/* BRIDGES_COUNT (port count) */
+#include "bridge.h"
 
 /* modbus_crc16() — used to build CRC-valid fixtures */
 #include "modbus_helpers.h"
@@ -656,6 +663,68 @@ void test_max_length_fm_encapsulated_frame_not_truncated(void)
     TEST_ASSERT_TRUE_MESSAGE(pkt.is_master, "subcmd 0x08 is a master-side command");
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(frame, pkt.data, sizeof(frame),
         "captured bytes must match the frame byte for byte, including the trailing CRC");
+}
+
+/* ============================================================
+ * TC-INIT1 — sniffer_init() releases the resources it already created when the
+ * WS task cannot be created (no leaked timers / queue / mutex)
+ * ============================================================ */
+void test_init_cleanup_on_task_create_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-INIT1: xTaskCreate failure must delete the timers, the queue and the mutex");
+    LOG_MESSAGE();
+
+    /* setUp() already ran a successful sniffer_init(); start from clean counters. */
+    mock_freertos_queue_reset();
+    mock_freertos_timers_reset();
+    mock_freertos_task_reset();
+    mock_freertos_semaphore_reset();
+
+    mock_xTaskCreate_data.should_fail = true;
+    esp_err_t err = sniffer_init();
+    mock_xTaskCreate_data.should_fail = false;
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, err, "sniffer_init must fail when the WS task cannot be created");
+
+    TEST_ASSERT_EQUAL_MESSAGE(BRIDGES_COUNT, mock_xTimerCreate_called,
+        "one resp_timer must have been created per port");
+    TEST_ASSERT_EQUAL_MESSAGE(BRIDGES_COUNT, mock_xTimerDelete_called,
+        "every created resp_timer must be deleted on the failure path");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_vQueueDelete_data.called,
+        "the sniffer queue must be deleted on the failure path");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_vSemaphoreDelete_called,
+        "the WS mutex must be deleted on the failure path");
+}
+
+/* ============================================================
+ * TC-INIT2 — sniffer_init() releases the WS mutex when the queue cannot be created
+ * ============================================================ */
+void test_init_cleanup_on_queue_create_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-INIT2: queue-create failure must delete the mutex and create no timers");
+    LOG_MESSAGE();
+
+    mock_freertos_queue_reset();
+    mock_freertos_timers_reset();
+    mock_freertos_task_reset();
+    mock_freertos_semaphore_reset();
+
+    mock_xQueueCreate_data.should_fail = true;
+    esp_err_t err = sniffer_init();
+    mock_xQueueCreate_data.should_fail = false;
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, err, "sniffer_init must fail when the queue cannot be created");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTimerCreate_called,
+        "no timer must be created once the queue allocation already failed");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_vSemaphoreDelete_called,
+        "the WS mutex must be deleted on the failure path");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vQueueDelete_data.called,
+        "no queue was created, so none must be deleted");
 }
 
 /* ============================================================
@@ -2061,6 +2130,8 @@ int main(void)
     RUN_TEST(test_rx_timeout_disable_does_not_change_timeout);
     RUN_TEST(test_rx_timeout_not_called_after_detach);
     RUN_TEST(test_max_length_fm_encapsulated_frame_not_truncated);
+    RUN_TEST(test_init_cleanup_on_task_create_failure);
+    RUN_TEST(test_init_cleanup_on_queue_create_failure);
     RUN_TEST(test_tc17_recursive_stream_split_two_frames);
     RUN_TEST(test_cache_reason_does_not_change_timeout);
     RUN_TEST(test_clearing_last_reason_does_not_change_timeout);
