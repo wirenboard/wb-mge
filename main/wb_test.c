@@ -18,17 +18,21 @@
 #define CLK_OUT_PWM_CHANNEL     LEDC_CHANNEL_0
 #define CLK_OUT_PWM_TIMER       LEDC_TIMER_0
 
-// Second 100 kHz output on the RS-485-2 UART2 TX line (GPIO14) so the RS-485-2
-// activity LED (LED2, tapped from UART2_TX via R36) lights during the factory
-// test. Shares CLK_OUT_PWM_TIMER with the RS-485-1 output, so both LEDs blink in
-// lockstep. The RS-485-2 transceiver driver is intentionally left DISABLED: U4.DE
-// (GPIO15) is held low by hardware pulldown R4, so no signal is emitted onto the
-// RS-485-2 bus (which is shared with the MIO transceiver U10). The LED is tapped
-// from the logic-side DI line and lights regardless of DE.
+// Second 100 kHz output on the RS-485-2 UART2 TX line (GPIO14). Shares
+// CLK_OUT_PWM_TIMER with the RS-485-1 output, so both ports carry the same
+// waveform and both activity LEDs blink in lockstep.
 #define CLK_OUT_PIN_2           GPIO_NUM_14
 #define CLK_OUT_PWM_CHANNEL_2   LEDC_CHANNEL_1
 
+// RS-485 transceiver driver-enable (DE/RE) pins. Both must be driven HIGH for the
+// square wave to actually reach the RS-485 bus: with DE low the TX pin only toggles
+// on the logic side, so the activity LED lights but nothing is emitted on the line.
+// CLK_OUT_EN_PIN   = SERIAL_IO_PIN_1 (RS-485-1 DE/RE).
+// CLK_OUT_EN_PIN_2 = SERIAL_IO_PIN_2 (RS-485-2 DE/RE, U4.DE). The RS-485-2 bus is
+//   shared with the MIO transceiver U10, which stays idle here because both ports
+//   are held DISABLED for the duration of the test.
 #define CLK_OUT_EN_PIN          GPIO_NUM_4
+#define CLK_OUT_EN_PIN_2        GPIO_NUM_15
 
 #define CLK_OUT_JSON_FIELD      "clock_out"
 
@@ -71,7 +75,7 @@ static ledc_channel_config_t channel_config_2 = {
 };
 
 gpio_config_t gpio_clk_en_config = {
-    .pin_bit_mask = (1ULL << CLK_OUT_EN_PIN),
+    .pin_bit_mask = (1ULL << CLK_OUT_EN_PIN) | (1ULL << CLK_OUT_EN_PIN_2),
     .mode = GPIO_MODE_OUTPUT,
     .pull_up_en = GPIO_PULLUP_DISABLE,
     .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -84,7 +88,9 @@ static const char* TAG = "wb_test";
 static void start_clock_out(void)
 {
     gpio_config(&gpio_clk_en_config);
+    // Keep both transceivers in receive mode until the waveform is running.
     gpio_set_level(CLK_OUT_EN_PIN, 0);
+    gpio_set_level(CLK_OUT_EN_PIN_2, 0);
 
     ledc_timer_config_t tim_conf = timer_config;
     tim_conf.deconfigure = false;
@@ -93,11 +99,13 @@ static void start_clock_out(void)
     ledc_channel_config_t ch_conf = channel_config;
     ledc_channel_config(&ch_conf);
 
-    // RS-485-2 activity LED: drive UART2 TX (GPIO14) with the same 100 kHz timer.
+    // RS-485-2: drive UART2 TX (GPIO14) with the same 100 kHz timer.
     ledc_channel_config_t ch_conf2 = channel_config_2;
     ledc_channel_config(&ch_conf2);
 
+    // Enable both line drivers so the square wave reaches both RS-485 buses.
     gpio_set_level(CLK_OUT_EN_PIN, 1);
+    gpio_set_level(CLK_OUT_EN_PIN_2, 1);
 
     ESP_LOGW(TAG, "100 kHz clock output on RS485-1/RS485-2 TX enabled (all indicator LEDs on)");
 }
@@ -105,7 +113,9 @@ static void start_clock_out(void)
 
 static void stop_clock_out(void)
 {
+    // Disable both line drivers before tearing the waveform down.
     gpio_set_level(CLK_OUT_EN_PIN, 0);
+    gpio_set_level(CLK_OUT_EN_PIN_2, 0);
 
     ledc_stop(channel_config.speed_mode, channel_config.channel, 0);
     ledc_stop(channel_config_2.speed_mode, channel_config_2.channel, 0);
@@ -118,6 +128,7 @@ static void stop_clock_out(void)
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
+    gpio_reset_pin(CLK_OUT_EN_PIN_2);
 
     ESP_LOGW(TAG, "100 kHz clock output on RS485-1/RS485-2 TX disabled");
 }
