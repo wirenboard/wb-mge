@@ -14,6 +14,7 @@
 #define RX_BUFFER_SIZE                  1024
 #define TCP_SERVER_TASK_STACK_SIZE      4096
 #define TCP_SERVER_TASK_PRIORITY        5
+#define TCP_SERVER_LISTEN_BACKLOG       5
 
 #define EVENT_TASK_FINISHED             BIT1
 #define EVENT_TASK_EXIT_REQ             BIT8
@@ -77,7 +78,7 @@ static int create_listen_socket(int port)
             return -1;
         }
 
-        if (listen(listen_sock, 5) != 0) {
+        if (listen(listen_sock, TCP_SERVER_LISTEN_BACKLOG) != 0) {
             int e = errno;
             close(listen_sock);
             if (attempt + 1 < max_attempts) {
