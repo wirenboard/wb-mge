@@ -76,20 +76,22 @@ static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
 //    the waveform is live. This is the ordering that matters — these are the paths
 //    that would hand the TX/DE pins back to the UART.
 //
-//  * Non-port paths — settings_update() gating update_rs485_control() (V-out),
-//    update_io_bus_control() (MIO reset) and update_serial_tx_disabled() — read it
-//    atomically with NO lock held. There is no pm_lock to take there: those calls
-//    drive the GPIO expander and the serial layer, not pm_ctx, and taking a port lock
-//    would only give a false sense of mutual exclusion against a test that does not
-//    hold it either. The residual window: settings_update() reads the flag as false,
-//    is preempted, the test freezes the ports and starts, and settings_update()
-//    resumes and re-applies the configured V-out / io_bus_enabled on top of the
-//    running test (tx_disabled lands on ports that are DISABLED by then, so it is a
-//    no-op). It is accepted, not proved impossible: the window is the few instructions
-//    between the read and the expander write, it has to be hit by a concurrent
-//    POST /settings or a factory-reset button long-press (main.c) on a board that is
-//    at that exact moment entering the factory test, and the damage is bounded —
-//    nothing is persisted, and switching the test off re-applies both settings anyway.
+//  * Non-port paths — settings_update() gating update_rs485_control() (V-out) and
+//    update_serial_tx_disabled() — read it atomically with NO lock held. There is no
+//    pm_lock to take there: those calls drive the GPIO expander and the serial layer,
+//    not pm_ctx, and taking a port lock would only give a false sense of mutual
+//    exclusion against a test that does not hold it either. update_io_bus_control()
+//    (MIO reset) is NOT in this list: it is no longer gated by the flag at all and is
+//    applied unconditionally, because the test does not own the I/O bus. The residual
+//    window: settings_update() reads the flag as false, is preempted, the test freezes
+//    the ports and starts, and settings_update() resumes and re-applies the configured
+//    V-out / tx_disabled on top of the running test (tx_disabled lands on ports that
+//    are DISABLED by then, so it is a no-op). It is accepted, not proved impossible:
+//    the window is the few instructions between the read and the expander write, it
+//    has to be hit by a concurrent POST /settings or a factory-reset button long-press
+//    (main.c) on a board that is at that exact moment entering the factory test, and
+//    the damage is bounded — nothing is persisted, and switching the test off
+//    re-applies both settings anyway.
 //    Closing it properly needs a lock the non-port paths and wb_test can share (see
 //    the note in settings_update.c), not a wider pm_lock.
 static bool s_ports_frozen = false;
