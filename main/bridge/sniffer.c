@@ -46,8 +46,12 @@ static const char *TAG = "sniffer";
 typedef struct {
     sniff_state_t  state;
     uint8_t        reasons;        /* bitmask of sniff_reason_t; sniffer runs when != 0 */
-    uint8_t        req_buf[SNIFFER_MAX_PACKET_LEN];
-    uint16_t       req_len;
+    /* The pending master request. Only the slave address and the function code are ever
+     * read back (by the timeout event and by the stream splitter's frame hints), so only
+     * those are kept — buffering the whole ADU copied bytes nobody looked at. */
+    bool           req_valid;      /* a master request is currently pending */
+    uint8_t        req_slave;      /* pending request: slave address */
+    uint8_t        req_fc;         /* pending request: function code */
     uint64_t       req_timestamp_us;
     TimerHandle_t  resp_timer;
     unsigned       port_index;
@@ -122,14 +126,17 @@ SNIFFER_STATIC int format_packet_json(char *buf, size_t buf_size,
         hex_str, pkt->data_len);
 }
 
-/* Try to enqueue packet; on failure log and reset port state to IDLE */
-static void try_enqueue(unsigned port_index, sniff_packet_t *pkt)
+/* Try to enqueue a packet. Returns false when the queue is full (the packet is dropped).
+ * Deliberately touches no port state: sniff_ctx[].state is owned by the sniff_mux critical
+ * section (resp_timer_cb() and sniffer_disable() mutate it from other tasks/cores), and
+ * this runs outside it. The caller applies the state transition under the spinlock. */
+static bool try_enqueue(unsigned port_index, sniff_packet_t *pkt)
 {
-    if (xQueueSend(sniff_queue, pkt, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "sniff queue full, port %u reset to IDLE", port_index);
-        xTimerStop(sniff_ctx[port_index].resp_timer, 0);
-        sniff_ctx[port_index].state = SNIFF_IDLE;
+    if (xQueueSend(sniff_queue, pkt, 0) == pdTRUE) {
+        return true;
     }
+    ESP_LOGW(TAG, "sniff queue full, dropping packet on port %u", port_index);
+    return false;
 }
 
 static void resp_timer_cb(TimerHandle_t timer)
@@ -144,14 +151,14 @@ static void resp_timer_cb(TimerHandle_t timer)
     bool do_enqueue = false;
 
     taskENTER_CRITICAL(&sniff_mux);
-    if (ctx->req_len >= 2 && ctx->reasons != 0) {
+    if (ctx->req_valid && ctx->reasons != 0) {
         pkt.port         = (uint8_t)port_index;
         pkt.timestamp_us = ctx->req_timestamp_us + (uint64_t)SNIFFER_RESP_TIMEOUT_MS * 1000ULL;
         pkt.is_master    = true;
         pkt.crc_valid    = true;
         pkt.is_timeout   = true;
-        pkt.slave_id     = ctx->req_buf[0];
-        pkt.function     = ctx->req_buf[1];
+        pkt.slave_id     = ctx->req_slave;
+        pkt.function     = ctx->req_fc;
         ctx->synchronized    = true;
         ctx->last_was_master = true;
         do_enqueue = true;
@@ -282,6 +289,114 @@ SNIFFER_STATIC pdu_direction_t classify_direction(const uint8_t *data, size_t le
     }
 }
 
+/*
+ * sniffer_decide — the whole request/response state machine, as a pure function.
+ *
+ * Takes the port's framing state plus the properties of one already-delimited frame,
+ * and returns what to do about it. No locks, no clock, no queue, no memcpy: it can be
+ * exercised directly from a unit test, and the caller can do all the expensive work
+ * (CRC, classification, packet copy) outside the spinlock.
+ *
+ * Exactly one packet is emitted per frame at most; the emitted direction is also what
+ * the port re-synchronises on (in->last_was_master for the next frame).
+ */
+SNIFFER_STATIC sniff_decision_t sniffer_decide(const sniff_input_t *in)
+{
+    sniff_decision_t d = {0};
+    d.new_state = in->state;
+
+    if (in->state == SNIFF_IDLE) {
+        if (in->is_fm) {
+            /* Fast Modbus frame (leading 0xFF arbitration bytes already stripped).
+             * Recognised by the command byte at any address — event-transfer/config
+             * frames carry the device server_id, not the 0xFD broadcast address.
+             * The subcommand decides the direction. */
+            d.emit      = true;
+            d.is_master = !in->fm_slave_subcmd;
+            d.crc_valid = in->crc_valid;
+        } else if (!in->crc_valid) {
+            if (!in->synchronized) {
+                /* Nothing known yet — direction is unguessable. Drop silently. */
+                return d;
+            }
+            /* Alternate from the direction of the last known packet. */
+            d.emit      = true;
+            d.is_master = !in->last_was_master;
+            d.crc_valid = false;
+        } else if (in->broadcast) {
+            /* Broadcast: no response is expected, so no timer and no RES_WAIT. */
+            d.emit      = true;
+            d.is_master = true;
+            d.crc_valid = true;
+        } else if (in->dir == DIRECTION_RESPONSE) {
+            /* Orphan response: the sniffer started mid-exchange and missed the
+             * request. Emit it as a slave packet and stay in SNIFF_IDLE. */
+            d.emit      = true;
+            d.is_master = false;
+            d.crc_valid = true;
+        } else if (in->dir == DIRECTION_REQUEST) {
+            /* Emit the master request immediately so it shows up in the log right
+             * away, then wait for the matching slave response. */
+            d.emit          = true;
+            d.is_master     = true;
+            d.crc_valid     = true;
+            d.latch_request = true;
+            d.new_state     = SNIFF_RES_WAIT;
+            d.start_timer   = true;
+        }
+        /* DIRECTION_UNKNOWN: ambiguous. Better to skip the frame than to guess wrong
+         * and invert the whole stream from here on. */
+        return d;
+    }
+
+    /* SNIFF_RES_WAIT — a master request is pending. Every path below concludes the
+     * wait for the current request, so the response timer always stops. */
+    d.stop_timer = true;
+
+    if (in->short_frame) {
+        /* Arbitration-only response (e.g. FF FF FF FF FF). The master was already
+         * emitted on receipt, so only the arbitration packet is emitted here.
+         * Defensive: unreachable today, strip_arbitration() never yields < 4 bytes. */
+        d.emit      = true;
+        d.is_master = false;
+        d.crc_valid = false;
+        d.from_raw  = true;
+        d.new_state = SNIFF_IDLE;
+        return d;
+    }
+
+    if (in->is_fm) {
+        /* A Fast Modbus frame where a response was expected: the state machine is out
+         * of phase. Emit it standalone and resynchronise. */
+        d.emit      = true;
+        d.is_master = !in->fm_slave_subcmd;
+        d.crc_valid = in->crc_valid;
+        d.new_state = SNIFF_IDLE;
+        return d;
+    }
+
+    if (in->dir == DIRECTION_REQUEST) {
+        /* Not a response at all but a second master starting a new transaction while
+         * we were waiting. The first master was already emitted; emit this one, re-latch
+         * it as the pending request, restart the timer and keep waiting. */
+        d.emit          = true;
+        d.is_master     = true;
+        d.crc_valid     = true;
+        d.latch_request = true;
+        d.start_timer   = true;
+        /* new_state stays SNIFF_RES_WAIT */
+        return d;
+    }
+
+    /* DIRECTION_RESPONSE or DIRECTION_UNKNOWN: the awaited slave response. The master
+     * was already emitted on receipt, so only the slave packet is emitted here. */
+    d.emit      = true;
+    d.is_master = false;
+    d.crc_valid = in->crc_valid;
+    d.new_state = SNIFF_IDLE;
+    return d;
+}
+
 /* sniffer_process_frame — run the request/response state machine for exactly ONE
  * already-delimited Modbus / Fast Modbus frame.
  *
@@ -306,214 +421,94 @@ static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size
     size_t effective_len;
     strip_arbitration(data, len, &effective, &effective_len);
 
-    bool should_start_timer = false;
-    bool should_stop_timer = false;
-    sniff_packet_t req_pkt = {0};
-    sniff_packet_t res_pkt = {0};
-    bool enqueue_req = false;
-    bool enqueue_res = false;
+    /* Everything below is a pure function of the frame, and the frame belongs to the
+     * calling task alone — nothing reachable from the spinlock can mutate it. So it all
+     * runs BEFORE taskENTER_CRITICAL. That matters: sniff_mux is a portMUX_TYPE, i.e.
+     * the critical section masks interrupts on this core. modbus_crc16() is bitwise
+     * (8 iterations per byte — ~2200 for a full-length frame), and running it with
+     * interrupts masked stalls every ISR on the core, up to and including a FIFO
+     * overrun on the neighbouring UART. */
+    sniff_input_t in = {
+        .is_fm           = (effective[1] == FAST_MODBUS_FUNC_1 ||
+                            effective[1] == FAST_MODBUS_FUNC_2),
+        .fm_slave_subcmd = fm_is_slave_subcmd(effective_len >= 3 ? effective[2] : 0),
+        .crc_valid       = crc_check(effective, effective_len),
+        .short_frame     = (effective_len < 4),
+        .broadcast       = (effective[0] == 0x00),
+        .dir             = (effective_len >= 4)
+                               ? classify_direction(effective, effective_len)
+                               : DIRECTION_UNKNOWN,
+    };
 
+    /* Read the clock once, before the lock: this is the arrival timestamp of the frame,
+     * shared by the emitted packet and (when latched) the pending request. */
+    uint64_t now_us = (uint64_t)esp_timer_get_time();
+
+    /* Under the spinlock: read the framing state, decide, apply the transition.
+     * Nothing else. No CRC, no classification, no memcpy, no timer calls. */
     taskENTER_CRITICAL(&sniff_mux);
-    if (ctx->state == SNIFF_IDLE) {
-        bool valid_crc = crc_check(effective, effective_len);
+    in.state           = ctx->state;
+    in.synchronized    = ctx->synchronized;
+    in.last_was_master = ctx->last_was_master;
 
-        if (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2) {
-            /* Fast Modbus packet (with or without stripped leading 0xFF bytes).
-             * Detected by the command byte at any address — event-transfer/config
-             * frames use the device server_id, not the 0xFD broadcast address.
-             * Subcmds 0x03/0x04/0x09/0x11/0x12 are slave responses; all others are master. */
-            uint8_t subcmd = (effective_len >= 3) ? effective[2] : 0;
-            bool is_slave_response = fm_is_slave_subcmd(subcmd);
-            req_pkt.port         = (uint8_t)port_index;
-            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-            req_pkt.is_master    = !is_slave_response;
-            req_pkt.crc_valid    = valid_crc;
-            req_pkt.slave_id     = effective[0];
-            req_pkt.function     = effective[1];
-            size_t cpy           = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-            memcpy(req_pkt.data, effective, cpy);
-            req_pkt.data_len     = (uint16_t)cpy;
-            ctx->synchronized    = true;
-            ctx->last_was_master = req_pkt.is_master;
-            enqueue_req = true;
-        } else if (!valid_crc) {
-            if (!ctx->synchronized) {
-                /* No known packet seen yet — cannot determine direction, drop silently. */
-            } else {
-                /* Alternate direction based on last known packet. */
-                req_pkt.port         = (uint8_t)port_index;
-                req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-                req_pkt.is_master    = !ctx->last_was_master;
-                req_pkt.crc_valid    = false;
-                req_pkt.slave_id     = effective[0];
-                req_pkt.function     = effective[1];
-                size_t cpy = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-                memcpy(req_pkt.data, effective, cpy);
-                req_pkt.data_len     = (uint16_t)cpy;
-                ctx->synchronized    = true;
-                ctx->last_was_master = req_pkt.is_master;
-                enqueue_req = true;
-            }
-        } else if (effective[0] == 0x00) {
-            /* Broadcast: no response expected */
-            req_pkt.port         = (uint8_t)port_index;
-            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-            req_pkt.is_master    = true;
-            req_pkt.crc_valid    = true;
-            req_pkt.slave_id     = 0;
-            req_pkt.function     = effective[1];
-            size_t cpy           = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-            memcpy(req_pkt.data, effective, cpy);
-            req_pkt.data_len     = (uint16_t)cpy;
-            ctx->synchronized    = true;
-            ctx->last_was_master = true;
-            enqueue_req = true;
-        } else {
-            pdu_direction_t dir = classify_direction(effective, effective_len);
-            if (dir == DIRECTION_RESPONSE) {
-                /* Orphan response: sniffer started mid-exchange, the request was missed.
-                 * Emit as a slave packet without buffering; stay in SNIFF_IDLE. */
-                req_pkt.port         = (uint8_t)port_index;
-                req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-                req_pkt.is_master    = false;
-                req_pkt.crc_valid    = true;
-                req_pkt.slave_id     = effective[0];
-                req_pkt.function     = effective[1];
-                size_t copy_len = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-                memcpy(req_pkt.data, effective, copy_len);
-                req_pkt.data_len     = (uint16_t)copy_len;
-                ctx->synchronized    = true;
-                ctx->last_was_master = false;
-                enqueue_req = true;
-                /* State stays SNIFF_IDLE */
-            } else if (dir == DIRECTION_REQUEST) {
-                /* Emit master request immediately so it appears in the sniffer log right away. */
-                req_pkt.port         = (uint8_t)port_index;
-                req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-                req_pkt.is_master    = true;
-                req_pkt.crc_valid    = true;
-                req_pkt.is_timeout   = false;
-                req_pkt.slave_id     = effective[0];
-                req_pkt.function     = effective[1];
-                size_t copy_len      = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-                memcpy(req_pkt.data, effective, copy_len);
-                req_pkt.data_len     = (uint16_t)copy_len;
-                ctx->synchronized    = true;
-                ctx->last_was_master = true;
-                enqueue_req          = true;
-                /* Also buffer in req_buf so the timer and SNIFF_RES_WAIT branches can reference
-                 * slave_id/function for the timeout event. */
-                memcpy(ctx->req_buf, effective, copy_len);
-                ctx->req_len          = (uint16_t)copy_len;
-                ctx->req_timestamp_us = req_pkt.timestamp_us;
-                ctx->state            = SNIFF_RES_WAIT;
-                should_start_timer    = true;
-            } else {
-                /* DIRECTION_UNKNOWN: cannot determine direction — drop and stay in SNIFF_IDLE.
-                 * Better to skip an ambiguous packet than to guess wrong and invert the stream. */
-            }
-        }
-    } else { /* SNIFF_RES_WAIT */
-        if (effective_len < 4) {
-            /* Arbitration-only response (e.g. FF FF FF FF FF).
-             * Master was already emitted immediately on receipt.
-             * Emit only the slave (arbitration) packet here. */
-            res_pkt.port         = (uint8_t)port_index;
-            res_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-            res_pkt.is_master    = false;
-            res_pkt.crc_valid    = false;
-            res_pkt.slave_id     = data[0];
-            res_pkt.function     = data[1];
-            size_t arb_cpy       = len < SNIFFER_MAX_PACKET_LEN ? len : SNIFFER_MAX_PACKET_LEN;
-            memcpy(res_pkt.data, data, arb_cpy);
-            res_pkt.data_len     = (uint16_t)arb_cpy;
-            ctx->synchronized    = true;
-            ctx->last_was_master = false;
-            enqueue_res = true;
+    sniff_decision_t d = sniffer_decide(&in);
 
-            ctx->state = SNIFF_IDLE;
-            /* Defensive: stop the response timer even though this branch is currently
-             * unreachable (effective_len is always >= 4 after strip_arbitration). */
-            should_stop_timer = true;
-            goto exit_critical;
-        }
-
-        should_stop_timer = true;
-
-        /* If the packet arriving in RES_WAIT is a Fast Modbus packet (possibly with
-         * stripped 0xFF prefix), the state machine is out of phase. Emit as standalone. */
-        if (effective[1] == FAST_MODBUS_FUNC_1 || effective[1] == FAST_MODBUS_FUNC_2) {
-            uint8_t subcmd2       = (effective_len >= 3) ? effective[2] : 0;
-            bool is_slave2        = fm_is_slave_subcmd(subcmd2);
-            req_pkt.port         = (uint8_t)port_index;
-            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-            req_pkt.is_master    = !is_slave2;
-            req_pkt.crc_valid    = crc_check(effective, effective_len);
-            req_pkt.slave_id     = effective[0];
-            req_pkt.function     = effective[1];
-            size_t fm_cpy        = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-            memcpy(req_pkt.data, effective, fm_cpy);
-            req_pkt.data_len     = (uint16_t)fm_cpy;
-            ctx->synchronized    = true;
-            ctx->last_was_master = req_pkt.is_master;
-            enqueue_req = true;
-            ctx->state = SNIFF_IDLE;
-            goto exit_critical;
-        }
-
-        /* Before pairing, check if the arriving packet is actually a new master request
-         * (second master starting a transaction while we were waiting for a response). */
-        pdu_direction_t dir2 = classify_direction(effective, effective_len);
-        if (dir2 == DIRECTION_REQUEST) {
-            /* First master was already emitted on receipt.
-             * Emit second master immediately and start waiting for its response. */
-            req_pkt.port         = (uint8_t)port_index;
-            req_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-            req_pkt.is_master    = true;
-            req_pkt.crc_valid    = true;
-            req_pkt.is_timeout   = false;
-            req_pkt.slave_id     = effective[0];
-            req_pkt.function     = effective[1];
-            size_t new_cpy       = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-            memcpy(req_pkt.data, effective, new_cpy);
-            req_pkt.data_len     = (uint16_t)new_cpy;
-            ctx->synchronized    = true;
-            ctx->last_was_master = true;
-            enqueue_req          = true;
-
-            /* Buffer the new request; restart timer; stay in SNIFF_RES_WAIT. */
-            memcpy(ctx->req_buf, effective, new_cpy);
-            ctx->req_len          = (uint16_t)new_cpy;
-            ctx->req_timestamp_us = req_pkt.timestamp_us;
-            should_start_timer    = true;
-            /* ctx->state stays SNIFF_RES_WAIT */
-        } else {
-            /* Normal response (DIRECTION_RESPONSE or DIRECTION_UNKNOWN):
-             * master was already emitted immediately on receipt.
-             * Emit only the slave response here. */
-            res_pkt.port         = (uint8_t)port_index;
-            res_pkt.timestamp_us = (uint64_t)esp_timer_get_time();
-            res_pkt.is_master    = false;
-            res_pkt.crc_valid    = crc_check(effective, effective_len);
-            res_pkt.slave_id     = effective[0];
-            res_pkt.function     = effective[1];
-            size_t copy_len      = effective_len < SNIFFER_MAX_PACKET_LEN ? effective_len : SNIFFER_MAX_PACKET_LEN;
-            memcpy(res_pkt.data, effective, copy_len);
-            res_pkt.data_len     = (uint16_t)copy_len;
-            ctx->synchronized    = true;
-            ctx->last_was_master = false;
-            enqueue_res          = true;
-
-            ctx->state = SNIFF_IDLE;
-        }
+    ctx->state = d.new_state;
+    if (d.emit) {
+        /* The emitted packet is what the port resynchronises on. */
+        ctx->synchronized    = true;
+        ctx->last_was_master = d.is_master;
     }
-exit_critical:
+    if (d.latch_request) {
+        ctx->req_slave        = effective[0];
+        ctx->req_fc           = effective[1];
+        ctx->req_valid        = true;
+        ctx->req_timestamp_us = now_us;
+    }
     taskEXIT_CRITICAL(&sniff_mux);
 
-    if (should_stop_timer) xTimerStop(ctx->resp_timer, 0);
-    if (enqueue_req) try_enqueue(port_index, &req_pkt);
-    if (enqueue_res) try_enqueue(port_index, &res_pkt);
-    if (should_start_timer) xTimerStart(ctx->resp_timer, 0);
+    /* Outside the lock: the packet copy, the queue and the timers. xTimerStop/Start are
+     * not spinlock-safe anyway. Order is stop -> enqueue -> start, as before: a re-latched
+     * request must end up with a freshly armed timer. */
+    if (d.stop_timer) xTimerStop(ctx->resp_timer, 0);
+
+    bool enqueued = true;
+    if (d.emit) {
+        /* The arbitration-only branch reports the raw bytes; every other branch reports
+         * the frame with the 0xFF arbitration prefix stripped. */
+        const uint8_t *src     = d.from_raw ? data : effective;
+        size_t         src_len = d.from_raw ? len  : effective_len;
+        size_t         cpy     = src_len < SNIFFER_MAX_PACKET_LEN ? src_len
+                                                                  : SNIFFER_MAX_PACKET_LEN;
+        sniff_packet_t pkt = {0};
+        pkt.port         = (uint8_t)port_index;
+        pkt.timestamp_us = now_us;
+        pkt.is_master    = d.is_master;
+        pkt.crc_valid    = d.crc_valid;
+        pkt.slave_id     = src[0];
+        pkt.function     = src[1];
+        memcpy(pkt.data, src, cpy);
+        pkt.data_len     = (uint16_t)cpy;
+
+        enqueued = try_enqueue(port_index, &pkt);
+    }
+
+    if (!enqueued) {
+        /* The packet never reached the consumer, so the exchange it belongs to cannot be
+         * followed any further: abandon the pending request and return the port to IDLE.
+         * The state write goes through the spinlock (it is shared with resp_timer_cb() and
+         * sniffer_disable()), and the response timer is deliberately NOT started — an armed
+         * timer on a request whose master packet was dropped would fire a phantom timeout
+         * packet for an exchange no consumer ever saw. Any previously armed timer was
+         * already stopped above (every RES_WAIT decision sets stop_timer). */
+        taskENTER_CRITICAL(&sniff_mux);
+        ctx->state     = SNIFF_IDLE;
+        ctx->req_valid = false;
+        taskEXIT_CRITICAL(&sniff_mux);
+        return;
+    }
+
+    if (d.start_timer) xTimerStart(ctx->resp_timer, 0);
 }
 
 /*
@@ -569,8 +564,8 @@ static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len
 
         stream_frame_t frames[STREAM_SPLITTER_MAX_FRAMES];
         int nframes = stream_split(effective, effective_len,
-                                   ctx->req_len >= 2 ? ctx->req_buf[0] : 0,
-                                   ctx->req_len >= 2 ? ctx->req_buf[1] : 0,
+                                   ctx->req_valid ? ctx->req_slave : 0,
+                                   ctx->req_valid ? ctx->req_fc    : 0,
                                    frames);
         if (nframes <= 1) {
             /* Splitter found nothing useful — process the whole buffer as one frame. */
@@ -849,6 +844,7 @@ esp_err_t sniffer_init(void)
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         sniff_ctx[i].state           = SNIFF_IDLE;
         sniff_ctx[i].reasons         = 0;
+        sniff_ctx[i].req_valid       = false;
         sniff_ctx[i].synchronized    = false;
         sniff_ctx[i].last_was_master = false;
         sniff_ctx[i].port_index = i;
@@ -941,8 +937,8 @@ void sniffer_disable(unsigned port_index, sniff_reason_t reason)
     ctx->reasons = (uint8_t)(prev & ~(uint8_t)reason);
     bool became_idle = (prev != 0) && (ctx->reasons == 0);
     if (became_idle) {
-        ctx->req_len = 0;   /* Prevent stale timer CB from emitting a packet */
-        ctx->state   = SNIFF_IDLE;
+        ctx->req_valid = false;  /* Prevent stale timer CB from emitting a packet */
+        ctx->state     = SNIFF_IDLE;
     }
     taskEXIT_CRITICAL(&sniff_mux);
 

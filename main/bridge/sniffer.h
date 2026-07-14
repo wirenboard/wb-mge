@@ -66,6 +66,42 @@ typedef enum {
     SNIFF_RES_WAIT,
 } sniff_state_t;
 
+/*
+ * The frame-decision model.
+ *
+ * Everything the state machine needs in order to decide what to do with one frame
+ * is reduced to sniff_input_t, and everything it decides is a sniff_decision_t.
+ * sniffer_decide() maps one to the other as a pure function: no locks, no clock, no
+ * queue, no side effects. That keeps the CRC check, the direction classification and
+ * the packet memcpy out of the spinlock (only the state transition needs it) and
+ * makes the decision table directly testable.
+ */
+typedef struct {
+    /* Port framing state — read under the spinlock by the caller. */
+    sniff_state_t   state;
+    bool            synchronized;    /* a packet with a known direction has been seen */
+    bool            last_was_master; /* direction of the most recently emitted packet */
+
+    /* Properties of the frame itself — derived by the caller before taking the lock. */
+    bool            is_fm;           /* function code is Fast Modbus (0x46 / 0x60) */
+    bool            fm_slave_subcmd; /* the FM subcommand marks a slave response */
+    bool            crc_valid;       /* RTU CRC16 checks out over the whole frame */
+    bool            short_frame;     /* below the 4-byte minimum (arbitration-only) */
+    bool            broadcast;       /* slave address 0x00 — no response expected */
+    pdu_direction_t dir;             /* classify_direction() of the frame */
+} sniff_input_t;
+
+typedef struct {
+    bool          emit;          /* emit exactly one packet for this frame */
+    bool          is_master;     /* sender of the emitted packet */
+    bool          crc_valid;     /* CRC flag to stamp on the emitted packet */
+    bool          from_raw;      /* build the packet from the raw, unstripped bytes */
+    bool          latch_request; /* remember slave/fc/timestamp as the pending request */
+    sniff_state_t new_state;     /* framing state to move to */
+    bool          start_timer;   /* (re)arm the slave-response timeout */
+    bool          stop_timer;    /* disarm the slave-response timeout */
+} sniff_decision_t;
+
 /**
  * @brief Reasons that keep the sniffer pipeline running for a port.
  *

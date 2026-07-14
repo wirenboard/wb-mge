@@ -26,6 +26,10 @@ int      format_packet_json(char *buf, size_t buf_size, uint32_t id, const sniff
 /* Forward declaration for classify_direction exposed via SNIFFER_STATIC */
 pdu_direction_t classify_direction(const uint8_t *data, size_t len);
 
+/* The frame-decision state machine, exposed via SNIFFER_STATIC. sniff_input_t and
+ * sniff_decision_t come from sniffer.h. */
+sniff_decision_t sniffer_decide(const sniff_input_t *in);
+
 void setUp(void)
 {
 }
@@ -927,6 +931,337 @@ void test_classify_direction_default_unknown(void)
     TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
 }
 
+/* ============================================================
+ * sniffer_decide tests — the frame-decision table, exercised directly.
+ *
+ * sniffer_decide() is the whole request/response state machine as a pure function
+ * (state + frame properties -> decision). Testing it here covers every branch without
+ * having to drive real frames, timers and queues through sniffer_process().
+ * ============================================================ */
+
+/* Build the input for a frame arriving in the given state. */
+static sniff_input_t decide_in(sniff_state_t state)
+{
+    sniff_input_t in = {0};
+    in.state = state;
+    in.dir   = DIRECTION_UNKNOWN;
+    return in;
+}
+
+/* --- SNIFF_IDLE --- */
+
+void test_decide_idle_fm_master_subcmd(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + FM master subcmd → emit master, stay IDLE");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.is_fm           = true;
+    in.fm_slave_subcmd = false;
+    in.crc_valid       = true;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_TRUE(d.is_master);
+    TEST_ASSERT_TRUE(d.crc_valid);
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+    TEST_ASSERT_FALSE(d.start_timer);
+    TEST_ASSERT_FALSE(d.stop_timer);
+    TEST_ASSERT_FALSE(d.latch_request);
+}
+
+void test_decide_idle_fm_slave_subcmd(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + FM slave subcmd → emit slave");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.is_fm           = true;
+    in.fm_slave_subcmd = true;
+    in.crc_valid       = false;   /* an FM frame is emitted regardless of CRC */
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_FALSE(d.is_master);
+    TEST_ASSERT_FALSE_MESSAGE(d.crc_valid, "the frame's real CRC verdict must be carried through");
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+}
+
+void test_decide_idle_crc_error_unsynchronized_drops(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + CRC error, never synced → drop");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.crc_valid    = false;
+    in.synchronized = false;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_FALSE_MESSAGE(d.emit, "direction is unguessable before the first known packet");
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+    TEST_ASSERT_FALSE(d.start_timer);
+}
+
+void test_decide_idle_crc_error_alternates_direction(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + CRC error, synced → alternate direction");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.crc_valid       = false;
+    in.synchronized    = true;
+    in.last_was_master = true;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_FALSE_MESSAGE(d.is_master, "after a master, a corrupt frame is assumed to be the slave");
+    TEST_ASSERT_FALSE(d.crc_valid);
+
+    in.last_was_master = false;
+    d = sniffer_decide(&in);
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_TRUE_MESSAGE(d.is_master, "and vice versa");
+}
+
+void test_decide_idle_broadcast_no_response_wait(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + broadcast → emit master, no RES_WAIT");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.crc_valid = true;
+    in.broadcast = true;
+    in.dir       = DIRECTION_REQUEST;   /* must not reach the request branch */
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_TRUE(d.is_master);
+    TEST_ASSERT_EQUAL_MESSAGE(SNIFF_IDLE, d.new_state, "a broadcast expects no response");
+    TEST_ASSERT_FALSE_MESSAGE(d.start_timer, "no response timer for a broadcast");
+    TEST_ASSERT_FALSE(d.latch_request);
+}
+
+void test_decide_idle_orphan_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + response → emit slave, stay IDLE");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.crc_valid = true;
+    in.dir       = DIRECTION_RESPONSE;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_FALSE(d.is_master);
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+    TEST_ASSERT_FALSE(d.latch_request);
+}
+
+void test_decide_idle_request_starts_wait(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + request → emit master, latch, arm timer");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.crc_valid = true;
+    in.dir       = DIRECTION_REQUEST;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_TRUE(d.is_master);
+    TEST_ASSERT_TRUE(d.crc_valid);
+    TEST_ASSERT_TRUE(d.latch_request);
+    TEST_ASSERT_EQUAL(SNIFF_RES_WAIT, d.new_state);
+    TEST_ASSERT_TRUE(d.start_timer);
+    TEST_ASSERT_FALSE(d.stop_timer);
+}
+
+void test_decide_idle_unknown_direction_drops(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + ambiguous direction → drop");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.crc_valid = true;
+    in.dir       = DIRECTION_UNKNOWN;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_FALSE_MESSAGE(d.emit, "guessing wrong would invert the whole stream");
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+    TEST_ASSERT_FALSE(d.start_timer);
+    TEST_ASSERT_FALSE(d.stop_timer);
+}
+
+/* --- SNIFF_RES_WAIT --- */
+
+void test_decide_res_wait_always_stops_timer(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - every RES_WAIT path stops the response timer");
+    LOG_MESSAGE();
+
+    /* Short frame, FM frame, new request, and plain response — all four conclude the
+     * wait for the pending request, so all four must disarm the timer. */
+    sniff_input_t in = decide_in(SNIFF_RES_WAIT);
+
+    in.short_frame = true;
+    TEST_ASSERT_TRUE(sniffer_decide(&in).stop_timer);
+
+    in.short_frame = false;
+    in.is_fm = true;
+    TEST_ASSERT_TRUE(sniffer_decide(&in).stop_timer);
+
+    in.is_fm = false;
+    in.dir = DIRECTION_REQUEST;
+    TEST_ASSERT_TRUE(sniffer_decide(&in).stop_timer);
+
+    in.dir = DIRECTION_RESPONSE;
+    TEST_ASSERT_TRUE(sniffer_decide(&in).stop_timer);
+}
+
+void test_decide_res_wait_short_frame_uses_raw_bytes(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - RES_WAIT + arbitration-only → slave packet from raw bytes");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_RES_WAIT);
+    in.short_frame = true;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_FALSE(d.is_master);
+    TEST_ASSERT_FALSE(d.crc_valid);
+    TEST_ASSERT_TRUE_MESSAGE(d.from_raw, "the arbitration bytes themselves are the payload here");
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+}
+
+void test_decide_res_wait_fm_resyncs_to_idle(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - RES_WAIT + FM frame → emit standalone, resync to IDLE");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_RES_WAIT);
+    in.is_fm           = true;
+    in.fm_slave_subcmd = true;
+    in.crc_valid       = true;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_FALSE(d.is_master);
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+    TEST_ASSERT_FALSE(d.latch_request);
+    TEST_ASSERT_FALSE(d.start_timer);
+}
+
+void test_decide_res_wait_second_master_relatches(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - RES_WAIT + second request → re-latch, restart timer, keep waiting");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_RES_WAIT);
+    in.crc_valid = true;
+    in.dir       = DIRECTION_REQUEST;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_TRUE(d.is_master);
+    TEST_ASSERT_TRUE(d.latch_request);
+    TEST_ASSERT_EQUAL_MESSAGE(SNIFF_RES_WAIT, d.new_state, "still waiting — now for the second request's response");
+    TEST_ASSERT_TRUE_MESSAGE(d.stop_timer,  "the old timeout must be disarmed");
+    TEST_ASSERT_TRUE_MESSAGE(d.start_timer, "and rearmed for the new request");
+}
+
+void test_decide_res_wait_response_completes_transaction(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - RES_WAIT + response → emit slave, back to IDLE");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_RES_WAIT);
+    in.crc_valid = true;
+    in.dir       = DIRECTION_RESPONSE;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_FALSE(d.is_master);
+    TEST_ASSERT_TRUE(d.crc_valid);
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+    TEST_ASSERT_TRUE(d.stop_timer);
+    TEST_ASSERT_FALSE(d.start_timer);
+    TEST_ASSERT_FALSE(d.latch_request);
+}
+
+void test_decide_res_wait_unknown_treated_as_response(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - RES_WAIT + ambiguous → treated as the awaited response");
+    LOG_MESSAGE();
+
+    /* Unlike IDLE (where an ambiguous frame is dropped), in RES_WAIT the context makes
+     * it a response: we asked, something answered. The CRC verdict is carried through. */
+    sniff_input_t in = decide_in(SNIFF_RES_WAIT);
+    in.crc_valid = false;
+    in.dir       = DIRECTION_UNKNOWN;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_FALSE(d.is_master);
+    TEST_ASSERT_FALSE(d.crc_valid);
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+}
+
+/* Emitting is what resynchronises the port: a decision that emits nothing must never
+ * be able to move the direction tracking. Guards the caller's
+ * "if (d.emit) { synchronized = true; last_was_master = d.is_master; }" contract. */
+void test_decide_non_emitting_decisions_are_inert(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - dropped frames change nothing but the state field");
+    LOG_MESSAGE();
+
+    sniff_input_t drop_unsynced = decide_in(SNIFF_IDLE);
+    drop_unsynced.crc_valid    = false;
+    drop_unsynced.synchronized = false;
+
+    sniff_input_t drop_ambiguous = decide_in(SNIFF_IDLE);
+    drop_ambiguous.crc_valid = true;
+    drop_ambiguous.dir       = DIRECTION_UNKNOWN;
+
+    const sniff_input_t *cases[] = { &drop_unsynced, &drop_ambiguous };
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        sniff_decision_t d = sniffer_decide(cases[i]);
+        TEST_ASSERT_FALSE(d.emit);
+        TEST_ASSERT_FALSE(d.latch_request);
+        TEST_ASSERT_FALSE(d.start_timer);
+        TEST_ASSERT_FALSE(d.stop_timer);
+        TEST_ASSERT_EQUAL_MESSAGE(SNIFF_IDLE, d.new_state, "a dropped frame must not change the framing state");
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1024,6 +1359,23 @@ int main(void)
 
     /* classify_direction tests — default FC */
     RUN_TEST(test_classify_direction_default_unknown);
+
+    /* sniffer_decide tests — the frame-decision table */
+    RUN_TEST(test_decide_idle_fm_master_subcmd);
+    RUN_TEST(test_decide_idle_fm_slave_subcmd);
+    RUN_TEST(test_decide_idle_crc_error_unsynchronized_drops);
+    RUN_TEST(test_decide_idle_crc_error_alternates_direction);
+    RUN_TEST(test_decide_idle_broadcast_no_response_wait);
+    RUN_TEST(test_decide_idle_orphan_response);
+    RUN_TEST(test_decide_idle_request_starts_wait);
+    RUN_TEST(test_decide_idle_unknown_direction_drops);
+    RUN_TEST(test_decide_res_wait_always_stops_timer);
+    RUN_TEST(test_decide_res_wait_short_frame_uses_raw_bytes);
+    RUN_TEST(test_decide_res_wait_fm_resyncs_to_idle);
+    RUN_TEST(test_decide_res_wait_second_master_relatches);
+    RUN_TEST(test_decide_res_wait_response_completes_transaction);
+    RUN_TEST(test_decide_res_wait_unknown_treated_as_response);
+    RUN_TEST(test_decide_non_emitting_decisions_are_inert);
 
     return UNITY_END();
 }

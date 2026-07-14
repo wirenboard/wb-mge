@@ -1982,6 +1982,58 @@ void test_enqueue_failure_graceful_and_recovers(void)
 }
 
 /* ============================================================
+ * ENQUEUE-FAILURE + LATCHED REQUEST — a master request whose packet is dropped because
+ * the queue is full must not leave the port with an armed response timer: the timer would
+ * fire a phantom TIMEOUT packet for an exchange no consumer ever saw (the master packet
+ * itself never made it into the queue). The pending request is abandoned and the port
+ * returns to IDLE instead.
+ * ============================================================ */
+
+void test_enqueue_failure_on_latched_request_no_phantom_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "ENQUEUE-FAIL-LATCH: dropped master request must not arm the response timer");
+    LOG_MESSAGE();
+
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* FC03 request: slave=0x83, func=0x03, valid CRC → emitted as MASTER and latched,
+     * which normally arms the response timer (RES_WAIT). */
+    uint8_t req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
+
+    int timer_start_before = mock_xTimerStart_called;
+
+    mock_xQueueSend_data.should_fail = true;
+    SEND0(req);
+    assert_queue_empty();
+
+    TEST_ASSERT_EQUAL_MESSAGE(timer_start_before, mock_xTimerStart_called,
+        "ENQUEUE-FAIL-LATCH: the response timer must NOT be armed for a dropped request");
+
+    /* Even if the timer did fire (e.g. it was already pending), the abandoned request must
+     * not produce a timeout packet. Let the queue accept items again first, so an emitted
+     * packet would be visible. */
+    mock_xQueueSend_data.should_fail = false;
+    timer_cb(MOCK_TIMER_HANDLE);
+    assert_queue_empty();
+
+    /* The port is back in IDLE and the pipeline works: the next request is emitted normally
+     * as a MASTER packet (not inverted into a slave). */
+    SEND0(req);
+    sniff_packet_t pkt = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(pkt.is_master,
+        "ENQUEUE-FAIL-LATCH: the next request must be emitted as MASTER");
+    TEST_ASSERT_FALSE_MESSAGE(pkt.is_timeout,
+        "ENQUEUE-FAIL-LATCH: the next packet must be the request itself, not a timeout");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, pkt.slave_id, "ENQUEUE-FAIL-LATCH: slave_id must be 0x83");
+
+    assert_queue_empty();
+}
+
+/* ============================================================
  * main
  * ============================================================ */
 
@@ -2030,6 +2082,7 @@ int main(void)
     RUN_TEST(test_lone_ff_subframe_dropped_at_sniffer);
     RUN_TEST(test_many_back_to_back_frames_iterative_split);
     RUN_TEST(test_enqueue_failure_graceful_and_recovers);
+    RUN_TEST(test_enqueue_failure_on_latched_request_no_phantom_timeout);
 
     return UNITY_END();
 }
