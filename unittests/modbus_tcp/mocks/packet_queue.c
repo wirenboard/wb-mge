@@ -27,19 +27,6 @@ size_t packet_queue_count(const packet_queue_handle handle) { (void)handle; retu
 
 void packet_queue_clear(const packet_queue_handle handle) { (void)handle; }
 
-esp_err_t packet_queue_push(const packet_queue_handle handle, const uint8_t *data, const size_t len)
-{
-    (void)handle; (void)data; (void)len;
-    return 0; /* ESP_OK */
-}
-
-size_t packet_queue_pop(const packet_queue_handle handle, uint8_t **buf_ptr, const TickType_t timeout_ticks)
-{
-    (void)handle; (void)timeout_ticks;
-    *buf_ptr = NULL;
-    return 0;
-}
-
 esp_err_t packet_queue_push_with_client(const packet_queue_handle handle, const uint8_t *data, const size_t len, int client_sock)
 {
     (void)handle;

@@ -35,6 +35,7 @@ static const char *TAG = "cache_mm";
 #define CACHE_TYPE_INPUT     1u
 #define CACHE_TYPE_COIL      2u
 #define CACHE_TYPE_DISCRETE  3u
+#define CACHE_TYPE_MASK      0x03u /* bits 1:0 — register type */
 #define CACHE_USED_BIT       0x80u
 
 /* Saturating cap for age_s counter: ~18.2 hours in seconds */
@@ -110,9 +111,9 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         if ((s_pool[i].type & CACHE_USED_BIT) &&
-            s_pool[i].slave_id              == slave_id &&
-            (s_pool[i].type & 0x03u)        == type_value &&
-            s_pool[i].address               == address) {
+            s_pool[i].slave_id                 == slave_id &&
+            (s_pool[i].type & CACHE_TYPE_MASK) == type_value &&
+            s_pool[i].address                  == address) {
             return &s_pool[i];  /* existing entry found */
         }
         if (!(s_pool[i].type & CACHE_USED_BIT) && free_slot == NULL) {
@@ -129,6 +130,37 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
     }
 
     return free_slot;  /* NULL when pool is full */
+}
+
+/**
+ * @brief Count used pool entries and the unique slave IDs (devices) among them.
+ *
+ * Single pass over the pool. Either output pointer may be NULL when the caller
+ * does not need that figure; both counts are 0 when the pool is not allocated.
+ *
+ * Caller must hold s_cache_mutex.
+ */
+static void cache_count_entries_and_devices(int *entries_out, int *devices_out)
+{
+    int entries = 0;
+    int devices = 0;
+
+    if (s_pool != NULL) {
+        /* Bitmap of slave IDs already counted: 256 bits = 32 bytes. */
+        uint8_t seen[32] = {0};
+        for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+            if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
+            entries++;
+            uint8_t sid = s_pool[i].slave_id;
+            if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
+                seen[sid >> 3] |= (1u << (sid & 7));
+                devices++;
+            }
+        }
+    }
+
+    if (entries_out != NULL) *entries_out = entries;
+    if (devices_out != NULL) *devices_out = devices;
 }
 
 
@@ -219,7 +251,7 @@ void cache_multimaster_enable(void)
                                     NULL, tskIDLE_PRIORITY + 1, &s_age_task);
         if (rc != pdPASS) {
             /* Without the aging task age_s never increments, so the lookup
-             * staleness check (age_s > timeout) can never fire and stale values
+             * staleness check (age_s >= timeout) can never fire and stale values
              * would be served as fresh forever (mem-exhaust-2). Refuse to enable
              * a cache that cannot expire its data: roll back the pool allocation
              * and leave the cache disabled so callers fall back to live polling. */
@@ -399,6 +431,10 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             return;
         }
 
+        /* Captured under the mutex, logged after it is released (count <= 127
+         * here, so uint16_t cannot overflow). */
+        uint16_t dropped = 0;
+
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
         for (uint16_t i = 0; i < count; i++) {
             uint16_t addr  = start_addr + i;
@@ -413,8 +449,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
                  * every dropped value so the condition is observable via
                  * /cache/status instead of being silently lost (mem-exhaust-1). */
                 if (s_pool != NULL) {
-                    s_entries_dropped += (uint32_t)(count - i);
-                    ESP_LOGW(TAG, "Pool full, dropping %u entries", (unsigned)(count - i));
+                    dropped = (uint16_t)(count - i);
+                    s_entries_dropped += (uint32_t)dropped;
                 }
                 break;
             }
@@ -428,6 +464,12 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         s_packets_processed++;
         s_last_packet_us = timestamp_us;
         xSemaphoreGive(s_cache_mutex);
+
+        /* Logged outside the critical section: the log backend can block on the
+         * console and would stall every other cache user holding s_cache_mutex. */
+        if (dropped > 0) {
+            ESP_LOGW(TAG, "Pool full, dropping %u entries", (unsigned)dropped);
+        }
 
     } else if (function == 0x01 || function == 0x02) {
         /* Coils / discrete inputs: bit-packed, LSB first (bit 0 of data[3] = coil[start_addr]) */
@@ -458,6 +500,10 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             return;
         }
 
+        /* Captured under the mutex, logged after it is released (count <= 2000
+         * here, so uint16_t cannot overflow). */
+        uint16_t dropped = 0;
+
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
         for (uint16_t i = 0; i < count; i++) {
             uint16_t addr  = start_addr + i;
@@ -466,8 +512,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
             if (e == NULL) {
                 /* Pool full — see register branch (mem-exhaust-1). */
                 if (s_pool != NULL) {
-                    s_entries_dropped += (uint32_t)(count - i);
-                    ESP_LOGW(TAG, "Pool full, dropping %u coil entries", (unsigned)(count - i));
+                    dropped = (uint16_t)(count - i);
+                    s_entries_dropped += (uint32_t)dropped;
                 }
                 break;
             }
@@ -478,6 +524,11 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         s_packets_processed++;
         s_last_packet_us = timestamp_us;
         xSemaphoreGive(s_cache_mutex);
+
+        /* Logged outside the critical section — see register branch. */
+        if (dropped > 0) {
+            ESP_LOGW(TAG, "Pool full, dropping %u coil entries", (unsigned)dropped);
+        }
     }
 }
 
@@ -506,16 +557,20 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
         for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
             const cache_entry_t *e = &s_pool[i];
             if ((e->type & CACHE_USED_BIT) &&
-                e->slave_id              == slave_id &&
-                (e->type & 0x03u)        == type_value &&
-                e->address               == address) {
+                e->slave_id                 == slave_id &&
+                (e->type & CACHE_TYPE_MASK) == type_value &&
+                e->address                  == address) {
                 *value_out = e->value;
                 result = CACHE_LOOKUP_FOUND;
 
                 /* Age check: age_s is maintained by cache_age_task (saturating counter).
-                 * value_timeout_s == 0 disables the check — always return FOUND.          */
+                 * value_timeout_s == 0 disables the check — always return FOUND.
+                 * The comparison is >= so that an entry reaching the timeout is
+                 * stale: age_s saturates at CACHE_AGE_MAX_S (65535), so a strict >
+                 * could never fire for value_timeout_s == 65535 and such entries
+                 * would be served as fresh forever.                                       */
                 if (value_timeout_s > 0) {
-                    if (e->age_s > value_timeout_s) {
+                    if (e->age_s >= value_timeout_s) {
                         result = CACHE_LOOKUP_STALE;
                     }
                 }
@@ -546,20 +601,10 @@ void cache_multimaster_get_stats(cache_multimaster_stats_t *out)
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
-    /* Single pass: count unique slave IDs. Reading the stats counters under the
-     * same lock prevents torn 64-bit reads of s_last_packet_us / s_reset_us on
-     * Xtensa (64-bit volatile is NOT atomically readable without a mutex). */
-    uint8_t seen[32] = {0};
-    if (s_pool != NULL) {
-        for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-            if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
-            uint8_t sid = s_pool[i].slave_id;
-            if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
-                seen[sid >> 3] |= (1u << (sid & 7));
-                slaves++;
-            }
-        }
-    }
+    /* Reading the stats counters under the same lock as the pool scan prevents
+     * torn 64-bit reads of s_last_packet_us / s_reset_us on Xtensa (64-bit
+     * volatile is NOT atomically readable without a mutex). */
+    cache_count_entries_and_devices(NULL, &slaves);
     packets     = s_packets_processed;
     last_pkt_us = s_last_packet_us;
     reset_us    = s_reset_us;
@@ -603,22 +648,10 @@ static esp_err_t cache_status_handler(httpd_req_t *req)
     if (s_cache_mutex != NULL) {
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
-        /* Single pass: count entries and unique slave IDs simultaneously.
-         * Reading the stats counters under the same lock prevents torn
-         * 64-bit reads of s_last_packet_us / s_reset_us on Xtensa
-         * (64-bit volatile is NOT atomically readable without a mutex). */
-        uint8_t seen[32] = {0};
-        if (s_pool != NULL) {
-            for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-                if (!(s_pool[i].type & CACHE_USED_BIT)) continue;
-                entries++;
-                uint8_t sid = s_pool[i].slave_id;
-                if (!(seen[sid >> 3] & (1u << (sid & 7)))) {
-                    seen[sid >> 3] |= (1u << (sid & 7));
-                    slaves++;
-                }
-            }
-        }
+        /* Reading the stats counters under the same lock as the pool scan
+         * prevents torn 64-bit reads of s_last_packet_us / s_reset_us on
+         * Xtensa (64-bit volatile is NOT atomically readable without a mutex). */
+        cache_count_entries_and_devices(&entries, &slaves);
         packets     = s_packets_processed;
         dropped     = s_entries_dropped;
         last_pkt_us = s_last_packet_us;
@@ -711,7 +744,7 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
         if (!(e->type & CACHE_USED_BIT)) continue;
 
         const char *type_str;
-        switch (e->type & 0x03u) {
+        switch (e->type & CACHE_TYPE_MASK) {
             case CACHE_TYPE_HOLDING:  type_str = "holding";  break;
             case CACHE_TYPE_INPUT:    type_str = "input";    break;
             case CACHE_TYPE_COIL:     type_str = "coil";     break;
@@ -798,26 +831,34 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
 
-    if (s_pool == NULL) {
-        xSemaphoreGive(s_cache_mutex);
-        ret = httpd_resp_send_chunk(req, "]}", 2);
-        if (ret != ESP_OK) return ret;
-        httpd_resp_send_chunk(req, NULL, 0);
-        return ESP_OK;
-    }
-
     /* Snapshot the pool generation: abort cleanly if it changes mid-stream
      * (concurrent clear()/disable()+enable()) to avoid a torn snapshot
      * (cache-concurrency-1). */
     uint32_t gen = s_pool_generation;
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
+        /* Guards every s_pool dereference below. Covers both a pool that was
+         * never allocated (cache disabled on entry) and one freed by disable()
+         * or wholesale-changed by clear()/disable+enable while the mutex was
+         * released to send the previous chunk. Close the array/object and stop
+         * rather than emit a torn snapshot (cache-concurrency-1). */
+        if (s_pool == NULL || s_pool_generation != gen) {
+            xSemaphoreGive(s_cache_mutex);
+            /* Close out exactly like the normal tail below, error handling included:
+             * a failed send means the connection is broken, so report it instead of
+             * telling the caller the response went out fine. */
+            ret = httpd_resp_send_chunk(req, "]}", 2);
+            if (ret != ESP_OK) return ret;
+            httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_OK;
+        }
+
         const cache_entry_t *e = &s_pool[i];
         if (!(e->type & CACHE_USED_BIT)) continue;
 
         /* Single-char type tag — shorter JSON, faster JS access */
         char type_ch;
-        switch (e->type & 0x03u) {
+        switch (e->type & CACHE_TYPE_MASK) {
             case CACHE_TYPE_HOLDING:  type_ch = 'h'; break;
             case CACHE_TYPE_INPUT:    type_ch = 'i'; break;
             case CACHE_TYPE_COIL:     type_ch = 'c'; break;
@@ -853,16 +894,8 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
             xSemaphoreGive(s_cache_mutex);
             return ret;
         }
-
-        if (s_pool == NULL || s_pool_generation != gen) {
-            /* Pool was freed by disable() or wholesale-changed (clear()/
-             * disable+enable) while we were sending — close the array/object and
-             * stop rather than emit a torn snapshot (cache-concurrency-1). */
-            xSemaphoreGive(s_cache_mutex);
-            httpd_resp_send_chunk(req, "]}", 2);
-            httpd_resp_send_chunk(req, NULL, 0);
-            return ESP_OK;
-        }
+        /* No pool re-check here: the top of the next iteration re-checks before
+         * the next s_pool dereference, and nothing dereferences it in between. */
     }
 
     xSemaphoreGive(s_cache_mutex);
@@ -978,7 +1011,7 @@ bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_cod
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         if ((s_pool[i].type & CACHE_USED_BIT) &&
             s_pool[i].slave_id == slave_id &&
-            (s_pool[i].type & 0x03u) == type_value &&
+            (s_pool[i].type & CACHE_TYPE_MASK) == type_value &&
             s_pool[i].address == address) {
             s_pool[i].age_s = age_s_val;
             return true;

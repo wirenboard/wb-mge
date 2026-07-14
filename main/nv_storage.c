@@ -104,6 +104,44 @@ esp_err_t nvs_read_str(const char* key, char* value)
 }
 
 
+esp_err_t nvs_erase_str(const char* key)
+{
+    if (!key) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs_handle;
+    esp_err_t ret = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS handle: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = nvs_erase_key(nvs_handle, key);
+    if (ret == ESP_ERR_NVS_NOT_FOUND) {
+        // Nothing to erase - an absent key is not an error.
+        ESP_LOGD(TAG, "Key %s not found in NVS, nothing to erase", key);
+        nvs_close(nvs_handle);
+        return ESP_OK;
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to erase key %s: %s", key, esp_err_to_name(ret));
+        nvs_close(nvs_handle);
+        return ret;
+    }
+
+    ret = nvs_commit(nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit NVS: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGD(TAG, "Erased key %s", key);
+    }
+
+    nvs_close(nvs_handle);
+    return ret;
+}
+
+
 bool nvs_has_key(const char* key)
 {
     if (!key) {

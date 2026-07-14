@@ -1089,7 +1089,7 @@ void test_cache_multimaster_lookup_timeout_zero(void)
 /* ---- CM-U-020: lookup() — age check: STALE vs FOUND --------------------- */
 
 /* Verify that cache_multimaster_lookup() correctly returns STALE when
- * age_s exceeds the timeout and FOUND when age_s is within the timeout. */
+ * age_s reaches or exceeds the timeout and FOUND when age_s is below it. */
 void test_cache_multimaster_lookup_age_check(void)
 {
     LOG_MESSAGE();
@@ -1128,10 +1128,11 @@ void test_cache_multimaster_lookup_age_check(void)
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xBEEF, val,
         "value should be 0xBEEF");
 
-    /* Exact boundary case: age_s == timeout must return FOUND (strictly greater-than check) */
+    /* Exact boundary case: age_s == timeout must return STALE. The check is >=
+     * so that a saturated age (65535) still expires under a 65535 timeout. */
     r = cache_multimaster_lookup(22, 3, 0, &val, 100);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "age_s == value_timeout_s must return FOUND (> is strict, not >=)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
+        "age_s == value_timeout_s must return STALE (>= is the boundary)");
 }
 
 /* ---- CM-U-021: lookup() — age saturation boundary near CACHE_AGE_MAX_S -- */
@@ -1178,6 +1179,16 @@ void test_cache_multimaster_lookup_age_saturation_boundary(void)
     r = cache_multimaster_lookup(24, 3, 0, &val, 65499);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
         "lookup with timeout=65499 should return STALE when age_s=65500");
+
+    /* Fully saturated age against the maximum timeout. age_s never grows past
+     * CACHE_AGE_MAX_S (65535), so a strict > could never fire here and the entry
+     * would be served as fresh forever; the >= comparison expires it. */
+    set_ok = cache_multimaster_test_set_entry_age(24, 3, 0, 65535);
+    TEST_ASSERT_TRUE_MESSAGE(set_ok, "cache_multimaster_test_set_entry_age must return true");
+    val = 0;
+    r = cache_multimaster_lookup(24, 3, 0, &val, 65535);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
+        "saturated age_s=65535 with timeout=65535 must return STALE");
 
     /* Verify the foundational invariant: on_response() always resets age_s to 0.
      * This proves there is no wrap-around: a fresh store always starts at age 0,

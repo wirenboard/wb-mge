@@ -661,8 +661,13 @@ paths:
                   clock_out:
                     type: boolean
                     description: >-
-                      Current state: when true, the 100 kHz test signal on RS485-1
-                      and all front-panel LEDs (Wi-Fi, Eth, Status, V-out) are active.
+                      Current state: when true, the 100 kHz clock_out factory test is
+                      running — a 100 kHz square wave is driven on the TX line of BOTH
+                      RS-485 ports, but only the RS-485-1 transceiver is enabled for
+                      transmission, so the signal reaches the RS-485-1 bus while the
+                      RS-485-2 bus stays silent (its TX line only blinks the RS-485-2
+                      activity LED); all front-panel LEDs (Wi-Fi, Eth, Status, V-out)
+                      are lit.
         '400':
           description: Bad request
           content:
@@ -679,6 +684,36 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
     post:
       summary: WB test control — clock signal and all front-panel LEDs (only for internal use!)
+      description: >
+        Factory production test. While it is on, the firmware owns the RS-485 hardware:
+
+        * a 100 kHz square wave is driven by the LEDC on the TX line of BOTH RS-485
+          ports, but only the RS-485-1 transceiver is enabled for transmission (DE
+          high), so the signal is emitted on the RS-485-1 bus — do not run it with live
+          devices attached to RS-485-1;
+
+        * the RS-485-2 pair stays silent on purpose: the firmware drives that port's DE
+          line low and holds it there for the whole test, so its transceiver driver is
+          off and the port-2 TX line only toggles on the logic side, blinking the
+          RS-485-2 activity LED. Nothing is emitted on the RS-485-2 pair, which is
+          shared with the MIO transceiver and wired out to the RS-485-2 terminals;
+
+        * both ports are forced to "disabled" at runtime so the LEDC can own their TX
+          pins (the firmware also takes both DE pins: RS-485-1 raised, RS-485-2 held
+          low). This is NOT persisted: NVS keeps the configured port_mode, and both
+          ports are restored from it when the test is switched off;
+
+        * the I/O bus is NOT touched: the MIO controller keeps whatever state
+          io_bus_enabled put it in, during the test and after it, and a POST /settings
+          that changes io_bus_enabled still takes effect immediately;
+
+        * port_mode is frozen: POST /ports/{n}/mode is refused with 409 while the test
+          runs, and the vout / serial tx_disabled settings are not re-applied. POST
+          /settings still accepts and persists any setting, including port_mode — it
+          only writes NVS, and the values take effect when the test ends;
+
+        * all front-panel LEDs (Wi-Fi, Eth, Status, V-out) are lit; V-out is forced on,
+          which energises the RS-485 bus V-out output.
       requestBody:
         required: true
         content:
@@ -689,9 +724,8 @@ paths:
                 clock_out:
                   type: boolean
                   description: >-
-                    Enables the 100 kHz test signal on RS485-1 and simultaneously
-                    lights all front-panel LEDs (Wi-Fi, Eth, Status, V-out).
-                    Note: enabling V-out energises the RS-485 bus V-out output.
+                    true starts the test described above, false stops it and restores
+                    the ports and V-out from the persisted settings.
               required: [clock_out]
       responses:
         '200':
@@ -718,6 +752,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: >
+            The test could not be started: either an RS-485 port could not be disabled
+            (driving its TX/DE pins would have collided with the UART that still owns
+            them), or the LEDC refused to produce the waveform. The entry is rolled back
+            (both ports restored from the persisted settings, the transceivers left in
+            receive mode) and the test stays off — the device is left exactly as it was.
+            The request itself was valid, so the same request may succeed on retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Cannot start clock_out test: the RS-485 ports or the clock generator could not be set up"
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -1061,13 +1110,55 @@ paths:
               example:
                 mode: "repeater"
         '400':
-          description: Bad request
+          description: >
+            Bad request: the body is not valid JSON, the "mode" field is missing or is
+            not a string, or its value is not one of the modes listed above. Returned
+            ONLY for a malformed request — a valid request the device fails to carry out
+            returns 500.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Unknown mode value"
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+        '409':
+          description: >
+            Port mode is locked: the clock_out factory test is active and owns the
+            RS-485 TX lines of both ports and both DE lines. The request body
+            was valid — retry once the test has been switched off. Returned ONLY for that
+            conflict; a port that fails to initialize for any other reason returns 500.
+
+
+            This endpoint applies the mode immediately, which is why it is refused. To
+            change port_mode during the test, write it with POST /settings instead: that
+            only persists the value (200) and it takes effect when the test ends.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Port mode is locked while the clock_out factory test is active"
+        '500':
+          description: >
+            The request was valid but the device could not carry it out. Either the port
+            refused to initialize in the requested mode — a "tcp_bridge" whose persisted
+            bridge_mode is invalid or left over from a legacy firmware, a serial port that
+            could not be opened, out of memory — in which case the port keeps its previous
+            mode (or is left disabled if that rollback also fails); or the mode was applied
+            but could not be written to NVS, in which case it
+            is live now but will be reverted to the persisted one on the next settings cycle
+            or reboot. The error field carries the underlying esp_err_t name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "ESP_ERR_INVALID_STATE"
 
   /ports/{port_number}/send:
     post:

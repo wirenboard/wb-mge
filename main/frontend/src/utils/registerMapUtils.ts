@@ -133,8 +133,12 @@ export function buildRegsByKey(
       : String(e.v);
     // age_s is maintained server-side as a saturating counter — use directly.
     const updatedAge = e.age;
+    // Staleness boundary mirrors the firmware cache lookup (age_s >= value_timeout_s):
+    // at age == timeout the gateway already answers with exception 0x0B, so the UI must
+    // mark the entry stale too. Inclusive >= also keeps age_s == 65535 (the saturating
+    // cap) reachable for valueTimeout == 65535.
     // When valueTimeout is 0, the timeout is disabled — never mark entries as stale.
-    const stale = valueTimeout > 0 && updatedAge > valueTimeout;
+    const stale = valueTimeout > 0 && updatedAge >= valueTimeout;
     // Deduplicate: keep only the fresher entry for each address.
     // Entry with smaller age_s is more recently updated (fresher).
     const existingIndex = result[key].findIndex(r => r.addr === e.a);

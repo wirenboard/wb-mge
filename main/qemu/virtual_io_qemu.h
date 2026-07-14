@@ -46,12 +46,27 @@ esp_err_t virtual_io_init(void);
 
 // Set a native GPIO's model direction (derived from the firmware's gpio mode).
 // On a change to INPUT/OUTPUT a "D<NN>/<d>" record is emitted; switching to
-// UNCONFIGURED emits nothing.
+// UNCONFIGURED emits nothing. On the transition to OUTPUT the pad starts driving
+// the value held in its output latch (see vio_native_fw_set_level), so a G record
+// is emitted if that changes the line. Configuring an input-only pad (ESP32
+// GPIO34..39) as OUTPUT is a violation: V<NN>/1, direction change rejected.
 void vio_native_set_direction(int gpio_num, vio_dir_state_t dir);
 
-// FIRMWARE write path (mirrors gpio_set_level). OUTPUT: update + emit G on
-// change. INPUT: violation V<NN>/1 (firmware drove input), rejected.
-// UNCONFIGURED: violation V<NN>/2 (operate uninitialized), rejected.
+// FIRMWARE write path (mirrors gpio_set_level). Always writes the pin's output
+// latch, as the silicon does regardless of pad direction. OUTPUT: the pad drives
+// the line -> update level + emit G on change. INPUT/UNCONFIGURED: latch-only,
+// the line is untouched and nothing is emitted — legal, not a violation (this is
+// the glitch-free "set level, then switch to OUTPUT" idiom).
+//
+// NOTE: the UNCONFIGURED case is a defensive contract of this function, not a
+// path the firmware can actually reach: __wrap_gpio_set_level() only calls the
+// model for a TRACKED pin (see vio_native_is_tracked), so a gpio_set_level() on a
+// pin that was never configured does NOT update out_latch here, unlike on real
+// silicon. That gate is deliberate — calling the model unconditionally would take
+// its mutex on every gpio_set_level() in the firmware, including the IRAM/ISR-ish
+// dispatch path the wrapper is optimized for. It is harmless in practice: the
+// firmware always configures a pin before driving it (serial.c's glitch-free idiom
+// goes through gpio_reset_pin() -> INPUT, which IS tracked).
 void vio_native_fw_set_level(int gpio_num, int level);
 
 // Return the model level for a native GPIO (for gpio_get_level on a tracked pin).

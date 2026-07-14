@@ -200,20 +200,89 @@ static void test_fw_output_legal_and_change_detect(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, sent_count("G04/1"), "redundant write must NOT re-emit (change-detection)");
 }
 
-static void test_fw_drives_input_violation(void)
+/* ── output latch (gpio_set_level writes the pad's data register in ANY
+ *    direction; the latch reaches the line when the pad becomes an OUTPUT) ─── */
+
+static void test_fw_write_to_input_is_latch_only(void)
 {
-    vio_native_set_direction(34, VIO_DIR_INPUT); // seeds level 1
+    /* Pin 4 is a normal (output-capable) pad currently configured as INPUT. */
+    vio_native_set_direction(4, VIO_DIR_INPUT); // seeds level 1
     mock_lwip_reset();
-    vio_native_fw_set_level(34, 0);
-    TEST_ASSERT_TRUE_MESSAGE(was_sent("V34/1"), "firmware writing INPUT must raise V34/1");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, vio_native_get_level(34), "INPUT level must be unchanged (rejected)");
+
+    vio_native_fw_set_level(4, 0);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_sendto_count,
+                                  "writing the latch of a non-output pin must emit nothing (no G, no V)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, vio_native_get_level(4),
+                                  "an INPUT pad does not drive the line: level must stay 1");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, s_ctx.native[4].out_latch, "the write must land in the output latch");
 }
 
-static void test_fw_operate_unconfigured_violation(void)
+/* Defensive contract of the model API only — NOT a property of the firmware's
+ * gpio_set_level() path: __wrap_gpio_set_level() gates on vio_native_is_tracked(),
+ * so an UNCONFIGURED pin never reaches vio_native_fw_set_level() at all (that gate
+ * is pinned by test_wrap_gpio_set_level_untracked in gpio_shim_qemu_test.c). This
+ * test therefore only asserts that a direct model call is inert and non-violating;
+ * it deliberately does NOT claim that gpio_set_level() latches an unconfigured pin
+ * the way real silicon does. See virtual_io_qemu.h for why the gate stays. */
+static void test_model_write_to_unconfigured_is_inert(void)
 {
     /* pin 5 is UNCONFIGURED after setUp. */
-    vio_native_fw_set_level(5, 0);
-    TEST_ASSERT_TRUE_MESSAGE(was_sent("V05/2"), "firmware operating UNCONFIGURED pin must raise V05/2");
+    vio_native_fw_set_level(5, 1);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_sendto_count,
+                                  "a model write on an UNCONFIGURED pin must emit nothing (no G, no V)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(VIO_DIR_UNCONFIGURED, s_ctx.native[5].dir_state,
+                                  "a latch write must not configure the pin");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, vio_native_get_level(5),
+                                  "an UNCONFIGURED pad does not drive the line: level must stay 0");
+}
+
+static void test_latch_applied_on_transition_to_output(void)
+{
+    /* The exact serial.c tx_disabled sequence on the RS-485 DE pin (G04):
+     *   uart_set_pin  -> OUTPUT, driven HIGH (TX enabled)
+     *   gpio_reset_pin-> INPUT
+     *   gpio_set_level(0) -> latch LOW (pad not an output yet: no glitch)
+     *   gpio_set_direction(OUTPUT) -> pad drives the latched LOW
+     * The host must end up observing DE LOW, with no violation anywhere. */
+    vio_native_set_direction(4, VIO_DIR_OUTPUT);
+    vio_native_fw_set_level(4, 1);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, vio_native_get_level(4), "DE starts HIGH (TX enabled)");
+
+    mock_lwip_reset();
+    vio_native_set_direction(4, VIO_DIR_INPUT);   // gpio_reset_pin
+    vio_native_fw_set_level(4, 0);                // pre-direction level write
+    vio_native_set_direction(4, VIO_DIR_OUTPUT);  // gpio_set_direction(OUTPUT)
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, vio_native_get_level(4),
+                                  "DE must end up LOW: the latch is applied when the pad becomes OUTPUT");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, sent_count("G04/0"), "the host must observe DE forced LOW exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, sent_count("D04/1"), "the OUTPUT direction must be re-announced");
+    for (int i = 0; i < mock_sendto_count; i++) {
+        TEST_ASSERT_NOT_EQUAL_MESSAGE('V', mock_sendto_data[i][0],
+                                      "the glitch-free tx_disabled sequence must raise NO violation");
+    }
+}
+
+static void test_fw_output_on_input_only_pad_violation(void)
+{
+    /* GPIO34 is input-only on the ESP32: it has no output driver, so firmware
+     * configuring it as an OUTPUT is a real bug -> V34/1, direction rejected. */
+    vio_native_set_direction(34, VIO_DIR_INPUT);
+    mock_lwip_reset();
+
+    vio_native_set_direction(34, VIO_DIR_OUTPUT);
+
+    TEST_ASSERT_TRUE_MESSAGE(was_sent("V34/1"), "OUTPUT on an input-only pad must raise V34/1");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(VIO_DIR_INPUT, s_ctx.native[34].dir_state,
+                                  "the rejected config must leave the pin an INPUT");
+    TEST_ASSERT_FALSE_MESSAGE(was_sent("D34/1"), "a rejected OUTPUT config must NOT emit a D record");
+
+    /* And the firmware still cannot drive the line through it. */
+    mock_lwip_reset();
+    vio_native_fw_set_level(34, 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, vio_native_get_level(34), "input-only pad must never drive the line");
 }
 
 static void test_host_drives_output_violation(void)
@@ -377,8 +446,10 @@ int main(void)
     RUN_TEST(test_dir_unconfigured_to_input_seed);
     RUN_TEST(test_dir_redundant_input_no_reset);
     RUN_TEST(test_fw_output_legal_and_change_detect);
-    RUN_TEST(test_fw_drives_input_violation);
-    RUN_TEST(test_fw_operate_unconfigured_violation);
+    RUN_TEST(test_fw_write_to_input_is_latch_only);
+    RUN_TEST(test_model_write_to_unconfigured_is_inert);
+    RUN_TEST(test_latch_applied_on_transition_to_output);
+    RUN_TEST(test_fw_output_on_input_only_pad_violation);
     RUN_TEST(test_host_drives_output_violation);
     RUN_TEST(test_host_operate_unconfigured_violation);
 

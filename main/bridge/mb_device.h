@@ -6,6 +6,10 @@
 /* Gateway's own Modbus Unit ID (0xFF), per the Modbus Messaging Implementation Guide. */
 #define MB_DEVICE_UNIT_ID 0xFFu
 
+/* MODBUS_TCP_MAX_ADU_LEN (modbus_helpers.h) is the minimum size of the resp_buf
+ * every function below writes into: callers must size their response buffers with
+ * that constant. */
+
 /* True if unit_id addresses the gateway itself (0xFF). */
 bool mb_device_is_self(uint8_t unit_id);
 
@@ -15,7 +19,7 @@ bool mb_device_is_self(uint8_t unit_id);
  *   transaction_id_net  : transaction ID in NETWORK byte order (echoed verbatim).
  *   task_stack_size_bytes: total stack size (bytes) of the CALLING task, for the
  *                          stack-usage registers; pass 0 if unknown.
- *   resp_buf            : output buffer, at least 260 bytes.
+ *   resp_buf            : output buffer, at least MODBUS_TCP_MAX_ADU_LEN bytes.
  *   exc_out             : on failure, set to a Modbus exception code.
  * Returns total wire length on success, or 0 on failure (then *exc_out is set:
  *   0x01 illegal function, 0x02 illegal data address, 0x03 illegal data value).
@@ -35,7 +39,7 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
  *   req_len              : total length of req in bytes.
  *   task_stack_size_bytes: total stack size of the calling task (for stack-usage
  *                          registers; pass 0 if unknown).
- *   resp_buf             : output buffer, at least 260 bytes.
+ *   resp_buf             : output buffer, at least MODBUS_TCP_MAX_ADU_LEN bytes.
  * Returns the total wire length of the ADU written to resp_buf (always > 0).
  */
 size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,

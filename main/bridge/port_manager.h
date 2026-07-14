@@ -35,6 +35,22 @@ typedef enum {
 } pm_mode_t;
 
 /**
+ * @brief port_manager_set_mode() refused the change: the ports are frozen by the
+ *        factory clock_out test (see port_manager_set_ports_frozen()).
+ *
+ * A dedicated code, NOT ESP_ERR_INVALID_STATE: that one is not exclusive to the
+ * freeze — bridge_port_init() returns exactly ESP_ERR_INVALID_STATE for a port
+ * whose bridge_mode is invalid/legacy, and it reaches the caller through
+ * port_init_mode(). Mapping ESP_ERR_INVALID_STATE to 409 "clock_out test active"
+ * would answer a corrupt-NVS device with a conflict about a test that is not
+ * running. Only this code means "frozen".
+ *
+ * 0x10000 is above every base the IDF hands out in esp_err.h and its components
+ * (the highest is ESP_ERR_MEMPROT_BASE, 0xd000), so it cannot alias a real code.
+ */
+#define PM_ERR_PORTS_FROZEN  ((esp_err_t)0x10000)
+
+/**
  * @brief Initialize the port manager.
  *
  * Reads the active mode for each port from NVS and brings up the appropriate
@@ -54,15 +70,48 @@ esp_err_t port_manager_init(void);
  * Deinitialises the current mode, saves the new mode to NVS, then initialises
  * the new mode.
  *
+ * Rejected with PM_ERR_PORTS_FROZEN while the ports are frozen by the factory
+ * test (see port_manager_set_ports_frozen()): re-initialising the port would take
+ * its TX and DE pins back from the test — the TX pins from the LEDC that is driving
+ * the waveform, the DE pins from the plain-GPIO levels the test holds them at
+ * (port 1 HIGH, port 2 LOW).
+ *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @param mode        Target mode.
  * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         PM_ERR_PORTS_FROZEN if the ports are frozen by the factory test
+ *         (nothing is changed, neither live nor in NVS);
  *         the init error if the new mode failed to initialise (the previous mode
- *         is rolled back); or the NVS save error if the mode initialised live
+ *         is rolled back) — note that this can itself be ESP_ERR_INVALID_STATE,
+ *         e.g. a tcp_bridge whose bridge_mode is invalid/legacy;
+ *         or the NVS save error if the mode initialised live
  *         but could not be persisted — in that case the mode is applied now but
  *         not persisted (persist-6).
  */
 esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode);
+
+/**
+ * @brief Switch a port to a new operating mode WITHOUT persisting it to NVS.
+ *
+ * Behaves exactly like port_manager_set_mode() (deinit, init, rollback on init
+ * failure) except that the new mode is never written to NVS: the port_mode key
+ * keeps the user's configured value.
+ *
+ * Intended for temporary runtime overrides — the factory 100 kHz test disables
+ * both ports so the LEDC can take over their TX pins, and must not clobber the
+ * persisted configuration if power is lost while the test is running. Restore the
+ * configured mode afterwards with port_manager_apply_settings(), which re-reads
+ * the mode from NVS and re-initialises the port.
+ *
+ * Do NOT use this for REST/settings-driven mode changes — those must persist.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param mode        Target mode.
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         or the init error if the new mode failed to initialise (the previous
+ *         mode is rolled back).
+ */
+esp_err_t port_manager_set_mode_transient(unsigned port_index, pm_mode_t mode);
 
 /**
  * @brief Return the currently active mode for a port.
@@ -106,11 +155,57 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled);
 bool port_manager_get_cache(unsigned port_index);
 
 /**
+ * @brief Freeze / unfreeze all ports for the duration of the factory test.
+ *
+ * The factory 100 kHz clock-out test drives the RS-485 pins directly, after
+ * transiently forcing both ports to PM_MODE_DISABLED (runtime only — NVS keeps
+ * the user's configured mode): the TX pin of both ports carries the LEDC waveform,
+ * and the DE pin of both ports is held as a plain GPIO — port 1 HIGH (its driver
+ * transmits), port 2 LOW (its driver stays in receive). That mismatch between
+ * the runtime mode and NVS would otherwise make port_manager_check_settings_changed()
+ * report "changed" for every port, so any unrelated POST /settings would run
+ * port_manager_apply_settings() and re-init the ports on top of the running
+ * waveform.
+ *
+ * While frozen:
+ *   - port_manager_check_settings_changed() always reports false;
+ *   - port_manager_apply_settings() is a no-op returning ESP_OK;
+ *   - port_manager_set_mode() is rejected with PM_ERR_PORTS_FROZEN (the REST
+ *     handler turns that — and only that — into 409 Conflict);
+ *   - port_manager_set_mode_transient() still works — it is how the test itself
+ *     puts the ports into PM_MODE_DISABLED.
+ *
+ * Note that POST /settings may still write a new port_mode to NVS during the test and
+ * is answered 200, while POST /ports/N/mode is answered 409. That is the intended
+ * split, not an inconsistency: /ports/N/mode applies the mode immediately (a deinit +
+ * re-init of a port whose TX and DE pins the test is driving), whereas /settings only
+ * records it — apply_settings() is frozen, and the value takes effect when the test ends.
+ * See the port_mode entry in settings_manager.c's rs485_base_mappings.
+ *
+ * NVS is not affected either way. Unfreeze first, then call
+ * port_manager_apply_settings() for each port to bring them back up from NVS
+ * (this also picks up any settings written while the test was running).
+ *
+ * @param frozen  True to freeze the ports, false to release them.
+ */
+void port_manager_set_ports_frozen(bool frozen);
+
+/**
+ * @brief Return whether the ports are currently frozen by the factory test.
+ *
+ * @return true if frozen (see port_manager_set_ports_frozen()).
+ */
+bool port_manager_ports_frozen(void);
+
+/**
  * @brief Re-apply settings for a port, re-reading mode and parameters from NVS.
  *
  * Deinitialises the current mode and re-initialises from the current NVS
  * settings, including the port mode.  Called by settings_update when any
  * serial, bridge, or mode parameters change.
+ *
+ * No-op (returns ESP_OK without touching the port) while the ports are frozen
+ * by the factory test — see port_manager_set_ports_frozen().
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @return ESP_OK on success.
@@ -123,6 +218,9 @@ esp_err_t port_manager_apply_settings(unsigned port_index);
  * For TCP_BRIDGE mode this delegates to bridge_port_check_settings_changed().
  * For other modes it compares the saved serial config and port mode against
  * the current NVS values.
+ *
+ * Always reports false while the ports are frozen by the factory test — see
+ * port_manager_set_ports_frozen().
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @return true if settings have changed and port_manager_apply_settings()

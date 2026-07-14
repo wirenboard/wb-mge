@@ -19,6 +19,8 @@ int mock_vSemaphoreDelete_called = 0;
 unsigned mock_vSemaphoreDelete_call_seq = 0;
 SemaphoreHandle_t mock_vSemaphoreDelete_Handle = NULL;
 
+void (*mock_xSemaphoreTake_hook)(void) = NULL;
+
 SemaphoreHandle_t xSemaphoreCreateMutex(void)
 {
     mock_xSemaphoreCreateMutex_called++;
@@ -32,6 +34,9 @@ BaseType_t xSemaphoreTake(SemaphoreHandle_t xSemaphore, TickType_t xTicksToWait)
     mock_xSemaphoreTake_call_seq = call_sequence_get_call_id();
     mock_xSemaphoreTake_Handle = xSemaphore;
     mock_xSemaphoreTake_xTicksToWait = xTicksToWait;
+    if (mock_xSemaphoreTake_hook != NULL) {
+        mock_xSemaphoreTake_hook();
+    }
     return pdPASS;
 }
 
@@ -68,4 +73,6 @@ void mock_freertos_semaphore_reset(void)
     mock_vSemaphoreDelete_called = 0;
     mock_vSemaphoreDelete_call_seq = 0;
     mock_vSemaphoreDelete_Handle = NULL;
+
+    mock_xSemaphoreTake_hook = NULL;
 }

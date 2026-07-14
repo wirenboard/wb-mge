@@ -127,6 +127,8 @@ typedef struct {
     bool (*has_key)(const char* key);
     esp_err_t (*write_str)(const char* key, const char* value);
     esp_err_t (*read_str)(const char* key, char* value);
+    // Optional: remove a key from storage. May be NULL for backends that cannot erase.
+    esp_err_t (*erase_key)(const char* key);
 } setting_storage_iface_t;
 
 // Core functions

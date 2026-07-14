@@ -100,7 +100,7 @@ size_t cache_modbus_server_build_register_response(
 
     /* Fill MBAP header fields */
     resp_hdr->transaction_id = transaction_id;
-    resp_hdr->protocol_id    = 0x0000;
+    resp_hdr->protocol_id    = MODBUS_TCP_PROTOCOL_ID;
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
 
@@ -180,7 +180,7 @@ size_t cache_modbus_server_build_coil_response(
 
     /* Fill MBAP header fields */
     resp_hdr->transaction_id = transaction_id;
-    resp_hdr->protocol_id    = 0x0000;
+    resp_hdr->protocol_id    = MODBUS_TCP_PROTOCOL_ID;
     resp_hdr->unit_id        = unit_id;
     resp_hdr->function       = fc;
 
@@ -276,7 +276,7 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
         /* Cache server task runs inside tcp_server's receiver_task; its stack is
          * TCP_SERVER_TASK_STACK_SIZE (see bridge/tcp_server.c). */
         #define CACHE_SRV_TASK_STACK_BYTES 4096u
-        uint8_t dev_resp[260];
+        uint8_t dev_resp[MODBUS_TCP_MAX_ADU_LEN];
         size_t dev_len = mb_device_handle_self_request(data, len,
                                                        CACHE_SRV_TASK_STACK_BYTES, dev_resp);
         tcp_server_send(desc, client_sock, dev_resp, dev_len);

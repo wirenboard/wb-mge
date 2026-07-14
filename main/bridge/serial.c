@@ -96,14 +96,27 @@ static void handle_uart_event(serial_desc_t *desc, uart_event_t event, buffer_ct
             // observe RX traffic without ever altering the bytes/timing the bridge
             // forwards. The sniffer_process()/cache work it triggers is gated
             // by the reasons bitmask, so an idle bridge with no overlay does no real work.
-            if (desc->sniff_handler && buffer_ctx->sniff_data) {
+            //
+            // sniff_handler is published by sniffer_attach() with a release store and cleared
+            // by sniffer_detach() with a release store; load it ONCE with a matching acquire
+            // load and use only the local copy for both the NULL check and the call. Reading
+            // desc->sniff_handler twice would let the compiler reload it after the memcpy
+            // (which may alias the descriptor), so a detach landing in between could turn the
+            // checked-non-NULL pointer into a NULL call.
+            // NOTE: this only makes the pointer read itself safe. It does NOT fully close the
+            // detach race: port_manager calls sniffer_detach() while this task is still
+            // running, so a handler that was non-NULL at load time can still be executing (or
+            // start executing) while the sniffer tears its state down. Closing that hole
+            // requires stopping/joining the transport tasks before detach — tracked separately.
+            serial_receive_handler_t sniff_handler = __atomic_load_n(&desc->sniff_handler, __ATOMIC_ACQUIRE);
+            if (sniff_handler && buffer_ctx->sniff_data) {
                 if (buffer_ctx->sniff_len + event.size > SERIAL_BUF_SIZE) {
                     buffer_ctx->sniff_len = 0;  // overflow guard: drop the partial frame
                 }
                 memcpy(&buffer_ctx->sniff_data[buffer_ctx->sniff_len], &buffer_ctx->data[old_len], event.size);
                 buffer_ctx->sniff_len += event.size;
                 if (event.timeout_flag) {
-                    desc->sniff_handler(desc, buffer_ctx->sniff_data, buffer_ctx->sniff_len);
+                    sniff_handler(desc, buffer_ctx->sniff_data, buffer_ctx->sniff_len);
                     buffer_ctx->sniff_len = 0;
                 }
             }
@@ -158,6 +171,26 @@ static void uart_event_task(void *pvParameters)
 
     uint8_t *dtmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
     uint8_t *sniff_tmp = (uint8_t *)malloc(SERIAL_BUF_SIZE);
+    // Do NOT return early when an allocation fails: the task must keep servicing
+    // EVENT_TASK_EXIT_REQ below, otherwise serial_deinit() would block on
+    // EVENT_TASK_FINISHED forever. The NULL guards (buffer_ctx.data in the loop below,
+    // sniff_data in handle_uart_event) keep it from dereferencing the failed buffer.
+    // The two buffers have very different consequences, so report them separately
+    // instead of blaming the sniffer buffer for killing RX.
+    if (dtmp == NULL) {
+        // The event loop is gated on buffer_ctx.data, so without it every received byte
+        // is silently discarded: RX really is dead on this port. Say so loudly.
+        ESP_LOGE(TAG, "UART[%d] failed to allocate the %d-byte RX buffer: RX inoperative on this port",
+                 desc->port_num, SERIAL_BUF_SIZE);
+    }
+    if (sniff_tmp == NULL) {
+        // RX is unaffected — received frames still reach receive_handler. Only the
+        // sniffer/cache overlay gets nothing from this port (handle_uart_event skips the
+        // sniff path when sniff_data is NULL).
+        ESP_LOGE(TAG, "UART[%d] failed to allocate the %d-byte sniffer buffer: RX still works, "
+                      "but the sniffer/cache overlay is inoperative on this port",
+                 desc->port_num, SERIAL_BUF_SIZE);
+    }
     buffer_ctx_t buffer_ctx = {
         .data = dtmp,
         .data_len = 0,
@@ -171,7 +204,9 @@ static void uart_event_task(void *pvParameters)
     while(1) {
         uart_event_t event;
         BaseType_t result = xQueueReceive(desc->uart_queue, (void *)&event, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
-        if (result == pdPASS) {
+        // Skip event handling if the RX buffer failed to allocate; the loop still
+        // honours EVENT_TASK_EXIT_REQ below so serial_deinit() does not block forever.
+        if (result == pdPASS && buffer_ctx.data != NULL) {
             handle_uart_event(desc, event, &buffer_ctx);
         }
 
@@ -332,8 +367,12 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
     // internally sniff_mux-guarded, so calling it here (TCP server / HTTP task context)
     // is safe and adds no lock-ordering hazard. Only reached when the data was actually
     // transmitted (tx_disabled returns early above; partial writes return ESP_FAIL above).
-    if (desc->sniff_handler) {
-        desc->sniff_handler(desc, data, len);
+    // Same rule as the RX path: acquire-load the handler ONCE into a local, then check and
+    // call only that copy, so a concurrent sniffer_detach() cannot turn the checked pointer
+    // into a NULL call. (This does not by itself close the detach race — see the RX note.)
+    serial_receive_handler_t sniff_handler = __atomic_load_n(&desc->sniff_handler, __ATOMIC_ACQUIRE);
+    if (sniff_handler) {
+        sniff_handler(desc, data, len);
     }
     return ESP_OK;
 }
@@ -375,8 +414,10 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
         // In QEMU the wrap shim mirrors these IDF calls onto the virtual native
         // GPIO so the host can observe the software-driven tx_disabled state.
         gpio_reset_pin(desc->dir_pin);
-        gpio_set_direction(desc->dir_pin, GPIO_MODE_OUTPUT);
+        // Set the safe level first, then switch to output, so the pin never
+        // drives an undefined level in the window between direction and level.
         gpio_set_level(desc->dir_pin, 0);
+        gpio_set_direction(desc->dir_pin, GPIO_MODE_OUTPUT);
         desc->tx_disabled = true;
         ESP_LOGI(TAG, "UART[%d] TX physically disabled (dir_pin=%d forced LOW)", desc->port_num, desc->dir_pin);
     } else {

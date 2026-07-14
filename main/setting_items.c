@@ -39,6 +39,7 @@ static const setting_storage_iface_t nvs_storage_iface = {
     .has_key = nvs_has_key,
     .write_str = nvs_write_str,
     .read_str = nvs_read_str,
+    .erase_key = nvs_erase_str,
 };
 
 static bool password_generated = false;
@@ -206,8 +207,8 @@ static const setting_item_t setting_items[] = {
     {KEY_DATABITS1, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
     {KEY_485_TERM_1, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_FAIL_SAFE_1, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_485_TX_DISABLED_1, "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_CACHE_EN_1, "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_TX_DISABLED_1, DEFAULT_485_TX_DISABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_CACHE_EN_1, DEFAULT_CACHE_EN, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_BRIDGE_MODE1, DEFAULT_BRIDGE_MODE, validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_PORT1, DEFAULT_BRIDGE_PORT, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP1, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
@@ -220,8 +221,8 @@ static const setting_item_t setting_items[] = {
     {KEY_DATABITS2, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
     {KEY_485_TERM_2, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_FAIL_SAFE_2, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_485_TX_DISABLED_2, "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
-    {KEY_CACHE_EN_2, "false", validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_485_TX_DISABLED_2, DEFAULT_485_TX_DISABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_CACHE_EN_2, DEFAULT_CACHE_EN, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_BRIDGE_MODE2, DEFAULT_BRIDGE_MODE, validate_bridge_mode, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
@@ -282,7 +283,9 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized)
 // the on/off axis. It is handled here solely for migration purposes.
 #define LEGACY_BRIDGE_MODE_DISABLED_STR    "disabled"
 
-// One-time legacy migration of the per-port operating-state axis.
+// Legacy migration of the per-port operating-state axis. The derivation runs once (on
+// the first boot after the upgrade), but the stale-record cleanup is idempotent and
+// re-runs on every boot — see the "Rules" below.
 //
 // Old firmware used bridge_mode_N alone for both the on/off state and the TCP role:
 //   bridge_mode_N = "server"/"client" -> port was an active TCP bridge
@@ -307,6 +310,11 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized)
 // Rules:
 //   - If port_mode_N already exists, never overwrite it (a user may have set it).
 //   - If neither key exists, this is a fresh device: leave it to defaults.
+//   - An invalid bridge_mode_N is erased whether or not port_mode_N was derived on this
+//     boot. The derive and the erase are separate NVS commits: a power loss between them
+//     leaves port_mode_N written and the invalid bridge_mode_N still in NVS, and nothing
+//     else would ever remove it (set_defaults only fills MISSING keys), so a tcp_bridge
+//     port would silently come up with a bridge_mode that maps to BRIDGE_MODE_DISABLED.
 // Best-effort per port: a write failure is logged but does not abort the others.
 esp_err_t setting_items_migrate_port_mode(void)
 {
@@ -325,17 +333,13 @@ esp_err_t setting_items_migrate_port_mode(void)
         const char *port_mode_key = port_mode_keys[i];
         const char *bridge_mode_key = bridge_mode_keys[i];
 
-        // Already migrated or user-set: do not touch.
-        if (storage_iface->has_key(port_mode_key)) {
-            continue;
-        }
-
-        // No legacy bridge_mode either: fresh device, let defaults handle it.
+        // No bridge_mode at all: fresh device (or a stale record already erased by an
+        // earlier boot). Nothing to derive from and nothing to clean up - defaults
+        // recreate the key with a valid role.
         if (!storage_iface->has_key(bridge_mode_key)) {
             continue;
         }
 
-        // Upgraded device: derive port_mode from the legacy bridge_mode value.
         char legacy_value[SETTING_ITEM_MAX_STR_LEN] = {0};
         esp_err_t read_ret = storage_iface->read_str(bridge_mode_key, legacy_value);
         if (read_ret != ESP_OK) {
@@ -344,25 +348,67 @@ esp_err_t setting_items_migrate_port_mode(void)
             continue;
         }
 
-        const char *mapped;
-        if (strncmp(legacy_value, LEGACY_BRIDGE_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-            mapped = PORT_MODE_DISABLED_STR;
-        } else {
-            // "server"/"client" -> tcp_bridge; any unknown legacy value also maps to
-            // tcp_bridge because the port was active (not disabled) before the upgrade.
-            mapped = PORT_MODE_TCP_BRIDGE_STR;
+        // A legacy record is stale iff it is no longer a valid bridge_mode - that covers
+        // BOTH the on/off sentinel and any unknown value. Such a record must not survive:
+        // setting_items_set_defaults() only fills keys that are MISSING, so an invalid
+        // bridge_mode left in NVS would be handed to the bridge on the next read.
+        const bool legacy_is_stale = !validate_bridge_mode(legacy_value);
+
+        // Derive port_mode only if it does not exist yet - once it does, it is either
+        // already migrated or user-set and must never be overwritten. The stale-record
+        // cleanup below runs regardless: the derive and the erase are two independent
+        // NVS commits, so losing power between them leaves port_mode written and the
+        // invalid bridge_mode still in NVS. Gating the cleanup on "port_mode missing"
+        // would then skip that record on every later boot and leave it there forever.
+        if (!storage_iface->has_key(port_mode_key)) {
+            // Derive the new lifecycle axis: only the legacy on/off sentinel means "port
+            // was off". Anything else (a valid role, or any unknown value an older
+            // firmware may have left) means the port was active, so it becomes a
+            // tcp_bridge.
+            const char *mapped = (strncmp(legacy_value, LEGACY_BRIDGE_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) == 0)
+                                 ? PORT_MODE_DISABLED_STR
+                                 : PORT_MODE_TCP_BRIDGE_STR;
+
+            // Write through setting_items_save() so the value is validated by
+            // validate_port_mode before it lands in NVS.
+            esp_err_t save_ret = setting_items_save(port_mode_key, mapped);
+            if (save_ret != ESP_OK) {
+                ESP_LOGE(TAG, "Migration: failed to set %s = %s (%s)",
+                         port_mode_key, mapped, esp_err_to_name(save_ret));
+                // port_mode is still missing, so the legacy record is the only record of
+                // the user's intent: keep it and retry the derivation on the next boot.
+                continue;
+            }
+            ESP_LOGI(TAG, "Migration: derived %s = %s from legacy %s = %s",
+                     port_mode_key, mapped, bridge_mode_key, legacy_value);
         }
 
-        // Write through setting_items_save() so the value is validated by
-        // validate_port_mode before it lands in NVS.
-        esp_err_t save_ret = setting_items_save(port_mode_key, mapped);
-        if (save_ret != ESP_OK) {
-            ESP_LOGE(TAG, "Migration: failed to set %s = %s (%s)",
-                     port_mode_key, mapped, esp_err_to_name(save_ret));
+        // The legacy value has now served its only purpose (deriving port_mode above).
+        // bridge_mode_N itself is NOT a legacy key - it still holds the TCP role - so a
+        // value that is still a valid role ("server"/"client") must be kept as-is, otherwise
+        // set_defaults() below would silently reset a user's role after an upgrade.
+        // Every other value is dropped, so no invalid bridge_mode lingers in NVS.
+        // setting_items_set_defaults(), which runs right after this migration, recreates
+        // the erased key with a valid default role.
+        if (!legacy_is_stale) {
             continue;
         }
-        ESP_LOGI(TAG, "Migration: derived %s = %s from legacy %s = %s",
-                 port_mode_key, mapped, bridge_mode_key, legacy_value);
+
+        if (!storage_iface->erase_key) {
+            ESP_LOGW(TAG, "Migration: storage cannot erase, stale legacy %s = %s left in place",
+                     bridge_mode_key, legacy_value);
+            continue;
+        }
+
+        // Best-effort: port_mode is already migrated, so a failed erase only leaves a
+        // stale record behind and must not abort the remaining ports.
+        esp_err_t erase_ret = storage_iface->erase_key(bridge_mode_key);
+        if (erase_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Migration: failed to erase stale legacy %s (%s)",
+                     bridge_mode_key, esp_err_to_name(erase_ret));
+            continue;
+        }
+        ESP_LOGI(TAG, "Migration: erased stale legacy %s = %s", bridge_mode_key, legacy_value);
     }
 
     return ESP_OK;
@@ -403,16 +449,11 @@ esp_err_t setting_items_save(const char *key, const char *value)
         return ESP_ERR_INVALID_ARG;
     }
 
-    const setting_item_t *item = find_setting_item(key);
-    if (!item) {
-        ESP_LOGE(TAG, "Unknown setting key: %s", key);
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    // Validate value if validator exists
-    if (item->validator && !item->validator(value)) {
-        ESP_LOGE(TAG, "Invalid value '%s' for setting '%s'", value, key);
-        return ESP_ERR_INVALID_ARG;
+    // Key lookup and value validation are identical to setting_items_validate(),
+    // so reuse it here instead of duplicating them.
+    esp_err_t validate_ret = setting_items_validate(key, value);
+    if (validate_ret != ESP_OK) {
+        return validate_ret;
     }
 
     esp_err_t result = storage_iface->write_str(key, value);

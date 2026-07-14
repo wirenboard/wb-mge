@@ -901,8 +901,14 @@ esp_err_t sniffer_init(void)
 void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
 {
     if (port_index >= BRIDGES_COUNT || serial_desc == NULL) return;
-    serial_desc->sniff_handler = s_port_callbacks[port_index];
+    // Store the descriptor in the context before publishing the callback, so the
+    // UART event task never sees sniff_handler set while serial_desc is still stale.
     sniff_ctx[port_index].serial_desc = serial_desc;
+    // Publish the callback with a release store. Plain ordering of the two writes is not
+    // enough: nothing stops the compiler from reordering them, and the reader is the UART
+    // event task, potentially on the other core. The release store makes the serial_desc
+    // write above visible to any core that observes this non-NULL sniff_handler.
+    __atomic_store_n(&serial_desc->sniff_handler, s_port_callbacks[port_index], __ATOMIC_RELEASE);
 }
 
 void sniffer_detach(unsigned port_index)
@@ -911,10 +917,16 @@ void sniffer_detach(unsigned port_index)
     /* Fully disable: clear all reasons so framing state and RX timeout are reset. */
     sniffer_disable(port_index, SNIFF_REASON_DISPLAY);
     sniffer_disable(port_index, SNIFF_REASON_CACHE);
-    // Clear the callback pointer in the serial descriptor before releasing our reference,
-    // to prevent the UART event task from calling a stale handler after detach.
+    // Retract the callback with a release store, symmetric to the release store in
+    // sniffer_attach(): the readers (serial.c UART event task / serial_send) acquire-load
+    // this pointer once into a local, so once they observe NULL they stop calling us.
+    // This does NOT make detach race-free: the transport tasks are still running here
+    // (port_manager calls sniffer_detach() before bridge_port_deinit()/serial_deinit()),
+    // so a reader that loaded the handler just before this store may still be inside it.
+    // Making detach truly safe requires stopping/joining those tasks first — open issue,
+    // deliberately out of scope for this change.
     if (sniff_ctx[port_index].serial_desc) {
-        sniff_ctx[port_index].serial_desc->sniff_handler = NULL;
+        __atomic_store_n(&sniff_ctx[port_index].serial_desc->sniff_handler, NULL, __ATOMIC_RELEASE);
     }
     sniff_ctx[port_index].serial_desc = NULL;
 }

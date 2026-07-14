@@ -50,6 +50,58 @@ typedef struct {
 
 static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
 
+// Set while the factory 100 kHz clock-out test owns the RS-485 TX/DE pins.
+// The test puts both ports into DISABLED transiently (runtime only — NVS keeps
+// the user's configured mode), which makes the runtime mode differ from NVS.
+// Without this flag check_settings_changed() would report "changed" for both
+// ports, so ANY unrelated POST /settings would run apply_settings() and re-init
+// the ports — re-grabbing the TX/DE pins that the factory test is currently
+// driving (the LEDC on the TX lines, plain GPIO writes on the DE lines).
+// While frozen, check_settings_changed() reports no change, apply_settings() is a
+// no-op and a persisting set_mode() (POST /ports/N/mode) is refused with the
+// dedicated PM_ERR_PORTS_FROZEN, so the ports stay down for the whole test. Only the
+// transient set_mode path stays open — that is how the test disables them. The
+// test clears the flag on exit and then calls apply_settings() itself to restore
+// both ports from NVS (which also picks up any settings written during the test).
+//
+// Locking contract. The flag is written by the httpd task (the wb_test handler) and
+// read from several tasks, so it is accessed with GCC atomics (SEQ_CST) — same
+// convention as tcp_desc.active_connections. Readers fall into two groups:
+//
+//  * Port paths — port_set_mode_impl(), port_manager_apply_settings() and
+//    port_manager_check_settings_changed() — read it while holding that port's
+//    pm_lock, together with the runtime mode it guards. Since the test only starts
+//    the LEDC after set_mode_transient() has taken (and released) both pm_locks, a
+//    reader that saw the flag as false is by then either already finished or still
+//    holding the lock the test is waiting on: it can no longer re-init a port after
+//    the waveform is live. This is the ordering that matters — these are the paths
+//    that would hand the TX/DE pins back to the UART.
+//
+//  * Non-port paths — settings_update() gating update_rs485_control() (V-out) and
+//    update_serial_tx_disabled() — read it atomically with NO lock held. There is no
+//    pm_lock to take there: those calls drive the GPIO expander and the serial layer,
+//    not pm_ctx, and taking a port lock would only give a false sense of mutual
+//    exclusion against a test that does not hold it either. update_io_bus_control()
+//    (MIO reset) is NOT in this list: it is no longer gated by the flag at all and is
+//    applied unconditionally, because the test does not own the I/O bus. The residual
+//    window: settings_update() reads the flag as false, is preempted, the test freezes
+//    the ports and starts, and settings_update() resumes and re-applies the configured
+//    V-out / tx_disabled on top of the running test (tx_disabled lands on ports that
+//    are DISABLED by then, so it is a no-op). It is accepted, not proved impossible:
+//    the window is the few instructions between the read and the expander write, it
+//    has to be hit by a concurrent POST /settings or a factory-reset button long-press
+//    (main.c) on a board that is at that exact moment entering the factory test, and
+//    the damage is bounded — nothing is persisted, and switching the test off
+//    re-applies both settings anyway.
+//    Closing it properly needs a lock the non-port paths and wb_test can share (see
+//    the note in settings_update.c), not a wider pm_lock.
+static bool s_ports_frozen = false;
+
+static inline bool ports_frozen(void)
+{
+    return __atomic_load_n(&s_ports_frozen, __ATOMIC_SEQ_CST);
+}
+
 // Take the per-port init mutex. Lazily creates it on first use so we don't depend
 // on init order (port_manager_init may not have run yet when an early handler is
 // dispatched). portMAX_DELAY because the critical section is the entire reinit and
@@ -436,13 +488,36 @@ esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t
     return ret;
 }
 
-esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
+// Shared implementation of the mode switch. When persist is true the new mode is
+// written to NVS after a successful init (the normal REST/settings path). When it
+// is false the switch is runtime-only: NVS keeps the user's configured mode, so a
+// reboot (or port_manager_apply_settings()) restores it. The transient path exists
+// for temporary overrides such as the factory 100 kHz test, which must not clobber
+// the persisted port configuration if power is lost while the test is running.
+static esp_err_t port_set_mode_impl(unsigned port_index, pm_mode_t mode, bool persist)
 {
     if (port_index >= BRIDGES_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
 
     pm_lock(port_index);
+
+    // While the factory test owns the TX/DE pins, a persisting mode change
+    // (POST /ports/N/mode) must not go through: port_init_mode() would hand the
+    // pins the test is driving back to the UART, and the new mode would be written
+    // to NVS on top of the user's configuration. Reject it with the dedicated
+    // PM_ERR_PORTS_FROZEN — the REST handler maps that (and only that) to 409.
+    // A generic ESP_ERR_INVALID_STATE would not do: port_init_mode() can return the
+    // same code for an unrelated reason (bridge_port_init() refuses a tcp_bridge with
+    // an invalid/legacy bridge_mode), and that must not be reported as a test conflict.
+    // The transient path stays open: it is how the test disables the ports in the
+    // first place.
+    if (persist && ports_frozen()) {
+        pm_unlock(port_index);
+        ESP_LOGW(TAG, "Port[%u]: mode change rejected, ports frozen by factory test",
+                 port_index + 1);
+        return PM_ERR_PORTS_FROZEN;
+    }
 
     // Remember the current (presumed-working) mode so we can roll back if the
     // new mode fails to initialise.
@@ -459,8 +534,10 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
         // port_manager_check_settings_changed() would report a permanent
         // mismatch, making settings_update_task re-apply (and re-fail) on every
         // subsequent settings write.
-        esp_err_t save_ret = setting_items_save(port_mode_nvs_key(port_index),
-                                                port_manager_mode_to_str(mode));
+        esp_err_t save_ret = persist
+            ? setting_items_save(port_mode_nvs_key(port_index),
+                                 port_manager_mode_to_str(mode))
+            : ESP_OK;
         if (save_ret != ESP_OK) {
             ESP_LOGE(TAG, "Port[%u]: Failed to save port mode to NVS: %s",
                      port_index + 1, esp_err_to_name(save_ret));
@@ -494,6 +571,16 @@ esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
 
     pm_unlock(port_index);
     return init_ret;
+}
+
+esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode)
+{
+    return port_set_mode_impl(port_index, mode, true);
+}
+
+esp_err_t port_manager_set_mode_transient(unsigned port_index, pm_mode_t mode)
+{
+    return port_set_mode_impl(port_index, mode, false);
 }
 
 bool port_manager_get_cache(unsigned port_index)
@@ -538,6 +625,17 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     return ret;
 }
 
+void port_manager_set_ports_frozen(bool frozen)
+{
+    __atomic_store_n(&s_ports_frozen, frozen, __ATOMIC_SEQ_CST);
+    ESP_LOGI(TAG, "Ports %s", frozen ? "frozen (factory test active)" : "unfrozen");
+}
+
+bool port_manager_ports_frozen(void)
+{
+    return ports_frozen();
+}
+
 esp_err_t port_manager_apply_settings(unsigned port_index)
 {
     if (port_index >= BRIDGES_COUNT) {
@@ -545,6 +643,20 @@ esp_err_t port_manager_apply_settings(unsigned port_index)
     }
 
     pm_lock(port_index);
+
+    // While the factory test owns the TX/DE pins, never bring a port back up.
+    // Checked INSIDE the lock: read outside it, settings_update_task could see
+    // false, get preempted before pm_lock, and resume after the test has frozen the
+    // ports and started the LEDC — re-initialising the port on top of the running
+    // waveform. Under the lock the test cannot slip in between the check and the
+    // re-init, and a set_mode_transient() waiting on this lock only proceeds once
+    // this apply_settings() is done.
+    if (ports_frozen()) {
+        pm_unlock(port_index);
+        ESP_LOGW(TAG, "Port[%u]: apply_settings skipped, ports frozen by factory test",
+                 port_index + 1);
+        return ESP_OK;
+    }
 
     port_deinit_mode(port_index);
 
@@ -555,12 +667,13 @@ esp_err_t port_manager_apply_settings(unsigned port_index)
     return ret;
 }
 
-bool port_manager_check_settings_changed(unsigned port_index)
+// Compare the running port against NVS. Caller must hold pm_lock(port_index): the
+// runtime mode read here is the same one port_set_mode_impl()/apply_settings()
+// mutate under that lock. Takes no other port_manager lock, and neither
+// bridge_port_check_settings_changed() nor bridge_read_serial_config() re-enters
+// port_manager, so the pm_lock→bridge order matches port_init_mode()'s.
+static bool port_settings_changed_locked(unsigned port_index)
 {
-    if (port_index >= BRIDGES_COUNT) {
-        return false;
-    }
-
     pm_mode_t current_mode = pm_ctx[port_index].mode;
 
     // Always check whether the port mode itself has changed.
@@ -593,6 +706,25 @@ bool port_manager_check_settings_changed(unsigned port_index)
 
     // PM_MODE_DISABLED — nothing to check.
     return false;
+}
+
+bool port_manager_check_settings_changed(unsigned port_index)
+{
+    if (port_index >= BRIDGES_COUNT) {
+        return false;
+    }
+
+    pm_lock(port_index);
+
+    // The factory test holds both ports DISABLED at runtime while NVS still has
+    // the user's mode, so a naive compare would report "changed" for every port
+    // and let any unrelated settings write re-init them mid-test. Report no
+    // change instead; the test restores the ports from NVS when it finishes.
+    // Read under the lock, together with the runtime mode it is guarding.
+    bool changed = ports_frozen() ? false : port_settings_changed_locked(port_index);
+
+    pm_unlock(port_index);
+    return changed;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -681,7 +813,7 @@ static esp_err_t port2_send_handler(httpd_req_t *req)
     return port_send_handler(req, 1);
 }
 
-static esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
+PORT_MANAGER_STATIC esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
 {
     if (!auth_middleware_check(req)) {
         return ESP_OK;
@@ -709,9 +841,32 @@ static esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index)
     }
 
     esp_err_t ret = port_manager_set_mode(port_index, new_mode);
-    if (ret != ESP_OK) {
+    if (ret == PM_ERR_PORTS_FROZEN) {
+        // The factory clock-out test owns the port's TX/DE pins right now, so the
+        // port cannot be reconfigured. 409: the request is fine, the resource state
+        // is not — retry once the test is switched off (POST /wb_test {"clock_out":false}).
+        // Only the dedicated freeze code lands here. ESP_ERR_INVALID_STATE must NOT:
+        // port_init_mode() returns it for an unrelated reason too (a tcp_bridge whose
+        // persisted bridge_mode is invalid/legacy — bridge.c), and answering that with
+        // "the clock_out test is active" would be a false status and a false diagnosis.
         cJSON_Delete(req_json);
-        return json_utils_send_error(req, esp_err_to_name(ret));
+        return json_utils_send_error_status(req, "409 Conflict",
+            "Port mode is locked while the clock_out factory test is active");
+    }
+    if (ret != ESP_OK) {
+        // The request body was fully validated above (the port index comes from the URI
+        // registration, an unknown mode string was already rejected with 400), so any
+        // remaining failure is server-side, not a bad request. Sources: the port refused
+        // to initialise in the requested mode (bridge_port_init() rejecting a tcp_bridge
+        // whose persisted bridge_mode is invalid/legacy, serial_init() failing with
+        // "UART driver already installed", repeater_init_port(), ESP_ERR_NO_MEM), or the
+        // mode was applied but could not be persisted to NVS (persist-6). On an init
+        // failure the port is rolled back to its previous mode (or left disabled if the
+        // rollback failed too); on a persist failure the new mode is live but NVS still
+        // holds the old one. Report 500 and name the real cause — never 400.
+        cJSON_Delete(req_json);
+        return json_utils_send_error_status(req, "500 Internal Server Error",
+                                            esp_err_to_name(ret));
     }
 
     cJSON *resp = cJSON_CreateObject();
@@ -835,5 +990,6 @@ esp_err_t port_manager_register_handlers(httpd_handle_t server)
 void port_manager_reset_for_test(void)
 {
     memset(pm_ctx, 0, sizeof(pm_ctx));
+    __atomic_store_n(&s_ports_frozen, false, __ATOMIC_SEQ_CST);
 }
 #endif /* __unittest_env__ */

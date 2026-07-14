@@ -499,7 +499,7 @@ static bool wait_rtu_send_receive(mb_tcp_task_ctx_t* ctx)
 static void handle_self_device_request(mb_tcp_task_ctx_t *ctx, int client_sock,
                                        uint8_t *tcp_req_buf, size_t tcp_req_len)
 {
-    uint8_t resp[260];
+    uint8_t resp[MODBUS_TCP_MAX_ADU_LEN];
     size_t rlen = mb_device_handle_self_request(tcp_req_buf, tcp_req_len,
                                                 MODBUS_TCP_TASK_STACK_SIZE, resp);
     tcp_server_send(ctx->tcp_desc, client_sock, resp, rlen);

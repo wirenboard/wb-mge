@@ -12,8 +12,8 @@ Wire protocol (matches main/qemu/virtual_io_qemu.c):
         '/': literal separator, always at index 3
         X  : for 'E'/'G' the RAW physical pin level ('0'/'1'); for 'D' the
              direction ('1' OUTPUT, '0' INPUT); for 'V' the violation cause
-             ('0' host wrote an OUTPUT pin, '1' firmware wrote an INPUT pin,
-             '2' operate an UNCONFIGURED pin)
+             ('0' host wrote an OUTPUT pin, '1' firmware configured an
+             input-only pad as an OUTPUT, '2' host operated an UNCONFIGURED pin)
     A single optional trailing '\\n' is tolerated.
 
 Tracked signals:
@@ -24,8 +24,8 @@ Tracked signals:
     G34 (config button input). Each native pin also carries a DIRECTION
     (D<NN>: 1=OUTPUT, 0=INPUT), DERIVED from the firmware's real ESP-IDF gpio
     config (no hardcoded defaults), and may emit a VIOLATION (V<NN>) if a write
-    breaks the model (host driving an OUTPUT, firmware driving an INPUT, or
-    either side operating an UNCONFIGURED pin).
+    breaks the model (host driving an OUTPUT, firmware configuring an input-only
+    pad as an OUTPUT, or the host operating an UNCONFIGURED pin).
 
 Direction of traffic:
     TX (guest -> host): one record per tracked-output change.
@@ -71,8 +71,9 @@ class IoBus:
         events: ordered list of (pin, value) tuples, one per received record.
         violations: ordered list of (gpio_num, cause) tuples (e.g. (4, 0))
             appended whenever a ``V<NN>/<c>`` record arrives. ``c=0`` host wrote
-            an OUTPUT pin; ``c=1`` firmware wrote an INPUT pin; ``c=2`` either side
-            operated an UNCONFIGURED pin. Empty in normal operation.
+            an OUTPUT pin; ``c=1`` firmware configured an input-only pad as an
+            OUTPUT; ``c=2`` the host operated an UNCONFIGURED pin. Empty in
+            normal operation.
     """
 
     HOST = "127.0.0.1"
@@ -112,8 +113,9 @@ class IoBus:
         (violation cause). ``pin`` keeps the type prefix (e.g. "E07", "G34",
         "D04", "V15") and ``value`` is the index-4 digit. For 'E'/'G'/'D' the
         value is strictly 0/1; for 'V' the cause is a single digit (0 host wrote
-        OUTPUT, 1 firmware wrote INPUT, 2 operate uninitialized). Tolerates a
-        single trailing newline. Parsing is positional to match the encoder.
+        OUTPUT, 1 firmware drove an input-only pad, 2 host operated an
+        uninitialized pin). Tolerates a single trailing newline. Parsing is
+        positional to match the encoder.
         """
         if len(data) == RECORD_LEN + 1 and data[RECORD_LEN:RECORD_LEN + 1] == b"\n":
             data = data[:RECORD_LEN]
