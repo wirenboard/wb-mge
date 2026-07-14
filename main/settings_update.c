@@ -89,10 +89,15 @@ esp_err_t settings_update(void)
     //
     // update_io_bus_control() is deliberately NOT gated. The MIO controller shares the
     // RS-485-2 pair, but the test never drives that pair: it toggles only the logic-side
-    // TX (DI) line of port 2 to blink LED2 and leaves that transceiver's DE to the hardware
-    // pulldown, so MIO has the bus to itself and taking it in or out of reset collides with
-    // nothing. Gating it would only mean an io_bus_enabled written during the test never
-    // reached the hardware, since wb_test's exit path does not re-apply it.
+    // TX (DI) line of port 2 to blink LED2, and it holds that transceiver's DE line
+    // (CLK_OUT_DE_PARK_PIN = SERIAL_IO_PIN_2) driven LOW for the whole test. That LOW is
+    // the FIRMWARE's doing, not the hardware's: disabling a port never releases its dir
+    // pin (serial_deinit() does not gpio_reset_pin() it), so the board's weak pulldown
+    // never gets a say — wb_test takes the pin and drives it. With DE low the port-2
+    // driver stays in receive, the RS-485-2 pair is silent, and MIO owns the bus alone, so
+    // taking MIO in or out of reset collides with nothing. Gating it would only mean an
+    // io_bus_enabled written during the test never reached the hardware, since wb_test's
+    // exit path does not re-apply it.
     //
     // The flag is read here without any lock (see the locking contract in port_manager.c):
     // unlike the port re-init below, these calls do not touch pm_ctx, so there is no
