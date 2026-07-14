@@ -153,6 +153,10 @@ static esp_err_t process_request_json(cJSON *request_json)
     if (cmd_item->valueint) {
         if (!clock_out_en) {
             clock_out_en = true;
+            // Freeze the ports first: from here on the runtime mode (DISABLED)
+            // deliberately differs from the mode in NVS, and nothing but this test
+            // may re-init the ports while the LEDC drives their TX/DE pins.
+            port_manager_set_ports_frozen(true);
             // Disable both ports so the LEDC can take over their TX pins, but do NOT
             // persist the DISABLED mode: NVS must keep the user's configured mode so
             // that losing power during the test cannot wipe the port configuration.
@@ -178,8 +182,13 @@ static esp_err_t process_request_json(cJSON *request_json)
         if (clock_out_en) {
             clock_out_en = false;
             stop_clock_out();
+            // The LEDC has released the TX/DE pins, so the ports may be brought up
+            // again: release the freeze before apply_settings, which is a no-op
+            // while the ports are frozen.
+            port_manager_set_ports_frozen(false);
             // The test never touched NVS, so the configured mode is still there:
             // re-read it and re-initialise both ports from the persisted settings.
+            // This also picks up any settings written while the test was running.
             esp_err_t err = port_manager_apply_settings(BRIDGE_PORT_INDEX);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to restore port mode after clock_out: %s", esp_err_to_name(err));

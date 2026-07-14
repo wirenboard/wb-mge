@@ -397,6 +397,128 @@ void test_set_mode_transient_init_fail_rolls_back(void)
         "failed transient switch must not call setting_items_save");
 }
 
+/* ── Factory-test port freeze (clock_out) ──────────────────────────────────
+ *
+ * During the 100 kHz clock_out test both ports are transiently DISABLED while
+ * the LEDC drives their TX/DE pins, but NVS still holds the user's mode. The
+ * freeze flag must stop that runtime/NVS mismatch from letting an unrelated
+ * POST /settings re-init the ports on top of the running waveform.
+ */
+
+/* Put port 0 in the state the factory test leaves it in: configured PASSIVE in
+ * NVS, transiently DISABLED at runtime, ports frozen. */
+static void enter_clock_out_test_on_port0(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+
+    port_manager_set_ports_frozen(true);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode_transient(0, PM_MODE_DISABLED));
+    TEST_ASSERT_EQUAL(PM_MODE_DISABLED, port_manager_get_mode(0));
+}
+
+void test_frozen_check_settings_changed_reports_no_change(void)
+{
+    enter_clock_out_test_on_port0();
+
+    /* Runtime mode is DISABLED while NVS says "passive" — without the freeze
+     * this mismatch alone makes check_settings_changed() return true, which is
+     * what dragged settings_update_task into re-initialising the port. */
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_check_settings_changed(0),
+        "frozen ports must never report changed settings");
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_check_settings_changed(1),
+        "frozen ports must never report changed settings");
+}
+
+void test_frozen_apply_settings_does_not_bring_port_up(void)
+{
+    enter_clock_out_test_on_port0();
+
+    mock_bridge_reset();
+    mock_serial_reset();
+
+    /* This is what settings_update_task would do for a port it thinks changed —
+     * e.g. a settings_update already in flight when the test started. */
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, port_manager_apply_settings(0),
+        "apply_settings on a frozen port must succeed as a no-op");
+
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "apply_settings must not re-init a frozen port");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_serial_only_called,
+        "a frozen port must not re-open its serial port (LEDC owns the TX pin)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_called,
+        "a frozen port must not re-init its bridge");
+}
+
+void test_frozen_ports_do_not_touch_nvs(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+
+    int saves_before = mock_setting_items_save_called;
+
+    port_manager_set_ports_frozen(true);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode_transient(0, PM_MODE_DISABLED));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+
+    /* Losing power at any point of the test must leave the configured mode intact. */
+    TEST_ASSERT_EQUAL_MESSAGE(saves_before, mock_setting_items_save_called,
+        "the factory test must not write to NVS");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_PASSIVE_STR,
+        mock_setting_items_get_port_mode(0),
+        "the factory test must leave the persisted port mode untouched");
+}
+
+void test_unfreeze_restores_mode_from_nvs(void)
+{
+    enter_clock_out_test_on_port0();
+
+    /* Exit path used by wb_test: unfreeze, then re-apply from NVS. */
+    port_manager_set_ports_frozen(false);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "leaving the test must restore the mode persisted in NVS");
+}
+
+void test_unfreeze_picks_up_settings_written_during_test(void)
+{
+    enter_clock_out_test_on_port0();
+
+    /* A POST /settings during the test persists a new mode but must not apply it. */
+    mock_setting_items_set_port_mode(0, PORT_MODE_TCP_BRIDGE_STR);
+    TEST_ASSERT_FALSE(port_manager_check_settings_changed(0));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "a settings write during the test must not raise the port");
+
+    /* On exit the new mode is picked straight out of NVS. */
+    port_manager_set_ports_frozen(false);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_TCP_BRIDGE, port_manager_get_mode(0),
+        "settings written during the test must be applied when it ends");
+}
+
+void test_unfrozen_check_settings_changed_still_detects_mode_change(void)
+{
+    /* Regression guard for the normal (non-test) path: the freeze must not
+     * suppress ordinary settings-driven re-inits. */
+    TEST_ASSERT_FALSE(port_manager_ports_frozen());
+
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_FALSE(port_manager_check_settings_changed(0));
+
+    mock_setting_items_set_port_mode(0, PORT_MODE_TCP_BRIDGE_STR);
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_check_settings_changed(0),
+        "an unfrozen port must still report a mode change");
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_TCP_BRIDGE, port_manager_get_mode(0),
+        "an unfrozen port must still be re-inited by apply_settings");
+}
+
 void test_switch_passive_repeater_disabled(void)
 {
     /* passive -> repeater -> disabled */
@@ -981,6 +1103,13 @@ int port_manager_test(void)
     RUN_TEST(test_set_mode_transient_applies_live_but_does_not_persist);
     RUN_TEST(test_set_mode_transient_restored_from_nvs_on_exit);
     RUN_TEST(test_set_mode_transient_init_fail_rolls_back);
+    /* factory-test port freeze (clock_out) */
+    RUN_TEST(test_frozen_check_settings_changed_reports_no_change);
+    RUN_TEST(test_frozen_apply_settings_does_not_bring_port_up);
+    RUN_TEST(test_frozen_ports_do_not_touch_nvs);
+    RUN_TEST(test_unfreeze_restores_mode_from_nvs);
+    RUN_TEST(test_unfreeze_picks_up_settings_written_during_test);
+    RUN_TEST(test_unfrozen_check_settings_changed_still_detects_mode_change);
     /* U-P1/U-P2/U-P3/U-P4/U-P5/U-P6 — repeater integration */
     RUN_TEST(test_init_brings_up_repeater_from_nvs);
     RUN_TEST(test_init_unknown_nvs_mode_falls_back_to_disabled);
