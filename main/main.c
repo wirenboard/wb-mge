@@ -136,7 +136,23 @@ void app_main(void)
     print_setting_items();
 
     ESP_ERROR_CHECK(network_init());
-    ESP_ERROR_CHECK(http_server_init());
+
+    // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
+    // This device is a Modbus gateway first — routing RS-485/TCP traffic is what it is installed
+    // for, and it does that with no web interface at all. Nothing below needs a running httpd
+    // either: every URI handler is registered inside http_server_init() itself, and
+    // port_manager_init() (the gateway) does not touch it.
+    // An abort() here panics and reboots, and every cause that can make the start fail — too
+    // little heap, no free LWIP socket, a web_port already taken by a bridge gateway, a refused
+    // auth/wifi_scan init — survives the reboot and meets the next boot the same way: a panic
+    // loop that takes the gateway down too, instead of one degraded feature. This matches how a
+    // failed start is handled at runtime in settings_update.c: log it, carry on, leave the web
+    // interface down until the device is power-cycled.
+    esp_err_t http_ret = http_server_init();
+    if (http_ret != ESP_OK) {
+        ESP_LOGE(TAG, "http_server_init failed: %s - continuing without the web interface, "
+                      "the gateway keeps running", esp_err_to_name(http_ret));
+    }
 
     #if (QEMU_BUILD)
         // Bring up the virtual IO state bus after the network is up and BEFORE
