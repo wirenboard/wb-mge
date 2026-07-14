@@ -1736,16 +1736,16 @@ describe('RM-I-15: tcpServeEnabled toggle + save', () => {
 });
 
 /**
- * Verifies that a register row with age > valueTimeout gets the .stale class
+ * Verifies that a register row with age >= valueTimeout gets the .stale class
  * and renders .stale-dot, while a fresh row does not.
  *
- * Stale logic from buildRegsByKey:
- *   stale = valueTimeout > 0 && updatedAge > valueTimeout
+ * Stale logic from buildRegsByKey (mirrors the firmware age_s >= value_timeout_s):
+ *   stale = valueTimeout > 0 && updatedAge >= valueTimeout
  *
  * Setup:
  *   - valueTimeout = 10 s (from makeInfo timeout: 10)
  *   - Entry 1: slave 1, addr 10, age 5  → fresh (5 < 10)
- *   - Entry 2: slave 1, addr 20, age 20 → stale (20 > 10)
+ *   - Entry 2: slave 1, addr 20, age 20 → stale (20 >= 10)
  *
  * Rows are sorted by address ascending: row[0]=addr10 (fresh), row[1]=addr20 (stale).
  */

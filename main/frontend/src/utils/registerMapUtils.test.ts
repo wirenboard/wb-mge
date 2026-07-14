@@ -288,18 +288,41 @@ describe('buildRegsByKey', () => {
     expect(result['1|Holding'][0].stale).toBe(false);
   });
 
-  it('stale=false when updatedAge <= valueTimeout', () => {
-    // age=10; valueTimeout=60; 10 <= 60 → not stale
+  it('stale=false when updatedAge < valueTimeout', () => {
+    // age=10; valueTimeout=60; 10 < 60 → not stale
     const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 10 }];
     const result = buildRegsByKey(entries, 60);
     expect(result['1|Holding'][0].stale).toBe(false);
   });
 
-  it('stale=false when updatedAge exactly equals valueTimeout (strict greater-than condition)', () => {
-    // stale condition is updatedAge > valueTimeout (strict), so equality must not trigger stale
-    // age=60; valueTimeout=60; 60 > 60 is false → stale=false
+  it('stale=true when updatedAge exactly equals valueTimeout (inclusive >= condition)', () => {
+    // stale condition is updatedAge >= valueTimeout, matching the firmware cache lookup:
+    // at age == timeout the gateway already answers with exception 0x0B instead of the value
+    // age=60; valueTimeout=60; 60 >= 60 → stale=true
     const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 60 }];
     const result = buildRegsByKey(entries, 60);
+    expect(result['1|Holding'][0].stale).toBe(true);
+  });
+
+  it('stale=false one second below the boundary (updatedAge = valueTimeout - 1)', () => {
+    // age=59; valueTimeout=60; 59 >= 60 is false → stale=false
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 59 }];
+    const result = buildRegsByKey(entries, 60);
+    expect(result['1|Holding'][0].stale).toBe(false);
+  });
+
+  it('stale=true when updatedAge=65535 and valueTimeout=65535 (saturated age at max timeout)', () => {
+    // age_s saturates at 65535 firmware-side; with a strict > the entry could never go
+    // stale at valueTimeout=65535. Inclusive >= makes the maximum timeout reachable.
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 65535 }];
+    const result = buildRegsByKey(entries, 65535);
+    expect(result['1|Holding'][0].stale).toBe(true);
+  });
+
+  it('stale=false when updatedAge=65535 and valueTimeout=0 (timeout disabled at saturated age)', () => {
+    // valueTimeout=0 disables the check entirely, even for a saturated age_s
+    const entries: CacheEntry[] = [{ s: 1, t: 'h', a: 0, v: 0, age: 65535 }];
+    const result = buildRegsByKey(entries, 0);
     expect(result['1|Holding'][0].stale).toBe(false);
   });
 
