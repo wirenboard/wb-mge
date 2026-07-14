@@ -219,8 +219,7 @@ esp_err_t bridge_port_init(unsigned index)
         // refuse to half-initialize. Returning an error (instead of the old
         // ESP_OK with initialized=false) lets port_manager_set_mode() roll the port
         // back rather than leave a zombie tcp_bridge that reports active but isn't.
-        ESP_LOGE(TAG, "Port[%d]: tcp_bridge requires a valid server/client bridge_mode, "
-                      "but an invalid/legacy value was found; refusing to initialize",
+        ESP_LOGE(TAG, "Port[%d]: invalid/legacy bridge_mode for tcp_bridge; refusing to init",
                  bridge_current_cfg[index].serial_config.port_num);
         return ESP_ERR_INVALID_STATE;
     }
