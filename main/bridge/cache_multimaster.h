@@ -112,7 +112,8 @@ void cache_multimaster_clear_pending(uint8_t port);
  *  - GET  /cache/csv      — download cache as CSV (columns: slave_id,type,address,value,age_s)
  *  - GET  /cache/json     — stream cache as a JSON object (for UI polling):
  *                           {"d":[{"s":3,"t":"h","a":100,"v":1234,"age":42},...]}
- *                           age – seconds since last update, saturates at 65535 (~18 h)
+ *                           age – seconds since last update; computed from a 16-bit
+ *                           uptime stamp, valid within a ~18.2 h window
  *
  * Port mode control (enable/disable cache_bus) is handled exclusively via
  * POST /ports/N/mode through port_manager — not through cache endpoints.

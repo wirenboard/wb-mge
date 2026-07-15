@@ -22,7 +22,6 @@ void cache_multimaster_test_reset(void);
 bool cache_multimaster_test_get_pending_valid(uint8_t port);
 bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_code,
                                            uint16_t address, uint16_t age_s_val);
-void cache_multimaster_test_tick_age(void);
 uint32_t cache_multimaster_test_get_entries_dropped(void);
 void cache_multimaster_test_bump_generation(void);
 
@@ -124,8 +123,7 @@ void test_cache_multimaster_init_oom(void)
 
 /* Verify that cache_multimaster_enable() after a successful init:
  *   - sets cache_multimaster_is_enabled() to true
- *   - allocates the pool via test_malloc (1 alloc, 0 frees)
- *   - creates the aging task via xTaskCreate exactly once */
+ *   - allocates the pool via test_malloc (1 alloc, 0 frees) */
 void test_cache_multimaster_enable_happy_path(void)
 {
     LOG_MESSAGE();
@@ -151,13 +149,6 @@ void test_cache_multimaster_enable_happy_path(void)
 
     /* Assert: pool was allocated exactly once via test_malloc, never freed */
     verify_malloc_tracking(1, 0);
-
-    /* Assert: aging task created exactly once */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        1,
-        mock_xTaskCreate_data.called,
-        "xTaskCreate should be called exactly once to start the aging task"
-    );
 
     /* Assert: mutex is balanced — every take must have a matching give */
     TEST_ASSERT_EQUAL_INT_MESSAGE(
@@ -214,7 +205,6 @@ void test_cache_multimaster_enable_oom(void)
 
 /* Verify that calling cache_multimaster_enable() twice:
  *   - allocates memory only once (pool already exists on second call)
- *   - creates the aging task only once (task already exists on second call)
  *   - clears the pool on each call (memset to 0), so a previously cached entry
  *     becomes NOT_FOUND after the second enable
  *   - resets stats on each call
@@ -259,7 +249,7 @@ void test_cache_multimaster_enable_twice(void)
         "Entry must be FOUND after first enable and store"
     );
 
-    /* Second enable: pool is NOT re-allocated (reuses existing), task is NOT re-created,
+    /* Second enable: pool is NOT re-allocated (reuses existing),
      * but pool IS cleared via memset(s_pool, 0, ...) */
     cache_multimaster_enable();
 
@@ -279,13 +269,6 @@ void test_cache_multimaster_enable_twice(void)
         "Mutex give count must equal take count after two enable() calls"
     );
 
-    /* Assert: xTaskCreate called only once (task not re-created on second enable) */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        1,
-        mock_xTaskCreate_data.called,
-        "xTaskCreate should be called only once even after two enable() calls"
-    );
-
     /* Assert: pool was cleared — the previously cached entry must now be NOT_FOUND */
     val = 0xDEAD;
     r = cache_multimaster_lookup(10, 3, 0, &val, 0);
@@ -300,8 +283,7 @@ void test_cache_multimaster_enable_twice(void)
 
 /* Verify that cache_multimaster_disable() after enable():
  *   - sets cache_multimaster_is_enabled() to false
- *   - deletes the aging task via vTaskDelete exactly once
- *   - frees the pool (re-enable afterwards triggers a new xTaskCreate, call count == 2) */
+ *   - frees the pool (re-enable afterwards re-allocates it: 2 allocs, 1 free) */
 void test_cache_multimaster_disable(void)
 {
     LOG_MESSAGE();
@@ -325,25 +307,12 @@ void test_cache_multimaster_disable(void)
         "cache_multimaster_is_enabled() should return false after disable()"
     );
 
-    /* Assert: aging task deleted exactly once */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        1,
-        mock_vTaskDelete_data.called,
-        "vTaskDelete should be called exactly once to stop the aging task"
-    );
-
-    /* Assert: re-enable creates a new task (total xTaskCreate calls == 2),
-     * which proves the pool was freed and re-allocated on the second enable.
-     * Also verify directly: 2 allocations total, 1 freed (by disable). */
+    /* Assert: re-enable re-allocates the pool, which proves disable() freed it:
+     * 2 allocations total, 1 freed (by disable). */
     cache_multimaster_enable();
     TEST_ASSERT_TRUE_MESSAGE(
         cache_multimaster_is_enabled(),
         "cache should be re-enabled after second enable()"
-    );
-    TEST_ASSERT_EQUAL_INT_MESSAGE(
-        2,
-        mock_xTaskCreate_data.called,
-        "xTaskCreate should be called a second time after re-enable (pool was freed)"
     );
     verify_malloc_tracking(2, 1);
 }
@@ -528,7 +497,6 @@ void test_cache_multimaster_on_response_oob_port_boundary(void)
     cache_multimaster_init();
     cache_multimaster_enable();
     TEST_ASSERT_TRUE_MESSAGE(cache_multimaster_is_enabled(), "cache must be enabled");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xTaskCreate_data.called, "aging task created once");
 
     uint8_t data[] = { 5, 0x03, 4, 0x00, 0x01, 0x00, 0x02 };
     cache_multimaster_on_response(BRIDGES_COUNT, 5, 3, data, sizeof(data), 0);
@@ -537,10 +505,6 @@ void test_cache_multimaster_on_response_oob_port_boundary(void)
     TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_test_get_pending_valid(1), "OOB must not affect s_pending[1]");
 
     cache_multimaster_disable();
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_vTaskDelete_data.called, "aging task deleted once");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE((TaskHandle_t)0xCCCCCCCC, mock_vTaskDelete_data.xTaskToDelete,
-        "s_age_task must be intact: on_response(port==BRIDGES_COUNT) must not write OOB");
 }
 
 /* ---- CM-U-048: on_response() minimum data_len boundary (data_len < 4) ----- */
@@ -733,7 +697,7 @@ void test_cache_multimaster_on_response_fc03_correct(void)
  * (port, slave_id, function) alone (an RTU response carries no start address),
  * so a reply that does not belong to this request can be matched to it. If the
  * mismatched prefix were stored, another register's values would be filed under
- * OUR addresses with age_s = 0 — wrong values, marked fresh. */
+ * OUR addresses and stamped fresh — wrong values, marked current. */
 void test_cache_multimaster_on_response_truncated_fc03(void)
 {
     LOG_MESSAGE();
@@ -808,7 +772,7 @@ void test_cache_multimaster_on_response_truncated_fc03(void)
  * the wire is the answer to somebody's 10-register read at address 200. Under
  * the old "clamp count to what fits" rule, the first 2 registers of THAT read
  * (0xDEAD, 0xBEEF — the values of registers 200 and 201) were written to
- * addresses 100 and 101 with age_s = 0: wrong values, presented as fresh.
+ * addresses 100 and 101 and stamped fresh: wrong values, presented as current.
  *
  * The byte_count check catches it: an answer to "read 2 registers" declares 4
  * data bytes, and this frame declares 20. It is not our answer — drop it. */
@@ -1164,7 +1128,8 @@ void test_cache_multimaster_lookup_timeout_zero(void)
     };
     cache_multimaster_on_response(0, 20, 3, data, sizeof(data), 0);
 
-    /* Set age_s to the maximum (65535) to ensure an age check would fail */
+    /* Back-date the stamp so the entry reads at the top of the ~18.2 h window
+     * (age 65535) — an age check would fail for any non-zero timeout */
     bool set_ok = cache_multimaster_test_set_entry_age(20, 3, 0, 65535);
     TEST_ASSERT_TRUE_MESSAGE(set_ok, "cache_multimaster_test_set_entry_age must return true");
 
@@ -1172,7 +1137,7 @@ void test_cache_multimaster_lookup_timeout_zero(void)
     uint16_t val = 0;
     cache_lookup_result_t r = cache_multimaster_lookup(20, 3, 0, &val, 0);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "lookup with timeout=0 should return FOUND even when age_s is at maximum");
+        "lookup with timeout=0 should return FOUND even when the age is at the window edge");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x1234, val,
         "value should be 0x1234");
 }
@@ -1219,9 +1184,9 @@ void test_cache_multimaster_lookup_age_check(void)
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xBEEF, val,
         "value should be 0xBEEF");
 
-    /* Exact boundary case: age_s == timeout must return STALE. The check is >=,
-     * not >, so that a timeout equal to the age saturation cap (65535) can still
-     * fire — see CM-U-021b. */
+    /* Exact boundary case: age == timeout must return STALE. The check is >=,
+     * not >, so that a timeout equal to the top of the ~18.2 h age window (65535)
+     * can still fire — see CM-U-021b. */
     r = cache_multimaster_lookup(22, 3, 0, &val, 100);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
         "age_s == value_timeout_s must return STALE (check is >=, not >)");
@@ -1232,9 +1197,9 @@ void test_cache_multimaster_lookup_age_check(void)
         "age_s < value_timeout_s must return FOUND");
 }
 
-/* ---- CM-U-021b: lookup() — timeout at the age saturation cap ------------- */
+/* ---- CM-U-021b: lookup() — timeout at the top of the age window --------- */
 
-/* age_s saturates at CACHE_AGE_MAX_S (65535) and can never exceed it. With a
+/* The derived age reaches at most 65535 within the valid ~18.2 h window. With a
  * strict > comparison an entry whose value_timeout_s is 65535 would therefore
  * never be reported STALE, no matter how old it got — the staleness check would
  * be silently dead at the top of its range. The >= comparison must fire. */
@@ -1242,7 +1207,7 @@ void test_cache_multimaster_lookup_timeout_at_saturation_cap(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "CM-U-021b: timeout == age saturation cap (65535) must still report STALE");
+        "CM-U-021b: timeout == top of the age window (65535) must still report STALE");
     LOG_MESSAGE();
 
     cache_multimaster_init();
@@ -1252,23 +1217,22 @@ void test_cache_multimaster_lookup_timeout_at_saturation_cap(void)
     uint8_t data[] = { 26, 0x03, 2, 0xCA, 0xFE };
     cache_multimaster_on_response(0, 26, 3, data, sizeof(data), 0);
 
-    /* Drive the entry to the saturation cap — the oldest age it can ever reach */
+    /* Back-date the stamp to age 65535 — the top of the valid ~18.2 h window */
     bool set_ok = cache_multimaster_test_set_entry_age(26, 3, 0, 65535);
     TEST_ASSERT_TRUE_MESSAGE(set_ok, "cache_multimaster_test_set_entry_age must return true");
 
     uint16_t val = 0;
     cache_lookup_result_t r = cache_multimaster_lookup(26, 3, 0, &val, 65535);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
-        "a fully saturated entry (age_s=65535) with timeout=65535 must be STALE, not FOUND");
+        "an entry at age 65535 with timeout=65535 must be STALE, not FOUND");
 }
 
-/* ---- CM-U-021: lookup() — age saturation boundary near CACHE_AGE_MAX_S -- */
+/* ---- CM-U-021: lookup() — age boundary near the top of the window ------- */
 
-/* Verify that the saturating age counter approach works correctly near the
- * maximum boundary (65535), proving there is no wrap-around problem.
- * Also verifies the foundational invariant: on_response() always resets age_s
- * to 0, so a fresh store never inherits a saturated age value. This is the
- * key property that prevents the wrap-around defect. */
+/* Verify that the >= staleness comparison behaves correctly near the top of the
+ * valid ~18.2 h age window (65535). Also verifies the foundational invariant:
+ * on_response() re-stamps the entry with the current time, so a fresh store
+ * always reads back at age 0, never inheriting the old, near-window-edge age. */
 void test_cache_multimaster_lookup_age_saturation_boundary(void)
 {
     LOG_MESSAGE();
@@ -1289,7 +1253,7 @@ void test_cache_multimaster_lookup_age_saturation_boundary(void)
     };
     cache_multimaster_on_response(0, 24, 3, data, sizeof(data), 0);
 
-    /* Set age_s to 65500 (near saturation limit 65535) */
+    /* Back-date the stamp to age 65500 (near the window top of 65535) */
     bool set_ok = cache_multimaster_test_set_entry_age(24, 3, 0, 65500);
     TEST_ASSERT_TRUE_MESSAGE(set_ok, "cache_multimaster_test_set_entry_age must return true");
 
@@ -1307,29 +1271,28 @@ void test_cache_multimaster_lookup_age_saturation_boundary(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
         "lookup with timeout=65499 should return STALE when age_s=65500");
 
-    /* Fully saturated age against the maximum timeout. age_s never grows past
-     * CACHE_AGE_MAX_S (65535), so a strict > could never fire here and the entry
-     * would be served as fresh forever; the >= comparison expires it. */
+    /* Age at the top of the window against the maximum timeout. The derived age
+     * reaches at most 65535 within the valid window, so a strict > could never
+     * fire here and the entry would be served as fresh forever; >= expires it. */
     set_ok = cache_multimaster_test_set_entry_age(24, 3, 0, 65535);
     TEST_ASSERT_TRUE_MESSAGE(set_ok, "cache_multimaster_test_set_entry_age must return true");
     val = 0;
     r = cache_multimaster_lookup(24, 3, 0, &val, 65535);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
-        "saturated age_s=65535 with timeout=65535 must return STALE");
+        "age 65535 with timeout=65535 must return STALE");
 
-    /* Verify the foundational invariant: on_response() always resets age_s to 0.
-     * This proves there is no wrap-around: a fresh store always starts at age 0,
-     * never at a value inherited from before the saturation. */
+    /* Verify the foundational invariant: on_response() re-stamps with the current
+     * time, so a fresh store reads back at age 0 regardless of the entry's old age. */
     cache_multimaster_on_request(0, 24, 3, 0, 1);  /* same slave, FC, addr, count as above */
-    cache_multimaster_on_response(0, 24, 3, data, sizeof(data), 0); /* store again: age_s reset to 0 */
+    cache_multimaster_on_response(0, 24, 3, data, sizeof(data), 0); /* store again: re-stamped, age 0 */
 
-    /* After re-storing, age_s is reset to 0 by on_response().
+    /* After re-storing, the entry reads at age 0 (re-stamped by on_response).
      * Use timeout=1 (not 0): this exercises the real age comparison path and proves
-     * age_s was truly reset — 0 > 1 is false → FOUND (not the timeout=0 bypass). */
+     * the re-stamp took effect — 0 >= 1 is false → FOUND (not the timeout=0 bypass). */
     val = 0;
-    r = cache_multimaster_lookup(24, 3, 0, &val, 1); /* timeout=1: age_s=0 ≤ 1 → FOUND */
+    r = cache_multimaster_lookup(24, 3, 0, &val, 1); /* timeout=1: age 0 < 1 → FOUND */
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
-        "re-storing a saturated entry must reset age_s to 0 → FOUND with timeout=1");
+        "re-storing an old entry re-stamps it to age 0 → FOUND with timeout=1");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x4321, val, "value must still be 0x4321 after re-store");
 }
 
@@ -1973,17 +1936,17 @@ void test_cache_multimaster_on_request_pending_overwrite(void)
 /* ---- CM-U-034: disable without prior enable does not crash ---------------- */
 
 /* Verify the NULL guards in disable() prevent a crash when called before any
- * enable() — s_pool is NULL, s_age_task is NULL, nothing to free or delete. */
+ * enable() — s_pool is NULL, nothing to free. */
 void test_cache_multimaster_disable_without_enable(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-034: disable without prior enable does not crash");
     LOG_MESSAGE();
 
-    /* Pre-condition: init only (no enable) — s_pool and s_age_task remain NULL */
+    /* Pre-condition: init only (no enable) — s_pool remains NULL */
     cache_multimaster_init();
 
-    /* Act: must not crash with NULL pool and NULL task handle */
+    /* Act: must not crash with NULL pool */
     cache_multimaster_disable();
 
     /* Cache must report disabled */
@@ -1996,21 +1959,32 @@ void test_cache_multimaster_disable_without_enable(void)
     verify_malloc_tracking(0, 0);
 }
 
-/* ---- CM-U-035: cache_age_task saturation — age_s must not exceed CACHE_AGE_MAX_S -- */
+/* ---- CM-U-035: age is derived from a uint16 uptime stamp -------------------- */
 
-/* Verify that calling cache_multimaster_test_tick_age() when age_s is already at
- * CACHE_AGE_MAX_S (65535) does not increment further (no wrap to 0). */
+/* Verify that entry age is computed lazily from the store stamp against the
+ * (mocked) uptime clock: a stored entry starts at age 0, test_set_entry_age()
+ * back-dates the stamp to a given age, and advancing the mock clock by N seconds
+ * grows the observed age by exactly N. Boundary lookups (timeout==age → STALE,
+ * timeout==age+1 → FOUND) pin the exact age at each step.
+ *
+ * NOTE on the wrap compromise: age = (uint16_t)(now16 - stamp_s) wraps once the
+ * elapsed time reaches 65536 s (~18.2 h), briefly making a very old entry look
+ * fresh again. This is the accepted trade-off for a per-entry uint16 stamp with
+ * no background aging task (review T52/T53). */
 void test_cache_multimaster_age_saturation(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-035: age saturation — age_s must not exceed CACHE_AGE_MAX_S");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-035: age derived from a uint16 uptime stamp");
     LOG_MESSAGE();
+
+    /* Pin the clock at 100 s so every stamp/age computation is deterministic. */
+    mock_esp_timer_get_time_value = 100000000; /* 100 s */
 
     /* Pre-condition: init + enable */
     cache_multimaster_init();
     cache_multimaster_enable();
 
-    /* Store an entry: slave 50, FC03, address 0, value 0xFFFF */
+    /* Store an entry: slave 50, FC03, address 0, value 0xFFFF — stamped at now=100 s. */
     cache_multimaster_on_request(0, 50, 3, 0, 1);
     uint8_t data[] = {
         50,             /* [0] slave_id */
@@ -2020,46 +1994,51 @@ void test_cache_multimaster_age_saturation(void)
     };
     cache_multimaster_on_response(0, 50, 3, data, sizeof(data), 0);
 
-    /* Force age_s to CACHE_AGE_MAX_S (65535) — the saturation limit */
-    bool set_ok = cache_multimaster_test_set_entry_age(50, 3, 0, 65535);
+    /* Freshly stored → age 0: lookup with timeout=1 is FOUND (0 >= 1 is false). */
+    uint16_t val = 0;
+    cache_lookup_result_t r = cache_multimaster_lookup(50, 3, 0, &val, 1);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "a freshly stored entry has age 0 → FOUND with timeout=1");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, val, "value must be 0xFFFF");
+
+    /* Back-date the stamp so the entry reads with age 10 at the current clock. */
+    bool set_ok = cache_multimaster_test_set_entry_age(50, 3, 0, 10);
     TEST_ASSERT_TRUE_MESSAGE(set_ok,
         "cache_multimaster_test_set_entry_age must find the entry");
 
-    /* Verify the entry is stale with timeout=65534 (age 65535 > 65534) */
-    uint16_t val = 0;
-    cache_lookup_result_t r = cache_multimaster_lookup(50, 3, 0, &val, 65534);
+    /* Pin age == 10: timeout=10 → STALE (10 >= 10), timeout=11 → FOUND (10 < 11). */
+    r = cache_multimaster_lookup(50, 3, 0, &val, 5);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
-        "Entry with age_s=65535 and timeout=65534 must be STALE");
-
-    /* Perform one aging tick — age_s is already at CACHE_AGE_MAX_S, must not increment.
-     * Use timeout=65534: if saturation works (age_s stayed 65535): 65535>65534 → STALE.
-     * If wrap-around occurred (age_s became 0): 0>65534 → FOUND. Only STALE is correct. */
-    cache_multimaster_test_tick_age();
-
-    val = 0;
-    r = cache_multimaster_lookup(50, 3, 0, &val, 65534);
+        "age 10 with timeout=5 must be STALE");
+    r = cache_multimaster_lookup(50, 3, 0, &val, 20);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "age 10 with timeout=20 must be FOUND");
+    r = cache_multimaster_lookup(50, 3, 0, &val, 10);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
-        "After tick at saturation, age_s must still be 65535 → STALE with timeout=65534 (not wrapped to 0)");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, val,
-        "Value must be intact after saturation tick");
+        "age 10 with timeout=10 must be STALE (check is >=)");
+    r = cache_multimaster_lookup(50, 3, 0, &val, 11);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "age 10 with timeout=11 must be FOUND — pins age at exactly 10");
 
-    /* Definitive saturation check: perform another tick, age_s must remain 65535.
-     * Verify by checking that with timeout=65534 result is still STALE (age > timeout),
-     * not FOUND (which would mean age was reset to 0 by wrap-around). */
-    cache_multimaster_test_tick_age();
-    val = 0;
-    r = cache_multimaster_lookup(50, 3, 0, &val, 65534);
+    /* Advance the mock clock by 30 s: the derived age must grow by exactly 30
+     * (10 → 40) without any background task ticking it. */
+    mock_esp_timer_get_time_value += 30 * 1000000; /* now = 130 s */
+
+    /* Pin age == 40: timeout=40 → STALE, timeout=41 → FOUND. */
+    r = cache_multimaster_lookup(50, 3, 0, &val, 40);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_STALE, r,
-        "After second tick at saturation, age_s must still be 65535 — NOT wrapped to 0");
-    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, val,
-        "Value must remain 0xFFFF — saturation did not corrupt the entry");
+        "after +30 s the age is 40 → STALE with timeout=40 (check is >=)");
+    r = cache_multimaster_lookup(50, 3, 0, &val, 41);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND, r,
+        "after +30 s the age is 40 → FOUND with timeout=41 — pins the +30 growth");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xFFFF, val, "value must remain 0xFFFF");
 
     /* Verify no extra allocations were made and mutex is balanced */
     verify_malloc_tracking(1, 0);
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         mock_xSemaphoreGive_called,
         mock_xSemaphoreTake_called,
-        "Mutex must be balanced after CM-U-035 — tick_age and lookup calls are symmetric");
+        "Mutex must be balanced after CM-U-035 — lookup calls are symmetric");
 }
 
 /* ---- CM-U-036: cache_status_handler — disabled, empty pool --------------- */
@@ -2410,7 +2389,7 @@ void test_cache_json_handler_one_entry(void)
     /* Store: slave=7, FC03, addr=50, val=0x1234 (decimal 4660) */
     cache_multimaster_on_request(0, 7, 3, 50, 1);
     uint8_t data[] = { 7, 0x03, 2, 0x12, 0x34 };
-    /* on_response() resets age_s to 0 for new entries — no timer manipulation needed */
+    /* on_response() stamps new entries at the current time (age 0) — no timer manipulation needed */
     cache_multimaster_on_response(0, 7, 3, data, sizeof(data), 0);
 
     httpd_req_t req = {0};
@@ -2959,50 +2938,6 @@ void test_cache_multimaster_pool_full_drop_counter_and_status(void)
         "status JSON must still report a full pool of 4096 entries");
 }
 
-/* ---- CM-U-060: age-task creation failure aborts enable ------------------- */
-
-/* mem-exhaust-2: if xTaskCreate(cache_age_task) fails, age_s never increments,
- * so the lookup staleness check can never fire and stale values would be served
- * as fresh forever. enable() must therefore roll back: free the pool, leave the
- * cache disabled (callers fall back to live polling) and not leak the pool. */
-void test_cache_multimaster_enable_age_task_fail_aborts(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "CM-U-060: age-task creation failure aborts enable");
-    LOG_MESSAGE();
-
-    TEST_ASSERT_EQUAL_INT(ESP_OK, cache_multimaster_init());
-
-    /* Force the aging-task creation to fail */
-    mock_xTaskCreate_data.should_fail = true;
-
-    cache_multimaster_enable();
-
-    /* Cache must stay disabled — never run without an aging task */
-    TEST_ASSERT_FALSE_MESSAGE(cache_multimaster_is_enabled(),
-        "enable() must not enable the cache when the aging task cannot be created");
-
-    /* xTaskCreate was attempted exactly once */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xTaskCreate_data.called,
-        "aging task creation must have been attempted once");
-
-    /* The pool must have been allocated and then freed — no leak */
-    verify_malloc_tracking(1, 1);
-
-    /* Mutex balanced — no leak on the rollback path */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(mock_xSemaphoreTake_called, mock_xSemaphoreGive_called,
-        "Mutex give count must equal take count on the abort path");
-
-    /* Cache is inert: a would-be response stores nothing (pool freed) */
-    cache_multimaster_on_request(0, 1, 3, 0, 1);
-    uint8_t data[] = { 1, 0x03, 2, 0xAB, 0xCD };
-    cache_multimaster_on_response(0, 1, 3, data, sizeof(data), 0);
-    uint16_t val = 0;
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
-        cache_multimaster_lookup(1, 3, 0, &val, 0),
-        "no data may be cached after an aborted enable");
-}
-
 /* ---- CM-U-061: clear_pending stops stale request matching a later response - */
 
 /* corr-7: after a request whose transaction ends WITHOUT a cacheable response
@@ -3280,7 +3215,6 @@ int main(void)
     RUN_TEST(test_cache_multimaster_on_response_fc01_addr_wrap_no_poison);
     RUN_TEST(test_cache_multimaster_on_response_addr_wrap_exact_boundary);
     RUN_TEST(test_cache_multimaster_pool_full_drop_counter_and_status);
-    RUN_TEST(test_cache_multimaster_enable_age_task_fail_aborts);
     RUN_TEST(test_cache_multimaster_clear_pending_blocks_stale_match);
     RUN_TEST(test_cache_multimaster_clear_pending_oob_port);
     RUN_TEST(test_cache_multimaster_on_response_fc01_no_phantom_coils);

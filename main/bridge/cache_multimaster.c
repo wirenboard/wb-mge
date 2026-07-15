@@ -12,7 +12,6 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/task.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -43,21 +42,29 @@ static const char *TAG = "cache_mm";
 #define CACHE_TYPE_MASK      0x07u  /* bits 2:0 of cache_entry_t.type = Modbus FC */
 #define CACHE_USED_BIT       0x80u
 
-/* Saturating cap for age_s counter: ~18.2 hours in seconds */
-#define CACHE_AGE_MAX_S  65535u
-
 /* One flat pool entry — 8 bytes, no padding, naturally aligned. */
 typedef struct {
     uint8_t  slave_id;      /* Modbus slave address (0x00..0xFE)              */
     uint8_t  type;          /* bit7=used, bits2:0=Modbus FC (see above)       */
     uint16_t address;       /* register or coil address (0-based)             */
     uint16_t value;         /* last known value (0 or 1 for coils)            */
-    uint16_t age_s;         /* seconds since last update; saturates at CACHE_AGE_MAX_S */
+    uint16_t stamp_s;       /* low 16 bits of uptime seconds when this value was last
+                             * cached; age = (uint16_t)(now16 - stamp_s), valid for
+                             * elapsed < 65536 s (~18.2 h) */
 } cache_entry_t;
 
 /* The 32 KB pool budget (CACHE_MAX_ENTRIES x 8) and the memory_bytes figure
  * reported by /cache/status are both computed from this size. */
 _Static_assert(sizeof(cache_entry_t) == 8, "cache_entry_t must stay 8 bytes");
+
+/* Low 16 bits of the uptime clock in seconds. Entry age is derived lazily as
+ * (uint16_t)(cache_now_s16() - stamp_s): the unsigned subtraction wraps on its
+ * own and yields the correct elapsed time as long as less than 65536 s (~18.2 h)
+ * have passed since the value was stamped. */
+static inline uint16_t cache_now_s16(void)
+{
+    return (uint16_t)(esp_timer_get_time() / 1000000);
+}
 
 /** Saved context from a master request, per port */
 typedef struct {
@@ -93,7 +100,6 @@ static cache_entry_t    *s_pool              = NULL;
 static volatile bool     s_cache_enabled = false;
 static SemaphoreHandle_t s_cache_mutex   = NULL;
 static pending_req_t     s_pending[BRIDGES_COUNT];
-static TaskHandle_t      s_age_task      = NULL; /* handle for cache_age_task, NULL when stopped */
 
 /* Statistics counters — reset on cache_multimaster_clear() */
 static volatile uint32_t s_packets_processed = 0; /* total response packets stored since last clear */
@@ -186,7 +192,7 @@ static cache_entry_t *find_or_alloc_entry(uint8_t slave_id,
             e->slave_id = slave_id;
             e->address  = address;
             e->value    = 0;
-            e->age_s    = 0;
+            e->stamp_s  = cache_now_s16();
             return e;
         }
 
@@ -238,40 +244,6 @@ static void cache_count_entries_and_devices(int *entries_out, int *devices_out)
 }
 
 
-/* ---- Background aging task ----------------------------------------------- */
-
-/* Increment age_s for every used pool entry by one second.
- * age_s saturates at CACHE_AGE_MAX_S and is never incremented beyond that.
- * Caller must hold s_cache_mutex. */
-static void cache_age_tick_pool(void)
-{
-    if (s_pool == NULL) {
-        return;
-    }
-    for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
-        if ((s_pool[i].type & CACHE_USED_BIT) &&
-            s_pool[i].age_s < CACHE_AGE_MAX_S) {
-            s_pool[i].age_s++;
-        }
-    }
-}
-
-/* Background task: increment age_s for every used cache entry once per second.
- * age_s saturates at CACHE_AGE_MAX_S and is never incremented beyond that. */
-static void cache_age_task(void *arg)
-{
-    (void)arg;
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        if (s_cache_mutex == NULL) {
-            continue;
-        }
-        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-        cache_age_tick_pool();
-        xSemaphoreGive(s_cache_mutex);
-    }
-}
-
 /* ---- Public API ---------------------------------------------------------- */
 
 esp_err_t cache_multimaster_init(void)
@@ -322,32 +294,6 @@ void cache_multimaster_enable(void)
     s_last_packet_us    = 0;
     s_entries_dropped   = 0;
 
-    /* Start the aging task under the mutex to prevent concurrent enables from
-     * creating duplicate tasks (TOCTOU on s_age_task == NULL check). */
-    if (s_age_task == NULL) {
-        BaseType_t rc = xTaskCreate(cache_age_task, "cache_age", 2048,
-                                    NULL, tskIDLE_PRIORITY + 1, &s_age_task);
-        if (rc != pdPASS) {
-            /* Without the aging task age_s never increments, so the lookup
-             * staleness check (age_s >= timeout) can never fire and stale values
-             * would be served as fresh forever (mem-exhaust-2). Refuse to enable
-             * a cache that cannot expire its data: roll back the pool allocation
-             * and leave the cache disabled so callers fall back to live polling. */
-            ESP_LOGE(TAG, "Failed to create cache_age_task (err %d) — aborting cache enable", rc);
-            s_age_task = NULL; /* xTaskCreate does not clear the handle on failure */
-#ifdef __unittest_env__
-            test_free(s_pool);
-#else
-            free(s_pool);
-#endif
-            s_pool = NULL;
-            s_pool_generation++;  /* pool freed on rollback — keep the invariant */
-            xSemaphoreGive(s_cache_mutex);
-            s_cache_enabled = false;
-            return;
-        }
-    }
-
     /* Reset pending request state for all ports before re-activating the
      * sniffer. Done under the mutex because on_request/on_response access
      * s_pending from the sniffer task (corr-5). */
@@ -366,19 +312,6 @@ void cache_multimaster_disable(void)
      * down — s_cache_enabled is volatile, visible immediately. */
     s_cache_enabled = false;
 
-    /* Take the mutex before deleting the aging task to guarantee it is not
-     * inside its critical section when deleted — prevents a mutex leak that
-     * would cause cache_multimaster_clear() to deadlock. */
-    if (s_cache_mutex != NULL) {
-        xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-    }
-    if (s_age_task != NULL) {
-        vTaskDelete(s_age_task);
-        s_age_task = NULL;
-    }
-    if (s_cache_mutex != NULL) {
-        xSemaphoreGive(s_cache_mutex);
-    }
     /* clear() zeros the pool and resets stats under the mutex */
     cache_multimaster_clear();
     /* Free heap pool under the mutex to prevent a race with HTTP handlers */
@@ -532,8 +465,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
      * else to bind them with. That binding is therefore weak — a late reply, a
      * duplicated slave address on the bus, or a corrupt frame that still passes
      * CRC can all be matched to a request they do not answer. Whatever such a
-     * response carries would then be filed under OUR start_addr with age_s = 0,
-     * i.e. another register's values presented as our own, fresh.
+     * response carries would then be filed under OUR start_addr and stamped with
+     * the current time, i.e. another register's values presented as our own, fresh.
      *
      * The binding cannot be strengthened, but a reply whose SHAPE does not match
      * the request can be refused: a genuine answer to "read N registers" always
@@ -573,6 +506,9 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         uint16_t dropped = 0;
 
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+        /* One clock read for the whole response: all cells arrive together, so a
+         * single stamp keeps the critical section short (all get the same age). */
+        const uint16_t stamp_s = cache_now_s16();
         for (uint16_t i = 0; i < count; i++) {
             uint16_t addr  = start_addr + i;
             uint16_t value = ((uint16_t)data[3 + i * 2] << 8) | data[3 + i * 2 + 1];
@@ -591,8 +527,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
                 }
                 break;
             }
-            e->value  = value;
-            e->age_s  = 0;  /* reset age on every new value received */
+            e->value   = value;
+            e->stamp_s = stamp_s;  /* one timestamp for the whole response */
         }
         /* Update stats inside the mutex: s_last_packet_us is uint64_t and is
          * NOT atomically writable on Xtensa without a lock; s_packets_processed
@@ -631,13 +567,15 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
         /* count is NOT widened to byte_count*8: the last data byte is padded with
          * zero bits up to the byte boundary, and those padding bits are not coils.
          * Storing them would invent up to 7 phantom coils per response, reported
-         * as real values with age_s = 0. Only the count the master asked for is
+         * as real values stamped fresh. Only the count the master asked for is
          * stored. */
 
         /* Logged after the mutex is released — see the register branch. */
         uint16_t dropped = 0;
 
         xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+        /* One clock read for the whole response — see the register branch. */
+        const uint16_t stamp_s = cache_now_s16();
         for (uint16_t i = 0; i < count; i++) {
             uint16_t addr  = start_addr + i;
             uint16_t value = (data[3 + i / 8] >> (i % 8)) & 1u;
@@ -650,8 +588,8 @@ void cache_multimaster_on_response(uint8_t port, uint8_t slave_id, uint8_t funct
                 }
                 break;
             }
-            e->value  = value;
-            e->age_s  = 0;  /* reset age on every new value received */
+            e->value   = value;
+            e->stamp_s = stamp_s;  /* one timestamp for the whole response */
         }
         /* Same rationale as the register branch above. */
         s_packets_processed++;
@@ -700,14 +638,16 @@ cache_lookup_result_t cache_multimaster_lookup(uint8_t slave_id, uint8_t functio
                 *value_out = e->value;
                 result = CACHE_LOOKUP_FOUND;
 
-                /* Age check: age_s is maintained by cache_age_task (saturating counter).
+                /* Age check: age is derived from the store stamp by a wrapping
+                 * unsigned subtraction, correct while elapsed < 65536 s (~18.2 h).
                  * value_timeout_s == 0 disables the check — always return FOUND.
                  * The comparison is >= so that an entry reaching the timeout is
-                 * stale: age_s saturates at CACHE_AGE_MAX_S (65535), so a strict >
-                 * could never fire for value_timeout_s == 65535 and such entries
-                 * would be served as fresh forever.                                       */
+                 * stale, and so a timeout equal to the ~18.2 h window (65535) can
+                 * still expire an entry instead of being served as fresh forever
+                 * (fix T70).                                                      */
                 if (value_timeout_s > 0) {
-                    if (e->age_s >= value_timeout_s) {
+                    uint16_t age = (uint16_t)(cache_now_s16() - e->stamp_s);
+                    if (age >= value_timeout_s) {
                         result = CACHE_LOOKUP_STALE;
                     }
                 }
@@ -894,6 +834,10 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
      * (cache-concurrency-1). */
     uint32_t gen = s_pool_generation;
 
+    /* Capture the clock once so every row's age is measured against the same
+     * instant; age = (uint16_t)(now16 - stamp_s). */
+    uint16_t now16 = cache_now_s16();
+
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         /* One guard at the top of every iteration covers both cases in which
          * s_pool must not be dereferenced: the pool was never allocated (cache
@@ -927,7 +871,7 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
                            type_str,
                            (unsigned)e->address,
                            (unsigned)e->value,
-                           (unsigned)e->age_s);
+                           (unsigned)(uint16_t)(now16 - e->stamp_s));
 
         if (len < 0 || len >= (int)sizeof(line)) {
             continue;
@@ -968,7 +912,8 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
  *   t   – type: "h"=holding, "i"=input, "c"=coil, "d"=discrete
  *   a   – address (0-based)
  *   v   – value
- *   age – seconds since last update (saturating at 65535 = ~18 h)
+ *   age – seconds since last update; derived from a 16-bit uptime stamp, valid
+ *         within a ~18.2 h window
  */
 static esp_err_t cache_json_handler(httpd_req_t *req)
 {
@@ -999,6 +944,10 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
      * (concurrent clear()/disable()+enable()) to avoid a torn snapshot
      * (cache-concurrency-1). */
     uint32_t gen = s_pool_generation;
+
+    /* Capture the clock once so every entry's age is measured against the same
+     * instant; age = (uint16_t)(now16 - stamp_s). */
+    uint16_t now16 = cache_now_s16();
 
     for (int i = 0; i < CACHE_MAX_ENTRIES; i++) {
         /* Guards every s_pool dereference below. Covers both a pool that was
@@ -1043,7 +992,7 @@ static esp_err_t cache_json_handler(httpd_req_t *req)
                            type_ch,
                            (unsigned)e->address,
                            (unsigned)e->value,
-                           (unsigned)e->age_s);
+                           (unsigned)(uint16_t)(now16 - e->stamp_s));
 
         if (len < 0 || len >= (int)sizeof(buf)) {
             /* Should never happen with the chosen sizes; skip silently */
@@ -1134,7 +1083,6 @@ void cache_multimaster_test_reset(void)
     /* s_pending reset here is intentionally unlocked: the host test harness is
      * single-threaded (not the corr-5 cross-task path). */
     memset(s_pending, 0, sizeof(s_pending));
-    s_age_task          = NULL;
     s_packets_processed = 0;
     s_last_packet_us    = 0;
     s_reset_us          = 0;
@@ -1168,8 +1116,10 @@ bool cache_multimaster_test_get_pending_valid(uint8_t port)
     return s_pending[port].valid;
 }
 
-/* Sets age_s for the first pool entry matching (slave_id, function_code, address).
- * Returns true if the entry was found and updated. Used in unit tests only. */
+/* Makes the first pool entry matching (slave_id, function_code, address) read
+ * back with an age of age_s_val at the current (mocked) time by back-dating its
+ * stamp: stamp_s = now16 - age_s_val. Returns true if the entry was found and
+ * updated. Used in unit tests only. */
 bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_code,
                                            uint16_t address, uint16_t age_s_val)
 {
@@ -1187,23 +1137,11 @@ bool cache_multimaster_test_set_entry_age(uint8_t slave_id, uint8_t function_cod
             s_pool[i].slave_id == slave_id &&
             (s_pool[i].type & CACHE_TYPE_MASK) == type_value &&
             s_pool[i].address == address) {
-            s_pool[i].age_s = age_s_val;
+            s_pool[i].stamp_s = (uint16_t)(cache_now_s16() - age_s_val);
             return true;
         }
     }
     return false;
-}
-
-/* Performs one aging tick by calling the same cache_age_tick_pool() that
- * cache_age_task() uses — tests the real production code, not a copy. */
-void cache_multimaster_test_tick_age(void)
-{
-    if (s_cache_mutex == NULL) {
-        return;
-    }
-    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-    cache_age_tick_pool();
-    xSemaphoreGive(s_cache_mutex);
 }
 
 /* Expose static HTTP handlers for unit tests. */
