@@ -34,6 +34,7 @@ extern int mock_cache_multimaster_init_called;
 extern int mock_cache_multimaster_enable_called;
 extern int mock_cache_multimaster_disable_called;
 extern bool mock_cache_multimaster_enabled;
+extern bool mock_cache_en[];  /* per-port cache_en NVS store (mocks/setting_items.c) */
 void mock_cache_multimaster_reset(void);
 
 /* setting_items.c mock helper */
@@ -1069,23 +1070,49 @@ void test_deinit_cache_overlay_last_port(void)
     TEST_ASSERT_TRUE(port_manager_get_cache(0));
 }
 
-void test_deinit_cache_overlay_not_last_port(void)
+void test_set_cache_second_port_rejected(void)
 {
-    /* Both ports feed the cache. */
-    port_manager_set_cache(0, true);
-    port_manager_set_cache(1, true);
-    port_manager_set_mode(0, PM_MODE_PASSIVE);
-    port_manager_set_mode(1, PM_MODE_PASSIVE);
+    /* Single-port cache invariant (review #51): the cache feeds from only one
+     * RS-485 port. Enabling the overlay on a second port while another already has
+     * it must be rejected, leaving the second port's overlay and its NVS untouched
+     * and triggering no extra pool enable. (Replaces the old two-port deinit test,
+     * whose "both ports feed the cache" premise is now impossible.) */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
+    int enable_before = mock_cache_multimaster_enable_called;
 
-    mock_cache_multimaster_reset();
-    mock_cache_multimaster_enabled = true;
-    mock_sniffer_reset();
+    esp_err_t ret = port_manager_set_cache(1, true);
 
-    /* Deinit only port 0 — port 1 still feeds the cache. */
-    port_manager_set_mode(0, PM_MODE_DISABLED);
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, ret);
+    TEST_ASSERT_FALSE(port_manager_get_cache(1));   /* overlay not set */
+    TEST_ASSERT_FALSE(mock_cache_en[1]);            /* NVS untouched */
+    TEST_ASSERT_EQUAL(enable_before, mock_cache_multimaster_enable_called);
+}
 
-    /* Not the last cache-feeding port → disable must NOT be called. */
-    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_disable_called);
+void test_set_cache_second_port_allowed_after_first_disabled(void)
+{
+    /* Once the first port releases the cache overlay, the second may take it. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, false));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(1, true));
+    TEST_ASSERT_TRUE(port_manager_get_cache(1));
+    TEST_ASSERT_FALSE(port_manager_get_cache(0));
+}
+
+void test_init_normalises_dual_cache_nvs(void)
+{
+    /* Legacy NVS may carry the overlay on BOTH ports. port_manager_init() must
+     * normalise to a single port (lowest index wins) and rewrite the loser's NVS
+     * to false, so the single-port invariant holds from boot. */
+    mock_cache_en[0] = true;
+    mock_cache_en[1] = true;
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));    /* kept */
+    TEST_ASSERT_FALSE(port_manager_get_cache(1));   /* cleared in memory */
+    TEST_ASSERT_TRUE(mock_cache_en[0]);             /* NVS kept */
+    TEST_ASSERT_FALSE(mock_cache_en[1]);            /* NVS rewritten to false */
 }
 
 void test_cache_overlay_survives_transport_change(void)
@@ -1453,7 +1480,9 @@ int port_manager_test(void)
     RUN_TEST(test_deinit_tcp_bridge);
     RUN_TEST(test_deinit_passive);
     RUN_TEST(test_deinit_cache_overlay_last_port);
-    RUN_TEST(test_deinit_cache_overlay_not_last_port);
+    RUN_TEST(test_set_cache_second_port_rejected);
+    RUN_TEST(test_set_cache_second_port_allowed_after_first_disabled);
+    RUN_TEST(test_init_normalises_dual_cache_nvs);
     RUN_TEST(test_cache_overlay_survives_transport_change);
     RUN_TEST(test_set_cache_invalid_port);
     RUN_TEST(test_set_cache_disable_clears_reason_and_disables_cache);

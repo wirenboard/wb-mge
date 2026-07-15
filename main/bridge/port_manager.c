@@ -426,10 +426,29 @@ esp_err_t port_manager_init(void)
         ESP_LOGI(TAG, "Cache Modbus TCP server is disabled by settings");
     }
 
+    // Load and normalise the per-port cache overlay before bringing ports up.
+    // Enforce the single-port invariant (review #51): legacy NVS from older firmware
+    // could carry both cache_en_1 and cache_en_2 set. Keep only the lowest-index port
+    // that asks for it and clear the rest (memory + NVS), so the invariant holds from
+    // boot regardless of stored state — not only via the runtime reject in
+    // port_manager_set_cache().
+    bool cache_claimed = false;
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        bool want = setting_items_read_bool(cache_en_nvs_key(i));
+        if (want && !cache_claimed) {
+            cache_claimed = true;
+            pm_ctx[i].cache_overlay = true;
+        } else {
+            if (want) {
+                ESP_LOGW(TAG, "Port[%u]: clearing stale cache overlay — cache is single-port (review #51)", i + 1);
+                (void)setting_items_save_bool(cache_en_nvs_key(i), false);
+            }
+            pm_ctx[i].cache_overlay = false;
+        }
+    }
+
     // Bring up each port in the mode stored in NVS.
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        // Read the persisted cache overlay intent for this port.
-        pm_ctx[i].cache_overlay = setting_items_read_bool(cache_en_nvs_key(i));
         pm_mode_t mode = read_port_mode_from_nvs(i);
         esp_err_t ret = port_init_mode(i, mode);
         if (ret != ESP_OK) {
@@ -602,6 +621,26 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
 {
     if (port_index >= BRIDGES_COUNT) {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    // Single-port cache invariant (review #51): the multimaster cache is one global
+    // pool keyed by slave_id, and the Cache-TCP interface answers by unit_id (it is
+    // port-blind), so it can only meaningfully serve one RS-485 port. Refuse enabling
+    // the overlay on a second port instead of silently colliding same-address slaves
+    // from the two buses. Reading the other ports' cache_overlay without their pm_lock
+    // mirrors cache_sync_global()'s lockless read discipline.
+    // This lockless check followed by the later locked write is race-free only
+    // because port_manager_set_cache() is called solely from the single
+    // esp_http_server request task (calls are serialised); a second concurrent
+    // caller would need this scan and the overlay write under one shared lock.
+    if (enabled) {
+        for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+            if (i != port_index && pm_ctx[i].cache_overlay) {
+                ESP_LOGW(TAG, "Port[%u]: cache overlay already active on port %u; refusing to enable a second (review #51)",
+                         port_index + 1, i + 1);
+                return ESP_ERR_INVALID_STATE;
+            }
+        }
     }
 
     pm_lock(port_index);
@@ -938,6 +977,13 @@ static esp_err_t port_set_cache_handler(httpd_req_t *req, unsigned port_index)
 
     bool enabled = cJSON_IsTrue(enabled_item);
     esp_err_t ret = port_manager_set_cache(port_index, enabled);
+    if (ret == ESP_ERR_INVALID_STATE) {
+        // Cache overlay already active on the other port; it is single-port by design
+        // (review #51). 409: the request is valid, the resource state forbids it.
+        cJSON_Delete(req_json);
+        return json_utils_send_error_status(req, "409 Conflict",
+                                            "Cache overlay already active on the other port; disable it there first");
+    }
     if (ret != ESP_OK) {
         cJSON_Delete(req_json);
         return json_utils_send_error(req, esp_err_to_name(ret));

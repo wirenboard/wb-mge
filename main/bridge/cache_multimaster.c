@@ -163,11 +163,13 @@ static bool request_is_cacheable(uint8_t function, uint16_t start_reg, uint16_t 
  * free slot, which is then initialised and returned as the new entry.
  * Returns NULL when the pool is full.
  *
- * Note: the port is intentionally NOT part of the lookup key.  The cache is
- * designed as a merged view of all RS-485 ports: when the same slave address
- * is seen on multiple ports, the most recently received value wins.  This
- * matches the behaviour of cache_multimaster_lookup(), which also ignores the
- * originating port.
+ * Note: the port is not part of the lookup key because the cache is single-port
+ * by design (review #51). The Cache-TCP interface answers by unit_id and is
+ * port-blind, so at most one RS-485 port may feed the pool at a time — enforced in
+ * port_manager (port_manager_set_cache() rejects a second port; the boot path
+ * normalises legacy NVS down to one port). With a single feeding port there is no
+ * cross-port ambiguity, so slave_id alone is a sufficient key, and
+ * cache_multimaster_lookup() likewise needs no port.
  *
  * @p type_value is the Modbus read function code (FC01..FC04), stored verbatim
  * in bits 2:0 of the type byte — caller must have validated it.
