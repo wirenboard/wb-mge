@@ -32,12 +32,8 @@ export interface RsStatus {
 export interface RepeaterStats {
   // true when both ports are in repeater mode
   active: boolean;
-  // seconds since forwarding became active (0 if inactive)
-  // kept for backward compatibility — prefer uptime_ms
-  uptime_s: number;
   // milliseconds since forwarding became active (0 if inactive)
-  // optional: absent on firmware that predates the field
-  uptime_ms?: number;
+  uptime_ms: number;
   // bytes forwarded Port 1 -> Port 2 (the TX->RX / forward arrow)
   bytes_1to2: number;
   // bytes forwarded Port 2 -> Port 1 (the RX<-TX / reverse arrow)

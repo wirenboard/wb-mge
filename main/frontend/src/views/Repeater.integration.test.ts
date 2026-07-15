@@ -110,7 +110,6 @@ function makeInfo(opts: {
     ? undefined
     : {
       active: opts.port1Mode === 'repeater' && opts.port2Mode === 'repeater',
-      uptime_s: 0,
       uptime_ms: 0,
       bytes_1to2: 0,
       bytes_2to1: 0,
@@ -270,7 +269,6 @@ describe('REP-I-004: stats render', () => {
       port1Mode: 'repeater',
       port2Mode: 'repeater',
       repeater: {
-        uptime_s: 5047,
         uptime_ms: 5047_500,
         bytes_1to2: 18472,
         bytes_2to1: 12345,
@@ -299,16 +297,14 @@ describe('REP-I-004: stats render', () => {
     wrapper.unmount();
   });
 
-  it('uptime and average throughput come from uptime_ms, not the truncated uptime_s', async () => {
+  it('uptime and average throughput come from uptime_ms', async () => {
     const { default: Repeater } = await import('@/views/Repeater.vue');
 
-    // uptime_s throws away the sub-second remainder; only uptime_ms carries it. If the view
-    // still divided by uptime_s, the average below would come out as 500 B/s instead of 400.
+    // uptime_ms carries millisecond precision: 1000 B over 2.5 s must average 400 B/s.
     infoRef.value = makeInfo({
       port1Mode: 'repeater',
       port2Mode: 'repeater',
       repeater: {
-        uptime_s: 2,
         uptime_ms: 2_500,
         bytes_1to2: 1000,
         bytes_2to1: 0,
@@ -319,30 +315,9 @@ describe('REP-I-004: stats render', () => {
     await flushPromises();
 
     const text = wrapper.text().replace(/\s+/g, ' ');
-    // 1000 B over 2.5 s = 400 B/s (uptime_s would have given 1000 / 2 = 500 B/s).
+    // 1000 B over 2.5 s = 400 B/s.
     expect(text).toContain('400 B');
     expect(text).toContain('00:00:02');
-
-    wrapper.unmount();
-  });
-
-  it('falls back to uptime_s when the firmware does not send uptime_ms', async () => {
-    const { default: Repeater } = await import('@/views/Repeater.vue');
-
-    // Older firmware: the repeater object has no uptime_ms at all.
-    const info = makeInfo({
-      port1Mode: 'repeater',
-      port2Mode: 'repeater',
-      repeater: { uptime_s: 5047, bytes_1to2: 0, bytes_2to1: 0 },
-    });
-    delete info.repeater!.uptime_ms;
-    infoRef.value = info;
-
-    const wrapper = mount(Repeater, { global: { plugins: [i18n, makeRouter()] } });
-    await flushPromises();
-
-    const text = wrapper.text().replace(/\s+/g, ' ');
-    expect(text).toContain('01:24:07');
 
     wrapper.unmount();
   });

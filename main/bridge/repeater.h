@@ -10,8 +10,6 @@ typedef struct {
     uint64_t bytes_2to1;   // bytes forwarded Port 2 RX -> Port 1 TX (64-bit: no practical overflow)
     uint64_t dropped_1;    // bytes received on Port 1 that were lost: forward failures plus RX-stage drops (receive-buffer / ring overflow) (64-bit)
     uint64_t dropped_2;    // bytes received on Port 2 that were lost: forward failures plus RX-stage drops (receive-buffer / ring overflow) (64-bit)
-    uint64_t uptime_s;     // seconds since the repeater started forwarding (0 if inactive, 64-bit: no practical overflow)
-                           // kept for backward compatibility; uptime_ms is the precise value
     uint64_t uptime_ms;    // milliseconds since the repeater started forwarding (0 if inactive, 64-bit: no practical overflow)
     bool     active;       // true when BOTH ports are running in repeater mode
 } repeater_stats_t;

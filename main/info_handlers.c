@@ -344,8 +344,6 @@ esp_err_t info_get_handler(httpd_req_t *req)
     cJSON *repeater_json = cJSON_CreateObject();
     if (repeater_json) {
         cJSON_AddBoolToObject(repeater_json, "active", rep.active);
-        // uptime_s is kept for backward compatibility; uptime_ms is the precise value.
-        cJSON_AddNumberToObject(repeater_json, "uptime_s", (double)rep.uptime_s);
         cJSON_AddNumberToObject(repeater_json, "uptime_ms", (double)rep.uptime_ms);
         cJSON_AddNumberToObject(repeater_json, "bytes_1to2", (double)rep.bytes_1to2);
         cJSON_AddNumberToObject(repeater_json, "bytes_2to1", (double)rep.bytes_2to1);
