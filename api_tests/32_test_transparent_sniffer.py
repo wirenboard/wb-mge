@@ -2,12 +2,12 @@
 
 Coverage:
 TR-01  Port 2 basic round-trip via transparent bridge.
-TR-02  Server reconnect after RST disconnect.
+TR-02  Server reconnect after RST disconnect: the RST frees the single-client slot and
+       a new client is admitted and served.
 TR-03  Large payload (1024 bytes) with embedded null bytes forwarded correctly.
 TR-04  Client-mode reconnect after server closes connection.
 TR-05  UART bytes are silently dropped when no TCP client is connected.
 TR-06  tx_disabled=True on port 2 prevents TCP→UART2 forwarding.
-TR-07  Port 2 last_writer routing.
 SN-01  Sniffer on port 2 emits packets with port==2.
 SN-02  Master request is immediately visible; no {type:"timeout"} packet is sent when slave doesn't respond.
 SN-03  Broadcast packet (slave_id=0x00) is classified as master.
@@ -16,6 +16,10 @@ SN-05  Orphan response (no preceding request) is emitted as sender=="slave".
 SN-06  After WS disconnect without stop, firmware stays alive.
 GM-15  After running the WS sniffer overlay on a tcp_bridge port and stopping it, the data path works correctly.
 GM-16  tcp_bridge round-trip works before, during, and after a WS sniffer overlay (transport stays tcp_bridge).
+
+TR-07 ("Port 2 last_writer routing") was removed: it predates the single-client cap
+and required two clients to be admitted at once, which block-new (max_connections == 1,
+set for every transparent server port) makes impossible.
 """
 
 import json
@@ -550,17 +554,21 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
 @pytest.mark.qemu
 @pytest.mark.timeout(30)
 def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
-    """After abrupt RST disconnect, new client connects and receives echo.
+    """After an abrupt RST disconnect, a new client connects and is served.
+
+    Single-client scenario, as required by the block-new cap (max_connections == 1):
+    the served client must go away before a replacement can be admitted, so the RST
+    also has to free the cap slot for the reconnect to work at all.
 
     Steps:
     1. Echo thread on UART1.
-    2. client_a connects (no data sent).
-    3. client_b connects, sends 4 bytes → becomes last_client_sock.
-    4. Receive and verify b's echo on client_b.
-    5. RST-close client_b (SO_LINGER trick).
-    6. Wait 200ms for firmware to process the RST.
-    7. Connect client_c; send 4 different bytes.
-    8. Collect echo on client_c; verify it matches sent data.
+    2. client_a connects and round-trips 4 bytes (proves it is the served client).
+    3. RST-close client_a (SO_LINGER trick) — abrupt, no FIN.
+    4. Wait 200 ms for the firmware to notice the RST and release the connection.
+    5. client_b connects and sends 4 other bytes. The connect() itself always succeeds
+       (the cap rejects only after accept(), so lwIP completes the handshake either way);
+       it is the echo in step 6 that proves the RST actually freed the single-client slot.
+    6. Collect the echo on client_b; verify it matches what was sent.
     """
     probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
     if probe is None:
@@ -573,63 +581,54 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
 
     client_a = None
     client_b = None
-    client_c = None
     try:
         client_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_a.settimeout(3.0)
+        client_a.settimeout(5.0)
         client_a.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
         time.sleep(0.05)  # allow server to accept A
 
+        data_a = b'\x11\x22\x33\x44'
+        client_a.sendall(data_a)
+
+        # A round-trips its data: it is the client currently being served.
+        received_a = _collect_echo(client_a, len(data_a), timeout=3.0)
+        assert received_a == data_a, (
+            f"client_a did not receive its echo before RST: got {received_a.hex()!r}"
+        )
+
+        # RST-close client_a — sends RST instead of FIN to abruptly terminate
+        client_a.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                            struct.pack('ii', 1, 0))
+        client_a.close()
+        client_a = None
+
+        # Wait for the firmware to process the RST and free the single-client slot
+        time.sleep(0.2)
+
+        # Connect client_b. The connect() alone proves nothing: the block-new cap rejects
+        # a surplus client only AFTER accept(), so the TCP handshake completes regardless.
+        # The round-trip asserted below is what proves the RST released A's slot.
         client_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_b.settimeout(5.0)
         client_b.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
-        time.sleep(0.05)  # allow server to accept B
-
-        data_b = b'\x11\x22\x33\x44'
-        client_b.sendall(data_b)  # B is now last_client_sock in firmware
-
-        # Verify B receives its own echo (confirms firmware tracks B as last_client_sock)
-        received_b = _collect_echo(client_b, len(data_b), timeout=3.0)
-        assert received_b == data_b, (
-            f"client_b did not receive its echo before RST: got {received_b.hex()!r}"
-        )
-
-        # RST-close client_b — sends RST instead of FIN to abruptly terminate
-        client_b.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
-                            struct.pack('ii', 1, 0))
-        client_b.close()
-        client_b = None
-
-        # Wait for firmware to process the RST
-        time.sleep(0.2)
-
-        # Connect client_c and verify it becomes new last_client_sock
-        client_c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_c.settimeout(5.0)
-        client_c.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
         time.sleep(0.05)
 
-        data_c = b'\xAA\xBB\xCC\xDD'
-        client_c.sendall(data_c)
+        data_b = b'\xAA\xBB\xCC\xDD'
+        client_b.sendall(data_b)
 
-        received_c = _collect_echo(client_c, len(data_c), timeout=5.0)
-        assert received_c == data_c, (
-            f"client_c did not receive its echo after RST reconnect: "
-            f"sent={data_c.hex()!r}, got={received_c.hex()!r}"
+        received_b = _collect_echo(client_b, len(data_b), timeout=5.0)
+        assert received_b == data_b, (
+            f"client_b did not receive its echo after RST reconnect: "
+            f"sent={data_b.hex()!r}, got={received_b.hex()!r}"
         )
-        print(f"✓ RST reconnect: client_c received {len(received_c)} bytes correctly")
+        print(f"✓ RST reconnect: client_b received {len(received_b)} bytes correctly")
     finally:
-        for sock in (client_a, client_c):
+        for sock in (client_a, client_b):
             if sock is not None:
                 try:
                     sock.close()
                 except OSError:
                     pass
-        if client_b is not None:
-            try:
-                client_b.close()
-            except OSError:
-                pass
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
 
@@ -908,68 +907,6 @@ def test_transparent_tx_disabled_port2(api):
         original_mode = original_settings.get("rs485_2", {}).get("port_mode", "disabled")
         api.set_port_mode(2, original_mode)
         time.sleep(0.3)
-
-
-# ===========================================================================
-# TR-07: Port 2 last_writer routing
-# ===========================================================================
-
-@pytest.mark.qemu
-@pytest.mark.timeout(20)
-def test_transparent_port2_last_writer_routing(transparent_bridge_p2):
-    """Port 2 last_writer routing: echo goes to the client that sent data.
-
-    Sequential scenario:
-    1. client_a connects (no data sent).
-    2. client_b connects and sends 4 bytes — B becomes last_client_sock.
-    3. Echo thread echoes B's 4 bytes back to the firmware.
-    4. Firmware routes the echo to last sender (client B).
-    5. client_b receives its own 4 bytes back; client_a receives nothing.
-    """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART2_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART2 chardev TCP port {UART2_TCP_PORT} not reachable")
-    probe.close()
-
-    echo_thread = _UartEchoThread(GATEWAY_HOST, UART2_TCP_PORT)
-    echo_thread.start()
-    assert echo_thread.wait_connected(timeout=5.0), "Echo thread failed to connect"
-
-    sock_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock_a.settimeout(3.0)
-    sock_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock_b.settimeout(5.0)
-    try:
-        sock_a.connect((GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT))
-        time.sleep(0.05)  # allow server to accept A before B connects
-        sock_b.connect((GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT))
-        time.sleep(0.05)  # allow server to accept B before data is sent
-
-        data_b = b'\xAA\xBB\xCC\xDD'
-        sock_b.sendall(data_b)  # B is now last writer
-
-        # B should receive its own echo
-        received_b = _collect_echo(sock_b, len(data_b), timeout=3.0)
-        assert received_b == data_b, (
-            f"Client B did not receive its echo: got {received_b.hex()!r}"
-        )
-
-        # A should receive nothing (not the last writer)
-        sock_a.settimeout(0.5)
-        try:
-            data_a = sock_a.recv(64)
-            assert not data_a, (
-                f"Client A must receive nothing (last-writer is B), got: {data_a.hex()!r}"
-            )
-        except socket.timeout:
-            pass  # expected: A gets nothing
-
-        print("✓ Port 2 last-writer routing: B received its echo, A got nothing")
-    finally:
-        sock_a.close()
-        sock_b.close()
-        echo_thread.stop()
-        echo_thread.join(timeout=3.0)
 
 
 # ===========================================================================

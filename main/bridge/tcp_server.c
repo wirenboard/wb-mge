@@ -162,6 +162,34 @@ static void run_receiver(tcp_desc_t *desc, int client_sock)
     char rx_buffer[RX_BUFFER_SIZE];
     int len;
 
+    // Register the client as soon as it is admitted, not on its first packet.
+    // Consumers that route unsolicited traffic to a connected client (transparent_tcp
+    // sending serial->TCP) read last_client_sock gated only by tcp_server_connected(),
+    // which passes as soon as active_connections != 0. Registering only on receive left
+    // last_client_sock at -1 for a client that had connected but not yet sent anything,
+    // so serial data was dropped with "No client connected" until the client spoke first.
+    //
+    // The acceptor already registered this socket before it incremented
+    // active_connections (see tcp_server_task) — that is what closes the window for the
+    // production path. This assignment is the same value again: it keeps run_receiver()
+    // self-contained for tcp_server_run_receiver_for_test(), which has no acceptor.
+    //
+    // Registering here is only correct because run_receiver() runs exclusively for
+    // ADMITTED connections — a client rejected by the max_connections cap never reaches
+    // it. In the acceptor the equivalent assignment must therefore stay AFTER the cap
+    // check; placing it before that check would let a rejected newcomer clobber the fd of
+    // the client currently being served.
+    //
+    // Interaction with close_handler (which may clear this field — see transparent_tcp's
+    // on_tcp_conn_close) on a CAPPED server (max_connections == 1): close_handler runs
+    // below, BEFORE active_connections is decremented, so the acceptor can only admit the
+    // next client after the previous socket has been cleared — no race. On an UNCAPPED
+    // server (max_connections == 0) the cap branch never fires, several receiver tasks
+    // coexist and do race on this field; that is harmless today because no uncapped
+    // consumer reads it (modbus_tcp/cache reply via the client_sock passed to their
+    // receive handler). A future uncapped reader would need real synchronisation here.
+    desc->last_client_sock = client_sock;
+
     do {
         len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
 
@@ -185,8 +213,17 @@ static void run_receiver(tcp_desc_t *desc, int client_sock)
         } else {
             ESP_LOGD(TAG, "Port %d received %d bytes", desc->port, len);
             ESP_LOG_BUFFER_HEX_LEVEL(TAG, rx_buffer, len, ESP_LOG_DEBUG);
-            // Update last_client_sock before invoking callback so that
-            // consumers (e.g. transparent_tcp) can send a reply to the last sender.
+            // Re-assert last_client_sock before invoking the callback. On a capped
+            // server this is a no-op: the acceptor and the entry registration above
+            // already point at this socket.
+            //
+            // It does NOT give an uncapped server (max_connections == 0) a "last sender
+            // wins" field: the acceptor re-registers on every admit, so a client that
+            // merely connects overwrites the socket of one that is actively sending.
+            // Kept as defensive bookkeeping only — it kicks the field back to a socket
+            // known to be alive and talking. No uncapped consumer reads it today; one
+            // that needed a reliable peer identity would have to be given real
+            // synchronisation, not this line.
             desc->last_client_sock = client_sock;
             desc->receive_handler(desc, client_sock, (uint8_t *)rx_buffer, len);
             // Check exit request after each received packet so deinit() can complete
@@ -310,6 +347,18 @@ static void tcp_server_task(void *pvParameters)
         args->desc = desc;
         args->client_sock = client_sock;
 
+        // Register the socket BEFORE publishing the connection via active_connections.
+        // tcp_server_connected() reports "connected" the moment the counter goes up, and
+        // consumers then read last_client_sock; registering only in the receiver task
+        // would leave a window (until that task is scheduled) where the server looks
+        // connected while the field is still -1, and a serial packet arriving right then
+        // would be dropped as "No client connected" — the same bug, just a few ms wide.
+        //
+        // Safe to do here: both admission gates (the max_connections cap and the args
+        // malloc) have already passed, so a rejected client can never reach this line and
+        // clobber the fd of the client currently being served.
+        desc->last_client_sock = client_sock;
+
         __atomic_fetch_add(&desc->active_connections, 1, __ATOMIC_SEQ_CST);
 
         // Create a unique task name using the socket fd number
@@ -320,8 +369,23 @@ static void tcp_server_task(void *pvParameters)
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Port %d: failed to create receiver_task, closing connection", desc->port);
             free(args);
-            close(client_sock);
+            // Roll the registration back BEFORE closing the socket and before dropping the
+            // count, mirroring run_receiver()'s teardown order: while active_connections is
+            // still non-zero tcp_server_connected() reports ESP_OK, so the send target must
+            // never be left pointing at a closed (and possibly already recycled) fd.
+            // Guarded like transparent_tcp's on_tcp_conn_close(): only clear the field if it
+            // still points at THIS socket.
+            // On a capped server the guard is a tautology (the count returns to 0 — there
+            // is no other client). On an uncapped server it narrows, but does not close,
+            // the clobber window: if no concurrent receiver re-asserted the field between
+            // our registration and here, it still holds our fd and gets zeroed even though
+            // another client is live. Harmless today because no uncapped consumer reads
+            // last_client_sock (see the discussion in run_receiver above).
+            if (desc->last_client_sock == client_sock) {
+                desc->last_client_sock = -1;
+            }
             __atomic_fetch_sub(&desc->active_connections, 1, __ATOMIC_SEQ_CST);
+            close(client_sock);
         }
     }
 

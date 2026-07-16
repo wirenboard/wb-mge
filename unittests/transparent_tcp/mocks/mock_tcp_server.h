@@ -27,4 +27,13 @@ extern tcp_receive_handler_t mock_tcp_server_registered_handler;
 // Descriptor handed back from tcp_server_init, so a test can drive the captured handler.
 tcp_desc_t *mock_tcp_server_get_desc(void);
 
+// Reproduce what the real tcp_server does when it ADMITS a connection: the acceptor
+// registers the socket in last_client_sock and then publishes the connection by
+// incrementing active_connections (the receiver task re-asserts the same value once it
+// is scheduled) — so a client that has connected but not yet sent anything is already
+// reachable.  Mirroring that contract here is what lets these tests exercise
+// transparent_tcp against realistic descriptor state; the real registration itself is
+// covered by the tcp_server suite.
+void mock_tcp_server_simulate_client_admitted(int client_sock);
+
 void mock_tcp_server_reset(void);

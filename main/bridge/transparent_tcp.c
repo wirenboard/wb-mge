@@ -83,8 +83,16 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
         return;
     }
 
-    // Use last_client_sock: in transparent mode, reply goes to the last client that sent data.
-    // This is appropriate since transparent mode doesn't have strict request/response matching.
+    // Send to last_client_sock. This callback serves BOTH bridge modes, and the field
+    // means something slightly different in each:
+    //   - server mode: the socket of the single admitted client (max_connections == 1),
+    //     registered by tcp_server.c as soon as the connection is admitted, so serial
+    //     data reaches a client that has never transmitted anything itself;
+    //   - client mode: our own outgoing socket, owned and maintained by tcp_client.c
+    //     (which connects, reconnects and resets the field itself; max_connections is
+    //     not used at all).
+    // Either way it is the one peer this port talks to, and transparent mode has no
+    // strict request/response matching, so an unsolicited serial->TCP push is correct.
     esp_err_t err = ctx->tcp_send_func(ctx->tcp_desc, ctx->tcp_desc->last_client_sock, data, len);
 
     if (err != ESP_OK) {
@@ -95,21 +103,18 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 
 // Callback invoked by the TCP server's receiver task when a client connection closes.
 //
-// desc->last_client_sock is written only when a client sends data (tcp_server.c) and is
-// reset only in tcp_server_init() — a closing connection used to leave it pointing at a
-// dead fd. process_data_from_serial() above routes every RS-485 reply to that fd, gated
-// only by tcp_server_connected() (which merely checks active_connections != 0), so:
+// desc->last_client_sock is registered by tcp_server.c when a connection is admitted and
+// re-asserted on every received packet; without a close_handler it would keep pointing at
+// the fd of a connection that has since closed. process_data_from_serial() above routes
+// every RS-485 reply to that fd, gated only by tcp_server_connected() (which merely checks
+// active_connections != 0), so a stale value is dangerous: after the old client drops and
+// a new one connects, a reply aimed at the dead fd lands on a COMPLETELY unrelated socket
+// (httpd, another port's tcp_client) once lwIP recycles that fd number.
 //
-//   (a) old client drops, a new one connects and stays silent -> the reply goes to the
-//       stale fd; once lwIP recycles that fd number, it goes to a COMPLETELY unrelated
-//       socket (httpd, another port's tcp_client);
-//   (b) with max_connections = 1 the acceptor allocates the new client's fd BEFORE
-//       closing the old one, which guarantees active_connections == 1 paired with a
-//       stale last_client_sock.
-//
-// Clearing it here closes both windows: tcp_server.c invokes close_handler BEFORE
-// shutdown()/close(), so there is no window where the fd is dead but the field still
-// looks valid. Mirrors modbus_tcp's on_tcp_conn_close().
+// Clearing it here closes that window: tcp_server.c invokes close_handler BEFORE
+// shutdown()/close() and before decrementing active_connections, so the field never
+// outlives the socket, and the next client is admitted only after this reset has run.
+// Mirrors modbus_tcp's on_tcp_conn_close().
 static void on_tcp_conn_close(tcp_desc_t *desc, int client_sock)
 {
     if (!desc) {

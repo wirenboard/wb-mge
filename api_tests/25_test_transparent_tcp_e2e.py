@@ -6,11 +6,16 @@ TCP client and the serial interface without any Modbus framing.
 
 Coverage:
 12. Basic round-trip — 16 arbitrary bytes TCP → serial → TCP (echo via UART chardev).
-13. Multiple clients — last-writer routing: last client's bytes are echoed back to it.
 14. Zero-byte edge case — null byte + real data; connection stays open throughout.
 15. Client mode — firmware connects outbound to a Python TCP echo server on the host.
 16. Single-client cap (C7) — a second client is rejected (block-new): A keeps being
     served while B is disconnected (EOF).
+17. Server-sends-first (B3) — serial → TCP reaches a client that never transmitted.
+
+Test #13 ("multiple clients — last-writer routing") was removed: it predates the
+single-client cap and asserted that two clients could be admitted at once, which
+block-new (max_connections == 1) makes impossible — test #16 asserts the correct
+behaviour instead.
 """
 
 import socket
@@ -329,84 +334,6 @@ def test_transparent_basic_roundtrip(transparent_bridge):
 
 
 # ---------------------------------------------------------------------------
-# Test #13: Multiple clients — last-writer routing
-# ---------------------------------------------------------------------------
-
-@pytest.mark.qemu
-@pytest.mark.timeout(120)
-def test_transparent_last_writer_routing(transparent_bridge):
-    """Second TCP client's bytes get echoed back to it (last_client_sock routing).
-
-    Sequential scenario:
-    1. Client A connects (no data sent).
-    2. Client B connects and sends 4 bytes — B becomes last_client_sock.
-    3. Echo thread echoes B's 4 bytes back to the firmware.
-    4. The firmware routes the echo to the last sender (client B).
-    5. Client B receives its own 4 bytes back; client A receives nothing.
-
-    Note: in transparent_tcp.c, last_client_sock is updated when bytes are received
-    (process_data_from_tcp), not on accept(). B becomes last_client_sock only after
-    it actually sends data.
-    """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
-
-    echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
-    echo_thread.start()
-    assert echo_thread.wait_connected(timeout=5.0), "Echo thread failed to connect"
-
-    sock_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock_a.settimeout(3.0)
-    sock_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock_b.settimeout(5.0)
-    try:
-        sock_a.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
-        time.sleep(0.05)    # allow server to accept A before B connects
-        sock_b.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
-        time.sleep(0.05)    # allow server to accept B before data is sent
-
-        data_b = b'\xAA\xBB\xCC\xDD'
-        sock_b.sendall(data_b)  # B is now last writer
-
-        # B should receive its own echo
-        received_b = b''
-        deadline = time.monotonic() + 3.0
-        while len(received_b) < len(data_b) and time.monotonic() < deadline:
-            try:
-                chunk = sock_b.recv(64)
-                if not chunk:
-                    break
-                received_b += chunk
-            except socket.timeout:
-                continue
-
-        assert received_b == data_b, (
-            f"Client B did not receive its echo: got {received_b.hex()!r}"
-        )
-
-        # A should receive nothing (not the last writer)
-        sock_a.settimeout(0.5)
-        try:
-            data_a = sock_a.recv(64)
-            # It's acceptable if A gets 0 bytes; fail if A gets B's data
-            if data_a:
-                assert data_a != data_b, (
-                    f"Client A incorrectly received client B's data: {data_a.hex()!r}"
-                )
-        except socket.timeout:
-            pass   # expected: A gets nothing
-
-        print("✓ Transparent bridge last-writer routing: B received its echo, A got nothing")
-    finally:
-        sock_a.close()
-        sock_b.close()
-        echo_thread.stop()
-        echo_thread.join(timeout=3.0)
-
-
-# ---------------------------------------------------------------------------
 # Test #14: Zero bytes edge case
 # ---------------------------------------------------------------------------
 
@@ -641,3 +568,73 @@ def test_transparent_single_client_cap_block_new(transparent_bridge):
         sock_b.close()
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+
+
+# ---------------------------------------------------------------------------
+# Test #17: B3 — server-sends-first: serial -> TCP to a client that never sent
+# ---------------------------------------------------------------------------
+#
+# NOTE: like every test in this module this needs QEMU (UART1 chardev on port
+# 5561 + the transparent-bridge hostfwd). It was NOT executed in the B3 change
+# environment — added and py_compile-checked only; run under the QEMU harness.
+# It needs no new fixture: it reuses `transparent_bridge` and writes into the
+# UART1 chardev directly (the same socket the echo thread uses), instead of
+# echoing, so that the serial side is the one that speaks first.
+
+@pytest.mark.qemu
+@pytest.mark.timeout(120)
+def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
+    """Serial data reaches a client that connected but never transmitted (B3).
+
+    Regression for the reported bug: with the bridge in server mode, bytes arriving
+    on RS-485 were dropped with "No client connected" / "Failed to send data to TCP
+    from serial" until the TCP client happened to send something first. Swapping who
+    spoke first made it work, because the client socket was only registered on receive.
+
+    Sequential scenario:
+    1. A TCP client connects to the transparent server and sends NOTHING.
+    2. The host injects bytes into the UART1 chardev (the serial side speaks first).
+    3. Those bytes must arrive on the silent client's TCP socket.
+    """
+    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
+    if probe is None:
+        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
+    probe.close()
+
+    # Drive the UART chardev by hand: no echo thread, this test needs the serial
+    # side to originate traffic rather than reflect it.
+    uart_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    uart_sock.settimeout(5.0)
+    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock.settimeout(5.0)
+    try:
+        uart_sock.connect((GATEWAY_HOST, UART1_TCP_PORT))
+
+        # 1. Client connects and stays completely silent.
+        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
+        time.sleep(0.3)   # let the firmware accept it and spawn its receiver
+
+        # 2. The serial side speaks first.
+        test_data = b'\x5A\xA5\x01\x02\x03\x04'
+        uart_sock.sendall(test_data)
+
+        # 3. The silent client must receive the serial bytes.
+        received = b''
+        deadline = time.monotonic() + 5.0
+        while len(received) < len(test_data) and time.monotonic() < deadline:
+            try:
+                chunk = tcp_sock.recv(64)
+                if not chunk:
+                    break
+                received += chunk
+            except socket.timeout:
+                continue
+
+        assert received == test_data, (
+            "serial->TCP must reach a client that never sent data "
+            f"(B3): injected={test_data.hex()!r}, got={received.hex()!r}"
+        )
+        print(f"✓ B3: serial->TCP delivered {len(test_data)} bytes to a silent client")
+    finally:
+        tcp_sock.close()
+        uart_sock.close()

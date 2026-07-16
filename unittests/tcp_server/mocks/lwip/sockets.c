@@ -21,6 +21,7 @@ int  mock_recv_return_count = 0;
 int  mock_recv_call_count = 0;
 uint8_t mock_recv_data[MOCK_RECV_DATA_SIZE] = {0};
 int  mock_recv_data_len = 0;
+mock_recv_hook_t mock_recv_hook = 0;
 
 int  mock_socket_fd = 5;
 bool mock_socket_should_fail = false;
@@ -106,6 +107,12 @@ ssize_t mock_recv(int sockfd, void *buf, size_t len, int flags)
     (void)sockfd;
     (void)flags;
 
+    /* Let a test observe descriptor state at the exact moment recv() is entered,
+     * i.e. before the receiver has processed any data. */
+    if (mock_recv_hook) {
+        mock_recv_hook(mock_recv_call_count);
+    }
+
     if (mock_recv_call_count < mock_recv_return_count) {
         int ret = mock_recv_return_values[mock_recv_call_count];
         mock_recv_call_count++;
@@ -175,6 +182,7 @@ void mock_lwip_sockets_reset(void)
     mock_recv_call_count = 0;
     memset(mock_recv_data, 0, sizeof(mock_recv_data));
     mock_recv_data_len = 0;
+    mock_recv_hook = 0;
 
     mock_socket_fd = 5;
     mock_socket_should_fail = false;

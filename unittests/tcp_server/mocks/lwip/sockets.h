@@ -45,6 +45,12 @@ extern int  mock_recv_call_count;
 extern uint8_t mock_recv_data[MOCK_RECV_DATA_SIZE];
 extern int  mock_recv_data_len;
 
+/* Optional hook invoked on entry to mock_recv(), before it returns anything.
+ * Receives the 0-based index of the recv() call being served, so a test can
+ * inspect descriptor state at a precise point in the receiver loop. */
+typedef void (*mock_recv_hook_t)(int call_index);
+extern mock_recv_hook_t mock_recv_hook;
+
 extern int  mock_socket_fd;
 extern bool mock_socket_should_fail;
 extern bool mock_bind_should_fail;

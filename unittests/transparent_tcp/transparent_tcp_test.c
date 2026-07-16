@@ -585,10 +585,11 @@ void test_tcp_to_serial_forwards_only_when_context_initialized(void)
 // ---------------------------------------------------------------------------
 // #74: a closing TCP connection must invalidate last_client_sock.
 //
-// last_client_sock is written only when a client sends data and was never reset on
-// close, so a serial reply could be routed to a dead fd — or, once lwIP recycled the
-// fd number, to a completely unrelated socket. transparent_tcp must therefore register
-// a close_handler (server mode only; tcp_client manages last_client_sock itself).
+// last_client_sock is registered by tcp_server when a connection is admitted and
+// re-asserted on each received packet, but nothing in tcp_server resets it on close, so
+// a serial reply could be routed to a dead fd — or, once lwIP recycled the fd number, to
+// a completely unrelated socket. transparent_tcp must therefore register a close_handler
+// (server mode only; tcp_client manages last_client_sock itself).
 // ---------------------------------------------------------------------------
 void test_close_handler_clears_last_client_sock(void)
 {
@@ -643,6 +644,53 @@ void test_close_handler_ignores_other_socket(void)
 }
 
 // ---------------------------------------------------------------------------
+// B3: serial -> TCP must reach a client that has connected but never sent data.
+//
+// Reported bug: with MGE#1 port1 as Transparent/Server and a client connected to it,
+// data arriving on RS-485 was dropped with "No client connected" until the client
+// happened to transmit first — swapping which side spoke first made it work.  The
+// receiver only recorded last_client_sock on receive, so a silent-but-connected
+// client left it at the -1 sentinel while tcp_server_connected() already reported
+// a live connection.
+//
+// The real registration lives in tcp_server.c (covered by the tcp_server suite,
+// which mocks nothing of it); the mock here reproduces that admission contract so
+// this test pins transparent_tcp's half: given an admitted client, a serial packet
+// must be sent to THAT socket and never to -1.
+// ---------------------------------------------------------------------------
+void test_serial_to_tcp_reaches_client_that_never_sent_data(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test: serial->TCP reaches a connected but silent client (B3)");
+    LOG_MESSAGE();
+
+    tcp_desc_t *tcp_desc = NULL;
+    init_server_and_capture(NULL, &tcp_desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(-1, tcp_desc->last_client_sock,
+        "before any client connects last_client_sock must be the -1 sentinel");
+
+    // A client connects and is admitted; it sends NOTHING. process_data_from_tcp is
+    // therefore never invoked — the whole point of the regression.
+    mock_tcp_server_simulate_client_admitted(9);
+
+    // RS-485 traffic arrives and must be pushed out to that client.
+    uint8_t payload[3] = { 0xDE, 0xAD, 0xBE };
+    serial_desc_t *serial_desc = mock_serial_get_desc();
+    mock_serial_registered_handler(serial_desc, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.send_called,
+        "serial data must be forwarded to the admitted client");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(-1, mock_tcp_server_calls.send_last_client_sock,
+        "serial data must not be sent to the -1 sentinel (\"No client connected\")");
+    TEST_ASSERT_EQUAL_MESSAGE(9, mock_tcp_server_calls.send_last_client_sock,
+        "serial data must go to the socket of the client that is connected");
+    TEST_ASSERT_EQUAL_MESSAGE((int)sizeof(payload), (int)mock_tcp_server_calls.send_last_len,
+        "the full serial payload must be relayed");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 int main(void)
@@ -668,6 +716,7 @@ int main(void)
     RUN_TEST(test_tcp_to_serial_forwards_only_when_context_initialized);
     RUN_TEST(test_close_handler_clears_last_client_sock);
     RUN_TEST(test_close_handler_ignores_other_socket);
+    RUN_TEST(test_serial_to_tcp_reaches_client_that_never_sent_data);
 
     return UNITY_END();
 }

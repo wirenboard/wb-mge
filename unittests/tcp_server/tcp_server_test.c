@@ -396,6 +396,12 @@ void test_acceptor_decrements_on_receiver_spawn_failure(void)
     TEST_ASSERT_EQUAL(0, desc->active_connections);
     /* The accepted client socket must have been closed on the rollback path. */
     TEST_ASSERT_GREATER_OR_EQUAL(1, mock_close_call_count);
+    /* The acceptor registers last_client_sock when it admits the client, so the same
+     * rollback must also un-register it: this connection is never served and its socket
+     * was just closed, so leaving it as the send target would point tcp_server_send()
+     * at a dead fd. */
+    TEST_ASSERT_EQUAL_MESSAGE(-1, desc->last_client_sock,
+        "a failed receiver spawn must roll last_client_sock back to the -1 sentinel");
 
     free(desc);
 }
@@ -496,6 +502,187 @@ void test_receiver_records_last_client_sock_on_data(void)
     TEST_ASSERT_EQUAL(10, desc.last_client_sock);
 }
 
+/* B3 regression: the receiver must register last_client_sock when the connection
+ * is ADMITTED, before it ever recv()s — not on the first received packet.
+ *
+ * Bug: a transparent bridge in server mode could not push serial->TCP to a client
+ * that had connected but not yet sent anything: tcp_server_connected() already
+ * passed (active_connections != 0) while last_client_sock was still the -1
+ * sentinel, so tcp_server_send() logged "No client connected" and dropped the data
+ * until the client happened to speak first.
+ *
+ * The recv hook samples last_client_sock on entry to the FIRST recv() call, which is
+ * strictly before any data can have been processed.  Pre-fix the sample is -1. */
+static tcp_desc_t *g_hook_desc = NULL;
+static int g_last_client_sock_at_first_recv = -99;
+
+static void sample_last_client_sock_on_first_recv(int call_index)
+{
+    if ((call_index == 0) && g_hook_desc) {
+        g_last_client_sock_at_first_recv = g_hook_desc->last_client_sock;
+    }
+}
+
+void test_receiver_registers_last_client_sock_before_first_recv(void)
+{
+    tcp_desc_t desc = {0};
+    desc.receive_handler = stub_receive_handler;
+    desc.close_handler = NULL;
+    desc.active_connections = 1;
+    desc.port = 502;
+    desc.last_client_sock = -1;   /* state left by tcp_server_init() */
+
+    g_hook_desc = &desc;
+    g_last_client_sock_at_first_recv = -99;
+    mock_recv_hook = sample_last_client_sock_on_first_recv;
+
+    /* The client never sends anything: the first recv() reports a clean disconnect. */
+    mock_recv_return_values[0] = 0;
+    mock_recv_return_count = 1;
+
+    tcp_server_run_receiver_for_test(&desc, 10);
+
+    mock_recv_hook = NULL;
+    g_hook_desc = NULL;
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_recv_call_count, "recv() must have been entered once");
+    TEST_ASSERT_EQUAL_MESSAGE(10, g_last_client_sock_at_first_recv,
+        "admitted client must be registered in last_client_sock before the first recv()");
+}
+
+/* A silent client (connects, sends nothing, disconnects) must still have been
+ * reachable for the whole life of its connection.  Sampled at close_handler time,
+ * which run_receiver invokes after the recv loop but before it tears the socket down. */
+static int g_last_client_sock_at_close = -99;
+
+static void sampling_close_handler(tcp_desc_t *desc, int client_sock)
+{
+    (void)client_sock;
+    g_close_handler_called++;
+    g_last_client_sock_at_close = desc->last_client_sock;
+}
+
+void test_receiver_registration_survives_silent_client(void)
+{
+    tcp_desc_t desc = {0};
+    desc.receive_handler = stub_receive_handler;
+    desc.close_handler = sampling_close_handler;
+    desc.active_connections = 1;
+    desc.port = 502;
+    desc.last_client_sock = -1;
+
+    g_last_client_sock_at_close = -99;
+
+    /* recv() returns 0 straight away — the client never sent a byte. */
+    mock_recv_return_values[0] = 0;
+    mock_recv_return_count = 1;
+
+    tcp_server_run_receiver_for_test(&desc, 10);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, g_receive_handler_called,
+        "no data was received, so receive_handler must not fire");
+    TEST_ASSERT_EQUAL_MESSAGE(10, g_last_client_sock_at_close,
+        "a client that never sent data must still be registered as last_client_sock");
+}
+
+/* The acceptor's block-new cap must not disturb the client currently being served:
+ * a rejected newcomer never reaches run_receiver(), so it cannot overwrite
+ * last_client_sock.  This is why registration lives in run_receiver() and not in
+ * the accept path.
+ *
+ * Scenario (acceptor task body, driven synchronously):
+ *   iter 1: exit check → 0; accept() → fd 10; active_connections (1) >= max (1)
+ *           → reject: close(10), continue — no malloc, no receiver spawn
+ *   iter 2: exit check → EVENT_TASK_EXIT_REQ → break */
+void test_acceptor_rejection_does_not_touch_last_client_sock(void)
+{
+    mock_accept_fd = 10;   /* the newcomer that must be rejected */
+
+    /* EXIT_REQ fires on the 2nd xEventGroupWaitBits call (top of iteration 2). */
+    mock_xEventGroupWaitBits_data.set_event_on_call = 1;
+    mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8);  /* EVENT_TASK_EXIT_REQ = BIT8 */
+
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_NOT_NULL(mock_xTaskCreate_data.pvTaskCode);
+
+    /* One client (fd 7) is already admitted and being served, as transparent_tcp
+     * configures it: a single connection at a time, newcomers rejected. */
+    tcp_server_set_max_connections(desc, 1);
+    desc->active_connections = 1;
+    desc->last_client_sock = 7;
+
+    mock_xTaskCreate_data.called = 0;
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
+
+    TEST_ASSERT_EQUAL_MESSAGE(7, desc->last_client_sock,
+        "a client rejected by the connection cap must not steal the served client's fd");
+    TEST_ASSERT_EQUAL_MESSAGE(1, desc->active_connections,
+        "a rejected client must not be counted as an active connection");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTaskCreate_data.called,
+        "no receiver task may be spawned for a rejected client");
+
+    free(desc);
+}
+
+/* The acceptor itself must register the admitted socket, and must do so BEFORE it
+ * publishes the connection via active_connections: tcp_server_connected() flips to
+ * "connected" on that increment, so a consumer reading last_client_sock in the gap
+ * before the receiver task gets scheduled would otherwise still see -1 and drop the
+ * data ("No client connected") — the residual form of the B3 bug.
+ *
+ * The xTaskCreate mock only records pvTaskCode without running it (self_execution is
+ * off by default), so after a SUCCESSFUL accept the receiver task has not run at all.
+ * Whatever is observable here was therefore written by the acceptor alone, which is
+ * exactly the state a consumer would see inside the window.
+ *
+ * What this canNOT show: the two writes are checked after the fact, so a
+ * single-threaded mock cannot prove the store ORDER against a concurrent reader.
+ * The ordering is enforced in the source (registration sits directly above the
+ * __atomic_fetch_add) and by the SEQ_CST increment; this test pins that the acceptor
+ * registers at all, which is the part that regressed. */
+void test_acceptor_registers_last_client_sock_on_admit(void)
+{
+    mock_accept_fd = 10;
+
+    /* EXIT_REQ fires on the 2nd xEventGroupWaitBits call (top of iteration 2), so the
+     * acceptor performs exactly one successful admit and then leaves the loop. */
+    mock_xEventGroupWaitBits_data.set_event_on_call = 1;
+    mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8);  /* EVENT_TASK_EXIT_REQ = BIT8 */
+
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_EQUAL_MESSAGE(-1, desc->last_client_sock,
+        "init must leave the -1 sentinel before any client is admitted");
+
+    /* Read the acceptor's entry point before invoking it: the receiver spawn inside
+     * the loop overwrites mock_xTaskCreate_data. */
+    TaskFunction_t acceptor = mock_xTaskCreate_data.pvTaskCode;
+    void *acceptor_args = mock_xTaskCreate_data.pvParameters;
+    TEST_ASSERT_NOT_NULL(acceptor);
+
+    acceptor(acceptor_args);
+
+    /* The receiver task never ran, so this is purely the acceptor's own state: the
+     * connection is published AND already routable. */
+    TEST_ASSERT_EQUAL_MESSAGE(1, desc->active_connections,
+        "a successfully admitted client must be counted as an active connection");
+    TEST_ASSERT_EQUAL_MESSAGE(10, desc->last_client_sock,
+        "the acceptor must register the admitted socket, so the client is reachable "
+        "before its receiver task is scheduled");
+
+    /* The receiver spawn SUCCEEDED, so the acceptor handed its heap-allocated args to a
+     * task that normally frees them (receiver_task). self_execution is off, so that task
+     * never ran: free the args here instead. mock_xTaskCreate_data still holds them —
+     * the receiver spawn was the last xTaskCreate call. */
+    free(mock_xTaskCreate_data.pvParameters);
+    free(desc);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Unity runner
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -533,6 +720,10 @@ int tcp_server_test(void)
     /* Section 6 — last_client_sock tracking */
     RUN_TEST(test_tcp_server_init_sets_no_client_sentinel);
     RUN_TEST(test_receiver_records_last_client_sock_on_data);
+    RUN_TEST(test_receiver_registers_last_client_sock_before_first_recv);
+    RUN_TEST(test_receiver_registration_survives_silent_client);
+    RUN_TEST(test_acceptor_rejection_does_not_touch_last_client_sock);
+    RUN_TEST(test_acceptor_registers_last_client_sock_on_admit);
 
     return UNITY_END();
 }

@@ -19,8 +19,16 @@ void mock_tcp_server_reset(void)
 {
     memset(&mock_tcp_server_calls, 0, sizeof(mock_tcp_server_calls));
     memset(&mock_tcp_desc, 0, sizeof(mock_tcp_desc));
+    mock_tcp_desc.last_client_sock = -1;   // as the real tcp_server_init() leaves it
     mock_tcp_server_registered_handler = 0;
     mock_tcp_server_calls.connected_ret = ESP_OK;  // default: connected
+}
+
+void mock_tcp_server_simulate_client_admitted(int client_sock)
+{
+    mock_tcp_desc.active_connections = 1;
+    mock_tcp_desc.last_client_sock = client_sock;
+    mock_tcp_server_calls.connected_ret = ESP_OK;
 }
 
 esp_err_t tcp_server_init(int port, tcp_receive_handler_t handler, tcp_desc_t **out_desc)
@@ -31,6 +39,7 @@ esp_err_t tcp_server_init(int port, tcp_receive_handler_t handler, tcp_desc_t **
         return ESP_FAIL;
     }
     mock_tcp_server_registered_handler = handler;
+    mock_tcp_desc.last_client_sock = -1;   // real init sets the "no client" sentinel
     *out_desc = &mock_tcp_desc;
     return ESP_OK;
 }
