@@ -919,7 +919,7 @@ def test_info_repeater_object_shape(api):
     assert "active" in rep, f"'active' missing from repeater: {rep}"
     assert isinstance(rep["active"], bool), f"'active' must be bool, got {type(rep['active'])}"
 
-    for key in ("uptime_s", "bytes_1to2", "bytes_2to1", "dropped_1", "dropped_2"):
+    for key in ("uptime_ms", "bytes_1to2", "bytes_2to1", "dropped_1", "dropped_2"):
         assert key in rep, f"'{key}' missing from repeater: {rep}"
         val = rep[key]
         # In Python bool is a subclass of int — reject bools explicitly for the counters.
