@@ -22,3 +22,9 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
 
 // Build the full settings response JSON (used by the GET handler).
 esp_err_t settings_build_response_json(cJSON **response_json);
+
+// Returns ESP_OK if switching RS-485 port `port_index` (0-based) to `new_port_mode`
+// introduces no new local TCP listener collision, ESP_ERR_INVALID_STATE if it does.
+// Mirrors the collision check POST /settings runs, so POST /ports/{n}/mode rejects the
+// same conflicts up front instead of failing later at bind().
+esp_err_t settings_manager_check_port_mode_collision(unsigned port_index, const char *new_port_mode);

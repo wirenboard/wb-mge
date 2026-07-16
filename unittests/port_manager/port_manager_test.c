@@ -78,6 +78,10 @@ void mock_json_utils_reset(void);
 void mock_json_utils_inject_hex(const char *hex);
 void mock_json_utils_inject_mode(const char *mode);
 
+/* settings_manager.c mock — injectable result of the port-mode collision pre-check.
+ * Defaults to ESP_OK; a test sets it to drive the handler's 409-collision branch. */
+extern esp_err_t g_mock_port_mode_collision_ret;
+
 /* repeater.c mock state is declared in repeater_mock.h */
 
 /* ── setUp / tearDown ───────────────────────────────────────────────────── */
@@ -95,10 +99,12 @@ void setUp(void)
     mock_rs485_stats_reset_all();
     mock_json_utils_reset();
     mock_repeater_reset();
+    g_mock_port_mode_collision_ret = ESP_OK;   // no collision unless a test opts in
 }
 
 void tearDown(void)
 {
+    g_mock_port_mode_collision_ret = ESP_OK;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -630,6 +636,40 @@ void test_unfrozen_set_mode_handler_succeeds(void)
         "a mode change on unfrozen ports must not error out");
     TEST_ASSERT_EQUAL(1, mock_json_utils_send_response_called);
     TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+}
+
+/* T22: a switch whose new mode would collide with another local TCP listener (web server, cache
+ * Modbus server, or the other RS-485 bridge) is rejected up front with 409, BEFORE the mode is
+ * applied — settings_manager_check_port_mode_collision() (mocked here) returns ESP_ERR_INVALID_STATE.
+ * The handler must answer 409 Conflict, must NOT report success, and must not reach the port init
+ * path (the collision check runs before port_manager_set_mode, so req_json is released on the error
+ * return and the live mode is left untouched). */
+void test_set_mode_handler_collision_returns_409(void)
+{
+    TEST_ASSERT_FALSE(port_manager_ports_frozen());
+    mock_json_utils_reset();
+
+    /* Inject a collision for the requested switch to tcp_bridge. */
+    g_mock_port_mode_collision_ret = ESP_ERR_INVALID_STATE;
+
+    pm_mode_t mode_before = port_manager_get_mode(0);
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_mode(PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_mode_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_error_called,
+        "a mode change that would collide with another listener must fail");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("409 Conflict",
+        mock_json_utils_send_error_last_status,
+        "a port-collision rejection is a state conflict, not a bad request");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_response_called,
+        "a rejected mode change must not report success (error path deletes req_json)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_called,
+        "a collision must be caught before the port init path runs");
+    TEST_ASSERT_EQUAL_MESSAGE(mode_before, port_manager_get_mode(0),
+        "a rejected mode change must leave the live mode untouched");
 }
 
 /* ESP_ERR_INVALID_STATE is NOT exclusive to the freeze: bridge_port_init() returns
@@ -1454,6 +1494,7 @@ int port_manager_test(void)
     RUN_TEST(test_frozen_set_mode_transient_still_allowed);
     RUN_TEST(test_frozen_set_mode_handler_returns_409);
     RUN_TEST(test_unfrozen_set_mode_handler_succeeds);
+    RUN_TEST(test_set_mode_handler_collision_returns_409);
     RUN_TEST(test_init_fail_invalid_state_is_not_reported_as_409);
     RUN_TEST(test_init_fail_esp_fail_is_reported_as_500);
     RUN_TEST(test_persist_fail_is_reported_as_500);

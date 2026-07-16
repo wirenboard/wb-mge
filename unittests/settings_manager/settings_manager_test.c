@@ -1085,6 +1085,115 @@ void test_rs485_invalid_port_mode_rejected(void)
 }
 
 // -------------------------------------------------------------------
+// T22: settings_manager_check_port_mode_collision (POST /ports/{n}/mode pre-check)
+// Mirrors the POST /settings collision check, but keyed by a single port's new mode.
+// -------------------------------------------------------------------
+
+// Switching a port to tcp_bridge (saved bridge mode = server) whose saved gateway port equals the
+// web server port introduces a new local listener collision → ESP_ERR_INVALID_STATE.
+void test_port_mode_collision_tcp_bridge_onto_web_port_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "switch port 1 to tcp_bridge with bridge_port_1 == web_port -> INVALID_STATE");
+    LOG_MESSAGE();
+
+    // web_port defaults to 80; park port 1's saved gateway on the same port.
+    setting_items_save(KEY_BRIDGE_PORT1, "80");
+
+    esp_err_t ret = settings_manager_check_port_mode_collision(0, PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_STATE, ret,
+        "switching onto a port the web server already owns must be reported as a collision");
+}
+
+// No collision (default NVS: bridge_port_1 = 502, distinct from web_port/cache/bridge_port_2) → ESP_OK.
+void test_port_mode_collision_no_collision_accepted(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "switch port 1 to tcp_bridge with a distinct gateway port -> ESP_OK");
+    LOG_MESSAGE();
+
+    // NVS defaults do not collide (80/502/503/504).
+    esp_err_t ret = settings_manager_check_port_mode_collision(0, PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "a tcp_bridge gateway on a free TCP port introduces no collision");
+}
+
+// Saved bridge mode = client binds nothing locally, so even a gateway port equal to web_port
+// is not a local listener → ESP_OK.
+void test_port_mode_collision_client_bridge_accepted(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "switch port 1 to tcp_bridge but saved bridge mode = client -> ESP_OK");
+    LOG_MESSAGE();
+
+    setting_items_save(KEY_BRIDGE_MODE1, BRIDGE_MODE_CLIENT_STR);
+    setting_items_save(KEY_BRIDGE_PORT1, "80");   // == web_port, but client binds nothing locally
+
+    esp_err_t ret = settings_manager_check_port_mode_collision(0, PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "a client-mode bridge port is remote and must not be treated as a local listener");
+}
+
+// A non-tcp_bridge mode (disabled/passive/repeater) contributes no gateway listener, so it can
+// never collide even if the saved gateway port equals another listener's → ESP_OK.
+void test_port_mode_collision_non_tcp_bridge_modes_never_collide(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "switch port 1 to disabled/passive/repeater with bridge_port_1 == web_port -> ESP_OK");
+    LOG_MESSAGE();
+
+    // Park the saved gateway on web_port: it would collide IF the port ran a tcp_bridge server.
+    setting_items_save(KEY_BRIDGE_PORT1, "80");
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK,
+        settings_manager_check_port_mode_collision(0, PORT_MODE_DISABLED_STR),
+        "disabled mode binds no gateway, so it cannot collide");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK,
+        settings_manager_check_port_mode_collision(0, PORT_MODE_PASSIVE_STR),
+        "passive mode binds no gateway, so it cannot collide");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK,
+        settings_manager_check_port_mode_collision(0, PORT_MODE_REPEATER_STR),
+        "repeater mode binds no gateway, so it cannot collide");
+}
+
+// The same collision is detected for port 2 (index 1) — verifies the rs485_2 name/key mapping.
+void test_port_mode_collision_port2_onto_web_port_rejected(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "switch port 2 to tcp_bridge with bridge_port_2 == web_port -> INVALID_STATE");
+    LOG_MESSAGE();
+
+    setting_items_save(KEY_BRIDGE_PORT2, "80");   // == web_port
+
+    esp_err_t ret = settings_manager_check_port_mode_collision(1, PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_STATE, ret,
+        "the collision check must apply to port 2 (rs485_2) as well");
+}
+
+// An out-of-range port index has no listener to model — the guard returns ESP_OK.
+void test_port_mode_collision_out_of_range_index_ok(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "out-of-range port index -> ESP_OK (nothing to check)");
+    LOG_MESSAGE();
+
+    esp_err_t ret = settings_manager_check_port_mode_collision(2, PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "a port index outside the RS-485 range must be a no-op, not a rejection");
+}
+
+// -------------------------------------------------------------------
 // Test runner
 // -------------------------------------------------------------------
 
@@ -1137,6 +1246,14 @@ int main(void)
     RUN_TEST(test_build_response_includes_port_mode_and_cache_en);
     RUN_TEST(test_rs485_port_mode_and_cache_en_saved_to_nvs);
     RUN_TEST(test_rs485_invalid_port_mode_rejected);
+
+    // T22: POST /ports/{n}/mode collision pre-check
+    RUN_TEST(test_port_mode_collision_tcp_bridge_onto_web_port_rejected);
+    RUN_TEST(test_port_mode_collision_no_collision_accepted);
+    RUN_TEST(test_port_mode_collision_client_bridge_accepted);
+    RUN_TEST(test_port_mode_collision_non_tcp_bridge_modes_never_collide);
+    RUN_TEST(test_port_mode_collision_port2_onto_web_port_rejected);
+    RUN_TEST(test_port_mode_collision_out_of_range_index_ok);
 
     return UNITY_END();
 }

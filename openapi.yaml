@@ -1151,15 +1151,28 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '409':
           description: >
-            Port mode is locked: the clock_out factory test is active and owns the
-            RS-485 TX lines of both ports and both DE lines. The request body
-            was valid — retry once the test has been switched off. Returned ONLY for that
-            conflict; a port that fails to initialize for any other reason returns 500.
+            Conflict: the request body was valid, but the port cannot be switched to the
+            requested mode right now. One of two cases.
 
 
-            This endpoint applies the mode immediately, which is why it is refused. To
-            change port_mode during the test, write it with POST /settings instead: that
-            only persists the value (200) and it takes effect when the test ends.
+            (1) Port mode is locked: the clock_out factory test is active and owns the
+            RS-485 TX lines of both ports and both DE lines — retry once the test has been
+            switched off. This endpoint applies the mode immediately, which is why it is
+            refused. To change port_mode during the test, write it with POST /settings
+            instead: that only persists the value (200) and it takes effect when the test
+            ends.
+
+
+            (2) Port collision: switching to "tcp_bridge" (with the saved bridge in
+            "server" mode) would bind a TCP port another local listener already uses — the
+            web server, the cache Modbus server, or the other RS-485 bridge gateway. This
+            mirrors the collision check POST /settings runs and is rejected up front instead
+            of failing later at bind(). Resolve the port conflict first (e.g. via POST
+            /settings) and retry.
+
+
+            Returned ONLY for these conflicts; a port that fails to initialize for any
+            other reason returns 500.
           content:
             application/json:
               schema:

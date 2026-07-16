@@ -6,6 +6,7 @@
 #include "cache_modbus_server.h"
 #include "serial.h"
 #include "setting_items.h"
+#include "settings_manager.h"
 #include "rs485_stats.h"
 #include "auth.h"
 #include "json_utils.h"
@@ -907,6 +908,19 @@ PORT_MANAGER_STATIC esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned p
         strncmp(mode_item->valuestring, PORT_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) != 0) {
         cJSON_Delete(req_json);
         return json_utils_send_error(req, "Unknown mode value");
+    }
+
+    // Reject up front a switch that would put this port's TCP bridge gateway onto a port another
+    // local listener already owns (the web server, the cache Modbus server, or the other RS-485
+    // bridge) — the same collision POST /settings refuses. Without this, the conflict would only
+    // surface later as a bind() EADDRINUSE after a ~10x1s retry, then roll the mode back: a poor
+    // and late diagnosis. Only tcp_bridge (with a saved server bridge) can collide; the other
+    // modes bind nothing locally and pass through.
+    esp_err_t coll = settings_manager_check_port_mode_collision(port_index, port_manager_mode_to_str(new_mode));
+    if (coll != ESP_OK) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error_status(req, "409 Conflict",
+            "Selected mode would bind a TCP port already used by another listener");
     }
 
     esp_err_t ret = port_manager_set_mode(port_index, new_mode);

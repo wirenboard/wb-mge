@@ -487,6 +487,58 @@ static bool validate_port_collisions(cJSON *request_json, cJSON *warnings)
     return true;
 }
 
+// Public wrapper around validate_port_collisions() for POST /ports/{n}/mode: report whether
+// switching one RS-485 port to a new transport mode would introduce a new local TCP listener
+// collision, without touching NVS. The REST handler calls this before applying the mode so the
+// conflict is rejected up front (409) instead of surfacing later as a bind() EADDRINUSE and a
+// rollback.
+esp_err_t settings_manager_check_port_mode_collision(unsigned port_index, const char *new_port_mode)
+{
+    static const char *const rs485_names[] = {"rs485_1", "rs485_2"};
+
+    // Out-of-range index or missing mode: nothing this call can model, so nothing to reject. The
+    // REST handler already validates the index via URI registration; this is just a safety net.
+    if ((port_index >= ARRAY_SIZE(rs485_names)) || (new_port_mode == NULL)) {
+        return ESP_OK;
+    }
+
+    // Build a minimal request that carries ONLY this port's new mode, e.g.
+    // {"rs485_1":{"port_mode":"tcp_bridge"}}. validate_port_collisions() reads every other listener
+    // (the other port, web_port, the cache Modbus server) from NVS through its effective_* helpers,
+    // so this single field fully models the post-switch listener set. For a non-tcp_bridge mode the
+    // rs485 loop's port_mode == tcp_bridge test is false, so this port contributes no listener and
+    // the result is ESP_OK.
+    cJSON *request_json = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    if ((request_json == NULL) || (rs485 == NULL)) {
+        // Allocation failure: fail open (skip the pre-check), exactly as POST /settings drops its
+        // warnings on OOM. The later bind() stays as the backstop, so no valid switch is wrongly
+        // rejected. rs485 is not attached yet, so freeing both here cannot double-free.
+        cJSON_Delete(request_json);
+        cJSON_Delete(rs485);
+        return ESP_OK;
+    }
+    // Same fail-open contract on OOM: if the port_mode field cannot be added, rs485 would carry no
+    // mode and validate_port_collisions() would silently evaluate the OLD saved mode instead of the
+    // requested one — wrong either way (a false 409 when switching AWAY from tcp_bridge, or a missed
+    // collision). rs485 is not attached to request_json yet, so free both separately here.
+    if (cJSON_AddStringToObject(rs485, "port_mode", new_port_mode) == NULL) {
+        cJSON_Delete(request_json);
+        cJSON_Delete(rs485);
+        return ESP_OK;
+    }
+    cJSON_AddItemToObject(request_json, rs485_names[port_index], rs485);
+
+    // warnings == NULL is safe: add_warning() returns early on NULL and validate_port_collisions()
+    // only ever touches the array through add_warning(). A pre-existing collision that does NOT
+    // involve this port is inherited, not newly introduced, so validate_port_collisions() still
+    // returns true (only a dropped warning) and the mode switch is correctly allowed.
+    bool no_collision = validate_port_collisions(request_json, NULL);
+
+    cJSON_Delete(request_json);
+    return no_collision ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
 // Validate all RS485 port settings (base fields + bridge subgroup) in the request JSON.
 // Returns false on the first invalid field.
 static bool validate_rs485_settings(cJSON *request_json)
