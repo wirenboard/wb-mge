@@ -15,6 +15,8 @@
 // RX timeout in UART symbol periods for transparent proxy mode (minimal latency)
 #define SERIAL_RX_TOUT_PROXY    10
 
+// When adding/removing a field, update bridge_config_equal() in bridge.c — it
+// compares serial_config_t field by field (memcmp is unsafe due to struct padding).
 typedef struct {
     uart_port_t port_num;
     int tx_pin;
