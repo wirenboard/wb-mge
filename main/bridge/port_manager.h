@@ -198,6 +198,26 @@ void port_manager_set_ports_frozen(bool frozen);
 bool port_manager_ports_frozen(void);
 
 /**
+ * @brief Serialisation lock coordinating the freeze transition against parties
+ *        that grab a UART OUTSIDE port_manager.
+ *
+ * The atomic frozen flag alone closes the race for anything that goes through
+ * port_manager_set_mode() (it is rejected with PM_ERR_PORTS_FROZEN). But the
+ * mqtt-serial bridge takes its UART directly (uart_set_pin() + mb_rtu_open())
+ * and only becomes stoppable once its task exists — so a bridge that is mid-start
+ * is invisible to the factory test's mqtt_serial_bridge_stop() and would keep
+ * driving SERIAL_OUTPUT_PIN_{1,2} just as the LEDC seizes them.
+ *
+ * Both the bridge's start sequence and the factory test's freeze transition take
+ * this lock, so they cannot interleave: the test blocks until an in-flight start
+ * has fully finished (and can then stop it), and a start that begins after the
+ * freeze is visible bails out via PM_ERR_PORTS_FROZEN. The lock takes no other
+ * lock while held (in particular not pm_lock), so it cannot invert with it.
+ */
+void port_manager_serialize_lock(void);
+void port_manager_serialize_unlock(void);
+
+/**
  * @brief Deinitialise a port, releasing its serial port and its TCP listening socket.
  *
  * Release half of the two-phase settings apply: settings_update() releases EVERY subsystem

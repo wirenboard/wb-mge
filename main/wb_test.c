@@ -294,12 +294,24 @@ static esp_err_t process_request_json(cJSON *request_json)
             // about to drive (CLK_OUT_PIN / CLK_OUT_PIN_2), and on WB-MGU the port-2 set
             // is the WBE2 bus. Unconditional: mqtt_serial_bridge_stop() is a no-op when
             // the bridge is not running.
+            //
+            // Take the serialisation lock across the stop + freeze so a bridge that is
+            // mid-start (its task not created yet, hence invisible to stop()) cannot
+            // slip through: bridge_start holds the same lock for its whole sequence, so
+            // acquiring it here blocks until any in-flight start has finished — which
+            // stop() then tears down — and any start beginning after the freeze is
+            // published bails out with PM_ERR_PORTS_FROZEN. The lock is released once
+            // the freeze is visible; from that point every start self-rejects, so the
+            // disable / LEDC steps below (and the abort paths, which restart the bridge)
+            // need not hold it.
+            port_manager_serialize_lock();
             mqtt_serial_bridge_stop();
             // Freeze the ports first: from here on the runtime mode (DISABLED)
             // deliberately differs from the mode in NVS, and nothing but this test may
             // re-init the ports while it owns their TX and DE pins (the LEDC drives the
             // TX lines; the DE lines are driven straight as GPIOs).
             port_manager_set_ports_frozen(true);
+            port_manager_serialize_unlock();
             // Disable both ports so the LEDC can take over their TX pins, but do NOT
             // persist the DISABLED mode: NVS must keep the user's configured mode so
             // that losing power during the test cannot wipe the port configuration.

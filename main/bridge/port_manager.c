@@ -126,6 +126,13 @@ static void pm_unlock(unsigned index)
 
 static SemaphoreHandle_t s_cache_decision_mutex; // lazily created; serialises global-cache lifetime decisions
 
+// Serialises the factory-test freeze transition against the mqtt-serial bridge's
+// start sequence — see the contract in port_manager.h. Created in
+// port_manager_init(), with a lazy guard in the lock path so it also works if a
+// caller runs before init. It guards nothing but the ordering: no other lock is
+// taken while it is held.
+static SemaphoreHandle_t s_serialize_mutex;
+
 static void cache_decision_lock(void)
 {
     if (s_cache_decision_mutex == NULL) {
@@ -405,6 +412,12 @@ static void port_deinit_mode(unsigned index)
 
 esp_err_t port_manager_init(void)
 {
+    // Create the freeze/bridge-start serialisation mutex up front, so its first
+    // real use is never the lazy-creation path racing a second caller.
+    if (s_serialize_mutex == NULL) {
+        s_serialize_mutex = xSemaphoreCreateMutex();
+    }
+
     // Initialise shared RS-485 infrastructure (previously done inside bridge_init()).
     rs485_busy_monitor_init();
     rs485_stats_init();
@@ -681,6 +694,23 @@ void port_manager_set_ports_frozen(bool frozen)
 bool port_manager_ports_frozen(void)
 {
     return ports_frozen();
+}
+
+void port_manager_serialize_lock(void)
+{
+    if (s_serialize_mutex == NULL) {
+        s_serialize_mutex = xSemaphoreCreateMutex();
+    }
+    if (s_serialize_mutex) {
+        xSemaphoreTake(s_serialize_mutex, portMAX_DELAY);
+    }
+}
+
+void port_manager_serialize_unlock(void)
+{
+    if (s_serialize_mutex) {
+        xSemaphoreGive(s_serialize_mutex);
+    }
 }
 
 esp_err_t port_manager_release(unsigned port_index)

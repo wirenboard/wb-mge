@@ -912,7 +912,11 @@ static int read_device_params(mb_rtu_port_t *mb, uint8_t slave_id,
  * Public API
  * ------------------------------------------------------------------ */
 
-esp_err_t mqtt_serial_bridge_start(void)
+/* Does the actual work; always run under port_manager_serialize_lock() via the
+ * public wrapper below, so the whole "take the port, grab the UART, read the
+ * device, create the task" sequence cannot interleave with the factory test's
+ * freeze transition. */
+static esp_err_t bridge_start_locked(void)
 {
     mqtt_serial_bridge_stop();
 
@@ -1193,6 +1197,20 @@ esp_err_t mqtt_serial_bridge_start(void)
     ESP_LOGI(TAG, "Bridge started: UART%d baud=%d slave=%d -> MQTT %s:%d",
              uart_num, baud, g_ctx.slave_id, mqtt_host, mqtt_port);
     return ESP_OK;
+}
+
+esp_err_t mqtt_serial_bridge_start(void)
+{
+    /* Serialise the entire start against the factory test's freeze transition.
+     * The bridge owns its UART outside port_manager and is only stoppable once
+     * its task exists, so a start that overlapped the freeze would drive the
+     * RS-485 TX pins the LEDC is taking over. The lock takes no other lock while
+     * held, and no caller holds it on entry (wb_test releases it before its own
+     * restart), so there is no self-deadlock. */
+    port_manager_serialize_lock();
+    esp_err_t ret = bridge_start_locked();
+    port_manager_serialize_unlock();
+    return ret;
 }
 
 void mqtt_serial_bridge_stop(void)
