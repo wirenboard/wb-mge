@@ -1,6 +1,8 @@
 #include "unity.h"
 #include "console_log.h"
 
+#include <string.h>
+
 #include "settings_update.h"
 #include "bridge.h"
 #include "port_manager.h"
@@ -8,6 +10,8 @@
 #include "http_server.h"
 #include "update_rs485_mio_gpio_states.h"
 #include "cache_modbus_server.h"
+#include "mqtt_manager.h"
+#include "mqtt_serial_bridge.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -35,6 +39,16 @@ extern unsigned  mock_cache_modbus_server_deinit_call_seq;  // call id of the fi
 void             mock_cache_modbus_server_reset(void);
 void             mock_cache_modbus_server_set_running_port(int port);
 
+// MQTT / MQTT-serial-bridge settings exposed by the setting_items mock
+extern bool mock_setting_items_mqtt_enabled;
+extern int  mock_setting_items_mqtt_port;
+extern char mock_setting_items_mqtt_host[];
+extern char mock_setting_items_mqtt_user[];
+extern char mock_setting_items_mqtt_pass[];
+extern bool mock_setting_items_mqts_enabled;
+extern int  mock_setting_items_mqts_port;
+extern int  mock_setting_items_mqts_slave_id;
+
 void setUp(void)
 {
     mock_bridge_reset();
@@ -45,6 +59,8 @@ void setUp(void)
     mock_freertos_task_reset();
     mock_setting_items_reset();
     mock_cache_modbus_server_reset();
+    mock_mqtt_manager_reset();
+    mock_mqtt_serial_bridge_reset();
     settings_update_reset();
 }
 
@@ -787,6 +803,144 @@ void test_settings_update_frozen_ports_are_neither_released_nor_reapplied(void)
 }
 
 // ===================================================================
+// ── MQTT / MQTT-serial-bridge change detection ───────────────────────────────
+// settings_update_prime() exists because the change detector treats the first pass
+// as "initialisation": without a primed cache the first edit after boot is consumed
+// silently and no flag is raised. These tests pin that down for BOTH groups, and pin
+// down that a broker change reaches the bridge (which owns a separate MQTT client)
+// exactly once.
+
+// Without prime, the first pass only seeds the cache — nothing is applied.
+void test_settings_update_mqtt_first_change_without_prime_is_swallowed(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - unprimed MQTT change only seeds the cache");
+    LOG_MESSAGE();
+
+    // No settings_update_prime() call: this is a boot without priming.
+    strcpy(mock_setting_items_mqtt_host, "broker.example");
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTaskCreate_data.called,
+        "The seeding pass must raise no flags, so no update task is created");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_mqtt_manager_restart_called, "mqtt_manager must not be restarted");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_mqtt_serial_bridge_start_called, "The bridge must not be restarted");
+}
+
+// After prime, the very first broker change is applied — to mqtt_manager AND to the
+// bridge, which holds its own esp_mqtt_client.
+void test_settings_update_mqtt_first_change_after_prime_restarts_both(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - primed MQTT change restarts manager and bridge");
+    LOG_MESSAGE();
+
+    strcpy(mock_setting_items_mqtt_host, "old.example");
+    settings_update_prime();
+
+    strcpy(mock_setting_items_mqtt_host, "new.example");
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mqtt_manager_restart_called, "mqtt_manager should be restarted once");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mqtt_serial_bridge_start_called,
+        "The bridge must be restarted too, or it keeps publishing to the old broker");
+
+    verify_task_deleted();
+}
+
+// An mqts-only change restarts the bridge without touching mqtt_manager.
+void test_settings_update_mqts_change_restarts_bridge_only(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - mqts change restarts the bridge only");
+    LOG_MESSAGE();
+
+    settings_update_prime();
+
+    mock_setting_items_mqts_slave_id = 42;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_mqtt_manager_restart_called, "mqtt_manager should not be restarted");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mqtt_serial_bridge_start_called, "The bridge should be restarted once");
+
+    verify_task_deleted();
+}
+
+// Both groups changed at once: the bridge is still restarted exactly once
+// (start() already begins with stop(), so a second call would be a full re-open).
+void test_settings_update_mqtt_and_mqts_change_restarts_bridge_once(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - MQTT+mqts change restarts the bridge once");
+    LOG_MESSAGE();
+
+    strcpy(mock_setting_items_mqtt_host, "old.example");
+    settings_update_prime();
+
+    strcpy(mock_setting_items_mqtt_host, "new.example");
+    mock_setting_items_mqts_port = 2;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mqtt_manager_restart_called, "mqtt_manager should be restarted once");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mqtt_serial_bridge_start_called,
+        "Both flags together must still restart the bridge exactly once");
+
+    verify_task_deleted();
+}
+
+// The MQTT/mqts flag bits must not collide with any other subsystem's bit: an
+// MQTT-only change must leave the ports, web server and network stack alone, and a
+// port-only change must not restart MQTT.
+void test_settings_update_mqtt_flags_do_not_overlap_other_subsystems(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - MQTT flag bits do not alias other subsystems");
+    LOG_MESSAGE();
+
+    strcpy(mock_setting_items_mqtt_host, "old.example");
+    settings_update_prime();
+    strcpy(mock_setting_items_mqtt_host, "new.example");
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    verify_updates(false, false, false, false, false, false);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vTaskDelay_data.called,
+        "An MQTT-only change must not enter the network-update path");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_modbus_server_init_call_count,
+        "An MQTT-only change must not touch the cache Modbus server");
+    verify_task_deleted();
+
+    // Now the other direction: a port-only change must not restart MQTT.
+    setUp();
+    settings_update_prime();
+    mock_port_manager_check_settings_changed_return_value[0] = true;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_port_manager_apply_settings_called[0], "Port 1 should be re-applied");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_mqtt_manager_restart_called, "mqtt_manager should not be restarted");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_mqtt_serial_bridge_start_called, "The bridge should not be restarted");
+
+    verify_task_deleted();
+}
+
 // The web server's fallback ladder: configured port -> released port -> default port.
 // http_server_check_settings_changed() reports "no change" while the server is stopped, so
 // HTTP_SERVER_FLAG is never raised again and a web UI left down here stays down until the device is
@@ -1004,6 +1158,13 @@ int main(void)
     RUN_TEST(test_settings_update_http_acquires_after_ports);
     RUN_TEST(test_settings_update_http_response_sent_before_deinit);
     RUN_TEST(test_settings_update_frozen_ports_are_neither_released_nor_reapplied);
+
+    // MQTT / MQTT-serial-bridge change detection and priming
+    RUN_TEST(test_settings_update_mqtt_first_change_without_prime_is_swallowed);
+    RUN_TEST(test_settings_update_mqtt_first_change_after_prime_restarts_both);
+    RUN_TEST(test_settings_update_mqts_change_restarts_bridge_only);
+    RUN_TEST(test_settings_update_mqtt_and_mqts_change_restarts_bridge_once);
+    RUN_TEST(test_settings_update_mqtt_flags_do_not_overlap_other_subsystems);
 
     // The web server's fallback ladder
     RUN_TEST(test_settings_update_http_init_failure_rolls_back);

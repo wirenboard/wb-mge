@@ -520,5 +520,17 @@ esp_err_t settings_update(void)
     void settings_update_reset(void)
     {
         update_task_handle = NULL;
+        // Return the change-detection caches to their cold-boot state so each test
+        // starts before settings_update_prime() has run.
+        s_mqtt_primed       = false;
+        s_mqtt_prev_enabled = false;
+        s_mqtt_prev_port    = -1;
+        s_mqtt_prev_host[0] = '\0';
+        s_mqtt_prev_user[0] = '\0';
+        s_mqtt_prev_pass[0] = '\0';
+        s_mqts_primed       = false;
+        s_mqts_prev_enabled = false;
+        s_mqts_prev_port    = -1;
+        s_mqts_prev_slave   = -1;
     }
 #endif
