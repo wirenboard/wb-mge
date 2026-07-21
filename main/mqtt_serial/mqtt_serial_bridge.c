@@ -947,16 +947,23 @@ esp_err_t mqtt_serial_bridge_start(void)
     g_ctx.saved_port_mode = port_manager_get_mode((unsigned)bridge_port_index);
     esp_err_t mode_err = port_manager_set_mode((unsigned)bridge_port_index, PM_MODE_DISABLED);
     if (mode_err != ESP_OK) {
-        /* Nothing changed — in particular PM_ERR_PORTS_FROZEN means the factory
-         * clock_out test owns the TX/DE pins and port_manager refused to release
-         * the port. Taking the UART anyway would put two drivers on the same
-         * pins, so give up here, before uart_set_pin()/mb_rtu_open(). The port is
-         * untouched, so there is no mode to roll back; tmpl_buf is the only thing
-         * allocated so far. */
+        /* Give up before uart_set_pin()/mb_rtu_open() — the port was not handed to
+         * the bridge, so taking the UART would fight whoever still owns it.
+         *
+         * PM_ERR_PORTS_FROZEN is returned BEFORE port_set_mode_impl() touches the
+         * port (the factory clock_out test owns the TX/DE pins), so the port is
+         * untouched and there is nothing to roll back. Every OTHER failure happens
+         * AFTER port_deinit_mode(): the port is already torn down and left DISABLED
+         * (e.g. the NVS save failed but the live deinit stands), so it must be
+         * restored to the mode it had on entry, or the RS-485 port stays dead until
+         * the next settings write or a reboot. */
         ESP_LOGE(TAG, "Cannot take port %d for the bridge: %s",
                  port_num_1based,
                  (mode_err == PM_ERR_PORTS_FROZEN) ? "ports are frozen by the factory test"
                                                    : esp_err_to_name(mode_err));
+        if (mode_err != PM_ERR_PORTS_FROZEN) {
+            port_manager_set_mode((unsigned)bridge_port_index, g_ctx.saved_port_mode);
+        }
         free(tmpl_buf);
         return mode_err;
     }
