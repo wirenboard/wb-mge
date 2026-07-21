@@ -6,7 +6,7 @@
 
 #include "setting_items.h"
 #include "port_manager.h"   /* port_manager_set_mode / port_manager_get_mode */
-#include "board.h"          /* board_rs485_pins() — board-dependent RS485 GPIOs */
+#include "board_pins.h"    /* SERIAL_*_PIN_* — per-model RS485 GPIOs */
 #include "mqtt_client.h"
 #include "template_handler.h"
 #include "fast_modbus_events.h"
@@ -32,20 +32,11 @@
 static const char *TAG = "mqtt_serial_bridge";
 
 /* ------------------------------------------------------------------
- * Hardware pins — same as bridge/bridge.c, defined here separately
- * to avoid a hard coupling to that module's internals.
- * ------------------------------------------------------------------
- * TODO: move to a shared board header if hardware is ever revised.
- * ------------------------------------------------------------------ */
+ * UART numbers — same as bridge/bridge.c. The RS485 GPIOs are NOT duplicated
+ * here: they are model-dependent and come from board_pins.h (main/boards/*.h),
+ * which is the single source of truth shared with bridge/bridge.c. */
 #define MB_SERIAL_PORT_NUM_1    1
-#define MB_SERIAL_INPUT_PIN_1   GPIO_NUM_9
-#define MB_SERIAL_OUTPUT_PIN_1  GPIO_NUM_10
-#define MB_SERIAL_IO_PIN_1      GPIO_NUM_4
-
 #define MB_SERIAL_PORT_NUM_2    2
-#define MB_SERIAL_INPUT_PIN_2   GPIO_NUM_12
-#define MB_SERIAL_OUTPUT_PIN_2  GPIO_NUM_14
-#define MB_SERIAL_IO_PIN_2      GPIO_NUM_15
 
 #define TOPIC_MAX   512
 #define WRITE_QUEUE_DEPTH  8
@@ -957,13 +948,17 @@ esp_err_t mqtt_serial_bridge_start(void)
     port_manager_set_mode((unsigned)bridge_port_index, PM_MODE_DISABLED);
     g_ctx.bridge_port_index = bridge_port_index;
 
-    /* UART number is board-independent; the RS485 GPIOs depend on the board
-     * variant (WB-MGE vs WB-MGU). Use the shared board pin table so the bridge
-     * drives exactly the same pins the base (port_manager) would for this port. */
+    /* UART number is board-independent; the RS485 GPIOs come from the per-model
+     * board header selected at build time (board_pins.h -> main/boards/*.h), so the
+     * bridge drives exactly the same pins the base (port_manager) would. */
     int uart_num = (port_num_1based == 1) ? MB_SERIAL_PORT_NUM_1 : MB_SERIAL_PORT_NUM_2;
-    int tx_i = 0, rx_i = 0, dir_i = 0;
-    board_rs485_pins((unsigned)bridge_port_index, &tx_i, &rx_i, &dir_i);
-    gpio_num_t tx_pin = (gpio_num_t)tx_i, rx_pin = (gpio_num_t)rx_i, dir_pin = (gpio_num_t)dir_i;
+    static const int tx_pins[2]  = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};
+    static const int rx_pins[2]  = {SERIAL_INPUT_PIN_1,  SERIAL_INPUT_PIN_2};
+    static const int dir_pins[2] = {SERIAL_IO_PIN_1,     SERIAL_IO_PIN_2};
+    int pin_idx = (bridge_port_index == 1) ? 1 : 0;
+    gpio_num_t tx_pin  = (gpio_num_t)tx_pins[pin_idx];
+    gpio_num_t rx_pin  = (gpio_num_t)rx_pins[pin_idx];
+    gpio_num_t dir_pin = (gpio_num_t)dir_pins[pin_idx];
 
     /* Configure UART pins — must be done before mb_rtu_open installs driver */
     esp_err_t pin_err = uart_set_pin((uart_port_t)uart_num, tx_pin, rx_pin, dir_pin, UART_PIN_NO_CHANGE);

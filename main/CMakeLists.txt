@@ -1,5 +1,4 @@
 set(COMPONENT_SRCS "main.c"
-                   "board.c"
                    "auth.c"
                    "http_server.c"
                    "info_handlers.c"
