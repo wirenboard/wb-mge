@@ -19,6 +19,7 @@ bool mock_validate_bool_called = false;
 bool mock_validate_login_called = false;
 bool mock_validate_password_called = false;
 bool mock_validate_wifi_password_called = false;
+bool mock_validate_modbus_slave_id_called = false;
 
 void mock_reset_validator_flags(void)
 {
@@ -39,6 +40,7 @@ void mock_reset_validator_flags(void)
     mock_validate_login_called = false;
     mock_validate_password_called = false;
     mock_validate_wifi_password_called = false;
+    mock_validate_modbus_slave_id_called = false;
 }
 
 bool validate_hostname(const char *value)
@@ -158,5 +160,11 @@ bool validate_wifi_password(const char *value)
 {
     (void)value;
     mock_validate_wifi_password_called = true;
+    return true;
+}
+
+bool validate_modbus_slave_id(const char *value)
+{
+    mock_validate_modbus_slave_id_called = true;
     return true;
 }

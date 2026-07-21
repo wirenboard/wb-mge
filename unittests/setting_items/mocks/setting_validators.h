@@ -19,6 +19,7 @@ extern bool mock_validate_bool_called;
 extern bool mock_validate_login_called;
 extern bool mock_validate_password_called;
 extern bool mock_validate_wifi_password_called;
+extern bool mock_validate_modbus_slave_id_called;
 
 void mock_reset_validator_flags(void);
 
@@ -39,3 +40,4 @@ bool validate_bool(const char *value);
 bool validate_login(const char *value);
 bool validate_password(const char *value);
 bool validate_wifi_password(const char *value);
+bool validate_modbus_slave_id(const char *value);

@@ -30,3 +30,14 @@ int setting_items_read_int(const char *key)
     }
     return 0;
 }
+
+// String settings (MQTT host / user / pass) are not exercised by these tests:
+// always report an empty value so the change detector sees a stable state.
+esp_err_t setting_items_read(const char *key, char *value)
+{
+    (void)key;
+    if (value) {
+        value[0] = '\0';
+    }
+    return ESP_OK;
+}

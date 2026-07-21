@@ -33,7 +33,7 @@ static const char *TAG = "mqtt_serial_bridge";
 
 /* ------------------------------------------------------------------
  * UART numbers — same as bridge/bridge.c. The RS485 GPIOs are NOT duplicated
- * here: they are model-dependent and come from board_pins.h (main/boards/*.h),
+ * here: they are model-dependent and come from board_pins.h (main/boards headers),
  * which is the single source of truth shared with bridge/bridge.c. */
 #define MB_SERIAL_PORT_NUM_1    1
 #define MB_SERIAL_PORT_NUM_2    2
@@ -949,7 +949,7 @@ esp_err_t mqtt_serial_bridge_start(void)
     g_ctx.bridge_port_index = bridge_port_index;
 
     /* UART number is board-independent; the RS485 GPIOs come from the per-model
-     * board header selected at build time (board_pins.h -> main/boards/*.h), so the
+     * board header selected at build time via board_pins.h, so the
      * bridge drives exactly the same pins the base (port_manager) would. */
     int uart_num = (port_num_1based == 1) ? MB_SERIAL_PORT_NUM_1 : MB_SERIAL_PORT_NUM_2;
     static const int tx_pins[2]  = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};

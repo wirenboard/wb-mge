@@ -19,6 +19,8 @@ INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main
 INC += $(PROJ_DIR)/main/bridge
+# template_handler.h — the device-template endpoints http_server.c registers
+INC += $(PROJ_DIR)/main/mqtt_serial
 # sys_info.h (used by http_server.c for the build-identity ETag) pulls in
 # wb_app_desc.h and the ESP-IDF app-format headers; expose them on the host.
 INC += $(PROJ_DIR)/main/wb_app_desc

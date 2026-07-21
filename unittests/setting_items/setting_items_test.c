@@ -88,6 +88,17 @@ const mock_setting_item_t expected_items[] = {
     {"cache_mb_port", "504", SETTING_ITEM_TYPE_INT},
     {"cache_mb_srv_en", "true", SETTING_ITEM_TYPE_BOOL},
     {"cache_val_tout", "60", SETTING_ITEM_TYPE_INT},
+
+    {"mqtt_enabled", "false", SETTING_ITEM_TYPE_BOOL},
+    {"mqtt_host", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_port", "1883", SETTING_ITEM_TYPE_INT},
+    {"mqtt_user", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_pass", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_prefix", "wb-mge", SETTING_ITEM_TYPE_STRING},
+
+    {"mqts_enabled", "false", SETTING_ITEM_TYPE_BOOL},
+    {"mqts_port", "1", SETTING_ITEM_TYPE_INT},
+    {"mqts_slave_id", "1", SETTING_ITEM_TYPE_INT},
 };
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))

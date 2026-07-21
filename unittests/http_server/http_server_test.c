@@ -297,6 +297,8 @@ void test_http_server_uri_handlers_registration(void)
         {"/wb_test",                        HTTP_GET},
         {"/wb_test",                        HTTP_POST},
         {"/hostname",                       HTTP_GET},
+        {"/device-template",                HTTP_POST},
+        {"/device-template",                HTTP_GET},
         {"/roboto-latin-wght-normal.woff2",        HTTP_GET},
         {"/roboto-cyrillic-wght-normal.woff2",     HTTP_GET},
         {"/roboto-cyrillic-ext-wght-normal.woff2", HTTP_GET}
