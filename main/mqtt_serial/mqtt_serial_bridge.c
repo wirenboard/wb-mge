@@ -988,8 +988,13 @@ esp_err_t mqtt_serial_bridge_start(void)
                                       : setting_items_read_int(KEY_BAUDRATE2);
     if (baud <= 0) baud = 9600;
 
-    char stop_str[8] = {0};
-    char parity_str[8] = {0};
+    /* Must be SETTING_ITEM_MAX_STR_LEN: setting_items_read() writes up to that many
+     * bytes into the caller's buffer regardless of the value's actual length — the
+     * NVS-read-failed path does strncpy(value, default, LEN - 1) (strncpy pads with
+     * NULs to n) followed by value[LEN - 1] = '\0', and storage_iface->read_str() is
+     * not told the buffer size either. Smaller buffers here smashed the stack. */
+    char stop_str[SETTING_ITEM_MAX_STR_LEN] = {0};
+    char parity_str[SETTING_ITEM_MAX_STR_LEN] = {0};
     if (port_num_1based == 1) {
         setting_items_read(KEY_STOPBITS1, stop_str);
         setting_items_read(KEY_PARITY1, parity_str);
