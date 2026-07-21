@@ -33,10 +33,18 @@ static const char *TAG = "settings_update";
 
 static TaskHandle_t update_task_handle = NULL;
 
-/* MQTT-serial bridge change-detection cache. Primed once at boot by
- * settings_update_prime() with the boot-time values, so the FIRST later change
- * (e.g. mqts_port from the web UI) is detected and the bridge is restarted
- * without needing a reboot. */
+/* MQTT and MQTT-serial-bridge change-detection caches. Both are primed once at
+ * boot by settings_update_prime() with the boot-time values, so the FIRST later
+ * change (e.g. mqtt_host or mqts_port from the web UI) is detected and applied
+ * without needing a reboot. Without priming, the first edit after boot is
+ * swallowed as "initialisation" and no flag is raised. */
+static bool s_mqtt_primed       = false;
+static bool s_mqtt_prev_enabled = false;
+static int  s_mqtt_prev_port    = -1;
+static char s_mqtt_prev_host[SETTING_ITEM_MAX_STR_LEN] = {0};
+static char s_mqtt_prev_user[SETTING_ITEM_MAX_STR_LEN] = {0};
+static char s_mqtt_prev_pass[SETTING_ITEM_MAX_STR_LEN] = {0};
+
 static bool s_mqts_primed       = false;
 static bool s_mqts_prev_enabled = false;
 static int  s_mqts_prev_port    = -1;
@@ -44,6 +52,13 @@ static int  s_mqts_prev_slave   = -1;
 
 void settings_update_prime(void)
 {
+    s_mqtt_prev_enabled = setting_items_read_bool(KEY_MQTT_ENABLED);
+    s_mqtt_prev_port    = setting_items_read_int(KEY_MQTT_PORT);
+    setting_items_read(KEY_MQTT_HOST, s_mqtt_prev_host);
+    setting_items_read(KEY_MQTT_USER, s_mqtt_prev_user);
+    setting_items_read(KEY_MQTT_PASS, s_mqtt_prev_pass);
+    s_mqtt_primed       = true;
+
     s_mqts_prev_enabled = setting_items_read_bool(KEY_MQTS_ENABLED);
     s_mqts_prev_port    = setting_items_read_int(KEY_MQTS_PORT);
     s_mqts_prev_slave   = setting_items_read_int(KEY_MQTS_SLAVE_ID);
@@ -321,7 +336,13 @@ static void settings_update_task(void *arg)
         mqtt_manager_restart();
     }
 
-    if (flags & MQTS_FLAG) {
+    // The mqtt-serial bridge runs its OWN esp_mqtt_client, so a broker change
+    // (MQTT_FLAG) has to reach it as well — restarting mqtt_manager alone left the
+    // bridge publishing to the old broker until the next reboot. A single combined
+    // check also guarantees exactly one restart when both flags are raised at once,
+    // which matters because mqtt_serial_bridge_start() re-opens the UART and re-reads
+    // the whole device template.
+    if (flags & (MQTT_FLAG | MQTS_FLAG)) {
         ESP_LOGD(TAG, "Applying new settings to MQTT serial bridge");
         mqtt_serial_bridge_start();
     }
@@ -427,14 +448,8 @@ esp_err_t settings_update(void)
     }
 
     {
-        // Check MQTT settings change by comparing current settings with cached values
-        static char prev_host[SETTING_ITEM_MAX_STR_LEN] = {0};
-        static int prev_port = -1;
-        static char prev_user[SETTING_ITEM_MAX_STR_LEN] = {0};
-        static char prev_pass[SETTING_ITEM_MAX_STR_LEN] = {0};
-        static bool prev_enabled = false;
-        static bool mqtt_initialized = false;
-
+        /* Check MQTT settings change against the cache primed at boot by
+         * settings_update_prime(), so the first change after boot is applied. */
         char cur_host[SETTING_ITEM_MAX_STR_LEN] = {0};
         char cur_user[SETTING_ITEM_MAX_STR_LEN] = {0};
         char cur_pass[SETTING_ITEM_MAX_STR_LEN] = {0};
@@ -444,25 +459,25 @@ esp_err_t settings_update(void)
         setting_items_read(KEY_MQTT_USER, cur_user);
         setting_items_read(KEY_MQTT_PASS, cur_pass);
 
-        if (!mqtt_initialized ||
-            cur_enabled != prev_enabled ||
-            cur_port != prev_port ||
-            strncmp(cur_host, prev_host, SETTING_ITEM_MAX_STR_LEN) != 0 ||
-            strncmp(cur_user, prev_user, SETTING_ITEM_MAX_STR_LEN) != 0 ||
-            strncmp(cur_pass, prev_pass, SETTING_ITEM_MAX_STR_LEN) != 0) {
-            if (mqtt_initialized) {
+        if (!s_mqtt_primed ||
+            cur_enabled != s_mqtt_prev_enabled ||
+            cur_port != s_mqtt_prev_port ||
+            strncmp(cur_host, s_mqtt_prev_host, SETTING_ITEM_MAX_STR_LEN) != 0 ||
+            strncmp(cur_user, s_mqtt_prev_user, SETTING_ITEM_MAX_STR_LEN) != 0 ||
+            strncmp(cur_pass, s_mqtt_prev_pass, SETTING_ITEM_MAX_STR_LEN) != 0) {
+            if (s_mqtt_primed) {
                 ESP_LOGD(TAG, "MQTT settings were changed");
                 flags |= MQTT_FLAG;
             }
-            strncpy(prev_host, cur_host, SETTING_ITEM_MAX_STR_LEN - 1);
-            prev_host[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-            strncpy(prev_user, cur_user, SETTING_ITEM_MAX_STR_LEN - 1);
-            prev_user[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-            strncpy(prev_pass, cur_pass, SETTING_ITEM_MAX_STR_LEN - 1);
-            prev_pass[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
-            prev_port = cur_port;
-            prev_enabled = cur_enabled;
-            mqtt_initialized = true;
+            strncpy(s_mqtt_prev_host, cur_host, SETTING_ITEM_MAX_STR_LEN - 1);
+            s_mqtt_prev_host[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+            strncpy(s_mqtt_prev_user, cur_user, SETTING_ITEM_MAX_STR_LEN - 1);
+            s_mqtt_prev_user[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+            strncpy(s_mqtt_prev_pass, cur_pass, SETTING_ITEM_MAX_STR_LEN - 1);
+            s_mqtt_prev_pass[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+            s_mqtt_prev_port = cur_port;
+            s_mqtt_prev_enabled = cur_enabled;
+            s_mqtt_primed = true;
         }
     }
 
