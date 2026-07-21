@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include <assert.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -124,23 +125,33 @@ static void pm_unlock(unsigned index)
     }
 }
 
-static SemaphoreHandle_t s_cache_decision_mutex; // lazily created; serialises global-cache lifetime decisions
+// Both mutexes are created once by port_manager_locks_init(), before httpd starts
+// (see the contract there). The lock paths assert they exist rather than creating
+// them lazily: a lazy create in a URI-handler task racing another caller would
+// spawn a second, unshared mutex (TOCTOU) and silently defeat the exclusion.
+static SemaphoreHandle_t s_cache_decision_mutex; // serialises global-cache lifetime decisions
 
 // Serialises the factory-test freeze transition against the mqtt-serial bridge's
-// start sequence — see the contract in port_manager.h. Created in
-// port_manager_init(), with a lazy guard in the lock path so it also works if a
-// caller runs before init. It guards nothing but the ordering: no other lock is
-// taken while it is held.
+// start sequence — see the contract in port_manager.h. It guards nothing but the
+// ordering: no other lock is taken while it is held.
 static SemaphoreHandle_t s_serialize_mutex;
 
-static void cache_decision_lock(void)
+void port_manager_locks_init(void)
 {
     if (s_cache_decision_mutex == NULL) {
         s_cache_decision_mutex = xSemaphoreCreateMutex();
     }
-    if (s_cache_decision_mutex) {
-        xSemaphoreTake(s_cache_decision_mutex, portMAX_DELAY);
+    if (s_serialize_mutex == NULL) {
+        s_serialize_mutex = xSemaphoreCreateMutex();
     }
+    assert(s_cache_decision_mutex && s_serialize_mutex);
+}
+
+static void cache_decision_lock(void)
+{
+    // Must exist: port_manager_locks_init() runs before any handler can call in.
+    assert(s_cache_decision_mutex);
+    xSemaphoreTake(s_cache_decision_mutex, portMAX_DELAY);
 }
 static void cache_decision_unlock(void)
 {
@@ -412,11 +423,9 @@ static void port_deinit_mode(unsigned index)
 
 esp_err_t port_manager_init(void)
 {
-    // Create the freeze/bridge-start serialisation mutex up front, so its first
-    // real use is never the lazy-creation path racing a second caller.
-    if (s_serialize_mutex == NULL) {
-        s_serialize_mutex = xSemaphoreCreateMutex();
-    }
+    // The global mutexes were created earlier by port_manager_locks_init(), before
+    // httpd started — assert that ordering held rather than creating them here.
+    assert(s_serialize_mutex && s_cache_decision_mutex);
 
     // Initialise shared RS-485 infrastructure (previously done inside bridge_init()).
     rs485_busy_monitor_init();
@@ -698,12 +707,9 @@ bool port_manager_ports_frozen(void)
 
 void port_manager_serialize_lock(void)
 {
-    if (s_serialize_mutex == NULL) {
-        s_serialize_mutex = xSemaphoreCreateMutex();
-    }
-    if (s_serialize_mutex) {
-        xSemaphoreTake(s_serialize_mutex, portMAX_DELAY);
-    }
+    // Must exist: port_manager_locks_init() runs before any handler can call in.
+    assert(s_serialize_mutex);
+    xSemaphoreTake(s_serialize_mutex, portMAX_DELAY);
 }
 
 void port_manager_serialize_unlock(void)
@@ -1111,5 +1117,8 @@ void port_manager_reset_for_test(void)
 {
     memset(pm_ctx, 0, sizeof(pm_ctx));
     __atomic_store_n(&s_ports_frozen, false, __ATOMIC_SEQ_CST);
+    // Production creates the global mutexes via port_manager_locks_init() before
+    // httpd; mirror that here so the lock paths' asserts hold under test.
+    port_manager_locks_init();
 }
 #endif /* __unittest_env__ */

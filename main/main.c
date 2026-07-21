@@ -142,6 +142,14 @@ void app_main(void)
 
     ESP_ERROR_CHECK(network_init());
 
+    // Create the port_manager global mutexes here, on the main task, BEFORE
+    // http_server_init() registers the URI handlers (/ports/N/mode, /ports/N/cache,
+    // /device-template, /settings, /wb_test) that take them. port_manager_init()
+    // itself runs only after the network is up (the wait loop below), which is later
+    // than httpd — so a first HTTP request in between would otherwise hit the lazy
+    // creation and race a second, unshared mutex into existence.
+    port_manager_locks_init();
+
     // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
     // This device is a Modbus gateway first — routing RS-485/TCP traffic is what it is installed
     // for, and it does that with no web interface at all. Nothing below needs a running httpd

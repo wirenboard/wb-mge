@@ -51,6 +51,21 @@ typedef enum {
 #define PM_ERR_PORTS_FROZEN  ((esp_err_t)0x10000)
 
 /**
+ * @brief Create the port_manager global mutexes.
+ *
+ * Creates the freeze/bridge-start serialisation mutex and the global-cache
+ * decision mutex. Deterministic and single-threaded: MUST be called once, on the
+ * main task, BEFORE http_server_init() registers the URI handlers (POST
+ * /ports/N/mode, /ports/N/cache, /device-template, /settings, /wb_test) that can
+ * take these locks — otherwise the first concurrent HTTP request would race the
+ * lazy creation and end up with a second, unshared mutex. Idempotent.
+ *
+ * Split out of port_manager_init() because that runs only after the network is
+ * up, which is later than http_server_init().
+ */
+void port_manager_locks_init(void);
+
+/**
  * @brief Initialize the port manager.
  *
  * Reads the active mode for each port from NVS and brings up the appropriate
@@ -59,6 +74,7 @@ typedef enum {
  *
  * Must be called once after NVS and settings are ready, in place of the old
  * bridge_init() + cache_modbus_server_init() calls in main.c.
+ * port_manager_locks_init() must have been called earlier (before httpd start).
  *
  * @return ESP_OK on success.
  */
