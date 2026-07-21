@@ -945,7 +945,21 @@ esp_err_t mqtt_serial_bridge_start(void)
      * persisted by port_manager so the settings task does not re-open the
      * port and steal the UART back; the saved mode is restored on stop. */
     g_ctx.saved_port_mode = port_manager_get_mode((unsigned)bridge_port_index);
-    port_manager_set_mode((unsigned)bridge_port_index, PM_MODE_DISABLED);
+    esp_err_t mode_err = port_manager_set_mode((unsigned)bridge_port_index, PM_MODE_DISABLED);
+    if (mode_err != ESP_OK) {
+        /* Nothing changed — in particular PM_ERR_PORTS_FROZEN means the factory
+         * clock_out test owns the TX/DE pins and port_manager refused to release
+         * the port. Taking the UART anyway would put two drivers on the same
+         * pins, so give up here, before uart_set_pin()/mb_rtu_open(). The port is
+         * untouched, so there is no mode to roll back; tmpl_buf is the only thing
+         * allocated so far. */
+        ESP_LOGE(TAG, "Cannot take port %d for the bridge: %s",
+                 port_num_1based,
+                 (mode_err == PM_ERR_PORTS_FROZEN) ? "ports are frozen by the factory test"
+                                                   : esp_err_to_name(mode_err));
+        free(tmpl_buf);
+        return mode_err;
+    }
     g_ctx.bridge_port_index = bridge_port_index;
 
     /* UART number is board-independent; the RS485 GPIOs come from the per-model
