@@ -6,6 +6,7 @@
 #include "board_pins.h"
 #include "json_utils.h"
 #include "bridge/port_manager.h"
+#include "mqtt_serial_bridge.h"
 #include "esp_log.h"
 #include "indication.h"
 #include "rs485_control.h"
@@ -259,6 +260,9 @@ static void abort_clock_out_entry(void)
     port_manager_set_ports_frozen(false);
     port_manager_apply_settings(BRIDGE_PORT_INDEX);
     port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
+    // The bridge was stopped on the way in (it owns a UART outside port_manager);
+    // bring it back. See the entry path for why the order matters.
+    mqtt_serial_bridge_start();
 }
 
 
@@ -282,6 +286,15 @@ static esp_err_t process_request_json(cJSON *request_json)
 
     if (cmd_item->valueint) {
         if (!clock_out_en) {
+            // Stop the mqtt-serial bridge BEFORE freezing. The bridge owns its UART
+            // outside port_manager: it disables the port once and then keeps the driver
+            // (uart_set_pin() + mb_rtu_open()) and its polling task for itself, so
+            // freezing the ports does not stop it. Left running it would keep
+            // transmitting on SERIAL_OUTPUT_PIN_{1,2} — exactly the pins the LEDC is
+            // about to drive (CLK_OUT_PIN / CLK_OUT_PIN_2), and on WB-MGU the port-2 set
+            // is the WBE2 bus. Unconditional: mqtt_serial_bridge_stop() is a no-op when
+            // the bridge is not running.
+            mqtt_serial_bridge_stop();
             // Freeze the ports first: from here on the runtime mode (DISABLED)
             // deliberately differs from the mode in NVS, and nothing but this test may
             // re-init the ports while it owns their TX and DE pins (the LEDC drives the
@@ -356,6 +369,13 @@ static esp_err_t process_request_json(cJSON *request_json)
             if (err2 != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to restore port 2 mode after clock_out: %s", esp_err_to_name(err2));
             }
+            // Restart the mqtt-serial bridge last: it needs the ports unfrozen (it takes
+            // its UART via port_manager_set_mode(), which is rejected while frozen), and
+            // it must run AFTER apply_settings() — otherwise apply_settings() would
+            // re-init the port and steal the UART back from the bridge. Unconditional:
+            // start() re-reads KEY_MQTT_ENABLED / KEY_MQTS_ENABLED and returns without
+            // starting anything when the bridge is not configured to run.
+            mqtt_serial_bridge_start();
             // Factory test: return LEDs to normal indication and restore V-out state.
             // The I/O bus needs no restoring: the test never touched it.
             indication_set_test_all_leds(false);
