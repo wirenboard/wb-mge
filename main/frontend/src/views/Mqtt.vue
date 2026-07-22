@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettings } from '@/common/settings';
+import { useInfo } from '@/common/info';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
@@ -11,6 +12,25 @@ import FileUpload from '@/components/FileUpload.vue';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
+const { info } = useInfo();
+
+// On WB-MGU the second RS485 port is physically the internal WBE2 bus, so RS485-2
+// must not be selectable. device_name reflects the build target and always contains
+// "MGU" on that board (e.g. "WB-MGU v.1"); substring match survives board revisions.
+const isMgu = computed(() => info.value?.device_name?.includes('MGU') ?? false);
+
+// Coerce a previously stored mqts.port === 2 down to 1 on MGU: the RS485-2 option is
+// hidden there, so an unmatched v-model would render an empty select. Once set to 1
+// the condition is false, so this cannot loop; the guard tolerates undefined data.
+watch(
+  [isMgu, () => data.value?.mqts?.port],
+  () => {
+    if (isMgu.value && data.value?.mqts && data.value.mqts.port === 2) {
+      data.value.mqts.port = 1;
+    }
+  },
+  { immediate: true }
+);
 
 const templateFile = ref<FileList | null>(null);
 const isUploadingTemplate = ref(false);
@@ -265,8 +285,11 @@ const installSelectedTemplate = async () => {
                   <label for="mqts_port">{{ t('mqts_port') }}</label>
                   <select id="mqts_port" v-model="data.mqts.port" name="mqts_port">
                     <option :value="1">RS485-1</option>
-                    <option :value="2">RS485-2</option>
+                    <option v-if="!isMgu" :value="2">RS485-2</option>
                   </select>
+                </div>
+                <div v-if="isMgu" class="field">
+                  <span style="color: var(--color-text-secondary); font-size: 0.875rem">{{ t('mqts_port_mgu_note') }}</span>
                 </div>
                 <div class="field">
                   <label for="mqts_slave_id">{{ t('mqts_slave_id') }}</label>
@@ -364,6 +387,7 @@ const installSelectedTemplate = async () => {
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Enable serial bridge",
     "mqts_port": "RS485 port",
+    "mqts_port_mgu_note": "On WB-MGU only RS485-1 is available; port 2 is the internal WBE2 bus.",
     "mqts_slave_id": "Modbus slave ID",
     "template_title": "Device template",
     "template_label": "Template JSON file",
@@ -401,6 +425,7 @@ const installSelectedTemplate = async () => {
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Включить serial bridge",
     "mqts_port": "Порт RS485",
+    "mqts_port_mgu_note": "На WB-MGU доступен только RS485-1; порт 2 — внутренняя шина WBE2.",
     "mqts_slave_id": "Modbus slave ID",
     "template_title": "Шаблон устройства",
     "template_label": "JSON-файл шаблона",
@@ -438,6 +463,7 @@ const installSelectedTemplate = async () => {
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Serial bridge қосу",
     "mqts_port": "RS485 порты",
+    "mqts_port_mgu_note": "WB-MGU-да тек RS485-1 қолжетімді; 2-порт — ішкі WBE2 шинасы.",
     "mqts_slave_id": "Modbus slave ID",
     "template_title": "Құрылғы шаблоны",
     "template_label": "JSON шаблон файлы",
@@ -475,6 +501,7 @@ const installSelectedTemplate = async () => {
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Abilita serial bridge",
     "mqts_port": "Porta RS485",
+    "mqts_port_mgu_note": "Su WB-MGU è disponibile solo RS485-1; la porta 2 è il bus interno WBE2.",
     "mqts_slave_id": "Modbus slave ID",
     "template_title": "Template dispositivo",
     "template_label": "File JSON template",
@@ -512,6 +539,7 @@ const installSelectedTemplate = async () => {
     "mqts_settings": "MQTT serial bridge",
     "mqts_enabled": "Serial bridge aktivieren",
     "mqts_port": "RS485-Port",
+    "mqts_port_mgu_note": "Bei WB-MGU ist nur RS485-1 verfügbar; Port 2 ist der interne WBE2-Bus.",
     "mqts_slave_id": "Modbus slave ID",
     "template_title": "Ger\u00e4tevorlage",
     "template_label": "JSON-Vorlagendatei",
