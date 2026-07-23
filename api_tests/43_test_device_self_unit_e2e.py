@@ -20,7 +20,8 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
                200-219 model string (MEM_8: 1 char/reg, in the LOW byte);
                220-244 git info (2 chars/reg, FIRST char in the LOW byte);
                250-265 fw version string (MEM_8: 1 char/reg, in the LOW byte);
-               266-269 serial ext u64 MSW-first; 270-271 serial low u32 MSW-first;
+               266-267 serial generation scheme u32 (4 = from MAC);
+               268-271 serial number u64 MSW-first;
                320 MAJOR, 321 MINOR, 322 PATCH, 323 SUFFIX(s16);
                324-325 numeric version LE word order (324=low);
                326-327 numeric version BE word order (326=high);
@@ -306,43 +307,40 @@ def test_self_unit_git_info_matches_info(api, gateway_slave):
 
 @pytest.mark.qemu
 def test_self_unit_serial_matches_info(api, gateway_slave):
-    """Serial registers at unit 0xFF reconstruct /info serial_num.
+    """Serial registers at unit 0xFF: scheme + serial value.
 
-    270-271 (u32 MSW-first) == serial_num & 0xFFFFFFFF.
-    266-269 (u64 MSW-first) == full serial_num.
+    266-267 (u32 MSW-first) == 4 (serial generated from the MAC).
+    268-271 (u64 MSW-first) == full serial_num from /info.
     """
     info = api.get_info().json()
     serial_num = info["serial_num"]
 
-    # Low u32, MSW-first across 270..271.
+    # Generation scheme, u32 MSW-first across 266..267.
     _tid, unit_id, resp_fc, payload = read_self_regs(
-        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 270, 2
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 266, 2
     )
     assert not (resp_fc & 0x80), \
-        f"serial low read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
+        f"serial scheme read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID
-    lo_regs = regs_from_payload(payload)
-    serial_u32 = (lo_regs[0] << 16) | lo_regs[1]
-    assert serial_u32 == (serial_num & 0xFFFFFFFF), (
-        f"serial low u32 mismatch: register=0x{serial_u32:08X}, "
-        f"expected 0x{serial_num & 0xFFFFFFFF:08X}"
-    )
+    scheme_regs = regs_from_payload(payload)
+    scheme = (scheme_regs[0] << 16) | scheme_regs[1]
+    assert scheme == 4, f"serial generation scheme mismatch: got {scheme}, expected 4"
 
-    # Full u64, MSW-first across 266..269.
+    # Serial value, u64 MSW-first across 268..271.
     _tid, unit_id, resp_fc, payload = read_self_regs(
-        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 266, 4
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 268, 4
     )
     assert not (resp_fc & 0x80), \
-        f"serial ext read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
+        f"serial value read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID
-    ext_regs = regs_from_payload(payload)
+    val_regs = regs_from_payload(payload)
     serial_u64 = 0
-    for r in ext_regs:
+    for r in val_regs:
         serial_u64 = (serial_u64 << 16) | r
     assert serial_u64 == serial_num, (
         f"serial u64 mismatch: register={serial_u64}, /info serial_num={serial_num}"
     )
-    print(f"✓ self-unit serial: u32=0x{serial_u32:08X} u64={serial_u64} "
+    print(f"✓ self-unit serial: scheme={scheme} value={serial_u64} "
           f"matches /info serial_num={serial_num}")
 
 

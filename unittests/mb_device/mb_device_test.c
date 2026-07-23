@@ -262,34 +262,34 @@ void test_fw_version_string(void)
     TEST_ASSERT_EQUAL_STRING("1.2.3+wb5", decoded);
 }
 
-/* ---- MBDEV-U-005: FC04 serial extension + serial number ------------------ */
+/* ---- MBDEV-U-005: FC04 serial generation scheme + serial number ---------- */
 
-/* serial = 0x0000112233445566. ext (266..269) MSW-first; serial (270..271) is
- * the low u32 MSW-first. */
+/* serial = 0x0000112233445566. scheme (266..267) = WB_SN_SCHEME_FROM_MAC (4);
+ * serial value (268..271) is the u64 MSW-first. */
 void test_serial_registers(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-005: FC04 serial extension + serial number");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-005: FC04 serial generation scheme + serial number");
     LOG_MESSAGE();
 
     uint8_t buf[260];
     uint8_t exc = 0xAA;
 
-    /* serial extension: 266..269 (u64, MSW-first) */
+    /* generation scheme: 266..267 (u32, MSW-first) = 4 (serial from MAC) */
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             266u, 4u, 0u, buf, &exc);
+                                             266u, 2u, 0u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 4u, n);
+    TEST_ASSERT_EQUAL_HEX16(0x0000, resp_reg(buf, 0));
+    TEST_ASSERT_EQUAL_HEX16(0x0004, resp_reg(buf, 1));
+
+    /* serial number: 268..271 (u64, MSW-first) = full serial */
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                      268u, 4u, 0u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 8u, n);
     TEST_ASSERT_EQUAL_HEX16(0x0000, resp_reg(buf, 0));
     TEST_ASSERT_EQUAL_HEX16(0x1122, resp_reg(buf, 1));
     TEST_ASSERT_EQUAL_HEX16(0x3344, resp_reg(buf, 2));
     TEST_ASSERT_EQUAL_HEX16(0x5566, resp_reg(buf, 3));
-
-    /* serial number: 270..271 (low u32, MSW-first) */
-    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      270u, 2u, 0u, buf, &exc);
-    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 4u, n);
-    TEST_ASSERT_EQUAL_HEX16(0x3344, resp_reg(buf, 0));
-    TEST_ASSERT_EQUAL_HEX16(0x5566, resp_reg(buf, 1));
 }
 
 /* ---- MBDEV-U-006: FC04 firmware numeric version -------------------------- */
@@ -1023,8 +1023,8 @@ void test_info_block_readable_via_fc03(void)
         200u, 219u,   /* model            */
         220u, 244u,   /* git info         */
         250u, 265u,   /* firmware version */
-        266u, 269u,   /* serial extension */
-        270u, 271u,   /* serial number    */
+        266u, 267u,   /* serial scheme    */
+        268u, 271u,   /* serial number    */
         290u, 301u,   /* signature        */
         320u, 327u,   /* numeric version  */
     };

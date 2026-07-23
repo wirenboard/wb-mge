@@ -79,8 +79,8 @@ TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (in
 | 200–219       | 0x00C8–0x00DB | 20   | string | Device model                                                        |
 | 220–244       | 0x00DC–0x00F4 | 25   | string | Commit hash and branch the firmware was built from                  |
 | 250–265       | 0x00FA–0x0109 | 16   | string | Firmware version (string)                                           |
-| 266–269       | 0x010A–0x010D | 4    | u64    | Serial number extension                                             |
-| 270–271       | 0x010E–0x010F | 2    | u32    | Serial number                                                       |
+| 266–267       | 0x010A–0x010B | 2    | u32    | Serial number generation scheme (4 = derived from the 48-bit MAC)   |
+| 268–271       | 0x010C–0x010F | 4    | u64    | Serial number, MSW-first (the 48-bit MAC in the low bits)           |
 | 320           | 0x0140        | 1    | u16    | Firmware version: MAJOR                                             |
 | 321           | 0x0141        | 1    | u16    | Firmware version: MINOR                                             |
 | 322           | 0x0142        | 1    | u16    | Firmware version: PATCH                                             |

@@ -59,8 +59,16 @@
 #define REG_FWVER_BASE        250u  /* 0x00FA .. 0x0109, 16 regs */
 #define REG_FWVER_COUNT        16u
 
-#define REG_SERIAL_EXT_BASE   266u  /* 0x010A .. 0x010D, u64 MSW-first */
-#define REG_SERIAL_BASE       270u  /* 0x010E .. 0x010F, u32 MSW-first */
+/* Serial number, WB common map. 266..267 hold the generation scheme (u32); 268..271
+ * hold the serial value (u64, MSW-first). Reading 268..271 gives the whole serial. */
+#define REG_SN_SCHEME_BASE    266u  /* 0x010A .. 0x010B, u32 MSW-first */
+#define REG_SN_SCHEME_COUNT    2u
+#define REG_SN_VALUE_BASE     268u  /* 0x010C .. 0x010F, u64 MSW-first */
+#define REG_SN_VALUE_COUNT     4u
+
+/* Generation scheme value reported at REG_SN_SCHEME. 4 = the serial number is
+ * derived from the device's 48-bit factory MAC (a WB-MGE-specific scheme). */
+#define WB_SN_SCHEME_FROM_MAC  4u
 
 #define REG_SIGNATURE_BASE    290u  /* 0x0122 .. 0x012D, 12 regs */
 #define REG_SIGNATURE_COUNT    12u
@@ -279,19 +287,19 @@ static bool device_get_reg(uint16_t addr, uint16_t task_stack_bytes, uint16_t *v
         return true;
     }
 
-    /* serial extension: u64, MSW-first across 266..269 */
-    if (addr >= REG_SERIAL_EXT_BASE && addr <= REG_SERIAL_EXT_BASE + 3u) {
-        uint64_t sn = sys_info.device_serial_num;
-        unsigned shift = (3u - (unsigned)(addr - REG_SERIAL_EXT_BASE)) * 16u;
-        *val = (uint16_t)((sn >> shift) & 0xFFFFu);
+    /* serial-number generation scheme: u32, MSW-first across 266..267. */
+    if (addr >= REG_SN_SCHEME_BASE && addr < REG_SN_SCHEME_BASE + REG_SN_SCHEME_COUNT) {
+        unsigned shift = (REG_SN_SCHEME_COUNT - 1u - (unsigned)(addr - REG_SN_SCHEME_BASE)) * 16u;
+        *val = (uint16_t)((WB_SN_SCHEME_FROM_MAC >> shift) & 0xFFFFu);
         return true;
     }
 
-    /* serial number: low u32, MSW-first across 270..271 */
-    if (addr == REG_SERIAL_BASE || addr == REG_SERIAL_BASE + 1u) {
-        uint32_t sn = (uint32_t)(sys_info.device_serial_num & 0xFFFFFFFFu);
-        *val = (addr == REG_SERIAL_BASE) ? (uint16_t)(sn >> 16)
-                                         : (uint16_t)(sn & 0xFFFFu);
+    /* serial number: u64, MSW-first across 268..271. The 48-bit MAC occupies the
+     * low 48 bits, so the top word (268) reads 0. */
+    if (addr >= REG_SN_VALUE_BASE && addr < REG_SN_VALUE_BASE + REG_SN_VALUE_COUNT) {
+        uint64_t sn = sys_info.device_serial_num;
+        unsigned shift = (REG_SN_VALUE_COUNT - 1u - (unsigned)(addr - REG_SN_VALUE_BASE)) * 16u;
+        *val = (uint16_t)((sn >> shift) & 0xFFFFu);
         return true;
     }
 
