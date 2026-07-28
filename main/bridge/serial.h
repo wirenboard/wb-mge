@@ -38,6 +38,11 @@ typedef void (*serial_drop_handler_t)(serial_desc_t *desc, size_t dropped_len);
 
 struct serial_desc_t {
     uart_port_t port_num;
+    // TX/RX pins are kept here (not just in serial_config_t) because serial_set_tx_disabled()
+    // has to re-apply the full pin routing when it hands the port back to the UART.
+    // See the comment in serial_set_tx_disabled() in serial.c for why.
+    int tx_pin;
+    int rx_pin;
     int dir_pin;            // Direction pin used for RS-485 half-duplex control
     bool tx_disabled;       // When true, serial_send() returns immediately without transmitting
     bool wait_for_idle;     // When true, receive_handler is called only on idle timeout (Modbus RTU frame boundary)

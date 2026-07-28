@@ -133,6 +133,14 @@ def test_tx_disabled_blocks_uart_transmission(api):
     4. Enable tx_disabled for rs485_1 and confirm NO bytes reach UART1.
     5. Disable tx_disabled for rs485_1 and confirm bytes ARE received on UART1.
     6. Restore original tx_disabled and port mode in a finally block.
+
+    NOTE: this test is NOT a guard for the uart_set_pin() pin-release regression, even
+    though it walks the same scenario. Under QEMU the chardev UART carries the bytes
+    directly and does not model the GPIO matrix, so which pins the UART is routed to
+    makes no difference and step 5 passes even with the broken code. (__wrap_uart_set_pin()
+    in main/qemu/gpio_shim_qemu.c does forward tx/rx to the real call; it only leaves them
+    out of its virtual-bus model.) That regression is covered by the unit test in
+    unittests/serial/serial_test.c.
     """
     # Connect to UART1 TCP chardev BEFORE switching port mode so QEMU can buffer bytes
     uart1_sock = _try_connect_tcp("127.0.0.1", UART1_TCP_PORT, timeout=3.0)

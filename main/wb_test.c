@@ -201,11 +201,18 @@ static esp_err_t start_clock_out(void)
 {
     // Keep the RS-485-1 transceiver in receive mode until the waveform is running.
     de_pin_latch_low_output(CLK_OUT_EN_PIN);
-    // Park the RS-485-2 transceiver in receive mode for the whole test. Its port has just
-    // been disabled, but that only deleted the UART driver: the dir pin is still an output
-    // held at the UART's TX-enabled idle level (HIGH), which would gate the meander from
-    // the DI line onto a bus we do not own. Take the pin and hold it LOW ourselves. It is
-    // never set to 1 anywhere in this file — that is the invariant review #30 turned on.
+    // Park the RS-485-2 transceiver in receive mode for the whole test. Its port has just been
+    // disabled, and on no IDF does that leave the dir pin in a state we can rely on. Through
+    // v5.4.1 uart_driver_delete() does not release the UART's pins, so the pin stays an output
+    // held at the UART's TX-enabled idle level (HIGH), which would gate the meander from the DI
+    // line onto a bus we do not own. From v5.4.2 on it does release them (uart_release_pin() ->
+    // gpio_output_disable()), which clears only the output driver: the resting level is then
+    // whatever else acts on the pad — the board (pulldown R4 on WB-MGE, nothing at all on
+    // WB-MGU, where SERIAL_IO_PIN_2 is GPIO13), or the internal pull-up left behind by any
+    // earlier gpio_reset_pin() on that pin (serial_set_tx_disabled(true), or a previous run of
+    // this test), which gpio_output_disable() does not undo. Take the pin and hold it LOW
+    // ourselves. It is never set to 1 anywhere in this file — that is the invariant review #30
+    // turned on.
     de_pin_latch_low_output(CLK_OUT_DE_PARK_PIN);
 
     ledc_timer_config_t tim_conf = timer_config;

@@ -1978,8 +1978,9 @@ void test_serial_set_tx_disabled_disable_gpio_sequence(void)
         "gpio_set_level must precede gpio_set_direction");
 }
 
-// Test serial_set_tx_disabled(false) re-attaches dir_pin to the UART via uart_set_pin
-// and must NOT touch the GPIO park path (no gpio_reset_pin/set_direction/set_level).
+// Test serial_set_tx_disabled(false) re-attaches dir_pin to the UART via uart_set_pin,
+// re-applying the real TX/RX pins along with it, and must NOT touch the GPIO park path
+// (no gpio_reset_pin/set_direction/set_level).
 void test_serial_set_tx_disabled_enable_no_gpio_park(void)
 {
     LOG_MESSAGE();
@@ -2006,12 +2007,16 @@ void test_serial_set_tx_disabled_enable_no_gpio_park(void)
 
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_pin_data.called,
         "uart_set_pin must be called exactly once to restore dir_pin to the UART");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_NUM_1, mock_uart_set_pin_data.uart_num,
+        "uart_set_pin must be called on the descriptor's own UART port (UART_NUM_1)");
     TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_uart_set_pin_data.dir_pin,
         "uart_set_pin must restore the dir_pin (rts) to GPIO_NUM_4");
-    TEST_ASSERT_EQUAL_MESSAGE(UART_PIN_NO_CHANGE, mock_uart_set_pin_data.tx_pin,
-        "uart_set_pin tx_pin must be UART_PIN_NO_CHANGE");
-    TEST_ASSERT_EQUAL_MESSAGE(UART_PIN_NO_CHANGE, mock_uart_set_pin_data.rx_pin,
-        "uart_set_pin rx_pin must be UART_PIN_NO_CHANGE");
+    // TX/RX must be re-applied explicitly rather than left as UART_PIN_NO_CHANGE;
+    // see the comment in serial_set_tx_disabled() in serial.c for why.
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_10, mock_uart_set_pin_data.tx_pin,
+        "uart_set_pin must re-apply the real tx_pin (GPIO_NUM_10)");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_9, mock_uart_set_pin_data.rx_pin,
+        "uart_set_pin must re-apply the real rx_pin (GPIO_NUM_9)");
     TEST_ASSERT_EQUAL_MESSAGE(UART_PIN_NO_CHANGE, mock_uart_set_pin_data.cts_pin,
         "uart_set_pin cts_pin must be UART_PIN_NO_CHANGE");
 
@@ -2021,6 +2026,75 @@ void test_serial_set_tx_disabled_enable_no_gpio_park(void)
         "re-enable must NOT call gpio_set_direction");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
         "re-enable must NOT call gpio_set_level");
+}
+
+// Test the uart_set_pin() failure path of serial_set_tx_disabled(false): the error is
+// returned to the caller and the port is left exactly as it was — still tx_disabled, so
+// serial_send() keeps gating, and with no GPIO touched. A re-enable that reports success
+// without having restored the routing would leave the descriptor lying about the bus.
+void test_serial_set_tx_disabled_enable_uart_set_pin_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled(false) - uart_set_pin failure");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    // Move to the disabled state first (real state change).
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    // Clear noise from serial_init + the disable step, then make the re-enable fail.
+    mock_gpio_reset();
+    mock_uart_reset();
+    mock_uart_set_pin_data.result = ESP_FAIL;
+
+    err = serial_set_tx_disabled(desc, false);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, err,
+        "serial_set_tx_disabled(false) must return the uart_set_pin error, not ESP_OK");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_pin_data.called,
+        "uart_set_pin must be attempted exactly once on the re-enable path");
+
+    // The failed re-enable must not have flipped the state: TX is still gated, so
+    // serial_send returns ESP_OK without reaching the UART.
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+    err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should return ESP_OK while TX is disabled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must NOT be called: a failed re-enable must leave TX disabled");
+
+    // The error path must not fall through to the GPIO park sequence either.
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_reset_pin_data.called,
+        "failed re-enable must NOT call gpio_reset_pin");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_direction_data.called,
+        "failed re-enable must NOT call gpio_set_direction");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
+        "failed re-enable must NOT call gpio_set_level");
+
+    // Keeping tx_disabled = true also keeps the port retryable: the next
+    // serial_set_tx_disabled(desc, false) still sees a state change, so it does NOT take the
+    // "already in that state" early return and really calls uart_set_pin() again. That is
+    // what makes the port recover by itself on the next settings_update().
+    mock_uart_set_pin_data.result = ESP_OK;
+
+    err = serial_set_tx_disabled(desc, false);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err,
+        "the retried serial_set_tx_disabled(false) should return ESP_OK");
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_uart_set_pin_data.called,
+        "the retry must reach uart_set_pin again, not short-circuit on the tx_disabled state");
+
+    // TX is really back: serial_send() no longer gates and reaches the UART.
+    err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should succeed after a successful retry");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must be called once TX has actually been re-enabled");
+    TEST_ASSERT_EQUAL_MESSAGE(sizeof(data), mock_uart_write_bytes_data.size,
+        "uart_write_bytes must be handed the whole payload");
 }
 
 // Test serial_set_tx_disabled(true) when already disabled is idempotent: it takes the
@@ -2401,6 +2475,7 @@ int main(void)
     RUN_TEST(test_serial_set_tx_disabled_gates_send);
     RUN_TEST(test_serial_set_tx_disabled_disable_gpio_sequence);
     RUN_TEST(test_serial_set_tx_disabled_enable_no_gpio_park);
+    RUN_TEST(test_serial_set_tx_disabled_enable_uart_set_pin_failure);
     RUN_TEST(test_serial_set_tx_disabled_idempotent_disable);
     RUN_TEST(test_serial_set_tx_disabled_null_desc);
 

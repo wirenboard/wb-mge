@@ -310,13 +310,16 @@ esp_err_t settings_update(void)
     //   - update_serial_tx_disabled() is NOT the pure software flag it looks like:
     //     serial_set_tx_disabled() does gpio_reset_pin()/gpio_set_level()/
     //     gpio_set_direction() on the port's dir_pin (or, for tx_disabled=false,
-    //     uart_set_pin() back to the UART) — and those dir pins are exactly the DE pins
-    //     the test is holding: SERIAL_IO_PIN_1, kept HIGH for port 1, and SERIAL_IO_PIN_2,
-    //     parked LOW for port 2. It would drop the port-1 driver mid-waveform, or hand the
-    //     parked port-2 pin back to the UART. Today it happens to be harmless only
-    //     because the frozen ports sit in PM_MODE_DISABLED, so port_manager_set_tx_disabled()
-    //     finds no serial_desc and returns early — an accident of the disable order, not a
-    //     property of the call. Gate it rather than depend on that.
+    //     uart_set_pin() back to the UART, re-applying the port's TX and RX pins along
+    //     with the dir pin) — and those pins are exactly the ones the test is holding:
+    //     the DE pins SERIAL_IO_PIN_1, kept HIGH for port 1, and SERIAL_IO_PIN_2, parked
+    //     LOW for port 2, plus the TX pins of both ports, driven by the LEDC. It would
+    //     drop the port-1 driver mid-waveform, hand the parked port-2 pin back to the
+    //     UART, or pull both TX lines out from under the LEDC. Today it happens to be
+    //     harmless only because the frozen ports sit in PM_MODE_DISABLED, so
+    //     port_manager_set_tx_disabled() finds no serial_desc and returns early — an
+    //     accident of the disable order, not a property of the call. Gate it rather than
+    //     depend on that.
     // Skipped while the ports are frozen, exactly as the port re-init below is skipped.
     // Nothing is lost: wb_test's exit path calls update_rs485_control() itself, and
     // port_manager_apply_settings() re-applies tx_disabled from NVS when it brings each
@@ -325,13 +328,19 @@ esp_err_t settings_update(void)
     // update_io_bus_control() is deliberately NOT gated. The MIO controller shares the
     // RS-485-2 pair, but the test never drives that pair: it toggles only the logic-side
     // TX (DI) line of port 2 to blink LED2, and it holds that transceiver's DE line
-    // (CLK_OUT_DE_PARK_PIN = SERIAL_IO_PIN_2) driven LOW for the whole test. That LOW is
-    // the FIRMWARE's doing, not the hardware's: disabling a port never releases its dir
-    // pin (serial_deinit() does not gpio_reset_pin() it), so the board's weak pulldown
-    // never gets a say — wb_test takes the pin and drives it. With DE low the port-2
-    // driver stays in receive, the RS-485-2 pair is silent, and MIO owns the bus alone, so
-    // taking MIO in or out of reset collides with nothing. Gating it would only mean an
-    // io_bus_enabled written during the test never reached the hardware, since wb_test's
+    // (CLK_OUT_DE_PARK_PIN = SERIAL_IO_PIN_2) driven LOW for the whole test. That LOW is the
+    // FIRMWARE's doing, not the hardware's: wb_test takes the pin and drives it, whatever
+    // disabling the port left on it. What disabling leaves there is IDF-version dependent —
+    // serial_deinit() never gpio_reset_pin()s the dir pin, but from v5.4.2 on the
+    // uart_driver_delete() it calls releases the UART's pins itself (uart_release_pin() ->
+    // gpio_output_disable(rts_io_num)), which clears the output driver and leaves the level to
+    // whatever else acts on the pad — the board, or an internal pull-up left by an earlier
+    // gpio_reset_pin(). On v5.4.1 and older nothing is released, so the pin keeps whatever the
+    // firmware last put there: the UART's idle level, or a driven LOW if tx_disabled was set.
+    // The argument below rests on neither: the test owns the pin for its whole run. With DE
+    // low the port-2 driver stays in receive, the RS-485-2 pair is silent, and MIO owns the
+    // bus alone, so taking MIO in or out of reset collides with nothing. Gating it would only
+    // mean an io_bus_enabled written during the test never reached the hardware, since wb_test's
     // exit path does not re-apply it.
     //
     // The flag is read here without any lock (see the locking contract in port_manager.c):

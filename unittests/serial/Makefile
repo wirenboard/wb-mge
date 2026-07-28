@@ -17,6 +17,8 @@ AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/queue.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/driver/uart.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/driver/gpio.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/malloc.c
+# esp_err_to_name() — used by serial.c when uart_set_pin() fails on the TX re-enable path
+AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c
 
 # Include directories
 INC += $(UNITTEST_DIR)

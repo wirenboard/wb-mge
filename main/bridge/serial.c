@@ -302,6 +302,8 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
     }
 
     desc->port_num = serial_config->port_num;
+    desc->tx_pin = serial_config->tx_pin;
+    desc->rx_pin = serial_config->rx_pin;
     desc->dir_pin = serial_config->dir_pin;
     desc->tx_disabled = false;
     desc->wait_for_idle = false;   // default: forward immediately (transparent bridge behavior)
@@ -421,7 +423,40 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
     } else {
         // Re-attach dir_pin to UART for automatic half-duplex direction control.
         // The wrap shim mirrors this back to OUTPUT on the virtual native GPIO.
-        uart_set_pin(desc->port_num, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, desc->dir_pin, UART_PIN_NO_CHANGE);
+        // TX and RX are passed explicitly instead of UART_PIN_NO_CHANGE, because
+        // uart_set_pin() starts by releasing ALL previously configured pins — it disables the
+        // TX/RTS pad outputs and re-routes the RX/CTS matrix inputs to constants — and only
+        // then reconfigures the signals whose argument is a real pin number. With
+        // UART_PIN_NO_CHANGE the bus would stay silent: TX left with its output disabled and
+        // RX detached, unrecoverably, since the driver has already forgotten the pin numbers.
+        //
+        // That unconditional release is an upstream regression, present in esp-idf v5.4.2,
+        // v5.4.3, v5.5 and v5.5.1: added by commit 007a497483 ("feat(uart): add pin release
+        // process to uart driver") and fixed by 85f0da63fc ("fix(uart): fix release pin logic
+        // if switching only one pin"), so it is gone again in v5.4.4+ and v5.5.2+; v5.4.1 and
+        // older have no release step at all. Passing the real pin numbers is correct on every
+        // one of those versions, so this call does not depend on which IDF the build picks
+        // up. To tell whether a given build sits inside the broken window, check the toolchain
+        // that is actually installed (EIM_IDF_VERSION in the Makefile pins an exact tag; the
+        // Dockerfile's espressif/idf:release-v5.4 tracks the branch and moves), not a version
+        // number written down here.
+        esp_err_t err = uart_set_pin(desc->port_num, desc->tx_pin, desc->rx_pin, desc->dir_pin, UART_PIN_NO_CHANGE);
+        if (err != ESP_OK) {
+            // Keep tx_disabled = true and return early: the routing was not restored, so
+            // TX really is still off, and the flag has to keep describing the hardware —
+            // serial_send() stays gated instead of pushing bytes onto a bus the pins no
+            // longer reach. Argument validation runs before the pin release, so a rejected
+            // call leaves the hardware as it was and the disabled state still fits it.
+            // The failure itself surfaces only through the ESP_LOGE below.
+            // Known limitation: the error does not reach the API. The only production path
+            // that can get here is update_serial_tx_disabled() -> port_manager_set_tx_disabled()
+            // (the other production caller, port_init_mode() in port_manager.c, only ever
+            // passes disabled=true and so never enters this branch). port_manager_set_tx_disabled()
+            // does propagate the esp_err_t, but update_serial_tx_disabled() discards it, and
+            // REST reports tx_disabled from NVS rather than from this descriptor.
+            ESP_LOGE(TAG, "UART[%d] failed to restore pin routing: %s", desc->port_num, esp_err_to_name(err));
+            return err;
+        }
         desc->tx_disabled = false;
         ESP_LOGI(TAG, "UART[%d] TX re-enabled (dir_pin=%d restored to UART)", desc->port_num, desc->dir_pin);
     }

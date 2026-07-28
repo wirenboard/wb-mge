@@ -43,11 +43,14 @@ void update_io_bus_control(void)
 // Applies the tx_disabled setting to the running serial ports for both RS-485 ports.
 // It does not touch the GPIO expander, but it is not a purely software flag either:
 // down in serial_set_tx_disabled() it takes the port's dir_pin (the SoC-side DE/RE line,
-// SERIAL_IO_PIN_1/2) away from the UART and drives it LOW. Callers that share those pins
-// with something else must not call this while that other owner is active: the factory
-// clock_out test owns both DE lines as plain GPIOs for its whole run (port 1 raised so
-// its transceiver transmits, port 2 held LOW so its transceiver stays silent). The LEDC
-// is not the conflicting owner here — it drives the TX pins, not the DE pins.
+// SERIAL_IO_PIN_1/2) away from the UART and drives it LOW; the re-enable direction hands
+// back not only that dir_pin but also the port's TX and RX pins (SERIAL_OUTPUT_PIN_1/2,
+// SERIAL_INPUT_PIN_1/2), which uart_set_pin() has to re-apply explicitly. Callers that
+// share any of those pins with something else must not call this while that other owner
+// is active: the factory clock_out test owns both DE lines as plain GPIOs for its whole
+// run (port 1 raised so its transceiver transmits, port 2 held LOW so its transceiver
+// stays silent), and it owns both TX pins through the LEDC that generates the waveform —
+// so the LEDC is a conflicting owner too, on the re-enable path.
 void update_serial_tx_disabled(void)
 {
     port_manager_set_tx_disabled(0, setting_items_read_bool(KEY_485_TX_DISABLED_1));
