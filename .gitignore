@@ -5,6 +5,7 @@
 
 # VS Code Settings
 .vscode/
+wb-mge.code-workspace
 
 # JetBrains IDEA
 .idea
@@ -39,3 +40,6 @@ managed_components/
 __pycache__
 .venv/
 api_tests/.venv/
+
+
+eim_config.toml
