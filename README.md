@@ -191,8 +191,10 @@ brew install eim
 
 
 ```bash
-eim install -i v5.4
+eim install -i v5.4.4
 ```
+
+**Note:** the ESP-IDF version must match in three places: `EIM_IDF_VERSION` in `Makefile`, the base image tag in `Dockerfile`, and the IDF actually installed. On a mismatch the build stops with an error; set `IDF_VERSION_CHECK=0` to bypass the check.
 
 ### 4. Clone the Repository
 
@@ -286,7 +288,7 @@ docker build -t wb-mge-builder .
 ```
 
 This will create a Docker image with:
-- ESP-IDF v5.4
+- ESP-IDF v5.4.4
 - Node.js 20.x
 - All necessary build tools
 
@@ -372,7 +374,7 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y nodejs
 ```
 
-### 3. ESP-IDF v5.4 via EIM (Espressif Installation Manager)
+### 3. ESP-IDF v5.4.4 via EIM (Espressif Installation Manager)
 
 Add the official EIM apt repository and install `eim-cli`:
 
@@ -387,13 +389,13 @@ Install ESP-IDF (uses `/var/tmp/eim-work` as scratch space to avoid filling `/tm
 
 ```bash
 mkdir -p /var/tmp/eim-work
-TMPDIR=/var/tmp/eim-work eim install --idf-versions v5.4 --target esp32 --non-interactive true -v
+TMPDIR=/var/tmp/eim-work eim install --idf-versions v5.4.4 --target esp32 --non-interactive true -v
 ```
 
-After install, ESP-IDF lives in `/root/.espressif/v5.4/esp-idf` and is activated with:
+After install, ESP-IDF lives in `/root/.espressif/v5.4.4/esp-idf` and is activated with:
 
 ```bash
-source /root/.espressif/tools/activate_idf_v5.4.sh
+source /root/.espressif/tools/activate_idf_v5.4.4.sh
 ```
 
 ### 4. QEMU xtensa
@@ -401,7 +403,7 @@ source /root/.espressif/tools/activate_idf_v5.4.sh
 EIM does not install QEMU. Use `idf_tools.py` from the activated environment:
 
 ```bash
-source /root/.espressif/tools/activate_idf_v5.4.sh
+source /root/.espressif/tools/activate_idf_v5.4.4.sh
 python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
 ```
 

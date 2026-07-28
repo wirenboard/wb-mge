@@ -1,6 +1,8 @@
 ## IDF Component Manager Manifest File
 dependencies:
-  espressif/mdns: '*'
+  ## Pinned to an exact version: '*' let separate resolves of the same commit
+  ## pull different mdns builds (we saw 1.11.0 and 1.11.3 side by side).
+  espressif/mdns: ==1.11.3
   ## Required IDF version
   idf:
     version: '>=4.1.0'

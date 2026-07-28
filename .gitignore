@@ -21,7 +21,6 @@ sdkconfig.mgu_v1
 sdkconfig.mgu_v1.old
 sdkconfig.qemu_build
 sdkconfig.qemu_build.old
-dependencies.lock
 **/build/
 
 # Release

@@ -12,7 +12,7 @@ To run all tests:
 make test
 ```
 
-The Makefile sources the EIM activate script (`~/.espressif/tools/activate_idf_v5.4.sh`) internally — no manual `source` needed.
+Every recipe that needs the ESP-IDF sources `scripts/idf_env.sh` internally — no manual `source` needed. That script activates the EIM toolchain (`~/.espressif/tools/activate_idf_<tag>.sh`) when it is installed, otherwise falls back to the `IDF_PATH` already in the environment (Docker, CI with `export.sh`), and in both cases verifies that the IDF actually in use is the expected version. The version comes from `EIM_IDF_VERSION` in `Makefile` (default `v5.4.4`) and can be overridden, e.g. `make EIM_IDF_VERSION=v5.5.2 ...`. `IDF_VERSION_CHECK=0` skips the version comparison only (`IDF_PATH` must still be a real checkout); `IDF_ENV_QUIET=1` suppresses the "Using ESP-IDF ..." banner.
 
 ## Running individual QEMU API tests
 

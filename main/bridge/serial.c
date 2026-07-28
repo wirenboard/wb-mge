@@ -437,9 +437,13 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
         // older have no release step at all. Passing the real pin numbers is correct on every
         // one of those versions, so this call does not depend on which IDF the build picks
         // up. To tell whether a given build sits inside the broken window, check the toolchain
-        // that is actually installed (EIM_IDF_VERSION in the Makefile pins an exact tag; the
-        // Dockerfile's espressif/idf:release-v5.4 tracks the branch and moves), not a version
-        // number written down here.
+        // that is actually installed rather than a version number written down here: both
+        // EIM_IDF_VERSION in the Makefile and the Dockerfile's base image now pin an exact
+        // tag, but the pins are bumped independently and neither one is what a local machine
+        // or a CI agent necessarily has in IDF_PATH. Any build that goes through make does
+        // check exactly that: scripts/idf_env.sh reads the version out of the IDF actually in
+        // IDF_PATH and fails the build when it differs from EIM_IDF_VERSION — unless
+        // IDF_VERSION_CHECK=0 is set, which skips that comparison.
         esp_err_t err = uart_set_pin(desc->port_num, desc->tx_pin, desc->rx_pin, desc->dir_pin, UART_PIN_NO_CHANGE);
         if (err != ESP_OK) {
             // Keep tx_disabled = true and return early: the routing was not restored, so

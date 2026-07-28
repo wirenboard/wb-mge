@@ -1,4 +1,7 @@
-FROM espressif/idf:release-v5.4
+# Exact tag, not the floating release-v5.4: that one moved between 5.4.x patch
+# releases and silently changed what CI built (v5.4.2/v5.4.3 carry a uart_set_pin
+# regression). Keep in sync with EIM_IDF_VERSION in Makefile.
+FROM espressif/idf:v5.4.4
 
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 

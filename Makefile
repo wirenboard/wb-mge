@@ -6,8 +6,13 @@ SHELL := /bin/bash
 # EIM (Espressif IDF Manager) settings
 #######################################
 
-# IDF version installed via EIM; used to locate the activate script.
-EIM_IDF_VERSION := v5.4
+# ESP-IDF version the project is built against. This is the exact tag EIM uses
+# when installing: it names the activate script activate_idf_<tag>.sh, so the
+# value must match an installed EIM version verbatim (v5.4.4, not v5.4).
+# Keep it in sync with the base image tag in Dockerfile — local builds and CI
+# must run the same IDF. `?=` so it can be overridden both from the environment
+# and from the command line (make EIM_IDF_VERSION=v5.5.2 ...).
+EIM_IDF_VERSION ?= v5.4.4
 
 #######################################
 # device signature
@@ -39,13 +44,18 @@ RELEASE_DIR = release
 # Tool selection (platform-specific)
 #######################################
 
-# EIM_ACTIVATE sources the EIM activate script when it exists (local EIM install).
-# If the script is absent (Docker espressif/idf image, Jenkins with export.sh),
-# it expands to "true" — a no-op — assuming IDF_PATH is already set in the environment.
-# stdout is redirected to /dev/null to suppress the verbose activation messages;
-# stderr is kept so that errors (missing script, bad env) are still visible.
-EIM_ACTIVATE_SCRIPT := $(HOME)/.espressif/tools/activate_idf_$(EIM_IDF_VERSION).sh
-EIM_ACTIVATE := $(if $(wildcard $(EIM_ACTIVATE_SCRIPT)),. $(EIM_ACTIVATE_SCRIPT) >/dev/null,true)
+# EIM_ACTIVATE sources scripts/idf_env.sh, which activates the EIM toolchain for
+# $(EIM_IDF_VERSION) when it is installed, falls back to the IDF_PATH already set
+# in the environment (Docker espressif/idf image, Jenkins with export.sh), and in
+# both cases verifies that the IDF actually in use is the expected version — the
+# activation used to silently override the caller's IDF_PATH and build against a
+# different IDF than intended. See scripts/idf_env.sh for the details.
+# It is sourced, not executed, so recipes keep the `$(EIM_ACTIVATE) && <command>`
+# form. EIM_IDF_VERSION is exported so the script can read it.
+# The path is absolute on purpose: recipes are free to `cd` first, and a relative
+# path would resolve against whatever directory the shell happens to be in.
+export EIM_IDF_VERSION
+EIM_ACTIVATE := . "$(CURDIR)/scripts/idf_env.sh"
 
 # idf.py path: IDF_PATH is set either by EIM_ACTIVATE or by the caller's export.sh.
 # $$IDF_PATH in a recipe expands to $IDF_PATH in the shell at recipe execution time.
@@ -135,6 +145,7 @@ unittests: $(UNITTESTS_TARGETS)
 $(UNITTESTS_TARGETS):
 	$(eval UT_DIR := $(subst UNITTEST_,,$@))
 	@if [ -f $(UT_DIR)/Makefile ]; then \
+		export IDF_ENV_QUIET=1; \
 		$(EIM_ACTIVATE) && cd $(UT_DIR) && $(MAKE) --no-print-directory && cd -; \
 	fi
 
