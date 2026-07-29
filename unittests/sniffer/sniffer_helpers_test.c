@@ -931,6 +931,45 @@ void test_classify_direction_default_unknown(void)
     TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(data, sizeof(data)));
 }
 
+/* exception replies — the high bit of the function code */
+
+/* A device that is on the bus but rejects the request answers with fc|0x80 and an
+ * exception code. The shape is unambiguous — nothing but a server ever sets that bit —
+ * and it is common: writing an unsupported register is exactly this. Without an explicit
+ * case it fell to `default:` and came out UNKNOWN, i.e. guessed at by the state machine:
+ * in SNIFF_IDLE that means the reply is announced as a master request and latched as a
+ * transaction with fc = 0x86 that nobody ever sent. */
+void test_classify_direction_exception_reply(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction exception - FC|0x80, len=5 → DIRECTION_RESPONSE");
+    LOG_MESSAGE();
+
+    /* Exception to an FC06 write: addr(1) + 0x86 + exception code 0x02 + CRC(2) = 5. */
+    uint8_t fc86[] = {0x23, 0x86, 0x02, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(fc86, sizeof(fc86)));
+
+    /* The rule is the high bit, not the particular code: FC03 and FC10 alike. */
+    uint8_t fc83[] = {0x01, 0x83, 0x02, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(fc83, sizeof(fc83)));
+    uint8_t fc90[] = {0x01, 0x90, 0x03, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_RESPONSE, classify_direction(fc90, sizeof(fc90)));
+}
+
+void test_classify_direction_exception_wrong_length_unknown(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test classify_direction exception - FC|0x80 of any other length → DIRECTION_UNKNOWN");
+    LOG_MESSAGE();
+
+    /* An exception reply is 5 bytes and nothing else. Anything longer or shorter that
+     * still carries the high bit is not a frame this classifier can vouch for. */
+    uint8_t short_exc[] = {0x23, 0x86, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(short_exc, sizeof(short_exc)));
+    uint8_t long_exc[] = {0x23, 0x86, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00};
+    TEST_ASSERT_EQUAL(DIRECTION_UNKNOWN, classify_direction(long_exc, sizeof(long_exc)));
+}
+
 /* ============================================================
  * sniffer_decide tests — the frame-decision table, exercised directly.
  *
@@ -1090,30 +1129,113 @@ void test_decide_idle_request_starts_wait(void)
     TEST_ASSERT_FALSE(d.stop_timer);
 }
 
-void test_decide_idle_unknown_direction_drops(void)
+/* An ambiguous frame (FC05/FC06/FC08 — request and echo-response have the same shape)
+ * arriving on a port that has never seen a packet with a known direction. Dropping it
+ * used to hide a whole class of traffic: a master that only writes with FC06 to devices
+ * that never answer never leaves SNIFF_IDLE, so nothing at all reached the UI. */
+void test_decide_idle_unknown_direction_unsynchronized_emits_master(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + ambiguous direction → drop");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + ambiguous, never synced → emit master, latch, arm timer");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.crc_valid    = true;
+    in.dir          = DIRECTION_UNKNOWN;
+    in.synchronized = false;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE_MESSAGE(d.emit, "an ambiguous frame must be shown, not silently dropped");
+    TEST_ASSERT_TRUE_MESSAGE(d.is_master, "a lone frame on an idle bus is almost always a request");
+    TEST_ASSERT_TRUE_MESSAGE(d.crc_valid, "the frame's CRC is valid and must be reported as such");
+    TEST_ASSERT_TRUE_MESSAGE(d.latch_request, "latched so the echo-response pairs with it");
+    TEST_ASSERT_EQUAL(SNIFF_RES_WAIT, d.new_state);
+    TEST_ASSERT_TRUE(d.start_timer);
+    TEST_ASSERT_FALSE(d.stop_timer);
+}
+
+/* SNIFF_IDLE says the SNIFFER is not tracking an open exchange, which is weaker than
+ * "the bus has none": resp_timer_cb() gives up after 200 ms of its own accord, the
+ * queue-full path abandons the request outright, a Fast Modbus frame in RES_WAIT
+ * resynchronises to IDLE with the request unanswered, and sniffer_enable() can switch
+ * the sniffer on mid-transaction. The frame is still called a master, because the
+ * alternative is worse rather than righter: alternating off last_was_master would call
+ * the frame a slave exactly when it is a retried, still unanswered request, since
+ * resp_timer_cb() returns to SNIFF_IDLE with last_was_master = true. */
+void test_decide_idle_unknown_direction_master_even_after_master(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - IDLE + ambiguous, synced after a master → still master");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_IDLE);
+    in.crc_valid       = true;
+    in.dir             = DIRECTION_UNKNOWN;
+    in.synchronized    = true;
+    in.last_was_master = true;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_TRUE_MESSAGE(d.is_master, "in SNIFF_IDLE no response is pending, so the frame is a request");
+    TEST_ASSERT_TRUE(d.crc_valid);
+    TEST_ASSERT_TRUE_MESSAGE(d.latch_request, "an assumed request is latched like a real one");
+    TEST_ASSERT_EQUAL(SNIFF_RES_WAIT, d.new_state);
+    TEST_ASSERT_TRUE(d.start_timer);
+    TEST_ASSERT_FALSE(d.stop_timer);
+
+    /* Same after a slave, where alternation would have agreed anyway. */
+    in.last_was_master = false;
+    d = sniffer_decide(&in);
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_TRUE_MESSAGE(d.is_master, "and after a slave the answer is the same");
+    TEST_ASSERT_TRUE(d.latch_request);
+    TEST_ASSERT_EQUAL(SNIFF_RES_WAIT, d.new_state);
+    TEST_ASSERT_TRUE(d.start_timer);
+}
+
+/* The whole point of latching the guess: an FC06 write and its byte-identical echo are
+ * reported as a master/slave pair rather than as two frames of the same direction. */
+void test_decide_ambiguous_exchange_yields_master_then_slave(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - ambiguous request + echo → master then slave");
     LOG_MESSAGE();
 
     sniff_input_t in = decide_in(SNIFF_IDLE);
     in.crc_valid = true;
     in.dir       = DIRECTION_UNKNOWN;
 
-    sniff_decision_t d = sniffer_decide(&in);
+    sniff_decision_t req = sniffer_decide(&in);
+    TEST_ASSERT_TRUE(req.emit);
+    TEST_ASSERT_TRUE(req.is_master);
+    TEST_ASSERT_EQUAL(SNIFF_RES_WAIT, req.new_state);
 
-    TEST_ASSERT_FALSE_MESSAGE(d.emit, "guessing wrong would invert the whole stream");
-    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
-    TEST_ASSERT_FALSE(d.start_timer);
-    TEST_ASSERT_FALSE(d.stop_timer);
+    /* The echo arrives in the state the request put the port into, and carries the same
+     * address and function code as the frame the request latched — which is what tells
+     * RES_WAIT it may be the reply at all. */
+    in.state           = req.new_state;
+    in.synchronized    = true;
+    in.last_was_master = req.is_master;
+    in.matches_pending = true;
+
+    sniff_decision_t echo = sniffer_decide(&in);
+    TEST_ASSERT_TRUE(echo.emit);
+    TEST_ASSERT_FALSE_MESSAGE(echo.is_master, "the echo is the awaited response");
+    TEST_ASSERT_TRUE(echo.crc_valid);
+    TEST_ASSERT_EQUAL_MESSAGE(SNIFF_IDLE, echo.new_state, "the transaction is complete");
+    TEST_ASSERT_TRUE(echo.stop_timer);
+    TEST_ASSERT_FALSE(echo.latch_request);
 }
 
 /* --- SNIFF_RES_WAIT --- */
 
-void test_decide_res_wait_always_stops_timer(void)
+void test_decide_res_wait_stops_timer_except_for_a_broadcast(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - every RES_WAIT path stops the response timer");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test sniffer_decide - every RES_WAIT path stops the response timer, except a broadcast");
     LOG_MESSAGE();
 
     /* Short frame, FM frame, new request, and plain response — all four conclude the
@@ -1133,6 +1255,24 @@ void test_decide_res_wait_always_stops_timer(void)
 
     in.dir = DIRECTION_RESPONSE;
     TEST_ASSERT_TRUE(sniffer_decide(&in).stop_timer);
+
+    /* A broadcast is the one path that concludes nothing: nobody answers address 0x00, so
+     * there is nothing to latch, and the request latched BEFORE it is still pending and
+     * still owed a reply. Its timer has to be left running to its own deadline — the port
+     * comes out of the broadcast waiting for exactly the reply it was waiting for. */
+    in.dir       = DIRECTION_UNKNOWN;
+    in.crc_valid = true;
+    in.broadcast = true;
+    sniff_decision_t bc = sniffer_decide(&in);
+    TEST_ASSERT_FALSE_MESSAGE(bc.stop_timer,
+        "a broadcast must not disarm the pending request's timer");
+    TEST_ASSERT_FALSE_MESSAGE(bc.start_timer, "and must not arm a timer of its own");
+    TEST_ASSERT_FALSE_MESSAGE(bc.latch_request, "nor become the pending request");
+    TEST_ASSERT_TRUE_MESSAGE(bc.emit, "the broadcast is still shown");
+    TEST_ASSERT_TRUE_MESSAGE(bc.is_master, "as the master frame it is");
+    TEST_ASSERT_TRUE(bc.crc_valid);
+    TEST_ASSERT_EQUAL_MESSAGE(SNIFF_RES_WAIT, bc.new_state,
+        "the port keeps waiting for the reply it was already waiting for");
 }
 
 void test_decide_res_wait_short_frame_uses_raw_bytes(void)
@@ -1220,18 +1360,64 @@ void test_decide_res_wait_unknown_treated_as_response(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - RES_WAIT + ambiguous → treated as the awaited response");
     LOG_MESSAGE();
 
-    /* Unlike IDLE (where an ambiguous frame is dropped), in RES_WAIT the context makes
-     * it a response: we asked, something answered. The CRC verdict is carried through. */
+    /* An ambiguous frame in RES_WAIT is the awaited response when the context supports
+     * it: we asked at this address with this function code, and something of an
+     * unclassifiable shape came back carrying both. The CRC verdict is carried through. */
     sniff_input_t in = decide_in(SNIFF_RES_WAIT);
-    in.crc_valid = false;
-    in.dir       = DIRECTION_UNKNOWN;
+    in.crc_valid       = true;
+    in.dir             = DIRECTION_UNKNOWN;
+    in.matches_pending = true;
 
     sniff_decision_t d = sniffer_decide(&in);
 
     TEST_ASSERT_TRUE(d.emit);
     TEST_ASSERT_FALSE(d.is_master);
-    TEST_ASSERT_FALSE(d.crc_valid);
+    TEST_ASSERT_TRUE(d.crc_valid);
     TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+    TEST_ASSERT_FALSE(d.latch_request);
+
+    /* A corrupt frame lands here too, matching or not: its address and function code
+     * are not evidence of anything, so they are not consulted. In this state the
+     * likeliest thing a corrupt frame was is the reply we were waiting for. */
+    in.crc_valid       = false;
+    in.matches_pending = false;
+
+    d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_FALSE_MESSAGE(d.is_master, "a corrupt frame in RES_WAIT is still the presumed reply");
+    TEST_ASSERT_FALSE_MESSAGE(d.crc_valid, "the frame's real CRC verdict must be carried through");
+    TEST_ASSERT_EQUAL(SNIFF_IDLE, d.new_state);
+}
+
+/* A Modbus RTU reply always carries the address the request was sent to and echoes its
+ * function code. An ambiguous frame in RES_WAIT that carries neither therefore cannot be
+ * the reply, whatever its shape — it is somebody's next request, and calling it a slave
+ * response is how a run of unanswered writes used to come out alternating master/slave.
+ * This is the only thing that makes the rule hold inside the 200 ms response window and
+ * inside a gap-less buffer, where resp_timer_cb() cannot run between frames at all. */
+void test_decide_res_wait_unknown_not_matching_pending_is_master(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - RES_WAIT + ambiguous addressed elsewhere → new master request");
+    LOG_MESSAGE();
+
+    sniff_input_t in = decide_in(SNIFF_RES_WAIT);
+    in.crc_valid       = true;
+    in.dir             = DIRECTION_UNKNOWN;
+    in.matches_pending = false;
+    in.synchronized    = true;
+    in.last_was_master = true;
+
+    sniff_decision_t d = sniffer_decide(&in);
+
+    TEST_ASSERT_TRUE(d.emit);
+    TEST_ASSERT_TRUE_MESSAGE(d.is_master, "a reply carries the address it was asked at — this one does not");
+    TEST_ASSERT_TRUE(d.crc_valid);
+    TEST_ASSERT_TRUE_MESSAGE(d.latch_request, "it becomes the new pending request");
+    TEST_ASSERT_EQUAL_MESSAGE(SNIFF_RES_WAIT, d.new_state, "still waiting — now for this request's response");
+    TEST_ASSERT_TRUE_MESSAGE(d.stop_timer,  "the old timeout must be disarmed");
+    TEST_ASSERT_TRUE_MESSAGE(d.start_timer, "and rearmed for the new request");
 }
 
 /* Emitting is what resynchronises the port: a decision that emits nothing must never
@@ -1243,23 +1429,19 @@ void test_decide_non_emitting_decisions_are_inert(void)
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer_decide - dropped frames change nothing but the state field");
     LOG_MESSAGE();
 
+    /* A corrupt frame on a port that has never seen a packet with a known direction is
+     * the only frame the state machine still drops: there is nothing to infer from. */
     sniff_input_t drop_unsynced = decide_in(SNIFF_IDLE);
     drop_unsynced.crc_valid    = false;
     drop_unsynced.synchronized = false;
 
-    sniff_input_t drop_ambiguous = decide_in(SNIFF_IDLE);
-    drop_ambiguous.crc_valid = true;
-    drop_ambiguous.dir       = DIRECTION_UNKNOWN;
+    sniff_decision_t d = sniffer_decide(&drop_unsynced);
 
-    const sniff_input_t *cases[] = { &drop_unsynced, &drop_ambiguous };
-    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-        sniff_decision_t d = sniffer_decide(cases[i]);
-        TEST_ASSERT_FALSE(d.emit);
-        TEST_ASSERT_FALSE(d.latch_request);
-        TEST_ASSERT_FALSE(d.start_timer);
-        TEST_ASSERT_FALSE(d.stop_timer);
-        TEST_ASSERT_EQUAL_MESSAGE(SNIFF_IDLE, d.new_state, "a dropped frame must not change the framing state");
-    }
+    TEST_ASSERT_FALSE(d.emit);
+    TEST_ASSERT_FALSE(d.latch_request);
+    TEST_ASSERT_FALSE(d.start_timer);
+    TEST_ASSERT_FALSE(d.stop_timer);
+    TEST_ASSERT_EQUAL_MESSAGE(SNIFF_IDLE, d.new_state, "a dropped frame must not change the framing state");
 }
 
 int main(void)
@@ -1360,6 +1542,10 @@ int main(void)
     /* classify_direction tests — default FC */
     RUN_TEST(test_classify_direction_default_unknown);
 
+    /* classify_direction — exception replies */
+    RUN_TEST(test_classify_direction_exception_reply);
+    RUN_TEST(test_classify_direction_exception_wrong_length_unknown);
+
     /* sniffer_decide tests — the frame-decision table */
     RUN_TEST(test_decide_idle_fm_master_subcmd);
     RUN_TEST(test_decide_idle_fm_slave_subcmd);
@@ -1368,13 +1554,16 @@ int main(void)
     RUN_TEST(test_decide_idle_broadcast_no_response_wait);
     RUN_TEST(test_decide_idle_orphan_response);
     RUN_TEST(test_decide_idle_request_starts_wait);
-    RUN_TEST(test_decide_idle_unknown_direction_drops);
-    RUN_TEST(test_decide_res_wait_always_stops_timer);
+    RUN_TEST(test_decide_idle_unknown_direction_unsynchronized_emits_master);
+    RUN_TEST(test_decide_idle_unknown_direction_master_even_after_master);
+    RUN_TEST(test_decide_ambiguous_exchange_yields_master_then_slave);
+    RUN_TEST(test_decide_res_wait_stops_timer_except_for_a_broadcast);
     RUN_TEST(test_decide_res_wait_short_frame_uses_raw_bytes);
     RUN_TEST(test_decide_res_wait_fm_resyncs_to_idle);
     RUN_TEST(test_decide_res_wait_second_master_relatches);
     RUN_TEST(test_decide_res_wait_response_completes_transaction);
     RUN_TEST(test_decide_res_wait_unknown_treated_as_response);
+    RUN_TEST(test_decide_res_wait_unknown_not_matching_pending_is_master);
     RUN_TEST(test_decide_non_emitting_decisions_are_inert);
 
     return UNITY_END();

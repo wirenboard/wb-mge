@@ -81,6 +81,12 @@ typedef struct {
     sniff_state_t   state;
     bool            synchronized;    /* a packet with a known direction has been seen */
     bool            last_was_master; /* direction of the most recently emitted packet */
+    /* The frame's address and function code are the ones the pending request was sent
+     * with. Belongs to this group and not to the frame properties below: it can only be
+     * computed against the latched request (req_valid/req_slave/req_fc), which lives in
+     * the port context and is readable only under the spinlock. False whenever no
+     * request is latched. */
+    bool            matches_pending;
 
     /* Properties of the frame itself — derived by the caller before taking the lock. */
     bool            is_fm;           /* function code is Fast Modbus (0x46 / 0x60) */

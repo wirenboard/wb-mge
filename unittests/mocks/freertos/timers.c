@@ -13,6 +13,7 @@ TimerHandle_t mock_xTimerCreate_return_value = MOCK_TIMER_HANDLE;
 int mock_xTimerStart_called = 0;
 TimerHandle_t mock_xTimerStart_xTimer = NULL;
 TickType_t mock_xTimerStart_xTicksToWait = 0;
+BaseType_t mock_xTimerStart_return_value = pdPASS;
 
 int mock_xTimerStop_called = 0;
 TimerHandle_t mock_xTimerStop_xTimer = NULL;
@@ -41,7 +42,9 @@ BaseType_t xTimerStart(TimerHandle_t xTimer, TickType_t xTicksToWait)
     mock_xTimerStart_xTimer = xTimer;
     mock_xTimerStart_xTicksToWait = xTicksToWait;
     mock_xTimerStart_called++;
-    return pdPASS;
+    /* Overridable so a test can reproduce a full FreeRTOS timer command queue: with
+     * xTicksToWait = 0 the real xTimerStart() returns pdFAIL and arms nothing. */
+    return mock_xTimerStart_return_value;
 }
 
 BaseType_t xTimerStop(TimerHandle_t xTimer, TickType_t xTicksToWait)
@@ -80,6 +83,7 @@ void mock_freertos_timers_reset(void)
     mock_xTimerStart_called = 0;
     mock_xTimerStart_xTimer = NULL;
     mock_xTimerStart_xTicksToWait = 0;
+    mock_xTimerStart_return_value = pdPASS;
 
     mock_xTimerStop_called = 0;
     mock_xTimerStop_xTimer = NULL;

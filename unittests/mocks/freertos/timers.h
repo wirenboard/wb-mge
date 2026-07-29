@@ -18,6 +18,9 @@ extern TimerHandle_t mock_xTimerCreate_return_value;
 extern int mock_xTimerStart_called;
 extern TimerHandle_t mock_xTimerStart_xTimer;
 extern TickType_t mock_xTimerStart_xTicksToWait;
+/* What xTimerStart() returns. Defaults to pdPASS and is reset to it by
+ * mock_freertos_timers_reset(); set to pdFAIL to simulate a full timer command queue. */
+extern BaseType_t mock_xTimerStart_return_value;
 
 extern int mock_xTimerStop_called;
 extern TimerHandle_t mock_xTimerStop_xTimer;

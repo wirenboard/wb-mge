@@ -254,6 +254,17 @@ SNIFFER_STATIC pdu_direction_t classify_direction(const uint8_t *data, size_t le
 {
     uint8_t fc = data[1];
 
+    /* Exception reply: addr(1) + (fc|0x80)(1) + exception code(1) + CRC(2) = 5 bytes.
+     * The high bit is set by the server and by nothing else, so the shape is
+     * unambiguous — checked before the switch, which knows only the request-side
+     * function codes and would otherwise send every exception to `default:`. The stream
+     * splitter frames these by the same rule (stream_splitter.c, frame_expected_len()).
+     * Fast Modbus command bytes (0x46 / 0x60) have the high bit clear and are not
+     * affected. */
+    if (fc & 0x80) {
+        return (len == 5) ? DIRECTION_RESPONSE : DIRECTION_UNKNOWN;
+    }
+
     switch (fc) {
     case 0x01: /* Read Coils */
     case 0x02: /* Read Discrete Inputs */
@@ -291,7 +302,8 @@ SNIFFER_STATIC pdu_direction_t classify_direction(const uint8_t *data, size_t le
     case 0x05: /* Write Single Coil  */
     case 0x06: /* Write Single Register */
     case 0x08: /* Diagnostics */
-        /* Request and echo-response are both 8 bytes — indistinguishable. */
+        /* Request and echo-response are both 8 bytes — indistinguishable.
+         * The frame is still displayed: sniffer_decide() infers a direction for it. */
         return DIRECTION_UNKNOWN;
 
     case 0x07: /* Read Exception Status */
@@ -396,14 +408,89 @@ SNIFFER_STATIC sniff_decision_t sniffer_decide(const sniff_input_t *in)
             d.latch_request = true;
             d.new_state     = SNIFF_RES_WAIT;
             d.start_timer   = true;
+        } else {
+            /* DIRECTION_UNKNOWN with a valid CRC: a frame whose shape does not pin down
+             * a direction. That is not a short list — but it is not everything
+             * classify_direction() gives up on either. The branches above claim a Fast
+             * Modbus frame and a broadcast whatever their dir, so an unresolved dir on
+             * those two never reaches this point. What does: FC05/FC06/FC08, whose
+             * request and echo-response are both 8 bytes; an FC01/FC02 frame with len==8
+             * and bytecount==3, which satisfies the request and the response formula at
+             * once; FC03/FC04, FC0F/FC10 and exception frames whose length fits neither
+             * formula; every vendor-specific or unknown function code, which reaches
+             * `default:`; and corrupted frames whose CRC happened to check out.
+             *
+             * The frame is shown anyway, always as a master. Skipping it is worse than
+             * mislabelling it: a master that only ever writes with FC06 to devices that
+             * do not answer leaves the port in SNIFF_IDLE forever, so every one of its
+             * frames hits this branch and the sniffer stays empty with nothing to
+             * explain why.
+             *
+             * Master is unconditional, NOT alternated from in->last_was_master the way
+             * the invalid-CRC branch above does it. Note what SNIFF_IDLE actually
+             * asserts: that THE SNIFFER is not tracking an open exchange — not that the
+             * bus has none. Of the paths that reach this state, only two really close
+             * one: sniffer_init(), and a SNIFF_RES_WAIT that consumed its response (or
+             * an arbitration-only frame). The other four leave a reply perfectly
+             * possible:
+             *   - resp_timer_cb(): SNIFFER_RESP_TIMEOUT_MS is this module's display
+             *     policy, not a rule of the bus, and a slow device answers after it;
+             *   - the "queue full" path in sniffer_process_frame(), which drops the
+             *     pending request because the consumer lost the packet, not because the
+             *     exchange ended;
+             *   - a Fast Modbus frame arriving in SNIFF_RES_WAIT, which resynchronises
+             *     to SNIFF_IDLE while the standard request is still unanswered;
+             *   - sniffer_enable() after sniffer_disable(), i.e. switching the sniffer
+             *     on in the middle of somebody else's transaction.
+             * So the guess is a guess, and a late echo of a real FC05/FC06 write does
+             * reach this branch and is labelled master. Alternation would be worse
+             * rather than better: resp_timer_cb() leaves last_was_master = true, so on
+             * repeated unanswered FC06 writes — precisely the case this branch exists
+             * for — it would call every second write a slave, and the broadcast branch
+             * above likewise emits a master that nobody will ever answer.
+             *
+             * A wrong guess costs the direction label and nothing else: the bytes, the
+             * length, the CRC verdict and the timestamp are all still right. Its reach is
+             * bounded, but it is not one packet. The next CRC-valid frame of an
+             * unambiguous shape does clear it, being labelled from that shape in both
+             * states (a request is a master in IDLE and in RES_WAIT alike). A run of
+             * ambiguous frames sharing one (address, FC) does not: guessing master on an
+             * echo latches that pair, the real write that follows matches the latch and is
+             * therefore reported as the reply, which returns the port to SNIFF_IDLE, where
+             * the next echo is guessed master again. The whole run comes out inverted, and
+             * the phase is recovered only on the first inter-transaction gap long enough
+             * for resp_timer_cb() to run — i.e. longer than SNIFFER_RESP_TIMEOUT_MS. The
+             * guess can also outlive frames that are themselves unclassifiable: a corrupt
+             * frame in SNIFF_IDLE is labelled by alternation, without its shape being
+             * consulted at all.
+             *
+             * Latched like a real request, so that the echo-response of an FC05/FC06
+             * write is consumed by the RES_WAIT branch below and displayed as the slave
+             * half of the pair, and so that a write that goes unanswered ends its
+             * transaction on the response timeout instead of leaving a pending request
+             * latched forever. Latching is also what makes the guess self-limiting: of the
+             * frames that reach the RES_WAIT response branch, an AMBIGUOUS one is taken as
+             * this reply only if it carries the same address and function code. That is a
+             * condition on ambiguous frames alone, not on the branch — it also accepts any
+             * frame unambiguously shaped as a response, from any address, and any corrupt
+             * frame (see its own comment). What the condition buys is the case at hand: a
+             * second unanswered write — to another slave, or to the same one before the
+             * timeout gets a chance to run — is recognised as a new request rather than
+             * swallowed as this one's reply. */
+            d.emit          = true;
+            d.crc_valid     = true;
+            d.is_master     = true;
+            d.latch_request = true;
+            d.new_state     = SNIFF_RES_WAIT;
+            d.start_timer   = true;
         }
-        /* DIRECTION_UNKNOWN: ambiguous. Better to skip the frame than to guess wrong
-         * and invert the whole stream from here on. */
         return d;
     }
 
-    /* SNIFF_RES_WAIT — a master request is pending. Every path below concludes the
-     * wait for the current request, so the response timer always stops. */
+    /* SNIFF_RES_WAIT — a master request is pending. Nearly every path below concludes the
+     * wait for the current request, so the response timer stops by default. The one
+     * exception is the broadcast branch, which leaves the pending request untouched and
+     * clears this flag again. */
     d.stop_timer = true;
 
     if (in->short_frame) {
@@ -428,10 +515,73 @@ SNIFFER_STATIC sniff_decision_t sniffer_decide(const sniff_input_t *in)
         return d;
     }
 
-    if (in->dir == DIRECTION_REQUEST) {
-        /* Not a response at all but a second master starting a new transaction while
-         * we were waiting. The first master was already emitted; emit this one, re-latch
-         * it as the pending request, restart the timer and keep waiting. */
+    if (in->crc_valid && in->broadcast) {
+        /* A broadcast arriving mid-transaction. It gets its own branch here for exactly
+         * the reason it has one in SNIFF_IDLE: address 0x00 obliges no device to answer,
+         * so there is nothing to wait for and nothing to latch.
+         *
+         * Without it a broadcast write fell through to the re-latch branch below — a
+         * broadcast FC05/FC06 is DIRECTION_UNKNOWN, CRC-valid, and can never match the
+         * latched (address, FC) — and became the pending request with req_slave = 0x00.
+         * The NEXT broadcast then matched that latch and was reported as its reply, so a
+         * run of broadcasts came out master, slave, master, slave..., which is the very
+         * artefact the re-latch branch exists to prevent. It also armed the response
+         * timer on a frame nobody will ever answer.
+         *
+         * stop_timer is cleared again: the blanket d.stop_timer = true above holds only
+         * because every path under it concludes the pending request's wait, and this one
+         * does not. The earlier request is still latched and still owed a reply, so its
+         * timer has to keep running to its own deadline — disarming it would strand that
+         * request in SNIFF_RES_WAIT with no timeout event left to end it. Nothing else
+         * needs undoing: this branch neither latches nor starts a timer, and new_state
+         * stays SNIFF_RES_WAIT, so the port comes out of the broadcast waiting for the
+         * same reply it was waiting for before. */
+        d.emit       = true;
+        d.is_master  = true;
+        d.crc_valid  = true;
+        d.stop_timer = false;
+        return d;
+    }
+
+    /* Two kinds of frame that cannot be the reply this port is waiting for. Both are
+     * handled identically — emit as a master, re-latch as the pending request, restart
+     * the timer and keep waiting:
+     *
+     *   - DIRECTION_REQUEST: not a response at all but a second master starting a new
+     *     transaction while we were waiting. The first master was already emitted.
+     *
+     *   - an ambiguous frame addressed elsewhere: a Modbus RTU reply always carries the
+     *     address the request was sent to, and echoes its function code unless it is an
+     *     exception reply — that one answers with fc | 0x80 and therefore never matches
+     *     the latch. The test is still sound, because an exception reply does not reach
+     *     it: the spec gives it exactly one shape (5 bytes), classify_direction() reads
+     *     the high bit and calls it DIRECTION_RESPONSE, and this branch only ever sees
+     *     DIRECTION_UNKNOWN. So among the frames that DO reach it, one whose (address, FC)
+     *     pair is not the latched one cannot be the awaited reply, however unclassifiable
+     *     its shape. The premise is scoped to that spec-defined shape and nothing wider: a
+     *     CRC-valid frame with the high bit set and a length other than 5 is
+     *     DIRECTION_UNKNOWN, does arrive here, and is re-latched as a phantom request with
+     *     fc = 0x86. No conforming device emits such a frame, and there is no honest rule
+     *     to apply to one that would not be invented along with the frame.
+     *
+     *     Without this test the "an ambiguous frame in SNIFF_IDLE is a master" rule above
+     *     holds only for as long as resp_timer_cb() manages to run between frames: a
+     *     second unanswered write arriving inside the 200 ms window would be consumed
+     *     here as the first one's response, and in a gap-less buffer — every frame of
+     *     which is dispatched from a single sniffer_process() call — the timer cannot
+     *     possibly intervene, so a run of writes came out labelled master, slave, master,
+     *     slave...
+     *     Restricted to CRC-valid frames: the address and function code of a corrupt
+     *     frame are not evidence of anything, and this branch stamps crc_valid = true.
+     *     A corrupt frame therefore still falls through to the response branch below,
+     *     which reports the real CRC verdict.
+     *     What this does NOT catch, and nothing can: a master retrying the very same
+     *     write to the very same slave inside the response window. Those bytes are
+     *     byte-for-byte what the echo of the first attempt would be, so the retry is
+     *     reported as that echo. It is one wrong label on one frame; the retry after
+     *     the timeout — the shape TC-14d walks — is labelled correctly. */
+    if (in->dir == DIRECTION_REQUEST ||
+        (in->dir == DIRECTION_UNKNOWN && in->crc_valid && !in->matches_pending)) {
         d.emit          = true;
         d.is_master     = true;
         d.crc_valid     = true;
@@ -441,7 +591,10 @@ SNIFFER_STATIC sniff_decision_t sniffer_decide(const sniff_input_t *in)
         return d;
     }
 
-    /* DIRECTION_RESPONSE or DIRECTION_UNKNOWN: the awaited slave response. The master
+    /* The awaited slave response: either unambiguously shaped as one, or ambiguous but
+     * consistent with the pending request (the FC05/FC06 echo case, where the reply is
+     * byte-for-byte the request), or corrupt — a frame whose CRC failed is reported as
+     * the response because in this state that is the likeliest thing it was. The master
      * was already emitted on receipt, so only the slave packet is emitted here. */
     d.emit      = true;
     d.is_master = false;
@@ -507,6 +660,13 @@ static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size
     in.state           = ctx->state;
     in.synchronized    = ctx->synchronized;
     in.last_was_master = ctx->last_was_master;
+    /* Compared against the same two bytes the latch stores below, and on the same
+     * (stripped) view of the frame the classification used. Both indices are in range:
+     * the caller rejected len < 4, and strip_arbitration() either leaves the buffer
+     * alone or hands back at least 4 bytes. */
+    in.matches_pending = ctx->req_valid &&
+                         effective[0] == ctx->req_slave &&
+                         effective[1] == ctx->req_fc;
 
     sniff_decision_t d = sniffer_decide(&in);
 
@@ -559,7 +719,11 @@ static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size
          * sniffer_disable()), and the response timer is deliberately NOT started — an armed
          * timer on a request whose master packet was dropped would fire a phantom timeout
          * packet for an exchange no consumer ever saw. Any previously armed timer was
-         * already stopped above (every RES_WAIT decision sets stop_timer). */
+         * already stopped above by all RES_WAIT decisions but one: the broadcast branch
+         * leaves the earlier request's timer running on purpose. If it is a broadcast that
+         * gets dropped here, that timer stays armed while req_valid is cleared — harmless,
+         * because resp_timer_cb() re-reads req_valid under this same spinlock and emits
+         * nothing when it is false, having set the state to SNIFF_IDLE regardless. */
         taskENTER_CRITICAL(&sniff_mux);
         ctx->state     = SNIFF_IDLE;
         ctx->req_valid = false;
@@ -567,8 +731,51 @@ static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size
         return;
     }
 
-    if (d.start_timer) {
-        xTimerStart(ctx->resp_timer, 0);
+    /*
+     * The return value is checked, and a lost start is not survivable in SNIFF_RES_WAIT.
+     *
+     * xTimerStart() does not arm anything itself: it posts a command to the FreeRTOS timer
+     * command queue, CONFIG_FREERTOS_TIMER_QUEUE_LENGTH (10) entries deep, for the Tmr Svc
+     * task to execute. That task runs at CONFIG_FREERTOS_TIMER_TASK_PRIORITY (1) and this
+     * one at SERIAL_TASK_PRIORITY (12), so it cannot preempt us to drain the queue while we
+     * are walking a buffer — and with xTicksToWait = 0 (mandatory: a serial task must not
+     * block on the bus's behalf) a full queue means the command is simply dropped.
+     *
+     * A gap-less buffer makes that reachable rather than theoretical. Every re-latching
+     * frame issues a stop and a start, so a single stream_split() pass of 15 write frames
+     * posts 1 + 14 * 2 = 29 commands with no chance for Tmr Svc to run in between: the
+     * first ten are queued and the rest are lost. The 10th is a stop, and the start that
+     * belonged with it is the first casualty.
+     *
+     * Only the stop-honoured-start-lost combination is dangerous, which is why this one
+     * call is the only one checked. If the stop is lost too, the timer stays armed on the
+     * previous deadline and still fires: it expires early for the freshly latched request,
+     * emits its timeout packet and returns the port to SNIFF_IDLE — a wrong timeout
+     * instant, not a wedged port. But a stop that lands with no start behind it leaves the
+     * port in SNIFF_RES_WAIT with req_valid = true and nothing armed to end it: no timeout
+     * packet is ever emitted, and the first frame after the silence that happens to carry
+     * the latched (address, FC) is reported as a slave reply to a request from minutes ago.
+     *
+     * So the port is returned to SNIFF_IDLE instead, exactly as the dropped-packet path
+     * above does it and for the same reason: the exchange can no longer be followed. The
+     * whole cost is one missing timeout event — the WS client is never shown those anyway
+     * (sniffer_ws_dispatch drops is_timeout packets), and the cache overlay only uses one
+     * to clear its pending entry, which the next packet from this port then clears or
+     * replaces regardless. The state write goes through the spinlock, after the timer call,
+     * keeping the established order: decide and mutate state under sniff_mux, touch
+     * FreeRTOS timers outside it.
+     *
+     * The alternative considered was skipping the stop/start pair when the re-latch does
+     * not change (address, FC), which would spare the queue on a burst of retries to one
+     * slave. Rejected: it lowers the odds without bounding anything — a burst addressed to
+     * different slaves posts every command exactly as before — and this check is what
+     * guarantees the port cannot be left waiting forever, whatever the traffic. */
+    if (d.start_timer && xTimerStart(ctx->resp_timer, 0) != pdPASS) {
+        ESP_LOGW(TAG, "resp timer start failed, port %u returned to idle", port_index);
+        taskENTER_CRITICAL(&sniff_mux);
+        ctx->state     = SNIFF_IDLE;
+        ctx->req_valid = false;
+        taskEXIT_CRITICAL(&sniff_mux);
     }
 }
 

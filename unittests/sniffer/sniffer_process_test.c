@@ -7,14 +7,22 @@
  * TC-4  FD 46 arrives in RES_WAIT (phase slip)
  * TC-5  All-0xFF frame without preceding FD 46 → CRC error
  * TC-6  Broadcast (slave id 0x00) does not start RES_WAIT
+ * TC-6b Broadcast in RES_WAIT is MASTER and leaves the pending request and its timer alone
  * TC-7  Timeout: no response within 200 ms
  * TC-8  Fast Modbus subcommand determines sender direction (FC 0x60)
  * TC-9  Scan Response with leading arbitration byte arrives in IDLE
  * TC-10 Orphan response FC04 at startup (first packet is a slave response)
  * TC-11 Orphan response FC01 with bytecount=1 (unambiguous: len=6, not 8)
  * TC-12 FC01 with len=8 treated as request even if data[2]=3 (not the ambiguous case)
- * TC-13 FC01 len=8 data[2]=3 — truly ambiguous case — DIRECTION_UNKNOWN → dropped
- * TC-14 FC05 in SNIFF_IDLE → DIRECTION_UNKNOWN → packet dropped, state stays IDLE
+ * TC-13 FC01 len=8 data[2]=3 — truly ambiguous case — DIRECTION_UNKNOWN → shown as master
+ * TC-14 FC05 in SNIFF_IDLE → DIRECTION_UNKNOWN → shown as master, FC03 unaffected
+ * TC-14b FC06 write + byte-identical echo → MASTER/SLAVE pair
+ * TC-14c Unanswered FC06 write (review #91/B4) stays visible, concluded by the timeout
+ * TC-14d Retried unanswered FC06 write is MASTER on every retry, never SLAVE
+ * TC-14e Unanswered writes arriving inside the 200 ms window are all MASTER
+ * TC-14f The same burst as one gap-less buffer — split into three MASTERs
+ * TC-14g Exception reply to a write is a SLAVE packet, and closes the transaction
+ * TC-14h Orphan exception reply in SNIFF_IDLE is SLAVE and latches nothing
  * TC-15 CRC ERR in SNIFF_IDLE, no prior sync — packet dropped
  * TC-16 CRC ERR in SNIFF_IDLE after sync — alternates master/slave
  * TC-18 Multi-master in RES_WAIT — second master request flushes buffered req
@@ -34,6 +42,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 /* sniff_packet_t is declared in sniffer.h (shared by production and test builds).
@@ -417,6 +426,93 @@ void test_tc6_broadcast_does_not_start_res_wait(void)
     /* Timer must have been started */
     TEST_ASSERT_EQUAL_MESSAGE(timer_start_before + 1, mock_xTimerStart_called,
         "xTimerStart must be called once after pkt2 (RES_WAIT entered)");
+}
+
+/* ============================================================
+ * TC-6b — A broadcast arriving in RES_WAIT is a MASTER and leaves the pending
+ *         request exactly as it was
+ * ============================================================ */
+
+void test_tc6b_broadcast_in_res_wait_keeps_pending_request(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-6b: broadcasts arriving in RES_WAIT are all MASTER, the pending request survives");
+    LOG_MESSAGE();
+
+    /*
+     * TC-6 covers a broadcast on an IDLE port only, which is why this went unnoticed: in
+     * SNIFF_RES_WAIT a broadcast used to fall through to the re-latch branch. Being
+     * CRC-valid, DIRECTION_UNKNOWN and never equal to the latched (address, FC), it was
+     * taken for a new master request and latched with req_slave = 0x00 — so the NEXT
+     * broadcast matched that latch and was reported as its reply, and a run of broadcasts
+     * came out master, slave, master... On top of that it armed the response timer on a
+     * frame no device will ever answer and disarmed the timer of the request that really
+     * was pending, leaving that request with nothing to end it.
+     */
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* An FC03 read of slave 0x05 that nobody answers: the port enters SNIFF_RES_WAIT and
+     * stays there for the rest of the test. */
+    uint8_t req[8] = {0x05, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00};
+    uint16_t crc = modbus_crc16(req, 6);
+    req[6] = (uint8_t)(crc & 0xFF);  /* RTU appends the CRC low byte first */
+    req[7] = (uint8_t)(crc >> 8);
+
+    /* Counters start from zero here so the timer assertions below read absolutely. */
+    mock_freertos_timers_reset();
+
+    SEND0(req);
+    sniff_packet_t p_req = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p_req.is_master, "TC-6b: the FC03 read must be MASTER");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x05, p_req.slave_id, "TC-6b: request slave_id must be 0x05");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p_req.function, "TC-6b: request function must be 0x03");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTimerStart_called,
+        "TC-6b: the pending FC03 read must arm the response timer exactly once");
+    assert_queue_empty();
+
+    /* Two broadcast FC06 writes inside the response window. Nobody answers a broadcast, so
+     * both are master frames, and neither may touch the timer of the request still
+     * pending — not to re-arm it (that would extend a deadline it does not own) and not to
+     * stop it (that would strand the read with no timeout event at all). */
+    uint8_t bcast[8] = {0x00, 0x06, 0x00, 0x72, 0x00, 0x01, 0x00, 0x00};
+    crc = modbus_crc16(bcast, 6);
+    bcast[6] = (uint8_t)(crc & 0xFF);
+    bcast[7] = (uint8_t)(crc >> 8);
+
+    for (unsigned i = 0; i < 2; i++) {
+        char msg[112];
+
+        SEND0(bcast);
+        sniff_packet_t p = dequeue_packet();
+        snprintf(msg, sizeof(msg), "TC-6b: broadcast %u must be MASTER, never a reply", i);
+        TEST_ASSERT_TRUE_MESSAGE(p.is_master, msg);
+        TEST_ASSERT_TRUE_MESSAGE(p.crc_valid, "TC-6b: broadcast crc_valid must be true");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x00, p.slave_id, "TC-6b: broadcast slave_id must be 0x00");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p.function, "TC-6b: broadcast function must be 0x06");
+        TEST_ASSERT_FALSE_MESSAGE(p.is_timeout, "TC-6b: this is the frame itself, not a timeout");
+        assert_queue_empty();
+
+        snprintf(msg, sizeof(msg),
+            "TC-6b: broadcast %u must not re-arm the pending request's timer", i);
+        TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTimerStart_called, msg);
+        snprintf(msg, sizeof(msg),
+            "TC-6b: broadcast %u must not disarm the pending request's timer", i);
+        TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTimerStop_called, msg);
+    }
+
+    /* The FC03 read is still the pending request, so the timeout identifies it and not a
+     * broadcast — proof that neither broadcast overwrote the latch. */
+    timer_cb(MOCK_TIMER_HANDLE);
+    sniff_packet_t p_to = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p_to.is_timeout, "TC-6b: the unanswered FC03 read must time out");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x05, p_to.slave_id,
+        "TC-6b: the timeout must belong to slave 0x05, not to the broadcast");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03, p_to.function,
+        "TC-6b: the timeout must carry FC03, not the broadcast's FC06");
+    assert_queue_empty();
 }
 
 /* ============================================================
@@ -923,14 +1019,14 @@ void test_tc12_fc01_len8_treated_as_request(void)
 }
 
 /* ============================================================
- * TC-13 — FC01 len=8 AND data[2]=3: truly ambiguous case → DIRECTION_UNKNOWN → dropped
+ * TC-13 — FC01 len=8 AND data[2]=3: truly ambiguous case → DIRECTION_UNKNOWN → shown
  * ============================================================ */
 
-void test_tc13_fc01_len8_data2_3_ambiguous_dropped(void)
+void test_tc13_fc01_len8_data2_3_ambiguous_emitted_as_master(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "TC-13: FC01 len=8 data[2]=3 — truly ambiguous case, DIRECTION_UNKNOWN → dropped");
+        "TC-13: FC01 len=8 data[2]=3 — truly ambiguous case, shown as MASTER on an idle port");
     LOG_MESSAGE();
 
     /*
@@ -939,28 +1035,36 @@ void test_tc13_fc01_len8_data2_3_ambiguous_dropped(void)
      * len=8 AND data[2]=0x03 — this is the ONLY case where both formulas match:
      *   request formula: fixed 8 bytes ✓
      *   response formula: 5 + data[2] = 5 + 3 = 8 ✓
-     * New logic: len==8 AND data[2]==3 → DIRECTION_UNKNOWN → dropped in SNIFF_IDLE.
-     * Expected: queue is empty AND timer was NOT started (packet was never buffered).
+     * classify_direction therefore returns DIRECTION_UNKNOWN. The frame is CRC-valid and
+     * arrives on an idle, never-synchronized port, so it is shown as a master request and
+     * latched: a frame nobody can classify is still a frame the user must be able to see.
      */
     int timer_start_before = mock_xTimerStart_called;
     uint8_t pkt_req[] = {0x83, 0x01, 0x03, 0x00, 0x00, 0x03, 0x62, 0x6D};
     SEND0(pkt_req);
-    /* Must be dropped — queue must be empty and state stays IDLE */
+
+    sniff_packet_t p = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p.is_master,
+        "TC-13: an ambiguous frame on an idle bus is assumed to be a request");
+    TEST_ASSERT_TRUE_MESSAGE(p.crc_valid, "TC-13: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p.slave_id, "TC-13: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, p.function, "TC-13: function must be 0x01");
     assert_queue_empty();
-    /* Timer must NOT have been started (packet was dropped, not buffered) */
-    TEST_ASSERT_EQUAL_MESSAGE(timer_start_before, mock_xTimerStart_called,
-        "xTimerStart must NOT be called after dropped packet (DIRECTION_UNKNOWN in IDLE)");
+
+    /* Latched like a real request, so the response timeout is armed. */
+    TEST_ASSERT_EQUAL_MESSAGE(timer_start_before + 1, mock_xTimerStart_called,
+        "TC-13: xTimerStart must be called — the assumed request is latched");
 }
 
 /* ============================================================
- * TC-14 — FC05 (Write Single Coil) in SNIFF_IDLE → DIRECTION_UNKNOWN → drop
+ * TC-14 — FC05 (Write Single Coil) in SNIFF_IDLE → DIRECTION_UNKNOWN → shown as master
  * ============================================================ */
 
-void test_tc14_fc05_direction_unknown_dropped(void)
+void test_tc14_fc05_direction_unknown_emitted_as_master(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "TC-14: FC05 in SNIFF_IDLE → DIRECTION_UNKNOWN → packet dropped, state stays IDLE");
+        "TC-14: FC05 in SNIFF_IDLE → DIRECTION_UNKNOWN → shown as MASTER, FC03 unaffected");
     LOG_MESSAGE();
 
     /*
@@ -968,23 +1072,29 @@ void test_tc14_fc05_direction_unknown_dropped(void)
      * value_hi=0xFF, value_lo=0x00, CRC lo=0x52, hi=0x39.
      * classify_direction: FC05 → DIRECTION_UNKNOWN (request and echo-response are
      * both 8 bytes, indistinguishable).
-     * With the new logic, DIRECTION_UNKNOWN in SNIFF_IDLE → drop, stay in SNIFF_IDLE.
-     * Expected: nothing enqueued, state stays IDLE.
+     * The frame is CRC-valid, so it is shown with an inferred direction instead of being
+     * dropped — on a never-synchronized port that means MASTER.
      */
     uint8_t pkt_fc05[] = {0x83, 0x05, 0x00, 0xAC, 0xFF, 0x00, 0x52, 0x39};
     SEND0(pkt_fc05);
-    /* Must be dropped — queue must be empty and state stays IDLE */
+    sniff_packet_t p0 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p0.is_master,
+        "TC-14: FC05 write on an idle bus must be shown as MASTER");
+    TEST_ASSERT_TRUE_MESSAGE(p0.crc_valid, "TC-14: FC05 crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p0.slave_id, "TC-14: FC05 slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x05, p0.function, "TC-14: FC05 function must be 0x05");
     assert_queue_empty();
 
     /*
-     * Verify state is still SNIFF_IDLE: send a FC03 request (DIRECTION_REQUEST).
-     * Master is emitted immediately; then after response only the slave is emitted.
+     * An unambiguous frame is labelled from its own shape whatever the port state, so
+     * the FC03 exchange that follows the guess is unaffected by it: the request is a
+     * master (re-latched in RES_WAIT), the response a slave.
      */
     uint8_t pkt_req[] = {0x83, 0x03, 0x00, 0x61, 0x00, 0x02, 0x8B, 0xF7};
     SEND0(pkt_req);
     sniff_packet_t p1 = dequeue_packet();
     TEST_ASSERT_TRUE_MESSAGE(p1.is_master,
-        "TC-14: FC03 request after dropped FC05 must be MASTER (emitted immediately)");
+        "TC-14: FC03 request after the FC05 guess must still be MASTER");
     TEST_ASSERT_TRUE_MESSAGE(p1.crc_valid,
         "TC-14: FC03 request crc_valid must be true");
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id,
@@ -1009,6 +1119,326 @@ void test_tc14_fc05_direction_unknown_dropped(void)
         "TC-14: FC03 response function must be 0x03");
 
     assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-14b — A whole FC06 write exchange is reported as a MASTER/SLAVE pair
+ * ============================================================ */
+
+void test_tc14b_fc06_write_exchange_pairs_master_and_slave(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14b: FC06 write + echo → two packets, MASTER then SLAVE");
+    LOG_MESSAGE();
+
+    /*
+     * FC06 Write Single Register: slave=0x63, reg=0x0072 (114), value=0x0001.
+     * A device that accepts the write echoes the request back byte for byte, so the two
+     * frames are literally identical — direction can only come from the state machine.
+     * Latching the first one (the assumed request) is what lets the second one land in
+     * SNIFF_RES_WAIT and be reported as the slave half of the pair.
+     */
+    uint8_t fc06[] = {0x63, 0x06, 0x00, 0x72, 0x00, 0x01, 0xE0, 0x53};
+
+    SEND0(fc06);
+    sniff_packet_t p_req = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p_req.is_master, "TC-14b: the write itself must be MASTER");
+    TEST_ASSERT_TRUE_MESSAGE(p_req.crc_valid, "TC-14b: request crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x63, p_req.slave_id, "TC-14b: request slave_id must be 0x63");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p_req.function, "TC-14b: request function must be 0x06");
+    assert_queue_empty();
+
+    SEND0(fc06);
+    sniff_packet_t p_echo = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p_echo.is_master, "TC-14b: the echo must be reported as SLAVE");
+    TEST_ASSERT_TRUE_MESSAGE(p_echo.crc_valid, "TC-14b: echo crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x63, p_echo.slave_id, "TC-14b: echo slave_id must be 0x63");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p_echo.function, "TC-14b: echo function must be 0x06");
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-14c — The frame from review #91/B4, alone on an idle port, is visible
+ * ============================================================ */
+
+void test_tc14c_unanswered_fc06_write_is_still_visible(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14c: a single unanswered FC06 write on an idle port reaches the UI");
+    LOG_MESSAGE();
+
+    /*
+     * The exact frame from the review: wb-mqtt-serial writing register 114 of slave 0x23,
+     * a device that is not on the bus. No response ever comes, so the port never leaves
+     * SNIFF_IDLE and every retry takes the ambiguous branch. When that branch dropped the
+     * frame, the sniffer showed nothing at all while the bus was clearly busy.
+     */
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    uint8_t fc06[] = {0x23, 0x06, 0x00, 0x72, 0x00, 0x01, 0xEE, 0x93};
+
+    SEND0(fc06);
+    sniff_packet_t p = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p.is_master, "TC-14c: the write must be shown as MASTER");
+    TEST_ASSERT_FALSE_MESSAGE(p.is_timeout, "TC-14c: this is the frame itself, not a timeout");
+    TEST_ASSERT_TRUE_MESSAGE(p.crc_valid, "TC-14c: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x23, p.slave_id, "TC-14c: slave_id must be 0x23");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p.function, "TC-14c: function must be 0x06");
+    assert_queue_empty();
+
+    /* Nobody answers: the latched guess is concluded by the response timeout, exactly
+     * like an unanswered FC03 request, and the port returns to SNIFF_IDLE. */
+    timer_cb(MOCK_TIMER_HANDLE);
+    sniff_packet_t p_to = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p_to.is_timeout, "TC-14c: the unanswered write must time out");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x23, p_to.slave_id, "TC-14c: timeout slave_id must be 0x23");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p_to.function, "TC-14c: timeout function must be 0x06");
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-14d — A retried unanswered FC06 write is MASTER every single time
+ * ============================================================ */
+
+void test_tc14d_repeated_unanswered_fc06_is_always_master(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14d: a retried unanswered FC06 write is MASTER on every retry, never SLAVE");
+    LOG_MESSAGE();
+
+    /*
+     * The review scenario in full: wb-mqtt-serial keeps retrying the same FC06 write to a
+     * device that is not on the bus, and each attempt ends in a response timeout.
+     *
+     * This is the regression guard for the direction rule in the ambiguous branch of
+     * sniffer_decide(). Deriving it from last_was_master instead of hard-coding MASTER
+     * looks harmless but breaks exactly here: resp_timer_cb() returns the port to
+     * SNIFF_IDLE with last_was_master = true, so alternation would label every second
+     * retry as a SLAVE response that never existed.
+     */
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    uint8_t fc06[] = {0x23, 0x06, 0x00, 0x72, 0x00, 0x01, 0xEE, 0x93};
+
+    for (unsigned retry = 0; retry < 4; retry++) {
+        char msg[96];
+
+        SEND0(fc06);
+        sniff_packet_t p = dequeue_packet();
+        snprintf(msg, sizeof(msg), "TC-14d: retry %u must be MASTER, never SLAVE", retry);
+        TEST_ASSERT_TRUE_MESSAGE(p.is_master, msg);
+        snprintf(msg, sizeof(msg), "TC-14d: retry %u is the frame itself, not a timeout", retry);
+        TEST_ASSERT_FALSE_MESSAGE(p.is_timeout, msg);
+        snprintf(msg, sizeof(msg), "TC-14d: retry %u crc_valid must be true", retry);
+        TEST_ASSERT_TRUE_MESSAGE(p.crc_valid, msg);
+        snprintf(msg, sizeof(msg), "TC-14d: retry %u slave_id must be 0x23", retry);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x23, p.slave_id, msg);
+        snprintf(msg, sizeof(msg), "TC-14d: retry %u function must be 0x06", retry);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p.function, msg);
+        assert_queue_empty();
+
+        /* Nobody answers. The timeout closes the transaction and is itself a master-side
+         * event, which is precisely what makes last_was_master useless as a predictor. */
+        timer_cb(MOCK_TIMER_HANDLE);
+        sniff_packet_t p_to = dequeue_packet();
+        snprintf(msg, sizeof(msg), "TC-14d: retry %u must end in a timeout", retry);
+        TEST_ASSERT_TRUE_MESSAGE(p_to.is_timeout, msg);
+        snprintf(msg, sizeof(msg), "TC-14d: retry %u timeout is a master-side event", retry);
+        TEST_ASSERT_TRUE_MESSAGE(p_to.is_master, msg);
+        assert_queue_empty();
+    }
+}
+
+/* ============================================================
+ * TC-14e — A burst of unanswered writes inside the 200 ms window is all MASTER
+ * ============================================================ */
+
+/* Build an 8-byte FC06 "write register 114 = 1" frame for a given slave. */
+static void make_fc06_write(uint8_t *out, uint8_t slave)
+{
+    out[0] = slave;
+    out[1] = 0x06;
+    out[2] = 0x00;
+    out[3] = 0x72;  /* register 114 */
+    out[4] = 0x00;
+    out[5] = 0x01;
+    uint16_t crc = modbus_crc16(out, 6);
+    out[6] = (uint8_t)(crc & 0xFF);  /* RTU appends the CRC low byte first */
+    out[7] = (uint8_t)(crc >> 8);
+}
+
+void test_tc14e_unanswered_write_burst_within_window_is_all_master(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14e: unanswered writes arriving faster than the timeout are all MASTER");
+    LOG_MESSAGE();
+
+    /*
+     * TC-14d drives the response timeout by hand between retries, so it only proves the
+     * rule for masters slower than SNIFFER_RESP_TIMEOUT_MS. The latch that makes an
+     * ambiguous frame a master in SNIFF_IDLE puts the port into SNIFF_RES_WAIT, where a
+     * frame of an unclassifiable shape used to be accepted as the awaited reply no matter
+     * what it carried — so a second unanswered write arriving inside the window came out
+     * labelled SLAVE, i.e. as a reply from a device that had not said anything.
+     *
+     * What rules it out is Modbus RTU addressing: a reply carries the address the request
+     * was sent to and echoes its function code. Three writes to three different slaves
+     * with no timeout in between are therefore three requests, and must be reported as
+     * three masters.
+     */
+    const uint8_t slaves[] = {0x23, 0x24, 0x25};
+
+    for (unsigned i = 0; i < sizeof(slaves) / sizeof(slaves[0]); i++) {
+        char msg[96];
+        uint8_t frame[8];
+        make_fc06_write(frame, slaves[i]);
+
+        SEND0(frame);
+
+        sniff_packet_t p = dequeue_packet();
+        snprintf(msg, sizeof(msg), "TC-14e: write to 0x%02X must be MASTER, never SLAVE", slaves[i]);
+        TEST_ASSERT_TRUE_MESSAGE(p.is_master, msg);
+        snprintf(msg, sizeof(msg), "TC-14e: write to 0x%02X must keep its own slave_id", slaves[i]);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(slaves[i], p.slave_id, msg);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p.function, "TC-14e: function must be 0x06");
+        TEST_ASSERT_TRUE_MESSAGE(p.crc_valid, "TC-14e: crc_valid must be true");
+        TEST_ASSERT_FALSE_MESSAGE(p.is_timeout, "TC-14e: this is the frame itself, not a timeout");
+        assert_queue_empty();
+    }
+}
+
+/* ============================================================
+ * TC-14f — The same burst arriving as ONE gap-less buffer is still all MASTER
+ * ============================================================ */
+
+void test_tc14f_unanswered_write_burst_in_merged_buffer_is_all_master(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14f: a gap-less buffer of unanswered writes is split into three MASTERs");
+    LOG_MESSAGE();
+
+    /*
+     * The case TC-14e cannot be reduced to "unlucky timing". In repeater / transparent
+     * mode a single idle-delimited buffer carries several back-to-back frames, and
+     * sniffer_process() dispatches all of them from one call — the response timer runs on
+     * the FreeRTOS timer task and cannot possibly fire in between, so the port is in
+     * SNIFF_RES_WAIT for every frame after the first, always.
+     */
+    uint8_t merged[24];
+    make_fc06_write(&merged[0],  0x23);
+    make_fc06_write(&merged[8],  0x24);
+    make_fc06_write(&merged[16], 0x25);
+
+    SEND0(merged);
+
+    const uint8_t expect[] = {0x23, 0x24, 0x25};
+    for (unsigned i = 0; i < sizeof(expect) / sizeof(expect[0]); i++) {
+        char msg[96];
+        sniff_packet_t p = dequeue_packet();
+
+        snprintf(msg, sizeof(msg), "TC-14f: frame %u (slave 0x%02X) must be MASTER", i, expect[i]);
+        TEST_ASSERT_TRUE_MESSAGE(p.is_master, msg);
+        snprintf(msg, sizeof(msg), "TC-14f: frame %u must be the write to 0x%02X", i, expect[i]);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(expect[i], p.slave_id, msg);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p.function, "TC-14f: function must be 0x06");
+        TEST_ASSERT_TRUE_MESSAGE(p.crc_valid, "TC-14f: each split frame must be CRC-valid");
+        TEST_ASSERT_EQUAL_MESSAGE(8, p.data_len, "TC-14f: each split frame must be 8 bytes");
+    }
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-14g — An exception reply is a SLAVE packet, not a master request
+ * ============================================================ */
+
+void test_tc14g_exception_reply_is_slave(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14g: an exception reply to an FC06 write is reported as SLAVE");
+    LOG_MESSAGE();
+
+    /*
+     * The common half of the review scenario: the device IS on the bus, but register 114
+     * is not one it supports, so it answers 23 86 02 (illegal data address). The high bit
+     * of the function code makes the shape unambiguous, and classify_direction() reads it
+     * — otherwise the reply reaches the ambiguous branch, gets announced as a MASTER and
+     * latches a transaction with fc = 0x86 that no master ever sent.
+     */
+    uint8_t write[8];
+    make_fc06_write(write, 0x23);
+    SEND0(write);
+
+    sniff_packet_t p_req = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p_req.is_master, "TC-14g: the write itself is MASTER");
+    assert_queue_empty();
+
+    uint8_t exc[5] = {0x23, 0x86, 0x02, 0x00, 0x00};
+    uint16_t crc = modbus_crc16(exc, 3);
+    exc[3] = (uint8_t)(crc & 0xFF);
+    exc[4] = (uint8_t)(crc >> 8);
+    SEND0(exc);
+
+    sniff_packet_t p_exc = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p_exc.is_master, "TC-14g: an exception reply is a SLAVE packet");
+    TEST_ASSERT_TRUE_MESSAGE(p_exc.crc_valid, "TC-14g: exception crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x23, p_exc.slave_id, "TC-14g: exception slave_id must be 0x23");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x86, p_exc.function, "TC-14g: exception function must be 0x86");
+    assert_queue_empty();
+
+    /* The transaction is closed by the reply, so the next write starts a new one and is
+     * a MASTER again — the exception did not leave a phantom request latched. */
+    uint8_t next[8];
+    make_fc06_write(next, 0x24);
+    SEND0(next);
+    sniff_packet_t p_next = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p_next.is_master, "TC-14g: the following write must be MASTER");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x24, p_next.slave_id, "TC-14g: following slave_id must be 0x24");
+    assert_queue_empty();
+}
+
+/* ============================================================
+ * TC-14h — An orphan exception reply on an idle port is a SLAVE packet
+ * ============================================================ */
+
+void test_tc14h_orphan_exception_reply_is_slave(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-14h: an exception reply whose request was missed is still SLAVE");
+    LOG_MESSAGE();
+
+    /*
+     * Same frame, but the sniffer came up mid-exchange and never saw the request, so the
+     * port is in SNIFF_IDLE. This is where the missing exception case did real damage
+     * before: the ambiguous branch would call the reply a MASTER and latch fc = 0x86,
+     * arming a response timeout for a request that does not exist.
+     */
+    int timer_start_before = mock_xTimerStart_called;
+
+    uint8_t exc[5] = {0x23, 0x83, 0x02, 0x00, 0x00};
+    uint16_t crc = modbus_crc16(exc, 3);
+    exc[3] = (uint8_t)(crc & 0xFF);
+    exc[4] = (uint8_t)(crc >> 8);
+    SEND0(exc);
+
+    sniff_packet_t p = dequeue_packet();
+    TEST_ASSERT_FALSE_MESSAGE(p.is_master, "TC-14h: an orphan exception reply is a SLAVE packet");
+    TEST_ASSERT_TRUE_MESSAGE(p.crc_valid, "TC-14h: crc_valid must be true");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p.function, "TC-14h: function must be 0x83");
+    assert_queue_empty();
+
+    TEST_ASSERT_EQUAL_MESSAGE(timer_start_before, mock_xTimerStart_called,
+        "TC-14h: a reply must not latch a request, so no response timeout is armed");
 }
 
 /* ============================================================
@@ -2147,6 +2577,67 @@ void test_enqueue_failure_on_latched_request_no_phantom_timeout(void)
 }
 
 /* ============================================================
+ * TIMER-START-FAILURE — xTimerStart() only posts a command to the FreeRTOS timer command
+ * queue, and with xTicksToWait = 0 a full queue means the command is dropped and pdFAIL is
+ * returned. A start lost that way while the preceding stop was honoured would leave the
+ * port in SNIFF_RES_WAIT with a latched request and nothing armed to end it: no timeout
+ * packet ever, and the first frame after the silence carrying the latched (address, FC)
+ * reported as its reply. The port must be returned to IDLE instead.
+ * ============================================================ */
+
+void test_timer_start_failure_returns_port_to_idle(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TIMER-START-FAIL: a dropped xTimerStart command must not leave the port latched");
+    LOG_MESSAGE();
+
+    TimerCallbackFunction_t timer_cb = mock_xTimerCreate_pxCallbackFunction;
+    TEST_ASSERT_NOT_NULL_MESSAGE(timer_cb,
+        "resp_timer_cb must have been registered by sniffer_init()");
+
+    /* An FC06 write to slave 0x83, twice, with silence in between — the shape from TC-14d.
+     * It is deliberately the same (address, FC) both times: that is what makes the second
+     * frame able to tell a latched port from an idle one. */
+    uint8_t write[8];
+    make_fc06_write(write, 0x83);
+
+    /* The timer command queue is full, so the start command is dropped and pdFAIL comes
+     * back. The frame itself was real and still reaches the consumer as a MASTER. */
+    mock_xTimerStart_return_value = pdFAIL;
+    SEND0(write);
+    sniff_packet_t p1 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p1.is_master, "TIMER-START-FAIL: the write is still MASTER");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p1.slave_id, "TIMER-START-FAIL: slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTimerStart_called,
+        "TIMER-START-FAIL: the start must have been attempted");
+    assert_queue_empty();
+
+    /* The retry after the silence. This is the assertion the whole test exists for: with the
+     * port abandoned back to IDLE it is another master write, whereas a port left in
+     * SNIFF_RES_WAIT with (0x83, 0x06) still latched and no timer to end it would match this
+     * frame against that latch and report it as a reply from a device that said nothing.
+     * No timeout can have intervened — nothing was ever armed. */
+    mock_xTimerStart_return_value = pdPASS;
+    SEND0(write);
+    sniff_packet_t p2 = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p2.is_master,
+        "TIMER-START-FAIL: the retry must be MASTER, not a phantom reply to the lost latch");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p2.slave_id, "TIMER-START-FAIL: retry slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p2.function, "TIMER-START-FAIL: retry function must be 0x06");
+    assert_queue_empty();
+
+    /* The retry's own start succeeded, so the pipeline is whole again: the retry is latched
+     * and ends on its response timeout like any other unanswered write. */
+    timer_cb(MOCK_TIMER_HANDLE);
+    sniff_packet_t p_to = dequeue_packet();
+    TEST_ASSERT_TRUE_MESSAGE(p_to.is_timeout, "TIMER-START-FAIL: the retry must time out");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x83, p_to.slave_id, "TIMER-START-FAIL: timeout slave_id must be 0x83");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x06, p_to.function, "TIMER-START-FAIL: timeout function must be 0x06");
+    assert_queue_empty();
+}
+
+/* ============================================================
  * main
  * ============================================================ */
 
@@ -2160,14 +2651,22 @@ int main(void)
     RUN_TEST(test_tc4_fd46_in_res_wait_phase_slip);
     RUN_TEST(test_tc5_all_ff_without_preceding_fd46);
     RUN_TEST(test_tc6_broadcast_does_not_start_res_wait);
+    RUN_TEST(test_tc6b_broadcast_in_res_wait_keeps_pending_request);
     RUN_TEST(test_tc7_timeout_no_response);
     RUN_TEST(test_tc8_fm_subcmd_determines_direction);
     RUN_TEST(test_tc9_scan_response_with_leading_ff);
     RUN_TEST(test_tc10_orphan_fc04_response_at_startup);
     RUN_TEST(test_tc11_orphan_fc01_response_len6);
     RUN_TEST(test_tc12_fc01_len8_treated_as_request);
-    RUN_TEST(test_tc13_fc01_len8_data2_3_ambiguous_dropped);
-    RUN_TEST(test_tc14_fc05_direction_unknown_dropped);
+    RUN_TEST(test_tc13_fc01_len8_data2_3_ambiguous_emitted_as_master);
+    RUN_TEST(test_tc14_fc05_direction_unknown_emitted_as_master);
+    RUN_TEST(test_tc14b_fc06_write_exchange_pairs_master_and_slave);
+    RUN_TEST(test_tc14c_unanswered_fc06_write_is_still_visible);
+    RUN_TEST(test_tc14d_repeated_unanswered_fc06_is_always_master);
+    RUN_TEST(test_tc14e_unanswered_write_burst_within_window_is_all_master);
+    RUN_TEST(test_tc14f_unanswered_write_burst_in_merged_buffer_is_all_master);
+    RUN_TEST(test_tc14g_exception_reply_is_slave);
+    RUN_TEST(test_tc14h_orphan_exception_reply_is_slave);
     RUN_TEST(test_tc15_crc_err_no_sync_dropped);
     RUN_TEST(test_tc16_crc_err_after_sync_alternates_direction);
     RUN_TEST(test_rx_timeout_enable_does_not_change_timeout);
@@ -2199,6 +2698,7 @@ int main(void)
     RUN_TEST(test_many_back_to_back_frames_iterative_split);
     RUN_TEST(test_enqueue_failure_graceful_and_recovers);
     RUN_TEST(test_enqueue_failure_on_latched_request_no_phantom_timeout);
+    RUN_TEST(test_timer_start_failure_returns_port_to_idle);
 
     return UNITY_END();
 }
