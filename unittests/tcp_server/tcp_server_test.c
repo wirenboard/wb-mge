@@ -4,6 +4,7 @@
 #include "tcp_desc.h"
 #include "lwip/sockets.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "malloc.h"
 
@@ -27,6 +28,7 @@ extern int  mock_accept_errno;
 extern int  mock_close_call_count;
 extern int  mock_shutdown_call_count;
 extern int  mock_send_call_count;
+extern int  mock_send_last_fd;
 void mock_lwip_sockets_reset(void);
 
 /* ── Mock state from freertos mocks ────────────────────────────────────── */
@@ -68,6 +70,7 @@ void setUp(void)
     mock_lwip_sockets_reset();
     mock_freertos_event_groups_reset();
     mock_freertos_task_reset();
+    mock_freertos_semaphore_reset();
     reset_malloc_tracking();
 
     g_receive_handler_called = 0;
@@ -475,11 +478,27 @@ void test_tcp_server_init_sets_no_client_sentinel(void)
 
 /* On data receipt the receiver must record the real client socket in
  * last_client_sock so consumers can reply to the last sender.  Mutant sets
- * it to -1 instead of the real sock. */
+ * it to -1 instead of the real sock.
+ *
+ * Sampled from inside the receive handler, which is the only point where the value is
+ * meaningful: the teardown at the end of run_receiver() clears the field again (that is
+ * what retires the connection), so checking it after the call would only prove the
+ * teardown ran. */
+static int g_last_client_sock_in_handler = -99;
+
+static void sampling_receive_handler(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
+{
+    (void)data;
+    g_receive_handler_called++;
+    g_receive_handler_sock = client_sock;
+    g_receive_handler_len = len;
+    g_last_client_sock_in_handler = desc->last_client_sock;
+}
+
 void test_receiver_records_last_client_sock_on_data(void)
 {
     tcp_desc_t desc = {0};
-    desc.receive_handler = stub_receive_handler;
+    desc.receive_handler = sampling_receive_handler;
     desc.close_handler = stub_close_handler;
     desc.active_connections = 1;
     desc.port = 502;
@@ -487,6 +506,8 @@ void test_receiver_records_last_client_sock_on_data(void)
     /* Non-NULL handle: run_receiver checks the exit flag after each packet via
      * check_task_exit_req(); the mock returns 0 (no exit) so the loop continues. */
     desc.event_group = (EventGroupHandle_t)0xDEADBEEF;
+
+    g_last_client_sock_in_handler = -99;
 
     mock_recv_data[0] = 0xAB;
     mock_recv_data_len = 1;
@@ -499,7 +520,10 @@ void test_receiver_records_last_client_sock_on_data(void)
     tcp_server_run_receiver_for_test(&desc, 10);
 
     TEST_ASSERT_EQUAL(1, g_receive_handler_called);
-    TEST_ASSERT_EQUAL(10, desc.last_client_sock);
+    TEST_ASSERT_EQUAL_MESSAGE(10, g_last_client_sock_in_handler,
+        "while the connection is live, last_client_sock must name its socket");
+    TEST_ASSERT_EQUAL_MESSAGE(-1, desc.last_client_sock,
+        "retiring the connection must clear the send target back to the -1 sentinel");
 }
 
 /* B3 regression: the receiver must register last_client_sock when the connection
@@ -674,6 +698,14 @@ void test_acceptor_registers_last_client_sock_on_admit(void)
     TEST_ASSERT_EQUAL_MESSAGE(10, desc->last_client_sock,
         "the acceptor must register the admitted socket, so the client is reachable "
         "before its receiver task is scheduled");
+    /* Admitting a connection must NOT move the generation on. A pair captured before this
+     * admit is still safe: the fd this client got was free only because the socket that held
+     * it had been closed, and every close goes through retire_client_conn(), which bumps. An
+     * extra bump here would only invalidate the in-flight replies of the OTHER clients
+     * sharing this descriptor — visible on the uncapped modbus gateway, where a stranger
+     * connecting would cost every master a retry. */
+    TEST_ASSERT_EQUAL_MESSAGE(0u, tcp_desc_conn_generation(desc),
+        "admitting a connection must not bump the connection generation");
 
     /* The receiver spawn SUCCEEDED, so the acceptor handed its heap-allocated args to a
      * task that normally frees them (receiver_task). self_execution is off, so that task
@@ -681,6 +713,240 @@ void test_acceptor_registers_last_client_sock_on_admit(void)
      * the receiver spawn was the last xTaskCreate call. */
     free(mock_xTaskCreate_data.pvParameters);
     free(desc);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Section 7: connection lock and generation (C2 — serial→TCP send racing a close)
+ *
+ * The bug: a producer task (uart_event_task) read desc->last_client_sock, passed the fd
+ * by value into the send path, and was preempted. The receiver task closed that socket,
+ * lwIP handed the fd number to the next socket in the system, and the producer then
+ * send()ed RS-485 bytes into a completely unrelated TCP connection.
+ *
+ * Two things are needed to close it, and both are exercised here: the LOCK, which makes
+ * "resolve/validate the target and send" atomic against "clear the target and close", and
+ * the GENERATION, because after fd reuse the number alone still matches.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* A live descriptor as the production code would leave it: one admitted client on
+ * client_sock and a real connection lock. */
+static void make_connected_desc(tcp_desc_t *desc, int client_sock)
+{
+    memset(desc, 0, sizeof(*desc));
+    desc->receive_handler = stub_receive_handler;
+    desc->active_connections = 1;
+    desc->port = 502;
+    desc->last_client_sock = client_sock;
+    desc->conn_lock = MOCK_SEMAPHORE_HANDLE_T;
+}
+
+/* tcp_server_send_to_current_client() resolves the target itself, under the lock, and
+ * waits for that lock only for a bounded time — the caller is the UART event task, which
+ * must not be parked behind a teardown (that is the whole reason the send below is
+ * MSG_DONTWAIT).  Mutant: portMAX_DELAY instead of the bounded wait. */
+void test_send_to_current_client_resolves_target_under_bounded_lock(void)
+{
+    tcp_desc_t desc;
+    make_connected_desc(&desc, 10);
+
+    uint8_t payload[4] = { 0x01, 0x02, 0x03, 0x04 };
+    esp_err_t ret = tcp_server_send_to_current_client(&desc, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_send_call_count, "the packet must reach send()");
+    TEST_ASSERT_EQUAL_MESSAGE(10, mock_send_last_fd,
+        "the registered client socket must be the send target");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xSemaphoreTake_called,
+        "the target must be resolved with the connection lock held");
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(portMAX_DELAY, mock_xSemaphoreTake_xTicksToWait,
+        "a producer task must never block indefinitely on the connection lock");
+    TEST_ASSERT_EQUAL_MESSAGE(pdMS_TO_TICKS(TCP_DESC_SEND_LOCK_TIMEOUT_MS),
+        mock_xSemaphoreTake_xTicksToWait,
+        "the producer-side wait must be TCP_DESC_SEND_LOCK_TIMEOUT_MS");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphore_held_count,
+        "the connection lock must be released again");
+}
+
+/* If the lock cannot be taken within that bounded wait, the packet is dropped — it must
+ * NOT be sent unsynchronised "just this once", because that is precisely the window in
+ * which the socket is being closed. */
+void test_send_to_current_client_drops_packet_when_lock_unavailable(void)
+{
+    tcp_desc_t desc;
+    make_connected_desc(&desc, 10);
+
+    mock_xSemaphoreTake_return_value = pdFAIL;   /* lock held by a teardown */
+
+    uint8_t payload[4] = { 0x01, 0x02, 0x03, 0x04 };
+    esp_err_t ret = tcp_server_send_to_current_client(&desc, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, ret, "a packet that could not be locked is dropped");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_send_call_count,
+        "nothing may be sent while the connection state cannot be validated");
+}
+
+/* A capture that predates a connection change must be refused. */
+void test_send_to_captured_client_rejects_stale_generation(void)
+{
+    tcp_desc_t desc;
+    make_connected_desc(&desc, 10);
+    desc.conn_generation = 5;
+
+    uint8_t payload[4] = { 0x01, 0x02, 0x03, 0x04 };
+    esp_err_t ret = tcp_server_send_to_captured_client(&desc, 10, 4, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, ret, "a stale capture must not be sent");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_send_call_count,
+        "a response captured before a connection change must never reach send()");
+}
+
+/* Control for the test above: with a matching generation the same call goes through, so
+ * the rejection is the generation check and not a blanket refusal. */
+void test_send_to_captured_client_sends_when_generation_matches(void)
+{
+    tcp_desc_t desc;
+    make_connected_desc(&desc, 10);
+    desc.conn_generation = 5;
+
+    uint8_t payload[4] = { 0x01, 0x02, 0x03, 0x04 };
+    esp_err_t ret = tcp_server_send_to_captured_client(&desc, 10, 5, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_EQUAL(1, mock_send_call_count);
+    TEST_ASSERT_EQUAL(10, mock_send_last_fd);
+}
+
+/* THE regression test for C2.
+ *
+ * Client A is admitted on fd 54 and a consumer captures (54, generation) — this is what
+ * modbus_tcp stores next to pending_client_sock while its RTU request is out on RS-485.
+ * A then disconnects and lwIP hands fd 54 straight back out to client B. The captured
+ * response must NOT be delivered to B.
+ *
+ * Note what an fd comparison would do here: desc->last_client_sock is 54 again, so
+ * "captured_sock == last_client_sock" passes and B receives A's RS-485 bytes. Only the
+ * generation distinguishes the two connections. Mutant: replace the generation check with
+ * that fd comparison and this test goes red while everything else stays green. */
+void test_stale_capture_rejected_after_fd_reused_by_new_connection(void)
+{
+    /* ---- Client A is admitted on fd 54 by the real acceptor ---------------- */
+    mock_accept_fd = 54;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 1;         /* exit on iteration 2 */
+    mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8);  /* EVENT_TASK_EXIT_REQ */
+
+    tcp_desc_t *desc = NULL;
+    TEST_ASSERT_EQUAL(ESP_OK, tcp_server_init(502, stub_receive_handler, &desc));
+    TEST_ASSERT_NOT_NULL(desc);
+
+    TaskFunction_t acceptor = mock_xTaskCreate_data.pvTaskCode;
+    void *acceptor_args = mock_xTaskCreate_data.pvParameters;
+    TEST_ASSERT_NOT_NULL(acceptor);
+
+    acceptor(acceptor_args);
+    /* self_execution is off, so the receiver task never ran and never freed its args. */
+    free(mock_xTaskCreate_data.pvParameters);
+
+    TEST_ASSERT_EQUAL_MESSAGE(54, desc->last_client_sock, "client A must be registered");
+
+    /* ---- A consumer captures the connection it is talking to --------------- */
+    int      captured_sock = desc->last_client_sock;
+    uint32_t captured_gen  = tcp_desc_conn_generation(desc);
+
+    /* ---- A disconnects: its receiver runs to completion and retires the socket */
+    mock_recv_return_values[0] = 0;      /* clean disconnect on the first recv() */
+    mock_recv_return_count = 1;
+    tcp_server_run_receiver_for_test(desc, 54);
+    TEST_ASSERT_EQUAL_MESSAGE(-1, desc->last_client_sock,
+        "retiring A must clear the send target");
+
+    /* ---- Client B connects and lwIP recycles the very same fd number -------- */
+    mock_freertos_event_groups_reset();                          /* clear the sticky exit bit */
+    mock_xEventGroupWaitBits_data.set_event_on_call = 1;
+    mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8);
+    mock_accept_fd      = 54;
+    mock_send_call_count = 0;
+
+    acceptor(acceptor_args);
+    free(mock_xTaskCreate_data.pvParameters);
+
+    TEST_ASSERT_EQUAL_MESSAGE(54, desc->last_client_sock,
+        "the new client must hold the same fd number — that is the point of this test");
+
+    /* ---- The stale capture must not reach B -------------------------------- */
+    uint8_t payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+    esp_err_t ret = tcp_server_send_to_captured_client(desc, captured_sock, captured_gen,
+                                                       payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, ret,
+        "a capture from the previous connection must be rejected");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_send_call_count,
+        "RS-485 bytes addressed to client A must never land on client B's connection");
+
+    /* Control: B's own (fd, generation) pair is accepted. */
+    ret = tcp_server_send_to_captured_client(desc, 54, tcp_desc_conn_generation(desc),
+                                             payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "the current connection must still be reachable");
+    TEST_ASSERT_EQUAL(1, mock_send_call_count);
+
+    free(desc);
+}
+
+/* Retiring a connection must both clear the send target and move the generation on:
+ * clearing alone would still let a pair captured earlier match after fd reuse. */
+void test_receiver_teardown_bumps_conn_generation(void)
+{
+    tcp_desc_t desc;
+    make_connected_desc(&desc, 10);
+    desc.conn_generation = 7;
+
+    mock_recv_return_values[0] = 0;
+    mock_recv_return_count = 1;
+
+    tcp_server_run_receiver_for_test(&desc, 10);
+
+    TEST_ASSERT_EQUAL_MESSAGE(-1, desc.last_client_sock,
+        "the retired socket must stop being the send target");
+    TEST_ASSERT_EQUAL_MESSAGE(8, desc.conn_generation,
+        "retiring a connection must invalidate every pair captured against it");
+}
+
+/* close() must run INSIDE the locked region, not merely after the field was cleared.
+ * Clearing the field does not help a producer that already resolved the fd and is on its
+ * way into send(): only holding the lock across close() keeps it out.
+ *
+ * Observed through the close hook: the semaphore mock counts outstanding takes, so a
+ * non-zero count at close time means the lock is held. Mutant: move close() below
+ * tcp_desc_conn_lock_release() and this goes red. */
+static int g_lock_held_at_close = -1;
+
+static void sample_lock_held_on_close(int fd)
+{
+    (void)fd;
+    g_lock_held_at_close = mock_xSemaphore_held_count;
+}
+
+void test_receiver_closes_socket_while_holding_conn_lock(void)
+{
+    tcp_desc_t desc;
+    make_connected_desc(&desc, 10);
+
+    g_lock_held_at_close = -1;
+    mock_close_hook = sample_lock_held_on_close;
+
+    mock_recv_return_values[0] = 0;
+    mock_recv_return_count = 1;
+
+    tcp_server_run_receiver_for_test(&desc, 10);
+
+    mock_close_hook = NULL;
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_close_call_count,
+        "the client socket must be closed exactly once");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, g_lock_held_at_close,
+        "close() must run with the connection lock held, or a producer can still be "
+        "inside send() with the fd being recycled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphore_held_count,
+        "the connection lock must be released once the socket is gone");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -724,6 +990,15 @@ int tcp_server_test(void)
     RUN_TEST(test_receiver_registration_survives_silent_client);
     RUN_TEST(test_acceptor_rejection_does_not_touch_last_client_sock);
     RUN_TEST(test_acceptor_registers_last_client_sock_on_admit);
+
+    /* Section 7 — connection lock and generation (C2) */
+    RUN_TEST(test_send_to_current_client_resolves_target_under_bounded_lock);
+    RUN_TEST(test_send_to_current_client_drops_packet_when_lock_unavailable);
+    RUN_TEST(test_send_to_captured_client_rejects_stale_generation);
+    RUN_TEST(test_send_to_captured_client_sends_when_generation_matches);
+    RUN_TEST(test_stale_capture_rejected_after_fd_reused_by_new_connection);
+    RUN_TEST(test_receiver_teardown_bumps_conn_generation);
+    RUN_TEST(test_receiver_closes_socket_while_holding_conn_lock);
 
     return UNITY_END();
 }

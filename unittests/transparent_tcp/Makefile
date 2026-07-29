@@ -18,7 +18,9 @@ AUX_SRC += mocks/rs485_stats.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/event_groups.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/task.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/queue.c
+AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/driver/uart.c
+AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 
 # Include directories
 INC += mocks

@@ -9,6 +9,7 @@
 #include "mock_tcp_server.h"
 #include "mock_tcp_client.h"
 #include "mock_serial.h"
+#include "freertos/semphr.h"
 
 #include <string.h>
 
@@ -51,6 +52,7 @@ void setUp(void)
     mock_tcp_server_reset();
     mock_tcp_client_reset();
     mock_serial_reset();
+    mock_freertos_semaphore_reset();
 }
 
 void tearDown(void)
@@ -111,6 +113,73 @@ void test_init_invalid_index(void)
         ESP_ERR_INVALID_ARG, result,
         "init with out-of-range index must return ESP_ERR_INVALID_ARG"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Test: the port's serial-path mutex cannot be created -> ESP_ERR_NO_MEM
+//
+// The mutex is what makes "read ctx->serial_desc and send through it" atomic against
+// deinit clearing and freeing that descriptor, so running without it is a
+// use-after-free waiting to happen: init must refuse, not degrade. It is also created
+// before anything else is allocated, precisely so this failure needs no cleanup — which
+// is the other half of what this test pins.
+// ---------------------------------------------------------------------------
+void test_init_serial_lock_create_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test: serial-path mutex creation failure aborts init");
+    LOG_MESSAGE();
+
+    // Port 1 deliberately: the mutex is created once per port and never deleted (a receiver
+    // task may be waiting on it exactly when the port is torn down), so only a port that no
+    // other test has initialised still reaches xSemaphoreCreateMutex() at all.
+    const unsigned port_index = 1;
+
+    mock_xSemaphoreCreateMutex_return_value = NULL;
+
+    serial_config_t cfg = make_serial_config();
+    serial_desc_t  *serial_desc = NULL;
+    tcp_desc_t     *tcp_desc    = NULL;
+
+    esp_err_t result = transparent_tcp_init_port(
+        port_index, &cfg, BRIDGE_MODE_SERVER, 502, 0, &serial_desc, &tcp_desc
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        ESP_ERR_NO_MEM, result,
+        "init must fail with ESP_ERR_NO_MEM when the serial-path mutex cannot be created"
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(
+        1, mock_xSemaphoreCreateMutex_called,
+        "the mutex creation must actually have been attempted on this port"
+    );
+
+    // Nothing may have been allocated: the mutex is taken before the TCP and serial layers
+    // are touched, so this path has nothing to unwind and must not pretend otherwise.
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_tcp_server_calls.init_called, "tcp_server_init must not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_tcp_client_calls.init_called, "tcp_client_init must not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_calls.init_called, "serial_init must not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_tcp_server_calls.deinit_called, "nothing was allocated, so nothing may be torn down");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_calls.deinit_called, "nothing was allocated, so nothing may be torn down");
+    TEST_ASSERT_NULL_MESSAGE(tcp_desc, "tcp_desc must be left untouched on this failure");
+    TEST_ASSERT_NULL_MESSAGE(serial_desc, "serial_desc must be left untouched on this failure");
+
+    // The port must be left usable, not latched into the failure: a failed creation is not
+    // cached, so a later init with a working allocator brings the port up normally.
+    mock_xSemaphoreCreateMutex_return_value = MOCK_SEMAPHORE_HANDLE_T;
+
+    result = transparent_tcp_init_port(
+        port_index, &cfg, BRIDGE_MODE_SERVER, 502, 0, &serial_desc, &tcp_desc
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "a retry with a working allocator must succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(
+        2, mock_xSemaphoreCreateMutex_called,
+        "the retry must attempt the mutex again rather than reuse a NULL handle"
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.init_called, "the retry must bring the TCP side up");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.init_called, "the retry must bring the serial side up");
+
+    transparent_tcp_deinit_port(port_index);
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +428,29 @@ void test_deinit_after_init_server(void)
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.deinit_called, "tcp_server_deinit must be called once");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.deinit_called, "serial_deinit must be called once");
 
+    // ORDER MATTERS: serial first, TCP second — the same order every other branch of
+    // port_manager's port_deinit_mode() uses. serial_deinit() joins the UART event task,
+    // and that task is a producer into the TCP descriptor: it calls
+    // tcp_server_send_to_current_client(), which can be parked for up to
+    // TCP_DESC_SEND_LOCK_TIMEOUT_MS inside desc->conn_lock. Freeing the TCP descriptor
+    // first lets tcp_server_deinit() delete that mutex and free the memory around a task
+    // still waiting on it — its active_connections wait counts receiver tasks only, and
+    // the UART task is not one of them.
+    TEST_ASSERT_LESS_THAN_UINT_MESSAGE(mock_tcp_server_calls.deinit_call_seq,
+        mock_serial_calls.deinit_call_seq,
+        "serial_deinit must run BEFORE tcp_server_deinit: it joins the UART event task, "
+        "which produces into the TCP descriptor being freed");
+
+    // The other direction (TCP receiver task -> serial_desc) is closed by the port's serial
+    // lock, not by that order: deinit must clear the descriptor under the lock, so a
+    // producer either finishes its send first or observes NULL.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xSemaphoreTake_called,
+        "deinit must clear the descriptors with the port's serial lock held");
+    TEST_ASSERT_LESS_THAN_UINT_MESSAGE(mock_serial_calls.deinit_call_seq,
+        mock_xSemaphoreGive_call_seq,
+        "deinit must release the serial lock BEFORE serial_deinit(): that call joins the "
+        "UART event task, and a lock must not be held across a task join");
+
     // Client functions must not have been involved
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_tcp_client_calls.deinit_called, "tcp_client_deinit must not be called in server mode");
 }
@@ -386,6 +478,15 @@ void test_deinit_after_init_client(void)
 
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_client_calls.deinit_called, "tcp_client_deinit must be called once");
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.deinit_called, "serial_deinit must be called once");
+
+    // Same ordering rule as server mode, and if anything it binds harder here:
+    // tcp_client_deinit() has no active_connections counter at all, so nothing in it even
+    // looks at whether an outside producer might still be inside conn_lock. Joining the
+    // UART event task first is what makes that a non-question.
+    TEST_ASSERT_LESS_THAN_UINT_MESSAGE(mock_tcp_client_calls.deinit_call_seq,
+        mock_serial_calls.deinit_call_seq,
+        "serial_deinit must run BEFORE tcp_client_deinit: it joins the UART event task, "
+        "which produces into the TCP descriptor being freed");
 
     // Server functions must not have been involved
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_tcp_server_calls.deinit_called, "tcp_server_deinit must not be called in client mode");
@@ -580,67 +681,135 @@ void test_tcp_to_serial_forwards_only_when_context_initialized(void)
     mock_tcp_server_registered_handler(tcp_desc, 5, payload, sizeof(payload));
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.send_called,
         "serial_send must be called while context is initialized");
+
+    // ...and it got there through the port's serial lock. Resolving ctx->serial_desc
+    // outside that lock is what lets deinit clear and free the descriptor between the read
+    // and the send — see test_tcp_to_serial_drops_packet_when_port_is_being_deinitialized.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xSemaphoreTake_called,
+        "the serial descriptor must be resolved with the port's serial lock held");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphore_held_count,
+        "the serial lock must be released again after the send");
 }
 
 // ---------------------------------------------------------------------------
-// #74: a closing TCP connection must invalidate last_client_sock.
+// The TCP -> serial half of the teardown race.
 //
-// last_client_sock is registered by tcp_server when a connection is admitted and
-// re-asserted on each received packet, but nothing in tcp_server resets it on close, so
-// a serial reply could be routed to a dead fd — or, once lwIP recycled the fd number, to
-// a completely unrelated socket. transparent_tcp must therefore register a close_handler
-// (server mode only; tcp_client manages last_client_sock itself).
+// Deinit does not stop the TCP receiver tasks before it clears and frees the serial
+// descriptor: tcp_*_deinit() joins them, and that runs AFTER serial_deinit(). So a receiver
+// task can be inside process_data_from_tcp(), already past the context lookup and the
+// initialized check, when deinit clears ctx->serial_desc and frees it. Passing ctx->serial_desc
+// straight into serial_send() then dereferences NULL (serial_send() reads desc->tx_disabled
+// on its first line) or, if the pointer was loaded a moment earlier, freed memory.
+//
+// The single-threaded harness cannot interleave two tasks, so the semaphore mock's take-hook
+// stands in for the scheduler: it fires while the producer is "waiting for" the serial lock
+// and runs the whole deinit there, which is the interleaving in which deinit wins the lock.
+// What is pinned is the producer's half of the contract — that it re-reads the descriptor
+// under the lock and drops the packet when it is gone, instead of using a value read before.
 // ---------------------------------------------------------------------------
-void test_close_handler_clears_last_client_sock(void)
+static int s_race_deinit_calls = 0;
+
+static void deinit_port0_from_inside_the_lock(void)
+{
+    // Disarm first: transparent_tcp_deinit_port() takes the same mutex, and the hook fires
+    // on every take.
+    mock_xSemaphoreTake_hook = NULL;
+    s_race_deinit_calls++;
+    transparent_tcp_deinit_port(0);
+}
+
+void test_tcp_to_serial_drops_packet_when_port_is_being_deinitialized(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "Test: connection close clears last_client_sock (#74)");
+        "Test: TCP->serial drops the packet when the port is being deinitialized");
     LOG_MESSAGE();
 
     tcp_desc_t *tcp_desc = NULL;
     init_server_and_capture(NULL, &tcp_desc);
 
-    TEST_ASSERT_NOT_NULL_MESSAGE(tcp_desc->close_handler,
-        "transparent_tcp must register a close_handler in server mode");
+    uint8_t payload[3] = { 0x44, 0x55, 0x66 };
 
-    // A client sends data: the receiver task records it as last_client_sock.
+    s_race_deinit_calls = 0;
+    mock_xSemaphoreTake_hook = deinit_port0_from_inside_the_lock;
+
+    mock_tcp_server_registered_handler(tcp_desc, 5, payload, sizeof(payload));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, s_race_deinit_calls,
+        "the injected deinit must have run inside the producer's lock acquisition");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.deinit_called,
+        "the injected deinit must have torn the serial port down, freeing the descriptor");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_serial_calls.send_called,
+        "a TCP packet must not reach serial_send() once ctx->serial_desc has been cleared: "
+        "that pointer is being freed by serial_deinit()");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphore_held_count,
+        "the serial lock must be released on the drop path too");
+}
+
+// ---------------------------------------------------------------------------
+// #74 / C2: a serial reply must never be routed to a socket that has been retired.
+//
+// The send target used to be sampled here — process_data_from_serial() read
+// desc->last_client_sock and passed the fd into the send function — and transparent_tcp
+// installed a close_handler to blank that field on disconnect. Neither half was enough:
+// the sampled fd was already in the producer's hands by the time the handler ran, and the
+// receiver task closed (and lwIP recycled) the socket right after.
+//
+// Now the target is resolved by the TCP layer, under its connection lock, at the moment
+// of the send — and clearing the field is part of that same locked teardown, so this port
+// no longer registers a close_handler at all.
+//
+// Scope, honestly: "the reply cannot reach the retired fd" is no longer a property a test
+// can break, because tcp_send_func_t is (desc, data, len) — there is no fd parameter for
+// transparent_tcp to get wrong, so the signature enforces it, not this test. Asserting
+// "the send did not go to fd 7" would therefore be unfailable padding. What IS still
+// transparent_tcp's own decision, and is what this test pins, is the two halves of the
+// delegation: no close_handler of its own, and the serial relay going through the
+// resolve-at-send-time entry point so the target it hits is whatever the descriptor holds
+// AT SEND TIME. The lock/generation machinery behind that is covered by the tcp_server
+// suite against the real implementation.
+// ---------------------------------------------------------------------------
+void test_serial_reply_target_is_resolved_by_the_tcp_layer(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test: transparent_tcp delegates send-target resolution to the TCP layer (#74/C2)");
+    LOG_MESSAGE();
+
+    tcp_desc_t *tcp_desc = NULL;
+    init_server_and_capture(NULL, &tcp_desc);
+
+    TEST_ASSERT_NULL_MESSAGE(tcp_desc->close_handler,
+        "transparent_tcp must not clear the send target from a close_handler: tcp_server "
+        "clears it, bumps the connection generation and closes the socket in one locked "
+        "step, which a callback running before the close cannot do");
+
+    // A client is admitted on fd 7 and talks to us.
     uint8_t payload[3] = { 0x11, 0x22, 0x33 };
-    tcp_desc->last_client_sock = 7;
+    mock_tcp_server_simulate_client_admitted(7);
     mock_tcp_server_registered_handler(tcp_desc, 7, payload, sizeof(payload));
 
-    // That client disconnects.
-    tcp_desc->close_handler(tcp_desc, 7);
-    TEST_ASSERT_EQUAL_MESSAGE(-1, tcp_desc->last_client_sock,
-        "last_client_sock must be invalidated when its connection closes");
+    // That connection is retired by tcp_server: the field goes back to the -1 sentinel
+    // while active_connections is still non-zero, because a newcomer is already being
+    // admitted — this is exactly the window in which the old code sent to the dead fd.
+    tcp_desc->last_client_sock = -1;
+    mock_tcp_server_calls.connected_ret = ESP_OK;
 
-    // A serial reply arriving after the close must not be sent to the dead fd.
-    mock_tcp_server_calls.connected_ret = ESP_OK;   // active_connections != 0 (new silent client)
     serial_desc_t *serial_desc = mock_serial_get_desc();
     mock_serial_registered_handler(serial_desc, payload, sizeof(payload));
-    TEST_ASSERT_NOT_EQUAL_MESSAGE(7, mock_tcp_server_calls.send_last_client_sock,
-        "a serial reply must never be routed to the closed fd");
-}
 
-// A close on a socket that is NOT the current last_client_sock must leave it alone:
-// the guard is defensive — close_handler clears the cached fd only when the closing
-// socket matches, so a late or duplicate close for a socket that is no longer the
-// active one cannot wipe the current client's fd.
-void test_close_handler_ignores_other_socket(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "Test: closing a non-current socket does not clear last_client_sock (#74)");
-    LOG_MESSAGE();
+    // The relay must still hand the packet to the send function — the gate in front of it
+    // is tcp_connected_func(), which says ESP_OK here, so skipping the send would be a
+    // different bug (dropping traffic while a connection is live).
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_tcp_server_calls.send_called,
+        "serial->TCP relay must go through the send function while the port reports connected");
 
-    tcp_desc_t *tcp_desc = NULL;
-    init_server_and_capture(NULL, &tcp_desc);
-
-    tcp_desc->last_client_sock = 9;      // the new client already owns the slot
-    tcp_desc->close_handler(tcp_desc, 7); // the old connection closes late
-
-    TEST_ASSERT_EQUAL_MESSAGE(9, tcp_desc->last_client_sock,
-        "an unrelated close must not clear the current client's fd");
+    // And the target it reached is the one the DESCRIPTOR held when the send ran, not the
+    // fd that was live when the request arrived. The mock resolves it exactly as the real
+    // tcp_server_send_to_current_client() does — from desc->last_client_sock under the
+    // lock — so this pins that transparent_tcp contributes no target of its own.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, mock_tcp_server_calls.send_last_client_sock,
+        "the send target must be resolved from the descriptor at send time (retired -> -1)");
 }
 
 // ---------------------------------------------------------------------------
@@ -700,6 +869,7 @@ int main(void)
     RUN_TEST(test_deinit_uninitialized_port);
     RUN_TEST(test_deinit_invalid_index);
     RUN_TEST(test_init_invalid_index);
+    RUN_TEST(test_init_serial_lock_create_fail);
     RUN_TEST(test_init_server_mode_success);
     RUN_TEST(test_init_client_mode_success);
     RUN_TEST(test_init_server_tcp_init_fail);
@@ -714,8 +884,8 @@ int main(void)
     RUN_TEST(test_serial_to_tcp_forwarding_gated_by_connection);
     RUN_TEST(test_tcp_to_serial_client_sock_zero_is_valid);
     RUN_TEST(test_tcp_to_serial_forwards_only_when_context_initialized);
-    RUN_TEST(test_close_handler_clears_last_client_sock);
-    RUN_TEST(test_close_handler_ignores_other_socket);
+    RUN_TEST(test_tcp_to_serial_drops_packet_when_port_is_being_deinitialized);
+    RUN_TEST(test_serial_reply_target_is_resolved_by_the_tcp_layer);
     RUN_TEST(test_serial_to_tcp_reaches_client_that_never_sent_data);
 
     return UNITY_END();

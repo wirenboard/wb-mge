@@ -67,6 +67,15 @@ extern int  mock_shutdown_call_count;
 extern int  mock_send_call_count;
 extern int  mock_setsockopt_call_count;
 
+/* Optional hook invoked on entry to mock_close(), before it returns. Lets a test observe
+ * global state at the exact instant a socket is closed — e.g. whether the connection lock
+ * is held, which is what makes close() safe against a concurrent send(). */
+typedef void (*mock_close_hook_t)(int fd);
+extern mock_close_hook_t mock_close_hook;
+
+/* Socket fd passed to the last mock_send() call. */
+extern int  mock_send_last_fd;
+
 void mock_lwip_sockets_reset(void);
 
 /* ── Mock function declarations ──────────────────────────────────────────── */

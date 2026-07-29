@@ -14,6 +14,10 @@ TESTED_SRC += $(PROJ_DIR)/main/bridge/tcp_server.c
 AUX_SRC += mocks/lwip/sockets.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/event_groups.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/task.c
+# tcp_desc's connection lock is a FreeRTOS mutex, so the semaphore mock (and the call
+# sequence counter it records into) are part of this suite now.
+AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/semphr.c
+AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/malloc.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/debug_log.c
 AUX_SRC += $(IDF_PATH)/components/esp_common/src/esp_err_to_name.c

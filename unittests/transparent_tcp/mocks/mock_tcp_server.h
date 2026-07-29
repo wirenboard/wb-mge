@@ -8,6 +8,8 @@ typedef struct {
     int send_called;
     int connected_called;
     int deinit_called;
+    // Global call ordinal of the tcp_server_deinit() call — see mock_serial_calls.
+    unsigned deinit_call_seq;
     bool init_should_fail;
     // Observation of tcp_server_set_max_connections (transparent mode caps at 1).
     int set_max_connections_called;

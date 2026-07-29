@@ -17,6 +17,23 @@
 
 #include "modbus_tcp_internal.h"
 
+#include "unity.h"
+
+
+/* Per-port stand-in serial descriptors, used ONLY as lookup keys.
+ *
+ * The serial mock returns NULL from serial_init(), so a context set up by these shims used
+ * to be left with serial_desc == NULL. process_data_from_serial() resolves its context with
+ * find_ctx_by_serial_desc(), which scans for the first context whose serial_desc matches —
+ * and NULL matched context 0. That happened to be TEST_CTX_IDX, so the shim appeared to
+ * work while in fact ignoring its ctx_idx argument entirely: pointing the tests at any
+ * other port would have silently driven port 0 instead.
+ *
+ * A distinct non-NULL key per port makes the lookup exact for every ctx_idx. Nothing ever
+ * dereferences these: process_data_from_serial() uses the pointer only to find its context,
+ * and no shim calls serial_send()/serial_deinit() on one. */
+static serial_desc_t test_serial_desc[MODBUS_TCP_MAX_TASK_COUNT];
+
 
 void modbus_tcp_test_init_ctx(unsigned ctx_idx, packet_queue_handle queue, tcp_desc_t *tcp_desc)
 {
@@ -25,6 +42,13 @@ void modbus_tcp_test_init_ctx(unsigned ctx_idx, packet_queue_handle queue, tcp_d
     ctx->index       = ctx_idx;
     ctx->tcp_queue   = queue;
     ctx->tcp_desc    = tcp_desc;
+    /* Unique lookup key for this port, so find_ctx_by_serial_desc() resolves to exactly
+     * this context rather than to whichever one happens to hold NULL — see above. */
+    ctx->serial_desc = &test_serial_desc[ctx_idx];
+    /* As a running port would be: initialized, with an event group the RS-485 receive
+     * path can signal EVENT_SERIAL_RESPONSE_RECEIVED on. */
+    ctx->initialized = true;
+    ctx->event_group = (EventGroupHandle_t)0xDEADBEEF;
     /* No mutex in unit tests: the harness is single-threaded. */
     ctx->reasm.mutex = NULL;
     ctx->reasm.tag   = TAG;
@@ -58,10 +82,19 @@ void modbus_tcp_test_conn_close(unsigned ctx_idx, int client_sock)
  * mb_device_is_self() is true: answers locally and sends back to client_sock,
  * never touching the RS485 serial path. */
 void modbus_tcp_test_handle_self_device_request(unsigned ctx_idx, int client_sock,
+                                                uint32_t conn_generation,
                                                 uint8_t *tcp_req_buf, size_t tcp_req_len)
 {
-    handle_self_device_request(&mb_tcp_task_ctx[ctx_idx], client_sock,
+    handle_self_device_request(&mb_tcp_task_ctx[ctx_idx], client_sock, conn_generation,
                                tcp_req_buf, tcp_req_len);
+}
+
+/* Drive the production dequeue path (pop + adopt the request's identity) without the
+ * surrounding task loop. */
+size_t modbus_tcp_test_fetch_tcp_request(unsigned ctx_idx, uint8_t **tcp_req_buf,
+                                         int *client_sock, uint32_t *conn_generation)
+{
+    return fetch_tcp_request(&mb_tcp_task_ctx[ctx_idx], tcp_req_buf, client_sock, conn_generation);
 }
 
 /* Seed the in-flight RTU request bookkeeping so the on_tcp_conn_close()
@@ -73,6 +106,11 @@ void modbus_tcp_test_set_pending(unsigned ctx_idx, uint16_t tid,
     ctx->pending_tid         = tid;
     ctx->pending_slave_id    = slave_id;
     ctx->pending_client_sock = client_sock;
+}
+
+void modbus_tcp_test_set_pending_generation(unsigned ctx_idx, uint32_t generation)
+{
+    mb_tcp_task_ctx[ctx_idx].pending_conn_generation = generation;
 }
 
 uint16_t modbus_tcp_test_get_pending_tid(unsigned ctx_idx)
@@ -88,4 +126,25 @@ uint8_t modbus_tcp_test_get_pending_slave_id(unsigned ctx_idx)
 int modbus_tcp_test_get_pending_client_sock(unsigned ctx_idx)
 {
     return mb_tcp_task_ctx[ctx_idx].pending_client_sock;
+}
+
+uint32_t modbus_tcp_test_get_pending_generation(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].pending_conn_generation;
+}
+
+
+/* Deliver an RTU response to the port exactly as the UART event task does — through the
+ * production entry point, so the context resolution under test is the real one.
+ *
+ * The guard makes the shim's one hidden dependency explicit: the callback finds its context
+ * by looking the descriptor up, so a test only drives the port it asked for as long as the
+ * key is unique to that port (see test_serial_desc above). Without it, a change to the key
+ * scheme would silently redirect every test to whichever context matched first. */
+void modbus_tcp_test_process_data_from_serial(unsigned ctx_idx, uint8_t *data, size_t len)
+{
+    serial_desc_t *desc = mb_tcp_task_ctx[ctx_idx].serial_desc;
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(&mb_tcp_task_ctx[ctx_idx], find_ctx_by_serial_desc(desc),
+        "serial_desc must resolve to the requested context, not merely to context 0");
+    process_data_from_serial(desc, data, len);
 }

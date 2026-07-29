@@ -14,6 +14,11 @@ typedef struct {
     size_t packet_len;
     uint8_t* data_buf;
     int client_sock;    // TCP socket fd of the originating client, or -1 if not applicable
+    // Connection generation of that socket's tcp_desc at the moment the packet was pushed.
+    // Travels with the packet so the consumer validates its reply against the connection
+    // that SENT the request, not against whoever holds the fd number by the time the
+    // packet is popped. Meaningless without client_sock — always read as a pair.
+    uint32_t conn_generation;
 } packet_queue_elem_t;
 
 
@@ -66,7 +71,8 @@ void packet_queue_clear(const packet_queue_handle handle)
 }
 
 
-esp_err_t packet_queue_push_with_client(const packet_queue_handle handle, const uint8_t* data, const size_t len, int client_sock)
+esp_err_t packet_queue_push_with_client(const packet_queue_handle handle, const uint8_t* data, const size_t len,
+                                        int client_sock, uint32_t conn_generation)
 {
     if (!handle) {
         return ESP_FAIL;
@@ -88,6 +94,7 @@ esp_err_t packet_queue_push_with_client(const packet_queue_handle handle, const 
     memcpy(queue_elem.data_buf, data, len);
     queue_elem.packet_len = len;
     queue_elem.client_sock = client_sock;
+    queue_elem.conn_generation = conn_generation;
 
     if (xQueueSend(handle, &queue_elem, 0) != pdPASS) {
         ESP_LOGE(TAG, "Unable to push packet into queue");
@@ -99,7 +106,8 @@ esp_err_t packet_queue_push_with_client(const packet_queue_handle handle, const 
 }
 
 
-size_t packet_queue_pop_with_client(const packet_queue_handle handle, uint8_t** buf_ptr, TickType_t timeout_ticks, int* client_sock)
+size_t packet_queue_pop_with_client(const packet_queue_handle handle, uint8_t** buf_ptr, TickType_t timeout_ticks,
+                                    int* client_sock, uint32_t* conn_generation)
 {
     if (!handle) {
         return 0;
@@ -120,6 +128,10 @@ size_t packet_queue_pop_with_client(const packet_queue_handle handle, uint8_t** 
 
     if (client_sock) {
         *client_sock = queue_elem.client_sock;
+    }
+
+    if (conn_generation) {
+        *conn_generation = queue_elem.conn_generation;
     }
 
     return queue_elem.packet_len;

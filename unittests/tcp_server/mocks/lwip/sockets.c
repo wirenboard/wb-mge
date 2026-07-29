@@ -36,6 +36,8 @@ int  mock_close_call_count = 0;
 int  mock_shutdown_call_count = 0;
 int  mock_send_call_count = 0;
 int  mock_setsockopt_call_count = 0;
+int  mock_send_last_fd = -1;
+mock_close_hook_t mock_close_hook = 0;
 
 /* ── Mock implementations ────────────────────────────────────────────────── */
 
@@ -131,16 +133,18 @@ ssize_t mock_recv(int sockfd, void *buf, size_t len, int flags)
 
 ssize_t mock_send(int sockfd, const void *buf, size_t len, int flags)
 {
-    (void)sockfd;
     (void)buf;
     (void)flags;
     mock_send_call_count++;
+    mock_send_last_fd = sockfd;
     return (ssize_t)len;
 }
 
 int mock_close(int fd)
 {
-    (void)fd;
+    if (mock_close_hook) {
+        mock_close_hook(fd);
+    }
     mock_close_call_count++;
     return 0;
 }
@@ -197,4 +201,6 @@ void mock_lwip_sockets_reset(void)
     mock_shutdown_call_count = 0;
     mock_send_call_count = 0;
     mock_setsockopt_call_count = 0;
+    mock_send_last_fd = -1;
+    mock_close_hook = 0;
 }

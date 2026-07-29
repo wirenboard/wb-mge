@@ -15,6 +15,8 @@ extern size_t    mock_tcp_send_len;
 extern int       mock_tcp_send_sock;
 extern esp_err_t mock_tcp_send_result;
 extern bool      mock_tcp_send_overflow;
+extern int       mock_tcp_send_captured_called;
+extern uint32_t  mock_tcp_send_generation;
 void mock_tcp_server_reset(void);
 
 /* ---- Mock state from mocks/packet_queue.c ------------------------------- */
@@ -23,15 +25,19 @@ void mock_tcp_server_reset(void);
 #define MOCK_PQ_MAX_LEN     300
 
 typedef struct {
-    uint8_t data[MOCK_PQ_MAX_LEN];
-    size_t  len;
-    int     sock;
+    uint8_t  data[MOCK_PQ_MAX_LEN];
+    size_t   len;
+    int      sock;
+    uint32_t generation;
 } mock_pq_entry_t;
 
 extern mock_pq_entry_t mock_pq_packets[];
 extern int             mock_pq_push_count;
 extern esp_err_t       mock_pq_push_result;
 void mock_packet_queue_reset(void);
+
+/* ---- Mock state from the shared FreeRTOS event group mock ---------------- */
+void mock_freertos_event_groups_reset(void);
 
 /* ---- Mock state from mocks/mb_device.c ---------------------------------- */
 extern int     mock_mb_device_handle_self_count;
@@ -87,6 +93,11 @@ void setUp(void)
     mock_tcp_server_reset();
     mock_mb_device_reset();
     mock_serial_reset();
+    /* fetch_tcp_request() polls the exit flag through the event group mock, whose call
+     * bookkeeping is a fixed-size array — reset it per test so the count cannot accumulate
+     * across the suite and trip the mock's own bounds assertion. */
+    mock_freertos_event_groups_reset();
+    memset(&s_test_tcp_desc, 0, sizeof(s_test_tcp_desc));
     modbus_tcp_test_init_ctx(TEST_CTX_IDX, (packet_queue_handle)1, &s_test_tcp_desc);
 }
 
@@ -120,6 +131,10 @@ void test_push_single_complete_frame(void)
     uint8_t req[12];
     build_fc03_request(req, 0x0001, 1, 100, 5);
 
+    /* The receive handler runs in this connection's receiver task, so the descriptor's
+     * generation right now is this connection's. */
+    s_test_tcp_desc.conn_generation = 6;
+
     unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 10, req, sizeof(req));
 
     TEST_ASSERT_EQUAL_UINT_MESSAGE(1u, pushed, "one complete frame must be pushed");
@@ -127,6 +142,8 @@ void test_push_single_complete_frame(void)
     TEST_ASSERT_EQUAL_size_t_MESSAGE(12u, mock_pq_packets[0].len, "pushed frame length must be 12");
     TEST_ASSERT_EQUAL_INT_MESSAGE(10, mock_pq_packets[0].sock, "pushed frame must carry client sock 10");
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(req, mock_pq_packets[0].data, 12u, "pushed frame data must match input");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(6u, mock_pq_packets[0].generation,
+        "the frame must be enqueued with the connection generation seen at enqueue time");
 }
 
 /* ---- MBTCP-U-008: split frame — two calls ------------------------------- */
@@ -589,8 +606,12 @@ void test_self_device_unit_ff_dispatched_locally(void)
     TEST_ASSERT_TRUE_MESSAGE(mb_device_is_self(req[6]),
         "Unit ID 0xFF must be recognized as self-device");
 
-    /* Dispatch via the production self-device handler for client sock 77. */
-    modbus_tcp_test_handle_self_device_request(TEST_CTX_IDX, 77, req, sizeof(req));
+    /* Dispatch via the production self-device handler for client sock 77, captured at the
+     * descriptor's current generation — the pair the request would have carried off the
+     * queue. Matching generations mean the reply is not dropped, so the assertions below
+     * see the send the handler actually made. */
+    s_test_tcp_desc.conn_generation = 4;
+    modbus_tcp_test_handle_self_device_request(TEST_CTX_IDX, 77, 4, req, sizeof(req));
 
     /* The local self-request handler must have been invoked exactly once... */
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_mb_device_handle_self_count,
@@ -602,6 +623,8 @@ void test_self_device_unit_ff_dispatched_locally(void)
      * client (sock 77) rather than forwarded to the serial bus. */
     TEST_ASSERT_EQUAL_INT_MESSAGE(77, mock_tcp_send_sock,
         "self-device response must be sent back to the requesting client sock");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, mock_tcp_send_generation,
+        "self-device response must be addressed by the generation the request came with");
     TEST_ASSERT_GREATER_THAN_size_t_MESSAGE(0u, mock_tcp_send_len,
         "a non-empty self-device response must be sent");
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xFF, mock_tcp_send_buf[6],
@@ -670,6 +693,111 @@ void test_conn_close_keeps_pending_for_other_client(void)
         "pending_client_sock must be preserved when an unrelated client disconnects");
 }
 
+/* ---- MBTCP-U-032: the (socket, generation) pair travels THROUGH the queue --- */
+/* C2, producer half. The generation is sampled by the receive handler, in the receiver
+ * task of the connection the bytes arrived on, and is pushed onto the packet queue
+ * alongside the frame. fetch_tcp_request() then adopts both halves straight off the queue
+ * as the port's in-flight identity.
+ *
+ * The point is what happens in between: while the request waits in the queue, other
+ * clients may come and go and the descriptor's generation moves on. The pending identity
+ * must still be the one captured at enqueue time. Re-deriving it at pop time —
+ * ctx->pending_conn_generation = tcp_desc_conn_generation(ctx->tcp_desc) — would validate
+ * the eventual reply against whatever connection exists by then, which is precisely the
+ * hole the pair-through-the-queue design closes.
+ *
+ * Mutant: sample the generation inside fetch_tcp_request() instead of taking it off the
+ * queue -> this goes red (would observe 11 instead of 9). */
+void test_queued_request_carries_its_connection_identity_to_pending(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-032: (sock, generation) captured at enqueue survives the queue into pending_*");
+    LOG_MESSAGE();
+
+    /* The descriptor is at generation 9 when the client's bytes arrive. */
+    s_test_tcp_desc.conn_generation = 9;
+
+    uint8_t req[12];
+    build_fc03_request(req, 0x0042, 0x07, 0, 1);
+
+    unsigned pushed = modbus_tcp_test_push_data(TEST_CTX_IDX, 88, req, sizeof(req));
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(1, pushed, "the complete frame must reach the queue");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(9u, mock_pq_packets[0].generation,
+        "the receive handler must enqueue the generation it saw, not a default");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(88, mock_pq_packets[0].sock,
+        "the enqueued frame must carry the originating socket");
+
+    /* While the request sits in the queue, unrelated clients connect and disconnect, so
+     * the descriptor moves on. Nothing about the queued request changes. */
+    s_test_tcp_desc.conn_generation = 11;
+
+    uint8_t *buf = NULL;
+    int      sock = -1;
+    uint32_t generation = 0;
+    size_t   len = modbus_tcp_test_fetch_tcp_request(TEST_CTX_IDX, &buf, &sock, &generation);
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(req), len, "the queued frame must be popped whole");
+    TEST_ASSERT_NOT_NULL(buf);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(88, sock, "pop must yield the socket that was pushed");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(9u, generation,
+        "pop must yield the generation that was pushed, not the descriptor's current one");
+
+    /* ...and both halves must have been adopted as the port's in-flight identity, which is
+     * what process_data_from_serial() will address the RTU reply with. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(88, modbus_tcp_test_get_pending_client_sock(TEST_CTX_IDX),
+        "pending_client_sock must be adopted from the popped request");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(9u, modbus_tcp_test_get_pending_generation(TEST_CTX_IDX),
+        "pending_conn_generation must come off the queue, not from the descriptor at pop time");
+
+    free(buf);
+}
+
+/* ---- MBTCP-U-031: the RTU reply is addressed by the CAPTURED pair ---------- */
+/* C2: the requester is identified by (pending_client_sock, pending_conn_generation), and
+ * the generation is the one sampled when the request was taken off the queue — before the
+ * RS-485 exchange. By the time the response comes back the client may be gone and lwIP
+ * may have handed its fd number to another connection, so re-sampling the generation at
+ * send time would validate the pair against whoever holds the fd now and deliver RS-485
+ * bytes to a stranger.
+ *
+ * The validation itself lives in tcp_server_send_to_captured_client() (covered by the
+ * tcp_server suite against the real implementation); what is pinned here is that
+ * modbus_tcp hands it the stored generation and not the descriptor's current one.
+ * Mutant: pass tcp_desc_conn_generation(ctx->tcp_desc) at send time -> this goes red. */
+void test_serial_response_uses_captured_connection_generation(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-031: RTU reply carries the generation captured with the request");
+    LOG_MESSAGE();
+
+    /* The request from sock 88 was popped while the descriptor was at generation 3. */
+    modbus_tcp_test_set_pending(TEST_CTX_IDX, 0x1234, 0x07, 88);
+    modbus_tcp_test_set_pending_generation(TEST_CTX_IDX, 3);
+
+    /* While the RTU exchange was running the client disconnected and a new one was
+     * admitted, so the descriptor has moved on. */
+    s_test_tcp_desc.conn_generation = 5;
+
+    /* The device answers: slave 7, FC03, one register, with a valid CRC.
+     * modbus_crc16() returns the value in the same layout the frame carries, so it is
+     * stored verbatim (that is what modbus_helpers does when it builds a frame). */
+    uint8_t rtu_resp[7] = { 0x07, 0x03, 0x02, 0x00, 0x2A, 0x00, 0x00 };
+    uint16_t crc = modbus_crc16(rtu_resp, 5);
+    memcpy(&rtu_resp[5], &crc, sizeof(crc));
+
+    modbus_tcp_test_process_data_from_serial(TEST_CTX_IDX, rtu_resp, sizeof(rtu_resp));
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_send_captured_called,
+        "the reply must go through the captured-connection send path, not a bare send");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(88, mock_tcp_send_sock,
+        "the reply must be addressed to the socket captured with the request");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(3u, mock_tcp_send_generation,
+        "the reply must carry the generation captured when the request was dequeued, "
+        "not the descriptor's current one");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -703,6 +831,8 @@ int main(void)
     RUN_TEST(test_self_device_unit_ff_dispatched_locally);
     RUN_TEST(test_conn_close_resets_pending_for_in_flight_client);
     RUN_TEST(test_conn_close_keeps_pending_for_other_client);
+    RUN_TEST(test_queued_request_carries_its_connection_identity_to_pending);
+    RUN_TEST(test_serial_response_uses_captured_connection_generation);
 
     return UNITY_END();
 }

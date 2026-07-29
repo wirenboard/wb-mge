@@ -8,6 +8,8 @@ typedef struct {
     int send_called;
     int connected_called;
     int deinit_called;
+    // Global call ordinal of the tcp_client_deinit() call — see mock_serial_calls.
+    unsigned deinit_call_seq;
     bool init_should_fail;
 } mock_tcp_client_calls_t;
 

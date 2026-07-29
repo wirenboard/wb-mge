@@ -4,6 +4,7 @@
 
 #include "tcp_client.h"
 #include "mock_tcp_client.h"
+#include "call_sequence.h"
 #include <string.h>
 
 static tcp_desc_t mock_tcp_desc;
@@ -29,10 +30,9 @@ esp_err_t tcp_client_init(uint32_t host_ip, uint16_t host_port,
     return ESP_OK;
 }
 
-esp_err_t tcp_client_send(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
+esp_err_t tcp_client_send_to_current_client(tcp_desc_t *desc, uint8_t *data, size_t len)
 {
     (void)desc;
-    (void)client_sock;
     (void)data;
     (void)len;
     mock_tcp_client_calls.send_called++;
@@ -50,5 +50,6 @@ esp_err_t tcp_client_deinit(tcp_desc_t *desc)
 {
     (void)desc;
     mock_tcp_client_calls.deinit_called++;
+    mock_tcp_client_calls.deinit_call_seq = call_sequence_get_call_id();
     return ESP_OK;
 }

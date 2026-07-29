@@ -6,6 +6,9 @@
 typedef struct {
     int init_called;
     int deinit_called;
+    // Global call ordinal of the serial_deinit() call, so a test can pin that the UART
+    // event task is joined BEFORE the TCP descriptor it produces into is freed.
+    unsigned deinit_call_seq;
     bool init_should_fail;
     // Observation of serial_send (used to verify TCP -> serial relay)
     int send_called;
