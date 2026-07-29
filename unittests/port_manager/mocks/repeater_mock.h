@@ -13,5 +13,7 @@ typedef struct {
 
 extern mock_repeater_calls_t mock_repeater_calls[BRIDGES_COUNT];
 extern bool mock_repeater_init_should_fail;
+/* repeater_init() — the global (non per-port) init that creates the repeater mutex. */
+extern int mock_repeater_global_init_called;
 
 void mock_repeater_reset(void);

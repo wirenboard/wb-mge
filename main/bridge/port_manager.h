@@ -51,14 +51,58 @@ typedef enum {
 #define PM_ERR_PORTS_FROZEN  ((esp_err_t)0x10000)
 
 /**
+ * @brief Initialise the shared subsystems that do NOT need a network interface.
+ *
+ * Brings up the RS-485 monitors, the repeater mutex, the sniffer (queue, per-port
+ * response timers, WS mutex and WS task) and the multimaster cache mutex.
+ *
+ * Must be called BEFORE http_server_init(). The URI handlers registered there —
+ * the sniffer WS endpoint above all — drive these FreeRTOS handles, and FreeRTOS
+ * configASSERTs on a NULL one, so a request that arrives before this ran used to
+ * panic and reboot the device. Each of those entry points now checks its own
+ * handle and degrades (the WS endpoint answers 503), so the order decides whether
+ * the feature works, not whether the device survives.
+ *
+ * The window is real but not where the wait-for-network loop in main.c suggests:
+ * that loop is released by link/association events (ETHERNET_EVENT_CONNECTED,
+ * WIFI_EVENT_STA_CONNECTED, WIFI_EVENT_AP_STACONNECTED), not by GOT_IP. Under
+ * SoftAP it is therefore narrower — a client is counted when it associates, before
+ * it has DHCPed, let alone requested a page — but not closed: that loop polls once
+ * a second, so a client that skips DHCP (static address, cached lease) still has
+ * most of that second to ask for a page. The exposure is Ethernet/STA with a static
+ * address, where the interface answers as soon as the link is up while the main task
+ * can still be a full second (its 1 s poll) from leaving the loop.
+ *
+ * Everything that needs a network interface (the cache Modbus TCP server and the
+ * ports themselves) stays in port_manager_init(), behind that loop.
+ *
+ * One attempt per boot: the first call runs it, every later call returns ESP_OK
+ * and does nothing — including after a partial failure, which is NOT retried. Two
+ * of the subsystems are not idempotent (sniffer_init() would create a second queue,
+ * timers and task and leak the first set; cache_multimaster_init() would leak its
+ * mutex), and a retry cannot fix the only failure cause there is, which is a lack
+ * of memory.
+ *
+ * @return ESP_OK on success, or the first subsystem init error. An error is worth
+ *         logging, not aborting on: the device runs degraded, not broken.
+ */
+esp_err_t port_manager_init_subsystems(void);
+
+/**
  * @brief Initialize the port manager.
  *
  * Reads the active mode for each port from NVS and brings up the appropriate
- * subsystems.  Also initialises shared infrastructure (sniffer, cache,
- * cache_modbus_server, RS-485 monitors) that was previously done by bridge_init().
+ * subsystems.  Also starts the cache Modbus TCP server (when enabled in NVS) —
+ * the part of the shared infrastructure that was previously done by bridge_init()
+ * and that needs a network interface to bind its socket.
  *
- * Must be called once after NVS and settings are ready, in place of the old
- * bridge_init() + cache_modbus_server_init() calls in main.c.
+ * Calls port_manager_init_subsystems() itself, so it remains self-contained when
+ * used alone; if main.c already ran it before starting the HTTP server (it does),
+ * that call is a no-op. A failure there is logged and the ports are brought up
+ * anyway — it is not reflected in the return value.
+ *
+ * Must be called once after NVS and settings are ready AND after the network is up,
+ * in place of the old bridge_init() + cache_modbus_server_init() calls in main.c.
  *
  * @return ESP_OK on success.
  */

@@ -69,6 +69,37 @@ static httpd_handle_t ws_server = NULL;
 static SemaphoreHandle_t ws_mutex = NULL;
 static uint32_t packet_counter = 0;
 
+/*
+ * READINESS. Whether the sniffer is up is read straight off these handles — the same
+ * discipline cache_multimaster.c applies to s_cache_mutex — and every public entry
+ * point that hands a handle to FreeRTOS checks that handle first: sniffer_attach() and
+ * sniffer_enable() up front (both gate a path that leads to the queue), sniffer_process()
+ * — the RX callback attach publishes — at its entry, sniffer_ws_handler() before it takes
+ * ws_mutex, and sniffer_disable() right at the xTimerStop() it ends on. The entry points
+ * without a check are the ones with no handle to check: sniffer_detach() only delegates
+ * to sniffer_disable(), sniffer_status_handler() reads nothing but the static
+ * sniff_ctx[] (see its own note), and sniffer_register_handlers() hands its argument to
+ * httpd, not to FreeRTOS.
+ *
+ * There is no separate "initialised" flag and there should not be one: sniffer_init()
+ * is all-or-nothing. Every early exit taken after the first handle exists runs
+ * sniffer_init_cleanup(), which deletes AND NULLs every handle created so far; the one
+ * exit before that (the WS mutex itself failing to allocate) has nothing to tear down
+ * and returns straight away. Either way nothing is left behind, so there is no
+ * half-built sniffer to probe for — a NULL handle is the whole truth about the state it
+ * protects, and a flag would only add a second source of truth that can disagree with it.
+ *
+ * Why the checks are needed at all: http_server_init() registers /sniffer/ws and
+ * /sniffer/status, and it can run before this module is up — either because a request
+ * beats the boot sequence, or because sniffer_init() itself failed on a low-memory
+ * device and main.c deliberately carries on without a sniffer rather than boot-looping.
+ * FreeRTOS configASSERTs on a NULL queue/timer/semaphore handle, and this firmware is
+ * built with assertions on: reaching one of these handles too early is a panic and a
+ * reboot, not a bad packet. The call order set up in main.c is still the invariant —
+ * these checks are what stops it from being the ONLY thing standing between a stray
+ * HTTP request and a reboot loop.
+ */
+
 
 /* Convert internal 0-based port index to external 1-based port name */
 static unsigned port_index_to_name(unsigned index) { return index + 1; }
@@ -566,6 +597,20 @@ static void sniffer_process_frame(unsigned port_index, const uint8_t *data, size
  */
 static void sniffer_process(unsigned port_index, const uint8_t *data, size_t len)
 {
+    /* Entry point of the whole RX path: the per-port callbacks published by
+     * sniffer_attach() land here, and every branch below eventually reaches either
+     * sniff_queue (try_enqueue, and the timeout callback) or ctx->resp_timer
+     * (xTimerStart/xTimerStop in sniffer_process_frame) — so one check at the entry
+     * covers all of them, instead of repeating it at each use.
+     *
+     * Silent, and once per received buffer rather than per frame: this is the only
+     * guard on a path driven by bus traffic, and a sniffer that is down must not turn
+     * every packet on the wire into a log line. See the readiness note above for why
+     * sniff_queue alone is a sufficient test. */
+    if (sniff_queue == NULL) {
+        return;
+    }
+
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
     /* Run only when at least one reason (display and/or cache) is active. */
@@ -775,6 +820,32 @@ int sniffer_test_get_ws_client_fd(void) { return ws_client_fd; }
 
 SNIFFER_STATIC esp_err_t sniffer_ws_handler(httpd_req_t *req)
 {
+    /* Both branches below need the sniffer: the upgrade path takes ws_mutex, and the
+     * frame path drives sniffer_enable()/sniffer_disable(), whose bookkeeping is
+     * pointless while the pipeline behind it does not exist.
+     *
+     * Answer instead of pretending: 503, not 4xx. Nothing is wrong with the request —
+     * the device is either still finishing its boot or running degraded after a failed
+     * sniffer_init(), and the same request is expected to succeed once it is not. The
+     * web UI reconnects on its own, so a transient status is what it needs to hear.
+     *
+     * Caveat, the same one the auth rejection above documents: on a genuine WebSocket
+     * upgrade IDF has already put the 101 on the wire before this handler runs, so such
+     * a client sees the connection break rather than a clean 503. A plain HTTP GET to
+     * this URI (no Upgrade header) gets the real status line.
+     *
+     * Answered ahead of the auth check below on purpose: "this device is not ready to
+     * serve this endpoint" is a state, not data, and it is what any server says before
+     * it can authenticate anyone. Nothing about the sniffer or its contents leaks. */
+    if (ws_mutex == NULL) {
+        ESP_LOGW(TAG, "/sniffer/ws request before the sniffer was initialized, replying 503");
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_type(req, "text/plain");
+        const char *msg = "sniffer not initialized";
+        httpd_resp_send(req, msg, (ssize_t)strlen(msg));
+        return ESP_OK;
+    }
+
     if (req->method == HTTP_GET) {
         /* Authenticate the upgrade request — cookie is available in the HTTP headers.
          * IDF v5.4 limitation: cannot reject WS upgrade from the handler (ESP_FAIL is ignored
@@ -881,6 +952,10 @@ static esp_err_t sniffer_status_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+    /* No readiness check here on purpose: this handler touches no FreeRTOS handle, only
+     * the statically allocated sniff_ctx[]. Before initialisation every reason bit is
+     * zero and stays zero (sniffer_enable() refuses to set one), so the honest answer —
+     * "not running on either port" — is exactly what this reports. */
     char resp[64];
     /* Report the user-facing "live sniffer running" state, i.e. the DISPLAY reason. */
     snprintf(resp, sizeof(resp), "{\"port_%u\":%s,\"port_%u\":%s}",
@@ -978,6 +1053,15 @@ void sniffer_attach(unsigned port_index, serial_desc_t *serial_desc)
     if (port_index >= BRIDGES_COUNT || serial_desc == NULL) {
         return;
     }
+    /* Do not put a sniffer that is not up into the UART hot path. Publishing the
+     * callback below is what makes every RX buffer walk into sniff_queue and
+     * ctx->resp_timer; refusing here keeps the whole path dark at zero runtime cost,
+     * where sniffer_process()'s own check pays a comparison per buffer. Quiet: the
+     * caller (port bring-up) has no recovery to attempt, and the reason the sniffer is
+     * missing was already logged by sniffer_init() and by main.c. */
+    if (sniff_queue == NULL) {
+        return;
+    }
     // Store the descriptor in the context before publishing the callback, so the
     // UART event task never sees sniff_handler set while serial_desc is still stale.
     sniff_ctx[port_index].serial_desc = serial_desc;
@@ -1011,6 +1095,14 @@ void sniffer_enable(unsigned port_index, sniff_reason_t reason)
     if (port_index >= BRIDGES_COUNT) {
         return;
     }
+    /* The reasons bitmask is the switch that un-gates the RX pipeline and the answer
+     * /sniffer/status gives the UI. Setting it while the pipeline does not exist would
+     * make both lie: the port would claim to be sniffing, and the cache overlay would
+     * be told to expect data that no queue can carry. Quiet for the same reason as
+     * sniffer_attach() above. */
+    if (sniff_queue == NULL) {
+        return;
+    }
     sniff_ctx_t *ctx = &sniff_ctx[port_index];
 
     /* The reasons bitmask is shared with other tasks (e.g. sniffer_ws_dispatch and
@@ -1037,7 +1129,14 @@ void sniffer_disable(unsigned port_index, sniff_reason_t reason)
 
     /* Perform the read-modify-write and non-zero -> 0 edge detection under the
      * spinlock so concurrent writers cannot lose a bit. The framing-state reset is
-     * safe here (sniffer_process mutates these fields under sniff_mux too). */
+     * safe here (sniffer_process mutates these fields under sniff_mux too).
+     *
+     * This runs unconditionally, ahead of any handle check: the bitmask is plain
+     * memory, it is what /sniffer/status reports and what sniffer_detach() clears a
+     * port through. Skipping it because a FreeRTOS handle went missing would strand
+     * exactly the state this function exists to undo — a port claiming to be sniffing
+     * with nothing behind it. The handle check belongs at the one place a handle is
+     * used, which is xTimerStop() at the tail. */
     taskENTER_CRITICAL(&sniff_mux);
     uint8_t prev = ctx->reasons;
     ctx->reasons = (uint8_t)(prev & ~(uint8_t)reason);
@@ -1056,8 +1155,19 @@ void sniffer_disable(unsigned port_index, sniff_reason_t reason)
     }
     /* No reasons left — fully quiesce the pipeline. The RX timeout is owned by the
      * transport mode and is intentionally left untouched. xTimerStop() is not
-     * spinlock-safe, so it runs after releasing the lock. */
-    xTimerStop(ctx->resp_timer, 0);
+     * spinlock-safe, so it runs after releasing the lock.
+     *
+     * The timer is the only handle this function hands to FreeRTOS, so this is where it
+     * is checked. Deliberately not phrased as "sniffer_enable() would have refused to
+     * set the bit, so this line cannot be reached with a NULL timer" — that is true
+     * today and is exactly the kind of cross-function reasoning this file is moving away
+     * from. Nothing ties the lifetime of the bitmask to the lifetime of the timers, so
+     * the function checks what it is about to use. With the handle gone there is nothing
+     * left to quiesce anyway — the pipeline it belonged to went with it, and the bits
+     * that described it have just been cleared above. */
+    if (ctx->resp_timer != NULL) {
+        xTimerStop(ctx->resp_timer, 0);
+    }
     ESP_LOGI(TAG, "Sniffer fully disabled on port %u", port_index);
 }
 

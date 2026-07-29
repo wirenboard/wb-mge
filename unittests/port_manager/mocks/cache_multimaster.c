@@ -7,10 +7,16 @@ int mock_cache_multimaster_enable_called = 0;
 int mock_cache_multimaster_disable_called = 0;
 /* Reflects enable/disable so production guards (is_enabled) behave realistically */
 bool mock_cache_multimaster_enabled = false;
+/* Set by a test to make the mutex allocation fail, the only way this init can fail
+ * on the device (out of memory). Still counts the call. */
+bool mock_cache_multimaster_init_should_fail = false;
 
 esp_err_t cache_multimaster_init(void)
 {
     mock_cache_multimaster_init_called++;
+    if (mock_cache_multimaster_init_should_fail) {
+        return ESP_ERR_NO_MEM;
+    }
     return ESP_OK;
 }
 
@@ -81,4 +87,5 @@ void mock_cache_multimaster_reset(void)
     mock_cache_multimaster_enable_called = 0;
     mock_cache_multimaster_disable_called = 0;
     mock_cache_multimaster_enabled = false;
+    mock_cache_multimaster_init_should_fail = false;
 }

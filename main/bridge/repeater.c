@@ -21,8 +21,9 @@ static int64_t  s_active_since_us = 0;          // esp_timer_get_time() snapshot
 // counters/active accounting. It exists so a port's UART task can read its peer's
 // descriptor and forward into it without the peer being torn down (freed) underneath
 // it from another context (HTTP set_mode handler or settings_update_task). Created
-// once by repeater_init() (called from port_manager_init), with a lazy fallback so
-// single-threaded unit tests that never call an init still work.
+// once by repeater_init() (called from port_manager_init_subsystems(), which main.c runs
+// before the HTTP server starts), with a lazy fallback so single-threaded unit tests that
+// never call an init still work.
 static SemaphoreHandle_t s_lock = NULL;
 
 static void repeater_lock(void)

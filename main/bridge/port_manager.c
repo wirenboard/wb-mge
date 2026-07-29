@@ -103,6 +103,15 @@ static inline bool ports_frozen(void)
     return __atomic_load_n(&s_ports_frozen, __ATOMIC_SEQ_CST);
 }
 
+// "port_manager_init_subsystems() has already been attempted" — NOT "it succeeded".
+// Set before the first attempt runs, so every later call is a no-op whatever the outcome;
+// see the function for why a retry is worse than living with the result.
+// Plain bool, no atomics: it is written and read only from the main task during boot
+// (main.c, then port_manager_init() from the wait-for-network loop in the same task).
+// Nothing else calls either function — if that ever changes, this needs the same
+// treatment as s_ports_frozen above.
+static bool s_subsystems_ready = false;
+
 // Take the per-port init mutex. Lazily creates it on first use so we don't depend
 // on init order (port_manager_init may not have run yet when an early handler is
 // dispatched). portMAX_DELAY because the critical section is the entire reinit and
@@ -403,8 +412,27 @@ static void port_deinit_mode(unsigned index)
 // Public API
 // ────────────────────────────────────────────────────────────────
 
-esp_err_t port_manager_init(void)
+esp_err_t port_manager_init_subsystems(void)
 {
+    // At most one attempt per boot, whatever comes of it. Two of the subsystems below are
+    // not idempotent on their own: sniffer_init() would create a second queue, a second
+    // pair of timers and a second WS task and leak the first set, and
+    // cache_multimaster_init() would leak its mutex. The other three tolerate a repeat —
+    // repeater_init() and rs485_busy_monitor_init() both create their handle only if it is
+    // still NULL, and rs485_stats_init() is a plain memset — but that is not what makes a
+    // second run safe overall. Both main.c and port_manager_init() call this, so the guard
+    // is what lets the two entry points coexist.
+    if (s_subsystems_ready) {
+        return ESP_OK;
+    }
+    // Set BEFORE running anything, so a partial failure cannot be retried either. There is
+    // nothing to gain from a second try: the only way any of these fail is out of memory,
+    // which the next call a few milliseconds later meets unchanged — and a whole lot to
+    // lose, since a retry would re-run whatever part did succeed. Callers get the error and
+    // log it; the degraded state that leaves behind is safe because everything reachable
+    // from the HTTP handlers checks its own handles (see sniffer.c and cache_multimaster.c).
+    s_subsystems_ready = true;
+
     // Initialise shared RS-485 infrastructure (previously done inside bridge_init()).
     rs485_busy_monitor_init();
     rs485_stats_init();
@@ -413,9 +441,67 @@ esp_err_t port_manager_init(void)
     // so the cross-port data path is protected from the first init onward.
     repeater_init();
 
-    // Initialise global subsystems once.
-    ESP_RETURN_ON_ERROR(sniffer_init(), TAG, "sniffer_init failed");
-    ESP_RETURN_ON_ERROR(cache_multimaster_init(), TAG, "cache_multimaster_init failed");
+    // The two below are independent of each other, so one running out of memory must not
+    // cost the device the other: try both, report the first error. Losing the sniffer must
+    // not also silently disable the cache.
+    esp_err_t first_err = ESP_OK;
+
+    esp_err_t ret = sniffer_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "sniffer_init failed: %s", esp_err_to_name(ret));
+        first_err = ret;
+    }
+
+    ret = cache_multimaster_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "cache_multimaster_init failed: %s", esp_err_to_name(ret));
+        if (first_err == ESP_OK) {
+            first_err = ret;
+        }
+    }
+
+    if (first_err != ESP_OK) {
+        return first_err;
+    }
+
+    ESP_LOGI(TAG, "Port manager subsystems initialized");
+    return ESP_OK;
+}
+
+esp_err_t port_manager_init(void)
+{
+    // Network-independent half. main.c has normally run it already, before starting the
+    // HTTP server (see port_manager_init_subsystems()); the second call is then a no-op.
+    // It is kept here so port_manager_init() stays self-contained for a caller that uses
+    // it alone — the unit tests do.
+    //
+    // Logged, not propagated: main.c calls this one under ESP_ERROR_CHECK, and a sniffer
+    // or cache mutex that would not allocate is no reason to leave the RS-485 ports down
+    // and reboot. This device routes Modbus first; the subsystems that failed degrade on
+    // their own (their entry points check their handles), and the failure was already
+    // logged where it happened.
+    //
+    // That promise stops at this call, though. cache_modbus_server_init() below is still
+    // reached through ESP_RETURN_ON_ERROR, so its failure leaves this function before the
+    // ports are brought up and lands on main.c's ESP_ERROR_CHECK — abort, reboot, RS-485
+    // down, which is exactly what the paragraph above argues against. And it is not only
+    // an out-of-memory path: tcp_server_init() -> create_listen_socket() returns ESP_FAIL
+    // when the bind fails, while validate_port_collisions() in settings_manager.c
+    // deliberately accepts an INHERITED collision (e.g. cache_modbus_port == web_port) as a
+    // warning and stores it in NVS — so that configuration is a boot loop that survives the
+    // reboot. Known and not closed here: fixing it means deciding what a dead cache server
+    // should degrade to, which is a change of behaviour, not a comment.
+    esp_err_t subsys_ret = port_manager_init_subsystems();
+    if (subsys_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Subsystem init failed: %s - bringing the ports up anyway",
+                 esp_err_to_name(subsys_ret));
+    }
+
+    // Everything from here on needs a network interface, which is why it stays behind
+    // main.c's wait-for-network loop instead of moving up with the subsystems: the cache
+    // Modbus server binds a TCP socket, and a port configured as a TCP bridge opens a
+    // listening socket (server mode) or an outgoing connection (client mode).
+
     // Start cache Modbus TCP server only if enabled in NVS settings.
     bool cache_server_enabled = setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED);
     if (cache_server_enabled) {
@@ -1081,5 +1167,9 @@ void port_manager_reset_for_test(void)
 {
     memset(pm_ctx, 0, sizeof(pm_ctx));
     __atomic_store_n(&s_ports_frozen, false, __ATOMIC_SEQ_CST);
+    /* Clear the one-shot guard so each test starts from a device that has not
+     * booted yet — otherwise the first test to run would consume the init and
+     * every later one would see port_manager_init_subsystems() as a no-op. */
+    s_subsystems_ready = false;
 }
 #endif /* __unittest_env__ */

@@ -8,6 +8,7 @@
 #include "esp_http_server.h"      /* httpd_req_t, for the REST handler tests */
 #include "freertos/semphr.h"      /* mock_xSemaphoreTake_hook, for the pm_lock race tests */
 
+#include <stdio.h>                /* main.c boot-order check reads the source file */
 #include <string.h>
 
 /* Statics that port_manager.c exposes to the tests via PORT_MANAGER_STATIC */
@@ -27,6 +28,7 @@ extern int mock_sniffer_disable_called[BRIDGES_COUNT];
 extern uint8_t mock_sniffer_reasons[BRIDGES_COUNT];
 extern uint8_t mock_sniffer_enable_last_reason[BRIDGES_COUNT];
 extern uint8_t mock_sniffer_disable_last_reason[BRIDGES_COUNT];
+extern bool mock_sniffer_init_should_fail;
 void mock_sniffer_reset(void);
 
 /* cache_multimaster.c mock */
@@ -34,6 +36,7 @@ extern int mock_cache_multimaster_init_called;
 extern int mock_cache_multimaster_enable_called;
 extern int mock_cache_multimaster_disable_called;
 extern bool mock_cache_multimaster_enabled;
+extern bool mock_cache_multimaster_init_should_fail;
 extern bool mock_cache_en[];  /* per-port cache_en NVS store (mocks/setting_items.c) */
 void mock_cache_multimaster_reset(void);
 
@@ -1448,6 +1451,248 @@ void test_port_send_handler_too_long_rejected(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * 10. Boot order — port_manager_init_subsystems()
+ *
+ * http_server_init() runs before the wait-for-network loop in main.c, and the URI
+ * handlers it registers reach into FreeRTOS handles owned by the sniffer and the
+ * multimaster cache without a NULL check (FreeRTOS configASSERTs on a NULL handle,
+ * which is a panic and a reboot in this build). So everything those handlers touch
+ * has to be up before httpd starts, and only what genuinely needs a network
+ * interface may stay behind the loop with port_manager_init().
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void test_init_subsystems_starts_all_network_independent_subsystems(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_init_called,
+        "sniffer (WS mutex, queue, per-port timers, WS task) must be up before httpd starts");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_init_called,
+        "the cache mutex must be up before httpd starts");
+    TEST_ASSERT_EQUAL(1, mock_repeater_global_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_busy_monitor_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_stats_init_called);
+}
+
+void test_init_subsystems_does_not_touch_network_dependent_parts(void)
+{
+    /* Both of these would need an interface to bind to, and this call runs before
+     * there is one. */
+    mock_cache_server_enabled = true;
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_setting_items_set_port_mode(1, PORT_MODE_TCP_BRIDGE_STR);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_modbus_server_init_called,
+        "the cache Modbus server binds a TCP socket — it must wait for port_manager_init()");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "ports must not come up before the network does");
+    TEST_ASSERT_EQUAL(PM_MODE_DISABLED, port_manager_get_mode(1));
+    TEST_ASSERT_EQUAL(0, mock_bridge_calls[0].bridge_port_init_serial_only_called);
+    TEST_ASSERT_EQUAL(0, mock_bridge_calls[1].bridge_port_init_called);
+}
+
+void test_init_subsystems_is_idempotent(void)
+{
+    /* None of the subsystems is idempotent on its own: a second sniffer_init()
+     * would create a second queue, a second pair of timers and a second WS task,
+     * leaking the first set. Both entry points (main.c and port_manager_init())
+     * may call this, so the guard has to hold. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_init_called,
+        "a repeated init must not create a second sniffer queue/timers/task");
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_init_called);
+    TEST_ASSERT_EQUAL(1, mock_repeater_global_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_busy_monitor_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_stats_init_called);
+}
+
+void test_init_after_subsystems_does_not_reinit_them(void)
+{
+    /* The real boot sequence: subsystems before httpd, ports once the network is up. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_init_called,
+        "port_manager_init() must not re-init the subsystems main.c already brought up");
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_init_called);
+    TEST_ASSERT_EQUAL(1, mock_repeater_global_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_busy_monitor_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_stats_init_called);
+}
+
+void test_init_alone_still_starts_subsystems(void)
+{
+    /* port_manager_init() stays self-contained for callers that use it alone. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    TEST_ASSERT_EQUAL(1, mock_sniffer_init_called);
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_init_called);
+    TEST_ASSERT_EQUAL(1, mock_repeater_global_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_busy_monitor_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_stats_init_called);
+}
+
+void test_init_subsystems_partial_failure_is_not_retried(void)
+{
+    /* A subsystem running out of memory must not turn the guard into a one-shot that
+     * never fired: the flag means "the attempt has been made", not "it went well".
+     * Otherwise main.c's failed call would leave the flag clear and port_manager_init()
+     * would run the whole sequence again — a second sniffer queue, a second pair of
+     * timers and a second WS task, with the first set leaked and still holding the
+     * serial callbacks. */
+    mock_cache_multimaster_init_should_fail = true;
+    esp_err_t ret = port_manager_init_subsystems();
+    mock_cache_multimaster_init_should_fail = false;
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, ret,
+        "the caller must be told, so it can log the degraded state");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_init_called,
+        "the subsystems before the failing one must have been started");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_init_called,
+        "an independent subsystem must still be attempted after another one failed");
+
+    /* Whatever comes next — a retry from main.c, or port_manager_init() — must not
+     * re-run anything. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_init_called,
+        "a partial failure must not be retried — that would create a second sniffer");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_init_called,
+        "nor a second cache mutex");
+    TEST_ASSERT_EQUAL(1, mock_repeater_global_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_busy_monitor_init_called);
+    TEST_ASSERT_EQUAL(1, mock_rs485_stats_init_called);
+}
+
+void test_init_subsystems_sniffer_failure_does_not_skip_the_cache(void)
+{
+    /* The sniffer and the cache are independent, and the sequence deliberately does not
+     * bail out on the first failure: losing the sniffer must not silently disable the
+     * cache as well. The failing subsystem is the FIRST one here, which is the half the
+     * cache-fails test above cannot see — there it is the last one and everything before
+     * it had already run. */
+    mock_sniffer_init_should_fail = true;
+    esp_err_t ret = port_manager_init_subsystems();
+    mock_sniffer_init_should_fail = false;
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_init_called, "the sniffer must have been tried");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_init_called,
+        "the cache must still be attempted after the sniffer failed — they are independent");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, ret,
+        "the sniffer's own error is what the caller must be told about");
+}
+
+void test_init_subsystems_reports_the_first_error_when_both_fail(void)
+{
+    /* "Report the first error" is only a real rule while a second one can disagree with
+     * it. The two mocks fail with different codes on purpose (sniffer: ESP_FAIL, the WS
+     * task that would not start; cache: ESP_ERR_NO_MEM, the mutex), so returning the
+     * later error instead of the first one is visible here. */
+    mock_sniffer_init_should_fail = true;
+    mock_cache_multimaster_init_should_fail = true;
+    esp_err_t ret = port_manager_init_subsystems();
+    mock_sniffer_init_should_fail = false;
+    mock_cache_multimaster_init_should_fail = false;
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_init_called, "the sniffer must have been tried");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_init_called,
+        "and the cache after it, even though there was already an error to report");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, ret,
+        "the first error wins — a later one must not overwrite it");
+}
+
+void test_init_still_brings_ports_up_after_subsystem_failure(void)
+{
+    /* The ports are what the device is installed for. A sniffer or cache mutex that
+     * would not allocate must not keep them down, and must not reach main.c's
+     * ESP_ERROR_CHECK(port_manager_init()) as an abort. */
+    mock_cache_multimaster_init_should_fail = true;
+    (void)port_manager_init_subsystems();
+    mock_cache_multimaster_init_should_fail = false;
+
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, port_manager_init(),
+        "a degraded subsystem must not be reported as a port-manager failure");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "the port must come up regardless");
+}
+
+/* The ordering half of the invariant lives in main.c, which has no host test
+ * harness: nothing links app_main() — the file is not in any unit test's SRC and
+ * could not be, since it pulls in the whole firmware — so the only thing a unit test
+ * can inspect is the source text. Reading a production source file from a test is a
+ * deliberate exception, made here because the alternative is not checking the order
+ * at all. Crude, but it is what catches the two calls being swapped back — and a swap
+ * puts the sniffer WS endpoint back on the air ahead of the handles it drives.
+ * Anchored on the statements, not on the identifiers, so the comments around them
+ * (which name both functions) cannot satisfy the check on their own, and bracketed by
+ * app_main()'s opening line and its closing brace, so hoisting either call into a
+ * helper — above app_main() or below it — does not quietly pass either.
+ *
+ * What this does NOT prove: that the two statements are on the same execution path.
+ * Both could sit in mutually exclusive #if branches, or one inside an if() the other
+ * is not, and the text order would still read correctly. Establishing that needs a
+ * parser, not strstr(); the swap this guards against is the failure that actually
+ * happened. */
+void test_main_c_inits_subsystems_before_starting_httpd(void)
+{
+    static char src[64 * 1024];
+
+    FILE *f = fopen("../../main/main.c", "rb");
+    TEST_ASSERT_NOT_NULL_MESSAGE(f, "main/main.c not readable — run this test from unittests/port_manager");
+    size_t n = fread(src, 1, sizeof(src) - 1, f);
+    fclose(f);
+    src[n] = '\0';
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, n, "main/main.c is empty");
+    /* A short read is the only proof the whole file arrived: fread() filling the buffer
+     * to the brim looks exactly like a file that is one byte too long, and the anchors
+     * below would then be searched in a silently truncated copy — a missing statement
+     * would read as "the call is gone" and a missing closing brace as "the call is
+     * outside app_main()". Both are wrong answers, so refuse to answer at all. */
+    TEST_ASSERT_LESS_THAN_MESSAGE(sizeof(src) - 1, n,
+        "main/main.c no longer fits in src[] — grow the buffer, do not trust a truncated read");
+
+    /* "\nvoid app_main(" and not "void app_main(": the plain form matches the first
+     * mention anywhere in the file, so a comment naming the function above the
+     * definition would move the anchor up and hand the position checks below a
+     * meaningless bound. A definition starts at column 0; a mention inside a comment
+     * does not. */
+    const char *app_main   = strstr(src, "\nvoid app_main(");
+    const char *subsystems = strstr(src, "= port_manager_init_subsystems();");
+    const char *httpd      = strstr(src, "= http_server_init();");
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(app_main,
+        "main.c must still define app_main() at file scope");
+    TEST_ASSERT_NOT_NULL_MESSAGE(subsystems,
+        "main.c must call port_manager_init_subsystems() — the URI handlers registered by "
+        "http_server_init() drive the FreeRTOS handles it creates");
+    TEST_ASSERT_NOT_NULL_MESSAGE(httpd, "main.c must still call http_server_init()");
+
+    /* Where app_main()'s body ends: the first closing brace at column 0 after its
+     * opening line. Everything inside the body is indented, so this is the function's
+     * own terminator. */
+    const char *app_main_end = strstr(app_main + 1, "\n}");
+    TEST_ASSERT_NOT_NULL_MESSAGE(app_main_end,
+        "app_main() must still be a brace-terminated function at file scope");
+
+    /* Both calls must be inside app_main() itself. Hoisting them into a helper — defined
+     * before app_main() or after it — would keep the two in the right order relative to
+     * each other while saying nothing about the order they run in. */
+    TEST_ASSERT_TRUE_MESSAGE(app_main < subsystems && subsystems < app_main_end,
+        "port_manager_init_subsystems() must be called from inside app_main(), not from a helper");
+    TEST_ASSERT_TRUE_MESSAGE(app_main < httpd && httpd < app_main_end,
+        "http_server_init() must be called from inside app_main(), not from a helper");
+    TEST_ASSERT_TRUE_MESSAGE(subsystems < httpd,
+        "port_manager_init_subsystems() must be called BEFORE http_server_init() in main.c");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Unity runner
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -1557,6 +1802,18 @@ int port_manager_test(void)
     RUN_TEST(test_port_send_handler_odd_length_rejected);
     RUN_TEST(test_port_send_handler_nonhex_rejected);
     RUN_TEST(test_port_send_handler_too_long_rejected);
+
+    /* 10 – boot order: network-independent subsystems before httpd */
+    RUN_TEST(test_init_subsystems_starts_all_network_independent_subsystems);
+    RUN_TEST(test_init_subsystems_does_not_touch_network_dependent_parts);
+    RUN_TEST(test_init_subsystems_is_idempotent);
+    RUN_TEST(test_init_after_subsystems_does_not_reinit_them);
+    RUN_TEST(test_init_alone_still_starts_subsystems);
+    RUN_TEST(test_init_subsystems_partial_failure_is_not_retried);
+    RUN_TEST(test_init_subsystems_sniffer_failure_does_not_skip_the_cache);
+    RUN_TEST(test_init_subsystems_reports_the_first_error_when_both_fail);
+    RUN_TEST(test_init_still_brings_ports_up_after_subsystem_failure);
+    RUN_TEST(test_main_c_inits_subsystems_before_starting_httpd);
 
     return UNITY_END();
 }

@@ -13,8 +13,12 @@
 
 mock_repeater_calls_t mock_repeater_calls[BRIDGES_COUNT] = {0};
 bool mock_repeater_init_should_fail = false;
+int mock_repeater_global_init_called = 0;
 
-void repeater_init(void) {}
+void repeater_init(void)
+{
+    mock_repeater_global_init_called++;
+}
 
 esp_err_t repeater_init_port(unsigned index, serial_config_t *config, serial_desc_t **serial_desc_out)
 {
@@ -51,6 +55,7 @@ void repeater_reset_for_test(void)
 {
     memset(mock_repeater_calls, 0, sizeof(mock_repeater_calls));
     mock_repeater_init_should_fail = false;
+    mock_repeater_global_init_called = 0;
 }
 
 void mock_repeater_reset(void)

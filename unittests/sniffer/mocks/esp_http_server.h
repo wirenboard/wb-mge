@@ -98,13 +98,11 @@ static inline esp_err_t httpd_resp_set_type(httpd_req_t *req, const char *type)
     return ESP_OK;
 }
 
-static inline esp_err_t httpd_resp_send(httpd_req_t *req, const char *buf, ssize_t buf_len)
-{
-    (void)req;
-    (void)buf;
-    (void)buf_len;
-    return ESP_OK;
-}
+/* Tracked in esp_http_server_mock.c: the readiness guard in sniffer_ws_handler()
+ * reports its refusal through the status line and the body, so a test has to be able
+ * to read both back. */
+esp_err_t httpd_resp_set_status(httpd_req_t *req, const char *status);
+esp_err_t httpd_resp_send(httpd_req_t *req, const char *buf, ssize_t buf_len);
 
 /* Tracked in esp_http_server_mock.c: the sniffer uses it both to reject an
  * unauthenticated upgrade and to evict the previous single-slot WS client. */
@@ -125,6 +123,14 @@ extern int mock_httpd_ws_send_data_last_fd;
 extern int mock_httpd_sess_trigger_close_called;
 extern int mock_httpd_sess_trigger_close_last_fd;
 extern httpd_handle_t mock_httpd_sess_trigger_close_last_handle;
+
+/* Last status line passed to httpd_resp_set_status(), NULL when never called
+ * (esp_http_server keeps the caller's pointer, so the mock does the same). */
+extern int         mock_httpd_resp_set_status_called;
+extern const char *mock_httpd_resp_set_status_last;
+
+extern int  mock_httpd_resp_send_called;
+extern char mock_httpd_resp_send_last_body[128];
 
 void mock_esp_http_server_reset(void);
 

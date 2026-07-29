@@ -137,11 +137,57 @@ void app_main(void)
 
     ESP_ERROR_CHECK(network_init());
 
+    // Bring up the network-independent subsystems BEFORE the HTTP server starts: the sniffer
+    // (queue, per-port response timers, WS mutex, WS task), the multimaster cache mutex, the
+    // repeater mutex and the RS-485 monitors. http_server_init() registers URI handlers that
+    // reach straight into those FreeRTOS handles — the sniffer WS endpoint is one "enable" +
+    // "disable" message away from xTimerStop() on the response timer — and FreeRTOS
+    // configASSERTs on a NULL handle, which on this build is a panic and a reboot, not a failed
+    // request. Keep this call above http_server_init(), and do not fold it back into
+    // port_manager_init(): that one stays behind the wait-for-network loop at the end of this
+    // function, because the rest of it (cache Modbus server, TCP bridges) needs an interface to
+    // bind to. The order is still an invariant.
+    //
+    // It is no longer the only thing holding this up, though. Every public entry point of the
+    // sniffer now checks the handle it is about to use and degrades instead of panicking — the
+    // WS endpoint answers 503 — the way cache_multimaster has always done with its mutex. The
+    // order keeps the feature working; the checks keep a stray early request from rebooting the
+    // device.
+    //
+    // How wide that window really is, since the loop below invites a wrong reading: it is
+    // released by sys_info flags that network.c sets on LINK/ASSOCIATION events —
+    // ETHERNET_EVENT_CONNECTED, WIFI_EVENT_STA_CONNECTED, WIFI_EVENT_AP_STACONNECTED — and NOT
+    // on IP_EVENT_ETH_GOT_IP / IP_EVENT_STA_GOT_IP, which only fill in the address strings.
+    // Under SoftAP the window is therefore narrower — the counter is bumped when a client
+    // associates, before it has finished DHCP and asked for a page — but narrower is not
+    // closed: the loop below only samples that counter once a second
+    // (vTaskDelay(pdMS_TO_TICKS(1000))), so the association happening early buys nothing
+    // against a client that skips DHCP. One with a static address or a cached lease can
+    // request a page almost anywhere inside that second. The real exposure is Ethernet/STA
+    // on a static address (eth_dhcpc off), where the interface starts answering the instant
+    // the link comes up while this task is still up to a poll interval from noticing. A web
+    // UI tab left open somewhere, retrying its WebSocket, lands inside that second easily.
+    //
+    // Deliberately NOT ESP_ERROR_CHECK, for the same reason as http_server_init() below: the
+    // only way any of this fails is out of memory. These subsystems used to be brought up
+    // behind the wait-for-network loop, so a device with no network never reached them at all
+    // and still served its configuration interface over SoftAP quite happily. Aborting here
+    // would put a fresh boot-loop trigger exactly where the old code degraded — and a device
+    // that cannot spare a mutex has no better luck on the next boot. Continuing is safe
+    // precisely because of the checks described above: a handler that arrives now gets a
+    // refusal, not a NULL handle.
+    esp_err_t subsys_ret = port_manager_init_subsystems();
+    if (subsys_ret != ESP_OK) {
+        ESP_LOGE(TAG, "port_manager_init_subsystems failed: %s - continuing without the "
+                      "affected subsystem, the gateway keeps running", esp_err_to_name(subsys_ret));
+    }
+
     // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
     // This device is a Modbus gateway first — routing RS-485/TCP traffic is what it is installed
     // for, and it does that with no web interface at all. Nothing below needs a running httpd
     // either: every URI handler is registered inside http_server_init() itself, and
-    // port_manager_init() (the gateway) does not touch it.
+    // port_manager_init() (the gateway) does not touch it. The opposite direction — what those
+    // handlers need from the rest of the boot — is what the call above takes care of.
     // An abort() here panics and reboots, and every cause that can make the start fail — too
     // little heap, no free LWIP socket, a web_port already taken by a bridge gateway, a refused
     // auth/wifi_scan init — survives the reboot and meets the next boot the same way: a panic

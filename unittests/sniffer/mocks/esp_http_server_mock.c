@@ -26,6 +26,13 @@ int            mock_httpd_sess_trigger_close_called     = 0;
 int            mock_httpd_sess_trigger_close_last_fd     = -1;
 httpd_handle_t mock_httpd_sess_trigger_close_last_handle = NULL;
 
+/* ---- httpd_resp_set_status / httpd_resp_send state ---- */
+int         mock_httpd_resp_set_status_called = 0;
+const char *mock_httpd_resp_set_status_last   = NULL;
+
+int  mock_httpd_resp_send_called       = 0;
+char mock_httpd_resp_send_last_body[128] = {0};
+
 void mock_esp_http_server_reset(void)
 {
     mock_httpd_ws_get_fd_info_return = HTTPD_WS_CLIENT_WEBSOCKET;
@@ -40,6 +47,35 @@ void mock_esp_http_server_reset(void)
     mock_httpd_sess_trigger_close_called     = 0;
     mock_httpd_sess_trigger_close_last_fd     = -1;
     mock_httpd_sess_trigger_close_last_handle = NULL;
+
+    mock_httpd_resp_set_status_called = 0;
+    mock_httpd_resp_set_status_last   = NULL;
+
+    mock_httpd_resp_send_called = 0;
+    memset(mock_httpd_resp_send_last_body, 0, sizeof(mock_httpd_resp_send_last_body));
+}
+
+esp_err_t httpd_resp_set_status(httpd_req_t *req, const char *status)
+{
+    (void)req;
+    mock_httpd_resp_set_status_called++;
+    mock_httpd_resp_set_status_last = status;
+    return ESP_OK;
+}
+
+esp_err_t httpd_resp_send(httpd_req_t *req, const char *buf, ssize_t buf_len)
+{
+    (void)req;
+    mock_httpd_resp_send_called++;
+    memset(mock_httpd_resp_send_last_body, 0, sizeof(mock_httpd_resp_send_last_body));
+    if (buf != NULL && buf_len > 0) {
+        size_t n = (size_t)buf_len;
+        if (n > sizeof(mock_httpd_resp_send_last_body) - 1) {
+            n = sizeof(mock_httpd_resp_send_last_body) - 1;
+        }
+        memcpy(mock_httpd_resp_send_last_body, buf, n);
+    }
+    return ESP_OK;
 }
 
 esp_err_t httpd_sess_trigger_close(httpd_handle_t handle, int sockfd)

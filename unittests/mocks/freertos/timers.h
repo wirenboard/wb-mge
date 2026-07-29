@@ -19,6 +19,10 @@ extern int mock_xTimerStart_called;
 extern TimerHandle_t mock_xTimerStart_xTimer;
 extern TickType_t mock_xTimerStart_xTicksToWait;
 
+extern int mock_xTimerStop_called;
+extern TimerHandle_t mock_xTimerStop_xTimer;
+extern TickType_t mock_xTimerStop_xTicksToWait;
+
 extern int mock_xTimerDelete_called;
 extern TimerHandle_t mock_xTimerDelete_xTimer;
 
@@ -31,6 +35,10 @@ TimerHandle_t xTimerCreate(const char * const pcTimerName,
                           TimerCallbackFunction_t pxCallbackFunction);
 
 BaseType_t xTimerStart(TimerHandle_t xTimer, TickType_t xTicksToWait);
+
+/* Fails the test on a NULL handle, mirroring the configASSERT() the real
+ * implementation opens with. */
+BaseType_t xTimerStop(TimerHandle_t xTimer, TickType_t xTicksToWait);
 
 BaseType_t xTimerDelete(TimerHandle_t xTimer, TickType_t xTicksToWait);
 

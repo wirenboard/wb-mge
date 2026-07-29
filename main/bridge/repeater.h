@@ -15,8 +15,9 @@ typedef struct {
 } repeater_stats_t;
 
 // Create the repeater-global mutex once. Idempotent. Call before any port concurrency
-// starts (port_manager_init does this). repeater_lock() also lazily creates the mutex,
-// so unit tests that skip this still work.
+// starts (port_manager_init_subsystems() does this, from main.c before the HTTP server
+// starts). repeater_lock() also lazily creates the mutex, so unit tests that skip this
+// still work.
 void repeater_init(void);
 
 // Open a port's serial in repeater mode (transparent serial<->serial forwarding).

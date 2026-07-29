@@ -623,6 +623,50 @@ void test_rx_timeout_not_called_after_detach(void)
 }
 
 /* ============================================================
+ * TC-BOOT1 — the WS overlay path never hands FreeRTOS a NULL timer
+ *
+ * sniffer_disable() quiesces the port through an unguarded
+ * xTimerStop(ctx->resp_timer, 0), and that handle exists only after
+ * sniffer_init(). Two WebSocket messages — "enable" then "disable" — walk into
+ * that line with no RS-485 traffic at all, so on a device whose HTTP server
+ * started before the sniffer was initialised the handle is still NULL and the
+ * FreeRTOS configASSERT panics and reboots the board. main.c closes that window
+ * by calling port_manager_init_subsystems() ahead of http_server_init().
+ *
+ * This test pins the post-init half of the invariant: once init has run, the
+ * enable -> disable path stops a timer init actually created. The pre-init half
+ * is caught by the xTimerStop() mock itself, which rejects a NULL handle the
+ * same way configASSERT does.
+ * ============================================================ */
+void test_boot_enable_disable_stops_timer_created_by_init(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "TC-BOOT1: enable -> disable stops the timer sniffer_init() created");
+    LOG_MESSAGE();
+
+    /* setUp() ran sniffer_init() — the state main.c must have in place before the
+     * first HTTP request can be served. */
+    TEST_ASSERT_EQUAL_MESSAGE(BRIDGES_COUNT, mock_xTimerCreate_called,
+        "sniffer_init() must create one response timer per port");
+
+    /* Return the port to fully idle (setUp() left DISPLAY enabled), then replay
+     * the two WS messages against clean counters. */
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
+    mock_freertos_timers_reset();
+
+    sniffer_enable(0, SNIFF_REASON_DISPLAY);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTimerStop_called,
+        "sniffer_enable() must not touch the response timer");
+
+    sniffer_disable(0, SNIFF_REASON_DISPLAY);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTimerStop_called,
+        "the last reason going away must stop the response timer");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(MOCK_TIMER_HANDLE, mock_xTimerStop_xTimer,
+        "the stopped timer must be the handle sniffer_init() created, not NULL");
+}
+
+/* ============================================================
  * TC-LEN1 — a maximum-length Fast Modbus frame with an encapsulated standard
  * command (FD 46 08, 265 bytes) is captured in full, not truncated.
  *
@@ -2129,6 +2173,7 @@ int main(void)
     RUN_TEST(test_rx_timeout_enable_does_not_change_timeout);
     RUN_TEST(test_rx_timeout_disable_does_not_change_timeout);
     RUN_TEST(test_rx_timeout_not_called_after_detach);
+    RUN_TEST(test_boot_enable_disable_stops_timer_created_by_init);
     RUN_TEST(test_max_length_fm_encapsulated_frame_not_truncated);
     RUN_TEST(test_init_cleanup_on_task_create_failure);
     RUN_TEST(test_init_cleanup_on_queue_create_failure);
