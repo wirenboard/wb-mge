@@ -41,6 +41,6 @@ direct_dependencies:
 - espressif/esp_io_expander_tca95xx_16bit
 - espressif/mdns
 - idf
-manifest_hash: 8381779525563e04a352d2bc41a9a83d411d7e679ed1b494ea9d33738f2f75d6
+manifest_hash: 5528e56de519cb31945a24a8b24d1859dc8081244223f06eab68c20cb35e2968
 target: esp32
 version: 2.0.0

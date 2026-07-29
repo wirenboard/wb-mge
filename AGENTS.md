@@ -12,7 +12,15 @@ To run all tests:
 make test
 ```
 
-Every recipe that needs the ESP-IDF sources `scripts/idf_env.sh` internally — no manual `source` needed. That script activates the EIM toolchain (`~/.espressif/tools/activate_idf_<tag>.sh`) when it is installed, otherwise falls back to the `IDF_PATH` already in the environment (Docker, CI with `export.sh`), and in both cases verifies that the IDF actually in use is the expected version. The version comes from `EIM_IDF_VERSION` in `Makefile` (default `v5.4.4`) and can be overridden, e.g. `make EIM_IDF_VERSION=v5.5.2 ...`. `IDF_VERSION_CHECK=0` skips the version comparison only (`IDF_PATH` must still be a real checkout); `IDF_ENV_QUIET=1` suppresses the "Using ESP-IDF ..." banner.
+Every recipe that needs the ESP-IDF sources `scripts/idf_env.sh` internally — no manual `source` needed. That script activates the EIM toolchain (`~/.espressif/tools/activate_idf_<tag>.sh`) when it is installed, otherwise falls back to the `IDF_PATH` already in the environment (Docker, CI with `export.sh`), and in both cases verifies that the IDF actually in use is the expected version.
+
+The expected version is pinned in **four** places, all of which must agree: `EIM_IDF_VERSION` in `Makefile` (default `v5.4.4`), the base image tag in `Dockerfile` (`FROM espressif/idf:v5.4.4`), the `idf` version range in `main/idf_component.yml` (`>=5.4.4,<5.5.0`) and the resolved `idf` version in `dependencies.lock` (`5.4.4`). Two mechanical checks enforce that: `make check-idf-pins` — a prerequisite of `apply-idf-patches`, `build-idf-project`, `build-idf-project-qemu` and `flash` — compares `EIM_IDF_VERSION` with every `FROM espressif/idf:` tag and with the lock, and `scripts/idf_env.sh` compares the IDF actually in use with `EIM_IDF_VERSION`. The range in `main/idf_component.yml` is not a third check: the component manager evaluates it only when it really re-resolves the dependencies, and with the lock committed and the manifest untouched that never happens — so it does not catch an off-pin build. It applies when a re-resolve is triggered (no lock, edited manifest, changed set of direct dependencies), rejecting an IDF outside the range with `no versions of idf match`.
+
+Each check has its own escape hatch, and each disables only itself: `IDF_VERSION_CHECK=0` skips the installed-vs-expected comparison in `scripts/idf_env.sh` (`IDF_PATH` must still be a real checkout); `IDF_PINS_CHECK=0` skips `check-idf-pins` (Makefile vs Dockerfile vs `dependencies.lock`) with a warning. Neither affects the range in `main/idf_component.yml` — that one has no override and must be widened in the file.
+
+So `make EIM_IDF_VERSION=v5.5.2 ...` alone is not enough to build off the pin. Building against another IDF on purpose (e.g. v5.4.2, to reproduce the `uart_set_pin` regression) means: install that IDF, widen the range in `main/idf_component.yml` by hand — editing the manifest is what triggers the re-resolve that checks the range, so it has to cover the target IDF — then `make IDF_PINS_CHECK=0 EIM_IDF_VERSION=v5.4.2 build-idf-project`. Such a build re-resolves the dependencies and rewrites `dependencies.lock` — revert it and the manifest afterwards. See "Building against a different ESP-IDF" in `README.md`.
+
+`IDF_ENV_QUIET=1` suppresses the "Using ESP-IDF ..." banner.
 
 ## Running individual QEMU API tests
 

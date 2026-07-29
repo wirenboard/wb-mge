@@ -194,7 +194,42 @@ brew install eim
 eim install -i v5.4.4
 ```
 
-**Note:** the ESP-IDF version must match in three places: `EIM_IDF_VERSION` in `Makefile`, the base image tag in `Dockerfile`, and the IDF actually installed. On a mismatch the build stops with an error; set `IDF_VERSION_CHECK=0` to bypass the check.
+**Note:** the ESP-IDF version is pinned in four places, and they must all agree — plus the IDF actually installed must match them:
+
+| Where | What it pins |
+| ----- | ------------ |
+| `EIM_IDF_VERSION` in `Makefile` | the version local/EIM builds activate and expect (`v5.4.4`) |
+| `FROM espressif/idf:<tag>` in `Dockerfile` | the version CI and container builds use |
+| `idf` version range in `main/idf_component.yml` | the versions the component manager accepts (`>=5.4.4,<5.5.0`) |
+| `idf` version in `dependencies.lock` | the version the checked-in lock was resolved against (`5.4.4`) |
+
+Two mechanical checks enforce this, and each one has its own escape hatch that disables only itself:
+
+- `make check-idf-pins` compares `EIM_IDF_VERSION` with every `FROM espressif/idf:` tag in `Dockerfile` and with the `idf` version in `dependencies.lock`. It runs automatically before every firmware build (hardware, QEMU, and `make flash`). `IDF_PINS_CHECK=0` skips it, printing a warning.
+- `scripts/idf_env.sh` compares the IDF actually in use with `EIM_IDF_VERSION` on every recipe that touches the IDF. `IDF_VERSION_CHECK=0` skips that comparison only — `IDF_PATH` must still point at a real IDF checkout.
+
+The range in `main/idf_component.yml` is not a third check: it is a constraint the component manager evaluates only when it actually re-resolves the dependencies. With `dependencies.lock` committed and the manifest untouched it is never re-evaluated, so it does **not** catch a build on an off-pin IDF. It bites when a re-resolve does happen — no lock, an edited manifest, a changed set of direct dependencies — and then rejects an IDF outside the range with `no versions of idf match`. There is no environment override for it; the range is widened in the file.
+
+**Building against a different ESP-IDF** (e.g. on v5.4.2, to reproduce the `uart_set_pin` regression that v5.4.2/v5.4.3 and v5.5/v5.5.1 carry) therefore takes three steps:
+
+```bash
+# 1. Install the version you want to build against
+eim install -i v5.4.2
+
+# 2. Widen the range in main/idf_component.yml by hand, e.g.
+#      idf:
+#        version: '>=5.4.2,<5.5.0'
+#    Editing the manifest is itself what forces a dependency re-resolve (its hash
+#    changes), and that re-resolve is the only moment the range is checked — so
+#    the range must already cover the IDF you are moving to, or the re-resolve
+#    you just triggered stops with "no versions of idf match".
+
+# 3. Build with the pin override; IDF_PINS_CHECK=0 waives the cross-check
+#    against Dockerfile/dependencies.lock, which still name the pinned version.
+make IDF_PINS_CHECK=0 EIM_IDF_VERSION=v5.4.2 build-idf-project
+```
+
+Such a build re-resolves the dependencies and rewrites `dependencies.lock`; revert it together with `main/idf_component.yml` when done. Moving the project to a new IDF for good is the same thing done properly: update all four pins (and this README), and no override is needed.
 
 ### 4. Clone the Repository
 
@@ -269,6 +304,8 @@ graph TD
     qemu-create-flash-image --> build-idf-project-qemu
     build-idf-project-qemu --> qemu-apply-idf-patches
     build-idf-project --> apply-idf-patches
+    qemu-apply-idf-patches --> check-idf-pins
+    apply-idf-patches --> check-idf-pins
 ```
 
 ## Building with Docker

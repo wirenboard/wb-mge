@@ -14,6 +14,15 @@ SHELL := /bin/bash
 # and from the command line (make EIM_IDF_VERSION=v5.5.2 ...).
 EIM_IDF_VERSION ?= v5.4.4
 
+# Dockerfile carries the second half of that pin (FROM espressif/idf:<tag>), and
+# dependencies.lock records the IDF version the component manager resolved
+# against. check-idf-pins compares both with EIM_IDF_VERSION; see the target below.
+# Absolute paths on purpose, for the same reason as EIM_ACTIVATE below: recipes
+# are free to `cd` first, and a relative path would resolve against whatever
+# directory the shell happens to be in.
+DOCKERFILE := $(CURDIR)/Dockerfile
+DEPENDENCIES_LOCK := $(CURDIR)/dependencies.lock
+
 #######################################
 # device signature
 #######################################
@@ -192,22 +201,61 @@ lint-c:
 	        --clang-extra-args="-header-filter=.*/main/.* -config-file=$(CURDIR)/.clang-tidy -extra-arg-before=-isystem -extra-arg-before=$$NEWLIB_INCLUDE" \
 	        $(CURDIR)
 
+# Third-party and generated trees are never linted: a Cyrillic comment in some
+# site-packages module (api_tests/.venv alone holds ~2200 .py files) or in a
+# generated build tree would fail the target for a reason unrelated to this
+# repository.
+LINT_EXCLUDE_DIRS := --exclude-dir=.venv --exclude-dir=node_modules --exclude-dir=build \
+                     --exclude-dir=managed_components --exclude-dir=__pycache__
+
+# Each block distinguishes the three grep outcomes instead of the plain
+# `if grep ...; then` it used to be: that form read every non-zero status as
+# "no violations", so on a grep without PCRE support (BSD grep, i.e. macOS
+# without Homebrew, where $(GREP) falls back to /usr/bin/grep) or on a mistyped
+# directory the target printed OK and passed. 0 = violations found, 1 = clean,
+# >1 = grep itself could not run.
 lint-comments:
 	@echo "Checking for Cyrillic characters in C/H comments..."
-	@if $(GREP) -rnP --include='*.c' --include='*.h' '//[^\n]*\p{Cyrillic}' main/ unittests/; then \
+	@out=$$($(GREP) -rnP $(LINT_EXCLUDE_DIRS) --include='*.c' --include='*.h' '//[^\n]*\p{Cyrillic}' main/ unittests/); rc=$$?; \
+	if [ $$rc -eq 0 ]; then \
+	    echo "$$out"; \
 	    echo "ERROR: Cyrillic characters found in C/H comments. All comments must be in English."; \
+	    exit 1; \
+	elif [ $$rc -gt 1 ]; then \
+	    echo "ERROR: grep failed while checking C/H comments (no PCRE support in $(GREP), or a listed directory is missing)."; \
 	    exit 1; \
 	fi
 	@echo "OK: no Cyrillic characters in C/H"
 	@echo "Checking for Cyrillic characters in Python comments..."
-	@if $(GREP) -rnP --include='*.py' '#[^\n]*\p{Cyrillic}' api_tests/; then \
+	@out=$$($(GREP) -rnP $(LINT_EXCLUDE_DIRS) --include='*.py' '#[^\n]*\p{Cyrillic}' api_tests/ patches/ scripts/ unittests/ wb_test/); rc=$$?; \
+	if [ $$rc -eq 0 ]; then \
+	    echo "$$out"; \
 	    echo "ERROR: Cyrillic characters found in Python comments. All comments must be in English."; \
+	    exit 1; \
+	elif [ $$rc -gt 1 ]; then \
+	    echo "ERROR: grep failed while checking Python comments (no PCRE support in $(GREP), or a listed directory is missing)."; \
 	    exit 1; \
 	fi
 	@echo "OK: no Cyrillic characters in Python"
+	@echo "Checking for Cyrillic characters in shell comments..."
+	@out=$$($(GREP) -rnP $(LINT_EXCLUDE_DIRS) --include='*.sh' '#[^\n]*\p{Cyrillic}' scripts/ patches/ unittests/ wb_test/); rc=$$?; \
+	if [ $$rc -eq 0 ]; then \
+	    echo "$$out"; \
+	    echo "ERROR: Cyrillic characters found in shell comments. All comments must be in English."; \
+	    exit 1; \
+	elif [ $$rc -gt 1 ]; then \
+	    echo "ERROR: grep failed while checking shell comments (no PCRE support in $(GREP), or a listed directory is missing)."; \
+	    exit 1; \
+	fi
+	@echo "OK: no Cyrillic characters in shell"
 	@echo "Checking for Cyrillic characters in frontend comments..."
-	@if $(GREP) -rnP --include='*.ts' --include='*.vue' --include='*.js' '//[^\n]*\p{Cyrillic}' main/frontend/src/; then \
+	@out=$$($(GREP) -rnP $(LINT_EXCLUDE_DIRS) --include='*.ts' --include='*.vue' --include='*.js' '//[^\n]*\p{Cyrillic}' main/frontend/src/); rc=$$?; \
+	if [ $$rc -eq 0 ]; then \
+	    echo "$$out"; \
 	    echo "ERROR: Cyrillic characters found in frontend comments. All comments must be in English."; \
+	    exit 1; \
+	elif [ $$rc -gt 1 ]; then \
+	    echo "ERROR: grep failed while checking frontend comments (no PCRE support in $(GREP), or a listed directory is missing)."; \
 	    exit 1; \
 	fi
 	@echo "OK: no Cyrillic characters in frontend"
@@ -233,13 +281,100 @@ build-frontend:
 		$(FIND) dist/ -type f ! -name "*.gz" ! -name "*.woff2" ! -name "*.webp" -exec gzip -k {} \; ; \
 	}
 
-apply-idf-patches:
+# The IDF version is pinned in four places: EIM_IDF_VERSION here (local/EIM
+# builds), the base image tag in Dockerfile (CI and container builds), the idf
+# range in main/idf_component.yml (what the component manager accepts) and the
+# resolved idf version in dependencies.lock. Until now they were kept together by
+# a set of "keep in sync" comments, and a drift only surfaced mid-build, when
+# scripts/idf_env.sh compared the running IDF with the expected one. This target
+# catches it up front — a couple of seds, no measurable cost as a build
+# prerequisite.
+#
+# What it compares: EIM_IDF_VERSION against EVERY 'FROM espressif/idf:<tag>' in
+# Dockerfile (a multi-stage file must not pin two different IDFs), and against
+# the 'idf: version:' entry in dependencies.lock, with the leading 'v' stripped
+# and MAJOR.MINOR padded to MAJOR.MINOR.0 — the same normalisation scripts/idf_env.sh
+# applies, because EIM names v5.4 what the lock records as 5.4.0. Without it a
+# perfectly consistent v5.4 pin would be reported as a mismatch.
+# What it does NOT compare: the version range in main/idf_component.yml. That is
+# a constraint, not a pin — deciding whether a version satisfies it is the
+# component manager's job, which it does at resolve time and reports as
+# "no versions of idf match". Widen that range by hand when moving off the pin.
+#
+# A missing Dockerfile or dependencies.lock is an error, not a skip: both are
+# tracked in the repo, so their absence means an incomplete checkout, and
+# silently skipping the check here is exactly the kind of quiet pass this whole
+# guard exists to remove.
+#
+# Escape hatch: IDF_PINS_CHECK=0 skips this target and nothing else — the same
+# way IDF_VERSION_CHECK=0 skips only the installed-vs-expected comparison in
+# scripts/idf_env.sh. It exists for deliberate off-pin builds (e.g. rebuilding on
+# v5.4.2 to reproduce the uart_set_pin regression) and prints a warning rather
+# than passing silently. See README.md, "Building against a different ESP-IDF".
+check-idf-pins:
+	@if [ "$${IDF_PINS_CHECK:-1}" = "0" ]; then \
+	    echo "WARNING: IDF_PINS_CHECK=0 — ESP-IDF pin cross-check skipped (Makefile vs Dockerfile vs dependencies.lock)."; \
+	    exit 0; \
+	fi; \
+	test -f "$(DOCKERFILE)" || { \
+	    echo "ERROR: $(DOCKERFILE) not found — cannot verify it pins the same ESP-IDF as EIM_IDF_VERSION=$(EIM_IDF_VERSION)."; \
+	    echo "       Run make from the repository root with a complete checkout."; \
+	    exit 1; \
+	}; \
+	test -f "$(DEPENDENCIES_LOCK)" || { \
+	    echo "ERROR: $(DEPENDENCIES_LOCK) not found — cannot verify it records the same ESP-IDF as EIM_IDF_VERSION=$(EIM_IDF_VERSION)."; \
+	    echo "       Run make from the repository root with a complete checkout."; \
+	    exit 1; \
+	}; \
+	DOCKER_IDF=$$($(SED) -n 's|^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]].*espressif/idf:\([^[:space:]][^[:space:]]*\).*|\1|p' "$(DOCKERFILE)"); \
+	if [ -z "$$DOCKER_IDF" ]; then \
+	    echo "ERROR: no 'FROM espressif/idf:<tag>' line in $(DOCKERFILE) — cannot verify the ESP-IDF pins."; \
+	    exit 1; \
+	fi; \
+	DOCKER_MISMATCH=""; \
+	for tag in $$DOCKER_IDF; do \
+	    if [ "$$tag" != "$(EIM_IDF_VERSION)" ]; then DOCKER_MISMATCH="$$DOCKER_MISMATCH $$tag"; fi; \
+	done; \
+	if [ -n "$$DOCKER_MISMATCH" ]; then \
+	    echo "ERROR: the ESP-IDF pins disagree — local and CI builds would use different IDF versions."; \
+	    echo "       Makefile   (EIM_IDF_VERSION)   : $(EIM_IDF_VERSION)"; \
+	    echo "       Dockerfile (FROM espressif/idf) : $$(echo "$$DOCKER_IDF" | tr '\n' ' ' | $(SED) 's/[[:space:]]*$$//')"; \
+	    echo "       Update both pins (and main/idf_component.yml if the range no longer fits)."; \
+	    echo "       IDF_PINS_CHECK=0 skips this check for a deliberate off-pin build."; \
+	    exit 1; \
+	fi; \
+	LOCK_IDF=$$($(SED) -n '/^  idf:[[:space:]]*$$/,/^[^[:space:]]/ s/^[[:space:]]*version:[[:space:]]*[^0-9]*\([0-9][0-9.]*\).*/\1/p' "$(DEPENDENCIES_LOCK)" | head -n 1); \
+	if [ -z "$$LOCK_IDF" ]; then \
+	    echo "ERROR: no 'idf:' version entry in $(DEPENDENCIES_LOCK) — cannot verify the ESP-IDF pins."; \
+	    exit 1; \
+	fi; \
+	EXPECTED_IDF="$(EIM_IDF_VERSION:v%=%)"; \
+	case "$$EXPECTED_IDF" in \
+	    *.*.*) ;; \
+	    *.*)   EXPECTED_IDF="$$EXPECTED_IDF.0" ;; \
+	    *)     EXPECTED_IDF="$$EXPECTED_IDF.0.0" ;; \
+	esac; \
+	if [ "$$LOCK_IDF" != "$$EXPECTED_IDF" ]; then \
+	    echo "ERROR: the ESP-IDF pins disagree — the checked-in lock was resolved against another IDF."; \
+	    echo "       Makefile          (EIM_IDF_VERSION) : $(EIM_IDF_VERSION) (expects $$EXPECTED_IDF)"; \
+	    echo "       dependencies.lock (idf version)     : $$LOCK_IDF"; \
+	    echo "       Re-resolve the dependencies on the pinned IDF and commit the lock."; \
+	    echo "       IDF_PINS_CHECK=0 skips this check for a deliberate off-pin build."; \
+	    exit 1; \
+	fi; \
+	echo "ESP-IDF pins match: $(EIM_IDF_VERSION) (Makefile, Dockerfile, dependencies.lock)"
+
+# check-idf-pins first: under `make -j` a bare `build-idf-project: check-idf-pins
+# apply-idf-patches` let the patches land while the pin check was still running,
+# so a build that the check was about to reject had already modified the IDF
+# sources. The prerequisite here makes the order a hard one.
+apply-idf-patches: check-idf-pins
 	@echo "Applying IDF patches..."
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
 
 # NOTE: the build/ dir is shared across signatures. When switching TARGET
 # (mge_v3 <-> mgu_v1) run `make clean` first to avoid a stale/mixed artifact.
-build-idf-project: apply-idf-patches
+build-idf-project: check-idf-pins apply-idf-patches
 	@echo 'Building ESP-IDF project'
 	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
@@ -270,7 +405,11 @@ clean:
 # Flash and monitor
 #######################################
 
-flash:
+# check-idf-pins is a prerequisite because `idf.py flash` builds the project
+# before flashing it: without it `make flash` would compile firmware on an
+# unverified set of pins. flash-all, monitor and ota-flash need no such guard —
+# they only push or read back artefacts that an earlier build produced.
+flash: check-idf-pins
 	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" flash
 
 # Flash all partitions (bootloader + partition table + OTA data + app) via esptool directly.
@@ -314,7 +453,7 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all test unittests lint-frontend lint-c lint-comments test-frontend build-frontend apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash coverage-combined
+.PHONY: all test unittests lint-frontend lint-c lint-comments test-frontend build-frontend check-idf-pins apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash coverage-combined
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk

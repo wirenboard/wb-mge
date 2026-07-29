@@ -3,9 +3,27 @@ dependencies:
   ## Pinned to an exact version: '*' let separate resolves of the same commit
   ## pull different mdns builds (we saw 1.11.0 and 1.11.3 side by side).
   espressif/mdns: ==1.11.3
-  ## Required IDF version
+  ## Required IDF version. Kept as a narrow range, not an open '>=', because it is
+  ## one of four places the IDF version is pinned (Makefile EIM_IDF_VERSION,
+  ## Dockerfile FROM tag, dependencies.lock). It is a constraint, not a guard: the
+  ## component manager evaluates it only when it actually re-resolves the
+  ## dependencies — no dependencies.lock, an edited manifest (its hash), a changed
+  ## set of direct dependencies. With the lock committed and this file untouched
+  ## the manager keeps the locked solution and skips the idf component entirely,
+  ## so building on an off-pin IDF does not trip this range. What catches that is
+  ## make check-idf-pins and scripts/idf_env.sh. Where the range does its work is
+  ## the re-resolve itself: it is rejected with "no versions of idf match" when the
+  ## IDF in use falls outside, which is why widening it is a deliberate step taken
+  ## together with the other pins.
+  ## Lower bound: v5.4.4 is the first release after the uart_set_pin regression
+  ## (v5.4.2, v5.4.3) in which it is fixed, and the version the project is built
+  ## against. Earlier 5.4.x — v5.4.0 and v5.4.1 — predate the regression and do
+  ## not carry it either; they are excluded because we build against v5.4.4, not
+  ## because of that bug.
+  ## Upper bound: the 5.5 branch carries the same regression in v5.5 and v5.5.1;
+  ## moving to v5.5.2+ must be a deliberate step, made together with the other pins.
   idf:
-    version: '>=4.1.0'
+    version: '>=5.4.4,<5.5.0'
   # # Put list of dependencies here
   # # For components maintained by Espressif:
   # component: "~1.0.0"

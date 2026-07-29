@@ -41,14 +41,20 @@ qemu-build: build-frontend build-idf-project-qemu
 # Patches live in patches/ and are idempotent: re-running is safe if already applied.
 # This target must run before any QEMU firmware compile so that the patched IDF
 # sources are compiled in, regardless of whether the build runs locally or in Docker.
-qemu-apply-idf-patches:
+# check-idf-pins comes first (as for the hardware apply-idf-patches): under
+# `make -j` an unordered prerequisite would let the patches land while the pin
+# check is still running.
+qemu-apply-idf-patches: check-idf-pins
 	@echo "Applying IDF patches for QEMU build..."
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug04-openeth-isr-dram-log.patch
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug05-lact-timer-null-isr-guard.patch
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug06-uart-install-rxfifo-storm.patch
 
-build-idf-project-qemu: qemu-apply-idf-patches
+# check-idf-pins is listed explicitly, not left to qemu-apply-idf-patches: this is
+# the entry point of the QEMU build (qemu-build, qemu-test, the Jenkins e2e stage),
+# and it must verify the IDF pins just like the hardware build-idf-project does.
+build-idf-project-qemu: check-idf-pins qemu-apply-idf-patches
 	@echo "Building for QEMU with OpenEth ethernet driver"
 	@# Detect stale hardware build cache: if CMakeCache exists but was not a QEMU build,
 	@# run fullclean to force CMake reconfiguration with correct source file selection.
