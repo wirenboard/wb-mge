@@ -189,11 +189,20 @@ void app_main(void)
     // port_manager_init() (the gateway) does not touch it. The opposite direction — what those
     // handlers need from the rest of the boot — is what the call above takes care of.
     // An abort() here panics and reboots, and every cause that can make the start fail — too
-    // little heap, no free LWIP socket, a refused auth/wifi_scan init — survives the reboot and
-    // meets the next boot the same way: a panic loop that takes the gateway down too, instead of
-    // one degraded feature. This matches how a failed start is handled at runtime in
-    // settings_update.c: log it, carry on, leave the web interface down until the device is
-    // power-cycled.
+    // little heap, no free LWIP socket, a web_port already held by another listener, a refused
+    // auth/wifi_scan init — survives the reboot and meets the next boot the same way: a panic
+    // loop that takes the gateway down too, instead of one degraded feature.
+    //
+    // The collision cause is back on that list. It was dropped while a bridge gateway and httpd
+    // disagreed about address family and could therefore both listen on one port; they agree now
+    // (create_listen_socket(), bridge/tcp_server.c binds the same dual-stack form httpd does),
+    // so whoever takes a shared port second gets EADDRINUSE from lwIP instead of quietly
+    // becoming a second listener on it. Note which side loses it HERE, though: this call runs
+    // before port_manager_init() opens any bridge or cache socket, so at boot httpd is always
+    // the first listener and the refusal goes to the other side. httpd is the one refused on the
+    // runtime path instead, where settings_update.c re-acquires the web server socket AFTER the
+    // ports (settings_update.c:264-279) — and that call site handles it exactly as this one
+    // does: log it, carry on, leave the web interface down until the device is power-cycled.
     esp_err_t http_ret = http_server_init();
     if (http_ret != ESP_OK) {
         ESP_LOGE(TAG, "http_server_init failed: %s - continuing without the web interface, "
@@ -225,11 +234,13 @@ void app_main(void)
             // the one function the device is installed for. It used to abort — the cache
             // Modbus TCP server was started through ESP_RETURN_ON_ERROR inside, so a mutex or
             // socket it could not allocate, or a listen() refused because cache_modbus_port
-            // collides with a bridge port, left the ports down and rebooted. A reboot clears
-            // none of that: the allocation failures recur on a deterministic boot path, and
-            // the port collision only swaps which side loses the port, because the cache server
-            // starts before the port loop (the mechanics are in port_manager_init()). A panic
-            // loop is the one outcome to avoid.
+            // collides with another listener (a bridge port, or httpd on web_port), left the
+            // ports down and rebooted. A reboot clears none of that: the allocation failures
+            // recur on a deterministic boot path; a collision with web_port comes back
+            // unchanged, because http_server_init() above binds it on every boot before this
+            // runs; and a collision with a bridge port only swaps which side loses it, because
+            // the cache server starts before the port loop (the mechanics are in
+            // port_manager_init()). A panic loop is the one outcome to avoid.
             //
             // As of today the function has no failure path left to report — it logs each one
             // and returns ESP_OK. The check stays anyway: it costs two lines, and it is what

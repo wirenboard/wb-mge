@@ -8,12 +8,13 @@ int mock_cache_modbus_server_init_called = 0;
 
 /* Drives the failure path of the real init: the reassembly mutex that would not allocate
  * (ESP_ERR_NO_MEM, cache_modbus_server.c:427), anything tcp_server_init() cannot allocate
- * (ESP_ERR_NO_MEM, tcp_server.c:537,545,555,576 — descriptor, event group, connection mutex,
- * acceptor task), or a listen() refused with ERR_USE because cache_modbus_port collides with a
- * BRIDGE port (ESP_FAIL, tcp_server.c:531). The mock reports ESP_FAIL for all three because the
- * caller only tests != ESP_OK (port_manager.c:556), so the specific code is immaterial here.
- * NOT a collision with the web port — that one yields two listeners rather than an error; the
- * full reasoning is in port_manager_init(). */
+ * (ESP_ERR_NO_MEM, tcp_server.c:604,612,622,643 — descriptor, event group, connection mutex,
+ * acceptor task), or a listen() refused with ERR_USE because cache_modbus_port collides with
+ * another local listener (ESP_FAIL, tcp_server.c:598). The mock reports ESP_FAIL for all three
+ * because the caller only tests != ESP_OK (port_manager.c:557), so the specific code is
+ * immaterial here. The collision covers the web port too: every listener on this device now
+ * binds the same dual-stack address, so lwIP refuses the second listen() instead of allowing
+ * two listeners on one port. The full reasoning is in port_manager_init(). */
 bool mock_cache_modbus_server_init_should_fail = false;
 
 esp_err_t cache_modbus_server_init(int port)

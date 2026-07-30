@@ -55,6 +55,20 @@ extern int  mock_socket_fd;
 extern bool mock_socket_should_fail;
 extern bool mock_bind_should_fail;
 extern bool mock_listen_should_fail;
+
+/* Arguments of the last socket() call. The domain is what decides whether the listening
+ * socket is the dual-stack IPv6 one esp_http_server also uses (and can therefore collide
+ * with) or the old AF_INET one that silently shared the port. */
+extern int  mock_socket_last_domain;
+extern int  mock_socket_last_type;
+extern int  mock_socket_last_protocol;
+
+/* Number of bind() calls, and a verbatim copy of the last address handed to it — tail
+ * bytes included, so a test can tell a fully zeroed sockaddr_in6 from a partly filled one.
+ * Reset fills the copy with 0xEE so "bind() never ran" cannot masquerade as "all zeroes". */
+extern int  mock_bind_call_count;
+extern struct sockaddr_storage mock_bind_last_addr;
+extern socklen_t mock_bind_last_addrlen;
 extern int  mock_accept_fd;
 extern int  mock_accept_call_count;
 /* When > 0, mock_accept() returns -1 with mock_accept_errno for the first

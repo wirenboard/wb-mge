@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -39,14 +40,61 @@ static int create_listen_socket(int port)
 {
     ESP_LOGD(TAG, "Creating listen socket on port %d", port);
 
-    int addr_family = (int)AF_INET;
+    /* AF_INET6 with in6addr_any and the DEFAULT IPV6_V6ONLY (0) is a DUAL-STACK listener:
+     * netconn_bind() rewrites a bind to IP6_ADDR_ANY into IP_ANY_TYPE when the netconn is
+     * not v6-only (api_lib.c:324-331), and tcp_input() matches an IPADDR_TYPE_ANY listen
+     * pcb against IPv4 SYNs as well (tcp_in.c:337-345). IPv4 clients therefore still reach
+     * this port exactly as before.
+     *
+     * This is not about serving IPv6. It is about being the SAME representation as
+     * esp_http_server, which binds PF_INET6/in6addr_any (httpd_main.c:350-393), so that
+     * lwIP can see the two as a collision. While this socket was AF_INET/INADDR_ANY it
+     * could not: both sides set SO_REUSEADDR, which makes tcp_bind() skip the
+     * address-in-use check outright (tcp.c:721-731), and tcp_listen()'s duplicate check
+     * compares with ip_addr_eq(), which returns 0 whenever IP_GET_TYPE differs
+     * (ip_addr.h:219) — IPADDR_TYPE_ANY vs IPADDR_TYPE_V4. Both listens then succeeded and
+     * the port ended up with TWO listeners answering alternate connections: on the bench,
+     * port 80 shared between httpd and a bridge served 15 HTTP and 9 Modbus replies out of
+     * 24. With one representation, tcp_listen() finds an equal address and returns ERR_USE
+     * (EADDRINUSE), the retry loop below gives up, and the second server reports a failed
+     * init instead of silently corrupting the first one.
+     *
+     * Two things must NOT be "cleaned up" here:
+     *   - SO_REUSEADDR stays. Without it tcp_bind() starts considering TIME_WAIT pcbs, and
+     *     with CONFIG_LWIP_TCP_MSL=60000 that blocks re-binding a port for 2*MSL = 120 s
+     *     after any device-initiated close — i.e. every settings change that moves a port.
+     *   - IPV6_V6ONLY stays at its default 0. Setting it would make this a V6-only
+     *     listener: unreachable from every IPv4 client, and invisible to httpd's pcb again.
+     *
+     * IPPROTO_IP is kept (it is 0, "the default protocol for this family and type") rather
+     * than IPPROTO_IPV6: the third argument of socket() is a protocol number, and 41 is an
+     * option LEVEL, not a protocol a SOCK_STREAM socket can carry. lwIP ignores it for TCP,
+     * so nothing here would notice the difference — which is exactly why the value is pinned
+     * by test_listen_socket_requests_dual_stack_family instead of by a runtime failure.
+     * httpd passes 0 here too (httpd_main.c:353). */
+    int addr_family = (int)AF_INET6;
     int ip_protocol = IPPROTO_IP;
     struct sockaddr_storage dest_addr;
 
-    struct sockaddr_in *dest_addr_ip4 = (struct sockaddr_in *)&dest_addr;
-    dest_addr_ip4->sin_addr.s_addr = htonl(INADDR_ANY);
-    dest_addr_ip4->sin_family = AF_INET;
-    dest_addr_ip4->sin_port = htons(port);
+    /* Zero the WHOLE address before filling it — this is load-bearing, not hygiene.
+     * dest_addr is an uninitialised stack object, and sockaddr_in6 has two fields the IPv4
+     * form did not: sin6_flowinfo and sin6_scope_id. lwIP reads sin6_scope_id on the bind
+     * path (SOCKADDR6_TO_IP6ADDR_PORT, sockets.c:152-158) and zones the ip_addr_t with it;
+     * a zoned address then fails the ip_addr_eq(addr, IP6_ADDR_ANY) test in netconn_bind()
+     * that selects dual stack, and the outcome is a silently V6-only listener that no IPv4
+     * client can reach and that collides with nothing.
+     *
+     * That macro applies the scope id only to an address that HAS a scope
+     * (ip6_addr_has_scope(), ip6_zone.h:179-182), and the unspecified address :: has none,
+     * so a garbage tail does not bite this particular address today. It is zeroed anyway
+     * and written down here because nothing in the code says "::", only in6addr_any: the
+     * day this binds a link-local or multicast address, the garbage becomes a zone index.
+     * esp_http_server gets the same guarantee for free from a designated initialiser. */
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    struct sockaddr_in6 *dest_addr_ip6 = (struct sockaddr_in6 *)&dest_addr;
+    dest_addr_ip6->sin6_family = AF_INET6;
+    dest_addr_ip6->sin6_addr = in6addr_any;
+    dest_addr_ip6->sin6_port = htons(port);
 
     /* Retry bind/listen up to N times with backoff. Under rapid mode toggles
      * (test_uart_teardown_no_crash) the previous deinit's listen socket may
@@ -113,7 +161,10 @@ static int create_listen_socket(int port)
 }
 
 
-static int accept_connection(int listen_sock, struct sockaddr_in* source_addr)
+// The peer address comes back as sockaddr_storage, not sockaddr_in: the listen socket is
+// dual-stack (see create_listen_socket()), so accept() may fill in either a sockaddr_in or
+// a sockaddr_in6 and only ss_family says which.
+static int accept_connection(int listen_sock, struct sockaddr_storage* source_addr)
 {
     static int keep_alive = 1;
     static int keep_idle = KEEPALIVE_IDLE;
@@ -121,6 +172,9 @@ static int accept_connection(int listen_sock, struct sockaddr_in* source_addr)
     static int keep_count = KEEPALIVE_COUNT;
     static int no_delay_flag = 1;
 
+    // The full sockaddr_storage. lwip_accept() clamps *addrlen DOWN to the length of the
+    // form it actually wrote (sockets.c:744-747) but truncates the copy if we pass less,
+    // so a sizeof(struct sockaddr_in) here would cut an IPv6 peer short.
     socklen_t addr_len = sizeof(*source_addr);
     int client_sock = accept(listen_sock, (struct sockaddr *)source_addr, &addr_len);
     if (client_sock < 0) {
@@ -397,7 +451,7 @@ static void tcp_server_task(void *pvParameters)
             break;
         }
 
-        struct sockaddr_in source_addr;
+        struct sockaddr_storage source_addr;
         int client_sock = accept_connection(desc->listen_sock, &source_addr);
         if (client_sock < 0) {
             if (check_task_exit_req(desc)) {
@@ -433,14 +487,28 @@ static void tcp_server_task(void *pvParameters)
             continue;
         }
 
-        // Print client IP address and port
-        char addr_str[32];
-        if (source_addr.sin_family == PF_INET) {
-            inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
-        } else {
-            addr_str[0] = 0;
+        // Print client IP address and port. Switched on ss_family because the listen socket
+        // is dual-stack; the buffer is sized for the longer (IPv6) form.
+        char addr_str[INET6_ADDRSTRLEN];
+        uint16_t client_port = 0;
+        addr_str[0] = 0;
+        if (source_addr.ss_family == AF_INET) {
+            // Still the branch every ordinary client takes. lwIP does NOT map an IPv4 peer
+            // into the v4-mapped ::ffff:a.b.c.d form the way Linux does on a dual-stack
+            // socket: lwip_accept() builds the sockaddr from the accepted pcb's remote_ip,
+            // which for an IPv4 SYN carries IPADDR_TYPE_V4, and IPADDR_PORT_TO_SOCKADDR
+            // then writes a genuine sockaddr_in with sin_family == AF_INET
+            // (sockets.c:170-176, 743). So this log keeps printing 10.0.0.5, not
+            // ::ffff:10.0.0.5. Do not "simplify" it into an IPv6-only branch.
+            struct sockaddr_in *peer4 = (struct sockaddr_in *)&source_addr;
+            inet_ntoa_r(peer4->sin_addr, addr_str, sizeof(addr_str) - 1);
+            client_port = ntohs(peer4->sin_port);
+        } else if (source_addr.ss_family == AF_INET6) {
+            struct sockaddr_in6 *peer6 = (struct sockaddr_in6 *)&source_addr;
+            inet_ntop(AF_INET6, &peer6->sin6_addr, addr_str, sizeof(addr_str));
+            client_port = ntohs(peer6->sin6_port);
         }
-        ESP_LOGI(TAG, "Socket on port %d accepted connection from %s, port: %d", desc->port, addr_str, htons(source_addr.sin_port));
+        ESP_LOGI(TAG, "Socket on port %d accepted connection from %s, port: %d", desc->port, addr_str, client_port);
 
         // Enforce the per-server connection cap by rejecting the newcomer and keeping
         // the client already being served. The transparent bridge uses

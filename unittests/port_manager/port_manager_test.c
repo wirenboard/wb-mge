@@ -1631,10 +1631,13 @@ void test_init_still_brings_ports_up_after_cache_modbus_server_failure(void)
      * this function through ESP_RETURN_ON_ERROR: the ports were never reached and the
      * error landed on main.c's ESP_ERROR_CHECK — abort, reboot, RS-485 down. Unlike the
      * subsystems, this one does not fail only on out-of-memory: when cache_modbus_port
-     * equals a bridge port, both listeners are AF_INET/INADDR_ANY, so lwIP's tcp_listen()
-     * really does return ERR_USE and tcp_server_init() returns ESP_FAIL — and a reboot
-     * only swaps which of the two loses the port. Both ports are configured here, since
-     * the abort took every one of them down, not just the port that carries the cache. */
+     * equals ANY other local listener's port — a bridge gateway, or httpd on web_port —
+     * every one of them now binds the same dual-stack address, so lwIP's tcp_listen()
+     * really does return ERR_USE and tcp_server_init() returns ESP_FAIL, and a reboot does
+     * not clear it (against a bridge it only swaps which of the two loses the port;
+     * against httpd the cache server loses again, since httpd is started first). Both
+     * ports are configured here, since the abort took every one of them down, not just the
+     * port that carries the cache. */
     mock_cache_server_enabled = true;
     mock_cache_modbus_server_init_should_fail = true;
     mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
@@ -1662,7 +1665,7 @@ void test_init_still_brings_ports_up_after_cache_modbus_server_failure(void)
  *
  * Why: both checks below are strstr() over source text, where a string in a COMMENT counts
  * as a hit. main.c already talks about ESP_ERROR_CHECK in prose three times (main.c:171,185,
- * 223) and passes only because the macro name happens to be followed by ',' or ':' there
+ * 232) and passes only because the macro name happens to be followed by ',' or ':' there
  * rather than '('. Documenting this very rule as `ESP_ERROR_CHECK(port_manager_init())` in a
  * comment is the natural thing to write, and it would fail a build whose code is correct.
  *

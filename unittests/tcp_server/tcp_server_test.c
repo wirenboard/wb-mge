@@ -21,6 +21,12 @@ extern int  mock_socket_fd;
 extern bool mock_socket_should_fail;
 extern bool mock_bind_should_fail;
 extern bool mock_listen_should_fail;
+extern int  mock_socket_last_domain;
+extern int  mock_socket_last_type;
+extern int  mock_socket_last_protocol;
+extern int  mock_bind_call_count;
+extern struct sockaddr_storage mock_bind_last_addr;
+extern socklen_t mock_bind_last_addrlen;
 extern int  mock_accept_fd;
 extern int  mock_accept_call_count;
 extern int  mock_accept_fail_count;
@@ -950,6 +956,102 @@ void test_receiver_closes_socket_while_holding_conn_lock(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Section 8: the listening socket's address family and bind address (B8)
+ *
+ * The socket layer is mocked here, so these tests cannot exercise lwIP's collision
+ * semantics — what they CAN pin down is the two inputs those semantics are decided from,
+ * and both of them are one careless edit away from silently reverting.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Overwrite the stack region that tcp_server_init() and create_listen_socket() are about
+ * to use with a recognisable pattern.
+ *
+ * Without this, "the address struct was never zeroed" would be invisible: an uninitialised
+ * sockaddr_storage on a fresh stack page reads back as zeroes, and the test below would
+ * pass on code that only works by luck. Poisoning first makes the missing memset() show up
+ * as 0xEE in sin6_flowinfo / sin6_scope_id.
+ *
+ * 4 KB covers the two frames involved with room to spare; volatile keeps the write from
+ * being elided as dead (the suite builds at -O0, but that is not a property to depend on). */
+static void poison_stack_below(void)
+{
+    volatile uint8_t scratch[4096];
+    memset((void *)scratch, 0xEE, sizeof(scratch));
+}
+
+/* Regression closed: create_listen_socket() going back to AF_INET.
+ *
+ * esp_http_server binds PF_INET6/in6addr_any, which lwIP turns into a dual-stack
+ * IPADDR_TYPE_ANY pcb. While this socket asked for AF_INET, tcp_listen()'s duplicate check
+ * compared the two with ip_addr_eq(), which is 0 whenever IP_GET_TYPE differs — so a bridge
+ * or the cache Modbus server could listen on a port httpd already held, and the port then
+ * answered HTTP and Modbus on alternate connections. Only the family requested here decides
+ * that; nothing else in this file would change if it were wrong. */
+void test_listen_socket_requests_dual_stack_family(void)
+{
+    tcp_desc_t *desc = NULL;
+
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "init must succeed with the default mocks");
+    TEST_ASSERT_EQUAL_MESSAGE(AF_INET6, mock_socket_last_domain,
+        "the listen socket must be AF_INET6: an AF_INET one is invisible to httpd's "
+        "dual-stack pcb and silently shares the port with it");
+    TEST_ASSERT_EQUAL_MESSAGE(SOCK_STREAM, mock_socket_last_type,
+        "still a stream socket");
+    TEST_ASSERT_EQUAL_MESSAGE(IPPROTO_IP, mock_socket_last_protocol,
+        "protocol 0 = the default for this family/type, the same value httpd passes; "
+        "IPPROTO_IPV6 is an option level, not a protocol a SOCK_STREAM socket can carry");
+
+    free(desc);
+}
+
+/* Regression closed: binding a partially filled sockaddr_in6.
+ *
+ * The address struct is a bare stack object and the IPv6 form has two fields the IPv4 one
+ * did not. lwIP reads sin6_scope_id on the bind path and zones the address with it when the
+ * address has a scope; a zoned address fails netconn_bind()'s ip_addr_eq(addr,
+ * IP6_ADDR_ANY) test, dual stack is then NOT applied, and the result is a V6-only listener
+ * no IPv4 client can reach — a far worse failure than the one being fixed, and one that no
+ * other test in this suite would notice.
+ *
+ * So: the whole struct must arrive at bind() zeroed apart from the three fields that are
+ * deliberately set. Asserting the two tail fields is the point of the test; family, address
+ * and port are checked with it so a mutation cannot satisfy it by binding nothing useful. */
+void test_listen_socket_binds_fully_zeroed_any_address(void)
+{
+    tcp_desc_t *desc = NULL;
+
+    poison_stack_below();
+    esp_err_t ret = tcp_server_init(8899, stub_receive_handler, &desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "init must succeed with the default mocks");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_bind_call_count,
+        "exactly one bind() — the retry loop must not have been entered");
+
+    const struct sockaddr_in6 *bound = (const struct sockaddr_in6 *)&mock_bind_last_addr;
+
+    TEST_ASSERT_EQUAL_MESSAGE(AF_INET6, bound->sin6_family,
+        "the bound address must be the IPv6 form, matching the socket family");
+    TEST_ASSERT_EQUAL_MESSAGE(htons(8899), bound->sin6_port,
+        "the requested port must survive into the bind");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(&in6addr_any, &bound->sin6_addr, sizeof(struct in6_addr),
+        "must bind the unspecified address: that is the only value netconn_bind() promotes "
+        "to the dual-stack IP_ANY_TYPE");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, bound->sin6_flowinfo,
+        "sin6_flowinfo must be zeroed, not left as stack garbage");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, bound->sin6_scope_id,
+        "sin6_scope_id must be zeroed: lwIP reads it, and a garbage zone costs the "
+        "dual-stack promotion and with it every IPv4 client");
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE((int)sizeof(struct sockaddr_in6), (int)mock_bind_last_addrlen,
+        "bind() must be told the address is at least the IPv6 form's length: lwIP validates "
+        "namelen against sizeof(sockaddr_in)/sizeof(sockaddr_in6) and rejects anything else "
+        "with EINVAL, which the retry loop would spend a second on before giving up");
+
+    free(desc);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Unity runner
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -999,6 +1101,10 @@ int tcp_server_test(void)
     RUN_TEST(test_stale_capture_rejected_after_fd_reused_by_new_connection);
     RUN_TEST(test_receiver_teardown_bumps_conn_generation);
     RUN_TEST(test_receiver_closes_socket_while_holding_conn_lock);
+
+    /* Section 8 — listen socket family and bind address (B8) */
+    RUN_TEST(test_listen_socket_requests_dual_stack_family);
+    RUN_TEST(test_listen_socket_binds_fully_zeroed_any_address);
 
     return UNITY_END();
 }

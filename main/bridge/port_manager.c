@@ -486,31 +486,32 @@ esp_err_t port_manager_init(void)
     // on main.c's ESP_ERROR_CHECK — abort, reboot, RS-485 down. Three ways it can fail, and
     // only two of them are out of memory: the reassembly mutex that would not allocate
     // (cache_modbus_server.c:427), and anything tcp_server_init() cannot get — socket,
-    // descriptor, event group, connection mutex, acceptor task (tcp_server.c:531-576). The
-    // third is a refused listen(), which needs the port to be held by another
-    // AF_INET/INADDR_ANY listener, i.e. a BRIDGE port: lwIP's tcp_listen() then finds an
-    // equal address and returns ERR_USE, create_listen_socket() gives up after 10 attempts
-    // 100 ms apart (tcp_server.c:83-95), and tcp_server_init() returns ESP_FAIL. Reachable
-    // when cache_modbus_port equals a bridge port that a POST /settings brought up while this
-    // task was still waiting for the network: httpd is already answering by then, and main.c's
-    // comment above port_manager_init_subsystems() sizes that window.
+    // descriptor, event group, connection mutex, acceptor task (tcp_server.c:598-643). The
+    // third is a refused listen(), which needs the port to be held by ANY other listener on
+    // this device — a bridge port, or httpd on web_port: lwIP's tcp_listen() finds an equal
+    // address and returns ERR_USE, create_listen_socket() gives up after 10 attempts 100 ms
+    // apart (tcp_server.c:130-142), and tcp_server_init() returns ESP_FAIL. Two ways to
+    // reach it. cache_modbus_port equal to a BRIDGE port that a POST /settings brought up
+    // while this task was still waiting for the network: httpd is already answering by then,
+    // and main.c's comment above port_manager_init_subsystems() sizes that window. Or an
+    // INHERITED cache_modbus_port == web_port, which validate_port_collisions() in
+    // settings_manager.c deliberately accepts as a warning and stores in NVS so the device
+    // stays reachable to be fixed over REST — httpd bound that port back in main.c, before
+    // this function ran, and keeps it.
     //
-    // What does NOT arrive here, against the obvious guess: an INHERITED
-    // cache_modbus_port == web_port, which validate_port_collisions() in settings_manager.c
-    // deliberately accepts as a warning and stores in NVS so the device stays reachable to be
-    // fixed over REST. httpd listens on PF_INET6/in6addr_any (httpd_main.c:353,361-367,377-386) while
-    // this socket is AF_INET/INADDR_ANY, and both set SO_REUSEADDR: tcp_bind() skips the
-    // address-in-use check when both pcbs have it (lwIP tcp.c:721-731), and tcp_listen()'s
-    // duplicate check uses ip_addr_eq(), which is 0 whenever IP_GET_TYPE differs
-    // (ip_addr.h:219). So bind() and listen() both succeed and the port keeps TWO listeners,
-    // which breaks HTTP on it — a real defect, tracked separately, but not this error path
-    // and not a reason to reboot.
+    // That second one used to be the exception, and the comment here used to say so: while
+    // this socket was AF_INET/INADDR_ANY and httpd's was PF_INET6/in6addr_any, lwIP compared
+    // the two addresses as unequal, both listens succeeded, and the port kept TWO listeners
+    // answering alternate connections instead of failing here. Fixed by binding this socket
+    // the same dual-stack way httpd does; the mechanics are in create_listen_socket()
+    // (tcp_server.c) and are not repeated here.
     //
     // A reboot clears none of the three: out of memory and a socket table with no free entry
-    // recur on a deterministic boot path, and the bridge-port collision merely moves, since
-    // cache_modbus_server_init() runs above the port loop below and after a reboot takes the
-    // port from the bridge instead. Keeping such a configuration serviceable is the settings
-    // side's job; not rebooting over it is this side's.
+    // recur on a deterministic boot path; the web_port collision comes back identically,
+    // because httpd is started before this function on every boot; and the bridge-port
+    // collision merely moves, since cache_modbus_server_init() runs above the port loop below
+    // and after a reboot takes the port from the bridge instead. Keeping such a configuration
+    // serviceable is the settings side's job; not rebooting over it is this side's.
     //
     // What a dead cache Modbus server degrades to — narrow, and reversible from settings:
     //   - Lost: the Modbus TCP interface for READING the cache (FC01-FC04 answered from
@@ -554,9 +555,9 @@ esp_err_t port_manager_init(void)
         if (cache_port <= 0) cache_port = CACHE_MODBUS_SERVER_PORT;
         esp_err_t cache_ret = cache_modbus_server_init(cache_port);
         if (cache_ret != ESP_OK) {
-            // The port is in the message on purpose: a collision with a bridge port is one of
-            // the three causes above, and the number is what tells the reader which listener
-            // this one lost the port to.
+            // The port is in the message on purpose: a collision with another listener — a
+            // bridge port or httpd's web_port — is one of the three causes above, and the
+            // number is what tells the reader which listener this one lost the port to.
             ESP_LOGE(TAG, "cache_modbus_server_init(port %d) failed: %s - continuing without "
                           "the cache Modbus TCP interface, the gateway keeps running",
                      cache_port, esp_err_to_name(cache_ret));
