@@ -2,6 +2,7 @@
 #include "console_log.h"
 
 #include "modbus_tcp_internal.h"
+#include "modbus_tcp.h"
 #include "mb_device.h"
 
 #include <stdint.h>
@@ -17,6 +18,8 @@ extern esp_err_t mock_tcp_send_result;
 extern bool      mock_tcp_send_overflow;
 extern int       mock_tcp_send_captured_called;
 extern uint32_t  mock_tcp_send_generation;
+extern tcp_desc_t *mock_tcp_server_init_desc;
+extern int         mock_tcp_server_deinit_count;
 void mock_tcp_server_reset(void);
 
 /* ---- Mock state from mocks/packet_queue.c ------------------------------- */
@@ -46,6 +49,8 @@ void mock_mb_device_reset(void);
 
 /* ---- Mock state from mocks/serial.c ------------------------------------- */
 extern int mock_serial_send_count;
+extern serial_desc_t *mock_serial_init_return;
+extern int mock_serial_deinit_count;
 void mock_serial_reset(void);
 
 /* ---- Context index used by all tests ------------------------------------ */
@@ -53,6 +58,32 @@ void mock_serial_reset(void);
 
 /* A static tcp_desc used so on_tcp_conn_close can find the ctx */
 static tcp_desc_t s_test_tcp_desc;
+
+/* Descriptors the mocked serial_init()/tcp_server_init() hand out to
+ * modbus_tcp_init_port(). One of each, on purpose: the tests below init two ports in a row
+ * and both get these same two addresses, which is exactly the situation the fix is about —
+ * an allocator handing a just-freed descriptor straight back to the next caller. */
+static serial_desc_t s_init_serial_desc;
+static tcp_desc_t    s_init_tcp_desc;
+
+/* Arm the mocks for a modbus_tcp_init_port() run: every port context back to power-on, and
+ * the two descriptors above ready to be handed out. */
+static void arrange_init_port_mocks(void)
+{
+    modbus_tcp_test_reset_all_ctx();
+    memset(&s_init_serial_desc, 0, sizeof(s_init_serial_desc));
+    memset(&s_init_tcp_desc, 0, sizeof(s_init_tcp_desc));
+    mock_serial_init_return   = &s_init_serial_desc;
+    mock_tcp_server_init_desc = &s_init_tcp_desc;
+}
+
+static serial_config_t make_serial_config(void)
+{
+    serial_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.baudrate = 9600;   /* only field modbus_tcp_init_port() reads (response timeout) */
+    return cfg;
+}
 
 /* ---- Reassembly state, via the real mbtcp_reasm API ---------------------- */
 /* Stream reassembly lives in bridge/mbtcp_reasm and is covered end-to-end by
@@ -97,6 +128,11 @@ void setUp(void)
      * bookkeeping is a fixed-size array — reset it per test so the count cannot accumulate
      * across the suite and trip the mock's own bounds assertion. */
     mock_freertos_event_groups_reset();
+    /* Tests that drive modbus_tcp_init_port() leave a real context behind — including a
+     * fully initialized one at index 1 — and xTaskCreate's should_fail latch is sticky, so
+     * both have to be cleared here or they leak into the next test. */
+    mock_freertos_task_reset();
+    modbus_tcp_test_reset_all_ctx();
     memset(&s_test_tcp_desc, 0, sizeof(s_test_tcp_desc));
     modbus_tcp_test_init_ctx(TEST_CTX_IDX, (packet_queue_handle)1, &s_test_tcp_desc);
 }
@@ -798,6 +834,239 @@ void test_serial_response_uses_captured_connection_generation(void)
         "not the descriptor's current one");
 }
 
+/* ---- MBTCP-U-033: a failed init must not leave the context holding freed objects ---- */
+/* C8. modbus_tcp_init_port() publishes the descriptors and handles into the module's own
+ * context BEFORE xTaskCreate(). When the task cannot be created the failure path destroys
+ * every one of them, but ctx->initialized is never set — so modbus_tcp_deinit_port() takes
+ * its "Not initialized" early return and no teardown will ever come back for this context.
+ * Whatever the failure path leaves behind therefore stays there for the lifetime of the
+ * device (or until the same index is initialised again).
+ *
+ * Mutant: drop the four `ctx->... = NULL` stores from that failure block -> this goes red on
+ * all four fields. It does NOT depend on the lookup hardening, which cannot reach into the
+ * context; that is covered separately by MBTCP-U-035/036. */
+void test_failed_task_create_clears_module_context(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-033: init failing at xTaskCreate leaves no freed descriptor or handle in the context");
+    LOG_MESSAGE();
+
+    arrange_init_port_mocks();
+    mock_xTaskCreate_data.should_fail = true;
+
+    serial_config_t cfg        = make_serial_config();
+    serial_desc_t  *serial_out = NULL;
+    tcp_desc_t     *tcp_out    = NULL;
+
+    esp_err_t err = modbus_tcp_init_port(0, &cfg, BRIDGE_MODE_SERVER, 502, 0, &serial_out, &tcp_out);
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, err, "init must fail when the server task cannot be created");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_xTaskCreate_data.called,
+        "the run must have got as far as xTaskCreate, i.e. past the point where the context is published");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_serial_deinit_count,
+        "the failure path must free the serial descriptor");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_tcp_server_deinit_count,
+        "the failure path must free the TCP descriptor");
+
+    /* Out-parameters (the caller's copies) — already covered by commit 4e01d88, asserted
+     * here so a regression in either half is attributed to the right one. */
+    TEST_ASSERT_NULL_MESSAGE(serial_out, "the serial out-parameter must not name a freed descriptor");
+    TEST_ASSERT_NULL_MESSAGE(tcp_out, "the TCP out-parameter must not name a freed descriptor");
+
+    /* The module's own copies, which nothing will ever clean up after this. */
+    TEST_ASSERT_FALSE_MESSAGE(modbus_tcp_test_get_ctx_initialized(0),
+        "a failed init must not mark the port initialized");
+    TEST_ASSERT_NULL_MESSAGE(modbus_tcp_test_get_ctx_serial_desc(0),
+        "ctx->serial_desc must not survive the failure pointing at the freed descriptor");
+    TEST_ASSERT_NULL_MESSAGE(modbus_tcp_test_get_ctx_tcp_desc(0),
+        "ctx->tcp_desc must not survive the failure pointing at the freed descriptor");
+    TEST_ASSERT_NULL_MESSAGE(modbus_tcp_test_get_ctx_queue(0),
+        "ctx->tcp_queue must not survive the failure pointing at the deleted queue");
+    TEST_ASSERT_NULL_MESSAGE(modbus_tcp_test_get_ctx_event_group(0),
+        "ctx->event_group must not survive the failure pointing at the deleted event group");
+}
+
+/* ---- MBTCP-U-034: nothing resolves to the context a failed init left behind --------- */
+/* The invariant the caller cares about, stated in the terms the bug appears in: after a
+ * failed init, the addresses that port used must not resolve to anything.
+ *
+ * Guarded twice over — by the context clear (MBTCP-U-033) and by the lookups skipping
+ * uninitialized contexts (MBTCP-U-035) — so reverting either one alone leaves this green;
+ * it goes red only with both reverted. It is here as the statement of the invariant, not as
+ * the discriminating test for either half. */
+void test_failed_task_create_leaves_no_resolvable_context(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-034: after a failed init, the descriptors it used resolve to no context");
+    LOG_MESSAGE();
+
+    arrange_init_port_mocks();
+    mock_xTaskCreate_data.should_fail = true;
+
+    serial_config_t cfg        = make_serial_config();
+    serial_desc_t  *serial_out = NULL;
+    tcp_desc_t     *tcp_out    = NULL;
+
+    TEST_ASSERT_NOT_EQUAL(ESP_OK,
+        modbus_tcp_init_port(0, &cfg, BRIDGE_MODE_SERVER, 502, 0, &serial_out, &tcp_out));
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, modbus_tcp_test_find_ctx_idx_by_serial_desc(&s_init_serial_desc),
+        "the serial descriptor of a failed init must resolve to no context");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, modbus_tcp_test_find_ctx_idx_by_tcp_desc(&s_init_tcp_desc),
+        "the TCP descriptor of a failed init must resolve to no context");
+}
+
+/* ---- MBTCP-U-035: an uninitialized context is never resolved ------------------------ */
+/* The lookups match on the raw pointer, and descriptors are heap objects, so a pointer
+ * alone cannot identify a context: a torn-down (or failed) port may still record an address
+ * the allocator has since handed to the OTHER port. The initialized flag is the only field
+ * that tells the two apart, which is why the lookups check it rather than leaving it to the
+ * callers.
+ *
+ * Mutant: drop the `if (!...initialized) continue;` from either lookup -> this goes red for
+ * that lookup. Independent of the context clear: the state is set up here directly. */
+void test_uninitialized_context_is_never_resolved(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-035: a context that is not initialized is skipped however its pointers compare");
+    LOG_MESSAGE();
+
+    /* The fixture leaves port 0 up. Take the descriptors it is registered under... */
+    serial_desc_t *serial_desc = modbus_tcp_test_get_ctx_serial_desc(TEST_CTX_IDX);
+    tcp_desc_t    *tcp_desc    = modbus_tcp_test_get_ctx_tcp_desc(TEST_CTX_IDX);
+    TEST_ASSERT_NOT_NULL(serial_desc);
+    TEST_ASSERT_NOT_NULL(tcp_desc);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(TEST_CTX_IDX, modbus_tcp_test_find_ctx_idx_by_serial_desc(serial_desc),
+        "precondition: while the port is up its serial descriptor resolves to it");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(TEST_CTX_IDX, modbus_tcp_test_find_ctx_idx_by_tcp_desc(tcp_desc),
+        "precondition: while the port is up its TCP descriptor resolves to it");
+
+    /* ...and take the port down while its pointers are still recorded — the state left by
+     * modbus_tcp_deinit_port() before it clears them, and the one a failed init used to
+     * leave permanently. */
+    modbus_tcp_test_set_ctx_initialized(TEST_CTX_IDX, false);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, modbus_tcp_test_find_ctx_idx_by_serial_desc(serial_desc),
+        "a serial descriptor recorded in an uninitialized context must not resolve to it");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, modbus_tcp_test_find_ctx_idx_by_tcp_desc(tcp_desc),
+        "a TCP descriptor recorded in an uninitialized context must not resolve to it");
+}
+
+/* ---- MBTCP-U-036: a NULL descriptor resolves to no context -------------------------- */
+/* The lookups' NULL rejection is defence in depth, and this test is built to match: it
+ * constructs the one state in which dropping that guard changes an answer, and that state
+ * is DELIBERATELY SYNTHETIC because production cannot reach it.
+ *
+ * A NULL needle can only match a context that holds NULL in the field under test, and every
+ * such context in production has initialized == false — modbus_tcp_init_port() writes both
+ * descriptors before it sets the flag, modbus_tcp_deinit_port() clears the flag before it
+ * clears them — so the `if (!...initialized) continue;` skip already rejects all of them and
+ * the NULL guard never decides anything. Pointing this test at the fixture's down port
+ * (index 1, both fields NULL) would therefore assert nothing: it would stay green with the
+ * guard deleted.
+ *
+ * So the test manufactures the state the guard is FOR: an initialized context holding NULL.
+ * That is what makes "a NULL needle resolves to nothing" a property of these two functions
+ * rather than a by-product of the two orderings above — the whole reason the guard is worth
+ * one comparison, and the property a future caller or a reordered init/deinit would rely on.
+ *
+ * Mutant: drop the NULL rejection from either lookup -> this goes red for that lookup,
+ * resolving to the manufactured context at index 1. Note it is NOT a duplicate of
+ * MBTCP-U-035: there the flag is false and the pointers are real, here the flag is true and
+ * the needle is NULL, so each mutant kills exactly one of the two. */
+void test_null_descriptor_resolves_to_no_context(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-036: a NULL needle matches no context, not even an initialized one holding NULL");
+    LOG_MESSAGE();
+
+    /* The fixture leaves port 1 zeroed, i.e. both descriptor fields NULL. Mark it
+     * initialized so the `!initialized` skip stops covering for the NULL guard, and the
+     * NULL guard is the only thing left that can reject the needle. */
+    TEST_ASSERT_NULL_MESSAGE(modbus_tcp_test_get_ctx_serial_desc(1),
+        "precondition: the second port context is zeroed, so its serial_desc is NULL");
+    TEST_ASSERT_NULL_MESSAGE(modbus_tcp_test_get_ctx_tcp_desc(1),
+        "precondition: the second port context is zeroed, so its tcp_desc is NULL");
+    modbus_tcp_test_set_ctx_initialized(1, true);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, modbus_tcp_test_find_ctx_idx_by_serial_desc(NULL),
+        "a NULL serial descriptor must not resolve to any context");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, modbus_tcp_test_find_ctx_idx_by_tcp_desc(NULL),
+        "a NULL TCP descriptor must not resolve to any context");
+}
+
+/* ---- MBTCP-U-037: recycled descriptor addresses route to the LIVE port -------------- */
+/* The end-to-end scenario C8 describes. Port 1 (index 0) runs out of heap at task creation;
+ * everything it allocated is freed. Port 2 (index 1) then comes up and the allocator hands
+ * back the very same blocks — the mocks make that certain rather than likely, which is the
+ * point of the test. Both descriptor addresses now appear in two contexts, and the lookups
+ * scan from index 0, so the dead context is the one they would reach first.
+ *
+ * Traffic for port 2 must reach port 2. With the bug it resolved to the dead context at
+ * index 0, whose initialized flag is false, and every packet on the healthy port was
+ * dropped with "Context is not initialized" — a silently dead port.
+ *
+ * Like MBTCP-U-034 this is protected by both halves of the fix and goes red only when both
+ * are reverted. */
+void test_recycled_descriptors_route_to_the_live_port(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "MBTCP-U-037: port 1 fails at task creation, port 2 reuses its descriptors -> traffic reaches port 2");
+    LOG_MESSAGE();
+
+    arrange_init_port_mocks();
+
+    serial_config_t cfg     = make_serial_config();
+    serial_desc_t  *serial0 = NULL, *serial1 = NULL;
+    tcp_desc_t     *tcp0    = NULL, *tcp1    = NULL;
+
+    /* Port 1 (index 0): out of heap at task creation. */
+    mock_xTaskCreate_data.should_fail = true;
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK,
+        modbus_tcp_init_port(0, &cfg, BRIDGE_MODE_SERVER, 502, 0, &serial0, &tcp0),
+        "port 1 must fail at task creation");
+
+    /* Port 2 (index 1): comes up, and gets the freed addresses back. */
+    mock_xTaskCreate_data.should_fail = false;
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK,
+        modbus_tcp_init_port(1, &cfg, BRIDGE_MODE_SERVER, 503, 0, &serial1, &tcp1),
+        "port 2 must initialize");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(&s_init_serial_desc, serial1,
+        "the scenario requires port 2 to be handed the address port 1 just freed");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(&s_init_tcp_desc, tcp1,
+        "the scenario requires port 2 to be handed the address port 1 just freed");
+    TEST_ASSERT_TRUE_MESSAGE(modbus_tcp_test_get_ctx_initialized(1), "port 2 must be initialized");
+
+    /* Both descriptors must resolve to the live port, not to the dead lower-index one. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, modbus_tcp_test_find_ctx_idx_by_tcp_desc(&s_init_tcp_desc),
+        "the recycled TCP descriptor must resolve to the live port");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, modbus_tcp_test_find_ctx_idx_by_serial_desc(&s_init_serial_desc),
+        "the recycled serial descriptor must resolve to the live port");
+
+    /* End to end, entering where tcp_server does — with a descriptor and nothing else.
+     * Half a frame must land in the LIVE port's reassembler. */
+    uint8_t req[12];
+    build_fc03_request(req, 0x00C8, 1, 0, 1);
+    modbus_tcp_test_deliver_tcp_data(&s_init_tcp_desc, 70, req, 6);
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(6u, mbtcp_reasm_pending(modbus_tcp_test_get_reasm(1), 70),
+        "the live port must have buffered the partial frame");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0u, mbtcp_reasm_pending(modbus_tcp_test_get_reasm(0), 70),
+        "the dead port must not have seen the bytes");
+
+    /* ...and the completed frame must reach the queue instead of being dropped as
+     * "Context is not initialized". */
+    modbus_tcp_test_deliver_tcp_data(&s_init_tcp_desc, 70, req + 6, 6);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_pq_push_count,
+        "the completed frame must be queued by the live port");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(12u, mock_pq_packets[0].len,
+        "the queued frame must be the whole 12-byte request");
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -833,6 +1102,12 @@ int main(void)
     RUN_TEST(test_conn_close_keeps_pending_for_other_client);
     RUN_TEST(test_queued_request_carries_its_connection_identity_to_pending);
     RUN_TEST(test_serial_response_uses_captured_connection_generation);
+
+    RUN_TEST(test_failed_task_create_clears_module_context);
+    RUN_TEST(test_failed_task_create_leaves_no_resolvable_context);
+    RUN_TEST(test_uninitialized_context_is_never_resolved);
+    RUN_TEST(test_null_descriptor_resolves_to_no_context);
+    RUN_TEST(test_recycled_descriptors_route_to_the_live_port);
 
     return UNITY_END();
 }

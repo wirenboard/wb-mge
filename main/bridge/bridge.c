@@ -353,10 +353,21 @@ esp_err_t bridge_port_deinit(unsigned index)
      * runs on the httpd task for every GET /info, which the web UI polls continuously, and
      * dereferences bridge_ctx[index].tcp_desc. Nothing serialises the two, so ordering is
      * the whole defence — the same clear-then-free ordering that modbus_tcp_deinit_port()
-     * applies to its own context, but for a DIFFERENT reason. There the danger is a stale
-     * pointer still MATCHING in find_ctx_by_tcp_desc()/find_ctx_by_serial_desc() once the
-     * address is recycled — its long note opens by saying no producer dereferences it. Here
-     * it is a genuine concurrent dereference of the freed descriptor, by the httpd task.
+     * applies to its own context, but for a DIFFERENT reason. There the clear is defence in
+     * depth: a stale pointer used to be able to MATCH in find_ctx_by_tcp_desc()/
+     * find_ctx_by_serial_desc() once the address was recycled, and those lookups now skip
+     * contexts that are not initialized, so the flag is what guards it.
+     *
+     * What makes a flag enough there and not enough here is NOT that this side lacks one: it
+     * has exactly the same flag, bridge_ctx[index].initialized, and
+     * tcp_server_active_connections() above gates on it. The difference is where the test
+     * sits relative to the memory access. There it is INSIDE the lookup, and what the lookup
+     * does with the stale pointer is COMPARE it — so the worst a missing flag buys is a
+     * mis-identified context, never a read of freed memory, and the paths that go on to
+     * dereference the descriptor are held safe by the task joins that note describes rather
+     * than by the flag. Here the httpd task tests the flag and then dereferences the
+     * descriptor itself: a check-then-use gap on memory another task is freeing, which no
+     * flag can close.
      *
      * Ordering alone is NOT sufficient here, and this note should not be read as claiming
      * it is. The residual interleaving: the httpd task passes the `initialized` check and

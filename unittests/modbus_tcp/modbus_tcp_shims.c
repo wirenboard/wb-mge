@@ -22,12 +22,15 @@
 
 /* Per-port stand-in serial descriptors, used ONLY as lookup keys.
  *
- * The serial mock returns NULL from serial_init(), so a context set up by these shims used
- * to be left with serial_desc == NULL. process_data_from_serial() resolves its context with
- * find_ctx_by_serial_desc(), which scans for the first context whose serial_desc matches —
- * and NULL matched context 0. That happened to be TEST_CTX_IDX, so the shim appeared to
- * work while in fact ignoring its ctx_idx argument entirely: pointing the tests at any
- * other port would have silently driven port 0 instead.
+ * serial_init() hands back mock_serial_init_return, which is NULL unless a test sets it, so
+ * a context set up by these shims used to be left with serial_desc == NULL.
+ * process_data_from_serial() resolves its context with find_ctx_by_serial_desc(), which
+ * scans for the first context whose serial_desc matches — and NULL matched context 0. That
+ * happened to be TEST_CTX_IDX, so the shim appeared to work while in fact ignoring its
+ * ctx_idx argument entirely: pointing the tests at any other port would have silently
+ * driven port 0 instead. (The lookup now rejects a NULL needle outright, so the same
+ * mistake would produce no match at all rather than the wrong port — but a distinct key is
+ * still what makes the lookup EXACT rather than merely non-NULL.)
  *
  * A distinct non-NULL key per port makes the lookup exact for every ctx_idx. Nothing ever
  * dereferences these: process_data_from_serial() uses the pointer only to find its context,
@@ -56,6 +59,62 @@ void modbus_tcp_test_init_ctx(unsigned ctx_idx, packet_queue_handle queue, tcp_d
         ctx->reasm.slots[i].sock = -1;
         ctx->reasm.slots[i].len  = 0;
     }
+}
+
+void modbus_tcp_test_reset_all_ctx(void)
+{
+    memset(mb_tcp_task_ctx, 0, sizeof(mb_tcp_task_ctx));
+}
+
+int modbus_tcp_test_find_ctx_idx_by_serial_desc(const serial_desc_t *serial_desc)
+{
+    const mb_tcp_task_ctx_t *ctx = find_ctx_by_serial_desc(serial_desc);
+    return (ctx == NULL) ? -1 : (int)(ctx - mb_tcp_task_ctx);
+}
+
+int modbus_tcp_test_find_ctx_idx_by_tcp_desc(const tcp_desc_t *tcp_desc)
+{
+    const mb_tcp_task_ctx_t *ctx = find_ctx_by_tcp_desc(tcp_desc);
+    return (ctx == NULL) ? -1 : (int)(ctx - mb_tcp_task_ctx);
+}
+
+serial_desc_t *modbus_tcp_test_get_ctx_serial_desc(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].serial_desc;
+}
+
+tcp_desc_t *modbus_tcp_test_get_ctx_tcp_desc(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].tcp_desc;
+}
+
+packet_queue_handle modbus_tcp_test_get_ctx_queue(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].tcp_queue;
+}
+
+EventGroupHandle_t modbus_tcp_test_get_ctx_event_group(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].event_group;
+}
+
+bool modbus_tcp_test_get_ctx_initialized(unsigned ctx_idx)
+{
+    return mb_tcp_task_ctx[ctx_idx].initialized;
+}
+
+void modbus_tcp_test_set_ctx_initialized(unsigned ctx_idx, bool initialized)
+{
+    mb_tcp_task_ctx[ctx_idx].initialized = initialized;
+}
+
+/* Enter through the production receive handler with only a descriptor in hand — the same
+ * call tcp_server makes — so the context is resolved by find_ctx_by_tcp_desc() and not by
+ * the test. */
+void modbus_tcp_test_deliver_tcp_data(tcp_desc_t *desc, int client_sock,
+                                      uint8_t *data, size_t len)
+{
+    process_data_from_tcp(desc, client_sock, data, len);
 }
 
 /* Hand the test the port's reassembler so it can query it through the real

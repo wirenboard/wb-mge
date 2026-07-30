@@ -13,6 +13,17 @@ bool      mock_tcp_send_overflow = false;  /* set when len > sizeof(mock_tcp_sen
 int       mock_tcp_send_captured_called = 0;
 uint32_t  mock_tcp_send_generation = 0;
 
+/* Descriptor tcp_server_init() publishes through its out-parameter. NULL by default, which
+ * the mock reports as an init FAILURE — see tcp_server_init() below. A test that drives
+ * modbus_tcp_init_port() must point this at a real tcp_desc_t, because the module writes
+ * desc->close_handler right after the call.
+ *
+ * A settable POINTER rather than a per-call allocation, for the same reason as
+ * mock_serial_init_return: the aliasing tests hand two consecutive inits the SAME address
+ * to reproduce a just-freed descriptor being recycled by the next caller. */
+tcp_desc_t *mock_tcp_server_init_desc   = NULL;
+int         mock_tcp_server_deinit_count = 0;
+
 void mock_tcp_server_reset(void)
 {
     mock_tcp_send_len      = 0;
@@ -22,12 +33,27 @@ void mock_tcp_server_reset(void)
     mock_tcp_send_captured_called = 0;
     mock_tcp_send_generation = 0;
     memset(mock_tcp_send_buf, 0, sizeof(mock_tcp_send_buf));
+    mock_tcp_server_init_desc    = NULL;
+    mock_tcp_server_deinit_count = 0;
 }
 
 esp_err_t tcp_server_init(int port, tcp_receive_handler_t handler, tcp_desc_t **desc_out)
 {
-    (void)port; (void)handler; (void)desc_out;
-    return 0;
+    (void)port;
+    if (mock_tcp_server_init_desc == NULL) {
+        /* Not armed. Report failure and write nothing, exactly as the real
+         * tcp_server_init() does — it only touches the out-parameter on success. Returning
+         * ESP_OK with *desc_out = NULL would be a contract the real one never offers, and
+         * modbus_tcp_init_port() dereferences the descriptor immediately afterwards
+         * ((*tcp_desc)->close_handler = ...), so a test that forgot to arm the mocks would
+         * segfault inside production code instead of failing on its own terms. */
+        return ESP_FAIL;
+    }
+    mock_tcp_server_init_desc->receive_handler = handler;
+    if (desc_out != NULL) {
+        *desc_out = mock_tcp_server_init_desc;
+    }
+    return ESP_OK;
 }
 
 esp_err_t tcp_server_send(tcp_desc_t *desc, int client_sock, uint8_t *data, size_t len)
@@ -65,5 +91,6 @@ esp_err_t tcp_server_connected(tcp_desc_t *desc)
 esp_err_t tcp_server_deinit(tcp_desc_t *desc)
 {
     (void)desc;
+    mock_tcp_server_deinit_count++;
     return 0;
 }

@@ -65,10 +65,52 @@ static inline bool check_task_exit_req(const mb_tcp_task_ctx_t *ctx)
     return false;
 }
 
+/* Descriptor -> context lookups.
+ *
+ * Both scan from index 0 and match on the RAW POINTER, which on its own is not enough to
+ * identify a context, so both apply the same two guards:
+ *
+ *  - a NULL needle never matches. Defence in depth, with no reachable failure behind it
+ *    today — said plainly rather than dressed up as a live bug. For a NULL needle to
+ *    resolve to anything, some context would have to hold NULL in the matched field WHILE
+ *    its initialized flag is set, and no path builds that: modbus_tcp_init_port() writes
+ *    both descriptors before it sets the flag (last of all), and modbus_tcp_deinit_port()
+ *    clears the flag before it clears them again. Every context a NULL could compare equal
+ *    to is therefore already rejected by the second guard below. Nor does any production
+ *    caller pass NULL: all three (process_data_from_serial, process_data_from_tcp,
+ *    on_tcp_conn_close) are reached as desc->handler(desc, ...), so the needle is the
+ *    descriptor whose field was just read. Kept anyway, at one comparison: it makes "a NULL
+ *    needle resolves to nothing" a property of these two functions instead of a
+ *    consequence of those two orderings, which a future caller — or a reordered
+ *    init/deinit — could take away without ever touching this file.
+ *
+ *  - a context whose initialized flag is false is skipped, however its pointers compare.
+ *    Descriptors are heap objects: once a port is torn down — or its init fails after
+ *    publishing them here — the allocator may hand the very same address to the OTHER
+ *    port's serial_init()/tcp_server_init(). Both contexts then match the same pointer and
+ *    the scan returns whichever comes first, so the healthy port's traffic could be
+ *    resolved to a dead context. The flag is the only field that tells the two apart, which
+ *    is why it belongs in the match rather than only in the callers.
+ *
+ * The two receive paths — process_data_from_serial() and process_data_from_tcp() — still
+ * re-check the flag: modbus_tcp_deinit_port() clears it from another task, so it can go
+ * false between this scan and their use of the context. on_tcp_conn_close(), the third
+ * caller, does not re-check and does not need to: all it touches is this port's own
+ * reassembly slots and pending-request bookkeeping, and deinit releases the reassembler
+ * only after tcp_server_deinit() has joined every receiver task — i.e. after the last task
+ * that can call this hook is gone.
+ */
+
 // Find context by serial_desc_t descriptor
 static mb_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* serial_desc)
 {
+    if (serial_desc == NULL) {
+        return 0;
+    }
     for (unsigned i = 0; i < MODBUS_TCP_MAX_TASK_COUNT; i++) {
+        if (!mb_tcp_task_ctx[i].initialized) {
+            continue;
+        }
         if (mb_tcp_task_ctx[i].serial_desc == serial_desc) {
             return &mb_tcp_task_ctx[i];
         }
@@ -79,7 +121,13 @@ static mb_tcp_task_ctx_t* find_ctx_by_serial_desc(const serial_desc_t* serial_de
 // Find context by tcp_desc_t descriptor
 static mb_tcp_task_ctx_t* find_ctx_by_tcp_desc(const tcp_desc_t* tcp_desc)
 {
+    if (tcp_desc == NULL) {
+        return 0;
+    }
     for (unsigned i = 0; i < MODBUS_TCP_MAX_TASK_COUNT; i++) {
+        if (!mb_tcp_task_ctx[i].initialized) {
+            continue;
+        }
         if (mb_tcp_task_ctx[i].tcp_desc == tcp_desc) {
             return &mb_tcp_task_ctx[i];
         }
@@ -96,15 +144,26 @@ static void process_data_from_serial(serial_desc_t *desc, uint8_t *data, size_t 
 
     mb_tcp_task_ctx_t* ctx = find_ctx_by_serial_desc(desc);
     if (!ctx) {
-        // Not an error: modbus_tcp_deinit_port() clears ctx->serial_desc while this port's
-        // UART event task is still running (serial_deinit() joins it only afterwards), so a
-        // lookup miss is the normal signal of a teardown in progress. At ESP_LOGE this
-        // printed once per packet for the whole teardown window, on the UART event task,
-        // where a console line costs ~4 ms of blocking UART0 writes.
-        ESP_LOGD(TAG, "Unknown serial_desc in process_data_from_serial(), port is being deinitialized");
+        // Not an error: the lookup resolves only ports that are up, and this port's UART
+        // event task outlives that state — modbus_tcp_deinit_port() clears ctx->initialized
+        // (and, after the task join, ctx->serial_desc) while the UART event task is still
+        // running, serial_deinit() joins it only afterwards. So a miss is the normal signal
+        // of a port that is not serving, not an impossible state. At ESP_LOGE this printed
+        // once per packet for the whole teardown window, on the UART event task, where a
+        // console line costs ~4 ms of blocking UART0 writes.
+        //
+        // Moving the flag test into the lookup lowered the level a teardown-window packet is
+        // logged at, deliberately. Between `initialized = false` and the later clear of
+        // ctx->serial_desc the lookup used to still resolve this context, so such a packet
+        // fell through to the ESP_LOGW below; it now stops here, at DEBUG. Same trade as the
+        // ESP_LOGE above and for the same reason: that warning also ran once per packet on
+        // this task, for a state that is expected rather than wrong.
+        ESP_LOGD(TAG, "No initialized port owns this serial_desc, dropping RTU packet");
         return;
     }
     if (!ctx->initialized) {
+        // Not redundant with the lookup's own check: the flag is cleared by
+        // modbus_tcp_deinit_port() from another task and can go false in between.
         ESP_LOGW(TAG, "Context is not initialized, skipping RTU packet");
         return;
     }
@@ -320,13 +379,18 @@ static void process_data_from_tcp(tcp_desc_t *desc, int client_sock, uint8_t *da
 
     mb_tcp_task_ctx_t* ctx = find_ctx_by_tcp_desc(desc);
     if (!ctx) {
-        // Same as in process_data_from_serial(): deinit clears ctx->tcp_desc while the TCP
-        // receiver tasks are still running (tcp_server_deinit() joins them only afterwards),
-        // so a lookup miss means "this port is being torn down", not "impossible state".
-        ESP_LOGD(TAG, "Unknown tcp_desc in process_data_from_tcp(), port is being deinitialized");
+        // Same as in process_data_from_serial(): deinit clears ctx->initialized (and later
+        // ctx->tcp_desc) while the TCP receiver tasks are still running — tcp_server_deinit()
+        // joins them only afterwards — so a lookup miss means "this port is not serving",
+        // not "impossible state". And the same deliberate level change: a packet that
+        // arrives after `initialized = false` but before ctx->tcp_desc is cleared used to
+        // reach the ESP_LOGW below and now stops here at DEBUG.
+        ESP_LOGD(TAG, "No initialized port owns this tcp_desc, dropping TCP packet");
         return;
     }
     if (!ctx->initialized) {
+        // Not redundant with the lookup's own check: the flag is cleared by
+        // modbus_tcp_deinit_port() from another task and can go false in between.
         ESP_LOGW(TAG, "Context is not initialized, skipping TCP packet");
         return;
     }
@@ -659,6 +723,28 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
         serial_deinit(*serial_desc);
         *tcp_desc    = NULL;
         *serial_desc = NULL;
+        /* Unlike every failure branch above, this one runs AFTER the block that published
+         * the descriptors and handles into the module's own context, so clearing the
+         * out-parameters is only half the job: ctx keeps its own copies of them, and
+         * everything they name is destroyed right here.
+         *
+         * ctx->initialized is never set on this path, so modbus_tcp_deinit_port() takes its
+         * "Not initialized" early return and will never clean this context up. Left as they
+         * were, the stale values would sit here until the same index is initialised again —
+         * for the lifetime of the device, in practice.
+         *
+         * All four fields, not just the two descriptors a lookup can match: the queue and
+         * the event group are destroyed immediately below, and leaving them behind would
+         * buy nothing but a context in which some of the freed handles are cleared and some
+         * are not. That is the same convention modbus_tcp_deinit_port() follows on the
+         * normal teardown path; ctx->task_handle, the fifth handle, is already NULL here
+         * because nothing ever assigned the one xTaskCreate() failed to produce. Clearing
+         * before those two deletes is fine — vEventGroupDelete() and packet_queue_delete()
+         * take the locals, not the context fields. */
+        ctx->serial_desc = NULL;
+        ctx->tcp_desc    = NULL;
+        ctx->tcp_queue   = NULL;
+        ctx->event_group = NULL;
         vEventGroupDelete(event_group);
         packet_queue_delete(queue_handle);
         mbtcp_reasm_deinit(&ctx->reasm);
@@ -698,30 +784,37 @@ esp_err_t modbus_tcp_deinit_port(unsigned index)
 
     /* Unregister both descriptors from the context before they are freed.
      *
-     * Not because a producer would otherwise dereference them — nothing here does, see the
-     * ordering note below — but because the CONTEXT LOOKUPS outlive this port. Both
-     * find_ctx_by_tcp_desc() and find_ctx_by_serial_desc() scan from index 0 and match on
-     * the raw pointer, and a later init of the OTHER port can get the same address back
-     * from calloc() in tcp_server_init() (or malloc() in serial_init()). A stale pointer
-     * left here then makes the lookup return THIS dead context, whose initialized flag is
-     * false — so every packet of the healthy new port would be answered with
-     * "Context is not initialized" and the port would be silently dead.
+     * Defence in depth rather than the guard itself. What keeps a recycled address from
+     * resolving to this dead context is the `initialized = false` above: both
+     * find_ctx_by_tcp_desc() and find_ctx_by_serial_desc() skip contexts that are not
+     * initialized, so even after a later init of the OTHER port gets one of these very
+     * addresses back from calloc() in tcp_server_init() (or malloc() in serial_init()), the
+     * scan can only return the live context. This clear adds that the dead context stops
+     * NAMING freed memory, so anything that reads the array without going through those
+     * lookups cannot be handed a destroyed descriptor. Together with the event-group, queue
+     * and task-handle clears further down — and mbtcp_reasm_deinit(), which NULLs its own
+     * mutex — that holds for every handle in the context, not just these two.
+     *
+     * No producer would dereference them either — nothing here does, see the ordering note
+     * below.
      *
      * Deliberately here and not next to the `initialized = false` above: until the
      * EVENT_TASK_FINISHED join, modbus_tcp_server_task() is still running and still
      * dereferences ctx->serial_desc (send_rtu_request, serial_wait_tx_done), so clearing
-     * it earlier would trade this bug for a NULL dereference in that task.
+     * it earlier would trade a stale pointer for a NULL dereference in that task.
      *
-     * Known consequence of clearing tcp_desc BEFORE tcp_server_deinit(): every connection
-     * that deinit tears down calls on_tcp_conn_close(), whose find_ctx_by_tcp_desc() now
-     * misses, so mbtcp_reasm_close() is NOT called for any of them and their slots are left
-     * behind with sock != -1 and a non-zero len. Harmless as the reassembler stands —
-     * mbtcp_reasm_deinit() only destroys the mutex, and mbtcp_reasm_init() re-initialises
-     * the whole slot table on the next init — but it stops being harmless the moment a slot
-     * owns heap: that buffer would then leak once per connection alive at teardown. Give
-     * mbtcp_reasm_deinit() the job of releasing every slot if that day comes; do not try to
-     * fix it by moving this clear after tcp_server_deinit(), which would reintroduce the
-     * stale-lookup bug described above. */
+     * Known consequence, and it now belongs to the flag rather than to this clear: from
+     * `initialized = false` onwards find_ctx_by_tcp_desc() misses, so on_tcp_conn_close()
+     * does nothing — neither for the connections tcp_server_deinit() tears down below, nor
+     * for a client that happens to hang up during the task join above, which is the window
+     * this widened. mbtcp_reasm_close() is therefore not called for any of them and their
+     * slots are left behind with sock != -1 and a non-zero len. Harmless as the reassembler
+     * stands — mbtcp_reasm_deinit() only destroys the mutex, and mbtcp_reasm_init()
+     * re-initialises the whole slot table on the next init — but it stops being harmless the
+     * moment a slot owns heap: that buffer would then leak once per connection alive at
+     * teardown. Give mbtcp_reasm_deinit() the job of releasing every slot if that day comes.
+     * Moving this clear after tcp_server_deinit() would NOT bring the close hook back, since
+     * the lookup checks the flag first. */
     serial_desc_t *serial_desc = ctx->serial_desc;
     tcp_desc_t    *tcp_desc    = ctx->tcp_desc;
     ctx->serial_desc = NULL;
@@ -740,8 +833,11 @@ esp_err_t modbus_tcp_deinit_port(unsigned index)
      * first would let tcp_server_deinit() vSemaphoreDelete() and free() it while the UART
      * task is parked on that very mutex — tcp_server_deinit()'s active_connections wait
      * only accounts for receiver tasks, and the UART task is not one of them. Between the
-     * clear above and that join the UART task reads ctx->tcp_desc as NULL; every consumer
-     * of it rejects NULL, so such a packet is dropped rather than dereferenced.
+     * clear above and that join the UART task cannot even reach ctx->tcp_desc:
+     * process_data_from_serial() resolves its context through find_ctx_by_serial_desc(),
+     * which skips a context whose initialized flag is false. Were it to get that far it
+     * would read NULL, and every consumer of the descriptor rejects NULL — so either way
+     * such a packet is dropped rather than dereferenced.
      *
      * Nothing pulls the other way here: the TCP side of this port never touches
      * serial_desc. process_data_from_tcp() only queues frames (packet_queue / reasm), and
@@ -749,8 +845,31 @@ esp_err_t modbus_tcp_deinit_port(unsigned index)
      * above. */
     serial_deinit(serial_desc);
     tcp_server_deinit(tcp_desc);        /* waits for all receiver tasks to finish */
+
+    /* Clear each handle right after the call that destroys it, so this function leaves the
+     * same kind of context the xTaskCreate failure path in modbus_tcp_init_port() does: one
+     * that names nothing destroyed. One convention for the whole file — a half-cleared
+     * context is the state both of those notes argue against.
+     *
+     * Safe here because every task that could still be using either handle is provably
+     * gone. modbus_tcp_server_task() (event_group via check_task_exit_req, tcp_queue via
+     * fetch_tcp_request) was joined at the EVENT_TASK_FINISHED wait above; the UART event
+     * task (event_group via the EVENT_SERIAL_RESPONSE_RECEIVED set in
+     * process_data_from_serial) was joined inside serial_deinit(); the acceptor and every
+     * receiver task (tcp_queue via process_data_from_tcp) were joined inside
+     * tcp_server_deinit(). No producer is left alive at this point. The clears go AFTER the
+     * deletes for the obvious reason: these calls take the fields, not locals.
+     *
+     * task_handle goes with them. Its only reader is the "Not initialized" guard at the top
+     * of this function, which the cleared flag already fails, so this buys no new
+     * protection — but the task it names sets EVENT_TASK_FINISHED and immediately
+     * vTaskDelete(NULL)s itself, so from the join above onwards the handle is about to
+     * dangle, and leaving it would be the one exception to the convention. */
     vEventGroupDelete(ctx->event_group);
+    ctx->event_group = NULL;
     packet_queue_delete(ctx->tcp_queue);
+    ctx->tcp_queue   = NULL;
+    ctx->task_handle = NULL;
 
     /* Safe to delete now: all receiver tasks have exited and no one takes the mutex. */
     mbtcp_reasm_deinit(&ctx->reasm);
