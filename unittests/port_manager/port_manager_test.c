@@ -46,6 +46,7 @@ const char *mock_setting_items_get_port_mode(unsigned index);
 
 /* cache_modbus_server.c mock */
 extern int mock_cache_modbus_server_init_called;
+extern bool mock_cache_modbus_server_init_should_fail;
 void mock_cache_modbus_server_reset(void);
 
 /* serial.c mock */
@@ -1609,8 +1610,9 @@ void test_init_subsystems_reports_the_first_error_when_both_fail(void)
 void test_init_still_brings_ports_up_after_subsystem_failure(void)
 {
     /* The ports are what the device is installed for. A sniffer or cache mutex that
-     * would not allocate must not keep them down, and must not reach main.c's
-     * ESP_ERROR_CHECK(port_manager_init()) as an abort. */
+     * would not allocate must not keep them down, and must not come back out of
+     * port_manager_init() as a failure at all — main.c only logs one now (it no longer
+     * aborts on it), so a false error there reads as a degraded boot that never happened. */
     mock_cache_multimaster_init_should_fail = true;
     (void)port_manager_init_subsystems();
     mock_cache_multimaster_init_should_fail = false;
@@ -1623,27 +1625,81 @@ void test_init_still_brings_ports_up_after_subsystem_failure(void)
         "the port must come up regardless");
 }
 
-/* The ordering half of the invariant lives in main.c, which has no host test
- * harness: nothing links app_main() — the file is not in any unit test's SRC and
- * could not be, since it pulls in the whole firmware — so the only thing a unit test
- * can inspect is the source text. Reading a production source file from a test is a
- * deliberate exception, made here because the alternative is not checking the order
- * at all. Crude, but it is what catches the two calls being swapped back — and a swap
- * puts the sniffer WS endpoint back on the air ahead of the handles it drives.
- * Anchored on the statements, not on the identifiers, so the comments around them
- * (which name both functions) cannot satisfy the check on their own, and bracketed by
- * app_main()'s opening line and its closing brace, so hoisting either call into a
- * helper — above app_main() or below it — does not quietly pass either.
+void test_init_still_brings_ports_up_after_cache_modbus_server_failure(void)
+{
+    /* The cache Modbus server sits ABOVE the port loop, and its failure used to leave
+     * this function through ESP_RETURN_ON_ERROR: the ports were never reached and the
+     * error landed on main.c's ESP_ERROR_CHECK — abort, reboot, RS-485 down. Unlike the
+     * subsystems, this one does not fail only on out-of-memory: when cache_modbus_port
+     * equals a bridge port, both listeners are AF_INET/INADDR_ANY, so lwIP's tcp_listen()
+     * really does return ERR_USE and tcp_server_init() returns ESP_FAIL — and a reboot
+     * only swaps which of the two loses the port. Both ports are configured here, since
+     * the abort took every one of them down, not just the port that carries the cache. */
+    mock_cache_server_enabled = true;
+    mock_cache_modbus_server_init_should_fail = true;
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_setting_items_set_port_mode(1, PORT_MODE_TCP_BRIDGE_STR);
+
+    esp_err_t ret = port_manager_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_modbus_server_init_called,
+        "the server must still be attempted — it is enabled in NVS");
+    /* The ports come first: they are what the early return actually cost, and asserting
+     * them before the return code is what makes a reintroduced ESP_RETURN_ON_ERROR report
+     * the damage rather than just the error code. */
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "the ports must come up regardless — routing Modbus is what the device is for");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_TCP_BRIDGE, port_manager_get_mode(1),
+        "including the port that does not carry the cache");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "a dead cache Modbus server must not be reported as a port-manager failure: "
+        "main.c would abort the boot on it");
+}
+
+/* Overwrite the content of every //... and /*...*\/ comment with spaces, in place. Length,
+ * newlines and every non-comment byte are left alone, so positions in the buffer still line
+ * up with the file and the ordering test's before/after comparisons stay meaningful.
  *
- * What this does NOT prove: that the two statements are on the same execution path.
- * Both could sit in mutually exclusive #if branches, or one inside an if() the other
- * is not, and the text order would still read correctly. Establishing that needs a
- * parser, not strstr(); the swap this guards against is the failure that actually
- * happened. */
-void test_main_c_inits_subsystems_before_starting_httpd(void)
+ * Why: both checks below are strstr() over source text, where a string in a COMMENT counts
+ * as a hit. main.c already talks about ESP_ERROR_CHECK in prose three times (main.c:171,185,
+ * 223) and passes only because the macro name happens to be followed by ',' or ':' there
+ * rather than '('. Documenting this very rule as `ESP_ERROR_CHECK(port_manager_init())` in a
+ * comment is the natural thing to write, and it would fail a build whose code is correct.
+ *
+ * String literals are deliberately NOT tracked — a "//" inside one would blank the real code
+ * after it. That error points the safe way: the guard gets STRICTER, so main.c growing such a
+ * literal costs a false failure (noisy, and visible) rather than a silent pass. */
+static void blank_out_comments(char *s)
+{
+    for (size_t i = 0; s[i] != '\0'; i++) {
+        if (s[i] == '/' && s[i + 1] == '/') {
+            /* To end of line; the '\n' itself is left for the outer loop to step over. */
+            while (s[i] != '\0' && s[i] != '\n') s[i++] = ' ';
+            if (s[i] == '\0') break;
+        } else if (s[i] == '/' && s[i + 1] == '*') {
+            s[i] = ' ';
+            s[i + 1] = ' ';
+            i += 2;
+            while (s[i] != '\0' && !(s[i] == '*' && s[i + 1] == '/')) {
+                if (s[i] != '\n') s[i] = ' ';
+                i++;
+            }
+            if (s[i] == '\0') break;   /* unterminated block comment: nothing left to keep */
+            s[i] = ' ';
+            s[i + 1] = ' ';
+            i++;
+        }
+    }
+}
+
+/* Load main/main.c for the source-text checks below, or fail the test trying, and hand
+ * back the buffer it lives in, comments blanked. Split out because both of them need the
+ * whole file and the same "did it all arrive" reasoning; the buffer is static HERE rather
+ * than one per test, because two 64 KB statics is 128 KB of BSS in the host binary for the
+ * same file, and neither caller keeps the text past its own test. */
+static const char *read_main_c_source(void)
 {
     static char src[64 * 1024];
-
     FILE *f = fopen("../../main/main.c", "rb");
     TEST_ASSERT_NOT_NULL_MESSAGE(f, "main/main.c not readable — run this test from unittests/port_manager");
     size_t n = fread(src, 1, sizeof(src) - 1, f);
@@ -1652,17 +1708,45 @@ void test_main_c_inits_subsystems_before_starting_httpd(void)
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, n, "main/main.c is empty");
     /* A short read is the only proof the whole file arrived: fread() filling the buffer
      * to the brim looks exactly like a file that is one byte too long, and the anchors
-     * below would then be searched in a silently truncated copy — a missing statement
-     * would read as "the call is gone" and a missing closing brace as "the call is
-     * outside app_main()". Both are wrong answers, so refuse to answer at all. */
+     * in the callers would then be searched in a silently truncated copy — a missing
+     * statement would read as "the call is gone" and a missing closing brace as "the call
+     * is outside app_main()". Both are wrong answers, so refuse to answer at all. */
     TEST_ASSERT_LESS_THAN_MESSAGE(sizeof(src) - 1, n,
         "main/main.c no longer fits in src[] — grow the buffer, do not trust a truncated read");
+    blank_out_comments(src);
+    return src;
+}
 
-    /* "\nvoid app_main(" and not "void app_main(": the plain form matches the first
-     * mention anywhere in the file, so a comment naming the function above the
-     * definition would move the anchor up and hand the position checks below a
-     * meaningless bound. A definition starts at column 0; a mention inside a comment
-     * does not. */
+/* The ordering half of the invariant lives in main.c, which has no host test
+ * harness: nothing links app_main() — the file is not in any unit test's SRC and
+ * could not be, since it pulls in the whole firmware — so the only thing a unit test
+ * can inspect is the source text. Reading a production source file from a test is a
+ * deliberate exception, made here because the alternative is not checking the order
+ * at all. Crude, but it is what catches the two calls being swapped back — and a swap
+ * puts the sniffer WS endpoint back on the air ahead of the handles it drives.
+ * Anchored on the statements, not on the identifiers, and read_main_c_source() blanks
+ * comment content out, so the comments around them (which name both functions) cannot
+ * satisfy the check at all rather than merely being unlikely to. Bracketed by app_main()'s
+ * opening line and its closing brace, so hoisting either call into a helper — above
+ * app_main() or below it — does not quietly pass either.
+ *
+ * What this does NOT prove: that the two statements are on the same execution path.
+ * Both could sit in mutually exclusive #if branches, or one inside an if() the other
+ * is not, and the text order would still read correctly. Establishing that needs a
+ * parser, not strstr(); the swap this guards against is the failure that actually
+ * happened. */
+void test_main_c_inits_subsystems_before_starting_httpd(void)
+{
+    const char *src = read_main_c_source();
+
+    /* "\nvoid app_main(" and not "void app_main(": the plain form matches the first mention
+     * anywhere in the file, so anything naming the function ahead of its definition would
+     * move the anchor up and hand the position checks below a meaningless bound. The leading
+     * '\n' pins the match to column 0, which the definition (main.c:108) reaches and the
+     * mentions that survive do not — a call is indented inside a body, and a mention inside a
+     * string literal sits behind the opening quote (blank_out_comments() strips comments, not
+     * literals, by design). A bare file-scope prototype would still match, but main.c carries
+     * none: app_main() is declared by ESP-IDF's headers. */
     const char *app_main   = strstr(src, "\nvoid app_main(");
     const char *subsystems = strstr(src, "= port_manager_init_subsystems();");
     const char *httpd      = strstr(src, "= http_server_init();");
@@ -1690,6 +1774,73 @@ void test_main_c_inits_subsystems_before_starting_httpd(void)
         "http_server_init() must be called from inside app_main(), not from a helper");
     TEST_ASSERT_TRUE_MESSAGE(subsystems < httpd,
         "port_manager_init_subsystems() must be called BEFORE http_server_init() in main.c");
+}
+
+/* The other half of "a failed init must not cost the device its ports" is main.c's side
+ * of the call, and it is the same source-text exception as the ordering check above.
+ * port_manager_init() returns only ESP_OK today, so this guards the future: the moment a
+ * new error path appears in it, ESP_ERROR_CHECK would turn that path back into an
+ * abort() — reboot with the RS-485 ports down, on a cause that meets the next boot
+ * unchanged (out of memory) or that only moves to the other port (a cache/bridge port
+ * collision). Also insists the result is still assigned to pm_ret by that exact name, so the
+ * alternative regression (dropping the check entirely, `(void)port_manager_init();`) does not
+ * pass either, and a rename cannot hollow out the pm_ret check below. */
+
+/* Is there an ESP_ERROR_CHECK in src whose argument text starts with `name`?
+ *
+ * The regression class this closes: matching the literal "ESP_ERROR_CHECK(port_manager_init())"
+ * alone is trivial to walk past. `esp_err_t pm_ret = port_manager_init(); ESP_ERROR_CHECK(pm_ret);`
+ * keeps the required "= port_manager_init();" and never contains the literal, and so does
+ * `ESP_ERROR_CHECK( port_manager_init() )` with spaces inside the parens. Both abort the boot
+ * exactly as the removed call did. So skip whitespace after the macro name and after the '(',
+ * and check every occurrence — only one of them has to be the bad one.
+ *
+ * What it still cannot prove: this is strstr(), not a parser. Comments no longer count —
+ * read_main_c_source() blanks them — but a hit inside a string literal still does, and the same
+ * abort reached through another macro, a helper, or `if (pm_ret != ESP_OK) abort();` does not.
+ * The prefix match also fires on
+ * ESP_ERROR_CHECK(port_manager_init_subsystems()) — which main.c avoids for the same reason,
+ * so that is a wanted hit rather than a false one. */
+static bool esp_error_check_wraps(const char *src, const char *name)
+{
+    const char *macro = "ESP_ERROR_CHECK";
+    const size_t name_len = strlen(name);
+
+    for (const char *p = strstr(src, macro); p != NULL; p = strstr(p + 1, macro)) {
+        const char *arg = p + strlen(macro);
+        while (*arg == ' ' || *arg == '\t' || *arg == '\n' || *arg == '\r') arg++;
+        if (*arg != '(') continue;   /* ESP_ERROR_CHECK_WITHOUT_ABORT and friends */
+        arg++;
+        while (*arg == ' ' || *arg == '\t' || *arg == '\n' || *arg == '\r') arg++;
+        if (strncmp(arg, name, name_len) == 0) return true;
+    }
+    return false;
+}
+
+void test_main_c_does_not_abort_the_boot_on_a_port_manager_init_failure(void)
+{
+    const char *src = read_main_c_source();
+
+    TEST_ASSERT_NULL_MESSAGE(strstr(src, "ESP_ERROR_CHECK(port_manager_init())"),
+        "port_manager_init() must not be called under ESP_ERROR_CHECK — an abort() here reboots "
+        "the gateway instead of logging one degraded feature");
+    /* The full declaration, not the looser "= port_manager_init();": the esp_error_check_wraps()
+     * call below is keyed on the literal name pm_ret, so a rename in main.c would turn that guard
+     * into a tautology and let `ESP_ERROR_CHECK(ret);` through while the loose anchor still
+     * matched. Pinning the name here makes the rename fail loudly instead. Also still covers the
+     * other regression, dropping the result entirely: `(void)port_manager_init();`. */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(src, "esp_err_t pm_ret = port_manager_init();"),
+        "main.c must keep port_manager_init()'s result in pm_ret — the ESP_ERROR_CHECK(pm_ret) "
+        "guard below is keyed on that name");
+
+    TEST_ASSERT_FALSE_MESSAGE(esp_error_check_wraps(src, "port_manager_init"),
+        "no ESP_ERROR_CHECK may wrap port_manager_init(), whitespace inside the parens included");
+    TEST_ASSERT_FALSE_MESSAGE(esp_error_check_wraps(src, "pm_ret"),
+        "port_manager_init()'s result must not be handed to ESP_ERROR_CHECK either — "
+        "`pm_ret = port_manager_init(); ESP_ERROR_CHECK(pm_ret);` aborts just the same");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(src, "port_manager_init failed"),
+        "main.c must still LOG the failure it no longer aborts on — dropping the ESP_LOGE while "
+        "keeping the assignment turns a lost gateway feature into silence");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1813,7 +1964,9 @@ int port_manager_test(void)
     RUN_TEST(test_init_subsystems_sniffer_failure_does_not_skip_the_cache);
     RUN_TEST(test_init_subsystems_reports_the_first_error_when_both_fail);
     RUN_TEST(test_init_still_brings_ports_up_after_subsystem_failure);
+    RUN_TEST(test_init_still_brings_ports_up_after_cache_modbus_server_failure);
     RUN_TEST(test_main_c_inits_subsystems_before_starting_httpd);
+    RUN_TEST(test_main_c_does_not_abort_the_boot_on_a_port_manager_init_failure);
 
     return UNITY_END();
 }

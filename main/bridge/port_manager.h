@@ -104,7 +104,11 @@ esp_err_t port_manager_init_subsystems(void);
  * Must be called once after NVS and settings are ready AND after the network is up,
  * in place of the old bridge_init() + cache_modbus_server_init() calls in main.c.
  *
- * @return ESP_OK on success.
+ * @return ESP_OK — always, as of today. Everything that can fail here (the subsystems,
+ *         the cache Modbus TCP server, each port) is logged and stepped over, because
+ *         none of it is worth leaving the RS-485 ports down for. The esp_err_t return
+ *         is kept so a future failure that IS worth reporting has somewhere to go;
+ *         callers must still check it rather than assume this stays true.
  */
 esp_err_t port_manager_init(void);
 

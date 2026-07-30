@@ -189,11 +189,11 @@ void app_main(void)
     // port_manager_init() (the gateway) does not touch it. The opposite direction — what those
     // handlers need from the rest of the boot — is what the call above takes care of.
     // An abort() here panics and reboots, and every cause that can make the start fail — too
-    // little heap, no free LWIP socket, a web_port already taken by a bridge gateway, a refused
-    // auth/wifi_scan init — survives the reboot and meets the next boot the same way: a panic
-    // loop that takes the gateway down too, instead of one degraded feature. This matches how a
-    // failed start is handled at runtime in settings_update.c: log it, carry on, leave the web
-    // interface down until the device is power-cycled.
+    // little heap, no free LWIP socket, a refused auth/wifi_scan init — survives the reboot and
+    // meets the next boot the same way: a panic loop that takes the gateway down too, instead of
+    // one degraded feature. This matches how a failed start is handled at runtime in
+    // settings_update.c: log it, carry on, leave the web interface down until the device is
+    // power-cycled.
     esp_err_t http_ret = http_server_init();
     if (http_ret != ESP_OK) {
         ESP_LOGE(TAG, "http_server_init failed: %s - continuing without the web interface, "
@@ -220,7 +220,25 @@ void app_main(void)
             sys_info.eth_is_connected ||
             sys_info.wifi_sta_is_connected)
         {
-            ESP_ERROR_CHECK(port_manager_init());
+            // Deliberately NOT ESP_ERROR_CHECK, for the same reason as the two calls above:
+            // this is the call that brings the RS-485 ports up, so aborting on it takes down
+            // the one function the device is installed for. It used to abort — the cache
+            // Modbus TCP server was started through ESP_RETURN_ON_ERROR inside, so a mutex or
+            // socket it could not allocate, or a listen() refused because cache_modbus_port
+            // collides with a bridge port, left the ports down and rebooted. A reboot clears
+            // none of that: the allocation failures recur on a deterministic boot path, and
+            // the port collision only swaps which side loses the port, because the cache server
+            // starts before the port loop (the mechanics are in port_manager_init()). A panic
+            // loop is the one outcome to avoid.
+            //
+            // As of today the function has no failure path left to report — it logs each one
+            // and returns ESP_OK. The check stays anyway: it costs two lines, and it is what
+            // keeps the next error path added in there from silently aborting the boot again.
+            esp_err_t pm_ret = port_manager_init();
+            if (pm_ret != ESP_OK) {
+                ESP_LOGE(TAG, "port_manager_init failed: %s - continuing with whatever came "
+                              "up, the device stays reachable", esp_err_to_name(pm_ret));
+            }
             break;
         } else {
             vTaskDelay(pdMS_TO_TICKS(1000));
