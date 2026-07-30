@@ -17,6 +17,7 @@ AUX_SRC += mocks/json_utils.c
 AUX_SRC += mocks/port_manager.c
 AUX_SRC += mocks/bridge.c
 AUX_SRC += mocks/repeater.c
+AUX_SRC += mocks/cache_modbus_server.c
 AUX_SRC += mocks/voltage_monitor.c
 AUX_SRC += mocks/config_button.c
 AUX_SRC += mocks/sys_info.c

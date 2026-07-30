@@ -204,6 +204,28 @@ paths:
                     minimum: 1
                     maximum: 65535
                     description: "TCP port of the cache Modbus server"
+                  cache_modbus_active_port:
+                    type: integer
+                    minimum: 0
+                    maximum: 65535
+                    description: >-
+                      TCP port the cache Modbus server is actually listening on right now, as opposed
+                      to the configured cache_modbus_port. 0 means nothing is listening, which is not
+                      necessarily a failure: it also reads 0 while the server is disabled, during the
+                      brief restart window of a settings update, and at boot between the network
+                      coming up and the ports being initialized — the boot loop notices the link
+                      within its one-second poll and starts the server right after, so that window is
+                      short but a request arriving inside it does report 0. A non-zero value that
+                      differs from cache_modbus_port is usually a failed port change, leaving the
+                      server on the port it was serving before, with the requested change still
+                      pending for the next settings update. It also appears when cache_modbus_port
+                      itself is stored as an invalid value (<= 0). Such a value cannot be produced
+                      through this API — the device rejects any port outside 1..65535, which is why
+                      cache_modbus_port is documented above with minimum 1 — so it only reaches a
+                      device in NVS written by other firmware, and such a device reports a
+                      cache_modbus_port outside the range documented here. This field then reports
+                      the built-in default port the server actually fell back to, nothing is
+                      pending, and the mismatch persists until the stored port is corrected.
                   cache_value_timeout_s:
                     type: integer
                     minimum: 0

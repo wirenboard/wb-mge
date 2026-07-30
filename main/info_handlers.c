@@ -361,6 +361,29 @@ esp_err_t info_get_handler(httpd_req_t *req)
     // GET /info consistent with GET /settings for this field.
     cJSON_AddBoolToObject(response_json, "cache_modbus_server_enabled",
                           setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED));
+    // Runtime counterpart of the two configured fields above: the port the server is
+    // actually bound to. Without it a failed start is invisible over REST — it is only
+    // logged over UART, so /info would keep advertising enabled=true on a port nobody
+    // is listening on. A boolean "running" would be too coarse: a failed port change
+    // restarts the server on the port it was already serving rather than leaving it
+    // down, so the running port may legitimately differ from the configured one. The
+    // three states a reader must be able to tell apart:
+    //   0                      — nothing is listening. A failed start is one cause, not the
+    //                            only one: the server is also down while disabled, before
+    //                            port_manager_init() runs (httpd answers throughout main.c's
+    //                            wait-for-network loop) and across the restart window of a
+    //                            settings apply;
+    //   == cache_modbus_port   — healthy;
+    //   != cache_modbus_port   — a failed move left the server on its previous port, and the
+    //                            settings layer still reports the change as pending, so the
+    //                            next POST /settings retries it; or cache_modbus_port is
+    //                            stored <= 0, which cache_modbus_port reports raw while both
+    //                            start paths substitute the compiled-in default that
+    //                            cache_modbus_active_port then shows — nothing is pending
+    //                            then, so that mismatch stays until the stored value is
+    //                            corrected.
+    cJSON_AddNumberToObject(response_json, "cache_modbus_active_port",
+                            cache_modbus_server_get_port());
     // Report the configured value timeout from NVS.
     cJSON_AddNumberToObject(response_json, "cache_value_timeout_s",
                             setting_items_read_int(KEY_CACHE_VALUE_TIMEOUT_S));

@@ -37,6 +37,34 @@ def test_info(api):
     assert "cache_modbus_server_enabled" in data, "Field cache_modbus_server_enabled is missing"
     assert isinstance(data["cache_modbus_server_enabled"], bool), \
         "Field cache_modbus_server_enabled has incorrect type"
+    assert "cache_modbus_active_port" in data, "Field cache_modbus_active_port is missing"
+    assert isinstance(data["cache_modbus_active_port"], int) and \
+        0 <= data["cache_modbus_active_port"] <= 65535, \
+        f"Field cache_modbus_active_port has incorrect value: {data['cache_modbus_active_port']}"
+    if data["cache_modbus_server_enabled"]:
+        # A healthy device serves the cache Modbus server on the port it was configured
+        # for. 0 means nothing is listening: a failed start, or the server not being up
+        # yet — it is started only after the network comes up, and it is briefly down
+        # while a settings update re-inits the ports. Another port means it stayed on the
+        # previous one after a failed port change (a stored port <= 0 gives the same
+        # mismatch, but the range assertion above has already ruled that out).
+        assert data["cache_modbus_active_port"] == data["cache_modbus_port"], \
+            f"Cache Modbus server is enabled on port {data['cache_modbus_port']} but " \
+            f"listens on {data['cache_modbus_active_port']}"
+    else:
+        # Same guarantees as the branch above: 0 is the steady state, and a non-zero port
+        # is either a server that failed to stop or a disable still in flight — the NVS
+        # write is visible in /info immediately, while the stop is asynchronous
+        # (settings_update() only spawns the task; the release runs in the task, possibly
+        # behind a 1 s delay), so enabled=false next to a live port is legitimate inside
+        # that window. Asserting strict equality is still safe here because the suite runs
+        # sequentially (pytest.ini sets neither -n nor random order, files run in numeric
+        # order) and nothing before this file writes cache Modbus settings, so no disable
+        # can be in flight — moving this check into a shared helper would break that.
+        assert data["cache_modbus_active_port"] == 0, \
+            "Cache Modbus server is disabled but still listens on " \
+            f"{data['cache_modbus_active_port']}"
+
     assert "cache_value_timeout_s" in data, "Field cache_value_timeout_s is missing"
     assert isinstance(data["cache_value_timeout_s"], int) and data["cache_value_timeout_s"] >= 0, \
         "Field cache_value_timeout_s must be a non-negative integer"

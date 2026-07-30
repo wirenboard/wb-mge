@@ -1,5 +1,10 @@
 /* auth mock for the info_handlers unit test. info_build_ap_clients_json() does
- * not authenticate, but the translation unit's HTTP handlers reference these. */
+ * not authenticate, and most of these symbols exist only because the translation
+ * unit's HTTP handlers reference them. auth_middleware_check() is the exception:
+ * it is on the executed path, and its unconditional true is load-bearing. Returning
+ * false would make info_get_handler() return early at info_handlers.c:269-271
+ * without building a response, and the GET /info tests would fail on the
+ * TEST_ASSERT_NOT_NULL for the emitted object. */
 
 #include "auth.h"
 
