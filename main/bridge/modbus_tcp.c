@@ -606,6 +606,18 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
     if (!queue_handle) {
         ESP_LOGE(TAG, "Port[%u]: Unable to create TCP packets queue", index + 1);
         serial_deinit(*serial_desc);
+        /* Every failure path from here on leaves both out-parameters NULL or untouched, and
+         * never pointing at freed memory — matching transparent_tcp_init_port(). "Untouched"
+         * covers *tcp_desc on this branch and on the tcp_server_init() one below: it is
+         * never written there at all (tcp_server_init() does not set it on failure), so the
+         * NULL a caller sees is its own already-cleared field, not something stored here.
+         * *serial_desc is the one that must be cleared explicitly, because the descriptor it
+         * names was created by this function and freed again by the cleanup above it, and a
+         * caller that stores the out-parameter straight into a long-lived context (bridge.c
+         * does) would otherwise be holding a pointer to freed memory. bridge_port_init()
+         * clears them on its side too — the two are deliberately independent, since neither
+         * module can see the other's state. */
+        *serial_desc = NULL;
         vEventGroupDelete(event_group);
         mbtcp_reasm_deinit(&ctx->reasm);
         return ESP_FAIL;
@@ -615,6 +627,7 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Port[%u]: Error while initializing TCP server", index + 1);
         serial_deinit(*serial_desc);
+        *serial_desc = NULL;
         vEventGroupDelete(event_group);
         packet_queue_delete(queue_handle);
         mbtcp_reasm_deinit(&ctx->reasm);
@@ -644,6 +657,8 @@ esp_err_t modbus_tcp_init_port(unsigned index, serial_config_t *config,
         ESP_LOGE(TAG, "Port[%u]: Unable to create Modbus TCP Server task", index + 1);
         tcp_server_deinit(*tcp_desc);
         serial_deinit(*serial_desc);
+        *tcp_desc    = NULL;
+        *serial_desc = NULL;
         vEventGroupDelete(event_group);
         packet_queue_delete(queue_handle);
         mbtcp_reasm_deinit(&ctx->reasm);
