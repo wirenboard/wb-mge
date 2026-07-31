@@ -166,8 +166,10 @@ static bool request_is_cacheable(uint8_t function, uint16_t start_reg, uint16_t 
  * Note: the port is not part of the lookup key because the cache is single-port
  * by design (review #51). The Cache-TCP interface answers by unit_id and is
  * port-blind, so at most one RS-485 port may feed the pool at a time — enforced in
- * port_manager (port_manager_set_cache() rejects a second port; the boot path
- * normalises legacy NVS down to one port). With a single feeding port there is no
+ * port_manager (port_manager_set_cache() MOVES the overlay, releasing whatever port
+ * held it before; the boot path normalises stored NVS down to one port). Note that a
+ * move frees and reallocates this pool, so no entry outlives the port that fed it.
+ * With a single feeding port there is no
  * cross-port ambiguity, so slave_id alone is a sufficient key, and
  * cache_multimaster_lookup() likewise needs no port.
  *
