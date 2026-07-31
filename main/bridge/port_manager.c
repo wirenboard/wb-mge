@@ -381,9 +381,10 @@ static void port_deinit_mode(unsigned index)
         break;
 
     case PM_MODE_REPEATER:
-        // repeater_deinit_port() detaches the peer under the lock and joins the UART
-        // event task (via serial_deinit) before freeing the descriptor; detach the
-        // sniffer afterwards.
+        // repeater_deinit_port() unpublishes this port from the peer's forwarding path,
+        // drains the forwards already inside serial_send() into it, and joins this port's
+        // own UART event task (via serial_deinit) before freeing the descriptor; detach
+        // the sniffer afterwards.
         repeater_deinit_port(index);
         sniffer_detach(index);
         pm_ctx[index].serial_desc = NULL;

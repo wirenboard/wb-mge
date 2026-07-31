@@ -53,6 +53,12 @@ esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
     mock_serial_calls.send_last_desc = desc;
     mock_serial_calls.send_last_data = data;
     mock_serial_calls.send_last_len = len;
+    // Stands in for the time the real serial_send() spends inside uart_write_bytes(): the
+    // hook runs while the caller is "on the wire", so a test can inspect the repeater state
+    // that only exists in that window. See mock_serial.h.
+    if (mock_serial_calls.send_hook != 0) {
+        mock_serial_calls.send_hook(desc, data, len);
+    }
     return mock_serial_calls.send_ret;
 }
 
