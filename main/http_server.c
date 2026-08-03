@@ -308,6 +308,7 @@ esp_err_t http_server_init_port(uint16_t port)
     httpd_current_config.stack_size = STACK_SIZE;
     httpd_current_config.max_open_sockets = MAX_OPEN_SOCKETS;
     httpd_current_config.server_port = port;
+    httpd_current_config.recv_wait_timeout = HTTP_RECV_WAIT_TIMEOUT_S;
 
     // Precompute per-asset ETags from the firmware build identity. sys_info is
     // populated by sys_info_init(), which runs before http_server_init(). The

@@ -258,6 +258,12 @@ void test_http_server_config_parameters(void)
         mock_captured_config.server_port,
         "server_port should be set to configured value"
     );
+
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+        HTTP_RECV_WAIT_TIMEOUT_S,
+        mock_captured_config.recv_wait_timeout,
+        "recv_wait_timeout must be set explicitly: the OTA stall limit is derived from it"
+    );
 }
 
 // Test URI handler registration during HTTP server initialization

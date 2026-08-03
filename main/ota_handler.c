@@ -2,6 +2,7 @@
 #include "json_utils.h"
 #include "auth.h"
 #include "cmd_handler.h"
+#include "http_server.h"
 
 #include <esp_log.h>
 #include <esp_ota_ops.h>
@@ -13,6 +14,20 @@
 
 
 #define OTA_PROGRESS_LOG_STEP       (64 * 1024)
+
+// How much complete silence from the uploading client is tolerated before the transfer is given up
+// on. A client that vanishes without closing its socket (laptop suspended, phone left the AP) sends
+// neither FIN nor RST, and TCP keep-alive is off, so nothing below this handler ever notices: the
+// receive loop would retry forever and, because the IDF web server is single-threaded, take every
+// other endpoint down with it until the device is power-cycled. 30 s is long enough to survive a
+// brief Wi-Fi roam and far longer than any gap a client fast enough to upload a ~1.2 MB image would
+// produce.
+#define OTA_RECV_STALL_TIMEOUT_MS   30000
+
+// Consecutive receive timeouts, arriving without a single accepted byte in between, that add up to
+// OTA_RECV_STALL_TIMEOUT_MS. Derived from the configured receive window instead of hardcoded, so
+// changing HTTP_RECV_WAIT_TIMEOUT_S keeps the silence budget above intact.
+#define OTA_RECV_MAX_STALL_TIMEOUTS (OTA_RECV_STALL_TIMEOUT_MS / (HTTP_RECV_WAIT_TIMEOUT_S * 1000))
 
 
 static const char *TAG = "ota_handler";
@@ -122,12 +137,21 @@ static esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_ha
     *total_received = 0;
     int progress_threshold = OTA_PROGRESS_LOG_STEP;
     bool app_desc_validated = false;
+    int stall_timeouts = 0;
 
     while (remaining > 0) {
         int recv_len = httpd_req_recv(req, buf, MIN(remaining, JSON_UTILS_REQ_RECV_BUF_SIZE));
 
-        if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {  // Timeout Error: Just retry
-            ESP_LOGW(TAG, "Network timeout, trying to continue");
+        if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {  // Timeout Error: retry until the client is declared gone
+            stall_timeouts++;
+            if (stall_timeouts >= OTA_RECV_MAX_STALL_TIMEOUTS) {
+                ESP_LOGE(TAG, "OTA upload stalled: %d consecutive network timeouts (%d ms of silence)",
+                         stall_timeouts, OTA_RECV_STALL_TIMEOUT_MS);
+                ESP_LOGE(TAG, "Total received bytes: %d, total firmware size: %d", *total_received, (int)req->content_len);
+                free(buf);
+                return ESP_FAIL;
+            }
+            ESP_LOGW(TAG, "Network timeout %d/%d, trying to continue", stall_timeouts, OTA_RECV_MAX_STALL_TIMEOUTS);
             continue;
 
         } else if (recv_len <= 0) {  // Serious Error: Abort OTA
@@ -136,6 +160,8 @@ static esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_ha
             free(buf);
             return ESP_FAIL;
         }
+
+        stall_timeouts = 0;  // Any accepted byte proves the client is still there
 
         // Validate OTA firmware (only once when first chunk received)
         if (!app_desc_validated) {

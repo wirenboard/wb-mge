@@ -16,6 +16,7 @@ Valid firmware fixture: build/qemu_mge.bin, produced by `make qemu-build`.
 
 import socket
 import struct
+import time
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,11 @@ WB_APP_DESC_MAGIC_WORD = 0xDACBBCAB
 SIGNATURE_OFFSET = WB_APP_DESC_OFFSET + 4
 SIGNATURE_LEN = 12
 MIN_VALID_HEAD_LEN = WB_APP_DESC_OFFSET + WB_APP_DESC_SIZE
+
+# Upper bound for the device to abort an upload whose client went silent and answer HTTP again.
+# Keep above OTA_RECV_STALL_TIMEOUT_MS (30 s) + one HTTP_RECV_WAIT_TIMEOUT_S window, see
+# main/ota_handler.c.
+STALL_RECOVERY_BUDGET_S = 40
 
 
 @pytest.fixture(scope="module")
@@ -256,6 +262,82 @@ def test_ota_truncated_stream(api, firmware_bytes):
     resp = api.get_info()
     assert resp.status_code == 200, (
         f"Server unresponsive after truncated OTA: {resp.status_code} {resp.text!r}"
+    )
+
+
+def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
+    """Client disappears mid-upload WITHOUT closing the socket → the device must
+    give up on its own and keep serving HTTP.
+
+    Unlike test_ota_truncated_stream, nothing tells the device the client is gone:
+    no FIN, no RST, TCP keep-alive is off. The socket just goes quiet, so
+    httpd_req_recv() only ever reports timeouts. Without the stall limit in
+    ota_receive_and_write() (main/ota_handler.c) the handler retries forever, and
+    since the IDF web server is single-threaded, every other endpoint dies with it
+    until the device is power-cycled.
+
+    The defining assertion is the one on /info: the web interface must come back
+    on its own, well inside OTA_RECV_STALL_TIMEOUT_MS + one receive window.
+    """
+    parsed = requests.utils.urlparse(api.base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 80
+    cookie_header = "; ".join(f"{k}={v}" for k, v in api.session.cookies.items())
+    promised_length = max(len(firmware_bytes), 1_000_000)
+    sent_chunk = firmware_bytes[: MIN_VALID_HEAD_LEN + 4096]
+    request = (
+        f"POST /update HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        f"Cookie: {cookie_header}\r\n"
+        f"Content-Type: application/octet-stream\r\n"
+        f"Content-Length: {promised_length}\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
+    ).encode() + sent_chunk
+
+    sock = socket.create_connection((host, port), timeout=30)
+    try:
+        sock.sendall(request)
+        # From here on the client is "gone": the socket stays open and silent.
+        stall_start = time.monotonic()
+
+        # A separate connection, because the stalled one is the one under test. The
+        # request is queued behind the OTA handler and can only be served once that
+        # handler gives up, so its round-trip time measures the recovery.
+        info_resp = api.session.get(f"{api.base_url}/info", timeout=50)
+        info_elapsed = time.monotonic() - stall_start
+
+        assert info_resp.status_code == 200, (
+            f"Server unresponsive while an OTA client is silent: "
+            f"{info_resp.status_code} {info_resp.text!r}"
+        )
+        assert info_elapsed < STALL_RECOVERY_BUDGET_S, (
+            f"GET /info took {info_elapsed:.1f}s while an OTA upload was stalled; "
+            f"expected the device to abort the upload within {STALL_RECOVERY_BUDGET_S}s"
+        )
+
+        # The stalled upload itself must be over too: either an error response
+        # arrived, or the device closed the connection.
+        sock.settimeout(15)
+        raw_response = b""
+        try:
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                raw_response += chunk
+        except socket.timeout:
+            pass
+        assert raw_response == b"" or raw_response.lstrip().startswith(b"HTTP/"), (
+            f"Unexpected data on the stalled OTA connection: {raw_response[:200]!r}"
+        )
+    finally:
+        sock.close()
+
+    resp = api.get_info()
+    assert resp.status_code == 200, (
+        f"Server unresponsive after the stalled OTA was aborted: "
+        f"{resp.status_code} {resp.text!r}"
     )
 
 
