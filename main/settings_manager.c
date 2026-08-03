@@ -34,6 +34,7 @@ static const setting_mapping_t top_level_mappings[] = {
     {"cache_modbus_port", KEY_CACHE_MODBUS_PORT},
     {"cache_modbus_server_enabled", KEY_CACHE_MODBUS_SERVER_ENABLED},
     {"cache_value_timeout_s", KEY_CACHE_VALUE_TIMEOUT_S},
+    {"update_channel", KEY_UPDATE_CHANNEL},
 };
 
 static const setting_mapping_t wifi_mappings[] = {

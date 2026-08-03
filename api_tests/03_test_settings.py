@@ -39,6 +39,10 @@ def test_settings(api):
         original_settings["cache_value_timeout_s"] >= 0, \
         "Field cache_value_timeout_s must be a non-negative integer"
 
+    assert "update_channel" in original_settings, "Field update_channel is missing"
+    assert original_settings["update_channel"] in ["stable", "testing"], \
+        f"Field update_channel has incorrect value: {original_settings['update_channel']}"
+
     wifi = original_settings["wifi"]
     wifi_fields = [
         "mode", "ap_auth", "sta_auth", "ap_ssid", "ap_pass", "sta_ssid", "sta_pass",
@@ -339,6 +343,53 @@ def test_port_mode_cache_en_round_trip(api):
         print("✓ Original settings restored")
 
 
+def test_update_channel_round_trip(api):
+    """update_channel export/import round-trip.
+
+    The firmware update channel is a device setting stored in NVS, so it must
+    survive a POST /settings -> GET /settings round-trip in both directions.
+    A value outside the {stable, testing} accept-list must be rejected
+    (success=false) and must not be persisted.
+    """
+    original_response = api.get_settings()
+    assert original_response.status_code == 200
+    original = original_response.json()
+
+    try:
+        for channel in ["testing", "stable"]:
+            response = api.update_settings({"update_channel": channel})
+            assert response.status_code == 200
+            assert response.json().get("success") is True, \
+                f"update_channel={channel} must be accepted: {response.json()}"
+
+            check = api.get_settings()
+            assert check.status_code == 200
+            assert check.json()["update_channel"] == channel, \
+                f"update_channel was not saved: {check.json().get('update_channel')}"
+            print(f"✓ update_channel={channel} round-tripped correctly")
+
+        # Negative: values outside the accept-list must be rejected and not saved
+        for bad_value, description in [
+            ("unstable", "unknown channel"),
+            ("", "empty string"),
+            ("Stable", "wrong case"),
+            (123, "wrong type (int)"),
+        ]:
+            response = api.update_settings({"update_channel": bad_value})
+            assert response.status_code == 200
+            assert response.json().get("success") is False, \
+                f"update_channel={bad_value!r} ({description}) must be rejected: {response.json()}"
+
+            check = api.get_settings()
+            assert check.status_code == 200
+            assert check.json()["update_channel"] == "stable", \
+                f"Invalid update_channel {bad_value!r} was saved (value must stay 'stable')"
+            print(f"✓ Invalid update_channel rejected: {description}")
+    finally:
+        api.update_settings(original)
+        print("✓ Original settings restored")
+
+
 @pytest.mark.timeout(180)
 def test_per_field_validation(api):
     """Validate each field independently so that each validator is exercised.
@@ -362,6 +413,10 @@ def test_per_field_validation(api):
         ({"hostname": "invalid_hostname!"}, "hostname with special chars"),
         ({"web_port": 70000}, "web_port out of range (>65535)"),
         ({"web_port": 0}, "web_port out of range (0)"),
+        ({"update_channel": "unstable"}, "update_channel unknown value"),
+        ({"update_channel": ""}, "update_channel empty string"),
+        ({"update_channel": "Stable"}, "update_channel wrong case"),
+        ({"update_channel": 123}, "update_channel wrong type (int)"),
         ({"wifi": {"mode": "disabled", "ap_auth": "close", "sta_auth": "wep",
                    "ap_ssid": "", "sta_ssid": "valid", "ap_ip_static": "192.168.4.1",
                    "ap_mask_static": "255.255.255.0", "ap_gw_static": "192.168.4.1",

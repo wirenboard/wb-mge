@@ -10,6 +10,7 @@
     * added:    QEMU virtual I/O state bus with transparent GPIO interception and extra emulated TCP/UART interfaces, enabling hardware-free integration tests
     * added:    host unit tests for the new cache, sniffer, repeater, port-manager, mb_device, fast-Modbus and transparent-TCP modules, plus shared test utilities
     * added:    firmware branch-coverage measurement in QEMU via a /gcov endpoint, with a combined unit + e2e coverage report
+    * added:    update_channel device setting (stable/testing, default stable) stored in NVS and exposed via GET/POST /settings
     * change:   unified serial transport with additive sniffer/cache overlays (passive / tcp_bridge / disabled port modes)
     * improve:  faster web UI via cached shell assets and removal of double-gzip
     * improve:  CI runs lint, clang-tidy, Cyrillic-comment and unit-test stages in parallel with JUnit reporting

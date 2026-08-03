@@ -35,8 +35,12 @@ def test_reboot(api):
     assert response.status_code == 200
     defaults = response.json()
 
+    assert defaults["update_channel"] == "stable", \
+        f"update_channel must default to 'stable', got {defaults['update_channel']!r}"
+
     custom_settings = {
         "hostname": "persist-test-host",
+        "update_channel": "testing",
         "vout": not defaults["vout"],
         "io_bus": not defaults["io_bus"],
         "rs485_1": {
@@ -106,6 +110,8 @@ def test_reboot(api):
         f"vout not persisted: expected {custom_settings['vout']}, got {post['vout']}"
     assert post["io_bus"] == custom_settings["io_bus"], \
         f"io_bus not persisted: expected {custom_settings['io_bus']}, got {post['io_bus']}"
+    assert post["update_channel"] == custom_settings["update_channel"], \
+        f"update_channel not persisted: expected {custom_settings['update_channel']!r}, got {post['update_channel']!r}"
     assert post["rs485_1"]["baudrate"] == custom_settings["rs485_1"]["baudrate"], \
         f"rs485_1.baudrate not persisted: expected {custom_settings['rs485_1']['baudrate']}, got {post['rs485_1']['baudrate']}"
     assert post["rs485_1"]["term"] == custom_settings["rs485_1"]["term"], \

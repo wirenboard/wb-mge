@@ -12,6 +12,7 @@ const makeInitialSettings = () => ({
     cache_modbus_port: 502,
     cache_modbus_server_enabled: false,
     cache_value_timeout_s: 10,
+    update_channel: 'stable',
     ethernet: { dhcpc: true, ip_static: '', mask_static: '', gw_static: '' },
     rs485_1: {
         baudrate: 9600,

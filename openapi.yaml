@@ -1574,6 +1574,11 @@ components:
           maximum: 65535
           default: 60
           description: "Cached value lifetime in seconds; 0 disables the timeout"
+        update_channel:
+          type: string
+          enum: [stable, testing]
+          default: stable
+          description: "Firmware update channel. Used as the lookup key for the release manifest"
         wifi_perm_disable:
           type: boolean
           default: false

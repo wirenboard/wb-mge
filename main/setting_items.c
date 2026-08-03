@@ -239,6 +239,9 @@ static const setting_item_t setting_items[] = {
     {KEY_CACHE_MODBUS_SERVER_ENABLED, DEFAULT_CACHE_MODBUS_SERVER_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
     // Cache value timeout: 0 = disabled (always return cached value), 1..65535 = age threshold in seconds
     {KEY_CACHE_VALUE_TIMEOUT_S,       DEFAULT_CACHE_VALUE_TIMEOUT_S,       validate_timeout, SETTING_ITEM_TYPE_INT},
+
+    // Firmware update channel: read by the web UI to pick a version from the release manifest
+    {KEY_UPDATE_CHANNEL, DEFAULT_UPDATE_CHANNEL, validate_update_channel, SETTING_ITEM_TYPE_STRING},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

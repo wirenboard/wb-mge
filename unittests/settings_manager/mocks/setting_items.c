@@ -217,6 +217,7 @@ static const mock_type_entry_t type_table[] = {
     { "cache_mb_port",      SETTING_ITEM_TYPE_INT,    "504"               },
     { "cache_mb_srv_en",    SETTING_ITEM_TYPE_BOOL,   "true"              },
     { "cache_val_tout",     SETTING_ITEM_TYPE_INT,    "60"                },
+    { "upd_channel",        SETTING_ITEM_TYPE_STRING, "stable"            },
 };
 
 #define TYPE_TABLE_SIZE (sizeof(type_table) / sizeof(type_table[0]))
