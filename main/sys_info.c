@@ -141,7 +141,11 @@ esp_err_t sys_info_init(void)
         ESP_LOGI(TAG, "PSRAM available: %" PRIu32 " KB", sys_info.psram_size_kb);
     } else {
         sys_info.psram_size_kb = 0;
-        ESP_LOGI(TAG, "PSRAM not available");
+        // PSRAM is soldered on every shipped MGU, so a chip that does not come up is a
+        // hardware fault, not a board variant - hence WARNING and not the neutral INFO
+        // used by the #else branch. CONFIG_SPIRAM_IGNORE_NOTFOUND=y (mgu_v1) keeps the
+        // device booting either way, so nothing else makes the fault stand out.
+        ESP_LOGW(TAG, "PSRAM expected on this board but did not initialize, running with reduced memory");
     }
 #else
     sys_info.psram_available = false;
