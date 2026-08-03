@@ -12,16 +12,20 @@ wb-mge.code-workspace
 
 # Build
 build/**
-sdkconfig
-sdkconfig.old
-sdkconfig.native
-sdkconfig.native.old
-sdkconfig.mge_v3
-sdkconfig.mge_v3.old
-sdkconfig.mgu_v1
-sdkconfig.mgu_v1.old
-sdkconfig.qemu_build
-sdkconfig.qemu_build.old
+# Generated sdkconfig files: sdkconfig.<signature> (one per MODEL_LIST entry in
+# the Makefile), sdkconfig.qemu_build, a bare sdkconfig from a manual idf.py run,
+# and the .old backup idf.py leaves next to each. Matched by pattern so that
+# signatures are named only in MODEL_LIST, and anchored with / so the pattern
+# cannot reach nested paths such as unittests/mocks/sdkconfig.h. The negations
+# re-include the checked-in inputs (note !/sdkconfig.qemu.* assumes a generated
+# QEMU config is never named sdkconfig.qemu.<something>: today's has an
+# underscore), and the trailing /sdkconfig.*.old wins over them for their backups.
+/sdkconfig
+/sdkconfig.*
+!/sdkconfig.defaults
+!/sdkconfig.defaults.*
+!/sdkconfig.qemu.*
+/sdkconfig.*.old
 **/build/
 
 # Release

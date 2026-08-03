@@ -29,9 +29,36 @@ DEPENDENCIES_LOCK := $(CURDIR)/dependencies.lock
 
 # Buildable device signatures. Each must match the eFuse signature and its
 # fw-releases.wirenboard.com/fw/by-signature/<sig> line.
+# This list is the only place a signature is spelled out in Makefile/.gitignore:
+# the default TARGET, the check below and the per-signature sdkconfig files
+# `clean` removes derive from it, and .gitignore matches the generated
+# sdkconfig.<sig> by pattern. A new signature also needs its own
+# sdkconfig.defaults.<sig> here, and on the firmware side main/boards/<sig>.h
+# wired into main/board_pins.h and a DEVICE_MODEL branch in main/config.h; both
+# chains end in #error, so a missing branch fails the build loudly.
+# Order matters: the first entry is the default TARGET, which is what the CI
+# release and QEMU e2e builds use, so append new signatures, never prepend.
 MODEL_LIST := mge_v3 mgu_v1
-# Default build target; override e.g. `make TARGET=mgu_v1 build-idf-project`.
-TARGET ?= mge_v3
+# Default build target; override e.g. `make TARGET=<signature> build-idf-project`.
+TARGET ?= $(firstword $(MODEL_LIST))
+override TARGET := $(strip $(TARGET))
+
+# A mistyped TARGET used to reach CMake before failing, as a missing
+# sdkconfig.defaults.<typo>. MODEL_LIST has to be the filter-out patterns and
+# TARGET the checked word, not the reverse: $(filter $(TARGET),$(MODEL_LIST))
+# reads TARGET as a pattern list, so '%' and a multi-word value matched
+# everything. The word count catches the empty and multi-word values filter-out
+# cannot see. Both checks run at parse time, for every target, so a stray TARGET
+# in the environment fails even targets that never read it — hence the reminder
+# in the messages.
+# The strip above is `override` because a command-line TARGET= wins over a plain
+# assignment, and unstripped whitespace reaches the file names built from TARGET.
+ifneq ($(words $(TARGET)),1)
+    $(error TARGET must name exactly one signature, got '$(TARGET)'; expected one of: $(MODEL_LIST). Check the environment too)
+endif
+ifneq ($(filter-out $(MODEL_LIST),$(TARGET)),)
+    $(error unknown TARGET '$(TARGET)'; expected one of: $(MODEL_LIST). Check the environment too)
+endif
 
 MODEL_DEFINE := $(shell echo MODEL_$(TARGET))
 
@@ -41,6 +68,18 @@ DEFS += MODEL_DEFINE=$(MODEL_DEFINE)
 # Per-target generated sdkconfig so switching TARGET never reuses another
 # signature's PSRAM/pin config (mirrors the dedicated sdkconfig.qemu_build).
 SDKCONFIG_FILE := sdkconfig.$(TARGET)
+
+# Legacy names that no longer come from MODEL_LIST: the removed native build
+# flavour today, plus any signature retired from MODEL_LIST later. `clean` keeps
+# removing them so a tree that still carries one does not keep it forever,
+# invisible under .gitignore.
+SDKCONFIG_LEGACY := sdkconfig.native
+
+# Every sdkconfig `clean` removes. A bare sdkconfig is written by no make target —
+# they all pass -DSDKCONFIG= — only by a manual idf.py run; idf.py keeps a .old
+# backup next to every sdkconfig it rewrites, hence the second line.
+SDKCONFIG_BASES := sdkconfig $(SDKCONFIG_LEGACY) sdkconfig.qemu_build $(addprefix sdkconfig.,$(MODEL_LIST))
+SDKCONFIG_GENERATED := $(SDKCONFIG_BASES) $(addsuffix .old,$(SDKCONFIG_BASES))
 
 #######################################
 # Directories
@@ -372,8 +411,8 @@ apply-idf-patches: check-idf-pins
 	@echo "Applying IDF patches..."
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
 
-# NOTE: the build/ dir is shared across signatures. When switching TARGET
-# (mge_v3 <-> mgu_v1) run `make clean` first to avoid a stale/mixed artifact.
+# NOTE: the build/ dir is shared across signatures. When switching TARGET from
+# one signature to another run `make clean` first to avoid a stale/mixed artifact.
 build-idf-project: check-idf-pins apply-idf-patches
 	@echo 'Building ESP-IDF project'
 	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" $(addprefix -D, $(DEFS)) build
@@ -392,7 +431,7 @@ clean:
 	@rm -rf $(RELEASE_DIR)
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
-	@rm -f sdkconfig sdkconfig.old sdkconfig.native sdkconfig.native.old sdkconfig.qemu_build sdkconfig.qemu_build.old sdkconfig.mge_v3 sdkconfig.mge_v3.old sdkconfig.mgu_v1 sdkconfig.mgu_v1.old
+	@rm -f $(SDKCONFIG_GENERATED)
 	@echo 'Cleaning unittests'
 	@for dir in $(UNITTESTS_DIRS); do \
 		if [ -f  $$dir/Makefile ]; then \
