@@ -1,4 +1,4 @@
-import { decodePacket, getByteRoles, type ByteRole, type Direction } from '@/common/modbusDecoder';
+import { decodePacket, getByteRoles, splitFunctionCode, type ByteRole, type Direction } from '@/common/modbusDecoder';
 
 export type { ByteRole };
 
@@ -14,11 +14,22 @@ export type SniffRow = {
   bytes: number;
   crc: 'OK' | 'ERR' | 'N/A';
   isArbitration: boolean;
+  /** True when the function byte — or, inside a Fast Modbus wrapper, the inner function byte —
+   *  carries the exception bit (0x90 = exception to FC16). */
+  isException: boolean;
   direction: Direction;
   t: string;
   dt: string;
   tooltip: string;
 };
+
+/**
+ * What the "make sure the capture is established" step had to do before a frame was transmitted
+ * (Sniffer.vue's ensureCaptureRunning). Three outcomes because the UI has to say something
+ * different about each: nothing at all, "the capture was started for you", or "the frame went
+ * out with nothing recording it".
+ */
+export type CaptureReadyOutcome = 'already-running' | 'started' | 'not-established';
 
 export const FC_NAMES: Record<number, string> = {
   1: 'Read Coils',
@@ -75,6 +86,51 @@ export const FC_TOOLTIPS: Record<number, string> = {
   15: 'Write Multiple Coils (FC15): write N coils. Request: addr(2) + count(2) + byte_count(1) + data. Response: addr+count.',
   16: 'Write Multiple Regs (FC16): write N holding registers. Request: addr(2) + count(2) + byte_count(1) + data. Response: addr+count.',
 };
+
+/**
+ * Resolve a raw function byte for display: is it an exception reply, and which function code
+ * does it refer to?
+ *
+ * Bit 7 marks an exception reply (0x90 answers FC16 = 0x10) — that rule lives in
+ * splitFunctionCode() so this cannot drift from the detail panel, which decodes the same byte.
+ * The one refinement: a byte that is itself a known function code is taken at face value, so
+ * 0xFF stays Fast Modbus arbitration instead of becoming an "exception to FC 0x7F" (0x7F is
+ * not a Modbus function at all). Only 0xFF is affected — it is the sole FC_NAMES key >= 0x80.
+ */
+export function resolveFunctionCode(fc: number): { isException: boolean; baseFc: number } {
+  if (FC_NAMES[fc] !== undefined) return { isException: false, baseFc: fc };
+  return splitFunctionCode(fc);
+}
+
+/**
+ * Human-readable label for a raw function byte.
+ *
+ * An exception reply carries the request's function code with bit 7 set, which has no FC_NAMES
+ * entry — it used to render as the meaningless "FC144". Resolve the name from the ORIGINAL code
+ * and prefix it so a failed reply is distinguishable at a glance from a successful one.
+ */
+export function fcLabel(fc: number): string {
+  const { isException, baseFc } = resolveFunctionCode(fc);
+  const name = FC_NAMES[baseFc] ?? `FC${baseFc}`;
+  return isException ? `Error: ${name}` : name;
+}
+
+/**
+ * Facet key for a raw function byte: 2-digit uppercase hex of the ORIGINAL function code.
+ * Exceptions deliberately share the key of the function they answer, so filtering the facet
+ * rail by e.g. "Write Multiple Regs" also surfaces the exception replies to it.
+ */
+export function fcFacetCode(fc: number): string {
+  return resolveFunctionCode(fc).baseFc.toString(16).padStart(2, '0').toUpperCase();
+}
+
+/**
+ * Tooltip for an exception reply to `baseFc`. A function of its own because a Fast Modbus row
+ * needs it in ADDITION to the subcommand tooltip, not instead of it (see parsePacket).
+ */
+function exceptionTooltip(baseFc: number): string {
+  return `Exception reply for ${FC_NAMES[baseFc] ?? `FC${baseFc}`}: the slave rejected the request. The exception code is the byte after the function code.`;
+}
 
 /** Update the wall-clock<->device-uptime offset (ms vs Unix epoch).
  *  deviceUs = packet timestamp_us (µs since boot); recvWallMs = Date.now() at receipt.
@@ -219,7 +275,7 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
   // following slave packet is sufficient to infer a timeout. This branch is kept for
   // backward compatibility with older firmware versions.
   if (msg.type === 'timeout') {
-    const fcName = FC_NAMES[msg.function] ?? `FC${msg.function}`;
+    const fcName = fcLabel(msg.function);
     const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase();
     const dt = formatDt(msg.timestamp_us, prevTimestampUs);
     return {
@@ -230,11 +286,12 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
         sender: 'TIMEOUT',
         slave,
         fc: fcName,
-        fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
+        fc_code: fcFacetCode(msg.function),
         pl: '',
         bytes: 0,
         crc: 'ERR',
         isArbitration: false,
+        isException: resolveFunctionCode(msg.function).isException,
         direction: 'request',
         t: formatTimestamp(msg.timestamp_us, offsetMs),
         dt,
@@ -265,6 +322,7 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
           bytes: msg.size,
           crc: 'N/A',
           isArbitration: true,
+          isException: false,
           direction: 'response',
           t: formatTimestamp(msg.timestamp_us, offsetMs),
           dt,
@@ -274,7 +332,12 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
       };
     }
 
-    const fcName = FC_NAMES[msg.function] ?? `FC${msg.function}`;
+    const resolvedFc = resolveFunctionCode(msg.function);
+    const baseFc = resolvedFc.baseFc;
+    // Not const: a Fast Modbus wrapper (0x46/0x60) is never itself an exception, but the PDU it
+    // carries can be — that is what makes the exchange a failure, so it flags the row too.
+    let isException = resolvedFc.isException;
+    const fcName = fcLabel(msg.function);
     const slave = msg.slave_id.toString(16).padStart(2, '0').toUpperCase();
     const sender = msg.sender === 'master' ? 'MASTER' : 'SLAVE';
     const crc = msg.crc_valid ? 'OK' : 'ERR';
@@ -282,7 +345,9 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
 
     /* Build FC display: no numeric prefix for named functions */
     let fcDisplay = fcName;
-    let tooltip = FC_TOOLTIPS[msg.function] ?? '';
+    /* Tooltips are keyed by the original function code, so an exception reply keeps the
+       explanation of the function it answers; the exception itself is called out first. */
+    let tooltip = isException ? exceptionTooltip(baseFc) : FC_TOOLTIPS[baseFc] ?? '';
     if ((msg.function === 0x46 || msg.function === 0x60) && msg.raw && msg.raw.length >= 6) {
       const sub = parseInt(msg.raw.slice(4, 6), 16);
       const subName = FAST_MODBUS_SUBCMDS[sub] ?? `FM subcmd 0x${sub.toString(16).padStart(2, '0').toUpperCase()}`;
@@ -297,8 +362,18 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
       const fmSub = decoded.payload.payload;
       if ((fmSub.type === 'command_by_serial' || fmSub.type === 'response_by_serial') && 'function_code' in fmSub) {
         const innerFcNum = parseInt(fmSub.function_code as string, 16);
-        const innerFcName = FC_NAMES[innerFcNum] ?? `FC${fmSub.function_code}`;
-        fcDisplay = `${fcDisplay} (${innerFcName})`;
+        // Same exception handling as the top-level FC: an inner 0x90 is an exception to FC16.
+        fcDisplay = `${fcDisplay} (${fcLabel(innerFcNum)})`;
+        const inner = resolveFunctionCode(innerFcNum);
+        if (inner.isException) {
+          isException = true;
+          // `tooltip` currently explains the Fast Modbus wrapper/subcommand. An exception buried
+          // inside that wrapper is the least obvious thing on the row, so lead with it — and KEEP
+          // the wrapper explanation after it rather than trading one for the other.
+          tooltip = tooltip === ''
+            ? exceptionTooltip(inner.baseFc)
+            : `${exceptionTooltip(inner.baseFc)} ${tooltip}`;
+        }
       }
     }
 
@@ -310,11 +385,12 @@ export function parsePacket(msg: any, prevTimestampUs: number, offsetMs: number)
         sender: crc === 'ERR' ? 'ERR' : sender,
         slave,
         fc: fcDisplay,
-        fc_code: msg.function.toString(16).padStart(2, '0').toUpperCase(),
+        fc_code: fcFacetCode(msg.function),
         pl,
         bytes: msg.size,
         crc,
         isArbitration: false,
+        isException,
         direction,
         t: formatTimestamp(msg.timestamp_us, offsetMs),
         dt,

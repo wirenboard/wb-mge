@@ -220,10 +220,23 @@ function isUserDefinedFc(fc: number): boolean {
 // but actively used by Schneider (M340, M580, Unity Pro). Treat as vendor-specific.
 const VENDOR_FC = new Set([0x5a, 0x5b]);
 
+/**
+ * Split a Modbus function byte into its exception flag and the original function code.
+ * Bit 7 set marks an exception reply (0x90 = exception to FC16 = 0x10); the code the slave
+ * is replying about is the low 7 bits. The bit-7 rule itself is written down only here — the
+ * decoder tree applies it as-is, while the sniffer goes through resolveFunctionCode()
+ * (snifferUtils.ts), which wraps this with one exemption of its own (a byte that is itself a
+ * known function code, i.e. 0xFF Fast Modbus arbitration, is taken at face value). So this is
+ * the source of the RULE, not a drop-in replacement for what the sniffer displays.
+ */
+export function splitFunctionCode(fc: number): { isException: boolean; baseFc: number } {
+  return { isException: (fc & 0x80) !== 0, baseFc: fc & 0x7f };
+}
+
 // Shared PDU helpers — used in both request and response decoders
 
 function makeError(fc: number, bytes: number[]): PduResult {
-  const origFc = fc & 0x7f;
+  const origFc = splitFunctionCode(fc).baseFc;
   // length already validated by caller (bytes.length >= 2)
   return {
     type: 'modbus_error',

@@ -14,6 +14,7 @@ import { sendPacketToPort } from '@/utils/modbusUtils';
 import {
   type SniffRow,
   type ByteRole,
+  type CaptureReadyOutcome,
   FC_NAMES,
   SLAVE_NAMES,
   parsePacket,
@@ -180,6 +181,11 @@ function connectWs() {
   ws.value.onopen = () => {
     wsStatus.value = 'connected';
     sendPortStart(parseInt(portFilter.value));
+    // The socket is open and the per-port `start` command has been written to it — that is what
+    // a waiting send is waiting for; see ensureCaptureRunning() for what it does and does not
+    // guarantee. Position within this handler does not matter: resolve() only schedules a
+    // microtask, so the rest of onopen always runs before any waiting send resumes.
+    resolveCaptureReady(true);
   };
   ws.value.onmessage = (ev) => {
     try {
@@ -214,6 +220,85 @@ function connectWs() {
 
 /** Delay after switching port mode to allow firmware to complete serial port reinit. */
 const PORT_MODE_SWITCH_DELAY_MS = 500;
+
+/** Give up waiting for the capture WebSocket after this long and transmit anyway (see
+ *  ensureCaptureRunning) — a send must never hang because the socket cannot be established. */
+const CAPTURE_READY_TIMEOUT_MS = 5000;
+
+// Resolvers for callers waiting until the capture is established (see ensureCaptureRunning() for
+// what that means). Settled with true in ws.onopen (socket open + `start` written) and with false
+// in stopCapture(), so a pending send is never stranded when the user stops the capture.
+let captureReadyWaiters: ((ready: boolean) => void)[] = [];
+
+function resolveCaptureReady(ready: boolean) {
+  const waiters = captureReadyWaiters;
+  captureReadyWaiters = [];
+  for (const resolve of waiters) resolve(ready);
+}
+
+function waitForCaptureReady(): Promise<boolean> {
+  if (running.value && wsStatus.value === 'connected') return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const waiter = (ready: boolean) => {
+      if (timer !== null) {
+        clearTimeout(timer); timer = null;
+      }
+      resolve(ready);
+    };
+    captureReadyWaiters.push(waiter);
+    timer = setTimeout(() => {
+      captureReadyWaiters = captureReadyWaiters.filter(w => w !== waiter);
+      resolve(false);
+    }, CAPTURE_READY_TIMEOUT_MS);
+  });
+}
+
+/**
+ * Make sure the capture is established before a frame is transmitted, so both the request and the
+ * reply land in the list instead of being sent into a socket that is not open yet and lost.
+ *
+ * What "established" is worth, exactly: the `{"cmd":"start"}` frame was written into an OPEN
+ * WebSocket before the send request went out. That is strictly stronger than awaiting
+ * startCapture() alone, which returns as soon as connectWs() has *requested* the socket
+ * (`new WebSocket(...)` returns immediately) — a frame sent at that point still races the
+ * connection. It is NOT proof that the firmware has processed the `start`: the capture command
+ * travels on the WebSocket and the frame on a separate POST /ports/N/send, and nothing on this
+ * side orders the two.
+ *
+ * Never rejects. Bringing the capture up is best effort — a send must degrade to "transmit with
+ * nothing recording it", never to "do not transmit" (the same principle as
+ * CAPTURE_READY_TIMEOUT_MS).
+ *
+ * @returns 'already-running' when the capture was already established, so there is nothing to
+ *   announce; 'started' when THIS call started it and it is now established; 'not-established'
+ *   when the frame is about to go out unrecorded — the user pressed Stop, the socket did not
+ *   open within CAPTURE_READY_TIMEOUT_MS, or starting the capture failed outright.
+ */
+async function ensureCaptureRunning(): Promise<CaptureReadyOutcome> {
+  if (running.value && wsStatus.value === 'connected') return 'already-running';
+  const autoStarted = !running.value;
+  if (autoStarted) {
+    try {
+      await startCapture();
+    } catch (e) {
+      // connectWs() constructs the WebSocket, and `new WebSocket(url)` throws synchronously on a
+      // malformed URL or on mixed content. Roll the UI back out of the running state it never
+      // actually reached, then let the caller transmit anyway.
+      console.warn('sniffer: could not start the capture before a send', e);
+      stopCapture();
+      return 'not-established';
+    }
+    // The user may have hit Stop while startCapture() was in flight — do not block on a
+    // connection that will never come.
+    if (!running.value) return 'not-established';
+  }
+  // The result decides what the caller tells the user: false means the capture never came up
+  // (Stop, or the timeout), so claiming it was started would be a lie.
+  const established = await waitForCaptureReady();
+  if (!established) return 'not-established';
+  return autoStarted ? 'started' : 'already-running';
+}
 
 async function startCapture() {
   // Set running immediately to prevent concurrent calls while async steps execute.
@@ -279,6 +364,9 @@ function stopCapture() {
   }
   running.value = false;
   wsStatus.value = 'disconnected';
+  // Nothing will connect now, so release any send waiting for the capture instead of making
+  // it sit out the full CAPTURE_READY_TIMEOUT_MS.
+  resolveCaptureReady(false);
   sendPortStop(parseInt(portFilter.value));
   ws.value?.close();
   ws.value = null;
@@ -463,6 +551,10 @@ const sel = computed(() =>
 const resending = ref(false);
 const resendMsg = ref('');
 const resendIsError = ref(false);
+// What the last resend had to do about the capture, so the user is told what actually happened
+// instead of the UI changing state behind their back (or claiming a capture that never came up).
+// null = no resend yet / nothing to announce.
+const resendCaptureNotice = ref<CaptureReadyOutcome | null>(null);
 
 const canResend = computed(() =>
   sel.value !== null && !sel.value.isArbitration && sel.value.pl.length > 0 && sel.value.crc === 'OK'
@@ -485,14 +577,25 @@ const resendDisabledReason = computed(() => {
 async function resendSelected() {
   const row = sel.value;
   if (row === null || !canResend.value) return;
+  // Pin the destination port together with the row. The port buttons stay live while the send
+  // waits for the capture (up to CAPTURE_READY_TIMEOUT_MS), and a frame captured on port 1 must
+  // not be replayed onto port 2 — a different bus with different devices — just because the
+  // filter moved in the meantime.
+  const port = portFilter.value;
   resending.value = true;
   resendMsg.value = '';
   resendIsError.value = false;
+  resendCaptureNotice.value = null;
   try {
+    // Resending has the same blind spot as the packet sender: with the capture stopped neither
+    // the replayed frame nor the answer is recorded. Establish it first, then say what actually
+    // happened. ensureCaptureRunning() never rejects, so a capture that cannot be started makes
+    // the resend go out unrecorded instead of cancelling it.
+    resendCaptureNotice.value = await ensureCaptureRunning();
     // Strip the display spaces from the payload to get a compact hex string.
     const hex = row.pl.replace(/\s+/g, '');
-    const res = await sendPacketToPort(portFilter.value, hex);
-    resendMsg.value = t('resend_sent', { n: res.sent, port: portFilter.value });
+    const res = await sendPacketToPort(port, hex);
+    resendMsg.value = t('resend_sent', { n: res.sent, port });
   } catch (e: unknown) {
     resendIsError.value = true;
     resendMsg.value = e instanceof Error ? e.message : String(e);
@@ -505,6 +608,7 @@ async function resendSelected() {
 watch(selected, () => {
   resendMsg.value = '';
   resendIsError.value = false;
+  resendCaptureNotice.value = null;
 });
 
 function senderPillClass(sender: string) {
@@ -674,7 +778,7 @@ function exportCsv() {
                 <span v-if="r.isArbitration" class="muted">—</span>
                 <span v-else>0x{{ r.slave }}</span>
               </td>
-              <td class="mono fc-cell" :title="r.tooltip || undefined">{{ r.fc }}</td>
+              <td :class="['mono', 'fc-cell', { 'fc-cellException': r.isException }]" :title="r.tooltip || undefined">{{ r.fc }}</td>
               <td>
                 <span class="hex-payload">
                   <span
@@ -702,6 +806,8 @@ function exportCsv() {
         </Button>
         <span v-if="resendMsg" :class="['pkt-resend-msg', { 'pkt-resend-msgErr': resendIsError }]">{{ resendMsg }}</span>
         <span v-else-if="resendDisabledReason" class="pkt-resend-hint">{{ resendDisabledReason }}</span>
+        <span v-if="resendCaptureNotice === 'started'" class="pkt-resend-hint">{{ t('capture_autostarted') }}</span>
+        <span v-else-if="resendCaptureNotice === 'not-established'" class="pkt-resend-hint">{{ t('capture_not_running') }}</span>
       </div>
       <PacketDecoder v-if="sel" :packet="sel" />
       </div><!-- /sniffer-body -->
@@ -711,6 +817,7 @@ function exportCsv() {
       v-if="senderOpen"
       :port-num="portFilter"
       :tx-disabled="txDisabledForCurrentPort"
+      :ensure-capture="ensureCaptureRunning"
       @close="senderOpen = false"
     />
     </div><!-- /sniffer-content-wrap -->
@@ -1088,6 +1195,13 @@ function exportCsv() {
   color: var(--text-secondary);
 }
 
+/* Exception reply (function byte with bit 7 set): the label already reads "Error: <function>",
+   the color makes a rejected reply stand out from a successful one in a dense list. */
+.fc-cellException {
+  color: var(--mb-err);
+  font-weight: 500;
+}
+
 .sender-pill {
   display: inline-block;
   font-family: var(--font-mono);
@@ -1286,6 +1400,8 @@ function exportCsv() {
     "resend_tx_disabled": "TX is disabled for this port",
     "resend_unavailable": "This packet cannot be resent",
     "resend_crc_err": "A frame with a CRC error cannot be resent",
+    "capture_autostarted": "Capture started automatically",
+    "capture_not_running": "Sent without a running capture, so the packets will not appear in the list",
     "port_n": "Port {n}"
   },
   "ru": {
@@ -1324,6 +1440,8 @@ function exportCsv() {
     "resend_tx_disabled": "TX отключён для этого порта",
     "resend_unavailable": "Этот пакет нельзя отправить повторно",
     "resend_crc_err": "Кадр с ошибкой CRC нельзя отправить повторно",
+    "capture_autostarted": "Перехват запущен автоматически",
+    "capture_not_running": "Отправлено без активного перехвата, пакеты не попадут в список",
     "port_n": "Порт {n}"
   },
   "kk": {
@@ -1362,6 +1480,8 @@ function exportCsv() {
     "resend_tx_disabled": "Бұл порт үшін TX өшірілген",
     "resend_unavailable": "Бұл пакетті қайта жіберу мүмкін емес",
     "resend_crc_err": "CRC қатесі бар кадрды қайта жіберу мүмкін емес",
+    "capture_autostarted": "Ұстау автоматты түрде іске қосылды",
+    "capture_not_running": "Белсенді ұстаусыз жіберілді, пакеттер тізімде көрінбейді",
     "port_n": "Порт {n}"
   },
   "it": {
@@ -1400,6 +1520,8 @@ function exportCsv() {
     "resend_tx_disabled": "TX disabilitato per questa porta",
     "resend_unavailable": "Questo pacchetto non può essere reinviato",
     "resend_crc_err": "Un frame con errore CRC non può essere reinviato",
+    "capture_autostarted": "Cattura avviata automaticamente",
+    "capture_not_running": "Inviato senza cattura attiva, i pacchetti non compariranno nell'elenco",
     "port_n": "Porta {n}"
   },
   "de": {
@@ -1438,6 +1560,8 @@ function exportCsv() {
     "resend_tx_disabled": "TX für diesen Port deaktiviert",
     "resend_unavailable": "Dieses Paket kann nicht erneut gesendet werden",
     "resend_crc_err": "Ein Frame mit CRC-Fehler kann nicht erneut gesendet werden",
+    "capture_autostarted": "Erfassung automatisch gestartet",
+    "capture_not_running": "Ohne laufende Erfassung gesendet, die Pakete erscheinen nicht in der Liste",
     "port_n": "Port {n}"
   }
 }

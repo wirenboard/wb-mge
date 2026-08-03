@@ -7,6 +7,8 @@ import {
   getRowBytes,
   getRowByteRoles,
   toggleSet,
+  fcLabel,
+  fcFacetCode,
   parsePacket,
   computeVirtualWindow,
   trimToCap,
@@ -161,6 +163,32 @@ describe('toggleSet', () => {
   });
 });
 
+describe('fcLabel / fcFacetCode', () => {
+  it('names a plain function code and keys its facet by its own hex', () => {
+    expect(fcLabel(0x03)).toBe('Read Holding Regs');
+    expect(fcFacetCode(0x03)).toBe('03');
+    expect(fcLabel(0x10)).toBe('Write Multiple Regs');
+    expect(fcFacetCode(0x10)).toBe('10');
+  });
+
+  it('strips the exception bit: names the original function and keys the facet by it', () => {
+    expect(fcLabel(0x90)).toBe('Error: Write Multiple Regs');
+    expect(fcFacetCode(0x90)).toBe('10');
+    expect(fcLabel(0x83)).toBe('Error: Read Holding Regs');
+    expect(fcFacetCode(0x83)).toBe('03');
+  });
+
+  it('falls back to the original numeric code when the function has no name', () => {
+    expect(fcLabel(0xc5)).toBe('Error: FC69');
+    expect(fcFacetCode(0xc5)).toBe('45');
+  });
+
+  it('0xFF stays Fast Modbus arbitration — it is a known code, not an exception to FC 0x7F', () => {
+    expect(fcLabel(0xff)).toBe('FM Arbitration');
+    expect(fcFacetCode(0xff)).toBe('FF');
+  });
+});
+
 describe('parsePacket', () => {
   // Fixed wall-clock offset for deterministic tests. None of the parsePacket assertions
   // check the rendered `t` (wall-clock Time) string, so a constant 0 is sufficient here.
@@ -294,6 +322,122 @@ describe('parsePacket', () => {
     const r = row as SniffRow;
     // subcmd byte = raw[4:6] = '01' → 'FM Scan Start'
     expect(r.fc).toBe('FM Scan Start');
+  });
+
+  // An exception reply carries the request FC with bit 7 set (0x90 answers FC16). FC_NAMES has
+  // no key >= 128, so this used to render as the literal "FC144" with a facet code of "90"
+  // (labelled "Unknown" in the rail). The row must name the ORIGINAL function, flag the
+  // exception, and group in the facet under the plain FC it answers.
+  it('parses an exception reply (function=0x90) → labelled with the original FC and flagged', () => {
+    // 01 90 02 CDC1 — exception 02 (illegal data address) in reply to FC16.
+    const msg = {
+      id: 7,
+      port: 1,
+      type: 'packet',
+      timestamp_us: 8000000,
+      raw: '019002CDC1',
+      size: 5,
+      function: 0x90,
+      slave_id: 1,
+      sender: 'slave',
+      crc_valid: true,
+    };
+    const { row } = parsePacket(msg, 0, OFFSET);
+    expect(row).not.toBeNull();
+    const r = row as SniffRow;
+    // Never the raw decimal byte.
+    expect(r.fc).not.toContain('144');
+    expect(r.fc).toContain('Write Multiple Regs');
+    expect(r.isException).toBe(true);
+    // Facet groups with a plain FC16 reply, so filtering by "Write Multiple Regs" finds it.
+    expect(r.fc_code).toBe('10');
+    expect(r.tooltip).not.toBe('');
+  });
+
+  it('an exception row is distinguishable from the successful reply it shares a facet with', () => {
+    const base = {
+      port: 1,
+      type: 'packet',
+      timestamp_us: 8000000,
+      size: 8,
+      slave_id: 1,
+      sender: 'slave',
+      crc_valid: true,
+    };
+    const ok = parsePacket({ ...base, id: 8, raw: '011000000001', function: 0x10 }, 0, OFFSET).row as SniffRow;
+    const err = parsePacket({ ...base, id: 9, raw: '019002CDC1', function: 0x90 }, 0, OFFSET).row as SniffRow;
+    // Same facet bucket...
+    expect(err.fc_code).toBe(ok.fc_code);
+    // ...but the row itself reads differently and carries the flag the table styles on.
+    expect(ok.isException).toBe(false);
+    expect(err.isException).toBe(true);
+    expect(err.fc).not.toBe(ok.fc);
+  });
+
+  it('an exception on a function with no name still resolves to the original code', () => {
+    // 0xC5 = exception to FC 0x45 (69), which has no FC_NAMES entry.
+    const msg = {
+      id: 10,
+      port: 1,
+      type: 'packet',
+      timestamp_us: 9000000,
+      raw: '01C502ABCD',
+      size: 5,
+      function: 0xc5,
+      slave_id: 1,
+      sender: 'slave',
+      crc_valid: true,
+    };
+    const r = parsePacket(msg, 0, OFFSET).row as SniffRow;
+    expect(r.fc).toBe('Error: FC69');
+    expect(r.isException).toBe(true);
+    expect(r.fc_code).toBe('45');
+  });
+
+  it('an exception inside a Fast Modbus response is named and flags the row', () => {
+    // FD 46 09 <serial:00062466> <inner PDU: 90 02 = exception to FC16> <crc:0000>
+    const msg = {
+      id: 12,
+      port: 1,
+      type: 'packet',
+      timestamp_us: 9700000,
+      raw: 'FD46090006246690020000',
+      size: 11,
+      function: 0x46,
+      slave_id: 0xfd,
+      sender: 'slave',
+      crc_valid: true,
+    };
+    const r = parsePacket(msg, 0, OFFSET).row as SniffRow;
+    expect(r.fc).toContain('FM Cmd');
+    expect(r.fc).toContain('Error: Write Multiple Regs');
+    // The wrapper FC 0x46 is not an exception, but the exchange failed — the row says so.
+    expect(r.isException).toBe(true);
+    // The facet still groups the packet by its Fast Modbus wrapper FC.
+    expect(r.fc_code).toBe('46');
+    // Both explanations survive: an exception buried inside an FM wrapper is exactly where the
+    // user needs it spelled out, and the subcommand tooltip must not be traded away for it.
+    expect(r.tooltip).toContain('Exception reply for Write Multiple Regs');
+    expect(r.tooltip).toContain('Fast Modbus Cmd Response');
+  });
+
+  it('a plain function code is untouched: no exception flag, facet code unchanged', () => {
+    const msg = {
+      id: 11,
+      port: 1,
+      type: 'packet',
+      timestamp_us: 9500000,
+      raw: '01030000000285CA',
+      size: 8,
+      function: 3,
+      slave_id: 1,
+      sender: 'master',
+      crc_valid: true,
+    };
+    const r = parsePacket(msg, 0, OFFSET).row as SniffRow;
+    expect(r.fc).toBe('Read Holding Regs');
+    expect(r.isException).toBe(false);
+    expect(r.fc_code).toBe('03');
   });
 
   it('returns {row: null} for unknown message type', () => {
@@ -451,6 +595,7 @@ describe('rowMatchesFilter', () => {
       bytes: 0,
       crc: 'OK',
       isArbitration: false,
+      isException: false,
       direction: 'request',
       t: '',
       dt: '',

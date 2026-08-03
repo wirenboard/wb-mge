@@ -9,10 +9,20 @@ import {
   parseValueList,
 } from '@/utils/modbusUtils';
 import { senderState } from '@/utils/senderState';
+import type { CaptureReadyOutcome } from '@/utils/snifferUtils';
 
 const props = defineProps<{
   portNum: string;
   txDisabled: boolean;
+  /**
+   * Establish the sniffer capture unless it already is, and report what had to be done:
+   * 'already-running' (nothing to announce), 'started' (this send started it) or
+   * 'not-established' (the frame is going out with nothing recording it). Awaited BEFORE the
+   * frame is transmitted — with the capture off neither the request nor the reply would
+   * otherwise appear in the list. What "established" actually guarantees is written down once,
+   * in ensureCaptureRunning() in Sniffer.vue.
+   */
+  ensureCapture: () => Promise<CaptureReadyOutcome>;
 }>();
 
 const emit = defineEmits<{
@@ -27,6 +37,10 @@ const state = senderState;
 const sending = ref(false);
 const error = ref('');
 const success = ref('');
+// What the last send had to do about the capture: announce an auto-start instead of letting the
+// UI change state behind the user's back, and — just as important — admit it when the capture
+// never came up, so the hint never promises packets that will not arrive. null = nothing to say.
+const captureNotice = ref<CaptureReadyOutcome | null>(null);
 
 // FCs that write coils (boolean, value 0/1) as opposed to 16-bit registers.
 const COIL_FCS = new Set(['05', '0f']);
@@ -51,18 +65,34 @@ const fcOptions = computed(() => (state.mode === 'read' ? readFcOptions.value : 
 
 function setMode(m: 'read' | 'write') {
   state.mode = m;
-  // Switching mode changes the FC, which triggers the fc watcher that resets `value`.
+  // Switching mode changes the FC, which triggers the fc watcher below.
   state.fc = m === 'read' ? '03' : '06';
   error.value = '';
   success.value = '';
 }
 
-// Reset `value` to a sensible default whenever the FC changes so the form never carries an
-// incompatible value into the new FC (e.g. "10" left over when switching to a coil FC that
-// only accepts 0/1, which would silently disable the send button). Fires only on a real
-// change — not on mount — so persisted values (#1) are preserved across reopen.
+/**
+ * Is what the user typed acceptable for this FC/mode?
+ *
+ * Answered by buildPreviewFrame — the very function that decides whether the send button is
+ * enabled — probed with a known-valid slave ID and address so that only the value decides the
+ * outcome. Reusing it means this check cannot drift from the real one; a separate hand-written
+ * range table could.
+ */
+function valueFitsFc(value: string, fc: string, mode: 'read' | 'write'): boolean {
+  return buildPreviewFrame('1', fc, '0', value, mode) !== null;
+}
+
+// Keep `value` across an FC change unless the new FC cannot accept it (e.g. "10" carried into
+// a coil FC that only takes 0/1, which would silently disable the send button — the reason this
+// watcher exists). FC03->FC04 or a 0/1 value moving between coil and register FCs is preserved
+// instead of throwing away the user's input. Fires only on a real change — not on mount — so
+// persisted values (#1) are preserved across reopen. `state.mode` is already updated by the
+// time this runs, because setMode() sets it before the FC and the watcher flushes after both.
 watch(() => state.fc, (fc) => {
-  state.value = COIL_FCS.has(fc) ? '1' : '10';
+  if (!valueFitsFc(state.value, fc, state.mode)) {
+    state.value = COIL_FCS.has(fc) ? '1' : '10';
+  }
   error.value = '';
   success.value = '';
 });
@@ -112,7 +142,21 @@ async function handleSend() {
   sending.value = true;
   error.value = '';
   success.value = '';
+  captureNotice.value = null;
   try {
+    // The sniffer only records what arrives while its WebSocket is open, so sending with the
+    // capture off shows neither the request nor the reply. Wait until the capture is established
+    // BEFORE transmitting — starting it after (or without awaiting) would lose the request
+    // exactly as before. Triggered by the send, not by opening the popup: composing a frame must
+    // not start a capture on its own. What "established" guarantees: see ensureCaptureRunning()
+    // in Sniffer.vue.
+    try {
+      captureNotice.value = await props.ensureCapture();
+    } catch {
+      // The capture must never cancel the send. `ensureCapture` comes from the parent, so do not
+      // rely on how it reports a failure: transmit anyway and say the frame went out unrecorded.
+      captureNotice.value = 'not-established';
+    }
     // Convert bytes to compact hex string (no spaces)
     const hex = Array.from(bytes)
       .map(b => b.toString(16).padStart(2, '0'))
@@ -235,9 +279,11 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
       >
 ▶ {{ sendLabel }}
 </button>
-      <!-- CRC hint or TX-disabled warning below the send button -->
+      <!-- CRC hint, TX-disabled warning or capture notice below the send button -->
       <span class="sniffer-sender-hint">
         <template v-if="txDisabled">{{ t('hint_tx_disabled') }}</template>
+        <template v-else-if="captureNotice === 'started'">{{ t('hint_capture_started') }}</template>
+        <template v-else-if="captureNotice === 'not-established'">{{ t('hint_capture_not_running') }}</template>
         <template v-else>{{ t('hint_crc') }}</template>
       </span>
     </div>
@@ -489,6 +535,8 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "preview_label": "PREVIEW",
     "hint_crc": "CRC computed automatically",
     "hint_tx_disabled": "TX is disabled for this port",
+    "hint_capture_started": "Capture started automatically so the packets appear in the list",
+    "hint_capture_not_running": "Sent without a running capture, so the packets will not appear in the list",
     "hint_slave": "Slave ID must be between 1 and 247",
     "hint_addr": "Address must be between 0 and 65535",
     "hint_reg": "Register value must be 0..65535",
@@ -523,6 +571,8 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "preview_label": "PREVIEW",
     "hint_crc": "CRC добавляется автоматически",
     "hint_tx_disabled": "TX отключён для этого порта",
+    "hint_capture_started": "Перехват запущен автоматически, чтобы пакеты попали в список",
+    "hint_capture_not_running": "Отправлено без активного перехвата, пакеты не попадут в список",
     "hint_slave": "Slave ID должен быть от 1 до 247",
     "hint_addr": "Адрес должен быть от 0 до 65535",
     "hint_reg": "Значение регистра должно быть 0..65535",
@@ -557,6 +607,8 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "preview_label": "PREVIEW",
     "hint_crc": "CRC автоматты түрде есептеледі",
     "hint_tx_disabled": "Бұл порт үшін TX өшірілген",
+    "hint_capture_started": "Пакеттер тізімде көріну үшін ұстау автоматты түрде іске қосылды",
+    "hint_capture_not_running": "Белсенді ұстаусыз жіберілді, пакеттер тізімде көрінбейді",
     "hint_slave": "Slave ID 1 мен 247 аралығында болуы керек",
     "hint_addr": "Мекенжай 0 бен 65535 аралығында болуы керек",
     "hint_reg": "Регистр мәні 0..65535 болуы керек",
@@ -591,6 +643,8 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "preview_label": "ANTEPRIMA",
     "hint_crc": "CRC calcolato automaticamente",
     "hint_tx_disabled": "TX disabilitato per questa porta",
+    "hint_capture_started": "Cattura avviata automaticamente per mostrare i pacchetti nell'elenco",
+    "hint_capture_not_running": "Inviato senza cattura attiva, i pacchetti non compariranno nell'elenco",
     "hint_slave": "Lo Slave ID deve essere compreso tra 1 e 247",
     "hint_addr": "L'indirizzo deve essere compreso tra 0 e 65535",
     "hint_reg": "Il valore del registro deve essere 0..65535",
@@ -625,6 +679,8 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "preview_label": "VORSCHAU",
     "hint_crc": "CRC wird automatisch berechnet",
     "hint_tx_disabled": "TX für diesen Port deaktiviert",
+    "hint_capture_started": "Erfassung automatisch gestartet, damit die Pakete in der Liste erscheinen",
+    "hint_capture_not_running": "Ohne laufende Erfassung gesendet, die Pakete erscheinen nicht in der Liste",
     "hint_slave": "Slave-ID muss zwischen 1 und 247 liegen",
     "hint_addr": "Adresse muss zwischen 0 und 65535 liegen",
     "hint_reg": "Registerwert muss 0..65535 sein",

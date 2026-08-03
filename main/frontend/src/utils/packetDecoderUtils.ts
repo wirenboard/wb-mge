@@ -1,3 +1,5 @@
+import { splitFunctionCode } from '@/common/modbusDecoder';
+
 // Human-readable labels
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -321,10 +323,10 @@ export function fmtCoilData(hexStr: string): string {
 export function fmtVal(key: string, raw: string): string {
   if ((key === 'fc' || key === 'function_code') && /^[0-9A-Fa-f]+$/.test(raw)) {
     const upper = raw.toUpperCase();
-    const val = parseInt(upper, 16);
-    if (val & 0x80) {
-      // Error FC: bit 7 is set — original FC is val & 0x7F
-      const origHex = (val & 0x7f).toString(16).toUpperCase().padStart(2, '0');
+    const { isException, baseFc } = splitFunctionCode(parseInt(upper, 16));
+    if (isException) {
+      // Error FC: bit 7 is set — the original FC is the low 7 bits
+      const origHex = baseFc.toString(16).toUpperCase().padStart(2, '0');
       const origName = FC_DISPLAY_NAMES[origHex] ?? 'Unknown';
       return `0x${upper} (Error: ${origName})`;
     }
@@ -512,10 +514,10 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
     }
     if ((k === 'fc' || k === 'function_code') && typeof v === 'string') {
       const upper = v.toUpperCase();
-      const num = parseInt(upper, 16);
+      const { isException, baseFc } = splitFunctionCode(parseInt(upper, 16));
       // Only set a tooltip for error FC responses — the plain name is already visible inline via fmtVal()
-      if (num & 0x80) {
-        const origHex = (num & 0x7f).toString(16).toUpperCase().padStart(2, '0');
+      if (isException) {
+        const origHex = baseFc.toString(16).toUpperCase().padStart(2, '0');
         valueTooltip = `Exception response for FC 0x${origHex} (${FC_DISPLAY_NAMES[origHex] ?? 'Unknown'})`;
       }
     }

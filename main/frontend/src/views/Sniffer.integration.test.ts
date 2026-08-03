@@ -20,6 +20,25 @@
  *   shows the full count), but only a small window of rows is rendered as <tr class="sniff-row">.
  *   A spacer row (tr.sniff-spacer) absorbs the height of the off-screen rows below the window.
  *
+ * SNIF-I-005 — the packet sender starts the capture and waits for it:
+ *   Sending with the capture off used to show neither the request nor the reply, because the
+ *   WebSocket is opened only by startCapture(). The send now starts the capture and — the part
+ *   that matters — does not transmit until the socket is actually open, since startCapture()
+ *   returns as soon as the socket has been REQUESTED. The wait is bounded, releasable and
+ *   truthfully reported: a frame must never be cancelled or stranded by the sniffer, and the
+ *   hint must never promise packets that cannot arrive.
+ *   Scenario A: capture off → send starts it and holds the frame until ws.onopen fires.
+ *   Scenario B: capture already running → the frame goes out at once, no second WebSocket.
+ *   Scenario C: Stop pressed while the send waits → released at once, reported as unrecorded.
+ *   Scenario D: the socket never opens → released by the timeout, reported as unrecorded.
+ *   Scenario E: the WebSocket cannot even be constructed → the frame still goes out and the
+ *     toolbar rolls back out of the running state it never reached.
+ *
+ * SNIF-I-006 — a resend goes to the port the frame was captured on:
+ *   The resend now waits for the capture, and the port buttons stay live during that wait, so the
+ *   filter can move between the click and the transmission. The destination is pinned when the
+ *   row is read: replaying a port 1 frame onto port 2 would put it on a different bus.
+ *
  * SNIF-I-004 — ring-buffer overflow scroll compensation:
  *   When the ring buffer overflows while the user is scrolled up (autoScroll=false), the
  *   dropped-oldest rows shift the rendered content up, so scrollTop is reduced by
@@ -446,6 +465,281 @@ describe('SNIF-I-002: startCapture auto-switch', () => {
 
     // connectWs must have been called despite fetchInfo throwing.
     expect(MockWS.constructCount).toBeGreaterThanOrEqual(1);
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+});
+
+describe('SNIF-I-005: the packet sender starts the capture and waits for it', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    MockWS.instance = null;
+    MockWS.constructCount = 0;
+    // info stays undefined → startCapture() skips the port-mode branch and connects at once.
+    sharedInfoRef.value = undefined;
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWS);
+    // sendPacketToPort() posts with the global fetch — the send endpoint is not the `api` mock.
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ sent: 8 }) });
+    vi.stubGlobal('fetch', fetchMock);
+    fetchInfoMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  /** Open the sender popup from the toolbar. */
+  async function openSender(wrapper: ReturnType<typeof mount>) {
+    const btn = wrapper.findAll('button').find((b) => b.text().includes('Send packet'));
+    expect(btn, 'Send packet button must be found').toBeDefined();
+    await btn!.trigger('click');
+    await flushPromises();
+  }
+
+  /** The popup hint shown when the frame went out with no capture recording it. */
+  const NOT_RUNNING_HINT = 'Sent without a running capture, so the packets will not appear in the list';
+
+  it('scenario A: capture off → send starts it and holds the frame until the socket is open', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Capture is off: the toolbar still offers Start.
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Start')).toBe(true);
+
+    await openSender(wrapper);
+    await wrapper.find('.sniffer-sender-foot-send').trigger('click');
+    await flushPromises();
+
+    // The capture was started by the send...
+    expect(MockWS.constructCount).toBe(1);
+    // ...and NOTHING has been transmitted yet, because the socket has not opened. This is the
+    // whole point: without the wait the frame would go out here and be missed, exactly as before.
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // The socket opens → the capture is established → the frame is released.
+    MockWS.instance!.onopen?.();
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/ports/1/send');
+    // The capture is left running, and the toolbar reflects it.
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Stop')).toBe(true);
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+
+  it('scenario B: capture already running → the frame goes out at once, no second WebSocket', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    const captureBtn = wrapper.findAll('button').find((b) => b.text() === 'Start');
+    expect(captureBtn, 'Start button must be found').toBeDefined();
+    await captureBtn!.trigger('click');
+    await flushPromises();
+    MockWS.instance!.onopen?.();
+    await wrapper.vm.$nextTick();
+
+    await openSender(wrapper);
+    await wrapper.find('.sniffer-sender-foot-send').trigger('click');
+    await flushPromises();
+
+    // No extra WebSocket, and no waiting: the running capture is used as-is.
+    expect(MockWS.constructCount).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/ports/1/send');
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+
+  it('scenario C: Stop while the send waits releases the frame at once, reported as unrecorded', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    await openSender(wrapper);
+    await wrapper.find('.sniffer-sender-foot-send').trigger('click');
+    await flushPromises();
+
+    // The socket has been requested but never opened, so the frame is still being held.
+    expect(MockWS.constructCount).toBe(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // The user presses Stop while the send waits. Nothing will connect now.
+    const stopBtn = wrapper.findAll('button').find((b) => b.text() === 'Stop');
+    expect(stopBtn, 'Stop button must be found').toBeDefined();
+    await stopBtn!.trigger('click');
+    await flushPromises();
+
+    // Released immediately — the fake clock has not moved, so this cannot be the 5 s timeout.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/ports/1/send');
+    // And the popup admits the capture is off instead of claiming it started one.
+    expect(wrapper.find('.sniffer-sender-hint').text()).toBe(NOT_RUNNING_HINT);
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+
+  it('scenario D: the socket never opens → the timeout still sends the frame, reported as unrecorded', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    await openSender(wrapper);
+    await wrapper.find('.sniffer-sender-foot-send').trigger('click');
+    await flushPromises();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // CAPTURE_READY_TIMEOUT_MS (5 s) elapses with ws.onopen never firing.
+    await vi.advanceTimersByTimeAsync(5001);
+    await flushPromises();
+
+    // A send must never hang because the socket cannot be established.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/ports/1/send');
+    expect(wrapper.find('.sniffer-sender-hint').text()).toBe(NOT_RUNNING_HINT);
+
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+
+  it('scenario E: the WebSocket cannot be constructed → the frame goes out, the toolbar rolls back', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // `new WebSocket(url)` throws synchronously on a malformed URL or on mixed content.
+    class ThrowingWebSocket {
+      constructor() {
+        throw new Error('SecurityError: mixed content');
+      }
+    }
+    vi.stubGlobal('WebSocket', ThrowingWebSocket);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await openSender(wrapper);
+    await wrapper.find('.sniffer-sender-foot-send').trigger('click');
+    await flushPromises();
+
+    // Sending a frame never depended on the sniffer socket, and must not start to now.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/ports/1/send');
+    expect(warn).toHaveBeenCalled();
+    expect(wrapper.find('.sniffer-sender-hint').text()).toBe(NOT_RUNNING_HINT);
+    // The failure is not shown as a send error — the send itself succeeded.
+    expect(wrapper.find('.sniffer-sender-error').exists()).toBe(false);
+    // The toolbar is back on Start: the view does not sit in a running state it never reached.
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Start')).toBe(true);
+
+    warn.mockRestore();
+    wrapper.unmount();
+    vi.runAllTimers();
+    await flushPromises();
+  });
+});
+
+describe('SNIF-I-006: a resend goes to the port the frame was captured on', () => {
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    MockWS.instance = null;
+    MockWS.constructCount = 0;
+    sharedInfoRef.value = undefined;
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWS);
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ sent: 6 }) });
+    vi.stubGlobal('fetch', fetchMock);
+    fetchInfoMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('the port filter moving while the resend waits does not redirect the frame', async () => {
+    const { default: Sniffer } = await import('@/views/Sniffer.vue');
+
+    const wrapper = mount(Sniffer, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Capture one resendable frame (valid CRC, non-empty payload) on port 1.
+    await wrapper.findAll('button').find((b) => b.text() === 'Start')!.trigger('click');
+    await flushPromises();
+    MockWS.instance!.onopen?.();
+    await wrapper.vm.$nextTick();
+    MockWS.instance!.onmessage?.({
+      data: JSON.stringify({
+        id: 1,
+        type: 'packet',
+        port: 1,
+        function: 3,
+        slave_id: 1,
+        sender: 'master',
+        crc_valid: true,
+        raw: '0103000A0002',
+        size: 6,
+        timestamp_us: 1000,
+      }),
+    });
+    await vi.runAllTimersAsync();
+    await flushPromises();
+
+    // Stop the capture, so the resend has to start it again — that is the wait during which the
+    // user can still press a port button.
+    await wrapper.findAll('button').find((b) => b.text() === 'Stop')!.trigger('click');
+    await flushPromises();
+
+    // Select the captured row and resend it.
+    await wrapper.find('tr.sniff-row').trigger('click');
+    await flushPromises();
+    const resendBtn = wrapper.findAll('button').find((b) => b.text().includes('Resend'));
+    expect(resendBtn, 'Resend button must be found').toBeDefined();
+    await resendBtn!.trigger('click');
+    await flushPromises();
+
+    // Held until the capture is established — nothing on the wire yet.
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Only the Resend button is disabled during the wait, so the user can still switch ports.
+    const port2 = wrapper.findAll('button').find((b) => b.text() === 'Port 2');
+    expect(port2, 'Port 2 button must be found').toBeDefined();
+    await port2!.trigger('click');
+    await flushPromises();
+
+    // The capture comes up and the held frame is released.
+    MockWS.instance!.onopen?.();
+    await flushPromises();
+
+    // It must go back to port 1, where it was captured — port 2 is a different bus with
+    // different devices, and replaying a write there is a real hazard.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/ports/1/send');
 
     wrapper.unmount();
     vi.runAllTimers();
