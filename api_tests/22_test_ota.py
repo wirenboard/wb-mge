@@ -40,9 +40,16 @@ SIGNATURE_LEN = 12
 MIN_VALID_HEAD_LEN = WB_APP_DESC_OFFSET + WB_APP_DESC_SIZE
 
 # Upper bound for the device to abort an upload whose client went silent and answer HTTP again.
-# Keep above OTA_RECV_STALL_TIMEOUT_MS (30 s) + one HTTP_RECV_WAIT_TIMEOUT_S window, see
-# main/ota_handler.c.
-STALL_RECOVERY_BUDGET_S = 40
+# Real recovery is ~35 s: six 5 s receive windows in the handler loop (OTA_RECV_STALL_TIMEOUT_MS /
+# HTTP_RECV_WAIT_TIMEOUT_S, see main/ota_handler.c) plus one more window while the IDF purges the
+# unsent body. The budget is generous on top of that because the emulator under host load stretches
+# every one of those windows — the test is here to prove the device recovers at all, not to time it.
+STALL_RECOVERY_BUDGET_S = 60
+
+# Lower bound: the device must NOT answer instantly. Without it the test passes on a firmware that
+# rejects the upload outright (no stall handling at all), which is the opposite of what it checks.
+# Well below the ~35 s the handler really takes, so a loaded emulator cannot trip it.
+STALL_RECOVERY_MIN_S = 20
 
 
 @pytest.fixture(scope="module")
@@ -277,7 +284,8 @@ def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
     until the device is power-cycled.
 
     The defining assertion is the one on /info: the web interface must come back
-    on its own, well inside OTA_RECV_STALL_TIMEOUT_MS + one receive window.
+    on its own, and only after having actually waited out the stall — hence both a
+    lower and an upper bound on how long that request takes.
     """
     parsed = requests.utils.urlparse(api.base_url)
     host = parsed.hostname or "localhost"
@@ -304,7 +312,9 @@ def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
         # A separate connection, because the stalled one is the one under test. The
         # request is queued behind the OTA handler and can only be served once that
         # handler gives up, so its round-trip time measures the recovery.
-        info_resp = api.session.get(f"{api.base_url}/info", timeout=50)
+        # Above the budget on purpose: a request that timed out would fail the test with a transport
+        # error instead of the assertion below, which says what actually went wrong.
+        info_resp = api.session.get(f"{api.base_url}/info", timeout=STALL_RECOVERY_BUDGET_S + 30)
         info_elapsed = time.monotonic() - stall_start
 
         assert info_resp.status_code == 200, (
@@ -314,6 +324,11 @@ def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
         assert info_elapsed < STALL_RECOVERY_BUDGET_S, (
             f"GET /info took {info_elapsed:.1f}s while an OTA upload was stalled; "
             f"expected the device to abort the upload within {STALL_RECOVERY_BUDGET_S}s"
+        )
+        assert info_elapsed >= STALL_RECOVERY_MIN_S, (
+            f"GET /info was served after only {info_elapsed:.1f}s: the device did not sit through the "
+            f"stall timeout at all, so this test proves nothing about the receive loop. Either the "
+            f"upload was refused outright, or the request was not queued behind the OTA handler"
         )
 
         # The stalled upload itself must be over too: either an error response

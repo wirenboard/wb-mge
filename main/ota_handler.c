@@ -29,6 +29,14 @@
 // changing HTTP_RECV_WAIT_TIMEOUT_S keeps the silence budget above intact.
 #define OTA_RECV_MAX_STALL_TIMEOUTS (OTA_RECV_STALL_TIMEOUT_MS / (HTTP_RECV_WAIT_TIMEOUT_S * 1000))
 
+// The limit above is an integer division, so a receive window longer than half the silence budget
+// silently rounds it down to one, and a window longer than the budget down to zero — the very first
+// timeout would then abort an upload whose client is alive and simply slow. Two is the smallest
+// limit that still means "retried at least once before giving up".
+_Static_assert(OTA_RECV_MAX_STALL_TIMEOUTS >= 2,
+               "HTTP_RECV_WAIT_TIMEOUT_S is too large for OTA_RECV_STALL_TIMEOUT_MS: the stall limit "
+               "rounds down below two timeouts, so a single timeout would kill a live upload");
+
 
 static const char *TAG = "ota_handler";
 

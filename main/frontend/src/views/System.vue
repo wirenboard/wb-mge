@@ -6,7 +6,7 @@ import { useAlerts } from '@/common/alert';
 import { useChannelRelease } from '@/common/channelRelease';
 import { DeviceUpdateError, useFirmware } from '@/common/firmware';
 import { useInfo } from '@/common/info';
-import { useSettings } from '@/common/settings';
+import { SettingsRefreshError, useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
 import Switch from '@/components/Switch.vue';
 import type { CommandResponse } from '@/common/types';
@@ -36,6 +36,7 @@ const {
   progress: updateProgress,
   failure: updateFailure,
   message: updateMessage,
+  notice: updateNotice,
   release,
   channels,
   resolvedChannel,
@@ -104,6 +105,19 @@ const updateStatus = computed(() => {
   }
 });
 
+// A click or a re-check that did not do what the user asked, shown next to the version because
+// otherwise the only sign of it is a button that appears to do nothing.
+const updateNoticeText = computed(() => {
+  switch (updateNotice.value) {
+    case 'offer_changed':
+      return t('firmware_offer_changed');
+    case 'recheck_failed':
+      return t('firmware_recheck_failed');
+    default:
+      return '';
+  }
+});
+
 // The channel is saved on its own request, and the offer is recomputed only from the value the
 // device confirmed: updateSettings resolves after it has re-read /settings.
 const onChannelChange = async () => {
@@ -113,9 +127,17 @@ const onChannelChange = async () => {
     await updateSettings({ update_channel: settings.value!.update_channel });
     await checkUpdates();
   } catch (err) {
-    console.error('Failed to save the update channel', err);
-    settings.value!.update_channel = previous;
-    showAlert(t('firmware_channel_save_failed'), { type: 'error' });
+    if (err instanceof SettingsRefreshError) {
+      // The device took the channel; only reading the settings back failed. Rolling the selector
+      // back here would show a channel the device no longer has — the offer is what could not be
+      // recomputed, and that is what the user is told.
+      console.error('Failed to re-read the settings after saving the update channel', err);
+      showAlert(t('firmware_channel_recheck_failed'), { type: 'warning' });
+    } else {
+      console.error('Failed to save the update channel', err);
+      settings.value!.update_channel = previous;
+      showAlert(t('firmware_channel_save_failed'), { type: 'error' });
+    }
   } finally {
     isSavingChannel.value = false;
   }
@@ -362,20 +384,26 @@ const updateInterface = () => {
                 <span>
                   <span class="mono">{{ info?.firmware }}</span>
                   <span v-if="updateStatus" class="muted firmware-note">({{ updateStatus }})</span>
+                  <span v-if="updateNoticeText" class="firmware-notice">{{ updateNoticeText }}</span>
                 </span>
+                <!-- isUpdating is the manual file upload: it owns the device for up to 180 s, and
+                     the pre-flight requests this button makes would queue behind it and time out,
+                     leaving the card stuck in "check unavailable". -->
                 <Button
                   v-if="canInstall"
                   type="button"
                   variant="primary"
-                  :disabled="isUpdateBusy"
+                  :disabled="isUpdateBusy || isUpdating"
                   @click="startUpdate"
                 >
                   {{ t('firmware_update_to', { v: offeredVersion }) }}
                 </Button>
                 <!-- In `conflict` the device is already holding a written image, so there is no
-                     update button — the only way forward is to look again after it has rebooted. -->
+                     update button — the only way forward is to look again after it has rebooted.
+                     `unavailable` is here too: it is reachable by a click whose pre-flight failed,
+                     and without this button the card would have no way out except a page reload. -->
                 <Button
-                  v-if="updatePhase === 'conflict' || updatePhase === 'not_applied'"
+                  v-if="updatePhase === 'conflict' || updatePhase === 'not_applied' || updatePhase === 'unavailable'"
                   type="button"
                   variant="outline"
                   @click="recheckUpdates"
@@ -463,6 +491,12 @@ const updateInterface = () => {
   margin-left: 8px;
   font-size: 11.5px;
 }
+
+.firmware-notice {
+  margin-left: 8px;
+  font-size: 11.5px;
+  color: var(--warn);
+}
 </style>
 
 <i18n>
@@ -507,6 +541,9 @@ const updateInterface = () => {
     "firmware_download_failed": "could not download the firmware",
     "firmware_no_response": "the device did not come back online",
     "firmware_channel_save_failed": "Could not save the update channel",
+    "firmware_channel_recheck_failed": "Channel saved, but the update offer could not be refreshed",
+    "firmware_offer_changed": "the available version changed — check it and press update again",
+    "firmware_recheck_failed": "could not re-read the device state, try again",
     "firmware_recheck": "Check state",
     "firmware_install": "Install from file",
     "wirmware_update_info": "The device will reboot after the update",
@@ -571,6 +608,9 @@ const updateInterface = () => {
     "firmware_download_failed": "не удалось скачать прошивку",
     "firmware_no_response": "устройство не вернулось на связь",
     "firmware_channel_save_failed": "Не удалось сохранить канал обновлений",
+    "firmware_channel_recheck_failed": "Канал сохранён, но обновить предложение не удалось",
+    "firmware_offer_changed": "предложение изменилось — проверьте версию и нажмите обновление ещё раз",
+    "firmware_recheck_failed": "не удалось перечитать состояние устройства, попробуйте ещё раз",
     "firmware_recheck": "Проверить состояние",
     "firmware_install": "Установить из файла",
     "wirmware_update_info": "После обновления устройство будет перезагружено",
@@ -635,6 +675,9 @@ const updateInterface = () => {
     "firmware_download_failed": "микробағдарламаны жүктеу мүмкін болмады",
     "firmware_no_response": "құрылғы байланысқа оралмады",
     "firmware_channel_save_failed": "Жаңарту арнасын сақтау мүмкін болмады",
+    "firmware_channel_recheck_failed": "Арна сақталды, бірақ жаңарту ұсынысын жаңарту мүмкін болмады",
+    "firmware_offer_changed": "қолжетімді нұсқа өзгерді — тексеріп, жаңартуды қайта басыңыз",
+    "firmware_recheck_failed": "құрылғы күйін қайта оқу мүмкін болмады, қайталап көріңіз",
     "firmware_recheck": "Күйін тексеру",
     "firmware_install": "Файлдан орнату",
     "wirmware_update_info": "Жаңартудан кейін құрылғы қайта жүктеледі",
@@ -699,6 +742,9 @@ const updateInterface = () => {
     "firmware_download_failed": "impossibile scaricare il firmware",
     "firmware_no_response": "il dispositivo non è tornato online",
     "firmware_channel_save_failed": "Impossibile salvare il canale di aggiornamento",
+    "firmware_channel_recheck_failed": "Canale salvato, ma non è stato possibile aggiornare la proposta",
+    "firmware_offer_changed": "la versione disponibile è cambiata — controllala e premi di nuovo Aggiorna",
+    "firmware_recheck_failed": "impossibile rileggere lo stato del dispositivo, riprova",
     "firmware_recheck": "Verifica stato",
     "firmware_install": "Installa da file",
     "wirmware_update_info": "Il dispositivo si riavvierà dopo l'aggiornamento",
@@ -763,6 +809,9 @@ const updateInterface = () => {
     "firmware_download_failed": "Firmware konnte nicht heruntergeladen werden",
     "firmware_no_response": "das Gerät ist nicht wieder online gegangen",
     "firmware_channel_save_failed": "Update-Kanal konnte nicht gespeichert werden",
+    "firmware_channel_recheck_failed": "Kanal gespeichert, das Update-Angebot konnte aber nicht aktualisiert werden",
+    "firmware_offer_changed": "die verfügbare Version hat sich geändert — prüfen Sie sie und drücken Sie erneut Aktualisieren",
+    "firmware_recheck_failed": "Gerätestatus konnte nicht erneut gelesen werden, bitte erneut versuchen",
     "firmware_recheck": "Status prüfen",
     "firmware_install": "Aus Datei installieren",
     "wirmware_update_info": "Das Gerät wird nach dem Update neu gestartet",

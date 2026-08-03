@@ -35,8 +35,11 @@ const firmwareNote = computed(() => {
     case 'checking':
       return t('firmware_checking');
     case 'available':
-    case 'up_to_date':
       return found?.ok ? t('firmware_in_channel', { channel: resolvedChannel.value, v: found.version }) : '';
+    // Naming the channel version here too would read as "1.1.0 (in stable: 1.1.0)" — the same
+    // number twice, with nothing telling the user it means there is nothing to install.
+    case 'up_to_date':
+      return t('firmware_up_to_date');
     case 'unavailable':
       return found && !found.ok && found.reason === 'no-signature'
         ? t('firmware_channels_unavailable')
@@ -248,6 +251,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_checking": "checking for updates…",
     "firmware_in_channel": "in {channel}: {v}",
+    "firmware_up_to_date": "up to date",
     "firmware_check_failed": "update check unavailable",
     "firmware_channels_unavailable": "no update channels published for this board yet",
     "firmware_update_btn": "Update",
@@ -293,6 +297,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Прошивка",
     "firmware_checking": "проверка обновлений…",
     "firmware_in_channel": "в канале {channel}: {v}",
+    "firmware_up_to_date": "актуальная",
     "firmware_check_failed": "проверка обновлений недоступна",
     "firmware_channels_unavailable": "для этой платы каналы обновлений пока не опубликованы",
     "firmware_update_btn": "Обновить",
@@ -338,6 +343,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Бағдарлама",
     "firmware_checking": "жаңартулар тексерілуде…",
     "firmware_in_channel": "{channel} арнасында: {v}",
+    "firmware_up_to_date": "өзекті",
     "firmware_check_failed": "жаңарту тексерісі қолжетімсіз",
     "firmware_channels_unavailable": "бұл тақта үшін жаңарту арналары әзірге жарияланбаған",
     "firmware_update_btn": "Жаңарту",
@@ -383,6 +389,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_checking": "controllo aggiornamenti…",
     "firmware_in_channel": "nel canale {channel}: {v}",
+    "firmware_up_to_date": "aggiornato",
     "firmware_check_failed": "controllo aggiornamenti non disponibile",
     "firmware_channels_unavailable": "per questa scheda i canali di aggiornamento non sono ancora pubblicati",
     "firmware_update_btn": "Aggiorna",
@@ -428,6 +435,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_version": "Firmware",
     "firmware_checking": "Update-Prüfung läuft…",
     "firmware_in_channel": "im Kanal {channel}: {v}",
+    "firmware_up_to_date": "aktuell",
     "firmware_check_failed": "Update-Prüfung nicht verfügbar",
     "firmware_channels_unavailable": "für diese Platine sind noch keine Update-Kanäle veröffentlicht",
     "firmware_update_btn": "Aktualisieren",

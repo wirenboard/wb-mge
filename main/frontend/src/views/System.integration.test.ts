@@ -12,6 +12,8 @@
  * SYS-I-004 — a failed channel save shows an alert, puts the selector back to the saved value and
  *              leaves the offer untouched.
  * SYS-I-005 — both channels equal to the installed version: two "installed" marks, no button.
+ * SYS-I-006 — a save the device accepted whose read-back failed keeps the selector on the new
+ *              channel and reports the failed re-read, not a failed save.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -71,7 +73,14 @@ vi.mock('@/common/info', () => ({
   useInfo: () => ({ info: infoRef, fetchInfo: vi.fn().mockResolvedValue(undefined), startPolling: vi.fn(), stopPolling: vi.fn() }),
 }));
 
+// Declared through vi.hoisted so the mock factory (which is hoisted above the imports) and the test
+// bodies share one class: instanceof is what tells a refused save from a failed read-back.
+const { SettingsRefreshErrorMock } = vi.hoisted(() => ({
+  SettingsRefreshErrorMock: class SettingsRefreshError extends Error {},
+}));
+
 vi.mock('@/common/settings', () => ({
+  SettingsRefreshError: SettingsRefreshErrorMock,
   useSettings: () => ({
     data: settingsRef,
     initData: savedSettingsRef,
@@ -218,6 +227,26 @@ describe('System.vue — firmware channels', () => {
     // The offer still names the stable version: nothing was recomputed for a channel the device
     // never accepted.
     expect(wrapper.text()).toContain('Update to 1.1.0');
+
+    wrapper.unmount();
+  });
+
+  it('SYS-I-006: a save whose read-back failed keeps the channel and says what really failed', async () => {
+    stubManifest(manifest);
+    // The device accepted the channel; only the /settings read that follows the POST did not come
+    // back. Rolling the selector back here would show a channel the device no longer has.
+    updateSettingsMock.mockRejectedValue(new SettingsRefreshErrorMock('connection_error'));
+    const wrapper = await mountSystem();
+
+    const select = wrapper.find('#update_channel');
+    await select.setValue('testing');
+    await flushPromises();
+
+    expect(settingsRef.value.update_channel).toBe('testing');
+    expect(showAlertMock).toHaveBeenCalledWith(
+      expect.stringContaining('offer could not be refreshed'),
+      expect.objectContaining({ type: 'warning' }),
+    );
 
     wrapper.unmount();
   });

@@ -11,6 +11,7 @@
     * added:    host unit tests for the new cache, sniffer, repeater, port-manager, mb_device, fast-Modbus and transparent-TCP modules, plus shared test utilities
     * added:    firmware branch-coverage measurement in QEMU via a /gcov endpoint, with a combined unit + e2e coverage report
     * added:    update_channel device setting (stable/testing, default stable) stored in NVS and exposed via GET/POST /settings
+    * added:    one-click firmware update in the web UI — the version published for the selected channel is downloaded and installed without leaving the browser, with progress, reboot wait and a check that the new version is the one running
     * change:   unified serial transport with additive sniffer/cache overlays (passive / tcp_bridge / disabled port modes)
     * improve:  faster web UI via cached shell assets and removal of double-gzip
     * improve:  CI runs lint, clang-tidy, Cyrillic-comment and unit-test stages in parallel with JUnit reporting
@@ -18,6 +19,7 @@
     * fix:      bound and back off bridge TCP-client reconnects; validate TCP/cache port collisions
     * fix:      sniffer wall-clock timestamps, memory usage, and Fast Modbus frame splitting
     * fix:      refuse a repeated firmware upload with 409 while the previous one is running or waiting to reboot, instead of silently erasing the image just written
+    * fix:      give up on a firmware upload whose client disappeared without closing the connection — such an upload used to leave the whole web interface unresponsive until the device was power-cycled
 
 2026-05-18 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
     * version:  1.2.0

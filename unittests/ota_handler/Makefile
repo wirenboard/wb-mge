@@ -33,6 +33,7 @@ INC += $(IDF_PATH)/components/esp_app_format/include
 # List of tests. One binary per scenario on purpose: the OTA state guard is a file-static with no
 # reset hook, so a test that leaves it set would decide the outcome of every test after it.
 TEST_LIST = ota_guard_repeat_test ota_guard_reset_test ota_guard_auth_order_test ota_response_failure_test
+TEST_LIST += ota_stall_abort_test ota_stall_recovery_test
 
 # Include base unit test build system
 include $(PROJ_DIR)/unittests/build_unittests.mk

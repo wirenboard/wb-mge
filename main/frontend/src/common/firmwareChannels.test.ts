@@ -16,7 +16,7 @@
  *            can never append that neighbour's pairs to ours.
  * FWC-008 — version parsing: .bin only, the Makefile grammar including +wbN / -rcN suffixes.
  * FWC-009 — describeChannels: both channels at once, a missing/unreadable key is null.
- * FWC-010 — resolveRelease: ok / no-signature / unavailable.
+ * FWC-010 — resolveRelease: ok / no-signature / unavailable, each with the channels view alongside.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -197,29 +197,38 @@ describe('describeChannels', () => {
 });
 
 describe('resolveRelease', () => {
-  it('FWC-010: resolves the selected channel', () => {
-    expect(resolveRelease(manifest, 'mge_v3', 'stable')).toEqual({
+  it('FWC-010: resolves the selected channel and reports both channels', () => {
+    const stable = resolveRelease(manifest, 'mge_v3', 'stable');
+    expect(stable.release).toEqual({
       ok: true,
       version: '1.1.0',
       url: `${FW_RELEASES_BASE}fw/by-signature/mge_v3/main/1.1.0.bin`,
     });
-    expect(resolveRelease(manifest, 'mge_v3', 'testing')).toEqual({
+    // The other channel comes out of the same lookup, so the UI needs no second parse.
+    expect(stable.channels?.testing?.version).toBe('1.1.1');
+
+    expect(resolveRelease(manifest, 'mge_v3', 'testing').release).toEqual({
       ok: true,
       version: '1.1.1',
       url: `${FW_RELEASES_BASE}fw/by-signature/mge_v3/main/1.1.1.bin`,
     });
   });
 
-  it('FWC-010: a signature absent from the manifest is no-signature', () => {
-    expect(resolveRelease(manifest, 'mgu_v1', 'stable')).toEqual({ ok: false, reason: 'no-signature' });
+  it('FWC-010: a signature absent from the manifest is no-signature with no channels', () => {
+    expect(resolveRelease(manifest, 'mgu_v1', 'stable')).toEqual({
+      channels: null,
+      release: { ok: false, reason: 'no-signature' },
+    });
   });
 
   it('FWC-010: an empty signature is no-signature', () => {
-    expect(resolveRelease(manifest, '', 'stable')).toEqual({ ok: false, reason: 'no-signature' });
+    expect(resolveRelease(manifest, '', 'stable').release).toEqual({ ok: false, reason: 'no-signature' });
   });
 
-  it('FWC-010: an unreadable version in the selected channel is unavailable', () => {
-    expect(resolveRelease(manifest, 'co2_sens_ns8', 'stable')).toEqual({ ok: false, reason: 'unavailable' });
+  it('FWC-010: an unreadable version in the selected channel is unavailable, the block still resolves', () => {
+    const found = resolveRelease(manifest, 'co2_sens_ns8', 'stable');
+    expect(found.release).toEqual({ ok: false, reason: 'unavailable' });
+    expect(found.channels).not.toBeNull();
   });
 
   it('FWC-010: a broken manifest throws instead of reporting a missing signature', () => {

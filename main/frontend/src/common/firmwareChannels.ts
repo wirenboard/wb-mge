@@ -21,6 +21,14 @@ export type ReleaseLookup =
   | { ok: true; version: string; url: string }
   | { ok: false; reason: 'no-signature' | 'unavailable' };
 
+// Everything one lookup produces: what to offer, plus what both channels hold. The second half is
+// what the UI shows next to the offer, and it exists even when the selected channel does not
+// resolve — a manifest that carries a broken `testing` still has a `stable` worth showing.
+export type ReleaseResolution = {
+  channels: ChannelsView | null; // null when the manifest has no block for this signature
+  release: ReleaseLookup;
+};
+
 // A signature line: exactly two spaces of indent, a bare key, nothing after the colon.
 // Live names contain hyphens and dots (m1w2-21, msv2-4.0, ups-v3-dlg2), hence [^\s:]+.
 const SIGNATURE_LINE_RE = /^ {2}([^\s:]+):$/;
@@ -99,7 +107,11 @@ export function parseSignatureBlock(text: string, signature: string): Record<str
       const match = SIGNATURE_LINE_RE.exec(line);
       if (match && match[1] === signature) {
         inOurBlock = true;
-        block = {};
+        // Object.create(null), not {}: the keys come from a file downloaded over the network, and a
+        // key such as __proto__ must land in the block as data. It cannot reach a prototype through
+        // this assignment even with a plain literal, but that is a property of the language, and
+        // this is the one place where the guarantee should be a property of the code.
+        block = Object.create(null) as Record<string, string>;
       }
       continue;
     }
@@ -166,21 +178,24 @@ export function describeChannels(block: Record<string, string>): ChannelsView {
 }
 
 /**
- * Full lookup: manifest text + device signature + selected channel -> what to offer.
+ * Full lookup: manifest text + device signature + selected channel -> what to offer and what both
+ * channels hold. The single entry point the application uses, so that what the tests exercise and
+ * what the UI runs cannot drift apart.
  *
  * Throws ManifestError (from parseSignatureBlock) when the manifest is unusable; the caller turns
  * that into "update check unavailable". An empty signature is reported as 'no-signature' here, but
  * callers are expected to catch that case earlier: a device that does not report its signature is
  * a failed check, not a board without published channels.
  */
-export function resolveRelease(text: string, signature: string, channel: UpdateChannel): ReleaseLookup {
+export function resolveRelease(text: string, signature: string, channel: UpdateChannel): ReleaseResolution {
   const block = signature ? parseSignatureBlock(text, signature) : null;
   if (block === null) {
-    return { ok: false, reason: 'no-signature' };
+    return { channels: null, release: { ok: false, reason: 'no-signature' } };
   }
-  const info = describeChannels(block)[channel];
+  const channels = describeChannels(block);
+  const info = channels[channel];
   if (info === null) {
-    return { ok: false, reason: 'unavailable' };
+    return { channels, release: { ok: false, reason: 'unavailable' } };
   }
-  return { ok: true, version: info.version, url: info.url };
+  return { channels, release: { ok: true, version: info.version, url: info.url } };
 }

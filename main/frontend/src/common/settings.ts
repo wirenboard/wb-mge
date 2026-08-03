@@ -17,6 +17,11 @@ const WARNING_MESSAGES: Record<string, string> = {
 const warningAlertMessage = (warning: SettingsWarning): string =>
   WARNING_MESSAGES[warning.code] ?? warning.message;
 
+// The device accepted the settings, only the read-back that follows the POST failed. Callers that
+// roll their input back when updateSettings() rejects must not do that here: the value IS saved,
+// and reverting the field would show the user the opposite of what the device holds.
+export class SettingsRefreshError extends Error {}
+
 const isDeepEqual = (a: any, b: any): boolean => {
   if (a === b) return true;
 
@@ -78,8 +83,10 @@ export const useSettings = () => {
   const updateSettings = async (json: DeepPartial<Settings>) => {
     isLoading.value = true;
     const savedKeys = Object.keys(json) as Array<keyof Settings>; // capture before async
+    let posted = false;
     return api<UpdateSettingsResponse>('settings', { method: 'POST', json })
       .then(async (response) => {
+        posted = true;
         // The settings WERE saved, so this is not an error — but a green "data updated" would hide
         // the fact that the firmware flagged the result (e.g. two services on one TCP port, one of
         // which will not come up). Show the warnings instead of the success toast.
@@ -94,7 +101,18 @@ export const useSettings = () => {
       })
       .finally(async () => {
         isLoading.value = false;
-        await partialRefresh(savedKeys); // Only refresh the keys that were just saved
+        try {
+          await partialRefresh(savedKeys); // Only refresh the keys that were just saved
+        } catch (err) {
+          // A rejection out of .finally() replaces the outcome of the POST, so without this the
+          // caller cannot tell "the device refused the setting" from "the setting was saved and the
+          // re-read afterwards failed". The two need different words and different UI reactions.
+          // When the POST itself failed the re-read almost certainly failed for the same reason, and
+          // the original rejection is the one that describes what happened.
+          if (posted) {
+            throw new SettingsRefreshError((err as Error)?.message ?? 'settings re-read failed');
+          }
+        }
       });
   };
 

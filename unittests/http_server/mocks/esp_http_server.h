@@ -90,6 +90,12 @@ struct httpd_req {
     void *user_ctx;
 };
 
+/* recv_wait_timeout is deliberately NOT the value http_server.c assigns (HTTP_RECV_WAIT_TIMEOUT_S):
+ * the test asserts that the server sets that field itself, and a default equal to it would let the
+ * assertion pass even with the assignment deleted — which is exactly the regression that would move
+ * the OTA stall limit derived from it. */
+#define MOCK_HTTPD_UNSET_RECV_WAIT_TIMEOUT  99
+
 #define HTTPD_DEFAULT_CONFIG() {                \
     .task_priority      = 5,                    \
     .stack_size         = STACK_SIZE,           \
@@ -101,7 +107,7 @@ struct httpd_req {
     .max_resp_headers   = 8,                    \
     .backlog_conn       = 5,                    \
     .lru_purge_enable   = false,                \
-    .recv_wait_timeout  = 5,                    \
+    .recv_wait_timeout  = MOCK_HTTPD_UNSET_RECV_WAIT_TIMEOUT,  \
     .send_wait_timeout  = 5,                    \
     .global_user_ctx = NULL,                    \
     .global_user_ctx_free_fn = NULL,            \

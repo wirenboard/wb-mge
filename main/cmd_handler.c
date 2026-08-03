@@ -79,7 +79,15 @@ static void reboot_task(void *pvParameters)
 void cmd_reboot_device(void)
 {
     ESP_LOGI(TAG, "Scheduling device reboot");
-    xTaskCreate(reboot_task, "reboot_task", REBOOT_TASK_STACK_SIZE, NULL, REBOOT_TASK_PRIORITY, NULL);
+    BaseType_t created = xTaskCreate(reboot_task, "reboot_task", REBOOT_TASK_STACK_SIZE, NULL,
+                                     REBOOT_TASK_PRIORITY, NULL);
+    // Still best effort: there is nothing to fall back to here, the caller owns the HTTP response.
+    // But OTA calls this exactly when the heap has just run out, and a reboot that silently never
+    // happens leaves the device refusing every further update — the log is the only way to tell.
+    if (created != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create the reboot task (%d), the device will not reboot on its own",
+                 (int)created);
+    }
 }
 
 static int cmd_get_code(const char *cmd_str)

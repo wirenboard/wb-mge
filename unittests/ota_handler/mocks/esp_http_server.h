@@ -55,6 +55,25 @@ void mock_http_set_body(const uint8_t *body, size_t len);
 /* Make the Nth (1-based) httpd_req_recv() call return `error` instead of data. 0 disables it. */
 void mock_http_set_recv_error(int call_number, int error);
 
+/* Make EVERY httpd_req_recv() call return `error`, for as long as the handler keeps asking. This is
+ * the client that vanished without closing its socket: the receive loop only ever sees timeouts and
+ * nothing but its own limit can end it. 0 disables it. */
+void mock_http_set_recv_error_always(int error);
+
+/* Outcome of one httpd_req_recv() call in a script: a negative entry is returned to the caller as
+ * is (the HTTPD_SOCK_ERR_* sentinels), MOCK_RECV_DATA hands out the next slice of the body. */
+#define MOCK_RECV_DATA  0
+
+/* Play `outcomes` back one entry per httpd_req_recv() call; once the script runs out the mock goes
+ * back to handing out the body. Lets a test interleave timeouts with accepted data, which no
+ * single-call knob can express. The array must outlive the calls (a static or a local in the test).
+ * NULL/0 disables it. */
+void mock_http_set_recv_script(const int *outcomes, size_t count);
+
+/* Hand out at most this many body bytes per httpd_req_recv() call, so that one upload is spread
+ * over several receives. 0 gives the handler as much as it asks for. */
+void mock_http_set_recv_chunk_limit(size_t max_bytes);
+
 /* Content-Type the request carries; NULL makes the header absent. */
 void mock_http_set_content_type(const char *content_type);
 

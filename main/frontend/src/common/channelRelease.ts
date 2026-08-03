@@ -3,8 +3,7 @@ import { DeviceUpdateError, useFirmware } from '@/common/firmware';
 import {
   MANIFEST_URL,
   ManifestError,
-  describeChannels,
-  parseSignatureBlock,
+  resolveRelease,
 } from '@/common/firmwareChannels';
 import type { ChannelsView, ReleaseLookup } from '@/common/firmwareChannels';
 import { useInfo } from '@/common/info';
@@ -22,6 +21,11 @@ export const MANIFEST_TIMEOUT_MS = 40000;
 export const FW_DOWNLOAD_STALL_MS = 30000;
 // Upper bound on the whole download: 1 265 872 bytes over 300 s is ~34 kbit/s.
 export const FW_DOWNLOAD_HARD_CAP_MS = 300000;
+// Upper bound on how much is read into memory. The device's OTA partition is 1728 KB
+// (partitions_table.csv), so anything past 2 MB cannot be a firmware for it. The Content-Length
+// check alone is not enough: it happens after the whole body has been collected, and a response
+// that declares nothing (or lies) would be buffered until the tab runs out of memory.
+export const FW_DOWNLOAD_MAX_BYTES = 2 * 1024 * 1024;
 // Pause before the first /uptime poll after the 200. The 200 leaves the device before the reboot
 // is even scheduled, so polling earlier only samples the old firmware.
 export const REBOOT_SETTLE_MS = 4000;
@@ -46,6 +50,11 @@ export type UpdatePhase =
 // What exactly failed, so the UI can pick the right sentence without parsing `message`.
 export type FailureKind = 'download' | 'upload' | 'no_response' | null;
 
+// Something the user has to be told about that is not a failed update: the click was dropped
+// because the offer had moved on, or a re-check could not be performed at all. Both used to be a
+// console warning and nothing else, which reads as a button that does nothing.
+export type UpdateNotice = 'offer_changed' | 'recheck_failed' | null;
+
 // Module scope: this state survives navigation between views. App.vue renders RouterView without
 // KeepAlive, so leaving the System page destroys the component while the download keeps running.
 const manifestText = ref<string | null>(null); // raw body, fetched once per SPA session
@@ -58,6 +67,7 @@ const phase = ref<UpdatePhase>('idle');
 const progress = ref(0); // download percent
 const failure = ref<FailureKind>(null);
 const message = ref<string | null>(null); // failure detail for the UI (device text, HTTP status, …)
+const notice = ref<UpdateNotice>(null);
 
 // A check already in flight: two views mounting at once must not fetch the manifest twice.
 let checkInFlight: Promise<void> | null = null;
@@ -130,25 +140,19 @@ export const useChannelRelease = () => {
   const applyManifest = (text: string) => {
     const signature = signatureOf();
     const channel = channelOf();
-    const block = parseSignatureBlock(text, signature); // throws ManifestError on a broken manifest
+    // The one lookup the tests exercise too: throws ManifestError on a broken manifest.
+    const found = resolveRelease(text, signature, channel);
     resolvedChannel.value = channel;
-    if (block === null) {
-      console.warn(`[firmware] no update channels published for signature ${signature}`);
-      channels.value = null;
-      release.value = { ok: false, reason: 'no-signature' };
+    channels.value = found.channels;
+    release.value = found.release;
+    if (!found.release.ok) {
+      if (found.release.reason === 'no-signature') {
+        console.warn(`[firmware] no update channels published for signature ${signature}`);
+      }
       phase.value = 'unavailable';
       return;
     }
-    const view = describeChannels(block);
-    channels.value = view;
-    const channelInfo = view[channel];
-    if (channelInfo === null) {
-      release.value = { ok: false, reason: 'unavailable' };
-      phase.value = 'unavailable';
-      return;
-    }
-    release.value = { ok: true, version: channelInfo.version, url: channelInfo.url };
-    phase.value = channelInfo.version === installedVersion.value ? 'up_to_date' : 'available';
+    phase.value = found.release.version === installedVersion.value ? 'up_to_date' : 'available';
   };
 
   const markUnavailable = () => {
@@ -161,6 +165,7 @@ export const useChannelRelease = () => {
     const signature = signatureOf();
     failure.value = null;
     message.value = null;
+    notice.value = null;
     phase.value = 'checking';
 
     if (!signature) {
@@ -219,10 +224,16 @@ export const useChannelRelease = () => {
     if (isBusy.value) {
       return;
     }
+    notice.value = null;
     try {
       await Promise.all([fetchInfo(), partialRefresh(['update_channel'])]);
     } catch (err) {
+      // Leaving `conflict` here would recompute the offer from data known to be stale — and offer an
+      // install of a device that may already be running the new image. The state stays as it is and
+      // the UI says the check did not happen, so the button is still there to press again.
       console.error('[firmware] could not re-read the device state', err);
+      notice.value = 'recheck_failed';
+      return;
     }
     phase.value = 'idle';
     await check();
@@ -241,6 +252,11 @@ export const useChannelRelease = () => {
     const controller = new AbortController();
     const hardCap = setTimeout(() => controller.abort(), FW_DOWNLOAD_HARD_CAP_MS);
     let received = 0;
+    const refuseIfTooLarge = () => {
+      if (received > FW_DOWNLOAD_MAX_BYTES) {
+        throw new Error(`larger than ${FW_DOWNLOAD_MAX_BYTES} bytes, this cannot be a firmware image`);
+      }
+    };
     try {
       const response = await fetch(url, { signal: controller.signal });
       // fetch does not throw on 4xx, and a missing key is answered with an HTML error page served
@@ -263,6 +279,8 @@ export const useChannelRelease = () => {
           }
           chunks.push(chunk.value);
           received += chunk.value.length;
+          // Checked per chunk: the point is to stop reading, not to report the size afterwards.
+          refuseIfTooLarge();
           const now = Date.now();
           if (expected > 0 && now - progressAt >= PROGRESS_THROTTLE_MS) {
             progressAt = now;
@@ -273,6 +291,7 @@ export const useChannelRelease = () => {
         const whole = new Uint8Array(await response.arrayBuffer());
         chunks.push(whole);
         received = whole.length;
+        refuseIfTooLarge();
       }
       if (expected > 0 && received !== expected) {
         throw new Error(`size mismatch: got ${received} of ${expected} bytes`);
@@ -345,6 +364,7 @@ export const useChannelRelease = () => {
     const wanted = { version: offered.version, url: offered.url };
     failure.value = null;
     message.value = null;
+    notice.value = null;
 
     // Between the check and the click the device could have been updated from another tab, or the
     // channel could have been switched there. Neither the per-tab button lock nor the device-side
@@ -360,7 +380,11 @@ export const useChannelRelease = () => {
     const current = release.value;
     if (phase.value !== 'available' || !current || !current.ok
       || current.version !== wanted.version || current.url !== wanted.url) {
+      // The button the user pressed no longer describes what would be installed. Refusing silently
+      // looks like a dead button, so the recomputed offer is shown together with a note saying why
+      // nothing happened.
       console.warn('[firmware] the offer changed between the check and the click, not installing');
+      notice.value = 'offer_changed';
       return;
     }
 
@@ -425,6 +449,7 @@ export const useChannelRelease = () => {
     progress,
     failure,
     message,
+    notice,
     release,
     channels,
     resolvedChannel,
@@ -447,5 +472,6 @@ export const __resetChannelReleaseState = () => {
   progress.value = 0;
   failure.value = null;
   message.value = null;
+  notice.value = null;
   checkInFlight = null;
 };
