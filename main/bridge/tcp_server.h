@@ -5,12 +5,6 @@
 #include "esp_err.h"
 #include <stdint.h>
 
-/* Stack size (in bytes) of the tasks tcp_server creates. Part of the public
- * contract: the tcp_receive_handler_t callback runs inside the per-connection
- * receiver task, so a handler that needs to report or budget against its own
- * stack must use this value rather than hard-coding a copy. */
-#define TCP_SERVER_TASK_STACK_SIZE      4096u
-
 esp_err_t tcp_server_init(int port, tcp_receive_handler_t tcps_receive_handler, tcp_desc_t **out_desc);
 void tcp_server_set_max_connections(tcp_desc_t *desc, uint32_t max_connections);
 /* Send on a socket the caller owns — i.e. from the per-connection receiver task, which is

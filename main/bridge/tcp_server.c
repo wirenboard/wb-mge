@@ -13,9 +13,7 @@
 #define KEEPALIVE_INTERVAL              5
 #define KEEPALIVE_COUNT                 3
 #define RX_BUFFER_SIZE                  1024
-/* TCP_SERVER_TASK_STACK_SIZE now lives in tcp_server.h: the receive handler runs
- * on the task it sizes, and cache_modbus_server reports it in its diagnostic
- * stack registers — a private copy here would silently drift out of sync. */
+#define TCP_SERVER_TASK_STACK_SIZE      4096u
 #define TCP_SERVER_TASK_PRIORITY        5
 #define TCP_SERVER_LISTEN_BACKLOG       5
 

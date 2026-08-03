@@ -25,7 +25,8 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
                320 MAJOR, 321 MINOR, 322 PATCH, 323 SUFFIX(s16);
                324-325 numeric version LE word order (324=low);
                326-327 numeric version BE word order (326=high);
-               65504..65508 RAM/stack/reboot diagnostics;
+               65505..65507 RAM total/used/free, KB; 65508 reboot reason
+               (65504 stays undefined: the WB stack register is not implemented);
                528-529 packets u32; 530-531 last-pkt-age u32;
                532 devices_on_bus; 533 bus poll ppm; 534 cache timeout s.
                (330-337 stay undefined: the 8-register WB bootloader-version field.)
@@ -424,14 +425,31 @@ def test_self_unit_reboot_reason_plausible(api, gateway_slave):
 
 
 @pytest.mark.qemu
-def test_self_unit_ram_stack_diagnostics_kb(api, gateway_slave):
-    """FC04 121 voltage + 65504..65507 RAM/stack diagnostics at unit 0xFF are sane KB values.
+def test_self_unit_ram_diagnostics_kb(api, gateway_slave):
+    """FC04 121 voltage + 65505..65507 RAM diagnostics at unit 0xFF are sane KB values.
 
-    This is the regression guard for the bytes->KB fix in mb_device.c: free/used
-    RAM used to be reported in BYTES, which saturated the u16 register at 0xFFFF
-    (~64 KB) on an ESP32 with hundreds of KB of internal RAM. The assertions below
-    (free_ram_kb > 64 and free_ram_kb < 0xFFFF) would FAIL if the values were still
-    byte-based, locking in the fix at the e2e level.
+    The RAM block follows the WB common register map: 65505 total, 65506 used,
+    65507 free. The test checks, in this order:
+      - register 121 (supply voltage): a cheap liveness probe of the self-unit
+        map before the RAM registers are read.
+      - bytes->KB: RAM used to be reported in BYTES, which saturates the u16
+        register at 0xFFFF on an ESP32 with hundreds of KB of internal RAM. Both
+        bounds apply to 65505 only, and `< 2000` is the one that catches a
+        byte-based 65505. A byte-based 65506 or 65507 has no bound of its own; it
+        is caught by total > used / total > free and by the sum check.
+      - arithmetic: total > used, total > free, and used + free == total within
+        the rounding/churn window below. These say nothing about a used<->free
+        swap: the firmware derives used as total - free, so all three survive
+        swapping 65506 with 65507.
+
+    Two further properties live in sibling tests on purpose, so that an early exit
+    in one can never drop the other silently:
+      - test_self_unit_ram_matches_info pins 65505 to /info heap_total exactly and
+        puts 65506 and 65507 on opposite sides of half the heap — enough to
+        discriminate a used<->free swap, which nothing here can. It can legitimately
+        skip ITSELF (see its own docstring); a skip here would swallow every
+        assertion above as well.
+      - test_self_unit_65504_unmapped covers the removed WB "max used stack" slot.
     """
     # 121 supply voltage (mV). The QEMU voltage source may be a mock, so keep
     # this loose — just prove the register responds with a sane u16 value.
@@ -447,45 +465,314 @@ def test_self_unit_ram_stack_diagnostics_kb(api, gateway_slave):
     mv = regs[0]
     assert 0 <= mv <= 65535, f"supply voltage out of u16 range: {mv}"
 
-    # 65504..65507 RAM/stack diagnostics (contiguous block, all in KB).
+    # 65505..65507 RAM diagnostics (contiguous block, all in KB).
     _tid, unit_id, resp_fc, payload = read_self_regs(
-        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 65504, 4
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 65505, 3
     )
     assert not (resp_fc & 0x80), \
-        f"RAM/stack read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
+        f"RAM read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
     assert unit_id == SELF_UNIT_ID, \
         f"echoed unit_id mismatch: expected 0x{SELF_UNIT_ID:02X}, got 0x{unit_id:02X}"
     regs = regs_from_payload(payload)
-    assert len(regs) == 4, f"expected 4 registers (65504..65507), got {regs}"
-    max_stack_kb, free_ram_kb, used_ram_kb, stack_size_kb = regs
+    assert len(regs) == 3, f"expected 3 registers (65505..65507), got {regs}"
+    total_ram_kb, used_ram_kb, free_ram_kb = regs
 
     # --- REGRESSION GUARD (bytes -> KB) --- #
-    # Free internal RAM on the ESP32 is well over 64 KB; a value <= 64 means the
-    # register is still byte-based (and a byte count would have saturated at 0xFFFF).
-    assert free_ram_kb > 64, (
-        f"free RAM reg 65505 = {free_ram_kb} (expected > 64 KB); "
-        "a value this small means RAM is still reported in BYTES, not KB"
+    # The lower bound is NOT the bytes->KB detector: sat_u16() in mb_device.c pins a
+    # byte count to 0xFFFF, so a byte-based register comes out at the TOP of the u16
+    # range and can never come out small. What `> 64` catches is zero, or some small
+    # garbage value, in a register that must always carry the size of the whole ESP32
+    # internal heap (measured: 425 KB under QEMU, 306 KB on an mge_v3 device).
+    assert total_ram_kb > 64, (
+        f"total RAM reg 65505 = {total_ram_kb} KB (expected > 64 KB); the ESP32 "
+        "internal heap is far larger than that, so 65505 is not reporting it "
+        "(a byte-based register would fail the upper bound below instead)"
     )
-    # 0xFFFF is the saturated u16 byte value; a real KB reading must be below it.
-    assert free_ram_kb < 0xFFFF, (
-        f"free RAM reg 65505 = {free_ram_kb} == 0xFFFF (saturated); "
-        "a real KB reading must be below the u16 ceiling — looks byte-based"
+    # THIS is the bytes->KB bound, and it covers both byte-based failure modes at
+    # once: 0xFFFF is the saturated u16 a byte count would pin the register to, and
+    # anything from a few thousand KB upwards is already past the whole ESP32
+    # internal-RAM budget. One assertion is enough — 2000 is the tighter ceiling.
+    assert total_ram_kb < 2000, (
+        f"total RAM reg 65505 = {total_ram_kb} KB: 0xFFFF (65535) means a byte count "
+        "saturated the u16 register, and any value this large exceeds the few hundred "
+        "KB of ESP32 internal RAM — either way the register looks byte-based"
+    )
+    assert used_ram_kb > 0, f"used RAM reg 65506 = {used_ram_kb} (expected > 0)"
+    assert free_ram_kb > 0, f"free RAM reg 65507 = {free_ram_kb} (expected > 0)"
+
+    # --- ARITHMETIC GUARD (65505 total / 65506 used / 65507 free) --- #
+    # These only prove the total dominates both parts. They do NOT detect a
+    # used<->free swap: the firmware derives used as total - free, so swapping the
+    # 65506 and 65507 branches leaves both comparisons — and their sum below —
+    # intact. test_self_unit_ram_matches_info is what discriminates the two.
+    assert total_ram_kb > used_ram_kb, (
+        f"total RAM {total_ram_kb} KB must exceed used RAM {used_ram_kb} KB — "
+        "65505 is not reporting the size of the whole internal heap"
+    )
+    assert total_ram_kb > free_ram_kb, (
+        f"total RAM {total_ram_kb} KB must exceed free RAM {free_ram_kb} KB — "
+        "65505 is not reporting the size of the whole internal heap"
+    )
+    # used + free vs total, within a SYMMETRIC +/-8 KB window:
+    #   * Rounding alone can only pull the sum DOWN, and by at most 1 KB, because
+    #     floor((T-f)/1024) + floor(f/1024) is either floor(T/1024) or one less.
+    #   * Heap churn is what can move it further, in either direction. The block is
+    #     NOT an atomic snapshot: `free` is sampled twice per request — once inside
+    #     the 65506 branch, which returns total - free, and again inside the 65507
+    #     branch. A block freed between the two samples pushes the sum up, one
+    #     allocated pushes it down.
+    #   * WHO can interfere: in practice only QEMU. The gateway_slave fixture
+    #     (build_gateway_fixture in api_tests/conftest.py) skips unless
+    #     127.0.0.1:5561 — the QEMU UART1 chardev — accepts a connection, and the RAM
+    #     reads here and in test_self_unit_ram_matches_info both go to
+    #     127.0.0.1:GATEWAY_HOST_PORT, the QEMU hostfwd port. (Not every register read
+    #     in this file does: the cache_server tests read from the --ip host.) HTTP is a
+    #     separate endpoint: api.get_info() talks to the --ip address, default
+    #     localhost:8080. Under --qemu that is the same guest, because conftest
+    #     forwards host 8080 to guest 80 and refuses to start if 8080 or 5561 is
+    #     already taken. It is NOT guaranteed to be the same machine in general:
+    #     `pytest --ip=<real device>` with a separately started QEMU alongside passes
+    #     the 5561 gate, and then the registers come from QEMU while /info comes from
+    #     the hardware. (@pytest.mark.qemu itself is inert — no hook skips on it; the
+    #     fixture is the real gate.)
+    #   * The QEMU build is single-core (CONFIG_FREERTOS_UNICORE=y in
+    #     sdkconfig.qemu_build), so only preemption of the request-handling task
+    #     (modbus_tcp.c, MODBUS_TCP_TASK_PRIORITY = 4) reaches the window — e.g. lwIP
+    #     at priority 18 (CONFIG_LWIP_TCPIP_TASK_PRIO) touching ~1.5 KB pbufs. It also
+    #     has PSRAM (CONFIG_SPIRAM_USE_MALLOC=y, CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=
+    #     16384), which routes large heap_caps_malloc_default() requests away from the
+    #     internal heap these registers report — though that call falls back to
+    #     internal memory when PSRAM cannot satisfy the request, and heap_caps_malloc()
+    #     with explicit caps ignores the threshold outright. On mge_v3 hardware the
+    #     build is dual-core with no PSRAM at all, so every allocation comes out of
+    #     this same heap; the test does not run there.
+    #   * MEASURED: one QEMU run of this test returned total=425 used=175 free=250 KB,
+    #     a sum delta of exactly 0 KB; a direct read of this firmware on an mge_v3
+    #     device returned 306 / 229 / 76 KB, delta -1 KB, the floor-rounding result.
+    #     Two samples, not a bound, but neither comes near the +/-8 KB window.
+    # The bound is symmetric because a tighter lower edge buys no detection power.
+    # The defect worth catching here is 65507 reading heap_caps_get_minimum_free_size()
+    # — the worst-case free heap since boot — instead of the call it claims. mb_device.c
+    # does not use it today, but /info does, four lines from its own
+    # heap_caps_get_free_size() call (main/info_handlers.c:290 and :294), so it is the
+    # obvious wrong call to reach for. It reads at or below current free, and while the
+    # heap sits at its all-time low the two are equal and NO bound can detect the
+    # substitution. How the two shapes of it fare (gap = current free - min_free):
+    #   (a) ONLY the 65507 branch changed, 65506 still returning total - free: the sum
+    #       drops by roughly the gap. Small gaps — single-digit KB — can slip through
+    #       this window; larger ones fail it reliably. On the mge_v3 read above /info
+    #       reported heap_free 83372 B against heap_min_free 78732 B, a gap of ~4.5 KB,
+    #       i.e. the slip-through end.
+    #   (b) BOTH branches changed: 65506 computing total - min_free and 65507 returning
+    #       min_free, the plausible "report the worst case since boot" edit. The sum is
+    #       then total up to the same rounding as the correct code, for ANY gap, so the
+    #       sum check does not catch this shape at all and no window width would.
+    #       Neither does the exact 65505 vs /info heap_total comparison in
+    #       test_self_unit_ram_matches_info, which never touches min_free. Only the
+    #       nearest-match assertions can, and only once the gap grows large enough to
+    #       push the register past info_total / 2 — about 38 KB on the measured QEMU
+    #       run (total 425, register free 250, midpoint 212.5).
+    # Shape (b) is therefore recorded here, not closed. Closing it would take a new
+    # assertion comparing 65507 against /info heap_min_free, and the gap between the two
+    # is a build and workload property, so that assertion would arrive with no
+    # defensible threshold. Anyone hardening this later should start there rather than
+    # at the +/-8 KB window.
+    churn_slack_kb = 8
+    sum_delta_kb = (used_ram_kb + free_ram_kb) - total_ram_kb
+    assert abs(sum_delta_kb) <= churn_slack_kb, (
+        f"used ({used_ram_kb}) + free ({free_ram_kb}) = {used_ram_kb + free_ram_kb} KB "
+        f"vs total ({total_ram_kb}) KB: delta {sum_delta_kb} KB is outside the "
+        f"+/-{churn_slack_kb} KB rounding + heap-churn window"
     )
 
-    # Plausibility for an ESP32 internal-RAM / task-stack budget.
-    assert used_ram_kb > 0, f"used RAM reg 65506 = {used_ram_kb} (expected > 0)"
-    assert used_ram_kb + free_ram_kb < 2000, (
-        f"used+free internal RAM = {used_ram_kb + free_ram_kb} KB exceeds the few "
-        "hundred KB of ESP32 internal RAM — looks byte-based"
+    print("✓ self-unit RAM KB: total=%d used=%d free=%d voltage=%dmV"
+          % (total_ram_kb, used_ram_kb, free_ram_kb, mv))
+
+
+@pytest.mark.qemu
+def test_self_unit_ram_matches_info(api, gateway_slave):
+    """65505 == /info heap_total exactly; 65506/65507 on opposite sides of half the heap.
+
+    Those two properties are the whole guarantee, and they are deliberately weaker
+    than "these registers report the quantities /info says they do". Past the exact
+    65505 comparison the test only decides which side of info_total / 2 each of the
+    other two falls on: on the measured figures below a 65506 stuck at 0 passes both
+    nearest-match assertions, because |0 - 166| < |0 - 259|. What rejects that value
+    is `used_ram_kb > 0` in test_self_unit_ram_diagnostics_kb, not anything here.
+
+    Side-of-midpoint is still the property worth pinning, because it is exactly what
+    makes a used<->free swap detectable, and no assertion in
+    test_self_unit_ram_diagnostics_kb can do that: the firmware derives used as
+    total - free, so total > used, total > free and used + free == total all hold
+    just as well with the 65506 and 65507 branches exchanged.
+
+    /info serves the same two heap_caps_* quantities in BYTES, from the same calls on
+    the same MALLOC_CAP_INTERNAL pool (main/info_handlers.c:289-292), so info_used =
+    heap_total - heap_free is computable and each register can be matched against the
+    NEARER of the two candidates instead of against an invented tolerance window.
+    Measured under QEMU: registers total=425 used=175 free=250 KB, /info total=425
+    free=259 KB, hence info_used=166 KB.
+
+    NOTE: this test assumes the register endpoint and the HTTP endpoint are the same
+    device. They are under --qemu (see the endpoint note in
+    test_self_unit_ram_diagnostics_kb), but `pytest --ip=<real device>` with a QEMU
+    running alongside would compare two machines' heaps and is not a supported way to
+    run it.
+
+    WHEN THIS TEST SKIPS: the nearest-match half only means anything while the two
+    candidates are far enough apart, so it is guarded by a separation check that SKIPS
+    instead of failing. How close the heap sits to half-used is a property of the
+    environment, not of the firmware, and a red run there would be indistinguishable
+    by colour from a real regression. On the two heaps measured the margin is wide:
+    259 free / 166 used KB under QEMU, and 306 total / 229 used / 76 free KB read
+    directly from this firmware on an mge_v3 device. The QEMU build has PSRAM and the
+    hardware build does not (see the churn notes in
+    test_self_unit_ram_diagnostics_kb), so neither figure guarantees the other. The
+    guard exists so that losing the margin becomes visible instead of silently turning
+    this test into a tautology, and it can only skip THIS test, which is why it lives
+    here and not in the sibling. The threshold arithmetic is in the body.
+    """
+    _tid, unit_id, resp_fc, payload = read_self_regs(
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 65505, 3
     )
-    assert 1 <= stack_size_kb <= 64, (
-        f"stack size reg 65507 = {stack_size_kb} KB out of plausible range 1..64"
+    assert not (resp_fc & 0x80), \
+        f"RAM read returned exception FC=0x{resp_fc:02X}, payload={payload.hex()}"
+    assert unit_id == SELF_UNIT_ID, \
+        f"echoed unit_id mismatch: expected 0x{SELF_UNIT_ID:02X}, got 0x{unit_id:02X}"
+    regs = regs_from_payload(payload)
+    assert len(regs) == 3, f"expected 3 registers (65505..65507), got {regs}"
+    total_ram_kb, used_ram_kb, free_ram_kb = regs
+
+    info_resp = api.get_info()
+    assert info_resp.status_code == 200, \
+        f"/info returned {info_resp.status_code}: {info_resp.text}"
+    info = info_resp.json()
+    info_total_kb = int(info["heap_total"]) // 1024
+    info_free_kb = int(info["heap_free"]) // 1024
+    # Derived, not reported: /info has no heap_used field. The KB conversion happens
+    # after the subtraction on the firmware side (65506 is floor((total-free)/1024))
+    # and before it here, so this can sit 1 KB off the register even when both are
+    # perfectly correct — irrelevant against the separations the check works with.
+    info_used_kb = info_total_kb - info_free_kb
+
+    # The heap total is fixed once the regions are registered during startup, so
+    # this comparison is exact: it fails the moment 65505 carries anything else.
+    assert total_ram_kb == info_total_kb, (
+        f"total RAM reg 65505 = {total_ram_kb} KB but /info heap_total = "
+        f"{info_total_kb} KB ({info['heap_total']} B) — 65505 is not "
+        "heap_caps_get_total_size(MALLOC_CAP_INTERNAL) in KB"
     )
-    assert max_stack_kb <= stack_size_kb, (
-        f"max used stack {max_stack_kb} KB exceeds total stack size {stack_size_kb} KB"
+
+    # --- PRECONDITION: the two candidates must be distinguishable --- #
+    # Because info_used is DEFINED as info_total - info_free, the midpoint between
+    # the two candidates is exactly info_total / 2, and "nearer to free than to used"
+    # is really "on free's side of half the heap". A correct register is therefore
+    # misclassified only if the free heap crossed half-total between the Modbus read
+    # and the /info read — i.e. only if the drift exceeded separation / 2. The same
+    # threshold, from the other side, is what a swapped register would need to escape
+    # detection, so one number covers both directions.
+    #
+    # Measured drift, same QEMU run as the docstring: register free 250 KB vs /info
+    # free 259 KB, 9 KB apart, on a separation of |259 - 166| = 93 KB, which left the
+    # register well clear of the midpoint. Requiring 4x the measured drift keeps 2x of
+    # it in hand: at the limit /info's free sits two drifts above the midpoint, so the
+    # drift would have to double before a correct register crosses to the wrong side
+    # (or a swapped one crosses back). There is no second sample to average, so this
+    # is deliberately a multiple of the one measurement rather than a round number.
+    measured_drift_kb = 9
+    min_separation_kb = 4 * measured_drift_kb
+    separation_kb = abs(info_free_kb - info_used_kb)
+
+    # SKIP rather than fail — the full rationale (why an environment property must
+    # not be reported as a firmware regression, and why the guard belongs to this
+    # test rather than to its sibling) is in this function's docstring.
+    if separation_kb < min_separation_kb:
+        pytest.skip(
+            f"used<->free cross-check not applicable in this environment: /info "
+            f"heap_free = {info_free_kb} KB and heap_used = {info_used_kb} KB "
+            f"(= heap_total {info_total_kb} - heap_free) are only {separation_kb} KB "
+            f"apart, below the {min_separation_kb} KB needed to survive the "
+            f"{measured_drift_kb} KB drift measured between the two requests. Nearer "
+            "to one than to the other would stop meaning anything. Not a firmware "
+            "defect; if it persists, re-measure the drift between the two reads and "
+            f"set measured_drift_kb (now {measured_drift_kb}) from the new figure — "
+            "min_separation_kb is derived from it as 4x, so it is not the knob"
+        )
+
+    # --- NEAREST-MATCH: each register must land on its own candidate --- #
+    # Both messages name the two causes that can produce a failure here, because the
+    # test cannot tell them apart on its own: either the registers really are swapped,
+    # or the free heap drifted across info_total / 2 between the Modbus read and the
+    # /info read, which misreports healthy firmware. The two numbers printed with each
+    # failure are what separate them — the observed drift (register free vs /info
+    # free, ~9 KB on the measured run) against the register's own distance from the
+    # midpoint. A drift far smaller than that distance points at the registers; a drift
+    # of the same order means the margin collapsed instead, and the skip guard above
+    # was tuned too loosely for this environment.
+    assert abs(free_ram_kb - info_free_kb) < abs(free_ram_kb - info_used_kb), (
+        f"free RAM reg 65507 = {free_ram_kb} KB is nearer to /info heap_used = "
+        f"{info_used_kb} KB (distance {abs(free_ram_kb - info_used_kb)}) than to "
+        f"/info heap_free = {info_free_kb} KB ({info['heap_free']} B, distance "
+        f"{abs(free_ram_kb - info_free_kb)}) — 65507 is not free heap. Two causes fit: "
+        "65506/65507 swapped, i.e. 65507 carrying total - free (the likelier one), or "
+        "the free heap drifting across the midpoint between the two reads, which would "
+        "fail healthy firmware. Observed drift (reg free vs /info free) "
+        f"{abs(free_ram_kb - info_free_kb)} KB; distance from reg 65507 to the midpoint "
+        f"info_total/2 = {info_total_kb / 2:.1f} KB is "
+        f"{abs(free_ram_kb - info_total_kb / 2):.1f} KB"
     )
-    print("✓ self-unit RAM/stack KB: free=%d used=%d stack_size=%d max_used=%d voltage=%dmV"
-          % (free_ram_kb, used_ram_kb, stack_size_kb, max_stack_kb, mv))
+    # Redundant against the assertion above under today's firmware, and kept anyway.
+    # 65506 is floor((total - free)/1024) and 65507 is floor(free/1024), so "65506
+    # nearer to info_used" is the same side-of-midpoint test as "65507 nearer to
+    # info_free" (info_used is DEFINED as info_total - info_free); the two pass and
+    # fail together up to rounding plus the churn between the two free samples. It
+    # stops being redundant the moment 65506 becomes an independent computation — a
+    # separate allocation counter, a different capability mask, or any source other
+    # than "total minus the same heap_caps_get_free_size() call".
+    assert abs(used_ram_kb - info_used_kb) < abs(used_ram_kb - info_free_kb), (
+        f"used RAM reg 65506 = {used_ram_kb} KB is nearer to /info heap_free = "
+        f"{info_free_kb} KB (distance {abs(used_ram_kb - info_free_kb)}) than to "
+        f"/info heap_used = {info_used_kb} KB (= heap_total {info_total_kb} - "
+        f"heap_free, distance {abs(used_ram_kb - info_used_kb)}) — 65506 is not used "
+        "heap. Two causes fit: 65506/65507 swapped (the likelier one), or the free "
+        "heap drifting across the midpoint between the two reads, which would fail "
+        "healthy firmware. Observed drift (reg free vs /info free) "
+        f"{abs(free_ram_kb - info_free_kb)} KB; distance from reg 65506 to the midpoint "
+        f"info_total/2 = {info_total_kb / 2:.1f} KB is "
+        f"{abs(used_ram_kb - info_total_kb / 2):.1f} KB"
+    )
+
+    print("✓ self-unit RAM matches /info: reg total=%d used=%d free=%d vs /info "
+          "total=%d used=%d free=%d (separation %d KB, min %d)"
+          % (total_ram_kb, used_ram_kb, free_ram_kb, info_total_kb, info_used_kb,
+             info_free_kb, separation_kb, min_separation_kb))
+
+
+@pytest.mark.qemu
+def test_self_unit_65504_unmapped(api, gateway_slave):
+    """FC04 65504 at unit 0xFF -> exception 0x02: the WB stack register is gone.
+
+    Regression guard for the REMOVED WB "max used stack" slot. This firmware is
+    multi-tasking and has no single stack to report, so 65504 must behave like any
+    other undefined address instead of answering with a leftover value.
+
+    It lives in its own test on purpose: it asserts a different property (an address
+    is unmapped) and depends on neither /info nor any heap reading, so an early exit
+    inside test_self_unit_ram_diagnostics_kb cannot drop it silently.
+    """
+    _tid, unit_id, resp_fc, payload = read_self_regs(
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x04, 65504, 1
+    )
+    assert resp_fc == (0x04 | 0x80), (
+        "register 65504 must not be mapped: expected exception FC 0x84, got "
+        f"0x{resp_fc:02X} (0x04 means FC04 answered it with a value)"
+    )
+    assert unit_id == SELF_UNIT_ID, \
+        f"echoed unit_id mismatch: expected 0x{SELF_UNIT_ID:02X}, got 0x{unit_id:02X}"
+    assert len(payload) >= 1, f"exception response has no code: {payload.hex()}"
+    assert payload[0] == 0x02, \
+        f"expected exception code 0x02 (ILLEGAL_ADDRESS), got 0x{payload[0]:02X}"
+    print("✓ self-unit FC04 65504 (removed WB stack register) -> exception 0x02")
 
 
 @pytest.mark.qemu

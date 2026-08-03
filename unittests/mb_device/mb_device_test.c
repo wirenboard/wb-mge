@@ -8,7 +8,6 @@
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
-#include "freertos/task.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -40,10 +39,6 @@ void mock_heap_reset(void);
 /* mocks/esp_system.c */
 void mock_set_reset_reason(esp_reset_reason_t reason);
 void mock_reset_reason_reset(void);
-
-/* mocks/freertos/task.c */
-void mock_set_stack_high_water_mark(UBaseType_t words);
-void mock_freertos_task_reset(void);
 
 /* unittests/mocks/esp_timer.c */
 void mock_esp_timer_reset(void);
@@ -137,7 +132,6 @@ void setUp(void)
     mock_cache_stats_reset();
     mock_heap_reset();
     mock_reset_reason_reset();
-    mock_freertos_task_reset();
     mock_esp_timer_reset();
 
     /* Deterministic device identity for every test. */
@@ -170,7 +164,7 @@ void test_uptime_and_mbap_header(void)
     uint16_t tid_net = 0x3412; /* arbitrary network-order tid; echoed verbatim */
 
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, tid_net,
-                                             104u, 2u, 0u, buf, &exc);
+                                             104u, 2u, buf, &exc);
 
     /* total = MBAP(8) + byte_count_field(1) + data(4) = 13 */
     TEST_ASSERT_EQUAL_UINT(13u, n);
@@ -202,7 +196,7 @@ void test_supply_voltage(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             121u, 1u, 0u, buf, &exc);
+                                             121u, 1u, buf, &exc);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
     TEST_ASSERT_EQUAL_UINT16(12000u, resp_reg(buf, 0));
@@ -222,7 +216,7 @@ void test_model_string(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             200u, 9u, 0u, buf, &exc);
+                                             200u, 9u, buf, &exc);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 18u, n);
     TEST_ASSERT_EQUAL_HEX16(0x0054, resp_reg(buf, 0)); /* 'T' */
@@ -253,7 +247,7 @@ void test_fw_version_string(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             250u, count, 0u, buf, &exc);
+                                             250u, count, buf, &exc);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + (size_t)count * 2u, n);
 
@@ -277,14 +271,14 @@ void test_serial_registers(void)
 
     /* generation scheme: 266..267 (u32, MSW-first) = 4 (serial from MAC) */
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             266u, 2u, 0u, buf, &exc);
+                                             266u, 2u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 4u, n);
     TEST_ASSERT_EQUAL_HEX16(0x0000, resp_reg(buf, 0));
     TEST_ASSERT_EQUAL_HEX16(0x0004, resp_reg(buf, 1));
 
     /* serial number: 268..271 (u64, MSW-first) = full serial */
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      268u, 4u, 0u, buf, &exc);
+                                      268u, 4u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 8u, n);
     TEST_ASSERT_EQUAL_HEX16(0x0000, resp_reg(buf, 0));
     TEST_ASSERT_EQUAL_HEX16(0x1122, resp_reg(buf, 1));
@@ -307,7 +301,7 @@ void test_fw_numeric_plus_suffix(void)
 
     /* 320..323: major, minor, patch, suffix */
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             320u, 4u, 0u, buf, &exc);
+                                             320u, 4u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 8u, n);
     TEST_ASSERT_EQUAL_UINT16(1u, resp_reg(buf, 0)); /* MAJOR */
     TEST_ASSERT_EQUAL_UINT16(2u, resp_reg(buf, 1)); /* MINOR */
@@ -316,7 +310,7 @@ void test_fw_numeric_plus_suffix(void)
 
     /* 324..327: LE lo, LE hi, BE hi, BE lo */
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      324u, 4u, 0u, buf, &exc);
+                                      324u, 4u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 8u, n);
     TEST_ASSERT_EQUAL_HEX16(0x0385, resp_reg(buf, 0)); /* LE low word  */
     TEST_ASSERT_EQUAL_HEX16(0x0102, resp_reg(buf, 1)); /* LE high word */
@@ -340,13 +334,13 @@ void test_fw_numeric_rc_suffix(void)
     uint8_t exc = 0xAA;
 
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             323u, 1u, 0u, buf, &exc);
+                                             323u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
     TEST_ASSERT_EQUAL_HEX16(0xFFFE, resp_reg(buf, 0)); /* (uint16_t)(int16_t)-2 */
 
     /* LE low word should hold patch(0x03) in high byte and enc(0x01) in low. */
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      324u, 1u, 0u, buf, &exc);
+                                      324u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
     TEST_ASSERT_EQUAL_HEX16(0x0301, resp_reg(buf, 0));
 }
@@ -367,7 +361,7 @@ void test_stats_block(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             528u, 7u, 0u, buf, &exc);
+                                             528u, 7u, buf, &exc);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 14u, n);
     TEST_ASSERT_EQUAL_UINT16(0u,   resp_reg(buf, 0)); /* 528 pkt proc hi      */
@@ -393,13 +387,13 @@ void test_bootloader_version_slot_not_claimed(void)
     for (uint16_t addr = 330u; addr <= 337u; addr++) {
         uint8_t exc = 0;
         size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                                 addr, 1u, 0u, buf, &exc);
+                                                 addr, 1u, buf, &exc);
         TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "FC04 must not answer a bootloader-version register");
         TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
 
         exc = 0;
         n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
-                                          addr, 1u, 0u, buf, &exc);
+                                          addr, 1u, buf, &exc);
         TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "FC03 must not answer a bootloader-version register");
         TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
     }
@@ -407,20 +401,22 @@ void test_bootloader_version_slot_not_claimed(void)
     /* The whole 8-register field must fail as one read, the way WB tooling issues it. */
     uint8_t exc_field = 0;
     size_t n_field = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
-                                                   330u, 8u, 0u, buf, &exc_field);
+                                                   330u, 8u, buf, &exc_field);
     TEST_ASSERT_EQUAL_UINT(0u, n_field);
     TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc_field);
 }
 
-/* ---- MBDEV-U-009: FC04 RAM diagnostics (65505, 65506) -------------------- */
+/* ---- MBDEV-U-009: FC04 RAM diagnostics (65505, 65506, 65507) ------------- */
 
-/* Values reported in KB (floor division by 1024).
- * total=200000, free=150000: free RAM = 150000/1024 = 146 KB;
- * used RAM = (200000-150000)/1024 = 50000/1024 = 48 KB. */
+/* WB common map order: 65505 total, 65506 used, 65507 free. Values reported in
+ * KB (floor division by 1024).
+ * total=200000, free=150000: total RAM = 200000/1024 = 195 KB;
+ * used RAM = (200000-150000)/1024 = 50000/1024 = 48 KB;
+ * free RAM = 150000/1024 = 146 KB. */
 void test_ram_diagnostics(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-009: FC04 RAM free/used (KB)");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-009: FC04 RAM total/used/free (KB)");
     LOG_MESSAGE();
 
     mock_heap_set_sizes(200000u, 150000u);
@@ -428,26 +424,42 @@ void test_ram_diagnostics(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
 
+    /* The three registers read as one contiguous block, the way a poller reads them. */
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             65505u, 1u, 0u, buf, &exc);
-    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
-    TEST_ASSERT_EQUAL_UINT16(146u, resp_reg(buf, 0)); /* free RAM in KB */
+                                             65505u, 3u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 6u, n);
 
-    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      65506u, 1u, 0u, buf, &exc);
-    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
-    TEST_ASSERT_EQUAL_UINT16(48u, resp_reg(buf, 0)); /* used RAM in KB */
+    uint16_t total_kb = resp_reg(buf, 0);
+    uint16_t used_kb  = resp_reg(buf, 1);
+    uint16_t free_kb  = resp_reg(buf, 2);
+
+    /* The three expected values are pairwise distinct, so these exact comparisons
+     * are what breaks if the total/used/free branches get swapped. */
+    TEST_ASSERT_EQUAL_UINT16(195u, total_kb); /* total RAM in KB */
+    TEST_ASSERT_EQUAL_UINT16(48u,  used_kb);  /* used RAM in KB  */
+    TEST_ASSERT_EQUAL_UINT16(146u, free_kb);  /* free RAM in KB  */
+
+    /* Semantic invariant of the block, spelled out: the total cannot be smaller
+     * than either part. Redundant with the exact values above — those already stop
+     * the test on any mismatch — and kept only to state the contract the three
+     * registers must satisfy for arbitrary heap figures, not just these mock ones. */
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT16_MESSAGE(used_kb, total_kb,
+        "65505 (total) must be >= 65506 (used)");
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT16_MESSAGE(free_kb, total_kb,
+        "65505 (total) must be >= 65507 (free)");
 }
 
 /* ---- MBDEV-U-010: FC04 RAM u16 clamp at KB scale ------------------------- */
 
-/* The u16 register still clamps when the KB value exceeds 0xFFFF.
- * total=200 MB, free=100 MB: used = 100 MB = 102400 KB > 65535 -> 0xFFFF;
+/* Every register of the block still clamps when the KB value exceeds 0xFFFF.
+ * total=200 MB, free=100 MB: total = 200 MB = 204800 KB > 65535 -> 0xFFFF;
+ * used = 100 MB = 102400 KB > 65535 -> 0xFFFF;
  * free = 100 MB = 102400 KB > 65535 -> 0xFFFF. */
-void test_ram_used_clamp(void)
+void test_ram_block_clamp(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-010: FC04 RAM u16 clamp (KB)");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+                        "MBDEV-U-010: FC04 RAM total/used/free u16 clamp (KB)");
     LOG_MESSAGE();
 
     mock_heap_set_sizes(200u * 1024u * 1024u, 100u * 1024u * 1024u);
@@ -455,72 +467,62 @@ void test_ram_used_clamp(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
 
-    /* used RAM = 100 MB = 102400 KB -> clamps to 0xFFFF */
+    /* total RAM = 200 MB = 204800 KB -> clamps to 0xFFFF */
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             65506u, 1u, 0u, buf, &exc);
+                                             65505u, 1u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
+    TEST_ASSERT_EQUAL_HEX16(0xFFFFu, resp_reg(buf, 0));
+
+    /* used RAM = 100 MB = 102400 KB -> clamps to 0xFFFF */
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
+                                      65506u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
     TEST_ASSERT_EQUAL_HEX16(0xFFFFu, resp_reg(buf, 0));
 
     /* free RAM = 100 MB = 102400 KB -> clamps to 0xFFFF */
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      65505u, 1u, 0u, buf, &exc);
+                                      65507u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
     TEST_ASSERT_EQUAL_HEX16(0xFFFFu, resp_reg(buf, 0));
 }
 
-/* ---- MBDEV-U-011: FC04 stack diagnostics (65504, 65507) ------------------ */
+/* ---- MBDEV-U-031: 65504 is NOT mapped ------------------------------------ */
 
-/* Values reported in KB (floor division by 1024).
- * sizeof(StackType_t)==1, high-water=800 words -> free_min=800 bytes.
- * stack_bytes=3072: max stack used = (3072-800)/1024 = 2272/1024 = 2 KB;
- * stack size = 3072/1024 = 3 KB. */
-void test_stack_diagnostics(void)
+/* The WB "max used stack" register (0xFFE0) is deliberately not implemented:
+ * this firmware is multi-tasking and has no single stack to report. It must
+ * therefore behave like any other undefined address — exception 0x02, both on
+ * its own and when a block read merely spans it. */
+void test_stack_reg_not_mapped(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-011: FC04 stack used + size (KB)");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-031: 65504 unmapped -> exception 0x02");
     LOG_MESSAGE();
 
-    mock_set_stack_high_water_mark(800u);
+    mock_heap_set_sizes(200000u, 150000u);
 
     uint8_t buf[260];
-    uint8_t exc = 0xAA;
 
+    /* 65504 alone: no value, illegal data address. */
+    uint8_t exc = 0;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             65504u, 1u, 3072u, buf, &exc);
-    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
-    TEST_ASSERT_EQUAL_UINT16(2u, resp_reg(buf, 0)); /* max stack used in KB */
+                                             65504u, 1u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "65504 must not answer FC04");
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
 
+    exc = 0;
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                      65504u, 1u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "65504 must not answer FC03");
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
+
+    /* 65504 count 4 spans the three mapped RAM registers: the whole read must
+     * still fail rather than quietly return the three good values. */
+    exc = 0;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      65507u, 1u, 3072u, buf, &exc);
-    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
-    TEST_ASSERT_EQUAL_UINT16(3u, resp_reg(buf, 0)); /* stack size in KB */
-}
-
-/* ---- MBDEV-U-012: FC04 stack used = 0 when unknown/corrupted ------------- */
-
-/* free_min >= stack_bytes (or stack_bytes==0) -> max stack used reports 0. */
-void test_stack_used_unknown(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-012: FC04 stack used = 0 (unknown)");
-    LOG_MESSAGE();
-
-    uint8_t buf[260];
-    uint8_t exc = 0xAA;
-
-    /* high-water (4000 bytes) exceeds the reported stack size (3072). */
-    mock_set_stack_high_water_mark(4000u);
-    size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             65504u, 1u, 3072u, buf, &exc);
-    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
-    TEST_ASSERT_EQUAL_UINT16(0u, resp_reg(buf, 0));
-
-    /* stack_bytes == 0 -> unknown -> 0 */
-    mock_set_stack_high_water_mark(800u);
-    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      65504u, 1u, 0u, buf, &exc);
-    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 2u, n);
-    TEST_ASSERT_EQUAL_UINT16(0u, resp_reg(buf, 0));
+                                      65504u, 4u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n,
+        "a block read spanning 65504 must fail, not return partial data");
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
 }
 
 /* ---- MBDEV-U-013: FC04 reboot reason (65508) ----------------------------- */
@@ -537,17 +539,17 @@ void test_reboot_reason(void)
 
     mock_set_reset_reason(ESP_RST_POWERON);
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  65508u, 1u, 0u, buf, &exc);
+                                  65508u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT16(5u, resp_reg(buf, 0)); /* WB_REBOOT_POR */
 
     mock_set_reset_reason(ESP_RST_BROWNOUT);
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  65508u, 1u, 0u, buf, &exc);
+                                  65508u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT16(1u, resp_reg(buf, 0)); /* WB_REBOOT_LPWR */
 
     mock_set_reset_reason(ESP_RST_TASK_WDT);
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  65508u, 1u, 0u, buf, &exc);
+                                  65508u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT16(3u, resp_reg(buf, 0)); /* WB_REBOOT_IWDG */
 }
 
@@ -564,7 +566,7 @@ void test_signature_string_fc03(void)
     uint8_t buf[260];
     uint8_t exc = 0xAA;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
-                                             290u, count, 0u, buf, &exc);
+                                             290u, count, buf, &exc);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + (size_t)count * 2u, n);
     /* function code in the response must reflect FC03 */
@@ -578,7 +580,7 @@ void test_signature_string_fc03(void)
     /* This is the read wb-mcu-fw-flasher --get-device-info performs, so the whole
      * 12-register field must come back with every high byte zero. */
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
-                                      290u, 12u, 0u, buf, &exc);
+                                      290u, 12u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 24u, n);
     char full[64] = {0};
     decode_string_1c(buf, 12u, full);
@@ -601,35 +603,35 @@ void test_error_paths(void)
     /* Undefined input register (FC04 @ 500) -> illegal data address */
     exc = 0;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      500u, 1u, 0u, buf, &exc);
+                                      500u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(0u, n);
     TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
 
     /* Undefined holding register (FC03 @ 100) -> illegal data address */
     exc = 0;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
-                                      100u, 1u, 0u, buf, &exc);
+                                      100u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(0u, n);
     TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
 
     /* Unsupported function code (FC01 coils) -> illegal function */
     exc = 0;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_COILS, 0x0001,
-                                      104u, 1u, 0u, buf, &exc);
+                                      104u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(0u, n);
     TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_FUNCTION, exc);
 
     /* Range spanning defined+undefined (104,105 defined; 106 undefined) */
     exc = 0;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      104u, 3u, 0u, buf, &exc);
+                                      104u, 3u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(0u, n);
     TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
 
     /* Address-space overflow (start=0xFFFF, count=2 => 0x10001 > 0x10000) */
     exc = 0;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      0xFFFFu, 2u, 0u, buf, &exc);
+                                      0xFFFFu, 2u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(0u, n);
     TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, exc);
 }
@@ -673,7 +675,7 @@ void test_self_req_bad_fc_06(void)
     uint16_t tid_net = 0x3412;
     size_t req_len = make_req(req, tid_net, DEV_UNIT_ID, 0x06u, 104u, 2u);
 
-    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
     TEST_ASSERT_EQUAL_HEX8(0x86u, resp[7]);  /* fc | 0x80          */
@@ -695,7 +697,7 @@ void test_self_req_bad_fc_01(void)
     uint8_t resp[260];
     size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x01u, 104u, 2u);
 
-    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
     TEST_ASSERT_EQUAL_HEX8(0x81u, resp[7]);  /* fc | 0x80        */
@@ -716,7 +718,7 @@ void test_self_req_truncated(void)
     make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_HOLDING, 104u, 2u);
     size_t req_len = MBAP_LEN + 3u; /* one byte short of the 4 PDU bytes */
 
-    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
     TEST_ASSERT_EQUAL_HEX8(0x83u, resp[7]);  /* FC03 | 0x80        */
@@ -735,7 +737,7 @@ void test_self_req_count_zero(void)
     uint8_t resp[260];
     size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_INPUT, 104u, 0u);
 
-    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
     TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);  /* ILLEGAL_DATA_VALUE */
@@ -753,7 +755,7 @@ void test_self_req_count_too_big(void)
     uint8_t resp[260];
     size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_INPUT, 104u, 126u);
 
-    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
     TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);  /* ILLEGAL_DATA_VALUE */
@@ -774,7 +776,7 @@ void test_self_req_count_max_addr_bad(void)
     uint8_t resp[260];
     size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_INPUT, 104u, 125u);
 
-    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
     TEST_ASSERT_EQUAL_HEX8(0x02u, resp[8]);  /* ILLEGAL_DATA_ADDRESS (count was accepted) */
@@ -797,7 +799,7 @@ void test_self_req_valid_fc04(void)
     uint16_t tid_net = 0x3412;
     size_t req_len = make_req(req, tid_net, DEV_UNIT_ID, FC_READ_INPUT, 104u, 2u);
 
-    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     /* total = MBAP(8) + byte_count_field(1) + data(4) = 13 */
     TEST_ASSERT_EQUAL_UINT(13u, n);
@@ -808,7 +810,7 @@ void test_self_req_valid_fc04(void)
     uint8_t ref[260];
     uint8_t exc = 0xAA;
     size_t rn = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, tid_net,
-                                              104u, 2u, 0u, ref, &exc);
+                                              104u, 2u, ref, &exc);
     TEST_ASSERT_EQUAL_UINT(rn, n);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(ref, resp, n);
 }
@@ -825,7 +827,7 @@ void test_self_req_valid_fc03(void)
     uint8_t resp[260];
     size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, FC_READ_HOLDING, 290u, 6u);
 
-    size_t n = mb_device_handle_self_request(req, req_len, 0u, resp);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 12u, n);
     TEST_ASSERT_EQUAL_HEX8(0x03u, resp[7]); /* FC03 echoed   */
@@ -855,7 +857,7 @@ void test_git_info_string(void)
     /* 13 chars -> 7 regs cover the string + pad */
     const uint16_t count = 7u;
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                             220u, count, 0u, buf, &exc);
+                                             220u, count, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + (size_t)count * 2u, n);
 
     char decoded[64] = {0};
@@ -869,7 +871,7 @@ void test_git_info_string(void)
 
     /* Full 25-reg field: upper bound + trailing zero pad. */
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      220u, 25u, 0u, buf, &exc);
+                                      220u, 25u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 50u, n);
     char full[64] = {0};
     decode_string_2c(buf, 25u, full);
@@ -902,7 +904,7 @@ void test_reboot_reason_all(void)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         mock_set_reset_reason(cases[i].in);
         mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      65508u, 1u, 0u, buf, &exc);
+                                      65508u, 1u, buf, &exc);
         TEST_ASSERT_EQUAL_UINT16(cases[i].out, resp_reg(buf, 0));
     }
 }
@@ -923,13 +925,13 @@ void test_poll_freq_edges(void)
     /* (a) map_age_s == 0 -> 0 (avoid divide-by-zero else branch). */
     mock_cache_stats_set(1000u, 0u, 0u, 0u);
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  533u, 1u, 0u, buf, &exc);
+                                  533u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT16(0u, resp_reg(buf, 0));
 
     /* (b) packets*60/map_age = 1e6*60/1 = 6e7 > 0xFFFF -> clamps to 0xFFFF. */
     mock_cache_stats_set(1000000u, 0u, 1u, 0u);
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  533u, 1u, 0u, buf, &exc);
+                                  533u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_HEX16(0xFFFFu, resp_reg(buf, 0));
 }
 
@@ -950,12 +952,12 @@ void test_fw_numeric_no_suffix(void)
 
     /* SUFFIX register (323) == 0 (no +wb / no -rc). */
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  323u, 1u, 0u, buf, &exc);
+                                  323u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_HEX16(0x0000u, resp_reg(buf, 0));
 
     /* LE low word (324): patch(0x06) in hi byte, enc(0+128 = 0x80) in lo byte. */
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  324u, 1u, 0u, buf, &exc);
+                                  324u, 1u, buf, &exc);
     uint16_t le_lo = resp_reg(buf, 0);
     TEST_ASSERT_EQUAL_HEX8(0x80u, (uint8_t)(le_lo & 0xFFu)); /* encoded suffix */
     TEST_ASSERT_EQUAL_HEX16(0x0680u, le_lo);
@@ -984,7 +986,7 @@ void test_pack_string_odd_boundary(void)
     strcpy(sys_info.firmware_ver, "ABCDE");
 
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  250u, 7u, 0u, buf, &exc);
+                                  250u, 7u, buf, &exc);
     TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0041u, resp_reg(buf, 0), "reg 250 = 'A' in the low byte");
     TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0045u, resp_reg(buf, 4), "reg 254 = 'E', the last character");
     TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0000u, resp_reg(buf, 5), "reg 255 is past the string: zero");
@@ -994,7 +996,7 @@ void test_pack_string_odd_boundary(void)
     strcpy(sys_info.firmware_git_info, "ABC");
 
     mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                  220u, 3u, 0u, buf, &exc);
+                                  220u, 3u, buf, &exc);
     TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x4241u, resp_reg(buf, 0),
         "reg 220 = 'A' (low) + 'B' (high)");
     TEST_ASSERT_EQUAL_HEX16_MESSAGE(0x0043u, resp_reg(buf, 1),
@@ -1036,9 +1038,9 @@ void test_info_block_readable_via_fc03(void)
         uint8_t exc_in = 0xAA, exc_hold = 0xAA;
 
         size_t n_in = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                                    addrs[i], 1u, 0u, in_buf, &exc_in);
+                                                    addrs[i], 1u, in_buf, &exc_in);
         size_t n_hold = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
-                                                      addrs[i], 1u, 0u, hold_buf, &exc_hold);
+                                                      addrs[i], 1u, hold_buf, &exc_hold);
 
         TEST_ASSERT_TRUE_MESSAGE(n_in > 0, "the address must be served on FC04");
         TEST_ASSERT_TRUE_MESSAGE(n_hold > 0, "the same address must be served on FC03");
@@ -1051,7 +1053,7 @@ void test_info_block_readable_via_fc03(void)
 
     /* The signature keeps working on FC03 — this is the read WB tooling performs. */
     size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
-                                             290u, 6u, 0u, buf, &exc);
+                                             290u, 6u, buf, &exc);
     TEST_ASSERT_TRUE_MESSAGE(n > 0, "the signature must still be served on FC03");
     char decoded[64] = {0};
     decode_string_1c(buf, 6u, decoded);
@@ -1062,7 +1064,7 @@ void test_info_block_readable_via_fc03(void)
      * that broke the FC03/FC04 symmetry. */
     exc = 0xAA;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      290u, 6u, 0u, buf, &exc);
+                                      290u, 6u, buf, &exc);
     TEST_ASSERT_TRUE_MESSAGE(n > 0, "the signature must now be served on FC04 as well");
     char decoded_fc04[64] = {0};
     decode_string_1c(buf, 6u, decoded_fc04);
@@ -1072,13 +1074,13 @@ void test_info_block_readable_via_fc03(void)
      * is illegal on both. */
     exc = 0xAA;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
-                                      1000u, 1u, 0u, buf, &exc);
+                                      1000u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "an undefined address must not be served on FC03");
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x02u, exc, "undefined address -> ILLEGAL DATA ADDRESS");
 
     exc = 0xAA;
     n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_INPUT, 0x0001,
-                                      1000u, 1u, 0u, buf, &exc);
+                                      1000u, 1u, buf, &exc);
     TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "an undefined address must not be served on FC04");
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x02u, exc, "undefined address -> ILLEGAL DATA ADDRESS");
 }
@@ -1099,9 +1101,8 @@ int main(void)
     RUN_TEST(test_stats_block);
     RUN_TEST(test_bootloader_version_slot_not_claimed);
     RUN_TEST(test_ram_diagnostics);
-    RUN_TEST(test_ram_used_clamp);
-    RUN_TEST(test_stack_diagnostics);
-    RUN_TEST(test_stack_used_unknown);
+    RUN_TEST(test_ram_block_clamp);
+    RUN_TEST(test_stack_reg_not_mapped);
     RUN_TEST(test_reboot_reason);
     RUN_TEST(test_signature_string_fc03);
     RUN_TEST(test_error_paths);

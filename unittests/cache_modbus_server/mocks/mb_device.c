@@ -33,9 +33,9 @@ void mock_mb_device_reset(void)
 }
 
 size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
-                                     uint16_t task_stack_size_bytes, uint8_t *resp_buf)
+                                     uint8_t *resp_buf)
 {
-    (void)req; (void)req_len; (void)task_stack_size_bytes;
+    (void)req; (void)req_len;
     mock_mb_device_handle_called++;
     memcpy(resp_buf, s_mock_resp, s_mock_resp_len);
     return s_mock_resp_len;

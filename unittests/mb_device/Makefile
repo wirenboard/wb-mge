@@ -17,7 +17,6 @@ AUX_SRC += mocks/setting_items.c
 AUX_SRC += mocks/cache_multimaster.c
 AUX_SRC += mocks/esp_heap_caps.c
 AUX_SRC += mocks/esp_system.c
-AUX_SRC += mocks/freertos/task.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/esp_timer.c
 AUX_SRC += $(UNITTEST_DIR)/call_sequence.c
 

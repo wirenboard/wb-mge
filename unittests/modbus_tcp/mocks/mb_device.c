@@ -23,9 +23,8 @@ bool mb_device_is_self(uint8_t unit_id)
 }
 
 size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
-                                     uint16_t task_stack_size_bytes, uint8_t *resp_buf)
+                                     uint8_t *resp_buf)
 {
-    (void)task_stack_size_bytes;
     mock_mb_device_handle_self_count++;
     /* Record the requested unit id (MBAP header byte 6) for assertions. */
     if (req && (req_len > 6)) {

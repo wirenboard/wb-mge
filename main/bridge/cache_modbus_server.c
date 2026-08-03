@@ -273,13 +273,8 @@ static void process_one_frame(tcp_desc_t *desc, int client_sock,
     /* Requests addressed to the gateway itself (Unit ID 0xFF) are served from the
      * built-in device-info register map, independently of the cache state. */
     if (mb_device_is_self(unit_id)) {
-        /* This callback runs inside tcp_server's per-connection receiver task, so
-         * the stack the device registers report is tcp_server's own — take it from
-         * tcp_server.h rather than keeping a copy that can drift out of sync and
-         * make REG_STACK_SIZE / REG_MAX_STACK_USED lie. */
         uint8_t dev_resp[MODBUS_TCP_MAX_ADU_LEN];
-        size_t dev_len = mb_device_handle_self_request(data, len,
-                                                       TCP_SERVER_TASK_STACK_SIZE, dev_resp);
+        size_t dev_len = mb_device_handle_self_request(data, len, dev_resp);
         tcp_server_send(desc, client_sock, dev_resp, dev_len);
         return;
     }

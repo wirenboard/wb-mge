@@ -93,10 +93,9 @@ supported.
 | 532           | 0x0214        | 1    | u16    | Devices currently on the bus (unique slave_ids in cache)            |
 | 533           | 0x0215        | 1    | u16    | Average bus poll rate, polls/min                                    |
 | 534           | 0x0216        | 1    | u16    | Cache value timeout, seconds                                        |
-| 65504         | 0xFFE0        | 1    | u16    | Maximum used stack, KB (0 = stack corrupted / unknown)              |
-| 65505         | 0xFFE1        | 1    | u16    | Free RAM, KB                                                        |
+| 65505         | 0xFFE1        | 1    | u16    | Total RAM, KB                                                       |
 | 65506         | 0xFFE2        | 1    | u16    | Used RAM, KB                                                        |
-| 65507         | 0xFFE3        | 1    | u16    | Stack size, KB                                                      |
+| 65507         | 0xFFE3        | 1    | u16    | Free RAM, KB                                                        |
 | 65508         | 0xFFE4        | 1    | u16    | Last MCU reboot reason                                              |
 
 ### Register map notes
@@ -114,6 +113,13 @@ supported.
   ([wiki](https://wiki.wirenboard.com/wiki/Modbus-hardware-version)):
   `if (SUFFIX >= 0) enc = SUFFIX + 128; else enc = -1 - SUFFIX;`
   `VERSION = (MAJOR << 24) | (MINOR << 16) | (PATCH << 8) | enc`.
+- **RAM block** (65505–65507) follows the Wiren Board common register map (total / used / free),
+  but is reported in **kilobytes**, not the bytes that map specifies: an ESP32 heap is hundreds of
+  KB and a byte count would sit saturated at 0xFFFF in a u16. "Total RAM" is the total size of the
+  internal **heap**, not the full SRAM of the chip, so it reads well below the datasheet figure.
+  Of the WB diagnostics block (65504–65508), register **65504** — the "maximum used stack" slot —
+  is the only one deliberately not implemented: this firmware is multi-tasking and has no single
+  stack to report.
 - **Reboot reason** (65508): 1 — LPWR (brownout / wake from sleep), 2 — WWDG (interrupt
   watchdog), 3 — IWDG (task / generic watchdog), 4 — SFT (software reset / panic), 5 — POR
   (power-on), 6 — PIN (external reset), 0 — unknown. Mapped from `esp_reset_reason()`.

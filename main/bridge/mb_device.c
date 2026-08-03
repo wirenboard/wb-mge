@@ -10,8 +10,6 @@
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -99,10 +97,9 @@
 #define REG_POLL_FREQ_PPM     533u  /* 0x0215 */
 #define REG_CACHE_TIMEOUT     534u  /* 0x0216 */
 
-#define REG_MAX_STACK_USED    65504u /* 0xFFE0 */
-#define REG_FREE_RAM          65505u /* 0xFFE1 */
+#define REG_TOTAL_RAM         65505u /* 0xFFE1 */
 #define REG_USED_RAM          65506u /* 0xFFE2 */
-#define REG_STACK_SIZE        65507u /* 0xFFE3 */
+#define REG_FREE_RAM          65507u /* 0xFFE3 */
 #define REG_REBOOT_REASON     65508u /* 0xFFE4 */
 
 /* ---- WB reboot reason codes ---------------------------------------------- */
@@ -246,11 +243,9 @@ static uint16_t map_reboot_reason(void)
  * with the same value — including the signature, which standard WB tooling reads
  * over FC03 and a plain poller may read over FC04.
  *
- * task_stack_bytes: total stack size of the calling task, for the stack-usage
- * registers (0 if unknown).
  * Returns true and writes *val if the address is a defined register, false otherwise.
  */
-static bool device_get_reg(uint16_t addr, uint16_t task_stack_bytes, uint16_t *val)
+static bool device_get_reg(uint16_t addr, uint16_t *val)
 {
     /* uptime, 32-bit, MSW-first */
     if (addr == REG_UPTIME_HI || addr == REG_UPTIME_LO) {
@@ -360,20 +355,14 @@ static bool device_get_reg(uint16_t addr, uint16_t task_stack_bytes, uint16_t *v
         return true;
     }
 
-    /* RAM / stack diagnostics (reported in kilobytes, floor division by 1024) */
-    if (addr == REG_MAX_STACK_USED) {
-        uint16_t free_min = (uint16_t)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
-        if (task_stack_bytes > 0 && task_stack_bytes >= free_min) {
-            uint32_t used = (uint32_t)task_stack_bytes - (uint32_t)free_min;
-            *val = sat_u16(used / 1024u); /* used stack in KB */
-        } else {
-            *val = 0; /* 0 means stack corrupted/unknown per the WB spec */
-        }
-        return true;
-    }
-    if (addr == REG_FREE_RAM) {
-        uint32_t free_internal = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        *val = sat_u16(free_internal / 1024u); /* free internal RAM in KB */
+    /* RAM diagnostics, laid out as in the WB common register map: 0xFFE1 total,
+     * 0xFFE2 used, 0xFFE3 free. Reported in KILOBYTES, deliberately not the bytes
+     * that map specifies: an ESP32 heap is hundreds of KB and a byte count would
+     * sit saturated at 0xFFFF in a u16. The WB stack register (0xFFE0) is not
+     * implemented — this firmware is multi-tasking and has no single stack. */
+    if (addr == REG_TOTAL_RAM) {
+        uint32_t total_internal = (uint32_t)heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
+        *val = sat_u16(total_internal / 1024u); /* total internal RAM in KB */
         return true;
     }
     if (addr == REG_USED_RAM) {
@@ -383,8 +372,9 @@ static bool device_get_reg(uint16_t addr, uint16_t task_stack_bytes, uint16_t *v
         *val = sat_u16(used / 1024u); /* used internal RAM in KB */
         return true;
     }
-    if (addr == REG_STACK_SIZE) {
-        *val = sat_u16((uint32_t)task_stack_bytes / 1024u); /* total stack size in KB */
+    if (addr == REG_FREE_RAM) {
+        uint32_t free_internal = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        *val = sat_u16(free_internal / 1024u); /* free internal RAM in KB */
         return true;
     }
     if (addr == REG_REBOOT_REASON) {
@@ -405,7 +395,6 @@ bool mb_device_is_self(uint8_t unit_id)
 size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
                                      uint16_t transaction_id_net,
                                      uint16_t start_addr, uint16_t count,
-                                     uint16_t task_stack_size_bytes,
                                      uint8_t *resp_buf, uint8_t *exc_out)
 {
     if (fc != MB_DEV_FC_READ_HOLDING_REGS && fc != MB_DEV_FC_READ_INPUT_REGS) {
@@ -433,7 +422,7 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
         uint16_t addr  = (uint16_t)(start_addr + i);
         uint16_t value = 0;
         /* One shared map: FC03 and FC04 resolve the same addresses. */
-        bool found = device_get_reg(addr, task_stack_size_bytes, &value);
+        bool found = device_get_reg(addr, &value);
         if (!found) {
             /* Any undefined register in the range -> ILLEGAL DATA ADDRESS. */
             *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
@@ -451,7 +440,6 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
 }
 
 size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
-                                     uint16_t task_stack_size_bytes,
                                      uint8_t *resp_buf)
 {
     const mb_tcp_header_t *req_hdr = (const mb_tcp_header_t *)req;
@@ -476,7 +464,7 @@ size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
 
     uint8_t exc = MB_DEV_EX_ILLEGAL_ADDRESS;
     size_t rlen = mb_device_build_read_response(unit_id, fc, tid, start, count,
-                                                task_stack_size_bytes, resp_buf, &exc);
+                                                resp_buf, &exc);
     if (rlen == 0) {
         return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, exc);
     }
