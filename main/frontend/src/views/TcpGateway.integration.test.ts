@@ -9,13 +9,27 @@
  *             when the cache overlay is off.
  * TG-I-004 — toggling a 'tcp_bridge' port OFF posts ports/N/mode { mode: 'passive' }
  *             when the cache overlay is on (keep serial alive for the cache listener).
- * TG-I-005 — port isolation: toggling port 1 never touches ports/2 and vice-versa.
+ * TG-I-005 — port isolation: the peer is written only where enabling would strand it. On the
+ *             ON path that means every peer mode OTHER than 'repeater' is left untouched; on
+ *             the OFF path the peer is left untouched unconditionally, 'repeater' included.
  * TG-I-006 — error path: a rejected api call reverts the optimistic switch state and
  *             surfaces showAlert('connection_error').
  * TG-I-007 — concurrency guard: a hanging api call makes a double-toggle post ports/N/mode
- *             exactly once.
+ *             exactly once, and the in-flight toggle locks the OTHER port's switch too
+ *             (the ON path writes both ports of the pair).
  * TG-I-008 — disabled when info undefined: the enable switch is disabled and toggling it
  *             makes no ports/N/mode api call until info has loaded.
+ * TG-I-009 — repeater peer: enabling the gateway on one port takes the PEER out of 'repeater'
+ *             first ('passive' when the peer's cache overlay is on, else 'disabled'), then
+ *             opens this port as 'tcp_bridge'. A repeater is a pair, so a port left alone in
+ *             'repeater' forwards nothing. Either request can fail: a failed peer request
+ *             sends nothing else, a failed gateway request leaves THIS port in 'repeater' and
+ *             the same click repairs it. Both surface the alert.
+ * TG-I-010 — the repeater banner on the peer card clears once the peer leaves 'repeater',
+ *             with no separate condition of its own.
+ * TG-I-011 — fresh-state decision: the peer's fate is decided from a re-read of info, not from
+ *             the cached copy, so clicking one port and then the other does not undo the
+ *             gateway the first click brought up.
  *
  * Rendering note: the port cards are gated by `v-if="data"`, so the mocked useSettings()
  * must return a realistic Settings object. flushPromises() after mount lets the component
@@ -165,6 +179,36 @@ function switchChecked(wrapper: ReturnType<typeof mount>, portKey: string): bool
   return el.checked;
 }
 
+/** Text content of the port card that owns the given port's enable switch. */
+function cardText(wrapper: ReturnType<typeof mount>, portKey: string): string {
+  const el = wrapper.find(`#${portKey}-enabled`).element;
+  return el.closest('section.card')?.textContent ?? '';
+}
+
+/** English text of the repeater banner (TcpGateway.vue i18n key 'repeater_active'). */
+const REPEATER_BANNER = 'turns off the repeater currently active on this port';
+
+/** The mode of every recorded ports/N/mode POST, in call order: ['ports/1/mode', 'passive']. */
+function postedModes(): [string, PortMode][] {
+  return vi.mocked(api).mock.calls
+    .map((c) => [c[0] as string, (c[1] as { json?: { mode?: PortMode } } | undefined)?.json?.mode])
+    .filter((c): c is [string, PortMode] => c[1] !== undefined);
+}
+
+/**
+ * Replay the recorded ports/N/mode POSTs onto a starting mode pair, so a test can feed back
+ * the info poll the device would report AFTER the component's requests — derived from what
+ * the component actually posted rather than from what the test expects it to post.
+ */
+function applyPostedModes(start: { port1Mode: PortMode; port2Mode: PortMode }) {
+  const modes = { ...start };
+  for (const [url, mode] of postedModes()) {
+    if (url === 'ports/1/mode') modes.port1Mode = mode;
+    if (url === 'ports/2/mode') modes.port2Mode = mode;
+  }
+  return modes;
+}
+
 /** Toggle the enable Switch for the given port key via a native checkbox change event. */
 async function toggleSwitch(wrapper: ReturnType<typeof mount>, portKey: string): Promise<void> {
   const input = wrapper.find(`#${portKey}-enabled`);
@@ -192,7 +236,10 @@ const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } });
 beforeEach(() => {
   infoRef.value = undefined;
   settingsData.value = makeSettings();
-  fetchInfoMock.mockClear();
+  // mockReset, not mockClear: TG-I-011 installs an implementation that publishes device state
+  // into infoRef, and it must not leak into the tests that run after it.
+  fetchInfoMock.mockReset();
+  fetchInfoMock.mockResolvedValue(undefined);
   showAlertMock.mockClear();
   vi.resetModules();
   vi.mocked(api).mockReset();
@@ -282,11 +329,15 @@ describe('TG-I-004: toggle OFF (cache on → passive)', () => {
   });
 });
 
-describe('TG-I-005: port isolation', () => {
-  it('toggling port 1 does not touch ports/2', async () => {
+describe('TG-I-005: port isolation (the peer is written only to clear a repeater on enable)', () => {
+  // Every peer mode except 'repeater'. Isolation is deliberate for all of them: only a
+  // repeater peer is a half of a pair that this port's mode change would strand (TG-I-009).
+  const peerModes: PortMode[] = ['disabled', 'passive', 'tcp_bridge'];
+
+  it.each(peerModes)('toggling port 1 does not touch ports/2 when port 2 is %s', async (port2Mode) => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
 
-    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled' });
+    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode, port2Cache: true });
 
     const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
     await flushPromises();
@@ -300,10 +351,10 @@ describe('TG-I-005: port isolation', () => {
     wrapper.unmount();
   });
 
-  it('toggling port 2 does not touch ports/1', async () => {
+  it.each(peerModes)('toggling port 2 does not touch ports/1 when port 1 is %s', async (port1Mode) => {
     const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
 
-    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'disabled' });
+    infoRef.value = makeInfo({ port1Mode, port2Mode: 'disabled', port1Cache: true });
 
     const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
     await flushPromises();
@@ -313,6 +364,24 @@ describe('TG-I-005: port isolation', () => {
 
     expect(vi.mocked(api)).toHaveBeenCalledWith('ports/2/mode', expect.anything());
     expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
+
+    wrapper.unmount();
+  });
+
+  it('turning a gateway OFF never touches the peer, even a repeater peer', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    // Port 1 is a live gateway, port 2 sits in 'repeater'. Switching port 1 off does not
+    // enable anything, so there is no stranded half to clean up: only the OFF branch runs.
+    infoRef.value = makeInfo({ port1Mode: 'tcp_bridge', port2Mode: 'repeater' });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+    vi.mocked(api).mockClear();
+
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    expect(postedModes()).toEqual([['ports/1/mode', 'disabled']]);
 
     wrapper.unmount();
   });
@@ -376,6 +445,42 @@ describe('TG-I-007: concurrency guard', () => {
 
     wrapper.unmount();
   });
+
+  it('a toggle in flight on one port disables the other port and blocks its toggle', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    // Both ports in 'repeater': a toggle on either one writes BOTH ports, so the per-port
+    // guard inside useOptimisticToggle is not enough — port 2 must be locked out while
+    // port 1's two-request sequence is still running, or the two sequences interleave.
+    infoRef.value = makeInfo({ port1Mode: 'repeater', port2Mode: 'repeater' });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // The peer request hangs forever, so port 1's toggle stays in flight.
+    vi.mocked(api).mockImplementation(() => new Promise<never>(() => {}));
+    vi.mocked(api).mockClear();
+
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    // Only the peer request went out and it never resolved.
+    expect(postedModes()).toEqual([['ports/2/mode', 'disabled']]);
+    // Both switches are locked, not just port 1's.
+    expect((wrapper.find('#rs485_1-enabled').element as HTMLInputElement).disabled).toBe(true);
+    expect((wrapper.find('#rs485_2-enabled').element as HTMLInputElement).disabled).toBe(true);
+
+    // A change event dispatched at the disabled switch still reaches the handler, which is
+    // why the guard has to live in toggleEnabled() and not only in the :disabled binding.
+    const el = wrapper.find('#rs485_2-enabled').element as HTMLInputElement;
+    el.checked = true;
+    el.dispatchEvent(new Event('change'));
+    await flushPromises();
+
+    // Nothing new was sent: no second sequence started under the first one.
+    expect(postedModes()).toEqual([['ports/2/mode', 'disabled']]);
+
+    wrapper.unmount();
+  });
 });
 
 describe('TG-I-008: disabled when info undefined', () => {
@@ -403,6 +508,264 @@ describe('TG-I-008: disabled when info undefined', () => {
     await flushPromises();
 
     expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
+
+    wrapper.unmount();
+  });
+});
+
+describe('TG-I-009: repeater peer is taken out of repeater', () => {
+  it('both ports in repeater, peer cache off: port 2 goes to disabled BEFORE port 1 opens as tcp_bridge', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    infoRef.value = makeInfo({ port1Mode: 'repeater', port2Mode: 'repeater' });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+    vi.mocked(api).mockClear();
+
+    // A repeater port is not a gateway, so the switch reads OFF and the flip takes the ON path.
+    expect(switchChecked(wrapper, 'rs485_1')).toBe(false);
+
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    // Order matters: the peer request goes first, so a failure of it leaves the pair untouched.
+    expect(postedModes()).toEqual([
+      ['ports/2/mode', 'disabled'],
+      ['ports/1/mode', 'tcp_bridge'],
+    ]);
+    expect(fetchInfoMock).toHaveBeenCalledWith('low');
+
+    wrapper.unmount();
+  });
+
+  it('peer cache overlay on: the peer goes to passive, not disabled', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    // port2Cache keeps the Register Map cache listener alive, so the peer must stay open
+    // as 'passive' — the same rule the OFF branch applies to the port being switched off.
+    infoRef.value = makeInfo({ port1Mode: 'repeater', port2Mode: 'repeater', port2Cache: true });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+    vi.mocked(api).mockClear();
+
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    expect(postedModes()).toEqual([
+      ['ports/2/mode', 'passive'],
+      ['ports/1/mode', 'tcp_bridge'],
+    ]);
+
+    wrapper.unmount();
+  });
+
+  it('the peer target follows the PEER cache flag, not the flag of the port being enabled', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    // Cache on for the port being enabled, off for the peer: the peer must still go to
+    // 'disabled'. Reading the wrong port's flag would send 'passive' here.
+    infoRef.value = makeInfo({ port1Mode: 'repeater', port2Mode: 'repeater', port1Cache: true, port2Cache: false });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+    vi.mocked(api).mockClear();
+
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    expect(postedModes()).toEqual([
+      ['ports/2/mode', 'disabled'],
+      ['ports/1/mode', 'tcp_bridge'],
+    ]);
+
+    wrapper.unmount();
+  });
+
+  it('symmetric: enabling port 2 takes port 1 out of repeater first', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    infoRef.value = makeInfo({ port1Mode: 'repeater', port2Mode: 'repeater', port1Cache: true });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+    vi.mocked(api).mockClear();
+
+    await toggleSwitch(wrapper, 'rs485_2');
+
+    expect(postedModes()).toEqual([
+      ['ports/1/mode', 'passive'],
+      ['ports/2/mode', 'tcp_bridge'],
+    ]);
+
+    wrapper.unmount();
+  });
+
+  it('a lone repeater peer is cleaned up too', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    // Port 2 alone in 'repeater' is already a dead mode (it forwards nothing). Enabling the
+    // gateway on port 1 clears it as well: the condition is the PEER's mode, not the pair's.
+    infoRef.value = makeInfo({ port1Mode: 'disabled', port2Mode: 'repeater' });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+    vi.mocked(api).mockClear();
+
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    expect(postedModes()).toEqual([
+      ['ports/2/mode', 'disabled'],
+      ['ports/1/mode', 'tcp_bridge'],
+    ]);
+
+    wrapper.unmount();
+  });
+
+  it('a failed peer request stops before ports/1/mode, reverts the switch and alerts', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    infoRef.value = makeInfo({ port1Mode: 'repeater', port2Mode: 'repeater' });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+    vi.mocked(api).mockClear();
+
+    // The peer request (the first of the two) rejects.
+    vi.mocked(api).mockRejectedValueOnce(new Error('fail'));
+
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    // Nothing was changed on the device: the gateway request was never sent.
+    expect(postedModes()).toEqual([['ports/2/mode', 'disabled']]);
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('ports/1/mode', expect.anything());
+    // The optimistic-toggle error path still surfaces through the two-call action.
+    expect(showAlertMock).toHaveBeenCalledWith('connection_error');
+    expect(switchChecked(wrapper, 'rs485_1')).toBe(false);
+
+    wrapper.unmount();
+  });
+
+  it('a failed gateway request after a successful peer request strands THIS port, and the same click repairs it', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    infoRef.value = makeInfo({ port1Mode: 'repeater', port2Mode: 'repeater' });
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+    vi.mocked(api).mockClear();
+
+    // The peer request succeeds; the gateway request — the SECOND of the two — rejects.
+    // Sequencing them this way is the mirror of the case above, and it is the half-configured
+    // state the request order confines rather than eliminates: port 1 stays in 'repeater'.
+    vi.mocked(api)
+      .mockResolvedValueOnce(undefined as never)
+      .mockRejectedValueOnce(new Error('fail'));
+
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    expect(postedModes()).toEqual([
+      ['ports/2/mode', 'disabled'],
+      ['ports/1/mode', 'tcp_bridge'],
+    ]);
+    expect(showAlertMock).toHaveBeenCalledWith('connection_error');
+    // The optimistic override reverted: the gateway never came up.
+    expect(switchChecked(wrapper, 'rs485_1')).toBe(false);
+
+    // The poll that follows reports what the device actually holds now: the peer left
+    // 'repeater', this port did not.
+    infoRef.value = makeInfo({ port1Mode: 'repeater', port2Mode: 'disabled' });
+    await flushPromises();
+
+    // The banner names the port that is actually stranded — this one, not the peer.
+    expect(cardText(wrapper, 'rs485_1')).toContain(REPEATER_BANNER);
+    expect(cardText(wrapper, 'rs485_2')).not.toContain(REPEATER_BANNER);
+
+    // Retry: the same click repairs it. The peer is no longer in 'repeater', so exactly one
+    // request goes out — this port's gateway — instead of re-running the pair.
+    vi.mocked(api).mockClear();
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    expect(postedModes()).toEqual([['ports/1/mode', 'tcp_bridge']]);
+
+    wrapper.unmount();
+  });
+});
+
+describe('TG-I-010: the repeater banner clears with the peer mode', () => {
+  it('shows on both cards while both ports are repeater, and on neither after the flip', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    const start = { port1Mode: 'repeater' as PortMode, port2Mode: 'repeater' as PortMode };
+    infoRef.value = makeInfo(start);
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    expect(cardText(wrapper, 'rs485_1')).toContain(REPEATER_BANNER);
+    expect(cardText(wrapper, 'rs485_2')).toContain(REPEATER_BANNER);
+
+    vi.mocked(api).mockClear();
+    await toggleSwitch(wrapper, 'rs485_1');
+
+    // The poll that fetchInfo('low') triggers, built from the modes the component actually
+    // posted — so the banner assertions below depend on the peer request having been sent.
+    infoRef.value = makeInfo(applyPostedModes(start));
+    await flushPromises();
+
+    // The banner condition is just port_mode === 'repeater'; no separate fix is needed.
+    expect(cardText(wrapper, 'rs485_1')).not.toContain(REPEATER_BANNER);
+    expect(cardText(wrapper, 'rs485_2')).not.toContain(REPEATER_BANNER);
+
+    wrapper.unmount();
+  });
+});
+
+describe('TG-I-011: the peer decision is made from fresh state, not the cached info', () => {
+  it('leaving the repeater by enabling both ports in turn: the second click keeps the first gateway', async () => {
+    const { default: TcpGateway } = await import('@/views/TcpGateway.vue');
+
+    // Both ports in 'repeater' → both switches read OFF, so the user clicks them one after
+    // the other to make both ports gateways.
+    const device = { port1Mode: 'repeater' as PortMode, port2Mode: 'repeater' as PortMode };
+    infoRef.value = makeInfo(device);
+
+    const wrapper = mount(TcpGateway, { global: { plugins: [i18n, makeRouter()] } });
+    await flushPromises();
+
+    // Stand-in firmware: every accepted ports/N/mode POST moves the device state.
+    vi.mocked(api).mockImplementation(async (url: string, opts?: unknown) => {
+      const mode = (opts as { json?: { mode?: PortMode } } | undefined)?.json?.mode;
+      if (mode !== undefined) {
+        if (url === 'ports/1/mode') device.port1Mode = mode;
+        if (url === 'ports/2/mode') device.port2Mode = mode;
+      }
+      return undefined as never;
+    });
+
+    // The refresh useOptimisticToggle fires after a toggle is low priority and fire-and-forget:
+    // leave it pending so `info` still holds the pre-click modes when the second click lands.
+    // That is the 5 s-stale window this test exists for. The component's own explicit re-read
+    // (no priority argument) resolves and publishes the real device state.
+    fetchInfoMock.mockImplementation((priority?: string) => {
+      if (priority === 'low') return new Promise<void>(() => {}); // never settles
+      infoRef.value = makeInfo(device);
+      return Promise.resolve();
+    });
+
+    vi.mocked(api).mockClear();
+
+    await toggleSwitch(wrapper, 'rs485_1');
+    await toggleSwitch(wrapper, 'rs485_2');
+
+    // The second click must NOT post 'disabled' to port 1: reading the peer's mode from the
+    // stale cache (still 'repeater' for both ports) is exactly what made it do that, killing
+    // the gateway the first click had just brought up.
+    expect(postedModes()).toEqual([
+      ['ports/2/mode', 'disabled'],
+      ['ports/1/mode', 'tcp_bridge'],
+      ['ports/2/mode', 'tcp_bridge'],
+    ]);
+    // Both ports ended up as gateways — the state the two clicks asked for.
+    expect(device).toEqual({ port1Mode: 'tcp_bridge', port2Mode: 'tcp_bridge' });
 
     wrapper.unmount();
   });

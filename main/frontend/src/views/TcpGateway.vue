@@ -17,13 +17,17 @@ import Switch from '@/components/Switch.vue';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
-const { info } = useInfo();
+const { info, fetchInfo } = useInfo();
 const { showAlert } = useAlerts();
 
 type PortKey = 'rs485_1' | 'rs485_2';
 
 // 1-based port number used by the backend ports/<N>/mode endpoint
 const portNumber: Record<PortKey, 1 | 2> = { rs485_1: 1, rs485_2: 2 };
+
+// The other port of the pair. The repeater always spans BOTH ports, so enabling the gateway
+// on one port has to deal with the repeater that is still set on the other one.
+const peerOf: Record<PortKey, PortKey> = { rs485_1: 'rs485_2', rs485_2: 'rs485_1' };
 
 // One optimistic-toggle state machine per port. The TCP gateway is considered ON for a port
 // when its transport mode is 'tcp_bridge'; on a failed toggle we surface the connection alert.
@@ -41,22 +45,41 @@ const toggles: Record<PortKey, ReturnType<typeof useOptimisticToggle>> = {
 // The displayed enable state for a port (optimistic override if set, else derived from info).
 const isEnabled = (portKey: PortKey): boolean => toggles[portKey].value.value;
 
-// True while a toggle request is in flight or info has not loaded yet.
-const isToggleDisabled = (portKey: PortKey): boolean =>
-  toggles[portKey].inFlight.value || info.value === undefined;
+// True while a toggle request is in flight on EITHER port. The ON branch below writes BOTH
+// ports (it takes the peer out of 'repeater'), so the per-port guard inside useOptimisticToggle
+// is no longer enough: it would let a click on port 2 run while port 1's sequence is still
+// mid-flight, with both toggles writing the same pair of ports from two different snapshots.
+const isAnyToggleInFlight = computed<boolean>(
+  () => toggles.rs485_1.inFlight.value || toggles.rs485_2.inFlight.value,
+);
+
+// True while any toggle request is in flight or info has not loaded yet. Not per-port: a
+// toggle on one port must lock the other port's switch as well (see isAnyToggleInFlight).
+const isToggleDisabled = computed<boolean>(
+  () => isAnyToggleInFlight.value || info.value === undefined,
+);
 
 // True when the port currently acts as a transparent repeater. While repeater mode is on,
-// the enable toggle derives OFF (it only tracks 'tcp_bridge'), so warn that TCP gateway
-// settings will not take effect until the repeater is turned off on the Repeater page.
+// the enable toggle derives OFF (it only tracks 'tcp_bridge'), so the banner has to say what
+// the click will do instead: enabling the gateway turns the repeater off, and the new mode is
+// persisted to NVS (POST /ports/N/mode applies AND saves it), so the repeater setting made on
+// the Repeater page is gone for good. The banner needs no state of its own: it clears as soon
+// as the port leaves 'repeater' - from the Repeater page, or when toggleEnabled() below opens
+// this port as 'tcp_bridge', or when it takes this port out as the peer of the port enabled.
 const isRepeaterMode = (portKey: PortKey): boolean =>
   info.value?.[portKey].port_mode === 'repeater';
 
 // Toggle the TCP gateway transport mode for a single port.
-// ON  -> open as 'tcp_bridge'.
+// ON  -> take the peer out of 'repeater' first (see below), then open this port as 'tcp_bridge'.
 // OFF -> 'passive' when the cache overlay is active (keep serial open for the
 //        Register Map cache listener), otherwise 'disabled' (fully off).
 function toggleEnabled(portKey: PortKey): void {
   if (info.value === undefined) return; // cannot determine target state yet
+  // Cross-port guard. useOptimisticToggle.run() already refuses a second toggle on the SAME
+  // port, but the ON branch writes the peer too, so a toggle in flight anywhere on this pair
+  // has to block this one. The switch is disabled for the same reason (isToggleDisabled), but
+  // that only hides the control - a change event dispatched at it still reaches this handler.
+  if (isAnyToggleInFlight.value) return;
   const n = portNumber[portKey];
   toggles[portKey].run(async (wasEnabled) => {
     if (wasEnabled) {
@@ -66,6 +89,50 @@ function toggleEnabled(portKey: PortKey): void {
       const mode = cacheOn ? 'passive' : 'disabled';
       await api<void>(`ports/${n}/mode`, { method: 'POST', json: { mode } });
     } else {
+      // Turning the gateway on. The repeater is a PAIR: switching only this port to
+      // 'tcp_bridge' would leave the peer alone in 'repeater', where it forwards nothing
+      // (repeater_rx_handler drops every frame once the peer descriptor is NULL) and where it
+      // keeps showing the repeater banner. So take the peer out of 'repeater' as well, using
+      // the same target as the OFF branch above but read off the PEER: 'passive' when the
+      // PEER's cache overlay is on (keep its serial open for the cache listener), otherwise
+      // 'disabled'. A peer in any other mode is deliberately left untouched.
+      //
+      // Re-read the device state first. This is the only decision on this page that acts on a
+      // port the user did not click, and the cached `info` is up to 5 s old: it is refreshed by
+      // the poll and by the fire-and-forget fetchInfo('low') that useOptimisticToggle runs after
+      // a toggle, neither of which is awaited here. Deciding from that stale copy is what let a
+      // second click post 'disabled' to the port the first click had just opened as a gateway -
+      // the cache still showed both ports in 'repeater'. Same precedent (and same graceful
+      // degradation on a failed fetch) as Sniffer.vue's startCapture().
+      try {
+        await fetchInfo();
+      } catch {
+        // Fetch failed: fall back to whatever is cached rather than abandoning the toggle.
+      }
+      // `info` is a shared ref that the fetch above - and the 5 s poll - can replace at any
+      // await, so snapshot it once and read both peer fields off that snapshot. An undefined
+      // snapshot cannot happen after the guard at the top of toggleEnabled(), but reading it
+      // through `?.` instead of asserting it away degrades to "leave the peer alone" rather
+      // than throwing, which is the safe direction for a write to a port nobody clicked.
+      const fresh = info.value;
+      const peer = peerOf[portKey];
+      const peerState = fresh?.[peer];
+      const peerInRepeater = peerState?.port_mode === 'repeater';
+      const peerMode = peerState?.cache_enabled ? 'passive' : 'disabled';
+      // Peer first, sequentially. The order does not remove the half-configured state, it moves
+      // which port can be caught in it: a failed SECOND request leaves a port that was itself in
+      // 'repeater' alone there, the mirror image of the defect this branch exists to prevent.
+      // What it buys is that the click stays repairable by repeating it. A failed peer request
+      // sends nothing else and changes nothing on the device; a failed gateway request leaves
+      // the switch reading OFF, so the same click retries - and now sends only this port, the
+      // peer having already left 'repeater'. Reversed, a failed peer request strands the peer
+      // while the switch reads ON, so repeating the click takes the OFF branch and tears the
+      // gateway down instead of finishing the job. A parallel Promise.all sends both requests
+      // regardless, so a failed peer request can coexist with a successful gateway one - the
+      // stranded-peer state this branch exists to prevent.
+      if (peerInRepeater) {
+        await api<void>(`ports/${portNumber[peer]}/mode`, { method: 'POST', json: { mode: peerMode } });
+      }
       await api<void>(`ports/${n}/mode`, { method: 'POST', json: { mode: 'tcp_bridge' } });
     }
   });
@@ -161,7 +228,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
                     :id="`${portKey}-enabled`"
                     v-model="enabledModel[portKey].value"
                     :aria-label="t('enabled')"
-                    :disabled="isToggleDisabled(portKey)"
+                    :disabled="isToggleDisabled"
                   />
                 </div>
               </div>
@@ -238,7 +305,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Transparent bridge",
     "bridge_ip": "IP address",
     "ports_conflict": "Two ports in server mode must use different port numbers",
-    "repeater_active": "Repeater mode is active on this port. TCP gateway settings will not take effect until the repeater is turned off.",
+    "repeater_active": "Enabling the TCP gateway turns off the repeater currently active on this port, and that change is saved on the device permanently.",
     "save": "Save"
   },
   "ru": {
@@ -256,7 +323,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Прозрачный мост",
     "bridge_ip": "IP-адрес сервера",
     "ports_conflict": "Два порта в режиме «Сервер» должны использовать разные номера порта",
-    "repeater_active": "На этом порту включён повторитель. Настройки TCP-шлюза не применятся, пока он не будет выключен.",
+    "repeater_active": "Включение TCP-шлюза выключит повторитель, который сейчас работает на этом порту, и это изменение будет безвозвратно сохранено в устройстве.",
     "save": "Сохранить"
   },
   "kk": {
@@ -274,7 +341,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Мөлдір көпір",
     "bridge_ip": "IP мекенжайы",
     "ports_conflict": "Сервер режиміндегі екі порт әртүрлі порт нөмірлерін қолдануы керек",
-    "repeater_active": "Бұл портта қайталағыш қосулы. TCP шлюзінің баптаулары ол өшірілгенше қолданылмайды.",
+    "repeater_active": "TCP шлюзін қосу осы портта қазір жұмыс істеп тұрған қайталағышты өшіреді және бұл өзгеріс құрылғыда біржола сақталады.",
     "save": "Сақтау"
   },
   "it": {
@@ -292,7 +359,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Bridge trasparente",
     "bridge_ip": "Indirizzo IP",
     "ports_conflict": "Due porte in modalità server devono usare numeri di porta diversi",
-    "repeater_active": "La modalità ripetitore è attiva su questa porta. Le impostazioni del gateway TCP non avranno effetto finché il ripetitore non viene disattivato.",
+    "repeater_active": "L'attivazione del gateway TCP disattiva il ripetitore attualmente attivo su questa porta e la modifica viene salvata sul dispositivo in modo permanente.",
     "save": "Salva"
   },
   "de": {
@@ -310,7 +377,7 @@ const enabledModel: Record<PortKey, WritableComputedRef<boolean>> = {
     "bridge_transparent": "Transparente Brücke",
     "bridge_ip": "IP-Adresse",
     "ports_conflict": "Zwei Ports im Servermodus müssen unterschiedliche Portnummern verwenden",
-    "repeater_active": "Der Repeater-Modus ist an diesem Port aktiv. Die TCP-Gateway-Einstellungen werden erst wirksam, wenn der Repeater ausgeschaltet ist.",
+    "repeater_active": "Das Aktivieren des TCP-Gateways schaltet den derzeit an diesem Port aktiven Repeater aus, und diese Änderung wird dauerhaft auf dem Gerät gespeichert.",
     "save": "Speichern"
   }
 }
