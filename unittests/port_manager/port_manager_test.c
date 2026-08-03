@@ -14,6 +14,7 @@
 /* Statics that port_manager.c exposes to the tests via PORT_MANAGER_STATIC */
 int hex_str_to_bytes(const char *hex, uint8_t *out, size_t out_max);
 esp_err_t port_set_mode_handler(httpd_req_t *req, unsigned port_index);
+esp_err_t port_set_cache_handler(httpd_req_t *req, unsigned port_index);
 
 /* ── Expose mock state from each mock file ─────────────────────────────── */
 
@@ -35,8 +36,10 @@ void mock_sniffer_reset(void);
 extern int mock_cache_multimaster_init_called;
 extern int mock_cache_multimaster_enable_called;
 extern int mock_cache_multimaster_disable_called;
+extern int mock_cache_multimaster_clear_called;
 extern bool mock_cache_multimaster_enabled;
 extern bool mock_cache_multimaster_init_should_fail;
+extern bool mock_cache_multimaster_enable_should_fail;
 extern bool mock_cache_en[];  /* per-port cache_en NVS store (mocks/setting_items.c) */
 void mock_cache_multimaster_reset(void);
 
@@ -83,6 +86,7 @@ extern int mock_json_utils_send_response_called;
 void mock_json_utils_reset(void);
 void mock_json_utils_inject_hex(const char *hex);
 void mock_json_utils_inject_mode(const char *mode);
+void mock_json_utils_inject_enabled(bool enabled);
 
 /* settings_manager.c mock — injectable result of the port-mode collision pre-check.
  * Defaults to ESP_OK; a test sets it to drive the handler's 409-collision branch. */
@@ -1155,12 +1159,24 @@ void test_set_cache_enable_moves_overlay_from_the_other_port(void)
     TEST_ASSERT_EQUAL(SNIFF_REASON_CACHE, mock_sniffer_disable_last_reason[1]);
     TEST_ASSERT_EQUAL(1, mock_sniffer_enable_called[0]);
     TEST_ASSERT_EQUAL(SNIFF_REASON_CACHE, mock_sniffer_enable_last_reason[0]);
-    /* The pool follows the intent: released while no port wanted it, then re-enabled
-     * for the new source. Its contents are dropped with it — they describe the bus the
-     * cache was moved away from, and the pool has no port dimension to keep them apart. */
-    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_disable_called);
-    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_enable_called);
-    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+    /* The pool is NOT cycled. Some port wants it before the move and some port wants it
+     * after, so the single sync that runs once both overlay flags are final sees no
+     * transition at all — no free, no 32 KB reallocation, and no window with the cache
+     * off. A per-half sync (the shape this replaces) would free the pool between the
+     * release and the enable and then try to get it back: a call that only moves a
+     * WORKING cache would be able to destroy it, on the one allocation here most likely
+     * to fail. */
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_disable_called,
+        "a move must not free the pool — it is wanted before and after");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_enable_called,
+        "a move must not reallocate the pool it never freed");
+    /* The CONTENTS are still dropped: they describe the bus the cache was moved away
+     * from, and the pool has no port dimension to keep them apart. clear() does that
+     * without freeing (see CM-U-008b in the cache_multimaster suite). */
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_clear_called,
+        "a move must drop the values read from the old bus");
+    TEST_ASSERT_TRUE_MESSAGE(mock_cache_multimaster_enabled,
+        "the cache must stay on across the move, not blink off and back");
 }
 
 /* Samples the overlay state of both ports at every mutex acquisition inside
@@ -1255,6 +1271,8 @@ void test_set_cache_enable_on_current_holder_does_not_cycle_the_pool(void)
         "re-enabling the current holder must not free the live pool");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_enable_called,
         "re-enabling the current holder must not wipe the live pool");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_clear_called,
+        "nothing was moved, so the accumulated values must not be dropped either");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniffer_disable_called[0],
         "re-enabling the current holder must not unwire its data flow");
     /* But the redundant work IS done, and the name must not pretend otherwise: exactly
@@ -1399,6 +1417,249 @@ void test_set_cache_persist_failure_surfaced(void)
     /* The live overlay is still applied despite the persistence failure. */
     TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
         "the live cache overlay must still be applied even when persistence failed");
+}
+
+/* C9, the core of it: a pool allocation that fails must not come back as success.
+ * The overlay is recorded (in memory and in NVS) but nothing is being cached — the
+ * sniffer is armed and decoding, every on_request/on_response bails on
+ * !cache_multimaster_is_enabled(), and /cache/status says enabled:false. A caller told
+ * ESP_OK here has no way to find that out except by polling another endpoint. */
+void test_set_cache_surfaces_a_failed_pool_allocation(void)
+{
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    mock_cache_multimaster_enable_should_fail = true;
+
+    esp_err_t ret = port_manager_set_cache(0, true);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_NO_MEM, ret,
+        "a failed pool allocation must reach the caller, not be reported as success");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_enable_called,
+        "the allocation must actually have been attempted");
+    TEST_ASSERT_FALSE_MESSAGE(mock_cache_multimaster_enabled,
+        "the cache must be OFF after a failed enable");
+    /* The intent is still recorded — that is what makes the retry below possible, and
+     * it is also the divergence the caller has to be told about: /info reports this
+     * port's cache_enabled as true while /cache/status reports the cache as disabled. */
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the overlay intent is still recorded on the port");
+    TEST_ASSERT_TRUE(mock_cache_en[0]);
+}
+
+/* The self-healing half of the same story: nothing retries the allocation on a timer,
+ * but the overlay flag keeps want true, so the NEXT sync tries again. A repeated
+ * POST /ports/N/cache is the cheapest trigger; a port re-init (POST /ports/N/mode,
+ * apply_settings) and a reboot go through port_init_mode()'s sync and work the same. */
+void test_set_cache_retries_the_pool_allocation_after_a_failure(void)
+{
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    mock_cache_multimaster_enable_should_fail = true;
+    TEST_ASSERT_EQUAL(ESP_ERR_NO_MEM, port_manager_set_cache(0, true));
+
+    /* Memory freed up in the meantime; the client repeats the request. */
+    mock_cache_multimaster_enable_should_fail = false;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, port_manager_set_cache(0, true),
+        "the repeated request must retry the allocation, not short-circuit on the "
+        "overlay already being set");
+    TEST_ASSERT_TRUE_MESSAGE(mock_cache_multimaster_enabled,
+        "the second attempt must actually bring the pool up");
+    TEST_ASSERT_EQUAL(2, mock_cache_multimaster_enable_called);
+}
+
+/* When BOTH failures happen at once, WHICH code comes back is the API contract, not an
+ * implementation detail. The rule: a pool failure OUTRANKS a persistence failure. It is
+ * the worse news — "the cache is not running at all" against "it is running but will not
+ * survive a reboot" — and it is the only one of the two that a retry can fix. The handler
+ * turns it into 503 "come back later, the allocation is attempted again"; the persistence
+ * failure becomes 500 "repeating this will not help". Return them the other way round and
+ * a client that could have had its cache back by repeating the request is told not to. */
+void test_set_cache_pool_failure_outranks_a_persist_failure(void)
+{
+    mock_cache_multimaster_enable_should_fail = true;
+    mock_setting_items_save_bool_should_fail = true;
+
+    esp_err_t ret = port_manager_set_cache(0, true);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_NO_MEM, ret,
+        "with both failing, the pool failure must win — the NVS error would be answered "
+        "with a 500 that tells the client retrying cannot help, and here it can");
+    /* Both really did fail, so the assertion above cannot pass for the wrong reason. */
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_cache_multimaster_enable_called,
+        "the pool allocation was really attempted");
+    TEST_ASSERT_FALSE_MESSAGE(mock_cache_en[0],
+        "and the NVS write really did fail, so there were two errors to choose from");
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the live overlay is applied either way — it is what keeps want true for the retry");
+}
+
+/* The same rule against the other persistence failure a move can produce: the write that
+ * RELEASES the old holder. Masked for the same reason, but with a consequence the plain
+ * case does not have — the retry that finally gets the pool will not rewrite the released
+ * port's key (its in-memory overlay is already false, so the release loop no longer runs),
+ * so that retry answers 200 while NVS still names the old port, and the boot-time
+ * normalisation — lowest index wins, see the loop in port_manager_init() — hands the
+ * overlay back. port_manager_set_cache() logs the masked error for exactly that reason.
+ * What is pinned here is only the returned code; the log is not observable from a test. */
+void test_set_cache_pool_failure_outranks_a_failed_release_write(void)
+{
+    /* Port 1 holds the overlay with the pool off — the state an earlier OOM leaves behind. */
+    mock_cache_multimaster_enable_should_fail = true;
+    TEST_ASSERT_EQUAL(ESP_ERR_NO_MEM, port_manager_set_cache(0, true));
+    TEST_ASSERT_TRUE(mock_cache_en[0]);
+
+    /* Now move it to port 2, with the RELEASED port's NVS key failing to write. */
+    mock_setting_items_save_bool_fail_key = KEY_CACHE_EN_1;
+
+    esp_err_t ret = port_manager_set_cache(1, true);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_NO_MEM, ret,
+        "the pool failure must outrank the failed release write too: the cache not "
+        "running is worse than a stored key that still names the old port");
+    TEST_ASSERT_TRUE_MESSAGE(mock_cache_en[0],
+        "the released port's stored key really did stay set — the failure being masked");
+    TEST_ASSERT_TRUE_MESSAGE(mock_cache_en[1], "while the new holder's key was written");
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_get_cache(0),
+        "the move is live: the old holder no longer has the overlay in memory");
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(1), "and the new one does");
+}
+
+/* A port re-init is the other self-heal trigger, and it must NOT turn a failed pool
+ * allocation into a failed mode change: port_init_mode()'s return value is what
+ * port_set_mode_impl() rolls the port back on, so propagating it here would tear a
+ * working UART down over a 32 KB overlay. Log and continue, exactly like the subsystem
+ * init in port_manager_init(). */
+void test_set_mode_is_not_failed_by_an_unavailable_cache_pool(void)
+{
+    /* Port still DISABLED, so this only records the intent and brings the pool up. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+
+    /* The pool goes away behind port_manager's back (the device is out of memory by the
+     * time the port is re-initialised) and cannot be got back. */
+    mock_cache_multimaster_reset();
+    mock_cache_multimaster_enable_should_fail = true;
+
+    esp_err_t ret = port_manager_set_mode(0, PM_MODE_PASSIVE);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "an unavailable cache pool must not fail (and roll back) a transport-mode change");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "the port must come up in the requested mode");
+    TEST_ASSERT_FALSE_MESSAGE(mock_cache_multimaster_enabled,
+        "and it must come up with the cache off, not with a cache it does not have");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_enable_called[0],
+        "the CACHE reason is armed anyway, so a later successful retry needs no re-arm");
+}
+
+/* Same policy at boot: the pool that would not allocate is logged, the port comes up in
+ * its stored mode anyway, and the overlay is kept so the next sync retries it.
+ *
+ * port_manager_init()'s return code is deliberately NOT asserted here. A failed pool
+ * never reaches it: port_init_mode() swallows the sync error by design, so it returns
+ * ESP_OK in this scenario and the assertion would hold no matter what the caller did with
+ * that value — it pinned nothing. The property worth pinning, that a port which really
+ * does fail to come up is still not a boot failure, needs a port that really fails, and
+ * is pinned by test_init_continues_when_a_port_fails_to_come_up() below. */
+void test_init_brings_ports_up_when_the_cache_pool_is_unavailable(void)
+{
+    mock_cache_en[0] = true;                       /* NVS says port 1 is the cache source */
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_cache_multimaster_enable_should_fail = true;
+
+    (void)port_manager_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "the port must come up regardless — routing Modbus is what the device is for");
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the stored overlay is kept, so the next sync retries the allocation");
+    TEST_ASSERT_FALSE_MESSAGE(mock_cache_multimaster_enabled,
+        "the cache itself is off until that retry succeeds");
+}
+
+/* The port loop's log-and-continue policy, with a port that genuinely fails to
+ * initialise. Both halves matter: the loop must go on to the next port, and the failure
+ * must not leave port_manager_init(). main.c keeps the result in pm_ret, so an error
+ * escaping here would be one ESP_ERROR_CHECK away from rebooting a gateway because one
+ * RS-485 port could not be opened — taking the other, working port down with it. */
+void test_init_continues_when_a_port_fails_to_come_up(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_setting_items_set_port_mode(1, PORT_MODE_TCP_BRIDGE_STR);
+    /* Fails bridge_port_init_serial_only() only, so port 1 (PASSIVE) dies and port 2
+     * (TCP_BRIDGE, a different init path) still comes up. */
+    mock_bridge_port_init_serial_only_should_fail = true;
+
+    esp_err_t ret = port_manager_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "the port whose init failed must stay down, not be recorded as running");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_TCP_BRIDGE, port_manager_get_mode(1),
+        "the loop must carry on to the next port instead of returning on the first error");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "one dead port must not be reported as a port-manager failure: main.c would "
+        "abort the boot on it and take the working port down too");
+}
+
+/* The REST layer must not answer 200 with cache_enabled:true for a cache that is not
+ * running (C9). It must also not answer 400: the body was fully validated above, so
+ * this is the device failing, not the client. 503 specifically, because the allocation
+ * is transient — repeating this very request retries it (see the retry test above). */
+void test_set_cache_handler_reports_a_failed_pool_allocation_as_503(void)
+{
+    mock_json_utils_reset();
+    mock_cache_multimaster_enable_should_fail = true;
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_enabled(true);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_cache_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_response_called,
+        "a cache that could not be enabled must not be answered with 200 cache_enabled:true");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_error_called,
+        "the failure must be reported to the client");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("503 Service Unavailable",
+        mock_json_utils_send_error_last_status,
+        "out of memory is the device failing to serve a valid request, not a bad request");
+}
+
+/* The other server-side outcome through the same handler: the overlay is live but could
+ * not be persisted (persist-6). Also not the client's fault — 500, and distinct from the
+ * 503 above so an integrator can tell "retry" from "this will not fix itself". */
+void test_set_cache_handler_reports_a_failed_persist_as_500(void)
+{
+    mock_json_utils_reset();
+    mock_setting_items_save_bool_should_fail = true;
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_enabled(true);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_cache_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_response_called,
+        "a change that will not survive a reboot must not be reported as a plain success");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_error_called, "it must be reported");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("500 Internal Server Error",
+        mock_json_utils_send_error_last_status,
+        "a failed NVS write is a server-side fault, not a bad request");
+}
+
+/* The success path of the same handler, so the 503/500 tests above are proved to be
+ * measuring the failure rather than a handler that errors on everything. */
+void test_set_cache_handler_reports_success(void)
+{
+    mock_json_utils_reset();
+
+    httpd_req_t req = {0};
+    mock_json_utils_inject_enabled(true);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_set_cache_handler(&req, 0));
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_json_utils_send_response_called,
+        "a cache that really came up must be answered with 200");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_json_utils_send_error_called, "and with no error");
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
 }
 
 /* persist-6: if the NVS write fails, set_mode must NOT report success even
@@ -2117,6 +2378,17 @@ int port_manager_test(void)
     RUN_TEST(test_set_cache_disable_clears_reason_and_disables_cache);
     RUN_TEST(test_get_cache_invalid_port);
     RUN_TEST(test_set_cache_persist_failure_surfaced);
+    /* C9 — a failed pool allocation must not be reported as success */
+    RUN_TEST(test_set_cache_surfaces_a_failed_pool_allocation);
+    RUN_TEST(test_set_cache_retries_the_pool_allocation_after_a_failure);
+    RUN_TEST(test_set_cache_pool_failure_outranks_a_persist_failure);
+    RUN_TEST(test_set_cache_pool_failure_outranks_a_failed_release_write);
+    RUN_TEST(test_set_mode_is_not_failed_by_an_unavailable_cache_pool);
+    RUN_TEST(test_init_brings_ports_up_when_the_cache_pool_is_unavailable);
+    RUN_TEST(test_init_continues_when_a_port_fails_to_come_up);
+    RUN_TEST(test_set_cache_handler_reports_a_failed_pool_allocation_as_503);
+    RUN_TEST(test_set_cache_handler_reports_a_failed_persist_as_500);
+    RUN_TEST(test_set_cache_handler_reports_success);
     RUN_TEST(test_set_mode_persist_failure_surfaced);
     RUN_TEST(test_apply_settings_preserves_cache_on_same_port_reinit);
 

@@ -189,11 +189,13 @@ const char *port_manager_mode_to_str(pm_mode_t mode);
  * The cache is single-port by design (review #51): the pool is keyed by slave_id
  * and the Cache-TCP interface answers by unit_id, with no port dimension in
  * either. Enabling therefore MOVES the overlay rather than being refused — any
- * other port holding it is released first (memory, NVS, live data flow and the
- * global pool), and the accumulated cache contents are dropped with it, since
- * they describe the bus the cache is being moved away from. Enabling on the port
- * that already holds it leaves the overlay where it is, but is NOT a no-op: it
- * re-writes the NVS key and re-arms the sniffer.
+ * other port holding it is released first (memory, NVS and live data flow), and
+ * the accumulated cache contents are dropped with it, since they describe the bus
+ * the cache is being moved away from. The pool itself is NOT freed and
+ * reallocated across a move: it is wiped in place (cache_multimaster_clear()), so
+ * a move cannot fail on a 32 KB allocation and cannot destroy a working cache.
+ * Enabling on the port that already holds it leaves the overlay where it is, but
+ * is NOT a no-op: it re-writes the NVS key and re-arms the sniffer.
  *
  * NOT thread-safe against itself. The move releases the old holder and enables
  * the new one under two DIFFERENT pm_locks, one after the other, so two
@@ -209,12 +211,19 @@ const char *port_manager_mode_to_str(pm_mode_t mode);
  * @param enabled     True to make this port the cache source, false to drop the
  *                    overlay from it.
  * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         ESP_ERR_NO_MEM if the global pool would not allocate (only reachable
+ *         when the cache was off beforehand — a move never reallocates it), or
+ *         ESP_ERR_INVALID_STATE if the cache module never initialised: the
+ *         overlay is recorded on the port but the cache is NOT running, and the
+ *         caller must not report it as enabled;
  *         or the NVS save error if the overlay was applied live but could not be
  *         persisted — the live state is applied but not persisted (persist-6).
  *         A failed NVS write on the RELEASED port is reported the same way: the
  *         move is live, but the stored state still names the old port too, and
  *         the boot-time normalisation (lowest index wins) may hand the overlay
  *         back to it.
+ *         A pool failure outranks a persistence failure: "the cache is not
+ *         running" is worse news than "it will not survive a reboot".
  */
 esp_err_t port_manager_set_cache(unsigned port_index, bool enabled);
 

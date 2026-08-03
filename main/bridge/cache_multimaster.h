@@ -35,8 +35,19 @@ esp_err_t cache_multimaster_init(void);
 
 /**
  * @brief Enable caching. Subsequent sniffer packets will update the cache.
+ *
+ * Allocates the 32 KB register pool on the first enable and after every
+ * disable(); a repeated enable on a live pool reuses the allocation and only
+ * wipes it. On failure the cache stays OFF — cache_multimaster_is_enabled()
+ * keeps returning false, nothing is stored, and the caller must not report the
+ * cache as running.
+ *
+ * @return ESP_OK when the cache is on and the pool is allocated;
+ *         ESP_ERR_NO_MEM if the pool allocation failed (out of contiguous DRAM);
+ *         ESP_ERR_INVALID_STATE if the module was never initialised —
+ *         cache_multimaster_init() has not run, or its mutex allocation failed.
  */
-void cache_multimaster_enable(void);
+esp_err_t cache_multimaster_enable(void);
 
 /**
  * @brief Disable caching. Also clears the cache and resets pending requests.

@@ -122,6 +122,7 @@ void test_cache_multimaster_init_oom(void)
 /* ---- CM-U-003: cache_multimaster_enable() happy path --------------------- */
 
 /* Verify that cache_multimaster_enable() after a successful init:
+ *   - returns ESP_OK
  *   - sets cache_multimaster_is_enabled() to true
  *   - allocates the pool via test_malloc (1 alloc, 0 frees) */
 void test_cache_multimaster_enable_happy_path(void)
@@ -139,7 +140,14 @@ void test_cache_multimaster_enable_happy_path(void)
     );
 
     /* Act */
-    cache_multimaster_enable();
+    esp_err_t enable_result = cache_multimaster_enable();
+
+    /* Assert: a successful enable reports ESP_OK */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        enable_result,
+        "cache_multimaster_enable should return ESP_OK once the pool is allocated"
+    );
 
     /* Assert: cache must be enabled */
     TEST_ASSERT_TRUE_MESSAGE(
@@ -161,6 +169,7 @@ void test_cache_multimaster_enable_happy_path(void)
 /* ---- CM-U-004: cache_multimaster_enable() OOM path ----------------------- */
 
 /* Verify that cache_multimaster_enable() when pool allocation fails:
+ *   - returns ESP_ERR_NO_MEM, so the caller cannot report the cache as running (C9)
  *   - leaves cache_multimaster_is_enabled() as false
  *   - releases the mutex after taking it (give count == take count)
  *   - records no allocations */
@@ -182,7 +191,16 @@ void test_cache_multimaster_enable_oom(void)
     malloc_should_fail = true;
 
     /* Act */
-    cache_multimaster_enable();
+    esp_err_t enable_result = cache_multimaster_enable();
+
+    /* Assert: the failure must reach the caller — silently returning "success" here is
+     * exactly what let a failed 32 KB allocation be answered with 200 and
+     * cache_enabled:true (C9). */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_ERR_NO_MEM,
+        enable_result,
+        "cache_multimaster_enable must return ESP_ERR_NO_MEM when the pool allocation fails"
+    );
 
     /* Assert: cache must remain disabled on OOM */
     TEST_ASSERT_FALSE_MESSAGE(
@@ -411,6 +429,86 @@ void test_cache_multimaster_clear_with_pool(void)
         mock_xSemaphoreTake_called,
         "Mutex must be balanced after cache_multimaster_clear()"
     );
+}
+
+/* ---- CM-U-008b: clear() drops the contents WITHOUT dropping the pool ----- */
+
+/* port_manager_set_cache() moves the cache source between ports by wiping the pool
+ * in place instead of freeing and reallocating it, so that a move cannot fail on a
+ * 32 KB allocation and cannot destroy a working cache. That only holds because
+ * clear() keeps the allocation and keeps the cache switched on. Pinned here, on the
+ * owning module, because it is a load-bearing property for another one. */
+void test_cache_multimaster_clear_keeps_the_pool_allocated(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+                        "CM-U-008b: clear() wipes the pool without freeing it");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, cache_multimaster_enable());
+    verify_malloc_tracking(1, 0);   /* pre-condition: exactly one live allocation */
+
+    /* Store one value so the wipe is observable. */
+    cache_multimaster_on_request(0, 7, 3, 0, 1);
+    uint8_t data[] = {7, 0x03, 2, 0x12, 0x34};
+    cache_multimaster_on_response(0, 7, 3, data, sizeof(data), 0);
+    uint16_t val = 0;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(7, 3, 0, &val, 0),
+        "Pre-condition: the value must be cached before the clear");
+
+    cache_multimaster_clear();
+
+    /* The allocation is untouched — still 1 alloc, still 0 frees. A clear() that freed
+     * (or freed and re-allocated) the pool would show up here, and a move built on it
+     * would be exactly the free/realloc this change removed. */
+    verify_malloc_tracking(1, 0);
+    TEST_ASSERT_TRUE_MESSAGE(cache_multimaster_is_enabled(),
+        "clear() must not switch the cache off — a move keeps recording on the new port");
+    /* ...but the contents are gone, which is what a move needs. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_NOT_FOUND,
+        cache_multimaster_lookup(7, 3, 0, &val, 0),
+        "clear() must drop the values read from the old bus");
+
+    /* And the pool is still usable straight afterwards — the new source can fill it
+     * without an intervening enable(). */
+    cache_multimaster_on_request(1, 7, 3, 0, 1);
+    uint8_t data2[] = {7, 0x03, 2, 0xAB, 0xCD};
+    cache_multimaster_on_response(1, 7, 3, data2, sizeof(data2), 0);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(CACHE_LOOKUP_FOUND,
+        cache_multimaster_lookup(7, 3, 0, &val, 0),
+        "the wiped pool must accept the new source's values with no re-enable");
+    TEST_ASSERT_EQUAL_HEX16(0xABCD, val);
+}
+
+/* ---- CM-U-008c: enable() before init() ----------------------------------- */
+
+/* Every pool access is guarded by the mutex cache_multimaster_init() creates, so an
+ * enable() that runs before it (or after its allocation failed) cannot turn the cache
+ * on. It must say so rather than return silently: the caller decides between "retry
+ * later" (NO_MEM) and "nothing will fix this before a reboot" (INVALID_STATE), and the
+ * REST layer answers 503 vs 500 on exactly that distinction. */
+void test_cache_multimaster_enable_without_init(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+                        "CM-U-008c: cache_multimaster_enable without init");
+    LOG_MESSAGE();
+
+    /* setUp() left the module reset: no mutex, no pool. */
+    esp_err_t result = cache_multimaster_enable();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_ERR_INVALID_STATE,
+        result,
+        "enable() without a mutex must report INVALID_STATE, not NO_MEM and not success"
+    );
+    TEST_ASSERT_FALSE_MESSAGE(
+        cache_multimaster_is_enabled(),
+        "the cache must stay off when it could not be enabled"
+    );
+    verify_malloc_tracking(0, 0);
 }
 
 /* ---- CM-U-009: cache_multimaster_on_request() OOB port ------------------- */
@@ -3159,6 +3257,8 @@ int main(void)
     RUN_TEST(test_cache_multimaster_disable);
     RUN_TEST(test_cache_multimaster_clear_null_mutex);
     RUN_TEST(test_cache_multimaster_clear_with_pool);
+    RUN_TEST(test_cache_multimaster_clear_keeps_the_pool_allocated);
+    RUN_TEST(test_cache_multimaster_enable_without_init);
     RUN_TEST(test_cache_multimaster_on_request_oob_port);
     RUN_TEST(test_cache_multimaster_on_response_oob_port_boundary);
     RUN_TEST(test_cache_multimaster_on_response_min_len_boundary);

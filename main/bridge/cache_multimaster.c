@@ -168,8 +168,9 @@ static bool request_is_cacheable(uint8_t function, uint16_t start_reg, uint16_t 
  * port-blind, so at most one RS-485 port may feed the pool at a time — enforced in
  * port_manager (port_manager_set_cache() MOVES the overlay, releasing whatever port
  * held it before; the boot path normalises stored NVS down to one port). Note that a
- * move frees and reallocates this pool, so no entry outlives the port that fed it.
- * With a single feeding port there is no
+ * move WIPES this pool — port_manager_set_cache() calls cache_multimaster_clear() on
+ * it, which zeroes every entry without freeing the allocation — so no entry outlives
+ * the port that fed it. With a single feeding port there is no
  * cross-port ambiguity, so slave_id alone is a sufficient key, and
  * cache_multimaster_lookup() likewise needs no port.
  *
@@ -264,10 +265,20 @@ esp_err_t cache_multimaster_init(void)
     return ESP_OK;
 }
 
-void cache_multimaster_enable(void)
+esp_err_t cache_multimaster_enable(void)
 {
     if (s_cache_mutex == NULL) {
-        return;
+        /* cache_multimaster_init() never ran, or its mutex allocation failed. Every
+         * pool access is guarded by that mutex, so the cache cannot be turned on at
+         * all. Reported as INVALID_STATE rather than NO_MEM even though the mutex is
+         * itself an allocation: the two need different answers. NO_MEM below may
+         * clear on its own (the caller can retry the 32 KB later, see the self-heal
+         * path in port_manager's cache_sync_global()); this one cannot, because the
+         * mutex is created at most once per boot — port_manager_init_subsystems()
+         * runs a single attempt and never retries — so every later call meets the
+         * same NULL until a reboot. */
+        ESP_LOGE(TAG, "Cannot enable cache: module not initialized");
+        return ESP_ERR_INVALID_STATE;
     }
 
     xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
@@ -281,7 +292,9 @@ void cache_multimaster_enable(void)
             ESP_LOGE(TAG, "Failed to allocate cache pool (%u bytes)",
                      (unsigned)(CACHE_MAX_ENTRIES * sizeof(cache_entry_t)));
             xSemaphoreGive(s_cache_mutex);
-            return;
+            /* s_cache_enabled is left false — the caller must surface this instead
+             * of reporting a cache that is not running (C9). */
+            return ESP_ERR_NO_MEM;
         }
     }
 
@@ -308,6 +321,7 @@ void cache_multimaster_enable(void)
     s_cache_enabled = true;
 
     ESP_LOGI(TAG, "Cache multimaster enabled");
+    return ESP_OK;
 }
 
 void cache_multimaster_disable(void)

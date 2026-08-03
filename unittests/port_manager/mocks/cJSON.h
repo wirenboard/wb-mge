@@ -12,11 +12,18 @@ typedef struct cJSON {
     int type;
 } cJSON;
 
+/* Booleans are carried in ->type, the way real cJSON does it: the two flags are
+ * distinct bits, so an item that is neither reads as "not a bool" and the handler's
+ * cJSON_IsBool() rejection path stays reachable. The values themselves need not match
+ * upstream cJSON — nothing but this stub and its mock ever sets or reads them. */
+#define cJSON_False        (1 << 0)
+#define cJSON_True         (1 << 1)
+
 /* A cJSON item is a string if valuestring is non-NULL */
 #define cJSON_IsString(x) ((x) != NULL && (x)->valuestring != NULL)
 #define cJSON_IsNumber(x)  0
-#define cJSON_IsBool(x)    0
-#define cJSON_IsTrue(x)    0
+#define cJSON_IsBool(x)   ((x) != NULL && (((x)->type & (cJSON_True | cJSON_False)) != 0))
+#define cJSON_IsTrue(x)   ((x) != NULL && (((x)->type & cJSON_True) != 0))
 
 static inline cJSON *cJSON_Parse(const char *v)                          { (void)v; return 0; }
 cJSON *cJSON_GetObjectItem(cJSON *o, const char *k);

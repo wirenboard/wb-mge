@@ -158,20 +158,31 @@ static void cache_decision_unlock(void)
 // Serialised so concurrent per-port operations cannot race the global decision.
 // Must NOT take any pm_lock (it only reads cache_overlay) to keep lock ordering
 // pm_lock→cache_decision_mutex and avoid deadlock.
-static void cache_sync_global(void)
+//
+// Returns cache_multimaster_enable()'s result — ESP_ERR_NO_MEM when the 32 KB pool
+// would not allocate, ESP_ERR_INVALID_STATE when the cache module never initialised.
+// A failed enable leaves the pool off while the overlay flag stays set, so want stays
+// true and the NEXT sync retries it; every caller must decide whether to surface the
+// failure (port_manager_set_cache(), where the caller asked for the cache) or to log
+// it and carry on (port_init_mode(), where the caller asked for a transport mode).
+// ESP_OK for the disable and the two no-op cases: disable() cannot fail, and there is
+// nothing to report when the pool already matches the intent.
+static esp_err_t cache_sync_global(void)
 {
     cache_decision_lock();
+    esp_err_t ret = ESP_OK;
     bool want = false;
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         if (pm_ctx[i].cache_overlay) { want = true; break; }
     }
     bool have = cache_multimaster_is_enabled();
     if (want && !have) {
-        cache_multimaster_enable();
+        ret = cache_multimaster_enable();
     } else if (!want && have) {
         cache_multimaster_disable();
     }
     cache_decision_unlock();
+    return ret;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -327,7 +338,30 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
     // The sniffer must already be attached (done above) before enabling the CACHE reason.
     // Ensure the global pool matches persisted intent (allocates it if needed),
     // then wire this port's serial data into it.
-    cache_sync_global();
+    //
+    // Logged, NOT propagated — the same log-and-continue policy as the subsystem init in
+    // port_manager_init() below, and for a stronger reason here: this function's return
+    // value is what port_set_mode_impl() rolls a port back on and what port_manager_init()
+    // reports a dead port with. A 32 KB pool that would not allocate says nothing about the
+    // transport the caller actually asked for, and turning it into a failure would tear a
+    // working UART back down (or, at boot, leave the port down) over an overlay. The port
+    // therefore comes up with the overlay flag still set and the pool off — a divergence
+    // that IS visible (/info says cache_enabled true, /cache/status says enabled false) and
+    // that heals on the next sync: the flag keeps want true, so the next cache_sync_global()
+    // retries the allocation. There are exactly two call sites of it — this one and
+    // port_manager_set_cache()'s — so a repeated POST /ports/N/cache is the cheapest retry,
+    // and this one is reached from every caller of port_init_mode(): the boot loop in
+    // port_manager_init(), a mode change and its rollback in port_set_mode_impl(), and
+    // port_manager_apply_settings().
+    // The CACHE sniffer reason is armed below regardless, so a later successful retry needs
+    // no re-arm; sniffer_ws_dispatch() drops packets while cache_multimaster_is_enabled()
+    // is false, so nothing is stored in the meantime.
+    esp_err_t cache_ret = cache_sync_global();
+    if (cache_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Port[%u]: cache pool unavailable (%s) - the port comes up without the "
+                      "cache, the overlay stays set and the next sync retries it",
+                 index + 1, esp_err_to_name(cache_ret));
+    }
     if (pm_ctx[index].cache_overlay && get_port_serial_desc(index) != NULL) {
         sniffer_enable(index, SNIFF_REASON_CACHE);
     }
@@ -758,10 +792,14 @@ bool port_manager_get_cache(unsigned port_index)
     return pm_ctx[port_index].cache_overlay;
 }
 
-// Apply one port's cache-overlay state end to end: the in-memory intent, its NVS key,
-// the global pool and the port's live data flow. This is the ONLY place that changes
-// a port's cache_overlay after boot, so an enable and the release half of a move are
-// guaranteed to leave a port in exactly the same shape.
+// Apply one port's cache-overlay state: the in-memory intent, its NVS key and the
+// port's live data flow. This is the ONLY place that changes a port's cache_overlay
+// after boot, so an enable and the release half of a move are guaranteed to leave a
+// port in exactly the same shape.
+// Everything here is PER-PORT. The global pool is deliberately NOT synced: a move
+// clears one port's overlay and sets another's, and syncing after each half would
+// free the pool in between (no port wanting it) only to allocate it again — see
+// port_manager_set_cache(), which runs the one sync once both flags are final.
 // The caller MUST hold pm_lock(index): get_port_serial_desc() reads the mode and the
 // descriptor that the reinit paths free and recreate.
 // Returns the NVS persistence result; the live state is applied either way (persist-6).
@@ -776,8 +814,6 @@ static esp_err_t cache_overlay_apply_locked(unsigned index, bool enabled)
         // revert it. The failure is surfaced via the return value (persist-6).
     }
 
-    // Update the global pool to match the new intent (serialised, wipe-safe).
-    cache_sync_global();
     // Wire/unwire this port's live data flow if its serial port is open.
     if (get_port_serial_desc(index) != NULL) {
         if (enabled) {
@@ -804,11 +840,19 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     // hand the cache over in one call, in either direction, without having to disable
     // the old holder first (and without the outcome depending on the order in which it
     // issues the two per-port calls).
-    // Releasing the old holder runs cache_sync_global() with no port wanting the pool,
-    // so the pool is freed and reallocated across the move and its contents are lost.
-    // That is intended: the entries describe the OLD bus, and the pool has no port
-    // dimension to keep them apart from the new one. It is also what the disable-then-
-    // enable sequence this replaces already did.
+    //
+    // The move must still DROP the cached values — the entries describe the OLD bus and
+    // the pool has no port dimension to keep them apart from the new one — but it must
+    // not drop the pool with them. That is why the global sync is not inside
+    // cache_overlay_apply_locked(): a per-half sync would see no port wanting the pool
+    // between the release and the enable, free the 32 KB and immediately allocate it
+    // again. The realloc is the single most likely thing here to fail (32 KB of
+    // contiguous DRAM on a fragmented heap), which would turn a call that only moves a
+    // working cache into one that destroys it. Instead both overlay flags are brought to
+    // their final state first, ONE cache_sync_global() runs after them — with want true
+    // throughout a move, so it is a no-op — and the contents are dropped by
+    // cache_multimaster_clear(), which zeroes the pool and resets the stats under the
+    // cache mutex without freeing anything.
     //
     // Locking. The release writes another port's pm_ctx, so it runs under THAT port's
     // pm_lock, taken and released in full before this port's pm_lock is taken. The two
@@ -828,6 +872,10 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     // make the whole move atomic first, by holding both pm_locks across it, taken in
     // ascending index order to stay deadlock-free.
     esp_err_t release_ret = ESP_OK;
+    bool moved = false;
+    // Which port release_ret came from — needed only for the log below, and captured
+    // alongside release_ret so the two always describe the same failed write.
+    unsigned release_fail_index = 0;
     if (enabled) {
         for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
             if (i == port_index) {
@@ -838,8 +886,10 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
                 ESP_LOGI(TAG, "Port[%u]: taking the cache overlay over from port %u — the cache is single-port (review #51)",
                          port_index + 1, i + 1);
                 esp_err_t r = cache_overlay_apply_locked(i, false);
+                moved = true;
                 if (r != ESP_OK && release_ret == ESP_OK) {
                     release_ret = r;
+                    release_fail_index = i;
                 }
             }
             pm_unlock(i);
@@ -850,11 +900,71 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     esp_err_t ret = cache_overlay_apply_locked(port_index, enabled);
     pm_unlock(port_index);
 
-    // Return the persistence result: live state was applied regardless, but the caller
-    // must know if the change will not survive a reboot (persist-6). A failed release
-    // write counts too: the old holder's NVS key would still say "enabled", and the
-    // boot-time normalisation in port_manager_init() keeps the LOWEST-index port that
-    // asks for the overlay — so a move to the higher-index port would come back undone.
+    // The one global sync for the whole operation, run only now that every overlay flag
+    // is final. Across a move want is true both before and after, so have stays true and
+    // neither enable() nor disable() runs: no free, no realloc, and no window with the
+    // cache off. A plain enable-from-off (want false -> true) allocates here, a plain
+    // disable of the last holder (true -> false) frees here — both exactly as before,
+    // except that this port's data flow has already been wired/unwired above. That order
+    // is the safe one for the disable (the port stops feeding the pool before it is
+    // freed); for the enable it costs at most the packets seen in the microseconds before
+    // the pool exists, which sniffer_ws_dispatch() drops on !cache_multimaster_is_enabled().
+    esp_err_t sync_ret = cache_sync_global();
+
+    // A move drops the accumulated values — see the block comment above. clear() wipes
+    // the pool and resets the stats under the cache mutex WITHOUT freeing it, which is
+    // what lets the allocation survive the move. Done last, so that it covers as much of
+    // the handover as possible: a straggler packet from the old port is wiped rather than
+    // left behind as a value from the wrong bus. At most ONE such packet exists —
+    // sniffer_ws_dispatch() runs on the single sniffer_ws task and re-reads
+    // SNIFF_REASON_CACHE per packet, so only the one already past that check when the old
+    // port's overlay was cleared above can still get through — and if it is a REQUEST it
+    // merely sets s_pending, because the response answering it is a second packet and
+    // fails the reason check.
+    // What this does NOT do is close the window, and nothing on this side can:
+    // cache_multimaster_on_response() consumes the pending request in one critical
+    // section, releases the cache mutex, and takes it again to write the pool, so a
+    // straggler RESPONSE that matched its pending before this clear() can still store its
+    // old-bus values after it. That hole is not new — with the free-and-reallocate shape
+    // this replaces, the same store landed in the freshly allocated pool — and closing it
+    // means a generation check across on_response()'s two critical sections, i.e. a change
+    // to the cache module rather than to this move. Such a value survives until the new
+    // bus reads the same register, or until the next clear/disable.
+    // A fresh packet from the new source arriving in the same window is wiped too — that
+    // costs one poll cycle, whereas a stale value from the old bus would be served as
+    // this port's own.
+    if (moved) {
+        cache_multimaster_clear();
+    }
+
+    // Error precedence: the pool first, persistence second. Both are real failures, but
+    // they are not equally bad — sync_ret != ESP_OK means the cache is NOT RUNNING at
+    // all (nothing is being recorded, /cache/status says disabled), while a failed NVS
+    // write means it is running and merely will not survive a reboot (persist-6). The
+    // worse of the two is what the caller has to act on, so it wins. A failed release
+    // write counts as a persistence failure too: the old holder's NVS key would still
+    // say "enabled", and the boot-time normalisation in port_manager_init() keeps the
+    // LOWEST-index port that asks for the overlay (see the normalisation loop there) —
+    // so a move to the higher-index port would come back undone.
+    //
+    // What that costs when BOTH fail at once, which is why the masked error is logged:
+    // the caller is told ESP_ERR_NO_MEM and answered 503 "retry", and the retry does NOT
+    // rewrite the released port's key. That port's in-memory overlay is already false, so
+    // the release loop above does not run a second time; only THIS port's key is written
+    // again. So a retry that finally gets the pool returns ESP_OK / 200 while NVS still
+    // names the old port — and the next boot hands the overlay back to it, undoing a move
+    // the client was told had succeeded. The log line below is the only trace of that.
+    if (sync_ret != ESP_OK) {
+        if (release_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Port[%u]: reporting %s for the cache pool, which MASKS the failed "
+                          "NVS write releasing port %u (%s) — a successful retry will not "
+                          "rewrite port %u's key, so a reboot can hand the overlay back to it",
+                     port_index + 1, esp_err_to_name(sync_ret),
+                     release_fail_index + 1, esp_err_to_name(release_ret),
+                     release_fail_index + 1);
+        }
+        return sync_ret;
+    }
     return (ret != ESP_OK) ? ret : release_ret;
 }
 
@@ -1158,7 +1268,7 @@ static esp_err_t port2_set_mode_handler(httpd_req_t *req)
     return port_set_mode_handler(req, 1);
 }
 
-static esp_err_t port_set_cache_handler(httpd_req_t *req, unsigned port_index)
+PORT_MANAGER_STATIC esp_err_t port_set_cache_handler(httpd_req_t *req, unsigned port_index)
 {
     if (!auth_middleware_check(req)) {
         return ESP_OK;
@@ -1178,12 +1288,36 @@ static esp_err_t port_set_cache_handler(httpd_req_t *req, unsigned port_index)
     bool enabled = cJSON_IsTrue(enabled_item);
     // No conflict branch here: the cache overlay is single-port (review #51), but
     // enabling it MOVES it off the other port instead of being refused, so there is no
-    // state in which a well-formed request has to be rejected. The only failures left
-    // are persistence failures, which the generic branch below reports as-is.
+    // state in which a well-formed request has to be rejected.
+    //
+    // Everything the body could get wrong was rejected above with a 400, so nothing
+    // below is the client's fault and none of it may be answered with one — an
+    // integrator has to be able to tell "you asked for something invalid" (fix the
+    // request) from "the device could not do it" (the request was right; the device
+    // was not able). Two server-side outcomes remain, and they are split because the
+    // right next move differs:
+    //   ESP_ERR_NO_MEM -> 503. The 32 KB register pool would not allocate. The overlay
+    //     IS recorded on this port in memory — and in NVS too when that write succeeded;
+    //     the pool failure outranks a persistence failure, so a 503 does not promise the
+    //     write went through — but the cache is off and /cache/status will say so.
+    //     Transient by nature — it is contiguous DRAM on a
+    //     fragmented heap — and retrying this very request re-attempts the allocation
+    //     (cache_sync_global() sees want true, have false), so 503 "come back later"
+    //     is both accurate and actionable.
+    //   anything else -> 500. The NVS write failed (the change is live but will not
+    //     survive a reboot, persist-6), or the cache module never initialised
+    //     (ESP_ERR_INVALID_STATE — no mutex, nothing retries it before a reboot).
+    //     Neither is fixed by repeating the request.
     esp_err_t ret = port_manager_set_cache(port_index, enabled);
+    if (ret == ESP_ERR_NO_MEM) {
+        cJSON_Delete(req_json);
+        return json_utils_send_error_status(req, "503 Service Unavailable",
+            "Cache pool could not be allocated: the device is out of contiguous memory");
+    }
     if (ret != ESP_OK) {
         cJSON_Delete(req_json);
-        return json_utils_send_error(req, esp_err_to_name(ret));
+        return json_utils_send_error_status(req, "500 Internal Server Error",
+                                            esp_err_to_name(ret));
     }
 
     cJSON *resp = cJSON_CreateObject();

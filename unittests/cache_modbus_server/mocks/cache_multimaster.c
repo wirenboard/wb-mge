@@ -69,7 +69,7 @@ esp_err_t cache_multimaster_init(void)
     return 0; /* ESP_OK */
 }
 
-void cache_multimaster_enable(void) {}
+esp_err_t cache_multimaster_enable(void) { return 0; /* ESP_OK */ }
 void cache_multimaster_disable(void) {}
 void cache_multimaster_clear(void) {}
 

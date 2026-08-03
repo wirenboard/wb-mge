@@ -1298,17 +1298,22 @@ paths:
 
         The move drops the cached register values: they were read from the other bus
         and there is no port dimension in the pool to keep them apart from the new
-        one. The pool is released and reallocated for the new source; when that
-        succeeds, GET /cache/status reports it as reset. Should the reallocation fail
-        (out of memory), the overlay is still recorded on the new port but the pool
-        stays off and GET /cache/status reports the cache as disabled.
+        one. GET /cache/status reports the cache as reset afterwards. The pool itself
+        is NOT released and reallocated — it is wiped in place — so a move cannot fail
+        on a memory allocation and cannot cost you a working cache. Only switching the
+        cache on from off allocates, and only switching the last holder off frees.
 
-        Errors: the live change is applied first and persisted afterwards, so a 400
-        here means "applied but not durable", not "not applied". Both of a move's two
-        writes count — if the RELEASED port's key cannot be written, the response is a
-        400 even though the move is already in effect live, because the stored state
-        then still names the old port as well and a reboot may resolve back to it.
-        Re-read GET /info for the state that actually took.
+        Errors: a 400 is always a bad request (malformed JSON, a missing or non-boolean
+        `enabled`) and means nothing was applied. Everything else is the device failing
+        a valid request, and the live change is applied before it is persisted, so those
+        mean "applied, but not fully". A 503 says the register pool could not be
+        allocated: the overlay IS recorded on this port in memory, and in NVS too when
+        that write succeeded, but the cache is off and GET /cache/status reports it as
+        disabled — repeat the request to retry the allocation. A 500 says the live change could not be persisted, so it is in
+        effect now but a reboot would revert it; both of a move's two writes count, and
+        a failure on the RELEASED port's key is reported the same way, because the
+        stored state then still names the old port as well and a reboot may resolve back
+        to it. Re-read GET /info and GET /cache/status for the state that actually took.
       parameters:
         - name: port_number
           in: path
@@ -1343,13 +1348,32 @@ paths:
               example:
                 cache_enabled: true
         '400':
-          description: Bad request
+          description: Bad request — malformed JSON or a missing/non-boolean `enabled`; nothing was applied
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          description: >
+            The overlay is live but could not be persisted, so a reboot would revert it
+            (a move reports a failure on either of its two NVS keys this way), or the
+            cache module never initialised. Repeating the request does not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: >
+            The register pool could not be allocated. The overlay is recorded on this
+            port in memory, and in NVS too when that write succeeded, but the cache is
+            not running — GET /cache/status reports it as disabled. Retry: the
+            allocation is attempted again on the next request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /gcov:
     get:
