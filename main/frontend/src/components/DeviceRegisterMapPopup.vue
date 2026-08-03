@@ -34,13 +34,18 @@ interface BiText {
   ru: string;
 }
 
-// Device own-address register map (Unit ID 255 / 0xFF), verbatim from the README.
+// Device own-address register map (Unit ID 255 / 0xFF), kept in sync with the README's table.
+// The addresses, sizes, types and the notes match it one for one; a few descriptions are
+// shortened here because this renders in a popup, so do not read "in sync" as "verbatim".
 const intro: BiText = {
-  en: 'The gateway answers Modbus polls on its own address Unit ID 255 (0xFF). It works in both Modbus TCP and Cache TCP modes, regardless of cache state. Read functions FC04 (input) and FC03 (holding) are supported.',
-  ru: 'Сам шлюз отвечает на Modbus-опрос по своему адресу Unit ID 255 (0xFF). Работает в режимах Modbus TCP и Cache TCP, независимо от состояния кэша. Поддерживаются функции чтения FC04 (input) и FC03 (holding).',
+  en: 'The gateway answers Modbus polls on its own address Unit ID 255 (0xFF). It works in both Modbus TCP and Cache TCP modes, regardless of cache state. Read functions FC03 and FC04 are supported.',
+  ru: 'Сам шлюз отвечает на Modbus-опрос по своему адресу Unit ID 255 (0xFF). Работает в режимах Modbus TCP и Cache TCP, независимо от состояния кэша. Поддерживаются функции чтения FC03 и FC04.',
 };
 
-const inputRows: RegRow[] = [
+// One table for both function codes: FC03 and FC04 answer the same value at the same address,
+// so the rows are ordered purely by address. Where the Wiren Board common map files a field
+// (input vs holding) is recorded in the first note instead of by a second table.
+const regRows: RegRow[] = [
   { dec: '104–105', hex: '0x0068–0x0069', regs: 2, type: 'u32', desc: { en: 'Uptime since boot, seconds', ru: 'Время работы с момента загрузки, секунды' } },
   { dec: '121', hex: '0x0079', regs: 1, type: 'u16', desc: { en: 'Current supply voltage, mV', ru: 'Текущее напряжение питания, мВ' } },
   { dec: '200–219', hex: '0x00C8–0x00DB', regs: 20, type: 'string', desc: { en: 'Device model', ru: 'Модель устройства' } },
@@ -48,6 +53,7 @@ const inputRows: RegRow[] = [
   { dec: '250–265', hex: '0x00FA–0x0109', regs: 16, type: 'string', desc: { en: 'Firmware version (string)', ru: 'Версия прошивки (строкой)' } },
   { dec: '266–267', hex: '0x010A–0x010B', regs: 2, type: 'u32', desc: { en: 'Serial number generation scheme (4 = from MAC)', ru: 'Схема генерации серийного номера (4 — из MAC)' } },
   { dec: '268–271', hex: '0x010C–0x010F', regs: 4, type: 'u64', desc: { en: 'Serial number (MSW-first, 48-bit MAC)', ru: 'Серийный номер (MSW-first, 48-битный MAC)' } },
+  { dec: '290–301', hex: '0x0122–0x012D', regs: 12, type: 'string', desc: { en: 'Firmware signature', ru: 'Сигнатура прошивки' } },
   { dec: '320', hex: '0x0140', regs: 1, type: 'u16', desc: { en: 'Firmware version: MAJOR', ru: 'Версия прошивки: MAJOR' } },
   { dec: '321', hex: '0x0141', regs: 1, type: 'u16', desc: { en: 'Firmware version: MINOR', ru: 'Версия прошивки: MINOR' } },
   { dec: '322', hex: '0x0142', regs: 1, type: 'u16', desc: { en: 'Firmware version: PATCH', ru: 'Версия прошивки: PATCH' } },
@@ -66,12 +72,8 @@ const inputRows: RegRow[] = [
   { dec: '65508', hex: '0xFFE4', regs: 1, type: 'u16', desc: { en: 'Last MCU reboot reason', ru: 'Причина последней перезагрузки МК' } },
 ];
 
-const holdingRows: RegRow[] = [
-  { dec: '290–301', hex: '0x0122–0x012D', regs: 12, type: 'string', desc: { en: 'Firmware signature', ru: 'Сигнатура прошивки' } },
-];
-
 const notes: BiText[] = [
-  { en: 'FC03 and FC04 share one address space: every address in both tables answers on both function codes with the same value. The split only records where the Wiren Board common register map files each field.', ru: 'FC03 и FC04 используют общее адресное пространство: каждый адрес из обеих таблиц отвечает по обеим функциям одним и тем же значением. Разделение лишь показывает, куда поле отнесено в общей карте регистров Wiren Board.' },
+  { en: 'FC03 and FC04 share one address space: every address in the table answers on both function codes with the same value, which is why one table covers both. For cross-referencing the Wiren Board common register map: that map files the firmware signature (290–301) as holding registers and every other field listed here as an input register.', ru: 'FC03 и FC04 используют общее адресное пространство: каждый адрес таблицы отвечает по обеим функциям одним и тем же значением, поэтому таблица одна. Для сверки с общей картой регистров Wiren Board: там сигнатура прошивки (290–301) отнесена к holding-регистрам, а все остальные перечисленные здесь поля — к input-регистрам.' },
   { en: 'Strings (model, firmware version, signature): MEM_8 packing — 1 character per register in the low byte, high byte = 0x00; the tail is zero-padded.', ru: 'Строки (модель, версия прошивки, сигнатура): упаковка MEM_8 — 1 символ на регистр в младшем байте, старший байт = 0x00; хвост дополняется нулями.' },
   { en: 'Git info: 2 characters per register, first character in the low byte; the tail is zero-padded.', ru: 'Git-инфо: 2 символа на регистр, первый символ в младшем байте; хвост дополняется нулями.' },
   { en: 'Multi-register integers (except 324–325) use big-endian word order — the most significant word is at the lower register address.', ru: 'Многорегистровые целые (кроме 324–325) хранятся в порядке слов big-endian — старшее слово в младшем адресе.' },
@@ -104,8 +106,8 @@ const notes: BiText[] = [
         <div class="drm-body">
           <p class="drm-intro">{{ intro[lang] }}</p>
 
-          <!-- Input registers (FC04) -->
-          <div class="drm-section-title">{{ t('section_input') }}</div>
+          <!-- Every register, ordered by address; both FC03 and FC04 read all of them -->
+          <div class="drm-section-title">{{ t('section_regs') }}</div>
           <table class="drm-table">
             <thead>
               <tr>
@@ -117,30 +119,7 @@ const notes: BiText[] = [
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in inputRows" :key="row.dec">
-                <td class="drm-mono drm-nowrap">{{ row.dec }}</td>
-                <td class="drm-mono drm-nowrap">{{ row.hex }}</td>
-                <td class="drm-mono">{{ row.regs }}</td>
-                <td class="drm-mono drm-nowrap">{{ row.type }}</td>
-                <td>{{ row.desc[lang] }}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <!-- Holding registers (FC03) -->
-          <div class="drm-section-title">{{ t('section_holding') }}</div>
-          <table class="drm-table">
-            <thead>
-              <tr>
-                <th class="drm-col-mono">{{ t('col_dec') }}</th>
-                <th class="drm-col-mono">{{ t('col_hex') }}</th>
-                <th class="drm-col-mono">{{ t('col_regs') }}</th>
-                <th class="drm-col-mono">{{ t('col_type') }}</th>
-                <th>{{ t('col_desc') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in holdingRows" :key="row.dec">
+              <tr v-for="row in regRows" :key="row.dec">
                 <td class="drm-mono drm-nowrap">{{ row.dec }}</td>
                 <td class="drm-mono drm-nowrap">{{ row.hex }}</td>
                 <td class="drm-mono">{{ row.regs }}</td>
@@ -319,8 +298,7 @@ const notes: BiText[] = [
 {
   "en": {
     "title": "Device register map",
-    "section_input": "Input registers (FC04, read-only)",
-    "section_holding": "Holding registers (FC03, read-only)",
+    "section_regs": "Registers (FC03/FC04, read-only)",
     "section_notes": "Notes",
     "col_dec": "Address (dec)",
     "col_hex": "Address (hex)",
@@ -331,8 +309,7 @@ const notes: BiText[] = [
   },
   "ru": {
     "title": "Карта регистров устройства",
-    "section_input": "Input-регистры (FC04, только чтение)",
-    "section_holding": "Holding-регистры (FC03, только чтение)",
+    "section_regs": "Регистры (FC03/FC04, только чтение)",
     "section_notes": "Примечания",
     "col_dec": "Адрес (dec)",
     "col_hex": "Адрес (hex)",
@@ -343,8 +320,7 @@ const notes: BiText[] = [
   },
   "kk": {
     "title": "Құрылғы тіркеу картасы",
-    "section_input": "Input регистрлері (FC04, тек оқу)",
-    "section_holding": "Holding регистрлері (FC03, тек оқу)",
+    "section_regs": "Регистрлер (FC03/FC04, тек оқу)",
     "section_notes": "Ескертпелер",
     "col_dec": "Мекенжай (dec)",
     "col_hex": "Мекенжай (hex)",
@@ -355,8 +331,7 @@ const notes: BiText[] = [
   },
   "it": {
     "title": "Mappa registri del dispositivo",
-    "section_input": "Registri input (FC04, sola lettura)",
-    "section_holding": "Registri holding (FC03, sola lettura)",
+    "section_regs": "Registri (FC03/FC04, sola lettura)",
     "section_notes": "Note",
     "col_dec": "Indirizzo (dec)",
     "col_hex": "Indirizzo (hex)",
@@ -367,8 +342,7 @@ const notes: BiText[] = [
   },
   "de": {
     "title": "Geräte-Registerkarte",
-    "section_input": "Input-Register (FC04, schreibgeschützt)",
-    "section_holding": "Holding-Register (FC03, schreibgeschützt)",
+    "section_regs": "Register (FC03/FC04, schreibgeschützt)",
     "section_notes": "Hinweise",
     "col_dec": "Adresse (dec)",
     "col_hex": "Adresse (hex)",

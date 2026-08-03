@@ -67,10 +67,10 @@ Separately, both ports together can run as a:
 The gateway itself answers Modbus polls on its own address **Unit ID 255 (0xFF)** — per the
 Modbus Messaging Implementation Guide this address is reserved for the TCP gateway itself.
 It works in both **Modbus TCP** and **Cache TCP** modes, regardless of cache state (in Modbus
-TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (input) and
-**FC03** (holding) are supported.
+TCP mode such a request is NOT forwarded to RS-485). Read functions **FC03** and **FC04** are
+supported.
 
-### Input registers (FC04, read-only)
+### Registers (FC03/FC04, read-only)
 
 | Address (dec) | Address (hex) | Regs | Type   | Description                                                         |
 |---------------|---------------|------|--------|---------------------------------------------------------------------|
@@ -81,6 +81,7 @@ TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (in
 | 250–265       | 0x00FA–0x0109 | 16   | string | Firmware version (string)                                           |
 | 266–267       | 0x010A–0x010B | 2    | u32    | Serial number generation scheme (4 = derived from the 48-bit MAC)   |
 | 268–271       | 0x010C–0x010F | 4    | u64    | Serial number, MSW-first (the 48-bit MAC in the low bits)           |
+| 290–301       | 0x0122–0x012D | 12   | string | Firmware signature                                                  |
 | 320           | 0x0140        | 1    | u16    | Firmware version: MAJOR                                             |
 | 321           | 0x0141        | 1    | u16    | Firmware version: MINOR                                             |
 | 322           | 0x0142        | 1    | u16    | Firmware version: PATCH                                             |
@@ -98,17 +99,12 @@ TCP mode such a request is NOT forwarded to RS-485). Read functions **FC04** (in
 | 65507         | 0xFFE3        | 1    | u16    | Stack size, KB                                                      |
 | 65508         | 0xFFE4        | 1    | u16    | Last MCU reboot reason                                              |
 
-### Holding registers (FC03, read-only)
-
-| Address (dec) | Address (hex) | Regs | Type   | Description        |
-|---------------|---------------|------|--------|--------------------|
-| 290–301       | 0x0122–0x012D | 12   | string | Firmware signature |
-
 ### Register map notes
 
-- **FC03 and FC04 share one address space**: every address in both tables answers on both
-  function codes with the same value. The split above only records where the Wiren Board common
-  register map files each field.
+- **FC03 and FC04 share one address space**: every address in the table answers on both function
+  codes with the same value, which is why one table covers both. For cross-referencing the Wiren
+  Board common register map: that map files the firmware signature (290–301) as holding registers
+  and every other field listed here as an input register.
 - **Strings (model, firmware version, signature)**: MEM_8 packing — 1 character per register in
   the low byte, high byte = 0x00; the tail is zero-padded.
 - **Git info**: 2 characters per register, first character in the low byte; the tail is zero-padded.
