@@ -20,7 +20,17 @@ const warningAlertMessage = (warning: SettingsWarning): string =>
 // The device accepted the settings, only the read-back that follows the POST failed. Callers that
 // roll their input back when updateSettings() rejects must not do that here: the value IS saved,
 // and reverting the field would show the user the opposite of what the device holds.
-export class SettingsRefreshError extends Error {}
+export class SettingsRefreshError extends Error {
+  // `cause` is declared on the class rather than taken from Error itself: the project compiles
+  // against lib ES2021, where the constructor takes no options and Error has no `cause` at all.
+  // Every browser the UI runs in has supported it since 2021, so this is a typing detail only.
+  readonly cause?: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.cause = options?.cause;
+  }
+}
 
 const isDeepEqual = (a: any, b: any): boolean => {
   if (a === b) return true;
@@ -110,7 +120,9 @@ export const useSettings = () => {
           // When the POST itself failed the re-read almost certainly failed for the same reason, and
           // the original rejection is the one that describes what happened.
           if (posted) {
-            throw new SettingsRefreshError((err as Error)?.message ?? 'settings re-read failed');
+            // The original error is carried as the cause: its stack and its response object are the
+            // only material a bug report about a failed read-back can be written from.
+            throw new SettingsRefreshError((err as Error)?.message ?? 'settings re-read failed', { cause: err });
           }
         }
       });

@@ -355,11 +355,15 @@ const updateInterface = () => {
           </div>
           <div class="card-body">
             <InfoRow :label="t('firmware_channel')">
+              <!-- isUpdating is the manual upload from the file field below. It owns the device's
+                   single web-server thread for up to 180 s, so a POST /settings issued meanwhile
+                   waits in that queue past ky's timeout: the selector would roll back and say the
+                   channel was not saved, while the device applies it once it reaches the request. -->
               <select
                 id="update_channel"
                 v-model="settings!.update_channel"
                 name="update_channel"
-                :disabled="isUpdateBusy || isSavingChannel"
+                :disabled="isUpdateBusy || isSavingChannel || isUpdating"
                 @change="onChannelChange"
               >
                 <option value="stable">{{ t('firmware_channel_stable') }}</option>
@@ -401,11 +405,14 @@ const updateInterface = () => {
                 <!-- In `conflict` the device is already holding a written image, so there is no
                      update button — the only way forward is to look again after it has rebooted.
                      `unavailable` is here too: it is reachable by a click whose pre-flight failed,
-                     and without this button the card would have no way out except a page reload. -->
+                     and without this button the card would have no way out except a page reload.
+                     Locked during a manual upload for the same reason as the button above: it
+                     re-reads /info and /settings, and those would queue behind the upload. -->
                 <Button
                   v-if="updatePhase === 'conflict' || updatePhase === 'not_applied' || updatePhase === 'unavailable'"
                   type="button"
                   variant="outline"
+                  :disabled="isUpdating"
                   @click="recheckUpdates"
                 >
                   {{ t('firmware_recheck') }}

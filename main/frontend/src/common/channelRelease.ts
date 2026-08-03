@@ -22,9 +22,10 @@ export const FW_DOWNLOAD_STALL_MS = 30000;
 // Upper bound on the whole download: 1 265 872 bytes over 300 s is ~34 kbit/s.
 export const FW_DOWNLOAD_HARD_CAP_MS = 300000;
 // Upper bound on how much is read into memory. The device's OTA partition is 1728 KB
-// (partitions_table.csv), so anything past 2 MB cannot be a firmware for it. The Content-Length
-// check alone is not enough: it happens after the whole body has been collected, and a response
-// that declares nothing (or lies) would be buffered until the tab runs out of memory.
+// (partitions_table.csv), so anything past 2 MB cannot be a firmware for it. A declared
+// Content-Length over the bound is refused before the body is read, but the running total is
+// checked too: a response that declares nothing (or lies) would otherwise be buffered until the
+// tab runs out of memory.
 export const FW_DOWNLOAD_MAX_BYTES = 2 * 1024 * 1024;
 // Pause before the first /uptime poll after the 200. The 200 leaves the device before the reboot
 // is even scheduled, so polling earlier only samples the old firmware.
@@ -204,6 +205,10 @@ export const useChannelRelease = () => {
    * does any network work.
    */
   const check = async (): Promise<void> => {
+    // Cleared before the early returns, not inside runCheck(): a recheck() that failed while in
+    // `conflict` leaves `recheck_failed` up, and every later check() bails out on `conflict` before
+    // runCheck() would have cleared it — the warning would then hang around with nothing retrying.
+    notice.value = null;
     if (isBusy.value || phase.value === 'conflict') {
       return;
     }
@@ -266,6 +271,11 @@ export const useChannelRelease = () => {
       }
       const declared = Number(response.headers.get('Content-Length'));
       const expected = Number.isFinite(declared) && declared > 0 ? declared : 0;
+      // Refused before a single byte is read: the checks below only fire once the bytes are already
+      // in memory, and on the fallback branch that means the whole body has been buffered first.
+      if (expected > FW_DOWNLOAD_MAX_BYTES) {
+        throw new Error(`declares ${expected} bytes, more than ${FW_DOWNLOAD_MAX_BYTES}, this cannot be a firmware image`);
+      }
       const chunks: Uint8Array[] = [];
       const reader = response.body?.getReader();
       if (reader) {
@@ -384,7 +394,12 @@ export const useChannelRelease = () => {
       // looks like a dead button, so the recomputed offer is shown together with a note saying why
       // nothing happened.
       console.warn('[firmware] the offer changed between the check and the click, not installing');
-      notice.value = 'offer_changed';
+      // Only when there is still something to install: "press update again" next to `up_to_date` or
+      // "check unavailable" points at a button that the recompute has just removed, and the status
+      // line already says what the device state is.
+      if (phase.value === 'available' && current?.ok) {
+        notice.value = 'offer_changed';
+      }
       return;
     }
 

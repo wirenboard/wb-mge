@@ -17,6 +17,12 @@
  * CR-011 — the device version changed between the check and the click -> nothing is installed.
  * CR-012 — version suffixes are not collapsed: 1.0.0-rc29 != 1.0.0.
  * CR-013 — a channel whose version cannot be read is null while the other channel still works.
+ * CR-014 — a click on an offer that moved to another installable version says so, and the next
+ *           check clears the note.
+ * CR-015 — a recompute that leaves nothing to install shows no "press update again" note.
+ * CR-016 — a recheck that failed in `conflict` is announced, and a later check clears the note.
+ * CR-017 — a download over FW_DOWNLOAD_MAX_BYTES is refused, before the body is read when the
+ *           response declares its size.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -47,7 +53,7 @@ vi.mock('@/utils/api', () => ({
   api: (url: string, options?: Record<string, unknown>) => apiMock(url, options),
 }));
 
-import { FW_DOWNLOAD_STALL_MS, MANIFEST_TIMEOUT_MS, REBOOT_SETTLE_MS, VERIFY_BUDGET_MS, VERIFY_POLL_MS, __resetChannelReleaseState, useChannelRelease } from './channelRelease';
+import { FW_DOWNLOAD_MAX_BYTES, FW_DOWNLOAD_STALL_MS, MANIFEST_TIMEOUT_MS, REBOOT_SETTLE_MS, VERIFY_BUDGET_MS, VERIFY_POLL_MS, __resetChannelReleaseState, useChannelRelease } from './channelRelease';
 
 const BIN_URL = 'https://fw-releases.wirenboard.com/fw/by-signature/mge_v3/main/1.1.0.bin';
 
@@ -91,6 +97,21 @@ const binaryResponse = (chunks: Uint8Array[], options: BinaryOptions = {}) => {
           return { done: true, value: undefined };
         },
       }),
+    },
+  };
+};
+
+// A response that declares a body far past FW_DOWNLOAD_MAX_BYTES. The reader is a spy: the whole
+// point of the declared-size check is that nothing is ever read from it.
+const oversizedResponse = (declared: number) => {
+  const read = vi.fn(async () => ({ done: true, value: undefined }));
+  return {
+    read,
+    response: {
+      ok: true,
+      status: 200,
+      headers: { get: (name: string) => (name.toLowerCase() === 'content-length' ? String(declared) : null) },
+      body: { getReader: () => ({ read }) },
     },
   };
 };
@@ -515,5 +536,87 @@ describe('useChannelRelease — installing', () => {
     expect(uploadedSizes).toHaveLength(0);
     expect(phase.value).toBe('available');
     expect(release.value).toMatchObject({ version: '1.1.1' });
+  });
+
+  it('CR-014: a click on an offer that moved to another version says so, and a check clears it', async () => {
+    const fetchMock = manifestThen(binaryResponse([image()]));
+    const { install, check, phase, notice } = await prepare(fetchMock);
+    // The channel was switched in another tab between the check and the click, so the recomputed
+    // offer is a different version — but one the user can still install by pressing again.
+    partialRefreshMock.mockImplementation(async () => {
+      setChannel('testing');
+    });
+
+    await install();
+
+    expect(uploadedSizes).toHaveLength(0);
+    expect(phase.value).toBe('available');
+    expect(notice.value).toBe('offer_changed');
+
+    // The note belongs to the click that produced it and must not outlive the next check.
+    await check();
+    expect(notice.value).toBeNull();
+  });
+
+  it('CR-015: an offer that recomputed to up_to_date carries no "press update again" note', async () => {
+    const fetchMock = manifestThen(binaryResponse([image()]));
+    const { install, phase, notice } = await prepare(fetchMock);
+    // Another tab already installed exactly this version: there is no button left to press again.
+    deviceFirmware = '1.1.0';
+
+    await install();
+
+    expect(uploadedSizes).toHaveLength(0);
+    expect(phase.value).toBe('up_to_date');
+    expect(notice.value).toBeNull();
+  });
+
+  it('CR-016: a recheck that failed in conflict is announced, and a later check clears the note', async () => {
+    const fetchMock = manifestThen(binaryResponse([image()]));
+    const { install, check, recheck, phase, notice } = await prepare(fetchMock);
+    updateOutcome = 409;
+
+    await install();
+    expect(phase.value).toBe('conflict');
+
+    deviceOffline = true; // the device is rebooting and does not answer /info yet
+    await recheck();
+    expect(notice.value).toBe('recheck_failed');
+    expect(phase.value).toBe('conflict');
+
+    // Leaving the page and coming back calls check(), which does nothing else in `conflict`: with
+    // no reset there the warning would stay up for good, with nothing retrying behind it.
+    await check();
+    expect(notice.value).toBeNull();
+    expect(phase.value).toBe('conflict');
+  });
+
+  it('CR-017: a declared size over the cap is refused before the body is read', async () => {
+    const oversized = oversizedResponse(FW_DOWNLOAD_MAX_BYTES + 1);
+    const fetchMock = manifestThen(oversized.response);
+    const { install, phase, failure, message } = await prepare(fetchMock);
+
+    await install();
+
+    expect(oversized.read).not.toHaveBeenCalled();
+    expect(uploadedSizes).toHaveLength(0);
+    expect(phase.value).toBe('failed');
+    expect(failure.value).toBe('download');
+    expect(message.value).toContain(String(FW_DOWNLOAD_MAX_BYTES));
+  });
+
+  it('CR-017: a body that declares no size is refused once it grows past the cap', async () => {
+    // Every chunk opens with the ESP magic byte, so the size is the only thing that can stop this
+    // download — a refusal for any other reason would mean the running total is not being watched.
+    const megabyte = () => image(0xe9, 1024 * 1024);
+    const fetchMock = manifestThen(binaryResponse([megabyte(), megabyte(), megabyte()], { contentLength: null }));
+    const { install, phase, failure, message } = await prepare(fetchMock);
+
+    await install();
+
+    expect(uploadedSizes).toHaveLength(0);
+    expect(phase.value).toBe('failed');
+    expect(failure.value).toBe('download');
+    expect(message.value).toContain(`larger than ${FW_DOWNLOAD_MAX_BYTES}`);
   });
 });
