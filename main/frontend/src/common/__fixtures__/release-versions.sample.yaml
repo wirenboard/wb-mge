@@ -1,0 +1,61 @@
+releases:
+  co2_sens_ns8:
+    _firmwares_stable: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    _firmwares_testing: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    stable: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    testing: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    unstable: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2207: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2304-70549e24: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2307-a70ab64c: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2307-cb8ea449: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2407-a70ab64c: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2407-e1d931dd: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2410-cb8ea449: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2501-cb8ea449: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+    wb-2507-cb8ea449: fw/by-signature/co2_sens_ns8/main/MF1.03D.compfw
+  mdm3_26:
+    _firmwares_stable: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    _firmwares_testing: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    stable: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    testing: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    unstable: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2207: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2304-70549e24: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2307-a70ab64c: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2307-cb8ea449: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2407-a70ab64c: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2407-e1d931dd: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2410-cb8ea449: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2501-cb8ea449: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+    wb-2507-cb8ea449: fw/by-signature/mdm3_26/main/2.6.6.wbfw
+  mge_v3:
+    _firmwares_stable: fw/by-signature/mge_v3/main/1.1.0.bin
+    _firmwares_testing: fw/by-signature/mge_v3/main/1.1.1.bin
+    stable: fw/by-signature/mge_v3/main/1.1.0.bin
+    testing: fw/by-signature/mge_v3/main/1.1.1.bin
+    unstable: fw/by-signature/mge_v3/main/1.1.1.bin
+    wb-2207: fw/by-signature/mge_v3/main/1.1.0.bin
+    wb-2304-70549e24: fw/by-signature/mge_v3/main/1.1.0.bin
+    wb-2307-a70ab64c: fw/by-signature/mge_v3/main/1.1.0.bin
+    wb-2307-cb8ea449: fw/by-signature/mge_v3/main/1.1.0.bin
+    wb-2407-a70ab64c: fw/by-signature/mge_v3/main/1.1.0.bin
+    wb-2407-e1d931dd: fw/by-signature/mge_v3/main/1.1.0.bin
+    wb-2410-cb8ea449: fw/by-signature/mge_v3/main/1.1.0.bin
+    wb-2501-cb8ea449: fw/by-signature/mge_v3/main/1.1.0.bin
+    wb-2507-cb8ea449: fw/by-signature/mge_v3/main/1.1.0.bin
+  mio:
+    _firmwares_stable: fw/by-signature/mio/main/1.8.4.wbfw
+    _firmwares_testing: fw/by-signature/mio/main/1.8.4.wbfw
+    stable: fw/by-signature/mio/main/1.8.4.wbfw
+    testing: fw/by-signature/mio/main/1.8.4.wbfw
+    unstable: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2207: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2304-70549e24: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2307-a70ab64c: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2307-cb8ea449: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2407-a70ab64c: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2407-e1d931dd: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2410-cb8ea449: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2501-cb8ea449: fw/by-signature/mio/main/1.8.4.wbfw
+    wb-2507-cb8ea449: fw/by-signature/mio/main/1.8.4.wbfw

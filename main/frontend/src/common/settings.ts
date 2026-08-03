@@ -103,6 +103,7 @@ export const useSettings = () => {
     initData,
     isChanged,
     isLoading,
+    partialRefresh,
     updateSettings,
     refresh,
   };

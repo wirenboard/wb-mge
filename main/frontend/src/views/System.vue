@@ -3,9 +3,9 @@ import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { changeLang, languages, type Locale } from '@/i18n';
 import { useAlerts } from '@/common/alert';
-import { useFirmware } from '@/common/firmware';
+import { useChannelRelease } from '@/common/channelRelease';
+import { DeviceUpdateError, useFirmware } from '@/common/firmware';
 import { useInfo } from '@/common/info';
-import { firmwareLatest, firmwareLatestVersion } from '@/common/links';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
 import Switch from '@/components/Switch.vue';
@@ -28,26 +28,105 @@ const firmwareFile = ref<File[]>();
 const loadedMethod = ref();
 const { isUpdating, update } = useFirmware();
 const { showAlert } = useAlerts();
-const { data: settings, isChanged, updateSettings } = useSettings();
+const { data: settings, initData: savedSettings, isChanged, updateSettings } = useSettings();
 const { isReconnecting, uptime } = useUptime();
 const { info } = useInfo();
+const {
+  phase: updatePhase,
+  progress: updateProgress,
+  failure: updateFailure,
+  message: updateMessage,
+  release,
+  channels,
+  resolvedChannel,
+  isBusy: isUpdateBusy,
+  canInstall,
+  check: checkUpdates,
+  recheck: recheckUpdates,
+  install: installUpdate,
+} = useChannelRelease();
 
-const latestVersion = ref<string | null>(null);
-const latestVersionError = ref(false);
+const isSavingChannel = ref(false);
 
-onMounted(async () => {
-  try {
-    const res = await fetch(firmwareLatestVersion);
-    if (!res.ok) throw new Error();
-    latestVersion.value = (await res.text()).trim();
-  } catch {
-    latestVersionError.value = true;
+onMounted(() => {
+  checkUpdates();
+});
+
+const offeredVersion = computed(() => (release.value?.ok ? release.value.version : ''));
+
+// The device reports no channels at all for this signature — as opposed to a check that could not
+// be performed, which gets a different sentence.
+const noChannelsPublished = computed(() =>
+  release.value !== null && !release.value.ok && release.value.reason === 'no-signature'
+);
+
+const isInstalledVersion = (version?: string) => !!version && version === info.value?.firmware;
+
+const failureText = () => {
+  if (updateFailure.value === 'no_response') {
+    return t('firmware_no_response');
+  }
+  if (updateFailure.value === 'upload') {
+    // The device names the reason it refused the image; a generic alert would send support
+    // looking for a UART log.
+    return updateMessage.value ?? t('wirmware_update_error');
+  }
+  return updateMessage.value
+    ? `${t('firmware_download_failed')} (${updateMessage.value})`
+    : t('firmware_download_failed');
+};
+
+const updateStatus = computed(() => {
+  switch (updatePhase.value) {
+    case 'checking':
+      return t('firmware_checking');
+    case 'available':
+    case 'up_to_date':
+      return t('firmware_in_channel', { channel: resolvedChannel.value, v: offeredVersion.value });
+    case 'unavailable':
+      return noChannelsPublished.value ? t('firmware_channels_unavailable') : t('firmware_check_failed');
+    case 'downloading':
+      return t('firmware_downloading', { p: updateProgress.value });
+    case 'uploading':
+      return t('firmware_updating');
+    case 'rebooting':
+      return t('firmware_rebooting');
+    case 'verified':
+      return t('firmware_verified', { v: updateMessage.value });
+    case 'not_applied':
+      return t('firmware_not_applied');
+    case 'conflict':
+      return t('firmware_update_in_progress');
+    case 'failed':
+      return failureText();
+    default:
+      return '';
   }
 });
 
-const hasUpdate = computed(() =>
-  latestVersion.value && info.value?.firmware && latestVersion.value !== info.value.firmware
-);
+// The channel is saved on its own request, and the offer is recomputed only from the value the
+// device confirmed: updateSettings resolves after it has re-read /settings.
+const onChannelChange = async () => {
+  const previous = savedSettings.value?.update_channel ?? 'stable';
+  isSavingChannel.value = true;
+  try {
+    await updateSettings({ update_channel: settings.value!.update_channel });
+    await checkUpdates();
+  } catch (err) {
+    console.error('Failed to save the update channel', err);
+    settings.value!.update_channel = previous;
+    showAlert(t('firmware_channel_save_failed'), { type: 'error' });
+  } finally {
+    isSavingChannel.value = false;
+  }
+};
+
+const startUpdate = async () => {
+  if (!confirm(t('firmware_update_confirm', { v: offeredVersion.value }))) {
+    return;
+  }
+  await installUpdate();
+};
 
 const updateFirmware = async () => {
   loadedMethod.value = 'firmware';
@@ -58,8 +137,12 @@ const updateFirmware = async () => {
     location.reload();
   } catch (err) {
     firmwareFile.value = [];
-    const isInProgress = (err as Error)?.message === 'update_in_progress';
-    showAlert(t(isInProgress ? 'firmware_update_in_progress' : 'wirmware_update_error'), { type: 'error' });
+    if (err instanceof DeviceUpdateError) {
+      showAlert(err.message, { type: 'error' });
+    } else {
+      const isInProgress = (err as Error)?.message === 'update_in_progress';
+      showAlert(t(isInProgress ? 'firmware_update_in_progress' : 'wirmware_update_error'), { type: 'error' });
+    }
   } finally {
     loadedMethod.value = null;
   }
@@ -249,18 +332,56 @@ const updateInterface = () => {
             <div class="title">{{ t('firmware') }}</div>
           </div>
           <div class="card-body">
+            <InfoRow :label="t('firmware_channel')">
+              <select
+                id="update_channel"
+                v-model="settings!.update_channel"
+                name="update_channel"
+                :disabled="isUpdateBusy || isSavingChannel"
+                @change="onChannelChange"
+              >
+                <option value="stable">{{ t('firmware_channel_stable') }}</option>
+                <option value="testing">{{ t('firmware_channel_testing') }}</option>
+              </select>
+            </InfoRow>
+            <InfoRow v-if="channels" :label="t('firmware_channels_row')">
+              <span class="firmware-channels">
+                <span :class="{ 'firmware-channel-selected': resolvedChannel === 'stable' }">
+                  stable: <span class="mono">{{ channels.stable?.version ?? '—' }}</span>
+                  <span v-if="isInstalledVersion(channels.stable?.version)" class="muted firmware-note">{{ t('firmware_installed_mark') }}</span>
+                </span>
+                <span class="muted">·</span>
+                <span :class="{ 'firmware-channel-selected': resolvedChannel === 'testing' }">
+                  testing: <span class="mono">{{ channels.testing?.version ?? '—' }}</span>
+                  <span v-if="isInstalledVersion(channels.testing?.version)" class="muted firmware-note">{{ t('firmware_installed_mark') }}</span>
+                </span>
+              </span>
+            </InfoRow>
             <InfoRow :label="t('firmware_current')">
               <span class="firmware-version-row">
                 <span>
                   <span class="mono">{{ info?.firmware }}</span>
-                  <template v-if="latestVersion && !latestVersionError">
-                    <span class="muted firmware-note">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span>
-                  </template>
-                  <span v-else-if="latestVersionError" class="muted firmware-note">({{ t('firmware_check_failed') }})</span>
+                  <span v-if="updateStatus" class="muted firmware-note">({{ updateStatus }})</span>
                 </span>
-                <a v-if="hasUpdate" :href="firmwareLatest" class="firmware-download-btn">
-                  <Button type="button" variant="primary">{{ t('firmware_download', { v: latestVersion }) }}</Button>
-                </a>
+                <Button
+                  v-if="canInstall"
+                  type="button"
+                  variant="primary"
+                  :disabled="isUpdateBusy"
+                  @click="startUpdate"
+                >
+                  {{ t('firmware_update_to', { v: offeredVersion }) }}
+                </Button>
+                <!-- In `conflict` the device is already holding a written image, so there is no
+                     update button — the only way forward is to look again after it has rebooted. -->
+                <Button
+                  v-if="updatePhase === 'conflict' || updatePhase === 'not_applied'"
+                  type="button"
+                  variant="outline"
+                  @click="recheckUpdates"
+                >
+                  {{ t('firmware_recheck') }}
+                </Button>
               </span>
             </InfoRow>
             <InfoRow :label="t('firmware_install')">
@@ -270,7 +391,7 @@ const updateInterface = () => {
                 accept=".bin"
                 :uploading-placeholder="isUpdating ? t('firmware_updating') : t('update')"
                 :is-loading="isUpdating"
-                :disabled="loadedMethod === 'firmware'"
+                :disabled="loadedMethod === 'firmware' || isUpdateBusy"
                 @upload="updateFirmware"
               />
               <!-- Guard v-if on the template itself to avoid rendering an empty hint container -->
@@ -300,8 +421,15 @@ const updateInterface = () => {
   flex-wrap: wrap;
 }
 
-.firmware-download-btn {
-  text-decoration: none;
+.firmware-channels {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.firmware-channel-selected {
+  font-weight: 600;
 }
 
 .system-saveWrapper {
@@ -361,9 +489,25 @@ const updateInterface = () => {
     "interface": "Web interface",
     "language": "Language",
     "firmware_current": "Current version",
-    "firmware_latest_label": "latest",
     "firmware_check_failed": "update check unavailable",
-    "firmware_download": "Download {v}",
+    "firmware_channel": "Update channel",
+    "firmware_channel_stable": "Stable",
+    "firmware_channel_testing": "Testing",
+    "firmware_channels_row": "Channels",
+    "firmware_installed_mark": "installed",
+    "firmware_checking": "checking for updates…",
+    "firmware_in_channel": "in {channel}: {v}",
+    "firmware_channels_unavailable": "no update channels published for this board yet",
+    "firmware_update_to": "Update to {v}",
+    "firmware_update_confirm": "Install firmware {v}? The device will reboot.",
+    "firmware_downloading": "downloading… {p}%",
+    "firmware_rebooting": "the device is rebooting…",
+    "firmware_verified": "updated to {v}",
+    "firmware_not_applied": "the version did not change — the update was not applied",
+    "firmware_download_failed": "could not download the firmware",
+    "firmware_no_response": "the device did not come back online",
+    "firmware_channel_save_failed": "Could not save the update channel",
+    "firmware_recheck": "Check state",
     "firmware_install": "Install from file",
     "wirmware_update_info": "The device will reboot after the update",
     "firmware_update_processed": "Firmware update in progress",
@@ -409,9 +553,25 @@ const updateInterface = () => {
     "interface": "Веб-интерфейс",
     "language": "Язык",
     "firmware_current": "Текущая версия",
-    "firmware_latest_label": "последняя",
     "firmware_check_failed": "проверка обновлений недоступна",
-    "firmware_download": "Скачать {v}",
+    "firmware_channel": "Канал обновлений",
+    "firmware_channel_stable": "Стабильный",
+    "firmware_channel_testing": "Тестовый",
+    "firmware_channels_row": "Каналы",
+    "firmware_installed_mark": "установлена",
+    "firmware_checking": "проверка обновлений…",
+    "firmware_in_channel": "в канале {channel}: {v}",
+    "firmware_channels_unavailable": "для этой платы каналы обновлений пока не опубликованы",
+    "firmware_update_to": "Обновить до {v}",
+    "firmware_update_confirm": "Установить прошивку {v}? Устройство перезагрузится.",
+    "firmware_downloading": "скачивание… {p}%",
+    "firmware_rebooting": "устройство перезагружается…",
+    "firmware_verified": "обновлено до {v}",
+    "firmware_not_applied": "версия не изменилась — обновление не применилось",
+    "firmware_download_failed": "не удалось скачать прошивку",
+    "firmware_no_response": "устройство не вернулось на связь",
+    "firmware_channel_save_failed": "Не удалось сохранить канал обновлений",
+    "firmware_recheck": "Проверить состояние",
     "firmware_install": "Установить из файла",
     "wirmware_update_info": "После обновления устройство будет перезагружено",
     "firmware_update_processed": "Обновление ПО в процессе",
@@ -457,9 +617,25 @@ const updateInterface = () => {
     "interface": "Веб-интерфейс",
     "language": "Тіл",
     "firmware_current": "Ағымдағы нұсқа",
-    "firmware_latest_label": "соңғы",
     "firmware_check_failed": "жаңарту тексерісі қолжетімсіз",
-    "firmware_download": "{v} жүктеу",
+    "firmware_channel": "Жаңарту арнасы",
+    "firmware_channel_stable": "Тұрақты",
+    "firmware_channel_testing": "Сынақ",
+    "firmware_channels_row": "Арналар",
+    "firmware_installed_mark": "орнатылған",
+    "firmware_checking": "жаңартулар тексерілуде…",
+    "firmware_in_channel": "{channel} арнасында: {v}",
+    "firmware_channels_unavailable": "бұл тақта үшін жаңарту арналары әзірге жарияланбаған",
+    "firmware_update_to": "{v} нұсқасына жаңарту",
+    "firmware_update_confirm": "{v} микробағдарламасын орнату керек пе? Құрылғы қайта жүктеледі.",
+    "firmware_downloading": "жүктелуде… {p}%",
+    "firmware_rebooting": "құрылғы қайта жүктелуде…",
+    "firmware_verified": "{v} нұсқасына жаңартылды",
+    "firmware_not_applied": "нұсқа өзгерген жоқ — жаңарту қолданылмады",
+    "firmware_download_failed": "микробағдарламаны жүктеу мүмкін болмады",
+    "firmware_no_response": "құрылғы байланысқа оралмады",
+    "firmware_channel_save_failed": "Жаңарту арнасын сақтау мүмкін болмады",
+    "firmware_recheck": "Күйін тексеру",
     "firmware_install": "Файлдан орнату",
     "wirmware_update_info": "Жаңартудан кейін құрылғы қайта жүктеледі",
     "firmware_update_processed": "Микробағдарламаны жаңарту жүріп жатыр",
@@ -505,9 +681,25 @@ const updateInterface = () => {
     "interface": "Interfaccia web",
     "language": "Lingua",
     "firmware_current": "Versione attuale",
-    "firmware_latest_label": "ultima",
     "firmware_check_failed": "controllo aggiornamenti non disponibile",
-    "firmware_download": "Scarica {v}",
+    "firmware_channel": "Canale di aggiornamento",
+    "firmware_channel_stable": "Stabile",
+    "firmware_channel_testing": "Test",
+    "firmware_channels_row": "Canali",
+    "firmware_installed_mark": "installata",
+    "firmware_checking": "controllo aggiornamenti…",
+    "firmware_in_channel": "nel canale {channel}: {v}",
+    "firmware_channels_unavailable": "per questa scheda i canali di aggiornamento non sono ancora pubblicati",
+    "firmware_update_to": "Aggiorna a {v}",
+    "firmware_update_confirm": "Installare il firmware {v}? Il dispositivo si riavvierà.",
+    "firmware_downloading": "download… {p}%",
+    "firmware_rebooting": "il dispositivo si sta riavviando…",
+    "firmware_verified": "aggiornato a {v}",
+    "firmware_not_applied": "la versione non è cambiata — l'aggiornamento non è stato applicato",
+    "firmware_download_failed": "impossibile scaricare il firmware",
+    "firmware_no_response": "il dispositivo non è tornato online",
+    "firmware_channel_save_failed": "Impossibile salvare il canale di aggiornamento",
+    "firmware_recheck": "Verifica stato",
     "firmware_install": "Installa da file",
     "wirmware_update_info": "Il dispositivo si riavvierà dopo l'aggiornamento",
     "firmware_update_processed": "Aggiornamento firmware in corso",
@@ -553,9 +745,25 @@ const updateInterface = () => {
     "interface": "Weboberfläche",
     "language": "Sprache",
     "firmware_current": "Aktuelle Version",
-    "firmware_latest_label": "neueste",
     "firmware_check_failed": "Update-Prüfung nicht verfügbar",
-    "firmware_download": "{v} herunterladen",
+    "firmware_channel": "Update-Kanal",
+    "firmware_channel_stable": "Stabil",
+    "firmware_channel_testing": "Test",
+    "firmware_channels_row": "Kanäle",
+    "firmware_installed_mark": "installiert",
+    "firmware_checking": "Update-Prüfung läuft…",
+    "firmware_in_channel": "im Kanal {channel}: {v}",
+    "firmware_channels_unavailable": "für diese Platine sind noch keine Update-Kanäle veröffentlicht",
+    "firmware_update_to": "Auf {v} aktualisieren",
+    "firmware_update_confirm": "Firmware {v} installieren? Das Gerät wird neu gestartet.",
+    "firmware_downloading": "Download… {p}%",
+    "firmware_rebooting": "Das Gerät startet neu…",
+    "firmware_verified": "auf {v} aktualisiert",
+    "firmware_not_applied": "die Version hat sich nicht geändert — das Update wurde nicht angewendet",
+    "firmware_download_failed": "Firmware konnte nicht heruntergeladen werden",
+    "firmware_no_response": "das Gerät ist nicht wieder online gegangen",
+    "firmware_channel_save_failed": "Update-Kanal konnte nicht gespeichert werden",
+    "firmware_recheck": "Status prüfen",
     "firmware_install": "Aus Datei installieren",
     "wirmware_update_info": "Das Gerät wird nach dem Update neu gestartet",
     "firmware_update_processed": "Firmware-Update läuft",
