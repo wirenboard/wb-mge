@@ -58,7 +58,8 @@ const updateFirmware = async () => {
     location.reload();
   } catch (err) {
     firmwareFile.value = [];
-    showAlert(t('wirmware_update_error'), { type: 'error' });
+    const isInProgress = (err as Error)?.message === 'update_in_progress';
+    showAlert(t(isInProgress ? 'firmware_update_in_progress' : 'wirmware_update_error'), { type: 'error' });
   } finally {
     loadedMethod.value = null;
   }
@@ -367,6 +368,7 @@ const updateInterface = () => {
     "wirmware_update_info": "The device will reboot after the update",
     "firmware_update_processed": "Firmware update in progress",
     "wirmware_update_error": "Firmware update error",
+    "firmware_update_in_progress": "An update is already running, the device will reboot shortly",
     "choose_firmware": "Choose file",
     "update": "Update",
     "firmware_updating": "Updating",
@@ -414,6 +416,7 @@ const updateInterface = () => {
     "wirmware_update_info": "После обновления устройство будет перезагружено",
     "firmware_update_processed": "Обновление ПО в процессе",
     "wirmware_update_error": "Ошибка обновления прошивки",
+    "firmware_update_in_progress": "Обновление уже идёт, устройство скоро перезагрузится",
     "choose_firmware": "Выбрать файл",
     "update": "Обновить",
     "firmware_updating": "Обновление",
@@ -461,6 +464,7 @@ const updateInterface = () => {
     "wirmware_update_info": "Жаңартудан кейін құрылғы қайта жүктеледі",
     "firmware_update_processed": "Микробағдарламаны жаңарту жүріп жатыр",
     "wirmware_update_error": "Микробағдарламаны жаңарту қатесі",
+    "firmware_update_in_progress": "Жаңарту басталып қойды, құрылғы жақында қайта жүктеледі",
     "choose_firmware": "Файлды таңдаңыз",
     "update": "Жаңарту",
     "firmware_updating": "Жаңартылуда",
@@ -508,6 +512,7 @@ const updateInterface = () => {
     "wirmware_update_info": "Il dispositivo si riavvierà dopo l'aggiornamento",
     "firmware_update_processed": "Aggiornamento firmware in corso",
     "wirmware_update_error": "Errore di aggiornamento firmware",
+    "firmware_update_in_progress": "Un aggiornamento è già in corso, il dispositivo si riavvierà a breve",
     "choose_firmware": "Scegli file",
     "update": "Aggiorna",
     "firmware_updating": "Aggiornamento",
@@ -555,6 +560,7 @@ const updateInterface = () => {
     "wirmware_update_info": "Das Gerät wird nach dem Update neu gestartet",
     "firmware_update_processed": "Firmware-Update läuft",
     "wirmware_update_error": "Fehler beim Firmware-Update",
+    "firmware_update_in_progress": "Ein Update läuft bereits, das Gerät startet in Kürze neu",
     "choose_firmware": "Datei auswählen",
     "update": "Aktualisieren",
     "firmware_updating": "Wird aktualisiert",

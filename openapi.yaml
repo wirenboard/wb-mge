@@ -123,6 +123,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            An update is already running, or the firmware has been written and the device is
+            waiting to reboot into it. The connection is closed right after this response;
+            retry once the device is back up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:

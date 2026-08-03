@@ -17,6 +17,7 @@
     * fix:      accept application/macbinary firmware uploads from macOS browsers
     * fix:      bound and back off bridge TCP-client reconnects; validate TCP/cache port collisions
     * fix:      sniffer wall-clock timestamps, memory usage, and Fast Modbus frame splitting
+    * fix:      refuse a repeated firmware upload with 409 while the previous one is running or waiting to reboot, instead of silently erasing the image just written
 
 2026-05-18 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
     * version:  1.2.0

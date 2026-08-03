@@ -425,6 +425,24 @@ def test_ota_full_update(api, firmware_bytes):
         )
         print(f"✓ Firmware accepted ({fw_size} bytes), device will reboot shortly")
 
+        # Step 5b: a second upload before the reboot must NOT be accepted — it would erase the
+        # image that was just written and the update would silently not happen. Best effort by
+        # design: the reboot is scheduled 100 ms after the response in the QEMU build
+        # (REBOOT_DELAY_MS in main/cmd_handler.c), so the connection may simply be gone by now.
+        # Anything except a second "success" passes; the deterministic check lives in
+        # unittests/ota_handler/.
+        try:
+            second = _post_update(api, firmware_bytes[: MIN_VALID_HEAD_LEN + 4096], timeout=30)
+        except requests.exceptions.RequestException as exc:
+            print(f"  Second POST /update did not complete ({exc.__class__.__name__}) — "
+                  "the device was already rebooting")
+        else:
+            assert second.status_code != 200, (
+                "A second POST /update before the reboot was accepted: it erased the firmware that "
+                f"had just been written. Response: {second.text!r}"
+            )
+            print(f"  ✓ Second POST /update refused with {second.status_code}")
+
         # Step 6: Wait for device to come back online after reboot
         # Bumped from 90s → 180s: under host CPU contention, QEMU boot can take longer
         # than 90 s even though the firmware itself reboots in <10 s on real hardware.
