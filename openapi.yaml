@@ -123,6 +123,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            An update is already running, or the firmware has been written and the device is
+            waiting to reboot into it. The connection is closed right after this response;
+            retry once the device is back up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -1277,6 +1286,29 @@ paths:
   /ports/{port_number}/cache:
     post:
       summary: Toggle the Modbus cache overlay for the port
+      description: >
+        The cache overlay is orthogonal to the port mode and survives mode changes.
+
+        The cache is single-port: the register pool is keyed by slave address only,
+        and the cache Modbus TCP interface answers by unit id, so only one RS-485 port
+        can feed it. Enabling the overlay therefore MOVES it — the other port, if it
+        was the cache source, is switched off as a side effect of this call (its
+        cache_enabled in GET /info becomes false) and does not have to be disabled
+        first. This request is never refused because of the other port's state.
+
+        The move drops the cached register values: they were read from the other bus
+        and there is no port dimension in the pool to keep them apart from the new
+        one. The pool is released and reallocated for the new source; when that
+        succeeds, GET /cache/status reports it as reset. Should the reallocation fail
+        (out of memory), the overlay is still recorded on the new port but the pool
+        stays off and GET /cache/status reports the cache as disabled.
+
+        Errors: the live change is applied first and persisted afterwards, so a 400
+        here means "applied but not durable", not "not applied". Both of a move's two
+        writes count — if the RELEASED port's key cannot be written, the response is a
+        400 even though the move is already in effect live, because the stored state
+        then still names the old port as well and a reboot may resolve back to it.
+        Re-read GET /info for the state that actually took.
       parameters:
         - name: port_number
           in: path
@@ -1551,6 +1583,11 @@ components:
           maximum: 65535
           default: 60
           description: "Cached value lifetime in seconds; 0 disables the timeout"
+        update_channel:
+          type: string
+          enum: [stable, testing]
+          default: stable
+          description: "Firmware update channel. Used as the lookup key for the release manifest"
         wifi_perm_disable:
           type: boolean
           default: false

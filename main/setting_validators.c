@@ -299,6 +299,20 @@ bool validate_port_mode(const char *value)
     return false;
 }
 
+bool validate_update_channel(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+    if (strncmp(value, UPDATE_CHANNEL_STABLE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    if (strncmp(value, UPDATE_CHANNEL_TESTING_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    return false;
+}
+
 bool validate_bool(const char *value)
 {
     if (!value) {

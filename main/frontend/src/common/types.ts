@@ -101,6 +101,8 @@ export type BridgeMode = 'client' | 'server';
 
 export type WiFiMode = 'none' | 'ap' | 'sta';
 
+export type UpdateChannel = 'stable' | 'testing';
+
 export interface RsSettings {
   term: boolean;
   fail_safe: boolean;
@@ -127,6 +129,7 @@ export interface Settings {
   cache_modbus_port: number;
   cache_modbus_server_enabled: boolean;
   cache_value_timeout_s: number;
+  update_channel: UpdateChannel;
   wifi_perm_disable?: boolean;
   wifi?: {
     mode: WiFiMode;

@@ -381,9 +381,10 @@ static void port_deinit_mode(unsigned index)
         break;
 
     case PM_MODE_REPEATER:
-        // repeater_deinit_port() detaches the peer under the lock and joins the UART
-        // event task (via serial_deinit) before freeing the descriptor; detach the
-        // sniffer afterwards.
+        // repeater_deinit_port() unpublishes this port from the peer's forwarding path,
+        // drains the forwards already inside serial_send() into it, and joins this port's
+        // own UART event task (via serial_deinit) before freeing the descriptor; detach
+        // the sniffer afterwards.
         repeater_deinit_port(index);
         sniffer_detach(index);
         pm_ctx[index].serial_desc = NULL;
@@ -567,11 +568,11 @@ esp_err_t port_manager_init(void)
     }
 
     // Load and normalise the per-port cache overlay before bringing ports up.
-    // Enforce the single-port invariant (review #51): legacy NVS from older firmware
-    // could carry both cache_en_1 and cache_en_2 set. Keep only the lowest-index port
-    // that asks for it and clear the rest (memory + NVS), so the invariant holds from
-    // boot regardless of stored state — not only via the runtime reject in
-    // port_manager_set_cache().
+    // Enforce the single-port invariant (review #51): NVS can carry both cache_en_1 and
+    // cache_en_2 set — legacy firmware wrote it, and a move whose release failed to
+    // persist leaves it. Keep only the lowest-index port that asks for it and clear the
+    // rest (memory + NVS), so the invariant holds from boot regardless of stored state,
+    // not only through the runtime move in port_manager_set_cache().
     bool cache_claimed = false;
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         bool want = setting_items_read_bool(cache_en_nvs_key(i));
@@ -757,6 +758,37 @@ bool port_manager_get_cache(unsigned port_index)
     return pm_ctx[port_index].cache_overlay;
 }
 
+// Apply one port's cache-overlay state end to end: the in-memory intent, its NVS key,
+// the global pool and the port's live data flow. This is the ONLY place that changes
+// a port's cache_overlay after boot, so an enable and the release half of a move are
+// guaranteed to leave a port in exactly the same shape.
+// The caller MUST hold pm_lock(index): get_port_serial_desc() reads the mode and the
+// descriptor that the reinit paths free and recreate.
+// Returns the NVS persistence result; the live state is applied either way (persist-6).
+static esp_err_t cache_overlay_apply_locked(unsigned index, bool enabled)
+{
+    pm_ctx[index].cache_overlay = enabled;
+    esp_err_t ret = setting_items_save_bool(cache_en_nvs_key(index), enabled);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Port[%u]: Failed to save cache overlay to NVS: %s",
+                 index + 1, esp_err_to_name(ret));
+        // The live overlay is still applied below, but a reboot would silently
+        // revert it. The failure is surfaced via the return value (persist-6).
+    }
+
+    // Update the global pool to match the new intent (serialised, wipe-safe).
+    cache_sync_global();
+    // Wire/unwire this port's live data flow if its serial port is open.
+    if (get_port_serial_desc(index) != NULL) {
+        if (enabled) {
+            sniffer_enable(index, SNIFF_REASON_CACHE);
+        } else {
+            sniffer_disable(index, SNIFF_REASON_CACHE);
+        }
+    }
+    return ret;
+}
+
 esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
 {
     if (port_index >= BRIDGES_COUNT) {
@@ -765,50 +797,65 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
 
     // Single-port cache invariant (review #51): the multimaster cache is one global
     // pool keyed by slave_id, and the Cache-TCP interface answers by unit_id (it is
-    // port-blind), so it can only meaningfully serve one RS-485 port. Refuse enabling
-    // the overlay on a second port instead of silently colliding same-address slaves
-    // from the two buses. Reading the other ports' cache_overlay without their pm_lock
-    // mirrors cache_sync_global()'s lockless read discipline.
-    // This lockless check followed by the later locked write is race-free only
-    // because port_manager_set_cache() is called solely from the single
-    // esp_http_server request task (calls are serialised); a second concurrent
-    // caller would need this scan and the overlay write under one shared lock.
+    // port-blind), so it can only meaningfully serve one RS-485 port. Enabling the
+    // overlay therefore MOVES it: any other port holding it is released first, so
+    // same-address slaves from the two buses can never collide in the pool. Enabling
+    // means "the cache source is now this port" and is never refused — a client can
+    // hand the cache over in one call, in either direction, without having to disable
+    // the old holder first (and without the outcome depending on the order in which it
+    // issues the two per-port calls).
+    // Releasing the old holder runs cache_sync_global() with no port wanting the pool,
+    // so the pool is freed and reallocated across the move and its contents are lost.
+    // That is intended: the entries describe the OLD bus, and the pool has no port
+    // dimension to keep them apart from the new one. It is also what the disable-then-
+    // enable sequence this replaces already did.
+    //
+    // Locking. The release writes another port's pm_ctx, so it runs under THAT port's
+    // pm_lock, taken and released in full before this port's pm_lock is taken. The two
+    // locks are deliberately NOT nested: pm_lock is held across whole port reinits, and
+    // nesting would add a pm_lock[i] -> pm_lock[j] ordering rule to keep on top of the
+    // existing pm_lock -> cache_decision_mutex one.
+    // The price is that the check-then-act spans TWO separate critical sections — the
+    // other port is read and cleared under its lock, this port is set under a different
+    // one — so it is race-free only because port_manager_set_cache() is called solely
+    // from the single esp_http_server request task and its calls are therefore
+    // serialised. That is the only caller today. Under that premise the overlay is held
+    // by NO port between the two sections and never by two: a concurrent reader sees the
+    // cache off for a moment, never two buses feeding one pool. Two concurrent callers
+    // would break it: one scanning while the other sits between its release and its
+    // enable finds no holder, releases nothing, and then sets its own port — so both end
+    // up set. A second caller (settings_update, MQTT, Modbus control) must therefore
+    // make the whole move atomic first, by holding both pm_locks across it, taken in
+    // ascending index order to stay deadlock-free.
+    esp_err_t release_ret = ESP_OK;
     if (enabled) {
         for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-            if (i != port_index && pm_ctx[i].cache_overlay) {
-                ESP_LOGW(TAG, "Port[%u]: cache overlay already active on port %u; refusing to enable a second (review #51)",
-                         port_index + 1, i + 1);
-                return ESP_ERR_INVALID_STATE;
+            if (i == port_index) {
+                continue;
             }
+            pm_lock(i);
+            if (pm_ctx[i].cache_overlay) {
+                ESP_LOGI(TAG, "Port[%u]: taking the cache overlay over from port %u — the cache is single-port (review #51)",
+                         port_index + 1, i + 1);
+                esp_err_t r = cache_overlay_apply_locked(i, false);
+                if (r != ESP_OK && release_ret == ESP_OK) {
+                    release_ret = r;
+                }
+            }
+            pm_unlock(i);
         }
     }
 
     pm_lock(port_index);
-
-    pm_ctx[port_index].cache_overlay = enabled;
-    esp_err_t ret = setting_items_save_bool(cache_en_nvs_key(port_index), enabled);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Port[%u]: Failed to save cache overlay to NVS: %s",
-                 port_index + 1, esp_err_to_name(ret));
-        // The live overlay is still applied below, but a reboot would silently
-        // revert it. The failure is surfaced via the return value (persist-6).
-    }
-
-    // Update the global pool to match the new intent (serialised, wipe-safe).
-    cache_sync_global();
-    // Wire/unwire this port's live data flow if its serial port is open.
-    if (get_port_serial_desc(port_index) != NULL) {
-        if (enabled) {
-            sniffer_enable(port_index, SNIFF_REASON_CACHE);
-        } else {
-            sniffer_disable(port_index, SNIFF_REASON_CACHE);
-        }
-    }
-
+    esp_err_t ret = cache_overlay_apply_locked(port_index, enabled);
     pm_unlock(port_index);
-    // Return the persistence result: live state was applied regardless, but the
-    // caller must know if the change will not survive a reboot (persist-6).
-    return ret;
+
+    // Return the persistence result: live state was applied regardless, but the caller
+    // must know if the change will not survive a reboot (persist-6). A failed release
+    // write counts too: the old holder's NVS key would still say "enabled", and the
+    // boot-time normalisation in port_manager_init() keeps the LOWEST-index port that
+    // asks for the overlay — so a move to the higher-index port would come back undone.
+    return (ret != ESP_OK) ? ret : release_ret;
 }
 
 void port_manager_set_ports_frozen(bool frozen)
@@ -1129,14 +1176,11 @@ static esp_err_t port_set_cache_handler(httpd_req_t *req, unsigned port_index)
     }
 
     bool enabled = cJSON_IsTrue(enabled_item);
+    // No conflict branch here: the cache overlay is single-port (review #51), but
+    // enabling it MOVES it off the other port instead of being refused, so there is no
+    // state in which a well-formed request has to be rejected. The only failures left
+    // are persistence failures, which the generic branch below reports as-is.
     esp_err_t ret = port_manager_set_cache(port_index, enabled);
-    if (ret == ESP_ERR_INVALID_STATE) {
-        // Cache overlay already active on the other port; it is single-port by design
-        // (review #51). 409: the request is valid, the resource state forbids it.
-        cJSON_Delete(req_json);
-        return json_utils_send_error_status(req, "409 Conflict",
-                                            "Cache overlay already active on the other port; disable it there first");
-    }
     if (ret != ESP_OK) {
         cJSON_Delete(req_json);
         return json_utils_send_error(req, esp_err_to_name(ret));

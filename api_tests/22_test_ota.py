@@ -16,6 +16,7 @@ Valid firmware fixture: build/qemu_mge.bin, produced by `make qemu-build`.
 
 import socket
 import struct
+import time
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,18 @@ WB_APP_DESC_MAGIC_WORD = 0xDACBBCAB
 SIGNATURE_OFFSET = WB_APP_DESC_OFFSET + 4
 SIGNATURE_LEN = 12
 MIN_VALID_HEAD_LEN = WB_APP_DESC_OFFSET + WB_APP_DESC_SIZE
+
+# Upper bound for the device to abort an upload whose client went silent and answer HTTP again.
+# Real recovery is ~35 s: six 5 s receive windows in the handler loop (OTA_RECV_STALL_TIMEOUT_MS /
+# HTTP_RECV_WAIT_TIMEOUT_S, see main/ota_handler.c) plus one more window while the IDF purges the
+# unsent body. The budget is generous on top of that because the emulator under host load stretches
+# every one of those windows — the test is here to prove the device recovers at all, not to time it.
+STALL_RECOVERY_BUDGET_S = 60
+
+# Lower bound: the device must NOT answer instantly. Without it the test passes on a firmware that
+# rejects the upload outright (no stall handling at all), which is the opposite of what it checks.
+# Well below the ~35 s the handler really takes, so a loaded emulator cannot trip it.
+STALL_RECOVERY_MIN_S = 20
 
 
 @pytest.fixture(scope="module")
@@ -259,6 +272,90 @@ def test_ota_truncated_stream(api, firmware_bytes):
     )
 
 
+def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
+    """Client disappears mid-upload WITHOUT closing the socket → the device must
+    give up on its own and keep serving HTTP.
+
+    Unlike test_ota_truncated_stream, nothing tells the device the client is gone:
+    no FIN, no RST, TCP keep-alive is off. The socket just goes quiet, so
+    httpd_req_recv() only ever reports timeouts. Without the stall limit in
+    ota_receive_and_write() (main/ota_handler.c) the handler retries forever, and
+    since the IDF web server is single-threaded, every other endpoint dies with it
+    until the device is power-cycled.
+
+    The defining assertion is the one on /info: the web interface must come back
+    on its own, and only after having actually waited out the stall — hence both a
+    lower and an upper bound on how long that request takes.
+    """
+    parsed = requests.utils.urlparse(api.base_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 80
+    cookie_header = "; ".join(f"{k}={v}" for k, v in api.session.cookies.items())
+    promised_length = max(len(firmware_bytes), 1_000_000)
+    sent_chunk = firmware_bytes[: MIN_VALID_HEAD_LEN + 4096]
+    request = (
+        f"POST /update HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        f"Cookie: {cookie_header}\r\n"
+        f"Content-Type: application/octet-stream\r\n"
+        f"Content-Length: {promised_length}\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
+    ).encode() + sent_chunk
+
+    sock = socket.create_connection((host, port), timeout=30)
+    try:
+        sock.sendall(request)
+        # From here on the client is "gone": the socket stays open and silent.
+        stall_start = time.monotonic()
+
+        # A separate connection, because the stalled one is the one under test. The
+        # request is queued behind the OTA handler and can only be served once that
+        # handler gives up, so its round-trip time measures the recovery.
+        # Above the budget on purpose: a request that timed out would fail the test with a transport
+        # error instead of the assertion below, which says what actually went wrong.
+        info_resp = api.session.get(f"{api.base_url}/info", timeout=STALL_RECOVERY_BUDGET_S + 30)
+        info_elapsed = time.monotonic() - stall_start
+
+        assert info_resp.status_code == 200, (
+            f"Server unresponsive while an OTA client is silent: "
+            f"{info_resp.status_code} {info_resp.text!r}"
+        )
+        assert info_elapsed < STALL_RECOVERY_BUDGET_S, (
+            f"GET /info took {info_elapsed:.1f}s while an OTA upload was stalled; "
+            f"expected the device to abort the upload within {STALL_RECOVERY_BUDGET_S}s"
+        )
+        assert info_elapsed >= STALL_RECOVERY_MIN_S, (
+            f"GET /info was served after only {info_elapsed:.1f}s: the device did not sit through the "
+            f"stall timeout at all, so this test proves nothing about the receive loop. Either the "
+            f"upload was refused outright, or the request was not queued behind the OTA handler"
+        )
+
+        # The stalled upload itself must be over too: either an error response
+        # arrived, or the device closed the connection.
+        sock.settimeout(15)
+        raw_response = b""
+        try:
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                raw_response += chunk
+        except socket.timeout:
+            pass
+        assert raw_response == b"" or raw_response.lstrip().startswith(b"HTTP/"), (
+            f"Unexpected data on the stalled OTA connection: {raw_response[:200]!r}"
+        )
+    finally:
+        sock.close()
+
+    resp = api.get_info()
+    assert resp.status_code == 200, (
+        f"Server unresponsive after the stalled OTA was aborted: "
+        f"{resp.status_code} {resp.text!r}"
+    )
+
+
 # --- Positive path: MUST stay last — reboots into ota_1 ----------------------
 
 @pytest.mark.timeout(2400)
@@ -342,6 +439,24 @@ def test_ota_full_update(api, firmware_bytes):
             f"Expected bytes_written={fw_size}, got {body.get('bytes_written')}"
         )
         print(f"✓ Firmware accepted ({fw_size} bytes), device will reboot shortly")
+
+        # Step 5b: a second upload before the reboot must NOT be accepted — it would erase the
+        # image that was just written and the update would silently not happen. Best effort by
+        # design: the reboot is scheduled 100 ms after the response in the QEMU build
+        # (REBOOT_DELAY_MS in main/cmd_handler.c), so the connection may simply be gone by now.
+        # Anything except a second "success" passes; the deterministic check lives in
+        # unittests/ota_handler/.
+        try:
+            second = _post_update(api, firmware_bytes[: MIN_VALID_HEAD_LEN + 4096], timeout=30)
+        except requests.exceptions.RequestException as exc:
+            print(f"  Second POST /update did not complete ({exc.__class__.__name__}) — "
+                  "the device was already rebooting")
+        else:
+            assert second.status_code != 200, (
+                "A second POST /update before the reboot was accepted: it erased the firmware that "
+                f"had just been written. Response: {second.text!r}"
+            )
+            print(f"  ✓ Second POST /update refused with {second.status_code}")
 
         # Step 6: Wait for device to come back online after reboot
         # Bumped from 90s → 180s: under host CPU contention, QEMU boot can take longer

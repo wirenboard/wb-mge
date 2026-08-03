@@ -1289,11 +1289,17 @@ void sniffer_detach(unsigned port_index)
     sniffer_disable(port_index, SNIFF_REASON_CACHE);
     // Do NOT clear serial_desc->sniff_handler here. port_manager now calls
     // sniffer_detach() AFTER the transport is torn down (bridge_port_deinit() /
-    // serial_deinit() / repeater_deinit_port()). By this point every task that could
-    // read sniff_handler — the UART event task and any serial_send() caller — has been
-    // joined, and serial_desc itself has already been freed. There are no readers left
-    // to retract the callback for, and touching the freed descriptor would be a
-    // use-after-free. Just drop our own reference to it.
+    // serial_deinit() / repeater_deinit_port()). By this point no reader of sniff_handler
+    // is left, and serial_desc itself has already been freed: there is nobody to retract
+    // the callback for, and touching the freed descriptor would be a use-after-free.
+    // Just drop our own reference to it.
+    //
+    // "No reader left" is not everywhere a join. serial_deinit() does join the port's own
+    // UART event task, but sniff_handler is also called from serial_send() (serial.c:373-376),
+    // and on a repeater port that caller is the PEER's UART task, which repeater_deinit_port()
+    // never joins — there the last such call is ended by the s_inflight drain, which brackets
+    // exactly the serial_send() window. transparent_tcp rules its own TCP -> serial senders
+    // out under the port's serial lock, likewise without joining them.
     sniff_ctx[port_index].serial_desc = NULL;
 }
 

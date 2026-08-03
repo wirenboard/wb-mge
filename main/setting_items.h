@@ -108,11 +108,19 @@
 // Cache value timeout in seconds NVS key (max 15 chars for ESP32 NVS)
 #define KEY_CACHE_VALUE_TIMEOUT_S           "cache_val_tout"
 
+// Firmware update channel NVS key (max 15 chars for ESP32 NVS)
+#define KEY_UPDATE_CHANNEL                  "upd_channel"
+
 // Port manager mode string values (transport-only)
 #define PORT_MODE_DISABLED_STR      "disabled"
 #define PORT_MODE_TCP_BRIDGE_STR    "tcp_bridge"
 #define PORT_MODE_PASSIVE_STR       "passive"
 #define PORT_MODE_REPEATER_STR      "repeater"
+
+// Firmware update channel string values. These names are used verbatim as lookup
+// keys in the wb-releases manifest, so they must not be renamed.
+#define UPDATE_CHANNEL_STABLE_STR   "stable"
+#define UPDATE_CHANNEL_TESTING_STR  "testing"
 
 // Setting types - used for type checking and JSON mapping
 typedef enum {

@@ -64,6 +64,8 @@ extern int mock_cache_port;
 extern int mock_setting_items_save_called;
 extern bool mock_setting_items_save_should_fail;
 extern bool mock_setting_items_save_bool_should_fail;
+extern const char *mock_setting_items_save_bool_fail_key;  /* fail one key only */
+extern int mock_setting_items_save_bool_called;
 void mock_setting_items_reset(void);
 
 /* rs485_stats.c mock */
@@ -1114,23 +1116,205 @@ void test_deinit_cache_overlay_last_port(void)
     TEST_ASSERT_TRUE(port_manager_get_cache(0));
 }
 
-void test_set_cache_second_port_rejected(void)
+/* B5: the cache source must be movable in BOTH directions in a single call.
+ *
+ * The cache stays single-port (review #51) — the pool is keyed by slave_id and the
+ * Cache-TCP interface answers by unit_id, so two ports would collide same-address
+ * slaves from two buses. The invariant is now upheld by the enable path itself rather
+ * than by a refusal: enabling the overlay MOVES it off whatever port holds it. Refusing
+ * made the outcome depend on call order — a client that handles port 1 before port 2
+ * could move the source 1 -> 2 but not 2 -> 1.
+ * The move is not atomic (release and enable run under two different pm_locks), so the
+ * invariant holds only while calls are serialised, as the single esp_http_server request
+ * task makes them today; see the locking note in port_manager_set_cache(). These tests
+ * are single-threaded and pin the sequential behaviour, not that premise. */
+void test_set_cache_enable_moves_overlay_from_the_other_port(void)
 {
-    /* Single-port cache invariant (review #51): the cache feeds from only one
-     * RS-485 port. Enabling the overlay on a second port while another already has
-     * it must be rejected, leaving the second port's overlay and its NVS untouched
-     * and triggering no extra pool enable. (Replaces the old two-port deinit test,
-     * whose "both ports feed the cache" premise is now impossible.) */
-    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+    /* Both ports open, so the live data flow (sniffer) is observable on both. */
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    port_manager_set_mode(1, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(1, true));
+    TEST_ASSERT_TRUE(port_manager_get_cache(1));
+    TEST_ASSERT_TRUE(mock_cache_en[1]);
+    mock_sniffer_reset();
+    mock_cache_multimaster_reset();
+    mock_cache_multimaster_enabled = true;   /* restore live state after counter reset */
+
+    esp_err_t ret = port_manager_set_cache(0, true);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "enabling the overlay must move it, not be refused");
+    /* Target holds it, old holder released — in memory AND in NVS, so a reboot does
+     * not hand it back (port_manager_init() keeps the lowest-index port that asks). */
     TEST_ASSERT_TRUE(port_manager_get_cache(0));
-    int enable_before = mock_cache_multimaster_enable_called;
+    TEST_ASSERT_FALSE(port_manager_get_cache(1));
+    TEST_ASSERT_TRUE(mock_cache_en[0]);
+    TEST_ASSERT_FALSE_MESSAGE(mock_cache_en[1],
+        "the released port's NVS key must be rewritten to false, not just its memory");
+    /* The old holder's live data flow is unwired and the target's is wired. */
+    TEST_ASSERT_EQUAL(1, mock_sniffer_disable_called[1]);
+    TEST_ASSERT_EQUAL(SNIFF_REASON_CACHE, mock_sniffer_disable_last_reason[1]);
+    TEST_ASSERT_EQUAL(1, mock_sniffer_enable_called[0]);
+    TEST_ASSERT_EQUAL(SNIFF_REASON_CACHE, mock_sniffer_enable_last_reason[0]);
+    /* The pool follows the intent: released while no port wanted it, then re-enabled
+     * for the new source. Its contents are dropped with it — they describe the bus the
+     * cache was moved away from, and the pool has no port dimension to keep them apart. */
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_disable_called);
+    TEST_ASSERT_EQUAL(1, mock_cache_multimaster_enable_called);
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+}
 
-    esp_err_t ret = port_manager_set_cache(1, true);
+/* Samples the overlay state of both ports at every mutex acquisition inside
+ * port_manager_set_cache() — i.e. on entry to each port's pm_lock critical section and
+ * inside each cache_sync_global(). This is a sampler, not a continuous watch: a
+ * both-held state that appears and disappears entirely between two acquisitions is
+ * invisible to it. What it does guarantee is that a both-held state still standing at
+ * the NEXT acquisition is caught, and that is enough for the orderings this test is
+ * meant to kill — enabling the target before releasing the old holder, or dropping the
+ * release entirely, both leave the second port set across at least one later
+ * acquisition (the pm_lock of the port being released, or the cache_decision_mutex
+ * taken by cache_sync_global() from inside the enable). */
+static int cache_both_ports_held_samples;
+static void sample_cache_holders_on_lock(void)
+{
+    if (port_manager_get_cache(0) && port_manager_get_cache(1)) {
+        cache_both_ports_held_samples++;
+    }
+}
 
-    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, ret);
-    TEST_ASSERT_FALSE(port_manager_get_cache(1));   /* overlay not set */
-    TEST_ASSERT_FALSE(mock_cache_en[1]);            /* NVS untouched */
-    TEST_ASSERT_EQUAL(enable_before, mock_cache_multimaster_enable_called);
+void test_set_cache_move_never_leaves_both_ports_enabled(void)
+{
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    port_manager_set_mode(1, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+
+    cache_both_ports_held_samples = 0;
+    mock_xSemaphoreTake_hook = sample_cache_holders_on_lock;
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(1, true));   /* move 1 -> 2 */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));   /* and back 2 -> 1 */
+    mock_xSemaphoreTake_hook = NULL;
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, cache_both_ports_held_samples,
+        "the overlay must never be held by two ports at once, not even mid-move");
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
+    TEST_ASSERT_FALSE(port_manager_get_cache(1));
+}
+
+/* B5, the exact failing scenario: the source sits on port 2 and the client applies its
+ * per-port calls in fixed 1-then-2 order (the frontend does). The enable on port 1 moves
+ * the source, and the disable on port 2 that follows must be a harmless no-op — it must
+ * not take the cache back down. */
+void test_set_cache_move_back_to_port1_in_port_order(void)
+{
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    port_manager_set_mode(1, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(1, true));
+
+    /* Port 1 first: enable → takes the source over from port 2. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+    mock_cache_multimaster_reset();
+    mock_cache_multimaster_enabled = true;   /* restore live state after counter reset */
+    mock_sniffer_reset();
+
+    /* Port 2 second: disable → already released, nothing left to undo. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(1, false));
+
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the trailing disable on the other port must not strip the new source");
+    TEST_ASSERT_FALSE(port_manager_get_cache(1));
+    TEST_ASSERT_TRUE(mock_cache_en[0]);
+    TEST_ASSERT_FALSE(mock_cache_en[1]);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_disable_called,
+        "port 1 still wants the pool, so the no-op disable must not free it");
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniffer_disable_called[0],
+        "the new source's data flow must stay wired");
+}
+
+/* Re-enabling the port that already holds the overlay is NOT a no-op — it re-writes the
+ * NVS key and re-arms the sniffer, exactly as port_manager.h documents. What it must not
+ * do is CYCLE the pool: cache_multimaster_enable() wipes the pool it (re)initialises, so
+ * a redundant free/realloc would silently throw the accumulated values away. That, and
+ * only that, is what this test pins. */
+void test_set_cache_enable_on_current_holder_does_not_cycle_the_pool(void)
+{
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+    mock_cache_multimaster_reset();
+    mock_cache_multimaster_enabled = true;   /* restore live state after counter reset */
+    mock_sniffer_reset();
+    int save_bool_before = mock_setting_items_save_bool_called;
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
+    TEST_ASSERT_FALSE(port_manager_get_cache(1));
+    TEST_ASSERT_TRUE(mock_cache_en[0]);
+    TEST_ASSERT_FALSE(mock_cache_en[1]);
+    /* The pool is untouched — neither freed nor re-initialised. */
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_disable_called,
+        "re-enabling the current holder must not free the live pool");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_cache_multimaster_enable_called,
+        "re-enabling the current holder must not wipe the live pool");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniffer_disable_called[0],
+        "re-enabling the current holder must not unwire its data flow");
+    /* But the redundant work IS done, and the name must not pretend otherwise: exactly
+     * one NVS write (this port's own key, no release write for the other port) and the
+     * sniffer re-armed. */
+    TEST_ASSERT_EQUAL_MESSAGE(save_bool_before + 1, mock_setting_items_save_bool_called,
+        "the current holder's NVS key is rewritten, and only it");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniffer_enable_called[0],
+        "the sniffer is re-armed on the port that already holds the overlay");
+    TEST_ASSERT_EQUAL(SNIFF_REASON_CACHE, mock_sniffer_enable_last_reason[0]);
+}
+
+/* persist-6, the release half of a move: a move writes TWO NVS keys, and a failure on
+ * either one must reach the caller. This isolates the RELEASED port's write — the
+ * target's own write succeeds, so the only thing that can make the call non-OK is the
+ * release result being propagated. Without that propagation the client is told the move
+ * is durable when it is not: the old holder's key still reads "enabled", and if the move
+ * had gone the other way (to the higher-index port) the boot-time normalisation in
+ * port_manager_init(), which keeps the LOWEST-index port that asks, would hand the
+ * overlay straight back. */
+void test_set_cache_move_surfaces_a_failed_release_write(void)
+{
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    port_manager_set_mode(1, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(1, true));
+    TEST_ASSERT_TRUE(mock_cache_en[1]);
+
+    /* Only the released port's key fails; the target's key still writes fine. */
+    mock_setting_items_save_bool_fail_key = KEY_CACHE_EN_2;
+
+    esp_err_t ret = port_manager_set_cache(0, true);
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, ret,
+        "a failed NVS write on the RELEASED port must be surfaced, not swallowed");
+    /* The move itself still happened live, on both ports. */
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the target must still hold the overlay in memory despite the release write failing");
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_get_cache(1),
+        "the old holder must still be released in memory");
+    TEST_ASSERT_TRUE_MESSAGE(mock_cache_en[0],
+        "the target's own NVS key was written and must not be rolled back");
+    /* ...but the released port's key was NOT rewritten — which is exactly the durability
+     * gap the non-OK return is there to report. */
+    TEST_ASSERT_TRUE_MESSAGE(mock_cache_en[1],
+        "the released port's NVS key must be left stale by the failed write");
+}
+
+void test_set_cache_disable_on_non_holder_leaves_the_holder_alone(void)
+{
+    port_manager_set_mode(0, PM_MODE_PASSIVE);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(0, true));
+    mock_cache_multimaster_reset();
+    mock_cache_multimaster_enabled = true;   /* restore live state after counter reset */
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_cache(1, false));
+
+    TEST_ASSERT_TRUE(port_manager_get_cache(0));
+    TEST_ASSERT_TRUE(mock_cache_en[0]);
+    TEST_ASSERT_EQUAL(0, mock_cache_multimaster_disable_called);
+    TEST_ASSERT_TRUE(mock_cache_multimaster_enabled);
 }
 
 void test_set_cache_second_port_allowed_after_first_disabled(void)
@@ -1920,7 +2104,12 @@ int port_manager_test(void)
     RUN_TEST(test_deinit_tcp_bridge);
     RUN_TEST(test_deinit_passive);
     RUN_TEST(test_deinit_cache_overlay_last_port);
-    RUN_TEST(test_set_cache_second_port_rejected);
+    RUN_TEST(test_set_cache_enable_moves_overlay_from_the_other_port);
+    RUN_TEST(test_set_cache_move_never_leaves_both_ports_enabled);
+    RUN_TEST(test_set_cache_move_back_to_port1_in_port_order);
+    RUN_TEST(test_set_cache_enable_on_current_holder_does_not_cycle_the_pool);
+    RUN_TEST(test_set_cache_move_surfaces_a_failed_release_write);
+    RUN_TEST(test_set_cache_disable_on_non_holder_leaves_the_holder_alone);
     RUN_TEST(test_set_cache_second_port_allowed_after_first_disabled);
     RUN_TEST(test_init_normalises_dual_cache_nvs);
     RUN_TEST(test_cache_overlay_survives_transport_change);

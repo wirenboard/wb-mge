@@ -15,6 +15,7 @@ bool mock_validate_wifi_mode_called = false;
 bool mock_validate_wifi_auth_called = false;
 bool mock_validate_bridge_mode_called = false;
 bool mock_validate_port_mode_called = false;
+bool mock_validate_update_channel_called = false;
 bool mock_validate_bool_called = false;
 bool mock_validate_login_called = false;
 bool mock_validate_password_called = false;
@@ -35,6 +36,7 @@ void mock_reset_validator_flags(void)
     mock_validate_wifi_auth_called = false;
     mock_validate_bridge_mode_called = false;
     mock_validate_port_mode_called = false;
+    mock_validate_update_channel_called = false;
     mock_validate_bool_called = false;
     mock_validate_login_called = false;
     mock_validate_password_called = false;
@@ -133,6 +135,13 @@ bool validate_bridge_mode(const char *value)
 bool validate_port_mode(const char *value)
 {
     mock_validate_port_mode_called = true;
+    return true;
+}
+
+bool validate_update_channel(const char *value)
+{
+    (void)value;
+    mock_validate_update_channel_called = true;
     return true;
 }
 

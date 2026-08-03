@@ -9,6 +9,13 @@
 // the previously served port.
 #define HTTP_SERVER_DEFAULT_PORT 80
 
+// How long a single blocking read on a client socket waits before httpd_req_recv() reports a
+// timeout. Same value the ESP-IDF default carried implicitly, but stated explicitly here because
+// the OTA handler derives its stall limit from it (OTA_RECV_STALL_TIMEOUT_MS in main/ota_handler.c):
+// a receive window that only exists as an IDF default would silently move that limit when IDF
+// changes it.
+#define HTTP_RECV_WAIT_TIMEOUT_S 5
+
 // Start the web server on the port configured in NVS (KEY_WEB_PORT).
 esp_err_t http_server_init(void);
 

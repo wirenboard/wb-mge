@@ -88,6 +88,8 @@ const mock_setting_item_t expected_items[] = {
     {"cache_mb_port", "504", SETTING_ITEM_TYPE_INT},
     {"cache_mb_srv_en", "true", SETTING_ITEM_TYPE_BOOL},
     {"cache_val_tout", "60", SETTING_ITEM_TYPE_INT},
+
+    {"upd_channel", "stable", SETTING_ITEM_TYPE_STRING},
 };
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))

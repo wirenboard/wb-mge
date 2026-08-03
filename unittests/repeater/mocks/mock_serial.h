@@ -20,6 +20,12 @@ typedef struct {
     size_t send_last_len;
     // Return value the next serial_send() call(s) should yield. Default ESP_OK.
     esp_err_t send_ret;
+    // Called from INSIDE serial_send(), before it returns — i.e. in the window where the real
+    // implementation would be blocked in uart_write_bytes(). It is the only place a test can
+    // observe state that exists only while a forward is on the wire: whether the repeater lock
+    // is held (mock_xSemaphore_held_count) and whether the destination port is registered as
+    // in-flight. NULL (the default, restored by mock_serial_reset()) means no hook.
+    void (*send_hook)(serial_desc_t *desc, uint8_t *data, size_t len);
 } mock_serial_calls_t;
 
 extern mock_serial_calls_t mock_serial_calls;

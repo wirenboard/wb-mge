@@ -52,6 +52,8 @@
 #define DEFAULT_CACHE_MODBUS_SERVER_ENABLED "true"
 #define DEFAULT_CACHE_VALUE_TIMEOUT_S       "60"
 
+#define DEFAULT_UPDATE_CHANNEL              UPDATE_CHANNEL_STABLE_STR
+
 
 #ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"

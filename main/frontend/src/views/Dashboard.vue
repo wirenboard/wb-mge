@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useChannelRelease } from '@/common/channelRelease';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
-import { firmwareLatestVersion } from '@/common/links';
 import { useRouter } from 'vue-router';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -19,22 +19,35 @@ const { data: settings } = useSettings();
 const { uptime } = useUptime();
 const router = useRouter();
 
-const latestVersion = ref<string | null>(null);
-const latestVersionError = ref(false);
+// The offer comes from the shared composable, so this page and System always name the same
+// version — and the manifest is downloaded once, no matter which page is opened first.
+const { phase: updatePhase, release, resolvedChannel, check: checkUpdates } = useChannelRelease();
 
-onMounted(async () => {
-  try {
-    const res = await fetch(firmwareLatestVersion);
-    if (!res.ok) throw new Error();
-    latestVersion.value = (await res.text()).trim();
-  } catch {
-    latestVersionError.value = true;
-  }
+onMounted(() => {
+  checkUpdates();
 });
 
-const hasUpdate = computed(() =>
-  latestVersion.value && info.value?.firmware && latestVersion.value !== info.value.firmware
-);
+const hasUpdate = computed(() => updatePhase.value === 'available');
+
+const firmwareNote = computed(() => {
+  const found = release.value;
+  switch (updatePhase.value) {
+    case 'checking':
+      return t('firmware_checking');
+    case 'available':
+      return found?.ok ? t('firmware_in_channel', { channel: resolvedChannel.value, v: found.version }) : '';
+    // Naming the channel version here too would read as "1.1.0 (in stable: 1.1.0)" — the same
+    // number twice, with nothing telling the user it means there is nothing to install.
+    case 'up_to_date':
+      return t('firmware_up_to_date');
+    case 'unavailable':
+      return found && !found.ok && found.reason === 'no-signature'
+        ? t('firmware_channels_unavailable')
+        : t('firmware_check_failed');
+    default:
+      return '';
+  }
+});
 
 const getDisplayValue = (val: string | boolean | number) => {
   if (typeof val === 'boolean') {
@@ -128,7 +141,7 @@ const getDisplayValue = (val: string | boolean | number) => {
             </InfoRow>
             <InfoRow :label="t('firmware_version')">
               <span class="firmware-row">
-                <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"><span class="muted firmware-note"> ({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"><span class="muted firmware-note"> ({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
+                <span class="mono">{{ info?.firmware }}<template v-if="firmwareNote"><span class="muted firmware-note"> ({{ firmwareNote }})</span></template></span>
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
               </span>
             </InfoRow>
@@ -236,8 +249,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime_hours": "less than an hour | {n} h | {n} h | {n} h",
     "uptime_minutes": "{n} min",
     "firmware_version": "Firmware",
-    "firmware_latest": "up to date",
-    "firmware_latest_label": "latest",
+    "firmware_checking": "checking for updates…",
+    "firmware_in_channel": "in {channel}: {v}",
+    "firmware_up_to_date": "up to date",
+    "firmware_check_failed": "update check unavailable",
+    "firmware_channels_unavailable": "no update channels published for this board yet",
     "firmware_update_btn": "Update",
     "port_1": "RS-485 · Port 1",
     "port_2": "RS-485 · Port 2",
@@ -279,8 +295,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime_hours": "- | {n} ч | {n} ч | {n} ч",
     "uptime_minutes": "{n} мин",
     "firmware_version": "Прошивка",
-    "firmware_latest": "актуальная",
-    "firmware_latest_label": "последняя",
+    "firmware_checking": "проверка обновлений…",
+    "firmware_in_channel": "в канале {channel}: {v}",
+    "firmware_up_to_date": "актуальная",
+    "firmware_check_failed": "проверка обновлений недоступна",
+    "firmware_channels_unavailable": "для этой платы каналы обновлений пока не опубликованы",
     "firmware_update_btn": "Обновить",
     "port_1": "RS-485 · Порт 1",
     "port_2": "RS-485 · Порт 2",
@@ -322,8 +341,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime_hours": "- | {n} сағ | {n} сағ | {n} сағ",
     "uptime_minutes": "{n} мин",
     "firmware_version": "Бағдарлама",
-    "firmware_latest": "өзекті",
-    "firmware_latest_label": "соңғы",
+    "firmware_checking": "жаңартулар тексерілуде…",
+    "firmware_in_channel": "{channel} арнасында: {v}",
+    "firmware_up_to_date": "өзекті",
+    "firmware_check_failed": "жаңарту тексерісі қолжетімсіз",
+    "firmware_channels_unavailable": "бұл тақта үшін жаңарту арналары әзірге жарияланбаған",
     "firmware_update_btn": "Жаңарту",
     "port_1": "RS-485 · Порт 1",
     "port_2": "RS-485 · Порт 2",
@@ -365,8 +387,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime_hours": "- | {n} h | {n} h | {n} h",
     "uptime_minutes": "{n} min",
     "firmware_version": "Firmware",
-    "firmware_latest": "aggiornato",
-    "firmware_latest_label": "ultima",
+    "firmware_checking": "controllo aggiornamenti…",
+    "firmware_in_channel": "nel canale {channel}: {v}",
+    "firmware_up_to_date": "aggiornato",
+    "firmware_check_failed": "controllo aggiornamenti non disponibile",
+    "firmware_channels_unavailable": "per questa scheda i canali di aggiornamento non sono ancora pubblicati",
     "firmware_update_btn": "Aggiorna",
     "port_1": "RS-485 · Porta 1",
     "port_2": "RS-485 · Porta 2",
@@ -408,8 +433,11 @@ const getDisplayValue = (val: string | boolean | number) => {
     "uptime_hours": "- | {n} h | {n} h | {n} h",
     "uptime_minutes": "{n} min",
     "firmware_version": "Firmware",
-    "firmware_latest": "aktuell",
-    "firmware_latest_label": "neueste",
+    "firmware_checking": "Update-Prüfung läuft…",
+    "firmware_in_channel": "im Kanal {channel}: {v}",
+    "firmware_up_to_date": "aktuell",
+    "firmware_check_failed": "Update-Prüfung nicht verfügbar",
+    "firmware_channels_unavailable": "für diese Platine sind noch keine Update-Kanäle veröffentlicht",
     "firmware_update_btn": "Aktualisieren",
     "port_1": "RS-485 · Port 1",
     "port_2": "RS-485 · Port 2",

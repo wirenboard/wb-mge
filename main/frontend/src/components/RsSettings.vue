@@ -31,8 +31,10 @@ const save = () => {
 // so io_bus changes must not enable the RS-485 Port 2 Save. Track only this port's field.
 const isSaveDisabled = computed(() => isLoading.value || !isChanged([props.field]));
 
-// WB-MGE (mge_v3) shares the RS-485-2 bus with WB-MIO, so disabling TX on port 2
-// also disables WB-MIO. This warning is specific to that board/port.
+// WB-MGE (mge_v3) shares the RS-485-2 bus with the on-board WB-MIO. Disabling TX on
+// port 2 does NOT switch WB-MIO off — that is the separate I/O Bus control, which drives
+// the MIO reset line — it keeps answering any other master on the segment, but the
+// gateway can no longer forward TCP requests to it. Specific to that board/port.
 const showMioWarning = computed(() =>
   props.field === 'rs485_2' && props.signature === 'mge_v3' && !!settings.value?.tx_disabled
 );
@@ -152,7 +154,7 @@ const showMioWarning = computed(() =>
     "terminator_hint": "120 Ω resistor connected between lines A and B. \nEnable when the module is at the end of the bus; if it sits in the middle, leave it off.",
     "tx_disabled": "Disable transmission (TX)",
     "tx_disabled_warning": "Disabling TX will break bridge modes — only sniffer and cache bus will remain fully functional. Bridge connections will only forward data from RS-485 to TCP, but will not send data from TCP into the RS-485 bus.",
-    "tx_disabled_mio_warning": "WB-MGE shares the RS-485-2 bus with WB-MIO: disabling TX also disables WB-MIO."
+    "tx_disabled_mio_warning": "With TX disabled the gateway can no longer reach WB-MIO — requests from TCP are not forwarded into the bus. WB-MIO itself is not switched off and keeps answering any other master on the shared RS-485-2 bus; the I/O Bus switch is what actually turns it off."
   },
   "ru": {
     "baudrate": "Скорость",
@@ -167,7 +169,7 @@ const showMioWarning = computed(() =>
     "terminator_hint": "Резистор 120 Ω, подключённый между линиями A и B. \nВключите, если модуль стоит в конце шины; если в середине — выключите.",
     "tx_disabled": "Отключить передачу (TX)",
     "tx_disabled_warning": "Отключение TX сломает режимы моста — полностью работоспособными останутся только сниффер и кэш шины. Мосты будут только передавать данные из RS-485 в TCP, но не смогут отправлять данные из TCP в шину RS-485.",
-    "tx_disabled_mio_warning": "У WB-MGE шина RS-485-2 общая с WB-MIO: отключение TX также отключит WB-MIO."
+    "tx_disabled_mio_warning": "С отключённым TX шлюз больше не может обратиться к WB-MIO — запросы из TCP не передаются в шину. Сам WB-MIO при этом не выключается и продолжает отвечать другому мастеру на общей шине RS-485-2; чтобы действительно его выключить, используйте переключатель I/O Bus."
   },
   "kk": {
     "baudrate": "Жылдамдық",
@@ -182,7 +184,7 @@ const showMioWarning = computed(() =>
     "terminator_hint": "A және B желілерінің арасына қосылған 120 Ω резистор. \nМодуль шинаның соңында тұрса қосыңыз; ортасында болса өшіріп қойыңыз.",
     "tx_disabled": "Жіберуді өшіру (TX)",
     "tx_disabled_warning": "TX өшіру көпір режимдерін бұзады — тек sniffer және кэш шина толық жұмыс істейді. Көпірлер тек RS-485-тен TCP-ге дерек береді, бірақ TCP-ден RS-485 шинасына жібере алмайды.",
-    "tx_disabled_mio_warning": "WB-MGE-де RS-485-2 шинасы WB-MIO-мен ортақ: TX өшіру WB-MIO-ны да өшіреді."
+    "tx_disabled_mio_warning": "TX өшірулі кезде шлюз WB-MIO-ға енді қол жеткізе алмайды — TCP-ден келген сұраулар шинаға жіберілмейді. WB-MIO өзі өшпейді және ортақ RS-485-2 шинасындағы басқа мастерге жауап беруін жалғастырады; оны шынымен өшіру үшін I/O Bus ауыстырғышын қолданыңыз."
   },
   "it": {
     "baudrate": "Velocità in baud",
@@ -197,7 +199,7 @@ const showMioWarning = computed(() =>
     "terminator_hint": "Resistenza da 120 Ω collegata tra le linee A e B. \nAbilitala quando il modulo si trova all'estremità del bus; se è al centro, lasciala disattivata.",
     "tx_disabled": "Disabilita trasmissione (TX)",
     "tx_disabled_warning": "La disabilitazione di TX interromperà le modalità bridge — solo sniffer e cache bus rimarranno completamente funzionali. I bridge inoltreranno solo i dati da RS-485 a TCP, ma non invieranno dati da TCP al bus RS-485.",
-    "tx_disabled_mio_warning": "WB-MGE condivide il bus RS-485-2 con WB-MIO: disabilitando il TX si disabilita anche WB-MIO."
+    "tx_disabled_mio_warning": "Con il TX disabilitato il gateway non può più raggiungere WB-MIO — le richieste dal TCP non vengono inoltrate al bus. WB-MIO in sé non viene disattivato e continua a rispondere a qualsiasi altro master sul bus RS-485-2 condiviso; per disattivarlo davvero usa l'interruttore I/O Bus."
   },
   "de": {
     "baudrate": "Baudrate",
@@ -212,7 +214,7 @@ const showMioWarning = computed(() =>
     "terminator_hint": "120-Ω-Widerstand zwischen den Leitungen A und B. \nAktivieren Sie ihn, wenn sich das Modul am Busende befindet; sitzt es in der Mitte, lassen Sie ihn aus.",
     "tx_disabled": "Senden deaktivieren (TX)",
     "tx_disabled_warning": "Das Deaktivieren von TX unterbricht Bridge-Modi — nur Sniffer und Cache-Bus bleiben vollständig funktionsfähig. Bridges leiten nur Daten von RS-485 zu TCP weiter, senden aber keine Daten vom TCP in den RS-485-Bus.",
-    "tx_disabled_mio_warning": "WB-MGE teilt den RS-485-2-Bus mit WB-MIO: Das Deaktivieren von TX deaktiviert auch WB-MIO."
+    "tx_disabled_mio_warning": "Bei deaktiviertem TX kann das Gateway WB-MIO nicht mehr erreichen — Anfragen vom TCP werden nicht in den Bus weitergeleitet. WB-MIO selbst wird dabei nicht abgeschaltet und antwortet weiterhin jedem anderen Master am gemeinsamen RS-485-2-Bus; zum tatsächlichen Abschalten dient der Schalter I/O Bus."
   }
 }
 </i18n>

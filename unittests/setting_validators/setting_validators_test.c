@@ -2,6 +2,7 @@
 #include "console_log.h"
 
 #include "setting_validators.h"
+#include "setting_items.h"
 
 #include <string.h>
 
@@ -300,6 +301,35 @@ void test_validate_port_mode(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("TCP_BRIDGE"), "Uppercase port mode should be invalid");
 }
 
+// Test validate_update_channel function
+void test_validate_update_channel(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_update_channel function");
+    LOG_MESSAGE();
+
+    // Valid update channels
+    TEST_ASSERT_TRUE_MESSAGE(validate_update_channel("stable"), "Update channel 'stable' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_update_channel("testing"), "Update channel 'testing' should be valid");
+
+    // Invalid update channels
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel(NULL), "NULL update channel should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel(""), "Empty update channel should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel("unstable"),
+                              "Update channel 'unstable' should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel("Stable"),
+                              "Uppercase update channel should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel("stable "),
+                              "Update channel with a trailing space should be invalid");
+
+    // A value longer than the setting string buffer must not be accepted
+    char too_long[SETTING_ITEM_MAX_STR_LEN + 10];
+    memset(too_long, 'a', sizeof(too_long) - 1);
+    too_long[sizeof(too_long) - 1] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel(too_long),
+                              "Update channel longer than SETTING_ITEM_MAX_STR_LEN should be invalid");
+}
+
 // Test validate_bool function
 void test_validate_bool(void)
 {
@@ -465,6 +495,7 @@ int main(void)
     RUN_TEST(test_validate_wifi_auth);
     RUN_TEST(test_validate_bridge_mode);
     RUN_TEST(test_validate_port_mode);
+    RUN_TEST(test_validate_update_channel);
     RUN_TEST(test_validate_bool);
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);

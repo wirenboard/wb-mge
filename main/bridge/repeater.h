@@ -32,4 +32,12 @@ void repeater_get_stats(repeater_stats_t *out);
 
 #ifdef __unittest_env__
 void repeater_reset_for_test(void);
+
+// Number of forwards currently inside serial_send() writing INTO port `index` — the counter
+// repeater_deinit_port() drains before freeing that port's descriptor.
+unsigned repeater_get_inflight_for_test(unsigned index);
+
+// Stage that counter, so a single-threaded test can present repeater_deinit_port() with a
+// forward that is still in flight into the port being torn down.
+void repeater_set_inflight_for_test(unsigned index, unsigned count);
 #endif

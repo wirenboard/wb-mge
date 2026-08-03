@@ -20,6 +20,12 @@ int mock_setting_items_save_bool_called = 0;
 bool mock_setting_items_save_should_fail = false;
 bool mock_setting_items_save_bool_should_fail = false;
 
+/* When set to a key name, setting_items_save_bool() fails for THAT key only and
+ * succeeds for every other one. Needed to isolate a single write inside a call that
+ * does several — e.g. the release half of a cache-overlay move, whose result would
+ * otherwise be masked by the target port's write failing too. */
+const char *mock_setting_items_save_bool_fail_key = NULL;
+
 static int index_from_port_mode_key(const char *key)
 {
     if (strcmp(key, KEY_PORT_MODE1) == 0) {
@@ -109,7 +115,9 @@ esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *s) { (v
 esp_err_t setting_items_save_bool(const char *key, bool value)
 {
     mock_setting_items_save_bool_called++;
-    if (mock_setting_items_save_bool_should_fail) {
+    if (mock_setting_items_save_bool_should_fail ||
+        (mock_setting_items_save_bool_fail_key != NULL &&
+         strcmp(key, mock_setting_items_save_bool_fail_key) == 0)) {
         return ESP_FAIL;  /* NVS write failed: stored value left unchanged */
     }
     int ci = index_from_cache_en_key(key);
@@ -142,4 +150,5 @@ void mock_setting_items_reset(void)
     mock_setting_items_save_bool_called = 0;
     mock_setting_items_save_should_fail = false;
     mock_setting_items_save_bool_should_fail = false;
+    mock_setting_items_save_bool_fail_key = NULL;
 }

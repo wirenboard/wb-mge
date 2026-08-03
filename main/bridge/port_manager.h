@@ -179,18 +179,42 @@ pm_mode_t port_manager_get_mode(unsigned port_index);
 const char *port_manager_mode_to_str(pm_mode_t mode);
 
 /**
- * @brief Enable or disable the per-port cache overlay.
+ * @brief Make this port the cache source, or drop the cache overlay from it.
  *
  * The cache overlay is persisted (KEY_CACHE_EN_1/2) and is orthogonal to the
  * transport mode: it survives transport-mode changes. When enabled and the
  * port's serial is open, the sniffer is driven (via SNIFF_REASON_CACHE) to
  * feed the global multimaster cache.
  *
+ * The cache is single-port by design (review #51): the pool is keyed by slave_id
+ * and the Cache-TCP interface answers by unit_id, with no port dimension in
+ * either. Enabling therefore MOVES the overlay rather than being refused — any
+ * other port holding it is released first (memory, NVS, live data flow and the
+ * global pool), and the accumulated cache contents are dropped with it, since
+ * they describe the bus the cache is being moved away from. Enabling on the port
+ * that already holds it leaves the overlay where it is, but is NOT a no-op: it
+ * re-writes the NVS key and re-arms the sniffer.
+ *
+ * NOT thread-safe against itself. The move releases the old holder and enables
+ * the new one under two DIFFERENT pm_locks, one after the other, so two
+ * concurrent calls can both find no holder and both enable — leaving two ports
+ * feeding the pool. The single-port invariant therefore rests on calls being
+ * serialised, which today they are: the only caller is the REST handler, running
+ * on the single esp_http_server request task. A second caller must serialise
+ * against it (see the locking note in port_manager_set_cache()); the boot-time
+ * normalisation in port_manager_init() is what enforces the invariant on stored
+ * NVS, and it is not a runtime guard.
+ *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
- * @param enabled     True to enable the cache overlay, false to disable.
+ * @param enabled     True to make this port the cache source, false to drop the
+ *                    overlay from it.
  * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
  *         or the NVS save error if the overlay was applied live but could not be
  *         persisted — the live state is applied but not persisted (persist-6).
+ *         A failed NVS write on the RELEASED port is reported the same way: the
+ *         move is live, but the stored state still names the old port too, and
+ *         the boot-time normalisation (lowest index wins) may hand the overlay
+ *         back to it.
  */
 esp_err_t port_manager_set_cache(unsigned port_index, bool enabled);
 

@@ -2,6 +2,7 @@
 #include "json_utils.h"
 #include "auth.h"
 #include "cmd_handler.h"
+#include "http_server.h"
 
 #include <esp_log.h>
 #include <esp_ota_ops.h>
@@ -14,6 +15,28 @@
 
 #define OTA_PROGRESS_LOG_STEP       (64 * 1024)
 
+// How much complete silence from the uploading client is tolerated before the transfer is given up
+// on. A client that vanishes without closing its socket (laptop suspended, phone left the AP) sends
+// neither FIN nor RST, and TCP keep-alive is off, so nothing below this handler ever notices: the
+// receive loop would retry forever and, because the IDF web server is single-threaded, take every
+// other endpoint down with it until the device is power-cycled. 30 s is long enough to survive a
+// brief Wi-Fi roam and far longer than any gap a client fast enough to upload a ~1.2 MB image would
+// produce.
+#define OTA_RECV_STALL_TIMEOUT_MS   30000
+
+// Consecutive receive timeouts, arriving without a single accepted byte in between, that add up to
+// OTA_RECV_STALL_TIMEOUT_MS. Derived from the configured receive window instead of hardcoded, so
+// changing HTTP_RECV_WAIT_TIMEOUT_S keeps the silence budget above intact.
+#define OTA_RECV_MAX_STALL_TIMEOUTS (OTA_RECV_STALL_TIMEOUT_MS / (HTTP_RECV_WAIT_TIMEOUT_S * 1000))
+
+// The limit above is an integer division, so a receive window longer than half the silence budget
+// silently rounds it down to one, and a window longer than the budget down to zero — the very first
+// timeout would then abort an upload whose client is alive and simply slow. Two is the smallest
+// limit that still means "retried at least once before giving up".
+_Static_assert(OTA_RECV_MAX_STALL_TIMEOUTS >= 2,
+               "HTTP_RECV_WAIT_TIMEOUT_S is too large for OTA_RECV_STALL_TIMEOUT_MS: the stall limit "
+               "rounds down below two timeouts, so a single timeout would kill a live upload");
+
 
 static const char *TAG = "ota_handler";
 
@@ -22,6 +45,35 @@ typedef struct {
     int bytes_written;
     const char *error_message;
 } ota_result_t;
+
+// Guard against a second POST /update overwriting an update that is already done. The web server is
+// single-threaded, so two uploads cannot interleave; the dangerous window is the second between
+// "image written, boot partition switched" and the reboot that activates it. A request arriving in
+// that window would erase the freshly written partition and the update would be lost without
+// anybody noticing — the device would come back up on the old firmware.
+//
+// Deliberate limitation: if the reboot never happens, every later OTA is refused until the device
+// is restarted by hand. A stuck "cannot update" is fixed with the Reboot button; an update that
+// silently did not apply is fixed by nothing until someone notices.
+typedef enum {
+    OTA_STATE_IDLE = 0,         // No update running: requests are handled normally
+    OTA_STATE_IN_PROGRESS,      // Upload running. Only observable from outside if the previous
+                                // handler never returned, since requests are serialized
+    OTA_STATE_PENDING_REBOOT,   // Image written and boot partition switched, waiting for the reboot
+} ota_state_t;
+
+static ota_state_t ota_state = OTA_STATE_IDLE;
+
+
+static const char *ota_state_to_str(ota_state_t state)
+{
+    switch (state) {
+        case OTA_STATE_IDLE:            return "idle";
+        case OTA_STATE_IN_PROGRESS:     return "in_progress (previous update never finished)";
+        case OTA_STATE_PENDING_REBOOT:  return "pending_reboot (firmware written, waiting for reboot)";
+        default:                        return "unknown";
+    }
+}
 
 
 static esp_err_t ota_validate_fw_desc(wb_app_desc_t* ota_fw_desc)
@@ -122,12 +174,21 @@ static esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_ha
     *total_received = 0;
     int progress_threshold = OTA_PROGRESS_LOG_STEP;
     bool app_desc_validated = false;
+    int stall_timeouts = 0;
 
     while (remaining > 0) {
         int recv_len = httpd_req_recv(req, buf, MIN(remaining, JSON_UTILS_REQ_RECV_BUF_SIZE));
 
-        if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {  // Timeout Error: Just retry
-            ESP_LOGW(TAG, "Network timeout, trying to continue");
+        if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) {  // Timeout Error: retry until the client is declared gone
+            stall_timeouts++;
+            if (stall_timeouts >= OTA_RECV_MAX_STALL_TIMEOUTS) {
+                ESP_LOGE(TAG, "OTA upload stalled: %d consecutive network timeouts (%d ms of silence)",
+                         stall_timeouts, OTA_RECV_STALL_TIMEOUT_MS);
+                ESP_LOGE(TAG, "Total received bytes: %d, total firmware size: %d", *total_received, (int)req->content_len);
+                free(buf);
+                return ESP_FAIL;
+            }
+            ESP_LOGW(TAG, "Network timeout %d/%d, trying to continue", stall_timeouts, OTA_RECV_MAX_STALL_TIMEOUTS);
             continue;
 
         } else if (recv_len <= 0) {  // Serious Error: Abort OTA
@@ -136,6 +197,8 @@ static esp_err_t ota_receive_and_write(httpd_req_t *req, esp_ota_handle_t ota_ha
             free(buf);
             return ESP_FAIL;
         }
+
+        stall_timeouts = 0;  // Any accepted byte proves the client is still there
 
         // Validate OTA firmware (only once when first chunk received)
         if (!app_desc_validated) {
@@ -216,9 +279,12 @@ static cJSON *ota_create_success_response(int bytes_written)
 }
 
 
+// Every failure path here leaves ota_state back at OTA_STATE_IDLE, so a failed update never blocks
+// the next attempt. On success the state moves to OTA_STATE_PENDING_REBOOT and stays there.
 static esp_err_t ota_update_from_http(httpd_req_t *req, ota_result_t *result)
 {
     if ((req == NULL) || (result == NULL)) {
+        ota_state = OTA_STATE_IDLE;
         return ESP_FAIL;
     }
 
@@ -232,6 +298,7 @@ static esp_err_t ota_update_from_http(httpd_req_t *req, ota_result_t *result)
     // Validate content type
     if (ota_validate_content_type(req) != ESP_OK) {
         result->error_message = "Invalid content type";
+        ota_state = OTA_STATE_IDLE;
         return ESP_FAIL;
     }
 
@@ -241,6 +308,7 @@ static esp_err_t ota_update_from_http(httpd_req_t *req, ota_result_t *result)
     // Begin OTA update
     if (ota_begin_update(&ota_partition, &ota_handle) != ESP_OK) {
         result->error_message = "Failed to begin OTA update";
+        ota_state = OTA_STATE_IDLE;
         return ESP_FAIL;
     }
 
@@ -253,14 +321,21 @@ static esp_err_t ota_update_from_http(httpd_req_t *req, ota_result_t *result)
             result->error_message = "Network timeout during upload";
         }
         esp_ota_abort(ota_handle);
+        ota_state = OTA_STATE_IDLE;
         return ESP_FAIL;
     }
 
     // Finalize update
     if (ota_finalize_update(ota_handle, ota_partition) != ESP_OK) {
         result->error_message = "Firmware validation failed";
+        ota_state = OTA_STATE_IDLE;
         return ESP_FAIL;
     }
+
+    // The image is written and the boot partition is switched: from here on any further upload
+    // would erase what the device is about to boot. Set here rather than next to cmd_reboot_device()
+    // in the caller, because between the two lies a branch that returns without scheduling a reboot.
+    ota_state = OTA_STATE_PENDING_REBOOT;
 
     result->success = true;
     return ESP_OK;
@@ -271,10 +346,24 @@ esp_err_t ota_update_post_handler(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "OTA update POST request received");
 
-    // Check authentication
+    // Check authentication. The state guard below deliberately sits after it: an unauthenticated
+    // caller must get the authentication answer, not a report on what the device is busy with.
     if (!auth_middleware_check(req)) {
         return ESP_OK;
     }
+
+    if (ota_state != OTA_STATE_IDLE) {
+        ESP_LOGW(TAG, "OTA update refused, state: %s", ota_state_to_str(ota_state));
+        json_utils_send_error_status(req, "409 Conflict", "OTA update already in progress");
+        // ESP_FAIL, not ESP_OK: on ESP_OK the server reads and discards the rest of the request
+        // body in CONFIG_HTTPD_PURGE_BUF_LEN (32 byte) chunks, which for a firmware image is tens of
+        // thousands of recv() calls in the single server thread — the refusal would cost more than
+        // the upload it refuses. A non-OK return makes the server close the socket instead; the
+        // response above has already been sent and does reach the client.
+        return ESP_FAIL;
+    }
+
+    ota_state = OTA_STATE_IN_PROGRESS;
 
     // Perform OTA update
     ota_result_t result = {0};
@@ -289,6 +378,9 @@ esp_err_t ota_update_post_handler(httpd_req_t *req)
     // Send success response
     cJSON *response_json = ota_create_success_response(result.bytes_written);
     if (response_json == NULL) {
+        // The firmware is valid and the boot partition is already switched, so the device must
+        // reboot anyway: it comes up on the new image even though the caller only sees an error.
+        cmd_reboot_device();
         return json_utils_send_error(req, "Failed to create response");
     }
 

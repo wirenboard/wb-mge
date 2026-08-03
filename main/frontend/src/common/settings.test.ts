@@ -12,6 +12,7 @@ const makeInitialSettings = () => ({
     cache_modbus_port: 502,
     cache_modbus_server_enabled: false,
     cache_value_timeout_s: 10,
+    update_channel: 'stable',
     ethernet: { dhcpc: true, ip_static: '', mask_static: '', gw_static: '' },
     rs485_1: {
         baudrate: 9600,
@@ -310,5 +311,67 @@ describe('useSettings', () => {
         await updateSettings({ web_port: 502 } as any);
 
         expect(showAlertMock).toHaveBeenCalledWith('data_updated', { type: 'success' });
+    });
+
+    // updateSettings() re-reads /settings after the POST, and the two ways that pair can fail need
+    // different words from the caller: a refused write must roll the input back, an accepted write
+    // whose read-back failed must not — the value IS on the device. The distinction is carried by
+    // the type of the rejection, so it is asserted through the real module, not a stub of it.
+    const setupRefreshTest = (postFails: Error | null, readBackError: Error) => {
+        vi.doMock('@/common/hostname', () => ({ setHostname: vi.fn() }));
+        vi.doMock('@/common/alert', () => ({ useAlerts: () => ({ showAlert: vi.fn() }) }));
+
+        // The first GET (refresh()) has to succeed: the failure under test is the one that follows
+        // the POST, and without initial data there would be nothing to save.
+        let readBackFails = false;
+        const apiMock = vi.fn().mockImplementation((_url: string, options?: { method?: string }) => {
+            if (options?.method === 'POST') {
+                return postFails ? Promise.reject(postFails) : Promise.resolve({ success: true });
+            }
+            return readBackFails ? Promise.reject(readBackError) : Promise.resolve(makeInitialSettings());
+        });
+        vi.doMock('@/utils/api', () => ({ api: apiMock }));
+
+        const armReadBackFailure = () => {
+            readBackFails = true;
+        };
+
+        return { armReadBackFailure };
+    };
+
+    it('ST-010: a POST the device accepted whose read-back failed rejects with SettingsRefreshError', async () => {
+        const readBackError = new Error('connection_error');
+        const { armReadBackFailure } = setupRefreshTest(null, readBackError);
+
+        const { SettingsRefreshError, useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        armReadBackFailure();
+
+        const rejection = await updateSettings({ update_channel: 'testing' } as any).catch((err) => err);
+
+        expect(rejection).toBeInstanceOf(SettingsRefreshError);
+        // The original rejection is kept as the cause: without it the stack and the response object
+        // are gone, and a report about a failed read-back has nothing in it but a message string.
+        expect((rejection as Error).cause).toBe(readBackError);
+    });
+
+    it('ST-011: when the POST itself failed the caller sees the POST error, not a refresh error', async () => {
+        const postError = new Error('device refused the setting');
+        // The re-read fails too — it almost always does, for the same reason the POST did. The POST
+        // rejection is still the one that must come out: it is what makes the caller roll back.
+        const { armReadBackFailure } = setupRefreshTest(postError, new Error('connection_error'));
+
+        const { SettingsRefreshError, useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        armReadBackFailure();
+
+        const rejection = await updateSettings({ update_channel: 'testing' } as any).catch((err) => err);
+
+        expect(rejection).toBe(postError);
+        expect(rejection).not.toBeInstanceOf(SettingsRefreshError);
     });
 });

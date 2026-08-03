@@ -79,6 +79,7 @@ function makeSettings(): Settings {
     cache_modbus_port: 504,
     cache_modbus_server_enabled: true,
     cache_value_timeout_s: 60,
+    update_channel: 'stable',
     ethernet: { ip_static: '', mask_static: '', gw_static: '', dhcpc: true },
     rs485_1: { ...rs(), bridge: { ...rs().bridge, port: 502 } },
     rs485_2: { ...rs(), bridge: { ...rs().bridge, port: 503 } },
