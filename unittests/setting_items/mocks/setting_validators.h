@@ -4,6 +4,7 @@
 
 extern bool mock_validate_hostname_called;
 extern bool mock_validate_ssid_called;
+extern bool mock_validate_sta_ssid_called;
 extern bool mock_validate_port_called;
 extern bool mock_validate_timeout_called;
 extern bool mock_validate_baudrate_called;
@@ -24,6 +25,7 @@ void mock_reset_validator_flags(void);
 
 bool validate_hostname(const char *value);
 bool validate_ssid(const char *value);
+bool validate_sta_ssid(const char *value);
 bool validate_port(const char *value);
 bool validate_timeout(const char *value);
 bool validate_baudrate(const char *value);

@@ -1509,7 +1509,7 @@ components:
           type: string
           minLength: 1
           maxLength: 31
-          pattern: '^[\\x20-\\x7E]{1,31}$'
+          pattern: '^[ -~]{1,31}$'
           description: "Access point SSID, 1-31 printable ASCII characters"
         ap_pass:
           type: string
@@ -1519,10 +1519,10 @@ components:
           description: "WPA password, 8-63 printable ASCII characters"
         sta_ssid:
           type: string
-          minLength: 1
+          minLength: 0
           maxLength: 31
-          pattern: '^[\\x20-\\x7E]{1,31}$'
-          description: "Station network SSID, 1-31 printable ASCII characters"
+          pattern: '^[ -~]{0,31}$'
+          description: "Station network SSID, 0-31 printable ASCII characters. Empty means no station network is configured — this is the factory default and is accepted on write"
         sta_pass:
           type: string
           minLength: 0

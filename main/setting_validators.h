@@ -4,6 +4,7 @@
 
 bool validate_hostname(const char *value);
 bool validate_ssid(const char *value);
+bool validate_sta_ssid(const char *value);
 bool validate_port(const char *value);
 bool validate_timeout(const char *value);
 bool validate_baudrate(const char *value);

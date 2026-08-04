@@ -81,6 +81,25 @@ bool validate_ssid(const char *value)
     return true;
 }
 
+// Station SSID validation. The empty string is accepted here and rejected by
+// validate_ssid() because the two keys mean different things: an access point always
+// transmits a name, while a station has a legitimate "no network configured" state —
+// and that state is exactly the factory default (DEFAULT_STA_SSID is ""). With the
+// stricter validator the device refused the value it had stored itself, so a
+// configuration exported by GET /settings could not be imported back by POST /settings
+// on any device that had never joined a Wi-Fi network. Non-empty values keep the
+// AP rules, so the check is delegated instead of copied.
+bool validate_sta_ssid(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+    if (value[0] == '\0') {
+        return true;
+    }
+    return validate_ssid(value);
+}
+
 bool validate_port(const char *value)
 {
     if (!value) {

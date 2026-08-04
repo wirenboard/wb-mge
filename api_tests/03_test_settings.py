@@ -390,6 +390,55 @@ def test_update_channel_round_trip(api):
         print("✓ Original settings restored")
 
 
+def test_settings_document_round_trip(api):
+    """Whole-document export/import round-trip — the UI's Download settings -> Upload settings.
+
+    "Download settings" stores the GET /settings document verbatim and "Upload
+    settings" POSTs that same document back, so a document the device produced
+    itself must always be accepted. On a device that had never joined a Wi-Fi
+    network this used to fail: the exported wifi.sta_ssid was the factory default
+    empty string, which the station SSID validator rejected. Validation is
+    all-or-nothing, so the whole import was refused and hostname, ports, cache
+    settings and update_channel were lost together with it.
+    """
+    original_response = api.get_settings()
+    assert original_response.status_code == 200
+    original = original_response.json()
+
+    # GET /settings drops the whole wifi group once wifi_perm_disable is set, and that
+    # state survives a failed teardown in 30_test_wifi_perm_disable.py — there is no
+    # station SSID to exercise then, so skip instead of dying on a missing key.
+    if "wifi" not in original:
+        pytest.skip("wifi group absent (wifi_perm_disable is set) — no station SSID to round-trip")
+
+    try:
+        # Reproduce the reported device state: no station network configured
+        response = api.update_settings({"wifi": {"sta_ssid": ""}})
+        assert response.status_code == 200
+        assert response.json().get("success") is True, \
+            f"Empty sta_ssid (no station network configured) must be accepted: {response.json()}"
+
+        exported_response = api.get_settings()
+        assert exported_response.status_code == 200
+        exported = exported_response.json()
+        assert exported["wifi"]["sta_ssid"] == "", \
+            f"sta_ssid was not cleared: {exported['wifi']['sta_ssid']!r}"
+
+        response = api.update_settings(exported)
+        assert response.status_code == 200
+        assert response.json().get("success") is True, \
+            f"The device must accept the document it exported itself: {response.json()}"
+
+        check = api.get_settings()
+        assert check.status_code == 200
+        assert check.json() == exported, \
+            "Re-importing the exported document changed the settings"
+        print("✓ Exported settings document imported back unchanged")
+    finally:
+        api.update_settings(original)
+        print("✓ Original settings restored")
+
+
 @pytest.mark.timeout(180)
 def test_per_field_validation(api):
     """Validate each field independently so that each validator is exercised.

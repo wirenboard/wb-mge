@@ -325,7 +325,7 @@ void test_wifi_validators(void)
 
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_STA_SSID, "test-sta"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_ssid_called, "validate_ssid should be called for STA SSID");
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_sta_ssid_called, "validate_sta_ssid should be called for STA SSID");
 
     // Test WiFi password validators
     mock_reset_validator_flags();
