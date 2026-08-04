@@ -380,12 +380,12 @@ esp_err_t bridge_port_deinit(unsigned index)
      * reached only from port_manager.c, and every path there — the tx_disabled, send_raw
      * and set_cache handlers, and port_init_mode() itself — runs under pm_lock(index), the
      * same lock every teardown path holds, so it is serialised against this function rather
-     * than racing it. (The exception is port_manager_init()'s boot loop, which calls
-     * port_init_mode() unlocked; it predates this change and is bounded to the single pass
-     * between http_server_init() and the end of boot.) tcp_server_active_connections() is
-     * the one with no lock anywhere: info_handlers.c calls it straight from GET /info on the
-     * httpd task. That makes it both the only unsynchronised reader and the only one that
-     * dereferences. Closing the window for good means routing the connection count through
+     * than racing it. There is no exception any more: port_manager_init()'s boot loop used to
+     * call port_init_mode() unlocked, and now takes pm_lock(i) per iteration like every other
+     * caller. tcp_server_active_connections() is the one with no lock anywhere:
+     * info_handlers.c calls it straight from GET /info on the httpd task — which is what makes
+     * it both the only unsynchronised reader and the only one that dereferences. Closing the
+     * window for good means routing the connection count through
      * port_manager, which already holds pm_lock, instead of letting info_handlers.c call
      * into bridge.c directly. Deliberately not done here.
      *
@@ -393,8 +393,8 @@ esp_err_t bridge_port_deinit(unsigned index)
      * the whole teardown, so a concurrent bridge_port_init(index) was rejected by the
      * "already initialized" check at the top of that function. Init/deinit mutual exclusion
      * now rests entirely on pm_lock(index) — held across port_init_mode()/port_deinit_mode()
-     * by port_set_mode_impl(), port_manager_apply_settings() and port_manager_release(),
-     * with the boot loop above as the only unlocked call site, and it only ever inits. Both
+     * by port_set_mode_impl(), port_manager_apply_settings(), port_manager_release() and the
+     * boot loop in port_manager_init(), i.e. by every call site with none left over. Both
      * functions are public in bridge.h, so a caller that ever bypasses port_manager must
      * take that lock itself.
      *

@@ -1354,9 +1354,11 @@ void test_set_cache_second_port_allowed_after_first_disabled(void)
 
 void test_init_normalises_dual_cache_nvs(void)
 {
-    /* Legacy NVS may carry the overlay on BOTH ports. port_manager_init() must
-     * normalise to a single port (lowest index wins) and rewrite the loser's NVS
-     * to false, so the single-port invariant holds from boot. */
+    /* Legacy NVS may carry the overlay on BOTH ports. A boot must normalise to a single port
+     * (lowest index wins) and rewrite the loser's NVS to false, so the single-port invariant
+     * holds from boot. Reached here through port_manager_init(), which calls
+     * port_manager_init_subsystems() where the normalisation actually lives — that WHERE is
+     * pinned separately by test_cache_overlay_is_normalised_before_httpd_starts(). */
     mock_cache_en[0] = true;
     mock_cache_en[1] = true;
 
@@ -2526,6 +2528,397 @@ void test_locked_paths_run_on_pre_created_locks(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * 12. The boot loop runs under pm_lock (C10)
+ *
+ * port_manager_init() sits behind main.c's wait-for-network loop, which http_server_init()
+ * runs ABOVE: httpd answers POST /ports/N/mode and POST /settings for the whole of it. The
+ * boot loop used to be the one caller of port_init_mode() that took no pm_lock.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The mock keeps only the LAST handle taken, and this needs every one of them plus the
+ * nesting depth each was taken at, so the hook logs them as they happen. */
+#define TAKE_LOG_MAX 16
+typedef struct {
+    SemaphoreHandle_t handle;
+    int               held_before;   /* locks already held when this take ran */
+} take_record_t;
+static take_record_t s_take_log[TAKE_LOG_MAX];
+static int s_take_log_len;
+
+/* Runs inside xSemaphoreTake(), after it has recorded the handle and BEFORE it bumps
+ * mock_xSemaphore_held_count — so held_before is the depth this take nests at. */
+static void log_lock_take(void)
+{
+    if (s_take_log_len < TAKE_LOG_MAX) {
+        s_take_log[s_take_log_len].handle      = mock_xSemaphoreTake_Handle;
+        s_take_log[s_take_log_len].held_before = mock_xSemaphore_held_count;
+    }
+    s_take_log_len++;
+}
+
+/* Structural half: the boot loop must take each port's own lock, and HOLD it across
+ * port_init_mode().
+ *
+ * The depth assertion on the port locks is what pins "one at a time". pm_lock ->
+ * cache_decision_mutex is the documented order and port_init_mode() -> cache_sync_global()
+ * uses it, so a nested take is expected — but never a PORT lock nested inside anything, which
+ * would be either two pm_locks held at once (the nesting port_manager_set_cache() documents as
+ * deliberately avoided) or a pm_lock taken under the cache-decision mutex, i.e. that order
+ * backwards.
+ *
+ * The cache-decision assertion is what pins the SPAN, and it is the one that discriminates.
+ * "Each port's lock was taken at depth 0, and nothing stayed held" is satisfied just as well by
+ * a loop that unlocks immediately after the two skip checks and runs port_init_mode() outside
+ * the lock — which is exactly the defect this change closes (the duplicated lazy serial_lock in
+ * transparent_tcp.c, and the second bridge_port_init_serial_only() for PM_MODE_PASSIVE, since
+ * that one has no double-init guard). cache_sync_global() takes the cache-decision mutex
+ * unconditionally at its top and is reached from inside port_init_mode(), so its take is a
+ * probe placed in the middle of the critical section: held_before == 1 means the port lock was
+ * still held there, held_before == 0 means it had already been given back. */
+void test_init_brings_each_port_up_under_its_own_lock(void)
+{
+    /* Captured before any counter reset: the mock hands back the static buffer it was given,
+     * in creation order — one per port, then the cache-decision mutex. */
+    SemaphoreHandle_t port_lock[BRIDGES_COUNT];
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        port_lock[i] = (SemaphoreHandle_t)mock_xSemaphoreCreateMutexStatic_buffers[i];
+        TEST_ASSERT_NOT_NULL_MESSAGE(port_lock[i],
+            "setUp() must have created the per-port locks, or this test compares against NULL");
+    }
+    SemaphoreHandle_t cache_lock =
+        (SemaphoreHandle_t)mock_xSemaphoreCreateMutexStatic_buffers[BRIDGES_COUNT];
+    TEST_ASSERT_NOT_NULL_MESSAGE(cache_lock,
+        "setUp() must have created the cache-decision mutex — it is created last, right after "
+        "the per-port locks, and it is what the span assertion below probes with");
+
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_setting_items_set_port_mode(1, PORT_MODE_REPEATER_STR);
+
+    s_take_log_len = 0;
+    mock_xSemaphoreTake_hook = log_lock_take;
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+    mock_xSemaphoreTake_hook = NULL;
+
+    /* Both ports really came up, or "no unlocked init" would hold trivially. */
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "port 1 must have been brought up, or the lock assertions below cover nothing");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_REPEATER, port_manager_get_mode(1),
+        "port 2 must have been brought up, or the lock assertions below cover nothing");
+
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        bool taken = false;
+        for (int n = 0; n < s_take_log_len && n < TAKE_LOG_MAX; n++) {
+            if (s_take_log[n].handle != port_lock[i]) {
+                continue;
+            }
+            taken = true;
+            TEST_ASSERT_EQUAL_MESSAGE(0, s_take_log[n].held_before,
+                "a port lock must be taken with nothing else held: the two pm_locks are never "
+                "nested, and pm_lock under the cache-decision mutex is the documented order "
+                "backwards");
+        }
+        TEST_ASSERT_TRUE_MESSAGE(taken,
+            "the boot loop must bring each port up under that port's own pm_lock — httpd is "
+            "already answering POST /ports/N/mode by the time this runs");
+    }
+
+    /* One cache-decision take per port brought up, each from inside port_init_mode(), each
+     * with that port's pm_lock still held. Both halves are asserted: the count, so a loop that
+     * stopped calling port_init_mode() altogether cannot pass by taking the mutex zero times,
+     * and the depth, so a loop that calls it outside the lock cannot pass either. */
+    int cache_takes = 0;
+    for (int n = 0; n < s_take_log_len && n < TAKE_LOG_MAX; n++) {
+        if (s_take_log[n].handle != cache_lock) {
+            continue;
+        }
+        cache_takes++;
+        TEST_ASSERT_EQUAL_MESSAGE(1, s_take_log[n].held_before,
+            "pm_lock must be held ACROSS port_init_mode(), not just around the skip checks: "
+            "cache_sync_global() is called from inside it, so its take must nest one deep. At "
+            "depth 0 the port comes up unlocked — two concurrent entries create two lazy "
+            "serial_locks in transparent_tcp.c, and PM_MODE_PASSIVE gets a second "
+            "bridge_port_init_serial_only() with no double-init guard to stop it");
+    }
+    TEST_ASSERT_EQUAL_MESSAGE((int)BRIDGES_COUNT, cache_takes,
+        "port_init_mode() must have run once per port, inside the lock — no take of the "
+        "cache-decision mutex means no port was actually brought up in the loop");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphore_held_count,
+        "every lock the boot loop took must be released again — a pm_lock left held deadlocks "
+        "the first REST request that touches that port");
+}
+
+/* Behavioural half, and the one that discriminates: a port a request already brought up
+ * inside the window must not be initialised a second time. bridge_port_init() and
+ * repeater_init_port() refuse a doubled bring-up on their own, but PASSIVE goes through
+ * bridge_port_init_serial_only(), which does not — a second call means a second
+ * serial_init()/uart_driver_install() for one port.
+ *
+ * The second half is what keeps the skip honest: the port that is NOT up must still be
+ * brought up in the same pass. */
+void test_init_does_not_reinit_a_port_a_request_already_brought_up(void)
+{
+    /* POST /ports/1/mode landed while the boot task was still waiting for the network. It
+     * persists the mode, which is exactly what makes the boot loop read it back and re-init. */
+    mock_setting_items_set_port_mode(1, PORT_MODE_PASSIVE_STR);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_PASSIVE));
+    TEST_ASSERT_EQUAL(PM_MODE_PASSIVE, port_manager_get_mode(0));
+    TEST_ASSERT_EQUAL_STRING(PORT_MODE_PASSIVE_STR, mock_setting_items_get_port_mode(0));
+
+    mock_bridge_reset();
+    mock_sniffer_reset();
+    mock_serial_reset();
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_serial_only_called,
+        "a port that is already running must not be opened a second time: bridge_port_init_"
+        "serial_only() has no double-init guard, so this is two uart_driver_install() calls "
+        "on one port");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniffer_attach_called[0],
+        "and nothing else of the bring-up may be repeated on it either");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "the running port is left running, not torn down");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_bridge_calls[1].bridge_port_init_serial_only_called,
+        "the port that is NOT up must still be brought up in the same pass — the skip is per "
+        "port, not a bail-out");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(1),
+        "and must end up in its stored mode");
+}
+
+/* The other side of that skip: pm_ctx[].mode is PM_MODE_DISABLED both for "never tried" and
+ * for "tried and failed" — port_init_mode() sets the mode only on success — so a port whose
+ * init failed inside the window looks exactly like an untouched one and must be retried. */
+void test_init_retries_a_port_whose_earlier_init_failed(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_bridge_port_init_serial_only_should_fail = true;
+    TEST_ASSERT_NOT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_PASSIVE));
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "a failed init must leave the port DISABLED, or this test is not set up as intended");
+
+    mock_bridge_port_init_serial_only_should_fail = false;
+    mock_bridge_reset();
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_bridge_calls[0].bridge_port_init_serial_only_called,
+        "a port that only FAILED to come up must still be tried by the boot loop");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "and must come up this time");
+}
+
+/* The factory clock_out test owns the TX/DE pins while the flag is set, so the boot loop must
+ * not bring the ports up under it. Skipping is only safe because unfreezing has a path that
+ * brings them up: wb_test.c clears the flag and then calls port_manager_apply_settings() for
+ * both ports, on the exit path and on the aborted-entry path alike. The second half of this
+ * test is that path — without it the skip would leave the ports down for good. */
+void test_init_skips_ports_frozen_by_the_factory_test(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_setting_items_set_port_mode(1, PORT_MODE_PASSIVE_STR);
+    port_manager_set_ports_frozen(true);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[i].bridge_port_init_serial_only_called,
+            "the boot loop must not hand the TX/DE pins back to the UART while the factory "
+            "test is driving them");
+        TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(i),
+            "and must leave the ports as the test put them");
+    }
+
+    /* wb_test.c's exit path. */
+    port_manager_set_ports_frozen(false);
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(0));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(1));
+
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(0),
+        "the test's exit path is what brings a skipped port up — skipping would otherwise "
+        "leave it down until a reboot");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_PASSIVE, port_manager_get_mode(1),
+        "both ports, since the test disables both");
+}
+
+/* The freeze must be read INSIDE the lock, for the same reason as in apply_settings():
+ * read outside it, the boot task could see false, be preempted, and resume after the test
+ * has frozen the ports and started the LEDC. */
+void test_freeze_landing_during_lock_wait_stops_the_boot_loop(void)
+{
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_setting_items_set_port_mode(1, PORT_MODE_PASSIVE_STR);
+
+    /* One-shot (it clears itself), so it lands on the first lock the loop waits for. Nothing
+     * above the loop in port_manager_init() takes a mutex: the subsystem stage (which is where
+     * the cache-overlay normalisation lives, and it takes no lock) and the cache-server stage
+     * are mocked or lock-free here. */
+    mock_xSemaphoreTake_hook = freeze_ports_while_waiting_for_lock;
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+    mock_xSemaphoreTake_hook = NULL;
+
+    TEST_ASSERT_TRUE(port_manager_ports_frozen());
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_bridge_calls[0].bridge_port_init_serial_only_called,
+        "a freeze that lands while the boot loop waits for pm_lock must still stop it");
+    TEST_ASSERT_EQUAL_MESSAGE(PM_MODE_DISABLED, port_manager_get_mode(0),
+        "the port must stay as the factory test left it");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 13. The cache overlay is loaded before httpd starts (C10 follow-up)
+ *
+ * The "already up" skip in the boot loop above is only safe if a request answered inside the
+ * boot window brought the port up with the STORED overlay in hand. That means loading it in
+ * port_manager_init_subsystems(), above http_server_init(), not above the port loop.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The cache overlay is normalised by port_manager_init_subsystems(), which main.c runs BEFORE
+ * http_server_init() — not above the port loop in port_manager_init(), which sits behind the
+ * wait-for-network loop and therefore runs after httpd has been answering for a while.
+ *
+ * This test pins the location. test_init_normalises_dual_cache_nvs() above pins the same
+ * single-port invariant through port_manager_init(), but that one passes with the loop in
+ * either place, because port_manager_init() calls port_manager_init_subsystems() itself. */
+void test_cache_overlay_is_normalised_before_httpd_starts(void)
+{
+    mock_cache_en[0] = true;
+    mock_cache_en[1] = true;
+
+    /* main.c's call, and nothing else — no port_manager_init(). */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the stored overlay must be in memory before http_server_init() registers a handler: "
+        "a POST /ports/N/mode answered while it is still false brings the port up uncached");
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_get_cache(1),
+        "and the single-port invariant (review #51) must be applied in the same pass");
+    TEST_ASSERT_FALSE_MESSAGE(mock_cache_en[1],
+        "including the corrective NVS write — setting_items is up by then, main.c "
+        "ESP_ERROR_CHECKs nvs_init() and setting_items_init() above this call");
+}
+
+/* The placement of that block inside port_manager_init_subsystems() has two halves, and this
+ * is the half that carries the risk: it sits BELOW the s_subsystems_ready guard, so it runs
+ * exactly once per boot. Above the guard it would run on every entry — and port_manager_init()
+ * is a second entry, made from behind main.c's wait-for-network loop, i.e. with httpd answering
+ * for the whole of that window. A second pass re-reads the cache_en_N keys and re-decides the
+ * single-port owner behind a live client's back, and rewrites the loser's key while holding no
+ * pm_lock, racing the POST /ports/N/cache that is the other writer of both.
+ *
+ * The state set up below is the one persist-6 leaves behind: POST /ports/2/cache moved the
+ * overlay to port 2 in memory and wrote cache_en_2, but the release write of cache_en_1 failed,
+ * so NVS carries BOTH keys. (test_set_cache_move_surfaces_a_failed_release_write drives that
+ * path for real; here the end state is set up directly, because what is under test is only that
+ * the second call does not look at NVS again.) Re-normalising it hands the overlay back to
+ * port 1 — while SNIFF_REASON_CACHE stays on port 2, so /info would name port 1 as the cache
+ * source while port 2 is the one feeding the pool: the single-port invariant (review #51)
+ * inverted at runtime.
+ *
+ * Mirror image of test_init_subsystems_creates_the_locks_above_the_one_shot_guard() in section
+ * 11, which pins the opposite direction for the port_manager_locks_init() call above the guard. */
+void test_init_subsystems_normalises_the_overlay_below_the_one_shot_guard(void)
+{
+    /* NVS as stored at boot: port 2 is the cache source. */
+    mock_cache_en[0] = false;
+    mock_cache_en[1] = true;
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());   /* main.c, before httpd */
+    TEST_ASSERT_FALSE(port_manager_get_cache(0));
+    TEST_ASSERT_TRUE(port_manager_get_cache(1));
+
+    /* NVS changes under the module afterwards — every POST /ports/N/cache writes these keys —
+     * and this particular stale cache_en_1 is what one of them left behind when its release
+     * write failed. Set here by hand rather than driven through port_manager_set_cache(), the
+     * same shortcut the lock test above takes when it clears the handles: what is under test is
+     * only what the SECOND call reads. */
+    mock_cache_en[0] = true;
+    int save_bool_before = mock_setting_items_save_bool_called;
+
+    /* port_manager_init()'s own call to this function, from behind the wait-for-network loop. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_get_cache(0),
+        "the normalisation must sit BELOW the s_subsystems_ready guard: a second pass re-reads "
+        "the cache_en_N keys and re-decides the cache owner while a client holds the other port");
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(1),
+        "the port the client moved the overlay to must keep it — SNIFF_REASON_CACHE is armed "
+        "there, so a re-decision leaves /info naming one port while the other feeds the pool");
+    TEST_ASSERT_TRUE_MESSAGE(mock_cache_en[1],
+        "and the second pass must not rewrite NVS either — it would do so without pm_lock, "
+        "racing the POST /ports/N/cache that is the only other writer of these keys");
+    TEST_ASSERT_EQUAL_MESSAGE(save_bool_before, mock_setting_items_save_bool_called,
+        "no corrective write at all on the second entry: the one-shot guard is what keeps the "
+        "normalisation — and its unlocked NVS writes — to the single pass that runs before httpd");
+}
+
+/* The other half of the same placement, and the cheaper one: the block sits ABOVE the subsystem
+ * inits, so a boot on which sniffer_init() or cache_multimaster_init() runs out of memory still
+ * loads and normalises the overlay. Below the `return first_err` that ends the function it would
+ * be skipped entirely on such a boot — and the one-shot guard means nothing loads it later, so
+ * pm_ctx[].cache_overlay would stay false (BSS) for the rest of the boot while cache_en_1 reads
+ * true: /info would report cache_enabled false against GET /settings' cache_en_1 true, and the
+ * dual-key NVS state would never be normalised. */
+void test_init_subsystems_normalises_the_overlay_above_the_subsystem_inits(void)
+{
+    /* Legacy dual-key NVS, so both halves of the block are visible: the load and the fix-up. */
+    mock_cache_en[0] = true;
+    mock_cache_en[1] = true;
+
+    mock_sniffer_init_should_fail = true;
+    esp_err_t ret = port_manager_init_subsystems();
+    mock_sniffer_init_should_fail = false;
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ESP_OK, ret,
+        "the subsystem failure is still what the caller is told about");
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the overlay must be loaded even when a subsystem below it failed — the flag is what "
+        "/info reports as cache_enabled, and the one-shot guard means nothing loads it later");
+    TEST_ASSERT_FALSE_MESSAGE(port_manager_get_cache(1),
+        "and the single-port invariant must be applied in that same pass");
+    TEST_ASSERT_FALSE_MESSAGE(mock_cache_en[1],
+        "including the corrective NVS write, or GET /settings keeps reporting cache_en_2 true "
+        "against an /info that reports port 2 uncached");
+}
+
+/* End-to-end version of the same thing, and the regression this closes: with the overlay
+ * loaded above the port loop instead, a port a request brought up inside the boot window
+ * came up with SNIFF_REASON_CACHE unarmed — port_init_mode() read cache_overlay while it was
+ * still false (BSS) — and the boot loop's "already up" skip then left it that way for good.
+ * cache_sync_global() and sniffer_enable(.., SNIFF_REASON_CACHE) have exactly two call sites
+ * between them (port_init_mode() and cache_overlay_apply_locked()), so nothing re-armed it
+ * short of a fresh POST /ports/N/cache.
+ *
+ * Both ports are brought up in the window on purpose: that is the case where the boot loop
+ * calls port_init_mode() for neither port, so a sync that only happens there never runs at
+ * all and the 32 KB pool is never even allocated. */
+void test_cache_is_armed_for_a_port_brought_up_in_the_boot_window(void)
+{
+    mock_cache_en[0] = true;                       /* NVS: port 1 is the cache source */
+    mock_setting_items_set_port_mode(0, PORT_MODE_PASSIVE_STR);
+    mock_setting_items_set_port_mode(1, PORT_MODE_PASSIVE_STR);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());   /* main.c, before httpd */
+
+    /* POST /ports/1/mode and POST /ports/2/mode land inside the window: main.c starts httpd
+     * above the wait-for-network loop that port_manager_init() sits behind. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_PASSIVE));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(1, PM_MODE_PASSIVE));
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init());
+
+    TEST_ASSERT_TRUE_MESSAGE(port_manager_get_cache(0),
+        "the overlay flag is what /info reports as cache_enabled");
+    TEST_ASSERT_TRUE_MESSAGE((mock_sniffer_reasons[0] & SNIFF_REASON_CACHE) != 0,
+        "and SNIFF_REASON_CACHE must actually be armed on that port — without it /info says "
+        "cache_enabled true while not one packet reaches the cache, and nothing re-arms it");
+    TEST_ASSERT_TRUE_MESSAGE(mock_cache_multimaster_enabled,
+        "and the pool must exist, or /cache/status reports it disabled with the flag set");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniffer_reasons[1] & SNIFF_REASON_CACHE,
+        "the other port must NOT be armed — the cache is single-port (review #51)");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Unity runner
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -2671,6 +3064,19 @@ int port_manager_test(void)
     RUN_TEST(test_init_subsystems_creates_the_locks_above_the_one_shot_guard);
     RUN_TEST(test_only_locks_init_creates_a_mutex);
     RUN_TEST(test_locked_paths_run_on_pre_created_locks);
+
+    /* 12 – the boot loop runs under pm_lock and skips ports that are already up (C10) */
+    RUN_TEST(test_init_brings_each_port_up_under_its_own_lock);
+    RUN_TEST(test_init_does_not_reinit_a_port_a_request_already_brought_up);
+    RUN_TEST(test_init_retries_a_port_whose_earlier_init_failed);
+    RUN_TEST(test_init_skips_ports_frozen_by_the_factory_test);
+    RUN_TEST(test_freeze_landing_during_lock_wait_stops_the_boot_loop);
+
+    /* 13 – the cache overlay is loaded before httpd starts, so the skip above is safe */
+    RUN_TEST(test_cache_overlay_is_normalised_before_httpd_starts);
+    RUN_TEST(test_init_subsystems_normalises_the_overlay_below_the_one_shot_guard);
+    RUN_TEST(test_init_subsystems_normalises_the_overlay_above_the_subsystem_inits);
+    RUN_TEST(test_cache_is_armed_for_a_port_brought_up_in_the_boot_window);
 
     return UNITY_END();
 }

@@ -43,11 +43,14 @@ typedef struct {
                                         // used to detect serial parameter changes for
                                         // PASSIVE mode.
     SemaphoreHandle_t init_mutex;       // Serialises port_init_mode/port_deinit_mode against
-                                        // races between the HTTP set_mode handler and the
-                                        // async settings_update_task (both can trigger a
-                                        // port reinit; without serialisation they collide on
+                                        // races between the HTTP set_mode handler, the async
+                                        // settings_update_task and the boot loop in
+                                        // port_manager_init() (all three can trigger a port
+                                        // reinit; without serialisation they collide on
                                         // uart_driver_install and the second one gets
                                         // ESP_FAIL with "UART driver already installed").
+                                        // EVERY call site of port_init_mode()/port_deinit_mode()
+                                        // holds it — there is no unlocked one left.
 } pm_ctx_t;
 
 static pm_ctx_t pm_ctx[BRIDGES_COUNT] = {0};
@@ -525,6 +528,55 @@ esp_err_t port_manager_init_subsystems(void)
     // from the HTTP handlers checks its own handles (see sniffer.c and cache_multimaster.c).
     s_subsystems_ready = true;
 
+    // Load and normalise the per-port cache overlay from NVS. It lives HERE, above everything
+    // else, and the placement is the whole point: main.c calls this function BEFORE
+    // http_server_init(), so pm_ctx[].cache_overlay already holds the stored intent by the time
+    // the first POST /ports/N/mode or POST /settings can be answered.
+    //
+    // It used to sit just above the port loop in port_manager_init(), behind main.c's
+    // wait-for-network loop — i.e. AFTER httpd had been answering for the whole of that window.
+    // A request that brought a port up inside it ran port_init_mode() while every cache_overlay
+    // was still false (BSS), so that call armed neither sniffer_enable(i, SNIFF_REASON_CACHE)
+    // nor a cache_sync_global() that wanted the pool. Nothing re-armed it afterwards: the boot
+    // loop skips a port that is already running, and those two calls have exactly two call sites
+    // between them — port_init_mode() and cache_overlay_apply_locked() — so the port fed nothing
+    // into the cache until the next POST /ports/N/cache, while /info kept reporting
+    // cache_enabled true. How that showed up depended on the other port: with one port up in
+    // the window the boot loop still brought the other one up, so the sync ran and /cache/status
+    // reported the pool enabled while no port was armed to fill it; with both up it never ran
+    // at all and the 32 KB pool was not even allocated.
+    //
+    // What the normalisation itself is for: the single-port invariant (review #51). NVS can
+    // carry both cache_en_1 and cache_en_2 set — legacy firmware wrote it, and a move whose
+    // release failed to persist leaves it — so keep only the lowest-index port that asks for it
+    // and clear the rest in memory AND in NVS. That way the invariant holds from boot whatever
+    // is stored, not only through the runtime move in port_manager_set_cache().
+    //
+    // Deliberately NOT under pm_lock, because after the move there is nothing to serialise
+    // against: this is the only writer of pm_ctx[].cache_overlay and of the cache_en_N keys
+    // outside a pm_lock, and it now runs before http_server_init() has registered a URI handler
+    // and before any task that can reach port_manager exists (settings_update_task is created
+    // from POST /settings, config_button_task from config_button_init(), both later in main.c).
+    // The one-shot guard above is what keeps it to that single pass: port_manager_init()'s own
+    // call to this function does run with httpd up, and returns before reaching this line.
+    //
+    // NVS is ready by then — main.c ESP_ERROR_CHECKs nvs_init() and setting_items_init() above
+    // its call — which both the read and the corrective write below need.
+    bool cache_claimed = false;
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        bool want = setting_items_read_bool(cache_en_nvs_key(i));
+        if (want && !cache_claimed) {
+            cache_claimed = true;
+            pm_ctx[i].cache_overlay = true;
+        } else {
+            if (want) {
+                ESP_LOGW(TAG, "Port[%u]: clearing stale cache overlay — cache is single-port (review #51)", i + 1);
+                (void)setting_items_save_bool(cache_en_nvs_key(i), false);
+            }
+            pm_ctx[i].cache_overlay = false;
+        }
+    }
+
     // Initialise shared RS-485 infrastructure (previously done inside bridge_init()).
     rs485_busy_monitor_init();
     rs485_stats_init();
@@ -658,29 +710,71 @@ esp_err_t port_manager_init(void)
         ESP_LOGI(TAG, "Cache Modbus TCP server is disabled by settings");
     }
 
-    // Load and normalise the per-port cache overlay before bringing ports up.
-    // Enforce the single-port invariant (review #51): NVS can carry both cache_en_1 and
-    // cache_en_2 set — legacy firmware wrote it, and a move whose release failed to
-    // persist leaves it. Keep only the lowest-index port that asks for it and clear the
-    // rest (memory + NVS), so the invariant holds from boot regardless of stored state,
-    // not only through the runtime move in port_manager_set_cache().
-    bool cache_claimed = false;
-    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
-        bool want = setting_items_read_bool(cache_en_nvs_key(i));
-        if (want && !cache_claimed) {
-            cache_claimed = true;
-            pm_ctx[i].cache_overlay = true;
-        } else {
-            if (want) {
-                ESP_LOGW(TAG, "Port[%u]: clearing stale cache overlay — cache is single-port (review #51)", i + 1);
-                (void)setting_items_save_bool(cache_en_nvs_key(i), false);
-            }
-            pm_ctx[i].cache_overlay = false;
-        }
-    }
+    // The per-port cache overlay is NOT loaded here. It is normalised at the top of
+    // port_manager_init_subsystems(), which main.c runs before http_server_init() — see there
+    // for why that has to happen before the first request rather than here, above the loop.
 
     // Bring up each port in the mode stored in NVS.
+    //
+    // Under pm_lock(i), like every other caller of port_init_mode(). This loop used to be the
+    // one exception, and the window is real rather than theoretical: http_server_init() runs
+    // in main.c above the wait-for-network loop this function sits behind, so httpd is already
+    // answering POST /ports/N/mode and POST /settings for the whole of it — a client with a
+    // static address or a cached lease needs no DHCP round trip to get in. What an unlocked
+    // pass cost, worst first: transparent_tcp.c creates its per-port serial_lock lazily and
+    // has no eager creation point, so two concurrent entries make TWO mutexes and the TCP
+    // receiver and the deinit path then take different ones — exactly the serial_send()-into-
+    // a-freed-descriptor race that lock exists to prevent; a doubled bring-up, which
+    // bridge_port_init() and repeater_init_port() both refuse but
+    // bridge_port_init_serial_only() (PM_MODE_PASSIVE) does not, leaving the second
+    // serial_init()/uart_driver_install() to fail and overwrite pm_ctx[i].serial_desc; and the
+    // stored mode being re-applied on top of one a request had just installed, since
+    // port_set_mode_impl() persists to NVS and this loop reads NVS back.
+    //
+    // One lock at a time, released before the next iteration: the two pm_locks are
+    // deliberately never nested (see port_manager_set_cache()). The only lock this adds under
+    // pm_lock is cache_decision_mutex, reached through port_init_mode() -> cache_sync_global()
+    // — the documented pm_lock -> cache_decision_mutex order, and the same one
+    // port_set_mode_impl() already establishes across the identical call. Nothing else in
+    // port_init_mode()'s call graph re-enters port_manager, so there is no self-deadlock on
+    // this non-recursive mutex.
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        pm_lock(i);
+
+        // A factory clock_out test that started inside the window above owns the TX/DE pins
+        // right now, and this loop would hand them straight back to the UART — the same
+        // reason port_manager_apply_settings() and port_manager_release() refuse. Checked
+        // INSIDE the lock, and for the same reason as there: read outside it, this task could
+        // see false, be preempted, and resume after the test has frozen the ports and started
+        // the LEDC. Nothing is lost by skipping — wb_test.c brings both ports up from NVS
+        // right after it clears the flag (port_manager_apply_settings() on both, on the exit
+        // path and on the aborted-entry path alike), so a port skipped here is brought up by
+        // the test rather than left down.
+        if (ports_frozen()) {
+            pm_unlock(i);
+            ESP_LOGW(TAG, "Port[%u]: boot init skipped, ports frozen by factory test", i + 1);
+            continue;
+        }
+
+        // A request that landed in the window above already brought this port up. Re-running
+        // port_init_mode() on it would be the doubled bring-up described above, so leave it
+        // alone. pm_ctx[i].mode is the right thing to test because port_init_mode() sets it
+        // only on success and a failed init deliberately leaves it PM_MODE_DISABLED: a port
+        // that merely FAILED to come up is not skipped here, it is retried.
+        //
+        // Skipping loses nothing the boot loop would have added, and the cache overlay is the
+        // part that had to be arranged for that to be true: pm_ctx[i].cache_overlay is loaded
+        // in port_manager_init_subsystems(), before httpd exists, so the port_init_mode() that
+        // request ran saw the stored intent and armed SNIFF_REASON_CACHE and the pool itself.
+        // While the overlay was still loaded here — after the window — it saw false instead,
+        // and this skip then left the port permanently uncached.
+        if (pm_ctx[i].mode != PM_MODE_DISABLED) {
+            ESP_LOGI(TAG, "Port[%u]: already running in mode '%s' — boot init skipped",
+                     i + 1, port_manager_mode_to_str(pm_ctx[i].mode));
+            pm_unlock(i);
+            continue;
+        }
+
         pm_mode_t mode = read_port_mode_from_nvs(i);
         esp_err_t ret = port_init_mode(i, mode);
         if (ret != ESP_OK) {
@@ -688,6 +782,7 @@ esp_err_t port_manager_init(void)
                      i + 1, port_manager_mode_to_str(mode), esp_err_to_name(ret));
             // Continue with remaining ports rather than aborting.
         }
+        pm_unlock(i);
     }
 
     ESP_LOGI(TAG, "Port manager initialized");

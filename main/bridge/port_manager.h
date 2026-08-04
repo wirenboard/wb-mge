@@ -92,6 +92,12 @@ void port_manager_locks_init(void);
  * port_manager_locks_init() first, above its own one-shot guard, so the port_manager
  * locks exist even if everything below it fails.
  *
+ * Also loads the per-port cache overlay from NVS and normalises it to the single-port
+ * invariant (review #51). That is here, and not in port_manager_init(), because it has to be
+ * true before the first request: a POST /ports/N/mode answered while it was still false would
+ * bring the port up with neither the cache sniffer reason nor the pool, and nothing would arm
+ * them afterwards. It runs inside the one-shot guard, so exactly one pass per boot.
+ *
  * Must be called BEFORE http_server_init(). The URI handlers registered there —
  * the sniffer WS endpoint above all — drive these FreeRTOS handles, and FreeRTOS
  * configASSERTs on a NULL one, so a request that arrives before this ran used to
@@ -140,6 +146,16 @@ esp_err_t port_manager_init_subsystems(void);
  *
  * Must be called once after NVS and settings are ready AND after the network is up,
  * in place of the old bridge_init() + cache_modbus_server_init() calls in main.c.
+ *
+ * httpd is already answering by then (main.c starts it above the wait-for-network loop this
+ * sits behind), so the per-port bring-up runs under pm_lock and brings up only the ports that
+ * are still down: a port a POST /ports/N/mode or POST /settings got to first is left running
+ * as it is, and a port the factory clock_out test has frozen is left to that test's exit path,
+ * which restores both ports from NVS. A port whose init merely FAILED is not skipped.
+ *
+ * Leaving a port running is safe only because the cache overlay is loaded earlier, in
+ * port_manager_init_subsystems() — the request that brought it up had the stored overlay in
+ * hand and armed the cache for it.
  *
  * @return ESP_OK — always, as of today. Everything that can fail here (the subsystems,
  *         the cache Modbus TCP server, each port) is logged and stepped over, because

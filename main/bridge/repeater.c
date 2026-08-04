@@ -281,11 +281,9 @@ esp_err_t repeater_deinit_port(unsigned index)
     // because the wait is unbounded: a re-init landing inside the drain would republish the
     // descriptor, the peer's task could keep feeding s_inflight[index], and the wait could
     // starve (it would still free the correct old descriptor, so that is starvation, not a
-    // use-after-free). The one call site that does NOT take pm_lock is the boot loop in
-    // port_manager_init(); reaching it during a drain takes HTTP mode changes racing a
-    // once-per-boot loop that is already unsafe against them for the whole reinit (httpd is
-    // started before it, main.c), so that is a boot-window hazard of the loop rather than one
-    // this wait adds. A new unlocked repeater_init_port() call site would break the argument.
+    // use-after-free). Every call site takes that lock, the boot loop in port_manager_init()
+    // included — it used to be the one that did not. A new unlocked repeater_init_port() call
+    // site would break the argument.
     //
     // Deliberately unbounded, unlike the bounded conn_lock waits in tcp_server.c. Timing out
     // would mean calling serial_deinit() on a descriptor a sender is still writing into, i.e.
