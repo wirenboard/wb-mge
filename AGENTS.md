@@ -64,10 +64,6 @@ make qemu-collect-only
 - **Fixing a bug: follow Red-Green-Refactor.** First write a test that reproduces the bug and confirm it fails (Red); then write the fix and confirm the test now passes (Green); then refactor while keeping the test green.
 - **After writing new QEMU API tests, always verify collection.** Run `make qemu-collect-only PYTEST_ARGS="<filename>"` immediately after writing or modifying a test file to confirm pytest can collect the tests (no syntax errors, no import errors) before proceeding.
 
-## Jenkins access
-
-CI lives at <https://jenkins.wirenboard.com>.
-
 ## Backend (Embedded C) Coding Standards
 
 Full style guide: https://raw.githubusercontent.com/wirenboard/codestyle/refs/heads/master/embedded_c.ru.md
