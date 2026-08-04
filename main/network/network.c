@@ -594,10 +594,49 @@ esp_err_t network_update_eth_settings(void)
 }
 
 
+// Whether applying WiFi settings can change anything at all in THIS boot. Two ways it
+// cannot:
+//   - wifi_perm_disable is set: the radio must stay off, the settings are only stored;
+//   - the radio is not up. Several different histories lead here, and this function cannot
+//     tell them apart:
+//       * WiFi was allowed to be off at boot — network_init() skips WiFi init entirely
+//         when wifi_perm_disable is set — and the flag was cleared afterwards WITHOUT a
+//         reboot; a factory reset (CMD_SET_DEFAULT_SETTINGS) does exactly that. NVS then
+//         says "WiFi enabled" while the hardware is still down. Nothing is wrong: the
+//         next boot brings the radio up with the stored settings.
+//       * WiFi was enabled at boot but init_wifi() failed. network_init() logs that and
+//         carries on, so the device runs with a dead radio and wifi_perm_disable false.
+//         That IS a fault, it just is not one that re-applying settings can fix.
+//       * read_wifi_settings() failed at boot, so init_wifi() was never even reached (the
+//         "Unable to read WiFi settings" branch of network_init()). Same end state as the
+//         previous case, reached one step earlier.
+//     The wifi_perm_disable check alone covered none of them: every settings write reported
+//     changed WiFi settings, spawned the update task and ended in wifi_set_apsta_config()
+//     returning ESP_ERR_NOT_ALLOWED, logged as a hard error on every path alike.
+// QEMU has no radio to initialize: network_update_wifi_settings() short-circuits there by
+// design, so the flag is the only thing that can make WiFi settings inapplicable.
+bool network_wifi_settings_applicable(void)
+{
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        return false;
+    }
+
+    #if (!QEMU_BUILD)
+        if (!wifi_apsta_is_initialized()) {
+            return false;
+        }
+    #endif
+
+    return true;
+}
+
+
 bool network_check_wifi_settings_changed(void)
 {
-    // When WiFi is permanently disabled, settings never change
-    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+    // Nothing can be applied to the radio in this boot, so nothing counts as changed:
+    // reporting a change here is what used to spawn a settings update task per settings
+    // write only to have it fail. See network_wifi_settings_applicable().
+    if (!network_wifi_settings_applicable()) {
         return false;
     }
 
@@ -653,9 +692,20 @@ bool network_check_wifi_settings_changed(void)
 
 esp_err_t network_update_wifi_settings(void)
 {
-    // When WiFi is permanently disabled, silently succeed without touching WiFi hardware
-    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
-        ESP_LOGD(TAG, "WiFi permanently disabled — skipping WiFi settings update");
+    // Succeed without touching the WiFi hardware: the new settings are already in NVS and
+    // the radio picks them up at the next boot, so there is no failure to report here.
+    // Going on would call wifi_set_apsta_config() on a radio that is not there, get
+    // ESP_ERR_NOT_ALLOWED back and log it as a failure of THIS settings write, which it is
+    // not. The message states what is observable — the radio is down — and not why: a
+    // failed init_wifi() at boot lands here too (see network_wifi_settings_applicable()),
+    // and on that device this warning is the only sign left that WiFi is dead, so it must
+    // not read as "WiFi was switched off on purpose", and must not sink to INFO.
+    if (!network_wifi_settings_applicable()) {
+        if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+            ESP_LOGD(TAG, "WiFi permanently disabled — skipping WiFi settings update");
+        } else {
+            ESP_LOGW(TAG, "WiFi radio is not up in this boot — the new WiFi settings will be applied after a reboot");
+        }
         return ESP_OK;
     }
 
@@ -739,3 +789,13 @@ wifi_mode_t network_get_wifi_mode(void)
 {
     return current_settings.wifi_settings.wifi_mode;
 }
+
+#ifdef __unittest_env__
+    // Drop the cached settings, so each test starts from a cold boot. Without it every test
+    // inherits the baseline the previous one's network_init() left in current_settings, and
+    // a "nothing changed" assertion can pass for the wrong reason.
+    void network_test_reset(void)
+    {
+        memset(&current_settings, 0, sizeof(current_settings));
+    }
+#endif /* __unittest_env__ */

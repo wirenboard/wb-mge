@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #include "esp_err.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -23,6 +25,11 @@ typedef struct {
 
 esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname);
 esp_err_t wifi_set_apsta_config(wifi_apsta_config_t* apsta_cfg, char* netif_hostname);
+
+// Whether the radio was brought up in THIS boot. wifi_set_apsta_config() refuses an
+// uninitialized radio with ESP_ERR_NOT_ALLOWED, which callers cannot tell from a genuine
+// configuration failure — ask this first when that distinction matters.
+bool wifi_apsta_is_initialized(void);
 
 esp_err_t wifi_sta_connect_scan_lock(void);
 esp_err_t wifi_sta_connect_scan_unlock(void);

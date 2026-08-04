@@ -457,6 +457,12 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
 }
 
 
+bool wifi_apsta_is_initialized(void)
+{
+    return wifi_ctx.initialized;
+}
+
+
 esp_err_t wifi_set_apsta_config(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
 {
     if (!wifi_ctx.initialized) {
