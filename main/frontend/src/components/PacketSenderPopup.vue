@@ -42,8 +42,6 @@ const success = ref('');
 // never came up, so the hint never promises packets that will not arrive. null = nothing to say.
 const captureNotice = ref<CaptureReadyOutcome | null>(null);
 
-// FCs that write coils (boolean, value 0/1) as opposed to 16-bit registers.
-const COIL_FCS = new Set(['05', '0f']);
 // FCs that take a list of values (FC15/FC16) rather than a single value (FC05/FC06).
 const LIST_FCS = new Set(['0f', '10']);
 
@@ -72,27 +70,24 @@ function setMode(m: 'read' | 'write') {
 }
 
 /**
- * Is what the user typed acceptable for this FC/mode?
+ * Is what the user typed in the value field acceptable for this FC/mode?
  *
  * Answered by buildPreviewFrame — the very function that decides whether the send button is
  * enabled — probed with a known-valid slave ID and address so that only the value decides the
  * outcome. Reusing it means this check cannot drift from the real one; a separate hand-written
- * range table could.
+ * range table could. Purely diagnostic: it selects WHICH message to show, never whether the
+ * frame may be sent (that stays previewBytes, the single gate).
  */
 function valueFitsFc(value: string, fc: string, mode: 'read' | 'write'): boolean {
   return buildPreviewFrame('1', fc, '0', value, mode) !== null;
 }
 
-// Keep `value` across an FC change unless the new FC cannot accept it (e.g. "10" carried into
-// a coil FC that only takes 0/1, which would silently disable the send button — the reason this
-// watcher exists). FC03->FC04 or a 0/1 value moving between coil and register FCs is preserved
-// instead of throwing away the user's input. Fires only on a real change — not on mount — so
-// persisted values (#1) are preserved across reopen. `state.mode` is already updated by the
-// time this runs, because setMode() sets it before the FC and the watcher flushes after both.
-watch(() => state.fc, (fc) => {
-  if (!valueFitsFc(state.value, fc, state.mode)) {
-    state.value = COIL_FCS.has(fc) ? '1' : '10';
-  }
+// An FC change never rewrites what the user typed. Carrying e.g. "500" into a coil FC that only
+// takes 0/1 leaves "500" in the field and turns on the inline valueHint below, so the send button
+// is never dead without a reason — the earlier behaviour silently replaced the value with a
+// default and threw away the input on every FC and read/write switch. Only the transient send
+// result is cleared here, since it describes the previous frame.
+watch(() => state.fc, () => {
   error.value = '';
   success.value = '';
 });
@@ -109,14 +104,29 @@ const previewParts = computed((): { hex: string; isCrc: boolean }[] => {
   return frameToPreviewParts(bytes);
 });
 
-// When the preview is invalid in write mode, explain exactly why so the send button is never
-// "dead" without a reason. Checks shared fields (slave, address) first, then the value per FC.
+// When the preview is invalid in write mode because of a field shared by every FC, name that
+// field so the send button is never "dead" without a reason. The Count / Value(s) field explains
+// itself right next to the input through valueHint below, so it is not repeated here.
 const writeHint = computed((): string => {
   if (state.mode !== 'write' || previewBytes.value !== null) return '';
   const slave = parseModbusAddress(state.slaveId);
   if (isNaN(slave) || slave < 1 || slave > 247) return t('hint_slave');
   const addr = parseModbusAddress(state.address);
   if (isNaN(addr) || addr < 0 || addr > 0xffff) return t('hint_addr');
+  return '';
+});
+
+/**
+ * Inline validation for the Count / Value(s) field: what the selected function actually accepts.
+ *
+ * This is what replaces resetting the field on an FC/mode switch — the typed text is kept and the
+ * reason the send button is off is written next to it. Empty whenever the value is acceptable, so
+ * an untouched default never shows a message. Which FC rejected the value comes from
+ * valueFitsFc(), i.e. from buildPreviewFrame(): the message can never disagree with the button.
+ */
+const valueHint = computed((): string => {
+  if (valueFitsFc(state.value, state.fc, state.mode)) return '';
+  if (state.mode === 'read') return t('hint_count');
   switch (state.fc) {
     case '06': return t('hint_reg');
     case '05': return t('hint_coil');
@@ -239,15 +249,17 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
           <input v-model="state.address" class="form-field-input" />
         </div>
 
-        <!-- Count / Value(s) -->
+        <!-- Count / Value(s). Never rewritten on an FC/mode switch: an unacceptable value stays
+             put and says what the selected function takes instead. -->
         <div class="form-field">
           <label class="form-field-label">{{ valueLabel }}</label>
           <input
             v-model="state.value"
-            class="form-field-input"
+            :class="['form-field-input', { 'form-field-inputInvalid': !!valueHint }]"
             :inputmode="isList ? 'text' : 'numeric'"
             :placeholder="valuePlaceholder"
           />
+          <div v-if="valueHint" class="form-field-error">{{ valueHint }}</div>
         </div>
       </div>
 
@@ -418,6 +430,17 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
   border-color: var(--primary-color);
 }
 
+.form-field-inputInvalid,
+.form-field-inputInvalid:focus {
+  border-color: var(--danger-color, #e53e3e);
+}
+
+.form-field-error {
+  color: var(--danger-color, #e53e3e);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .sniffer-sender-preview {
   background: var(--bg-surface-subtle);
   border: 1px solid var(--border-color);
@@ -539,6 +562,7 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "hint_capture_not_running": "Sent without a running capture, so the packets will not appear in the list",
     "hint_slave": "Slave ID must be between 1 and 247",
     "hint_addr": "Address must be between 0 and 65535",
+    "hint_count": "Count must be between 1 and 2000",
     "hint_reg": "Register value must be 0..65535",
     "hint_coil": "Coil value must be 0 or 1",
     "hint_list": "Enter values separated by commas",
@@ -575,6 +599,7 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "hint_capture_not_running": "Отправлено без активного перехвата, пакеты не попадут в список",
     "hint_slave": "Slave ID должен быть от 1 до 247",
     "hint_addr": "Адрес должен быть от 0 до 65535",
+    "hint_count": "Количество должно быть от 1 до 2000",
     "hint_reg": "Значение регистра должно быть 0..65535",
     "hint_coil": "Значение coil должно быть 0 или 1",
     "hint_list": "Введите значения через запятую",
@@ -611,6 +636,7 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "hint_capture_not_running": "Белсенді ұстаусыз жіберілді, пакеттер тізімде көрінбейді",
     "hint_slave": "Slave ID 1 мен 247 аралығында болуы керек",
     "hint_addr": "Мекенжай 0 бен 65535 аралығында болуы керек",
+    "hint_count": "Саны 1 мен 2000 аралығында болуы керек",
     "hint_reg": "Регистр мәні 0..65535 болуы керек",
     "hint_coil": "Coil мәні 0 немесе 1 болуы керек",
     "hint_list": "Мәндерді үтір арқылы енгізіңіз",
@@ -647,6 +673,7 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "hint_capture_not_running": "Inviato senza cattura attiva, i pacchetti non compariranno nell'elenco",
     "hint_slave": "Lo Slave ID deve essere compreso tra 1 e 247",
     "hint_addr": "L'indirizzo deve essere compreso tra 0 e 65535",
+    "hint_count": "Il conteggio deve essere compreso tra 1 e 2000",
     "hint_reg": "Il valore del registro deve essere 0..65535",
     "hint_coil": "Il valore del coil deve essere 0 o 1",
     "hint_list": "Inserisci i valori separati da virgole",
@@ -683,6 +710,7 @@ const valuePlaceholder = computed(() => (isList.value ? t('placeholder_values') 
     "hint_capture_not_running": "Ohne laufende Erfassung gesendet, die Pakete erscheinen nicht in der Liste",
     "hint_slave": "Slave-ID muss zwischen 1 und 247 liegen",
     "hint_addr": "Adresse muss zwischen 0 und 65535 liegen",
+    "hint_count": "Anzahl muss zwischen 1 und 2000 liegen",
     "hint_reg": "Registerwert muss 0..65535 sein",
     "hint_coil": "Coil-Wert muss 0 oder 1 sein",
     "hint_list": "Werte durch Kommas getrennt eingeben",
