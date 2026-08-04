@@ -130,10 +130,6 @@ supported.
 - Reading a range where at least one address is undefined returns exception **0x02** (illegal
   data address); a function other than FC03/FC04 returns exception **0x01** (illegal function).
 
-## CI
-
-Builds run on Jenkins at <https://jenkins.wirenboard.com/job/wirenboard/job/wb-mge/>.
-
 ## Manual UI Test Procedures
 
 Manual UI verification scenarios. Each document contains step-by-step procedures with
