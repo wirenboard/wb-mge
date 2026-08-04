@@ -90,6 +90,11 @@ QEMU runs the firmware in an emulator and tests the HTTP API without physical ha
 - **RS-485 / Modbus RTU**: a mock task injects synthetic packets into the sniffer to populate the cache
 - **Cache Modbus TCP server**: runs on port 50504 (QEMU forwards `localhost:50504 → ESP32:50504`)
 
+> **CI:** Jenkins does **not** run this suite by default. Tick the `RUN_E2E` build parameter to
+> enable the `E2E tests (QEMU)` stage; `Coverage (QEMU e2e)` needs `RUN_COVERAGE` as well.
+> On a branch Jenkins has never built, the checkbox is not there yet — a `parameters` block only
+> takes effect from the second build onwards, so build once, then rebuild with the parameter set.
+
 ### 1. Build firmware
 
 ```bash

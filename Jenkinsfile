@@ -11,7 +11,8 @@ pipeline {
     }
     parameters {
         booleanParam(name: 'UPLOAD_FROM_BRANCH', description: 'Upload results to S3 even if it is not master branch', defaultValue: false)
-        booleanParam(name: 'RUN_COVERAGE', description: 'Run coverage (unit + QEMU e2e + combined report)', defaultValue: true)
+        booleanParam(name: 'RUN_COVERAGE', description: 'Run coverage (unit tests; the QEMU e2e and combined reports also need RUN_E2E)', defaultValue: true)
+        booleanParam(name: 'RUN_E2E', description: 'Run the QEMU e2e API suite; off by default. The QEMU coverage stage additionally needs RUN_COVERAGE', defaultValue: false)
     }
 
     stages {
@@ -95,7 +96,7 @@ pipeline {
         }
         stage('Lint C (clang-tidy)') {
             steps {
-                // catchError keeps build UNSTABLE (yellow) on lint findings — QEMU/S3 still run
+                // catchError keeps build UNSTABLE (yellow) on lint findings — S3 Upload still runs
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make lint-c"'
                 }
@@ -113,6 +114,12 @@ pipeline {
             }
         }
         stage('E2E tests (QEMU)') {
+            // The QEMU e2e suite is not stable enough to gate CI, so it runs on request only.
+            // '== true' — not the '!= false' idiom used for RUN_COVERAGE below: on the first
+            // build after a parameter is added the parameters block has not taken effect yet
+            // and params.RUN_E2E is null. This parameter defaults to OFF, so that null must
+            // mean "disabled"; in Groovy 'null == true' is false, so the stage is skipped.
+            when { expression { params.RUN_E2E == true } }
             steps {
                 // catchError keeps build UNSTABLE (yellow) on e2e failure — S3 Upload still runs
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
@@ -128,8 +135,10 @@ pipeline {
                 }
             }
         }
-        // Coverage stages run after the clean E2E run and before S3 upload; catchError keeps
-        // the build UNSTABLE (yellow) on coverage failure so the firmware upload still runs.
+        // Coverage stages run before the S3 upload; catchError keeps the build UNSTABLE
+        // (yellow) on coverage failure so the firmware upload still runs. Unit coverage needs
+        // only RUN_COVERAGE; the QEMU one additionally needs RUN_E2E, because it re-runs the
+        // e2e suite (see that stage). When it runs, it runs after the clean e2e stage.
         // '!= false' is deliberate: the parameters block only takes effect for the NEXT run,
         // so on the first build after RUN_COVERAGE was introduced params.RUN_COVERAGE is null
         // — treat that null as "enabled" instead of silently skipping all coverage stages
@@ -152,12 +161,17 @@ pipeline {
             }
         }
         stage('Coverage (QEMU e2e)') {
-            when { expression { params.RUN_COVERAGE != false } }
+            // Gated on RUN_E2E as well: 'make qemu-coverage' re-runs the very same e2e suite on
+            // an instrumented build, so without this gate the suite would still run in every CI
+            // build — and with no junit published at all. Same '== true' null-handling as the
+            // 'E2E tests (QEMU)' stage above, inverted relative to RUN_COVERAGE next to it.
+            when { expression { params.RUN_COVERAGE != false && params.RUN_E2E == true } }
             steps {
                 // Re-runs the e2e suite on an instrumented firmware build with reboot/OTA tests
                 // deselected (--without-reboot: a reboot zeroes the in-RAM gcov counters).
-                // The earlier 'E2E tests (QEMU)' stage on the clean build stays authoritative
-                // for test results, so this stage deliberately publishes NO junit results.
+                // Both stages share the RUN_E2E gate, so whenever this stage runs the earlier
+                // 'E2E tests (QEMU)' stage on the clean build ran too and stays authoritative
+                // for test results — this stage deliberately publishes NO junit results.
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make qemu-coverage"'
                     // Reached only when 'make qemu-coverage' exits 0 — see 'Coverage (combined)'
@@ -179,7 +193,9 @@ pipeline {
             // cause, and a partially produced unit-test tracefile set would be worse still: the
             // merge would succeed and publish a silently incomplete report with understated
             // coverage. Success flags are used rather than file-existence checks precisely because
-            // a partial unit-coverage run still leaves some tracefiles on disk.
+            // a partial unit-coverage run still leaves some tracefiles on disk. No RUN_E2E check
+            // is needed here: with e2e off the QEMU coverage stage never runs, so QEMU_COVERAGE_OK
+            // stays unset and this stage skips on its own.
             when { expression { params.RUN_COVERAGE != false && env.UNIT_COVERAGE_OK == 'true' && env.QEMU_COVERAGE_OK == 'true' } }
             steps {
                 // Merges the unit-test gcovr tracefiles with build/qemu_coverage/qemu_covr.json,
