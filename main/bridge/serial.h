@@ -49,15 +49,15 @@ struct serial_desc_t {
     // serial_set_tx_disabled() to write, as for sniff_handler here — because a plain store racing an
     // __atomic_load_n() is a C11 data race however it compiles on Xtensa, and no single lock covers both sides:
     // the writers, port_manager_set_tx_disabled() (httpd task, plus the button task on factory reset) and
-    // port_init_mode(), hold that port's pm_lock — except port_init_mode() on port_manager_init()'s boot-loop
-    // pass, which is unlocked — while the readers hold nothing (serial_send() from the repeater and
-    // modbus_tcp_server_task), a disjoint lock (repeater_rx_handler()'s s_lock pre-check, transparent-TCP's
-    // send under serial_path_lock), or, in port_manager_send_raw() alone, pm_lock. mge_v3 is dual-core
-    // (CONFIG_FREERTOS_UNICORE unset, sdkconfig.mge_v3:1231), so this is a real cross-core race, not just
-    // preemption; the single-core QEMU build cannot reproduce it. RELEASE/ACQUIRE because each store lands AFTER
-    // the pin work it describes (dir_pin parked LOW, or the routing restored) and so publishes consistent
-    // hardware state — per writer only: serialising writers on one port is pm_lock's job, and no memory order
-    // closes the boot-loop gap. Not SEQ_CST: nothing else is correlated with this flag. The one plain access
+    // port_init_mode(), always hold that port's pm_lock — C10 put port_manager_init()'s boot loop
+    // under it too, so no unlocked writer is left — while the readers hold nothing (serial_send() from the
+    // repeater and modbus_tcp_server_task), a disjoint lock (repeater_rx_handler()'s s_lock pre-check,
+    // transparent-TCP's send under serial_path_lock), or, in port_manager_send_raw() alone, pm_lock. mge_v3 is
+    // dual-core (CONFIG_FREERTOS_UNICORE unset, sdkconfig.mge_v3:1231), so this is a real cross-core race, not
+    // just preemption; the single-core QEMU build cannot reproduce it. RELEASE/ACQUIRE because each store lands
+    // AFTER the pin work it describes (dir_pin parked LOW, or the routing restored) and so publishes consistent
+    // hardware state to whichever reader picks it up; serialising the writers against each other is pm_lock's
+    // job, not this pairing's. Not SEQ_CST: nothing else is correlated with this flag. The one plain access
     // left is serial_init()'s pre-publication store.
     bool tx_disabled;
     bool wait_for_idle;     // When true, receive_handler is called only on idle timeout (Modbus RTU frame boundary)

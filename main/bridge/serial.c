@@ -408,9 +408,10 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
     if (desc == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    // The writer's own read goes through the accessor too: port_init_mode() reaches this unlocked on
-    // port_manager_init()'s boot-loop pass, so the comparison is exposed exactly like the reads in
-    // serial_send() and repeater_rx_handler() — neither of those is under pm_lock either.
+    // The writer's own read goes through the accessor too, though since C10 put port_manager_init()'s
+    // boot loop under pm_lock it need not: both writers now reach this under that port's pm_lock, so by
+    // tcp_desc.h's doctrine — "Comparisons are always under the lock, so they stay plain reads" — it
+    // could be a plain read. It stays atomic for uniformity, at the price of one memw under the lock.
     if (disabled == serial_tx_disabled(desc)) {
         return ESP_OK; // no state change needed
     }
