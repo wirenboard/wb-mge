@@ -130,7 +130,7 @@ void test_drop_when_peer_tx_disabled(void)
     init_both_ports(&d0, &d1);
 
     // The user turned "Disable transmission (TX)" on for port 2, the peer of port 1.
-    d1->tx_disabled = true;
+    TEST_ASSERT_EQUAL(ESP_OK, serial_set_tx_disabled(d1, true));
 
     uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
     mock_serial_registered_handler(d0, payload, sizeof(payload));
@@ -151,6 +151,64 @@ void test_drop_when_peer_tx_disabled(void)
         "RX activity must still be reported on the receiving port");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_rs485_busy_monitor_activity_called[1],
         "no TX activity may be reported on a peer that transmitted nothing");
+}
+
+// ---------------------------------------------------------------------------
+// C5: the residual logical window left open on purpose after the flag was made atomic
+// ---------------------------------------------------------------------------
+// Drives one of the three timings catalogued at the pre-check in repeater_rx_handler(): TX still enabled
+// when the repeater decides to forward, parked once the send is already running. The mock returning ESP_OK
+// is faithful — by then the real serial_send() is past its own check, and uart_write_bytes() returns ESP_OK
+// for a write that fit. The wire is NOT silent for this timing: the bytes were already going out, so parking
+// DE cuts the frame off rather than un-sending it, and the peer gets a truncated frame the repeater still
+// books as forwarded. Asserting that is not blessing a bug — the truncation is inherent to cutting TX
+// mid-frame, and one misattributed frame is the accepted, bounded price of leaving serial_send()'s return
+// contract alone. If this starts failing because the frame lands in dropped_1, the decision has moved into
+// serial_send(), which is the proper fix.
+static void park_peer_tx_inside_send(serial_desc_t *dest, uint8_t *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    // The repeater has already read the flag, dropped s_lock and committed to the forward:
+    // this runs where the real serial_send() sits in uart_write_bytes().
+    TEST_ASSERT_EQUAL(ESP_OK, serial_set_tx_disabled(dest, true));
+}
+
+void test_peer_tx_disabled_after_the_check_counts_forwarded(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test: peer TX parked mid-send -> still counted forwarded (C5 residual window)");
+    LOG_MESSAGE();
+
+    serial_desc_t *d0 = NULL, *d1 = NULL;
+    init_both_ports(&d0, &d1);
+
+    mock_serial_calls.send_hook = park_peer_tx_inside_send;
+
+    uint8_t payload[] = {0x01, 0x02, 0x03, 0x04};
+    mock_serial_registered_handler(d0, payload, sizeof(payload));
+
+    mock_serial_calls.send_hook = NULL;
+
+    // The hook ran, i.e. the repeater really did get past its pre-check and into the send.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_serial_calls.send_called,
+        "the forward must reach serial_send() — the pre-check saw TX still enabled");
+    TEST_ASSERT_TRUE_MESSAGE(serial_tx_disabled(d1),
+        "the hook must have parked the peer's TX inside the send window");
+
+    // The documented outcome of the window: forwarded, not dropped.
+    repeater_stats_t st = {0};
+    repeater_get_stats(&st);
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(sizeof(payload), st.bytes_1to2,
+        "a frame whose peer was parked after the check is still booked as forwarded");
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(0, st.dropped_1,
+        "nothing is booked as dropped — serial_send() returns ESP_OK once it is past its own check");
+
+    // Whatever the accounting, the in-flight guard is balanced: the peer descriptor is
+    // releasable again, so a concurrent repeater_deinit_port(1) would not be blocked.
+    TEST_ASSERT_EQUAL_MESSAGE(0, repeater_get_inflight_for_test(1),
+        "the in-flight guard must be released even when the flag flipped mid-send");
 }
 
 // ---------------------------------------------------------------------------
@@ -605,10 +663,10 @@ void test_inflight_released_for_every_outcome(void)
     mock_serial_calls.send_ret = ESP_OK;
 
     // (3) peer TX disabled — no send, so nothing may be registered either
-    d1->tx_disabled = true;
+    TEST_ASSERT_EQUAL(ESP_OK, serial_set_tx_disabled(d1, true));
     mock_serial_registered_handler(d0, payload, sizeof(payload));
     TEST_ASSERT_EQUAL_MESSAGE(0, repeater_get_inflight_for_test(1), "guard raised for a peer that cannot transmit");
-    d1->tx_disabled = false;
+    TEST_ASSERT_EQUAL(ESP_OK, serial_set_tx_disabled(d1, false));
 
     // (4) peer not in repeater mode
     TEST_ASSERT_EQUAL(ESP_OK, repeater_deinit_port(1));
@@ -713,6 +771,7 @@ int main(void)
     RUN_TEST(test_forward_port1_to_port0);
     RUN_TEST(test_drop_when_peer_not_inited);
     RUN_TEST(test_drop_when_peer_tx_disabled);
+    RUN_TEST(test_peer_tx_disabled_after_the_check_counts_forwarded);
     RUN_TEST(test_drop_when_peer_send_fails);
     RUN_TEST(test_active_requires_both_ports);
     RUN_TEST(test_deinit_decrements_active);

@@ -83,3 +83,15 @@ esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols)
     (void)tout_symbols;
     return ESP_OK;
 }
+
+// repeater.c never calls this; the tests do, so they flip a descriptor's TX gate through the same
+// release store production uses instead of poking the field (see the note on tx_disabled in serial.h).
+// The NULL guard mirrors the real one; its pin work has no counterpart in a mock with no UART behind it.
+esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
+{
+    if (desc == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    __atomic_store_n(&desc->tx_disabled, disabled, __ATOMIC_RELEASE);
+    return ESP_OK;
+}

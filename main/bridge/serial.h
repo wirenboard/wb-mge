@@ -44,7 +44,22 @@ struct serial_desc_t {
     int tx_pin;
     int rx_pin;
     int dir_pin;            // Direction pin used for RS-485 half-duplex control
-    bool tx_disabled;       // When true, serial_send() returns immediately without transmitting
+    // When true, serial_send() returns without transmitting. Plain bool, not _Atomic, but every access uses a
+    // GCC atomic builtin on BOTH sides — serial_tx_disabled() below to read, __atomic_store_n(RELEASE) in
+    // serial_set_tx_disabled() to write, as for sniff_handler here — because a plain store racing an
+    // __atomic_load_n() is a C11 data race however it compiles on Xtensa, and no single lock covers both sides:
+    // the writers, port_manager_set_tx_disabled() (httpd task, plus the button task on factory reset) and
+    // port_init_mode(), hold that port's pm_lock — except port_init_mode() on port_manager_init()'s boot-loop
+    // pass, which is unlocked — while the readers hold nothing (serial_send() from the repeater and
+    // modbus_tcp_server_task), a disjoint lock (repeater_rx_handler()'s s_lock pre-check, transparent-TCP's
+    // send under serial_path_lock), or, in port_manager_send_raw() alone, pm_lock. mge_v3 is dual-core
+    // (CONFIG_FREERTOS_UNICORE unset, sdkconfig.mge_v3:1231), so this is a real cross-core race, not just
+    // preemption; the single-core QEMU build cannot reproduce it. RELEASE/ACQUIRE because each store lands AFTER
+    // the pin work it describes (dir_pin parked LOW, or the routing restored) and so publishes consistent
+    // hardware state — per writer only: serialising writers on one port is pm_lock's job, and no memory order
+    // closes the boot-loop gap. Not SEQ_CST: nothing else is correlated with this flag. The one plain access
+    // left is serial_init()'s pre-publication store.
+    bool tx_disabled;
     bool wait_for_idle;     // When true, receive_handler is called only on idle timeout (Modbus RTU frame boundary)
     QueueHandle_t uart_queue;
     serial_receive_handler_t receive_handler;
@@ -53,6 +68,14 @@ struct serial_desc_t {
     TaskHandle_t task_handle;
     EventGroupHandle_t event_group;
 };
+
+/* Read the TX-disabled flag — the only sanctioned reader of desc->tx_disabled. ACQUIRE pairs with
+ * the RELEASE store in serial_set_tx_disabled(), per writer; the note on the field above says who
+ * races whom and what that pairing does and does not buy. */
+static inline bool serial_tx_disabled(const serial_desc_t *desc)
+{
+    return __atomic_load_n(&desc->tx_disabled, __ATOMIC_ACQUIRE);
+}
 
 serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handler_t serial_receive_handler);
 esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len);

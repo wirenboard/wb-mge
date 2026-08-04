@@ -86,7 +86,8 @@ esp_err_t serial_set_rx_timeout(serial_desc_t *desc, uint8_t tout_symbols)
 esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
 {
     if (desc) {
-        desc->tx_disabled = disabled;
+        // Release store like the real one — see the note on tx_disabled in serial.h.
+        __atomic_store_n(&desc->tx_disabled, disabled, __ATOMIC_RELEASE);
     }
     return ESP_OK;
 }
