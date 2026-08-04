@@ -159,6 +159,40 @@ static int create_listen_socket(int port)
 }
 
 
+/* Take the listen socket OUT of the descriptor and close it — the exchange is the claim.
+ *
+ * desc->listen_sock has two owners that are not serialised with each other: the acceptor
+ * task (its exit path, and the recreate branch below that throws a broken listener away)
+ * and tcp_server_deinit(), which closes the socket on its way out as an OPPORTUNISTIC nudge
+ * for a blocked accept() — not as the mechanism it relies on. That wake-up is delayed and
+ * unreliable (see the SO_RCVTIMEO block in create_listen_socket() above), so what deinit
+ * actually depends on to get the acceptor moving is the 200 ms accept() timeout; the close
+ * only makes it happen sooner when it works.
+ *
+ * Nothing orders those two, so "close it" and "clear the field" being separate steps is
+ * enough to close the same number twice: deinit closes the fd and leaves the value in
+ * place, the acceptor wakes up, walks its exit path and closes what it still reads out of
+ * the structure.
+ *
+ * A double close is not a harmless duplicate. The number is not reserved between the two
+ * closes: ANY other task can be handed that exact number back in the gap — httpd, another
+ * bridge, anything at all that opens an lwIP socket — and the second close then lands on a
+ * live socket belonging to somebody else, which simply stops working with no error anywhere
+ * near the code that broke it.
+ *
+ * __atomic_exchange_n() makes the two steps one: exactly one caller can come away with a
+ * non-negative fd and so exactly one close() is ever issued for it. Every loser reads -1
+ * and does nothing, which is also why the callers do not need to test the field first. */
+static void close_listen_socket(tcp_desc_t *desc)
+{
+    int listen_sock = __atomic_exchange_n(&desc->listen_sock, -1, __ATOMIC_SEQ_CST);
+    if (listen_sock >= 0) {
+        ESP_LOGD(TAG, "Closed TCP listen socket %d on port %d", listen_sock, desc->port);
+        close(listen_sock);
+    }
+}
+
+
 // The peer address comes back as sockaddr_storage, not sockaddr_in: the listen socket is
 // dual-stack (see create_listen_socket()), so accept() may fill in either a sockaddr_in or
 // a sockaddr_in6 and only ss_family says which.
@@ -449,8 +483,38 @@ static void tcp_server_task(void *pvParameters)
             break;
         }
 
+        /* Read the listen socket once, through the same atomic the closers use. This buys
+         * exactly two things, and it is worth being precise about which.
+         *
+         * One: it keeps the read out of a C11 data race. Exactly one writer is another task:
+         * the __atomic_exchange_n() inside close_listen_socket() when tcp_server_deinit() is
+         * the caller. The other two call sites of that function, and the __atomic_store_n()
+         * in the recreate branch below, are this very task and so are merely sequenced. One
+         * cross-task writer is enough: a plain load racing it is undefined however well it
+         * compiles on Xtensa.
+         *
+         * Two: a cheap early exit. A negative value means the socket has ALREADY been
+         * claimed, so there is nothing left to accept on and the loop ends the ordinary way
+         * (the exit code below is what still reports EVENT_TASK_FINISHED).
+         *
+         * What it does NOT buy is the check-then-use window. deinit can claim and close the
+         * fd one tick after this load, while this task is already inside accept() holding its
+         * local copy of a number lwIP may meanwhile have handed to someone else. The 200 ms
+         * SO_RCVTIMEO BOUNDS that window rather than closing it: the option belongs to the
+         * old socket, so once the number has a new owner it is the new owner's semantics that
+         * apply — on another listening socket accept() could even succeed and hand back a
+         * stranger's connection (which deinit would then wait out in its active_connections
+         * loop). The 200 ms therefore bound this wait only while the fd is still ours: past
+         * that, the bound is whatever the new owner set, which on a listening socket that
+         * never asked for a timeout — httpd's, say — is none at all.
+         * Older than this atomic, and unchanged by it. */
+        int listen_sock = __atomic_load_n(&desc->listen_sock, __ATOMIC_SEQ_CST);
+        if (listen_sock < 0) {
+            break;
+        }
+
         struct sockaddr_storage source_addr;
-        int client_sock = accept_connection(desc->listen_sock, &source_addr);
+        int client_sock = accept_connection(listen_sock, &source_addr);
         if (client_sock < 0) {
             if (check_task_exit_req(desc)) {
                 ESP_LOGD(TAG, "Socket on port %d returned error %d during connection accept", desc->port, errno);
@@ -476,12 +540,38 @@ static void tcp_server_task(void *pvParameters)
             /* For other errors the listen socket may itself be broken — close and recreate. */
             ESP_LOGE(TAG, "Unable to accept connection on port %d, errno: %d", desc->port, errno);
             vTaskDelay(pdMS_TO_TICKS(1000));
-            close(desc->listen_sock);
-            desc->listen_sock = create_listen_socket(desc->port);
-            if (desc->listen_sock < 0) {
+
+            /* Re-check the exit flag AFTER the backoff, not only before it (the check at the
+             * top of this branch covers the instant accept() failed). This is about TEARDOWN
+             * LATENCY, not correctness.
+             *
+             * A second of sleeping is plenty of time for tcp_server_deinit() to arrive, and
+             * once the exit flag is up deinit is at most one close() away from parking on
+             * EVENT_TASK_FINISHED with portMAX_DELAY — a bit set only at the very end of
+             * this task. So every millisecond spent here past the exit request is a
+             * millisecond deinit's caller is stalled, and with it the device's single httpd
+             * worker (see the SO_RCVTIMEO block in create_listen_socket(), which exists for
+             * the same reason). Without this check the task would answer a teardown by
+             * building a listener nobody wants, and create_listen_socket() can spend ~1 s
+             * doing it on its own — 10 bind attempts, 100 ms apart — before it either
+             * succeeds or gives up.
+             *
+             * That unwanted listener would not survive the teardown, which is why this is a
+             * latency fix and not a bug fix: the exit path closes it through
+             * close_listen_socket() BEFORE setting EVENT_TASK_FINISHED, so it is gone before
+             * deinit returns, and port_manager.c holds the per-port init_mutex across
+             * port_deinit_mode() -> port_init_mode() on top of that. */
+            if (check_task_exit_req(desc)) {
+                break;
+            }
+
+            close_listen_socket(desc);
+            int fresh_sock = create_listen_socket(desc->port);
+            if (fresh_sock < 0) {
                 ESP_LOGE(TAG, "Failed to re-create listen socket");
                 break;
             }
+            __atomic_store_n(&desc->listen_sock, fresh_sock, __ATOMIC_SEQ_CST);
             continue;
         }
 
@@ -572,8 +662,7 @@ static void tcp_server_task(void *pvParameters)
         }
     }
 
-    close(desc->listen_sock);
-    desc->listen_sock = -1;
+    close_listen_socket(desc);
     ESP_LOGI(TAG, "TCP server acceptor task finished");
     xEventGroupSetBits(desc->event_group, EVENT_TASK_FINISHED);
     vTaskDelete(NULL);
@@ -847,10 +936,7 @@ esp_err_t tcp_server_deinit(tcp_desc_t *desc)
 
     // Signal acceptor task to stop and close listen socket to unblock accept()
     xEventGroupSetBits(desc->event_group, EVENT_TASK_EXIT_REQ);
-    if (desc->listen_sock >= 0) {
-        ESP_LOGD(TAG, "Closing TCP listen socket");
-        close(desc->listen_sock);
-    }
+    close_listen_socket(desc);
 
     // Wait for acceptor task to finish.
     ESP_LOGD(TAG, "Waiting for TCP server acceptor task finished...");

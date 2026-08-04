@@ -55,7 +55,34 @@ typedef void (*tcp_receive_handler_t)(struct tcp_desc_t *desc, int client_sock, 
 typedef void (*tcp_close_handler_t)(struct tcp_desc_t *desc, int client_sock);
 
 typedef struct tcp_desc_t {
-    int listen_sock;                        // set to -1 in case of client
+    // The listening socket in server mode; -1 in client mode.
+    //
+    // Written plain exactly once, by tcp_server_init(), before it creates the acceptor task —
+    // there is nothing to race with yet, which is also why that function's own failure paths
+    // may still close the fd directly through their local variable. From the moment the task
+    // exists the field has TWO owners with nothing serialising them: the acceptor loop in
+    // tcp_server.c (which re-reads it each iteration, and replaces it when it throws a broken
+    // listener away) and tcp_server_deinit(), which claims it on the way out. So every access
+    // after that first write goes through the GCC atomic builtins — __atomic_load_n /
+    // __atomic_store_n / __atomic_exchange_n, SEQ_CST — because a plain access racing those is
+    // a data race by the C11 model however well it compiles on Xtensa. (Being touched by the
+    // builtins adds no new s32c1i/PSRAM constraint beyond the one active_connections below
+    // already imposes.)
+    //
+    // From then on the socket is closed in ONE place: close_listen_socket() in tcp_server.c,
+    // which takes the number out of the field with a single __atomic_exchange_n and closes
+    // only what the exchange handed back. That is what gives -1 its meaning: not merely "no
+    // socket" but CLAIMED — somebody has already taken this fd and closed it (or the
+    // descriptor was never a server). A reader that sees -1 must therefore close nothing and
+    // accept() on nothing: lwIP hands a freed number straight to the next socket, so the
+    // value that used to be here may already belong to an httpd connection or another
+    // bridge's listener.
+    //
+    // In client mode tcp_client_init() sets the field with a plain `desc->listen_sock = -1;`.
+    // Safe there for the reason the server's first write is safe, and then some: it runs
+    // before tcp_client_task() is created, and a client descriptor never gets an acceptor
+    // task, so nothing reads or writes the field for the rest of its life.
+    int listen_sock;
     // Socket a consumer should send unsolicited data to. In server mode the ACCEPTOR
     // registers it the moment a connection is admitted — before it publishes the
     // connection via active_connections — so a client that has not sent anything yet is

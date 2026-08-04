@@ -348,6 +348,14 @@ void test_acceptor_enfile_does_not_close_listen_socket(void)
      * shutdown path at the end of tcp_server_task(), NOT inside the ENFILE handler. */
     TEST_ASSERT_EQUAL(1, mock_accept_call_count);   /* exactly 1 accept() attempted */
     TEST_ASSERT_EQUAL(1, mock_close_call_count);    /* exactly 1 close() — final shutdown only */
+    /* Plain invariant of the exit path: the descriptor outlives the acceptor, and
+     * tcp_server_deinit() claims the very same field — before or after this exit path, in an
+     * order nothing fixes — so it must be left at the -1 sentinel and not at a stale fd.
+     * This pins nothing about C6 — the pre-fix exit path assigned -1 here as well, it just
+     * did the close and the assignment as two separate steps. Section 9 is where the claim
+     * itself is tested. */
+    TEST_ASSERT_EQUAL_MESSAGE(-1, desc->listen_sock,
+        "the acceptor's exit path must take the listen socket out of the descriptor");
 
     free(desc);
 }
@@ -871,6 +879,12 @@ void test_stale_capture_rejected_after_fd_reused_by_new_connection(void)
     mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8);
     mock_accept_fd      = 54;
     mock_send_call_count = 0;
+    /* Re-arm the listen socket. Driving the acceptor a second time is a fiction of this
+     * test — in production the task body runs once — and its exit path CLAIMED the listen
+     * socket on the way out (see Section 9), leaving the -1 sentinel. The loop now refuses
+     * to accept() on a claimed socket, so B's connection needs a live listener again; 5 is
+     * the fd tcp_server_init() was given by the socket mock. */
+    desc->listen_sock = 5;
 
     acceptor(acceptor_args);
     free(mock_xTaskCreate_data.pvParameters);
@@ -1052,6 +1066,313 @@ void test_listen_socket_binds_fully_zeroed_any_address(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Section 9: listen-socket ownership (C6 — double close of the listen socket)
+ *
+ * The bug: desc->listen_sock had two owners with nothing serialising them — the acceptor
+ * task and tcp_server_deinit(), which closes the socket as an opportunistic nudge for a
+ * blocked accept() (the guarantee is the 200 ms SO_RCVTIMEO, not this close) — and "close
+ * it" and "clear the field" were separate steps. deinit() closed the fd and left the number
+ * in place, so the acceptor's exit path closed the same number a second time. (On the
+ * recreate path the roles swap and the second close is the recreate branch's — the comment
+ * on test_acceptor_skips_recreate_when_exit_requested_during_backoff spells that one out.)
+ * That is not a harmless duplicate: nothing reserves the number between the two closes, so
+ * any other task — httpd, another bridge, anything that opens an lwIP socket — can be handed
+ * it back in the gap, and the second close then silently kills an unrelated live socket.
+ *
+ * The fix is close_listen_socket(): one atomic exchange takes the number OUT of the
+ * descriptor and only the caller that came away with a non-negative fd closes it. These
+ * tests observe that claim from inside the close hook, which is the only point where the
+ * "was the field already cleared?" question has a meaningful answer.
+ *
+ * mock_socket_fd is a constant 5, so a recreate hands the SAME number back — the fd-reuse
+ * hazard is modelled by construction here rather than having to be simulated.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Sampled from inside mock_close(), i.e. at the instant the fd is handed to close():
+ * what the descriptor still says, and which fd is being closed. */
+static tcp_desc_t *g_deinit_desc = NULL;
+static int g_listen_sock_during_close = -99;
+static int g_fd_at_close = -99;
+
+static void sample_listen_sock_on_close(int fd)
+{
+    g_fd_at_close = fd;
+    if (g_deinit_desc) {
+        g_listen_sock_during_close = g_deinit_desc->listen_sock;
+    }
+}
+
+/* The same sample, but kept per close, for the path that closes twice. */
+#define MAX_TRACKED_CLOSES  4
+static tcp_desc_t *g_close_watch_desc = NULL;
+static int g_close_fd[MAX_TRACKED_CLOSES];
+static int g_listen_sock_at_close[MAX_TRACKED_CLOSES];
+static int g_close_records = 0;
+
+static void record_close_against_desc(int fd)
+{
+    if (g_close_records < MAX_TRACKED_CLOSES) {
+        g_close_fd[g_close_records] = fd;
+        g_listen_sock_at_close[g_close_records] =
+            g_close_watch_desc ? g_close_watch_desc->listen_sock : -99;
+    }
+    g_close_records++;
+}
+
+/* Every loop exit in tcp_server_task() ends at the same three lines: close_listen_socket(),
+ * then xEventGroupSetBits(EVENT_TASK_FINISHED), then vTaskDelete(). An exit that skips the
+ * middle one — a `return` where a `break` belongs — leaves tcp_server_deinit() parked on
+ * that bit with portMAX_DELAY forever, taking the device's single httpd worker with it. So
+ * every test of a new `break` asserts the bit, not just that something was signalled.
+ *
+ * EVENT_TASK_FINISHED is BIT1 in tcp_server.c; the acceptor sets no other bit anywhere, so
+ * one call carrying exactly this mask is the whole expected signalling of a clean exit. */
+#define EVENT_TASK_FINISHED_BIT     (1u << 1)
+
+static void assert_signalled_task_finished_once(void)
+{
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xEventGroupSetBits_data.called,
+        "the acceptor must signal exactly once on its way out");
+    TEST_ASSERT_EQUAL_HEX32_MESSAGE(EVENT_TASK_FINISHED_BIT,
+        mock_xEventGroupSetBits_data.uxBitsToSet[0],
+        "and the bit must be EVENT_TASK_FINISHED — it is the one deinit() waits on forever");
+}
+
+/* tcp_server_deinit() must CLAIM the listen socket, not merely close it: by the time
+ * close() runs, the descriptor must no longer name that fd.
+ *
+ * Pre-fix, deinit did `if (listen_sock >= 0) close(listen_sock);` and left the field
+ * untouched, so this hook would see 5 — the live fd number that the acceptor task, waking
+ * up on the exit flag, would then close a second time.
+ *
+ * Sampling has to happen inside the hook: deinit() free()s the descriptor before it
+ * returns, so there is nothing left to read afterwards. */
+void test_deinit_claims_listen_sock_before_closing_it(void)
+{
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_EQUAL(5, desc->listen_sock);
+
+    g_deinit_desc = desc;
+    g_listen_sock_during_close = -99;
+    g_fd_at_close = -99;
+    mock_close_hook = sample_listen_sock_on_close;
+
+    /* The acceptor task never runs here (no self_execution), so EVENT_TASK_FINISHED is
+     * never set — the event-group mock returns from every wait immediately, and
+     * active_connections is 0, so deinit() runs straight through. */
+    TEST_ASSERT_EQUAL(ESP_OK, tcp_server_deinit(desc));
+
+    mock_close_hook = NULL;
+    g_deinit_desc = NULL;
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_close_call_count,
+        "deinit must close the listen socket exactly once");
+    TEST_ASSERT_EQUAL_MESSAGE(5, g_fd_at_close,
+        "the fd that was claimed is the one that must be closed");
+    TEST_ASSERT_EQUAL_MESSAGE(-1, g_listen_sock_during_close,
+        "the number must already be out of the descriptor when close() runs, or the "
+        "acceptor's exit path closes the same fd again");
+}
+
+/* The other half of the same claim: an acceptor that finds the field already at -1 —
+ * because deinit() got there first — must not close anything.
+ *
+ * Pre-fix the exit path was an unconditional close(desc->listen_sock) followed by the
+ * reset, so it would have issued close(-1) here; with the real deinit's stale value left
+ * in place it would have issued a close of the live number instead. */
+void test_acceptor_does_not_close_listen_sock_claimed_by_deinit(void)
+{
+    /* EXIT_REQ must be visible on the FIRST xEventGroupWaitBits call. set_event_on_call
+     * only fires on calls strictly after it, so this case is expressed by seeding the
+     * mock's return value directly. EVENT_TASK_EXIT_REQ = BIT8. */
+    mock_xEventGroupWaitBits_data.return_value = (1 << 8);
+
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_NOT_NULL(mock_xTaskCreate_data.pvTaskCode);
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_close_call_count, "init must not have closed anything");
+
+    /* Stands in for a tcp_server_deinit() that has already claimed the socket: the field
+     * is at the sentinel and the fd it used to name has been closed and may already have
+     * been handed to somebody else. */
+    desc->listen_sock = -1;
+
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_close_call_count,
+        "a socket somebody else has already claimed must not be closed again");
+
+    free(desc);
+}
+
+/* The same guard one step earlier: the acceptor re-reads the field every iteration, and a
+ * negative value means deinit() claimed the socket between iterations. It must leave the
+ * loop instead of calling accept() on a closed (and possibly recycled) fd number.
+ *
+ * The exit flag is deliberately NOT set here, so the only thing that can stop the loop is
+ * the field itself. Without the check the acceptor would accept() on -1, and the mock —
+ * which does not care what fd it is given — would hand out a client and keep the loop
+ * running until the event-group mock's call-tracking assert trips. */
+void test_acceptor_stops_when_listen_sock_disappears_mid_loop(void)
+{
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_NOT_NULL(mock_xTaskCreate_data.pvTaskCode);
+
+    desc->listen_sock = -1;
+
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_accept_call_count,
+        "there is nothing left to accept on once the listen socket has been claimed");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_close_call_count,
+        "and nothing left to close either");
+    /* The break lands on the ordinary exit code, so the task still reports itself finished —
+     * deinit() waits on that bit and would otherwise never be released. */
+    assert_signalled_task_finished_once();
+
+    free(desc);
+}
+
+/* A deinit() that arrives during the recreate branch's 1000 ms backoff must not be
+ * answered with a brand-new listener.
+ *
+ * accept() fails with an "unknown" errno (EINVAL — not EAGAIN, not the ENFILE class), so
+ * the acceptor takes the branch that treats the listen socket as broken. It then sleeps a
+ * second, which is ample time for a port-mode change to call deinit(): the socket has been
+ * claimed and the port is being torn down.
+ *
+ * Pre-fix there was no check after the sleep, and the production sequence ran:
+ *   deinit() close(5) and leaves 5 in the field   ← its close, with no claim
+ *   the recreate branch close(desc->listen_sock) = close(5) a SECOND time, landing on
+ *      whatever unrelated socket lwIP has handed fd 5 in the meantime
+ *   create_listen_socket() may then be given 5 straight back
+ *   the exit path closes that fresh fd — once, correctly
+ * So the double close was the RECREATE BRANCH's, not the exit path's, and the fresh listener
+ * that followed it was pure waste: up to another second of create_listen_socket() bind
+ * retries with deinit blocked on EVENT_TASK_FINISHED for every millisecond of it.
+ *
+ * Drive sequence (the exit flag appears on WaitBits call #3):
+ *   #1 top of the loop                          → 0
+ *   accept() #1                                 → EINVAL
+ *   #2 the check right after accept() failed    → 0
+ *   vTaskDelay(1000 ms)
+ *   #3 the post-backoff check                   → EXIT_REQ → break
+ *   close_listen_socket()                        ← the one and only close
+ *
+ * Pre-fix the same sequence gives bind #2 (a fresh listener) and close #2. */
+void test_acceptor_skips_recreate_when_exit_requested_during_backoff(void)
+{
+    mock_accept_fail_count = 1;
+    mock_accept_errno      = EINVAL;   /* "unknown" errno → the close-and-recreate branch */
+
+    mock_xEventGroupWaitBits_data.set_event_on_call = 2;        /* fires on call #3 */
+    mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8); /* EVENT_TASK_EXIT_REQ */
+
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_bind_call_count, "init built the first listener");
+    TEST_ASSERT_NOT_NULL(mock_xTaskCreate_data.pvTaskCode);
+
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_accept_call_count,
+        "the loop must not come round for a second accept()");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_bind_call_count,
+        "no listener may be built for a port that is being torn down");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_close_call_count,
+        "only the exit path's claim-close, on the socket that was already there");
+    TEST_ASSERT_EQUAL(-1, desc->listen_sock);
+    /* The new break must land on the ordinary exit code, not walk out of the function: it is
+     * the same three closing lines that release deinit(). */
+    assert_signalled_task_finished_once();
+
+    free(desc);
+}
+
+/* Control for the test above: with no exit request in the way, the recreate branch still
+ * does its job — the broken listener is thrown away, a fresh one takes its place, and each
+ * of the two sockets is closed exactly once.
+ *
+ * Same drive sequence, except the exit flag appears one call later (#4), i.e. at the top of
+ * the second iteration rather than in the post-backoff check:
+ *   #1 top of the loop                          → 0
+ *   accept() #1                                 → EINVAL
+ *   #2 the check right after accept() failed    → 0
+ *   vTaskDelay(1000 ms)
+ *   #3 the post-backoff check                   → 0
+ *   close_listen_socket()                        ← close #1 (the broken listener)
+ *   create_listen_socket()                       ← bind #2, same fd number back (fd 5)
+ *   #4 top of the loop, 2nd iteration           → EXIT_REQ → break
+ *   close_listen_socket()                        ← close #2 (the fresh listener)
+ *
+ * The fd number is the same both times, which is the whole point — and the reason the CLOSE
+ * COUNT cannot carry this test. "Two sockets closed once each" and "one socket closed twice"
+ * both come to 2. What separates them is sampled inside the close hook: each close must find
+ * the descriptor ALREADY at -1, i.e. each was preceded by its own claim. Pre-fix, both
+ * closers read the fd out of the field and left it there, so the hook would have caught 5
+ * still sitting in the descriptor at close time — the number a second closer goes on to
+ * close. */
+void test_acceptor_recreates_listen_socket_and_closes_each_once(void)
+{
+    mock_accept_fail_count = 1;
+    mock_accept_errno      = EINVAL;   /* "unknown" errno → the close-and-recreate branch */
+
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;        /* fires on call #4 */
+    mock_xEventGroupWaitBits_data.events_to_set     = (1 << 8); /* EVENT_TASK_EXIT_REQ */
+
+    tcp_desc_t *desc = NULL;
+    esp_err_t ret = tcp_server_init(502, stub_receive_handler, &desc);
+    TEST_ASSERT_EQUAL(ESP_OK, ret);
+    TEST_ASSERT_NOT_NULL(desc);
+    TEST_ASSERT_EQUAL(1, mock_bind_call_count);
+    TEST_ASSERT_NOT_NULL(mock_xTaskCreate_data.pvTaskCode);
+
+    g_close_watch_desc = desc;
+    g_close_records    = 0;
+    mock_close_hook    = record_close_against_desc;
+
+    mock_xTaskCreate_data.pvTaskCode(mock_xTaskCreate_data.pvParameters);
+
+    mock_close_hook    = NULL;
+    g_close_watch_desc = NULL;
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_accept_call_count,
+        "the fresh listener is never accept()ed on: the exit flag is seen first");
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_bind_call_count,
+        "the broken listener must be replaced by a fresh one");
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_close_call_count,
+        "the recreate branch closes the broken listener, the exit path closes the fresh one");
+    /* The property the count cannot see: BOTH closes were claim-closes. */
+    TEST_ASSERT_EQUAL_MESSAGE(2, g_close_records,
+        "the hook must have observed both closes");
+    TEST_ASSERT_EQUAL_MESSAGE(5, g_close_fd[0],
+        "close #1 is the broken listener");
+    TEST_ASSERT_EQUAL_MESSAGE(-1, g_listen_sock_at_close[0],
+        "the recreate branch must claim the broken listener before closing it");
+    TEST_ASSERT_EQUAL_MESSAGE(5, g_close_fd[1],
+        "close #2 is the fresh listener, handed the same fd number back");
+    TEST_ASSERT_EQUAL_MESSAGE(-1, g_listen_sock_at_close[1],
+        "the exit path must claim the fresh listener before closing it — a close that finds "
+        "its own fd still in the descriptor is a close somebody else can repeat");
+    TEST_ASSERT_EQUAL_MESSAGE(-1, desc->listen_sock,
+        "the acceptor must hand the fresh socket over to close_listen_socket() too");
+    TEST_ASSERT_EQUAL_MESSAGE(0, desc->active_connections,
+        "no client was ever admitted on this path");
+
+    free(desc);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Unity runner
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -1105,6 +1426,13 @@ int tcp_server_test(void)
     /* Section 8 — listen socket family and bind address (B8) */
     RUN_TEST(test_listen_socket_requests_dual_stack_family);
     RUN_TEST(test_listen_socket_binds_fully_zeroed_any_address);
+
+    /* Section 9 — listen-socket ownership (C6) */
+    RUN_TEST(test_deinit_claims_listen_sock_before_closing_it);
+    RUN_TEST(test_acceptor_does_not_close_listen_sock_claimed_by_deinit);
+    RUN_TEST(test_acceptor_stops_when_listen_sock_disappears_mid_loop);
+    RUN_TEST(test_acceptor_skips_recreate_when_exit_requested_during_backoff);
+    RUN_TEST(test_acceptor_recreates_listen_socket_and_closes_each_once);
 
     return UNITY_END();
 }
