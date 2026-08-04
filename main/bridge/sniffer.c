@@ -1295,7 +1295,7 @@ void sniffer_detach(unsigned port_index)
     // Just drop our own reference to it.
     //
     // "No reader left" is not everywhere a join. serial_deinit() does join the port's own
-    // UART event task, but sniff_handler is also called from serial_send() (serial.c:373-376),
+    // UART event task, but sniff_handler is also called from serial_send() in serial.c,
     // and on a repeater port that caller is the PEER's UART task, which repeater_deinit_port()
     // never joins — there the last such call is ended by the s_inflight drain, which brackets
     // exactly the serial_send() window. transparent_tcp rules its own TCP -> serial senders

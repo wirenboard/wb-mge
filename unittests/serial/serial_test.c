@@ -1889,7 +1889,7 @@ void test_serial_sniffer_delivers_only_on_idle_timeout(void)
 
 // Test serial_set_tx_disabled gates serial_send: when TX is disabled, serial_send
 // returns ESP_OK immediately WITHOUT calling uart_write_bytes; re-enabling restores it.
-// Kills mutant M8: inverting the "disabled == desc->tx_disabled" no-state-change guard
+// Kills mutant M8: inverting the "disabled == serial_tx_disabled(desc)" no-state-change guard
 // would prevent the state transition, so the disable/enable would not take effect.
 void test_serial_set_tx_disabled_gates_send(void)
 {

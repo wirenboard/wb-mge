@@ -305,6 +305,8 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
     desc->tx_pin = serial_config->tx_pin;
     desc->rx_pin = serial_config->rx_pin;
     desc->dir_pin = serial_config->dir_pin;
+    // The one plain store: nothing else can see the descriptor yet — xTaskCreate() below is what
+    // first hands it out — so there is no reader to pair with (see the note on tx_disabled in serial.h).
     desc->tx_disabled = false;
     desc->wait_for_idle = false;   // default: forward immediately (transparent bridge behavior)
     desc->receive_handler = serial_receive_handler;
@@ -349,7 +351,7 @@ serial_desc_t* serial_init(serial_config_t *serial_config, serial_receive_handle
 
 esp_err_t serial_send(serial_desc_t *desc, uint8_t *data, size_t len)
 {
-    if (desc->tx_disabled) {
+    if (serial_tx_disabled(desc)) {
         ESP_LOGD(TAG, "UART[%d] TX skipped: transmission is disabled", desc->port_num);
         return ESP_OK;
     }
@@ -406,9 +408,15 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
     if (desc == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (disabled == desc->tx_disabled) {
+    // The writer's own read goes through the accessor too: port_init_mode() reaches this unlocked on
+    // port_manager_init()'s boot-loop pass, so the comparison is exposed exactly like the reads in
+    // serial_send() and repeater_rx_handler() — neither of those is under pm_lock either.
+    if (disabled == serial_tx_disabled(desc)) {
         return ESP_OK; // no state change needed
     }
+    // Both stores below are __atomic_store_n(RELEASE) and both land AFTER the pin work they describe,
+    // which is what the acquire load in serial_tx_disabled() picks up — per writer; the rationale is
+    // at the tx_disabled field in serial.h.
     if (disabled) {
         // Detach dir_pin from UART control and force LOW (RS-485 TX disabled).
         // In QEMU the wrap shim mirrors these IDF calls onto the virtual native
@@ -418,7 +426,7 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
         // drives an undefined level in the window between direction and level.
         gpio_set_level(desc->dir_pin, 0);
         gpio_set_direction(desc->dir_pin, GPIO_MODE_OUTPUT);
-        desc->tx_disabled = true;
+        __atomic_store_n(&desc->tx_disabled, true, __ATOMIC_RELEASE);
         ESP_LOGI(TAG, "UART[%d] TX physically disabled (dir_pin=%d forced LOW)", desc->port_num, desc->dir_pin);
     } else {
         // Re-attach dir_pin to UART for automatic half-duplex direction control.
@@ -461,7 +469,7 @@ esp_err_t serial_set_tx_disabled(serial_desc_t *desc, bool disabled)
             ESP_LOGE(TAG, "UART[%d] failed to restore pin routing: %s", desc->port_num, esp_err_to_name(err));
             return err;
         }
-        desc->tx_disabled = false;
+        __atomic_store_n(&desc->tx_disabled, false, __ATOMIC_RELEASE);
         ESP_LOGI(TAG, "UART[%d] TX re-enabled (dir_pin=%d restored to UART)", desc->port_num, desc->dir_pin);
     }
     return ESP_OK;

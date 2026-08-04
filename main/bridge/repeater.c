@@ -115,7 +115,7 @@ static void repeater_drop_handler(serial_desc_t *desc, size_t dropped_len)
 // TX drain either way — releasing the lock only moves the wait from the lock into two explicit
 // places: a forward already inside uart_write_bytes() writing INTO this port (the drain loop in
 // repeater_deinit_port() below) and this port's OWN UART task leaving uart_write_bytes() on the
-// peer (the EVENT_TASK_FINISHED join inside serial_deinit(), serial.c:483). Together those are
+// peer (the EVENT_TASK_FINISHED join inside serial_deinit()). Together those are
 // exactly what the old repeater_lock() at the top of repeater_deinit_port() waited for. That
 // latency belongs to the bytes sitting in the TX rings, not to the lock.
 //
@@ -152,7 +152,16 @@ static void repeater_rx_handler(serial_desc_t *desc, uint8_t *data, size_t len)
     // the flag BEFORE the send. Letting serial_send() swallow them would count them as forwarded
     // and blink the peer's TX indicator, so the UI would report "Forwarded: N, Dropped: 0" for a
     // repeater that is relaying nothing at all.
-    bool peer_tx_disabled = (peer_desc != NULL) && peer_desc->tx_disabled;
+    //
+    // The read is an acquire load (see the note on tx_disabled in serial.h), not mutual exclusion: the writer
+    // holds the port's pm_lock, this path the repeater's disjoint s_lock, and serial_send() — reached after
+    // repeater_unlock() — re-reads the flag, so the two can disagree. Three timings, all accepted: set in the
+    // gap, so serial_send() swallows the frame yet it is booked forwarded (the bus does stay silent — dir_pin
+    // parks LOW before the store); re-enabled in the gap, so it is booked dropped; or flipped while
+    // uart_write_bytes() runs or the ring drains, parking dir_pin mid-frame, so the peer gets a truncated frame
+    // still booked forwarded — inherent to cutting TX mid-transmission, not to this check. One frame either way;
+    // closing the window would change serial_send()'s return contract, deliberately not done here.
+    bool peer_tx_disabled = (peer_desc != NULL) && serial_tx_disabled(peer_desc);
 
     if ((peer_desc == NULL) || peer_tx_disabled) {
         // Peer not in repeater mode (NULL) or peer TX disabled: nothing is sent, so no
