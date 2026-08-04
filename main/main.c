@@ -139,7 +139,20 @@ void app_main(void)
 
     // Bring up the network-independent subsystems BEFORE the HTTP server starts: the sniffer
     // (queue, per-port response timers, WS mutex, WS task), the multimaster cache mutex, the
-    // repeater mutex and the RS-485 monitors. http_server_init() registers URI handlers that
+    // repeater mutex, the RS-485 monitors and — first of all, above that function's own
+    // one-shot guard — the port_manager locks (the two per-port init mutexes and the
+    // cache-decision mutex, via port_manager_locks_init()). Those last ones are why the order
+    // is load-bearing in a second, harder way than the rest: they used to be created lazily
+    // inside the lock paths, and a lazy create is not atomic, so two tasks arriving together
+    // would each end up holding a mutex of their own and serialise nothing. Neither the POST
+    // /ports/N/* handlers registered below nor the config-button long-press callback
+    // (config_button_init() further down, then settings_update() -> update_serial_tx_disabled()
+    // -> port_manager_set_tx_disabled()) waits for port_manager_init(), so that race had the
+    // whole wait-for-network window to happen in. The lock paths now assert the handle exists,
+    // which is a check on THIS ordering and nothing else: those mutexes sit in static buffers,
+    // so their creation cannot fail and a NULL handle can only mean this call did not run.
+    //
+    // The original reason stands unchanged. http_server_init() registers URI handlers that
     // reach straight into those FreeRTOS handles — the sniffer WS endpoint is one "enable" +
     // "disable" message away from xTimerStop() on the response timer — and FreeRTOS
     // configASSERTs on a NULL handle, which on this build is a panic and a reboot, not a failed

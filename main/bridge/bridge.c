@@ -241,8 +241,8 @@ esp_err_t bridge_init(void)
 {
     // Note: rs485_busy_monitor_init() and rs485_stats_init() have been moved to
     // port_manager_init_subsystems() (called from main.c before the HTTP server starts,
-    // and again from port_manager_init(), where it is a no-op) so they are called even
-    // when bridge_init() is not used directly.
+    // and again from port_manager_init(), where its one-shot guard skips them) so they are
+    // called even when bridge_init() is not used directly.
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         bridge_port_init(index);
     }

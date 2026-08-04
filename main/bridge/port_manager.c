@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include <assert.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -104,51 +105,100 @@ static inline bool ports_frozen(void)
 }
 
 // "port_manager_init_subsystems() has already been attempted" — NOT "it succeeded".
-// Set before the first attempt runs, so every later call is a no-op whatever the outcome;
-// see the function for why a retry is worse than living with the result.
+// Set before the first attempt runs, so every later call skips the subsystems whatever the
+// outcome; see the function for why a retry is worse than living with the result.
 // Plain bool, no atomics: it is written and read only from the main task during boot
 // (main.c, then port_manager_init() from the wait-for-network loop in the same task).
 // Nothing else calls either function — if that ever changes, this needs the same
 // treatment as s_ports_frozen above.
 static bool s_subsystems_ready = false;
 
-// Take the per-port init mutex. Lazily creates it on first use so we don't depend
-// on init order (port_manager_init may not have run yet when an early handler is
-// dispatched). portMAX_DELAY because the critical section is the entire reinit and
-// callers genuinely need exclusive access.
+// Serialises global-cache lifetime decisions. Created by port_manager_locks_init() together
+// with the per-port locks.
+static SemaphoreHandle_t s_cache_decision_mutex;
+
+// Backing store for every lock this module owns — the per-port init mutexes in pm_ctx[] and
+// s_cache_decision_mutex above. Static (BSS), not heap, and that is the load-bearing part:
+// xSemaphoreCreateMutexStatic() hands back the very buffer it was given, so creation cannot
+// fail and port_manager_locks_init() has no error to report or to swallow.
+//
+// Available unconditionally, not by our configuration: ESP-IDF hardcodes
+// configSUPPORT_STATIC_ALLOCATION to 1 in components/freertos/config/include/freertos/
+// FreeRTOSConfig.h, and the CONFIG_FREERTOS_SUPPORT_STATIC_ALLOCATION Kconfig symbol is a
+// hidden `bool default y` with no prompt, kept only so old code can test for it. So this
+// holds for every build target, including the ones with no sdkconfig checked in.
+static StaticSemaphore_t s_pm_init_mutex_buf[BRIDGES_COUNT];
+static StaticSemaphore_t s_cache_decision_mutex_buf;
+
+// Create every lock this module owns: one init mutex per port plus the cache-decision mutex.
+// See the contract in port_manager.h for when this must run.
+//
+// Cannot fail, so it returns nothing and logs nothing. See the buffers above for why — that
+// is exactly what the static storage buys, and it is the reason this boot-path function needs
+// no failure policy. Every candidate policy was wrong: aborting turns a low-memory boot into
+// a reboot loop, and continuing with a NULL handle only moves the same question into the lock
+// paths, which run on the HTTP tasks where it is harder to answer.
+//
+// Idempotent, and the NULL checks are what make it so — do not simplify them away. Handing
+// xSemaphoreCreateMutexStatic() a buffer whose mutex is already live reinitialises it, which
+// would reset a lock some task may be holding at that moment. With the checks, the second
+// caller (see the header) only reads the handles and writes nothing.
+void port_manager_locks_init(void)
+{
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        if (pm_ctx[i].init_mutex == NULL) {
+            pm_ctx[i].init_mutex = xSemaphoreCreateMutexStatic(&s_pm_init_mutex_buf[i]);
+        }
+    }
+    if (s_cache_decision_mutex == NULL) {
+        s_cache_decision_mutex = xSemaphoreCreateMutexStatic(&s_cache_decision_mutex_buf);
+    }
+}
+
+// Take the per-port init mutex. The handle is created once by port_manager_locks_init(),
+// before httpd starts — see the contract in port_manager.h.
+//
+// It asserts rather than creating the mutex on demand, which is what this used to do. A
+// lazy `if (handle == NULL) handle = create()` in a lock path is not atomic: two tasks that
+// both read NULL each create a mutex, the second assignment overwrites the first, and each
+// then holds a lock nobody else respects — no mutual exclusion at all, plus a leaked
+// semaphore. That window was reachable, because httpd (main.c) registers the URI handlers
+// that come through here well before port_manager_init() runs.
+//
+// The assert is a pure init-order guard: the handle is statically allocated, so the only way
+// it can be NULL is that port_manager_locks_init() has not run yet — a bug in the boot
+// sequence, and the only thing this can ever catch. It cannot fire on a device that is merely
+// short of heap, because there is no allocation here to run short for.
+//
+// portMAX_DELAY because the critical section is the entire reinit and callers genuinely
+// need exclusive access.
 static void pm_lock(unsigned index)
 {
-    if (pm_ctx[index].init_mutex == NULL) {
-        pm_ctx[index].init_mutex = xSemaphoreCreateMutex();
-    }
-    if (pm_ctx[index].init_mutex) {
-        xSemaphoreTake(pm_ctx[index].init_mutex, portMAX_DELAY);
-    }
+    assert(pm_ctx[index].init_mutex != NULL);
+    xSemaphoreTake(pm_ctx[index].init_mutex, portMAX_DELAY);
 }
 
+// Asserts for the same reason as pm_lock(), and deliberately does not fall back to an
+// `if (handle)` guard: reaching an unlock means the matching lock already ran, so the handle
+// is non-NULL on every path that gets here. A guard would be dead code stating the opposite
+// policy to the lock above it.
 static void pm_unlock(unsigned index)
 {
-    if (pm_ctx[index].init_mutex) {
-        xSemaphoreGive(pm_ctx[index].init_mutex);
-    }
+    assert(pm_ctx[index].init_mutex != NULL);
+    xSemaphoreGive(pm_ctx[index].init_mutex);
 }
-
-static SemaphoreHandle_t s_cache_decision_mutex; // lazily created; serialises global-cache lifetime decisions
 
 static void cache_decision_lock(void)
 {
-    if (s_cache_decision_mutex == NULL) {
-        s_cache_decision_mutex = xSemaphoreCreateMutex();
-    }
-    if (s_cache_decision_mutex) {
-        xSemaphoreTake(s_cache_decision_mutex, portMAX_DELAY);
-    }
+    // Init-order guard only; see pm_lock() for why that is all it can be.
+    assert(s_cache_decision_mutex != NULL);
+    xSemaphoreTake(s_cache_decision_mutex, portMAX_DELAY);
 }
+
 static void cache_decision_unlock(void)
 {
-    if (s_cache_decision_mutex) {
-        xSemaphoreGive(s_cache_decision_mutex);
-    }
+    assert(s_cache_decision_mutex != NULL);
+    xSemaphoreGive(s_cache_decision_mutex);
 }
 
 // Bring the global cache pool in line with persisted per-port intent.
@@ -449,6 +499,13 @@ static void port_deinit_mode(unsigned index)
 
 esp_err_t port_manager_init_subsystems(void)
 {
+    // Deliberately ABOVE the one-shot guard below, and above everything that can fail: the
+    // locks must exist even when a later call short-circuits on s_subsystems_ready, and even
+    // if every subsystem init below fails. They are what the URI handlers that http_server_init()
+    // registers immediately after this take, and creating them lazily in the lock paths is
+    // exactly the race this replaced (see pm_lock()). Idempotent, so the repeat is free.
+    port_manager_locks_init();
+
     // At most one attempt per boot, whatever comes of it. Two of the subsystems below are
     // not idempotent on their own: sniffer_init() would create a second queue, a second
     // pair of timers and a second WS task and leak the first set, and
@@ -505,10 +562,10 @@ esp_err_t port_manager_init_subsystems(void)
 
 esp_err_t port_manager_init(void)
 {
-    // Network-independent half. main.c has normally run it already, before starting the
-    // HTTP server (see port_manager_init_subsystems()); the second call is then a no-op.
-    // It is kept here so port_manager_init() stays self-contained for a caller that uses
-    // it alone — the unit tests do.
+    // Network-independent half. main.c has normally run it already, before starting the HTTP
+    // server (see port_manager_init_subsystems()); the second call then re-runs only the
+    // idempotent port_manager_locks_init() and returns ESP_OK. Kept here so port_manager_init()
+    // stays self-contained for a caller that uses it alone — the unit tests do.
     //
     // Logged, not propagated: a sniffer or cache mutex that would not allocate is no reason
     // to leave the RS-485 ports down and reboot. This device routes Modbus first; the
@@ -1394,13 +1451,40 @@ esp_err_t port_manager_register_handlers(httpd_handle_t server)
 }
 
 #ifdef __unittest_env__
+/* Drop every lock handle without recreating it: the state of a device on which
+ * port_manager_locks_init() has not run yet. Nothing in production is allowed to produce
+ * this state — that is the entire point of the change this exists to test — so the only way
+ * a test can check that a production entry point creates the locks is to be able to take
+ * them away first. Kept separate from port_manager_reset_for_test() because the interesting
+ * case (see the test for the one-shot guard) needs the handles cleared while
+ * s_subsystems_ready stays set, which a full reset would undo. */
+void port_manager_clear_locks_for_test(void)
+{
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        pm_ctx[i].init_mutex = NULL;
+    }
+    s_cache_decision_mutex = NULL;
+}
+
 void port_manager_reset_for_test(void)
 {
     memset(pm_ctx, 0, sizeof(pm_ctx));
+    /* The memset above already dropped the per-port handles; this is here for the one that
+     * lives outside pm_ctx. Without it the cache-decision mutex would survive from whichever
+     * test ran first, and "reset" would mean something different for it than for the
+     * per-port locks. */
+    port_manager_clear_locks_for_test();
     __atomic_store_n(&s_ports_frozen, false, __ATOMIC_SEQ_CST);
     /* Clear the one-shot guard so each test starts from a device that has not
      * booted yet — otherwise the first test to run would consume the init and
-     * every later one would see port_manager_init_subsystems() as a no-op. */
+     * every later one would see port_manager_init_subsystems() skip every subsystem. */
     s_subsystems_ready = false;
+    /* Production creates every lock in port_manager_locks_init(), before httpd; mirror that
+     * here so the lock paths' asserts hold for the ~110 tests that call into them without
+     * booting the module first. This is a convenience for those tests and NOT the coverage
+     * of the fix: the tests that prove port_manager_init_subsystems() creates the locks
+     * clear them again with port_manager_clear_locks_for_test() and go through the
+     * production entry point. */
+    port_manager_locks_init();
 }
 #endif /* __unittest_env__ */

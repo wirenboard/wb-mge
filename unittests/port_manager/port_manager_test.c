@@ -8,6 +8,7 @@
 #include "esp_http_server.h"      /* httpd_req_t, for the REST handler tests */
 #include "freertos/semphr.h"      /* mock_xSemaphoreTake_hook, for the pm_lock race tests */
 
+#include <ctype.h>
 #include <stdio.h>                /* main.c boot-order check reads the source file */
 #include <string.h>
 
@@ -98,7 +99,13 @@ extern esp_err_t g_mock_port_mode_collision_ret;
 
 void setUp(void)
 {
-    mock_xSemaphoreTake_hook = NULL;
+    /* Full reset rather than just `mock_xSemaphoreTake_hook = NULL`: every knob in this mock
+     * is global state, and a TEST_ASSERT failure longjmps straight out of the test that set
+     * one, past whatever restore it had planned at the end. Leaving that to the tests means
+     * one red test can turn every later test in the binary red for an unrelated reason. Runs
+     * BEFORE port_manager_reset_for_test() so the lock creations that reset performs are
+     * visible to a test that wants to count them. */
+    mock_freertos_semaphore_reset();
     port_manager_reset_for_test();
     mock_bridge_reset();
     mock_sniffer_reset();
@@ -2140,29 +2147,46 @@ static void blank_out_comments(char *s)
     }
 }
 
-/* Load main/main.c for the source-text checks below, or fail the test trying, and hand
- * back the buffer it lives in, comments blanked. Split out because both of them need the
- * whole file and the same "did it all arrive" reasoning; the buffer is static HERE rather
- * than one per test, because two 64 KB statics is 128 KB of BSS in the host binary for the
- * same file, and neither caller keeps the text past its own test. */
-static const char *read_main_c_source(void)
+/* Load a production .c file into the caller's buffer for the source-text checks below, or fail
+ * the test trying, and hand it back with comments blanked. `path` is relative to the suite
+ * directory and names the file in every failure message: the three below read identically
+ * otherwise, and a CI log that does not say which file failed points the reader at the wrong one.
+ *
+ * The buffer belongs to the caller, one per file, so two files can be held at once: one shared
+ * buffer would hand a test that read both the second file's text for BOTH pointers, and check
+ * one file's anchors against the other with nothing to notice. */
+static const char *read_c_source(const char *path, char *buf, size_t buf_size)
 {
-    static char src[64 * 1024];
-    FILE *f = fopen("../../main/main.c", "rb");
-    TEST_ASSERT_NOT_NULL_MESSAGE(f, "main/main.c not readable — run this test from unittests/port_manager");
-    size_t n = fread(src, 1, sizeof(src) - 1, f);
+    char msg[256];
+    FILE *f = fopen(path, "rb");
+    snprintf(msg, sizeof(msg), "%s not readable — run this test from unittests/port_manager", path);
+    TEST_ASSERT_NOT_NULL_MESSAGE(f, msg);
+    size_t n = fread(buf, 1, buf_size - 1, f);
     fclose(f);
-    src[n] = '\0';
-    TEST_ASSERT_GREATER_THAN_MESSAGE(0, n, "main/main.c is empty");
+    buf[n] = '\0';
+    snprintf(msg, sizeof(msg), "%s is empty", path);
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, n, msg);
     /* A short read is the only proof the whole file arrived: fread() filling the buffer
      * to the brim looks exactly like a file that is one byte too long, and the anchors
      * in the callers would then be searched in a silently truncated copy — a missing
      * statement would read as "the call is gone" and a missing closing brace as "the call
      * is outside app_main()". Both are wrong answers, so refuse to answer at all. */
-    TEST_ASSERT_LESS_THAN_MESSAGE(sizeof(src) - 1, n,
-        "main/main.c no longer fits in src[] — grow the buffer, do not trust a truncated read");
-    blank_out_comments(src);
-    return src;
+    snprintf(msg, sizeof(msg), "%s no longer fits in its buffer — grow it, do not trust a truncated read", path);
+    TEST_ASSERT_LESS_THAN_MESSAGE(buf_size - 1, n, msg);
+    blank_out_comments(buf);
+    return buf;
+}
+
+static const char *read_main_c_source(void)
+{
+    static char src[64 * 1024];
+    return read_c_source("../../main/main.c", src, sizeof(src));
+}
+
+static const char *read_port_manager_c_source(void)
+{
+    static char src[192 * 1024];
+    return read_c_source("../../main/bridge/port_manager.c", src, sizeof(src));
 }
 
 /* The ordering half of the invariant lives in main.c, which has no host test
@@ -2234,33 +2258,49 @@ void test_main_c_inits_subsystems_before_starting_httpd(void)
  * alternative regression (dropping the check entirely, `(void)port_manager_init();`) does not
  * pass either, and a rename cannot hollow out the pm_ret check below. */
 
+/* Whitespace between an identifier and its parens is invisible to the compiler, so a guard matching
+ * only the tight form is one space from being walked past; skip_ws() steps over it. find_no_arg_call()
+ * returns the next `name()` at or after `from` in `src`, NULL if none, checking both ends of
+ * the identifier: empty parens only, so a definition `void name(void)` is not a call to itself (a
+ * `void name();` declaration in the .c would be), and no identifier char before, else `pm_name()`. */
+static const char *skip_ws(const char *p)
+{
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    return p;
+}
+
+static const char *find_no_arg_call(const char *src, const char *from, const char *name)
+{
+    const size_t name_len = strlen(name);
+
+    for (const char *p = strstr(from, name); p != NULL; p = strstr(p + 1, name)) {
+        if (p > src && (isalnum((unsigned char)p[-1]) || p[-1] == '_')) continue;
+        const char *q = skip_ws(p + name_len);
+        if (*q == '(' && *skip_ws(q + 1) == ')') return p;
+    }
+    return NULL;
+}
+
 /* Is there an ESP_ERROR_CHECK in src whose argument text starts with `name`?
  *
  * The regression class this closes: matching the literal "ESP_ERROR_CHECK(port_manager_init())"
- * alone is trivial to walk past. `esp_err_t pm_ret = port_manager_init(); ESP_ERROR_CHECK(pm_ret);`
- * keeps the required "= port_manager_init();" and never contains the literal, and so does
- * `ESP_ERROR_CHECK( port_manager_init() )` with spaces inside the parens. Both abort the boot
- * exactly as the removed call did. So skip whitespace after the macro name and after the '(',
- * and check every occurrence — only one of them has to be the bad one.
+ * alone is trivial to walk past — `esp_err_t pm_ret = port_manager_init(); ESP_ERROR_CHECK(pm_ret);`
+ * and `ESP_ERROR_CHECK( port_manager_init() )` abort the boot without ever containing it.
  *
  * What it still cannot prove: this is strstr(), not a parser. Comments no longer count —
  * read_main_c_source() blanks them — but a hit inside a string literal still does, and the same
  * abort reached through another macro, a helper, or `if (pm_ret != ESP_OK) abort();` does not.
- * The prefix match also fires on
- * ESP_ERROR_CHECK(port_manager_init_subsystems()) — which main.c avoids for the same reason,
- * so that is a wanted hit rather than a false one. */
+ * The prefix match also fires on ESP_ERROR_CHECK(port_manager_init_subsystems()) — which main.c
+ * avoids for the same reason, so that is a wanted hit rather than a false one. */
 static bool esp_error_check_wraps(const char *src, const char *name)
 {
     const char *macro = "ESP_ERROR_CHECK";
     const size_t name_len = strlen(name);
 
     for (const char *p = strstr(src, macro); p != NULL; p = strstr(p + 1, macro)) {
-        const char *arg = p + strlen(macro);
-        while (*arg == ' ' || *arg == '\t' || *arg == '\n' || *arg == '\r') arg++;
+        const char *arg = skip_ws(p + strlen(macro));
         if (*arg != '(') continue;   /* ESP_ERROR_CHECK_WITHOUT_ABORT and friends */
-        arg++;
-        while (*arg == ' ' || *arg == '\t' || *arg == '\n' || *arg == '\r') arg++;
-        if (strncmp(arg, name, name_len) == 0) return true;
+        if (strncmp(skip_ws(arg + 1), name, name_len) == 0) return true;
     }
     return false;
 }
@@ -2289,6 +2329,200 @@ void test_main_c_does_not_abort_the_boot_on_a_port_manager_init_failure(void)
     TEST_ASSERT_NOT_NULL_MESSAGE(strstr(src, "port_manager_init failed"),
         "main.c must still LOG the failure it no longer aborts on — dropping the ESP_LOGE while "
         "keeping the assignment turns a lost gateway feature into silence");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 11. Lock creation — port_manager_locks_init()  (C4)
+ *
+ * Both the per-port init mutexes and the global cache-decision mutex used to be
+ * created lazily inside the lock paths, under `if (h == NULL) h = create();`. That
+ * is not atomic: two tasks that both read NULL each create a mutex, the second
+ * assignment overwrites the first, and each task then holds a lock the other does
+ * not respect — no mutual exclusion, plus a leaked semaphore. The window was a
+ * boot-order property, not a theoretical one: main.c starts httpd, and arms the
+ * config-button long-press callback, long before port_manager_init() leaves the
+ * wait-for-network loop, and both routes reach these locks.
+ *
+ * The fix is to create every lock once, up front, in port_manager_locks_init() —
+ * called from the top of port_manager_init_subsystems(), above its one-shot guard —
+ * and to make the lock paths assert instead of create. The mutexes live in static
+ * buffers, so creation cannot fail and there is no failure path left to test: the
+ * asserts in the lock paths can only ever catch "locks_init() has not run".
+ *
+ * port_manager_reset_for_test() calls locks_init() so the other ~110 tests can take a
+ * lock without booting the module. That convenience is NOT the coverage of this fix —
+ * the tests below go through port_manager_init_subsystems(), the production entry
+ * point, after clearing the handles it is supposed to create.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Sized by MOCK_STATIC_MUTEX_MAX, indexed below by BRIDGES_COUNT + 1: over-capacity calls are
+ * counted but not stored, so a third port would read past the end with the count still passing. */
+_Static_assert(BRIDGES_COUNT + 1 <= MOCK_STATIC_MUTEX_MAX,
+    "mock_xSemaphoreCreateMutexStatic_buffers[] needs one slot per port_manager lock — raise "
+    "MOCK_STATIC_MUTEX_MAX in unittests/mocks/freertos/semphr.h");
+
+void test_locks_init_creates_every_lock_up_front(void)
+{
+    port_manager_clear_locks_for_test();
+    mock_freertos_semaphore_reset();
+
+    port_manager_locks_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(BRIDGES_COUNT + 1, mock_xSemaphoreCreateMutexStatic_called,
+        "port_manager_locks_init() must create one init mutex per port plus the "
+        "cache-decision mutex — every lock the module owns, before anything can take one");
+    /* Static storage, so this is the only creation call the module may use: a dynamic
+     * xSemaphoreCreateMutex() would be a creation that can fail, and a boot-path failure is
+     * precisely what the static buffers exist to remove. */
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphoreCreateMutex_called,
+        "the locks must be statically allocated — a heap mutex reintroduces a failure mode "
+        "on the boot path that has no correct handling");
+
+    /* One buffer per lock, checked pairwise: the mock returns the buffer as the handle, as the
+     * real one does, so two locks on one buffer are one lock under two names. */
+    for (int i = 0; i < BRIDGES_COUNT + 1; i++) {
+        TEST_ASSERT_NOT_NULL_MESSAGE(mock_xSemaphoreCreateMutexStatic_buffers[i],
+            "every lock must be created from a static buffer of its own");
+        for (int j = i + 1; j < BRIDGES_COUNT + 1; j++) {
+            TEST_ASSERT_TRUE_MESSAGE(mock_xSemaphoreCreateMutexStatic_buffers[i] !=
+                                     mock_xSemaphoreCreateMutexStatic_buffers[j],
+                "each lock needs its own static buffer — sharing one makes two ports (or a port "
+                "and the cache decision) serialise against the same mutex");
+        }
+    }
+
+    /* Idempotent, and it has to be: port_manager_init_subsystems() calls it a second time
+     * with httpd already up, where re-running xSemaphoreCreateMutexStatic() on a live
+     * mutex's buffer would reinitialise a lock another task may be holding. */
+    port_manager_locks_init();
+    TEST_ASSERT_EQUAL_MESSAGE(BRIDGES_COUNT + 1, mock_xSemaphoreCreateMutexStatic_called,
+        "a second port_manager_locks_init() must create nothing — handles that are already "
+        "set must be left alone, not rebuilt on top of a possibly-held mutex");
+}
+
+/* The production wiring, which is the thing that actually has to hold: main.c never calls
+ * port_manager_locks_init() itself, it calls port_manager_init_subsystems(). Deleting the
+ * locks_init() call from that function must fail a test — before this one, it did not,
+ * because every test reached locks_init() through port_manager_reset_for_test().
+ *
+ * Second half pins the placement ABOVE the one-shot guard, the other thing nothing
+ * distinguished: with s_subsystems_ready already set, everything below the guard is skipped,
+ * so only a call above it can still create anything. */
+void test_init_subsystems_creates_the_locks_above_the_one_shot_guard(void)
+{
+    /* A device that has booted no further than app_main()'s first lines. */
+    port_manager_clear_locks_for_test();
+    mock_freertos_semaphore_reset();
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+
+    TEST_ASSERT_EQUAL_MESSAGE(BRIDGES_COUNT + 1, mock_xSemaphoreCreateMutexStatic_called,
+        "port_manager_init_subsystems() must create every port_manager lock — it is what "
+        "main.c calls, and http_server_init() registers handlers that take them right after");
+
+    /* The call above consumed the one-shot guard. Take the handles away again — nothing in
+     * production can do this, which is exactly why the helper is test-only — and repeat. */
+    port_manager_clear_locks_for_test();
+    mock_freertos_semaphore_reset();
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_init_subsystems());
+
+    TEST_ASSERT_EQUAL_MESSAGE(BRIDGES_COUNT + 1, mock_xSemaphoreCreateMutexStatic_called,
+        "port_manager_locks_init() must sit ABOVE the s_subsystems_ready guard: a call below "
+        "it is skipped on every entry after the first, and port_manager_init() is one such entry");
+}
+
+/* Structural half of the C4 regression guard, and the half that actually discriminates.
+ * The behavioural test below runs with every handle already set, so a reintroduced
+ * `if (h == NULL) h = create();` in a lock path would not fire there and the suite would stay
+ * green. Anchoring on the source text does not depend on the state a test happens to be in:
+ * the creation call must appear inside port_manager_locks_init() and nowhere else.
+ *
+ * Same source-text exception, and the same limits, as the main.c checks above: comments are
+ * blanked, string literals are not, and this is strstr() rather than a parser. What that leaves
+ * uncovered is indirection: `static void (*f)(void) = port_manager_locks_init;` then `f();` in a
+ * lock path is neither a create nor a call by that name, so neither loop sees it. The
+ * "xSemaphoreCreateMutex" prefix covers the dynamic form and the Static one at once. */
+void test_only_locks_init_creates_a_mutex(void)
+{
+    const char *src = read_port_manager_c_source();
+
+    const char *fn = strstr(src, "\nvoid port_manager_locks_init(void)\n{");
+    TEST_ASSERT_NOT_NULL_MESSAGE(fn,
+        "port_manager.c must still define port_manager_locks_init() at file scope — the check "
+        "below is bounded by that definition and means nothing without it");
+    const char *fn_end = strstr(fn + 1, "\n}");
+    TEST_ASSERT_NOT_NULL_MESSAGE(fn_end,
+        "port_manager_locks_init() must still be a brace-terminated function at file scope");
+
+    int inside = 0;
+    for (const char *p = strstr(src, "xSemaphoreCreateMutex");
+         p != NULL;
+         p = strstr(p + 1, "xSemaphoreCreateMutex")) {
+        TEST_ASSERT_TRUE_MESSAGE(p > fn && p < fn_end,
+            "every mutex creation in port_manager.c must live inside port_manager_locks_init(): "
+            "a create anywhere else — a lock path above all — is a create a second task can race, "
+            "which is the C4 defect this replaced");
+        inside++;
+    }
+    /* Otherwise a rename of the creation API would silently empty the loop and pass. */
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, inside,
+        "port_manager_locks_init() must still create the mutexes — no creation call found at all");
+
+    /* And exactly one call site, the hole the loop above leaves open: a lock path that runs
+     * `if (h == NULL) port_manager_locks_init();` keeps every create inside locks_init() and still
+     * races — both re-enter, the second re-initialising a live mutex as free. Only
+     * port_manager_reset_for_test() is exempt, and only its body: the scan resumes past it to EOF. */
+    const char *sub = strstr(src, "\nesp_err_t port_manager_init_subsystems(void)\n{");
+    TEST_ASSERT_NOT_NULL_MESSAGE(sub,
+        "port_manager.c must still define port_manager_init_subsystems() at file scope");
+    const char *sub_end = strstr(sub + 1, "\n}");
+    TEST_ASSERT_NOT_NULL_MESSAGE(sub_end,
+        "port_manager_init_subsystems() must still be a brace-terminated function at file scope");
+    const char *reset_fn = strstr(src, "\nvoid port_manager_reset_for_test(void)\n{");
+    TEST_ASSERT_NOT_NULL_MESSAGE(reset_fn,
+        "port_manager_reset_for_test() must still be defined — it bounds the exclusion below");
+    const char *reset_fn_end = strstr(reset_fn + 1, "\n}");
+    TEST_ASSERT_NOT_NULL_MESSAGE(reset_fn_end,
+        "port_manager_reset_for_test() must still be a brace-terminated function at file scope");
+
+    int calls = 0;
+    for (const char *p = find_no_arg_call(src, src, "port_manager_locks_init");
+         p != NULL;
+         p = find_no_arg_call(src, p + 1, "port_manager_locks_init")) {
+        if (p > reset_fn && p < reset_fn_end) continue;
+        TEST_ASSERT_TRUE_MESSAGE(p > sub && p < sub_end,
+            "port_manager_locks_init() must be called only from port_manager_init_subsystems(): "
+            "a call from a lock path re-creates a mutex another task may be holding");
+        calls++;
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(1, calls,
+        "port_manager_init_subsystems() must carry exactly one call to port_manager_locks_init()");
+}
+
+/* Behavioural companion to the structural check above. It cannot prove the absence of a lazy
+ * create (its handles are already set, so a `if (h == NULL) h = create()` would not run); what
+ * it does prove is that the locked paths are reachable with the locks merely pre-created — i.e.
+ * that they take what locks_init() made and do not need anything else built for them. */
+void test_locked_paths_run_on_pre_created_locks(void)
+{
+    /* The locks are up: setUp() -> port_manager_reset_for_test() -> locks_init(). */
+    mock_freertos_semaphore_reset();
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_tx_disabled(0, true));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_tx_disabled(1, true));
+    port_manager_set_cache(0, true);
+    port_manager_set_cache(1, true);
+    port_manager_set_cache(1, false);
+
+    /* Without this the test would also pass if the calls above stopped locking at all. */
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, mock_xSemaphoreTake_called,
+        "the calls above must actually take the locks, or the assertion below proves nothing");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphoreCreateMutexStatic_called,
+        "a locked path found every mutex missing and built one — with the locks already created "
+        "there is nothing left for it to create");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xSemaphoreCreateMutex_called,
+        "and no heap mutex either");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2431,6 +2665,12 @@ int port_manager_test(void)
     RUN_TEST(test_init_still_brings_ports_up_after_cache_modbus_server_failure);
     RUN_TEST(test_main_c_inits_subsystems_before_starting_httpd);
     RUN_TEST(test_main_c_does_not_abort_the_boot_on_a_port_manager_init_failure);
+
+    /* 11 – lock creation: every lock up front, none created in a lock path (C4) */
+    RUN_TEST(test_locks_init_creates_every_lock_up_front);
+    RUN_TEST(test_init_subsystems_creates_the_locks_above_the_one_shot_guard);
+    RUN_TEST(test_only_locks_init_creates_a_mutex);
+    RUN_TEST(test_locked_paths_run_on_pre_created_locks);
 
     return UNITY_END();
 }

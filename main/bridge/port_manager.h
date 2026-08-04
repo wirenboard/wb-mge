@@ -51,10 +51,46 @@ typedef enum {
 #define PM_ERR_PORTS_FROZEN  ((esp_err_t)0x10000)
 
 /**
+ * @brief Create the port_manager locks: the per-port init mutexes and the
+ *        global cache-decision mutex.
+ *
+ * Called from the top of port_manager_init_subsystems(), which main.c runs on the
+ * main task before http_server_init(). That ordering is the contract: the URI
+ * handlers registered there (POST /ports/N/mode, /ports/N/cache, /ports/N/send,
+ * /settings, /wb_test) take these locks, and so does the config-button long-press
+ * callback, both of which can fire long before port_manager_init() leaves the
+ * wait-for-network loop. Creating a lock on demand inside the lock path is not atomic, whether
+ * it creates the mutex there (two tasks see NULL, two mutexes, no mutual exclusion) or calls
+ * back into this function (both re-enter, and the second create re-initialises a live mutex as
+ * free). So production calls it from port_manager_init_subsystems() and nowhere else — held by
+ * a source-text test for the call shapes it can recognise, port_manager_reset_for_test() aside.
+ *
+ * Runs up to twice per boot, and only the first run is single-threaded. main.c calls
+ * port_manager_init_subsystems() before http_server_init(); port_manager_init() calls it again
+ * if the wait-for-network loop it sits behind ever releases, by which time httpd and other
+ * tasks are up. The first call is the one that establishes the handles and it is what the
+ * contract above is about. The second is safe for a different reason: every handle is already
+ * set, so it only READS them and writes nothing. Do not fold the NULL checks away to "simplify"
+ * it — handing a live mutex's buffer back to xSemaphoreCreateMutexStatic() would
+ * reinitialise a lock another task may be holding.
+ *
+ * Cannot fail, hence no return value. The mutexes live in statically allocated buffers,
+ * so xSemaphoreCreateMutexStatic() returns the buffer itself — there is no allocation to
+ * come up short and nothing to report. That is deliberate rather than incidental: this
+ * runs on the boot path, where every available failure policy is wrong. Aborting turns a
+ * low-memory boot into a reboot loop; logging and continuing leaves a NULL handle for the
+ * lock paths on the HTTP tasks to have an opinion about. Removing the failure mode is the
+ * only answer that needs neither.
+ */
+void port_manager_locks_init(void);
+
+/**
  * @brief Initialise the shared subsystems that do NOT need a network interface.
  *
  * Brings up the RS-485 monitors, the repeater mutex, the sniffer (queue, per-port
- * response timers, WS mutex and WS task) and the multimaster cache mutex.
+ * response timers, WS mutex and WS task) and the multimaster cache mutex. Also calls
+ * port_manager_locks_init() first, above its own one-shot guard, so the port_manager
+ * locks exist even if everything below it fails.
  *
  * Must be called BEFORE http_server_init(). The URI handlers registered there —
  * the sniffer WS endpoint above all — drive these FreeRTOS handles, and FreeRTOS
@@ -76,8 +112,9 @@ typedef enum {
  * Everything that needs a network interface (the cache Modbus TCP server and the
  * ports themselves) stays in port_manager_init(), behind that loop.
  *
- * One attempt per boot: the first call runs it, every later call returns ESP_OK
- * and does nothing — including after a partial failure, which is NOT retried. Two
+ * One attempt per boot for the subsystems: the first call brings them up, every later call
+ * re-runs the idempotent port_manager_locks_init() above and then returns ESP_OK without
+ * touching them — including after a partial failure, which is NOT retried. Two
  * of the subsystems are not idempotent (sniffer_init() would create a second queue,
  * timers and task and leak the first set; cache_multimaster_init() would leak its
  * mutex), and a retry cannot fix the only failure cause there is, which is a lack
@@ -96,10 +133,10 @@ esp_err_t port_manager_init_subsystems(void);
  * the part of the shared infrastructure that was previously done by bridge_init()
  * and that needs a network interface to bind its socket.
  *
- * Calls port_manager_init_subsystems() itself, so it remains self-contained when
- * used alone; if main.c already ran it before starting the HTTP server (it does),
- * that call is a no-op. A failure there is logged and the ports are brought up
- * anyway — it is not reflected in the return value.
+ * Calls port_manager_init_subsystems() itself, so it remains self-contained when used alone; if
+ * main.c already ran it before starting the HTTP server (it does), that call re-runs only the
+ * idempotent port_manager_locks_init() and returns ESP_OK. A failure there is logged and the
+ * ports are brought up anyway — it is not reflected in the return value.
  *
  * Must be called once after NVS and settings are ready AND after the network is up,
  * in place of the old bridge_init() + cache_modbus_server_init() calls in main.c.
@@ -385,6 +422,11 @@ esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t
 
 #ifdef __unittest_env__
 void port_manager_reset_for_test(void);
+
+/* Null every lock handle without recreating it — the "port_manager_locks_init() has not run
+ * yet" state, which no production path can reach. Only useful to a test that wants to watch a
+ * production entry point create the locks. */
+void port_manager_clear_locks_for_test(void);
 
 /* hex_str_to_bytes: exposed for unit testing */
 int hex_str_to_bytes(const char *hex, uint8_t *out, size_t out_max);
