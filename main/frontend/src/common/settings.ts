@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import { useAlerts } from '@/common/alert';
 import type { DeepPartial, Settings, SettingsWarning, UpdateSettingsResponse } from '@/common/types';
-import { api } from '@/utils/api';
+import { ApiError, api } from '@/utils/api';
 import { setHostname } from '@/common/hostname';
 
 // A warning stays up longer than the "saved" toast: it is the only place the user learns that the
@@ -16,6 +16,17 @@ const WARNING_MESSAGES: Record<string, string> = {
 
 const warningAlertMessage = (warning: SettingsWarning): string =>
   WARNING_MESSAGES[warning.code] ?? warning.message;
+
+// Firmware error string -> i18n key, the mirror image of WARNING_MESSAGES above: here the device
+// REFUSED the write and nothing was saved. Unlike a warning, a string we have no wording for is NOT
+// shown raw — the firmware's other refusals are all "Failed to save <group> settings", which say
+// the same thing to the user as the generic sentence does and say it in untranslated English.
+const ERROR_MESSAGES: Record<string, string> = {
+  'Invalid settings value': 'error_invalid_settings_value',
+};
+
+const settingsErrorMessage = (deviceError?: string): string =>
+  (deviceError === undefined ? undefined : ERROR_MESSAGES[deviceError]) ?? 'settings_rejected';
 
 // The device accepted the settings, only the read-back that follows the POST failed. Callers that
 // roll their input back when updateSettings() rejects must not do that here: the value IS saved,
@@ -108,6 +119,18 @@ export const useSettings = () => {
           return;
         }
         showAlert('data_updated', { type: 'success' });
+      // The rejection handler is the second argument of .then() rather than a .catch() of its own
+      // so that it sees the POST's failures only, and never a throw from the success branch above.
+      }, (err) => {
+        // The device refused the write: nothing was saved. api() has already turned a
+        // {"success": false} body into an ApiError, so a refusal the firmware answered with HTTP
+        // 200 arrives here exactly like a 4xx one. `posted` stays false, which is what makes the
+        // .finally() below let THIS rejection through instead of a SettingsRefreshError: the
+        // caller must roll its input back, which it must NOT do when only the read-back failed.
+        if (err instanceof ApiError) {
+          showAlert(settingsErrorMessage(err.deviceError), { type: 'error' });
+        }
+        throw err;
       })
       .finally(async () => {
         isLoading.value = false;

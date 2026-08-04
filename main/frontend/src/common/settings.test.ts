@@ -41,6 +41,11 @@ describe('useSettings', () => {
     // (data, initData) are re-created fresh and cannot bleed state between tests.
     beforeEach(() => {
         vi.resetModules();
+        // doMock registrations are NOT undone by resetModules(): they outlive the module registry.
+        // Without these, a test that stubs api() keeps stubbing it for the tests below that need
+        // the real api() running under a ky stub — and those would silently assert nothing.
+        vi.doUnmock('@/utils/api');
+        vi.doUnmock('ky');
     });
 
     it('ST-001: saving one card does not reset dirty state in adjacent cards', async () => {
@@ -64,7 +69,13 @@ describe('useSettings', () => {
         });
         // First GET (called by refresh()) must return the initial state (baudrate=9600).
         apiMock.mockImplementationOnce(() => Promise.resolve(makeInitialSettings()));
-        vi.doMock('@/utils/api', () => ({ api: apiMock }));
+        // Partial mock: only api() is replaced. ApiError has to stay real — settings.ts
+        // narrows the POST rejection with `instanceof`, and a mock without it turns any
+        // rejection into a TypeError that would quietly pass tests asserting a failure.
+        vi.doMock('@/utils/api', async (importOriginal) => ({
+            ...(await importOriginal<typeof import('@/utils/api')>()),
+            api: apiMock,
+        }));
 
         const { useSettings } = await import('@/common/settings');
         const { data, isChanged, updateSettings, refresh } = useSettings();
@@ -113,7 +124,13 @@ describe('useSettings', () => {
         });
         // First GET returns initial state (baudrate=9600).
         apiMock.mockImplementationOnce(() => Promise.resolve(makeInitialSettings()));
-        vi.doMock('@/utils/api', () => ({ api: apiMock }));
+        // Partial mock: only api() is replaced. ApiError has to stay real — settings.ts
+        // narrows the POST rejection with `instanceof`, and a mock without it turns any
+        // rejection into a TypeError that would quietly pass tests asserting a failure.
+        vi.doMock('@/utils/api', async (importOriginal) => ({
+            ...(await importOriginal<typeof import('@/utils/api')>()),
+            api: apiMock,
+        }));
 
         const { useSettings } = await import('@/common/settings');
         const { data, initData, updateSettings, refresh } = useSettings();
@@ -159,7 +176,13 @@ describe('useSettings', () => {
         });
         // First GET returns initial state (hostname='wb-mge').
         apiMock.mockImplementationOnce(() => Promise.resolve(makeInitialSettings()));
-        vi.doMock('@/utils/api', () => ({ api: apiMock }));
+        // Partial mock: only api() is replaced. ApiError has to stay real — settings.ts
+        // narrows the POST rejection with `instanceof`, and a mock without it turns any
+        // rejection into a TypeError that would quietly pass tests asserting a failure.
+        vi.doMock('@/utils/api', async (importOriginal) => ({
+            ...(await importOriginal<typeof import('@/utils/api')>()),
+            api: apiMock,
+        }));
 
         const { useSettings } = await import('@/common/settings');
         const { data, updateSettings, refresh } = useSettings();
@@ -198,7 +221,13 @@ describe('useSettings', () => {
         });
         // First GET returns initial state.
         apiMock.mockImplementationOnce(() => Promise.resolve(makeInitialSettings()));
-        vi.doMock('@/utils/api', () => ({ api: apiMock }));
+        // Partial mock: only api() is replaced. ApiError has to stay real — settings.ts
+        // narrows the POST rejection with `instanceof`, and a mock without it turns any
+        // rejection into a TypeError that would quietly pass tests asserting a failure.
+        vi.doMock('@/utils/api', async (importOriginal) => ({
+            ...(await importOriginal<typeof import('@/utils/api')>()),
+            api: apiMock,
+        }));
 
         const { useSettings } = await import('@/common/settings');
         const { updateSettings, refresh } = useSettings();
@@ -231,7 +260,13 @@ describe('useSettings', () => {
             }
             return Promise.resolve(makeInitialSettings());
         });
-        vi.doMock('@/utils/api', () => ({ api: apiMock }));
+        // Partial mock: only api() is replaced. ApiError has to stay real — settings.ts
+        // narrows the POST rejection with `instanceof`, and a mock without it turns any
+        // rejection into a TypeError that would quietly pass tests asserting a failure.
+        vi.doMock('@/utils/api', async (importOriginal) => ({
+            ...(await importOriginal<typeof import('@/utils/api')>()),
+            api: apiMock,
+        }));
 
         return showAlertMock;
     };
@@ -330,7 +365,13 @@ describe('useSettings', () => {
             }
             return readBackFails ? Promise.reject(readBackError) : Promise.resolve(makeInitialSettings());
         });
-        vi.doMock('@/utils/api', () => ({ api: apiMock }));
+        // Partial mock: only api() is replaced. ApiError has to stay real — settings.ts
+        // narrows the POST rejection with `instanceof`, and a mock without it turns any
+        // rejection into a TypeError that would quietly pass tests asserting a failure.
+        vi.doMock('@/utils/api', async (importOriginal) => ({
+            ...(await importOriginal<typeof import('@/utils/api')>()),
+            api: apiMock,
+        }));
 
         const armReadBackFailure = () => {
             readBackFails = true;
@@ -373,5 +414,101 @@ describe('useSettings', () => {
 
         expect(rejection).toBe(postError);
         expect(rejection).not.toBeInstanceOf(SettingsRefreshError);
+    });
+
+    // A refused write comes back as HTTP 200 with {"success": false, "error": "..."} — the firmware
+    // reserves its status codes for malformed requests, so a rejected VALUE is a 200. ky resolves
+    // that like any other 200, which is why the refusal is only visible if the response BODY is
+    // inspected. These tests therefore stub ky and run the real api() underneath the real
+    // updateSettings(): stubbing api() would only prove that a stub can reject.
+    const setupDeviceResponseTest = (postBody: unknown) => {
+        const showAlertMock = vi.fn();
+        vi.doMock('@/common/hostname', () => ({ setHostname: vi.fn() }));
+        vi.doMock('@/common/alert', () => ({ useAlerts: () => ({ showAlert: showAlertMock }) }));
+        vi.doMock('ky', () => ({
+            default: vi.fn((_url: string, options?: { method?: string }) => ({
+                json: () => Promise.resolve(options?.method === 'POST' ? postBody : makeInitialSettings()),
+            })),
+        }));
+
+        return showAlertMock;
+    };
+
+    it('ST-012: a write the device refused with HTTP 200 alerts the error instead of "data updated"', async () => {
+        const showAlertMock = setupDeviceResponseTest({ success: false, error: 'Invalid settings value' });
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ wifi: { ap_ip_static: '999.1.1.1' } } as any).catch(() => undefined);
+
+        // The known firmware string is translated, the same way a known warning code is.
+        expect(showAlertMock).toHaveBeenCalledWith('error_invalid_settings_value', { type: 'error' });
+        // And the green toast must NOT appear — that is the whole bug: nothing was saved.
+        expect(showAlertMock).not.toHaveBeenCalledWith('data_updated', expect.anything());
+    });
+
+    it('ST-013: a refused write rejects so the caller can roll its input back', async () => {
+        setupDeviceResponseTest({ success: false, error: 'Invalid settings value' });
+
+        const { SettingsRefreshError, useSettings } = await import('@/common/settings');
+        const { ApiError } = await import('@/utils/api');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        const rejection = await updateSettings({ wifi: { ap_ip_static: '999.1.1.1' } } as any).catch((err) => err);
+
+        expect(rejection).toBeInstanceOf(ApiError);
+        // "The device refused it" and "it was saved but the re-read failed" need opposite reactions
+        // from the caller, so a refusal must never arrive wearing the refresh error's type.
+        expect(rejection).not.toBeInstanceOf(SettingsRefreshError);
+    });
+
+    it('ST-014: a refusal the UI has no wording for falls back to the generic message', async () => {
+        const showAlertMock = setupDeviceResponseTest({ success: false, error: 'Failed to save WiFi settings' });
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ wifi: { ap_ssid: 'x' } } as any).catch(() => undefined);
+
+        expect(showAlertMock).toHaveBeenCalledWith('settings_rejected', { type: 'error' });
+        expect(showAlertMock).not.toHaveBeenCalledWith('data_updated', expect.anything());
+    });
+
+    it('ST-015: a clean save through the real api() still shows the success alert', async () => {
+        const showAlertMock = setupDeviceResponseTest({ success: true });
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ web_port: 502 } as any);
+
+        expect(showAlertMock).toHaveBeenCalledWith('data_updated', { type: 'success' });
+    });
+
+    it('ST-016: warnings through the real api() are still a warning, not a refusal', async () => {
+        // success:true WITH warnings means the write was accepted. The envelope check must not
+        // touch it: turning this into an error would tell the user to undo a change that is live.
+        const showAlertMock = setupDeviceResponseTest({
+            success: true,
+            warnings: [{ code: 'port_collision', message: 'web_port and rs485_1 share TCP port 80' }],
+        });
+
+        const { useSettings } = await import('@/common/settings');
+        const { updateSettings, refresh } = useSettings();
+
+        await refresh();
+        await updateSettings({ web_port: 502 } as any);
+
+        expect(showAlertMock).toHaveBeenCalledWith(
+            'warning_port_collision',
+            expect.objectContaining({ type: 'warning' }),
+        );
+        expect(showAlertMock).not.toHaveBeenCalledWith('settings_rejected', expect.anything());
+        expect(showAlertMock).not.toHaveBeenCalledWith('data_updated', expect.anything());
     });
 });

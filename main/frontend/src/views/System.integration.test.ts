@@ -28,6 +28,10 @@
  * SYS-I-012 — a manual upload in flight disables the update button and the channel selector.
  * SYS-I-013 — the manual install posts to /update and reports the 409 conflict, not a generic
  *              update error.
+ * SYS-I-014 — leaving the page mid-download and coming back (acceptance criterion 10 of #101): the
+ *              download is not cancelled by the unmount, the returning page starts no second one and
+ *              offers no update button, and the operation finishes on its own — leaving no timer of
+ *              its own behind and no unhandled rejection.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -35,6 +39,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { nextTick, ref, shallowRef } from 'vue';
 import { createI18n } from 'vue-i18n';
 import { createRouter, createMemoryHistory, matchedRouteKey } from 'vue-router';
+import { REBOOT_SETTLE_MS } from '@/common/channelRelease';
 import { useFirmware } from '@/common/firmware';
 import { messages } from '@/i18n/messages';
 import manifest from '@/common/__fixtures__/release-versions.sample.yaml?raw';
@@ -140,9 +145,13 @@ const makeRouter = () => createRouter({
   ],
 });
 
-const mountSystem = async () => {
+// `reset: false` mounts the page on top of the module state left by a previous mount — that is what
+// coming back to /system after navigating away looks like, the composable being module scoped.
+const mountSystem = async ({ reset = true } = {}) => {
   const { __resetChannelReleaseState } = await import('@/common/channelRelease');
-  __resetChannelReleaseState();
+  if (reset) {
+    __resetChannelReleaseState();
+  }
   const { default: System } = await import('@/views/System.vue');
   const router = makeRouter();
   await router.push('/system');
@@ -161,6 +170,42 @@ const stubManifest = (text: string) => {
   const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => text });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
+};
+
+// A firmware download the test can hold open: the first half of the image arrives at once, the rest
+// only when release() is called. That gap is the window in which the user leaves the page.
+const gatedDownload = () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chunks = [new Uint8Array([0xe9, 0x01, 0x02, 0x03]), new Uint8Array([0x04, 0x05, 0x06, 0x07])];
+  const total = chunks[0].length + chunks[1].length;
+  let index = 0;
+  const response = {
+    ok: true,
+    status: 200,
+    headers: {
+      get: (name: string) => (name.toLowerCase() === 'content-length' ? String(total) : null),
+    },
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (index === 0) {
+            index += 1;
+            return { done: false, value: chunks[0] };
+          }
+          if (index === 1) {
+            await gate;
+            index += 1;
+            return { done: false, value: chunks[1] };
+          }
+          return { done: true, value: undefined };
+        },
+      }),
+    },
+  };
+  return { response, total, release: () => release() };
 };
 
 // The phases the card renders are produced by a long device conversation (download, upload, reboot,
@@ -194,6 +239,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Only SYS-I-014 switches them on; on real timers this is a no-op.
+  vi.useRealTimers();
 });
 
 describe('System.vue — firmware channels', () => {
@@ -433,5 +480,95 @@ describe('System.vue — firmware channels', () => {
     expect(showAlertMock).not.toHaveBeenCalledWith('Firmware update error', expect.anything());
 
     wrapper.unmount();
+  });
+
+  it('SYS-I-014: leaving the page mid-download keeps it running and coming back starts no second one', async () => {
+    // Fake timers so the reboot wait can be driven, and so a leftover timer of the operation would
+    // still be countable at the end. flushPromises() keeps working: it captured the real
+    // setImmediate when @vue/test-utils was loaded, long before the clock was faked.
+    vi.useFakeTimers();
+    const rejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onUnhandledRejection);
+    // A late write into a component that is no longer mounted would show up here as a Vue warning.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let uptimeSeconds = 3600;
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === 'uptime') {
+        return { days: 0, hours: 0, minutes: Math.floor(uptimeSeconds / 60), seconds: uptimeSeconds % 60 } as never;
+      }
+      return {} as never;
+    });
+
+    const download = gatedDownload();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => manifest })
+      .mockResolvedValueOnce(download.response);
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('confirm', vi.fn(() => true));
+
+    const wrapper = await mountSystem();
+    const state = await channelReleaseState();
+    const timersBefore = vi.getTimerCount();
+
+    const updateButton = wrapper.findAll('button').find((button) => button.text() === 'Update to last version on channel');
+    await updateButton!.trigger('click');
+    await flushPromises();
+
+    // Half of the image is in, the rest is being waited for.
+    expect(state.phase.value).toBe('downloading');
+    expect(statusText(wrapper)).toContain('downloading… 50%');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const signal = fetchMock.mock.calls[1][1].signal as AbortSignal;
+
+    // The user navigates away. The component dies; the operation must not.
+    wrapper.unmount();
+    await flushPromises();
+    expect(signal.aborted).toBe(false);
+    expect(state.phase.value).toBe('downloading');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // …and comes back to /system, which mounts a fresh component over the same module state.
+    const back = await mountSystem({ reset: false });
+    // The mount runs check() again: it must bail out on a busy operation instead of re-downloading
+    // the manifest, and nothing may start a second firmware download either.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(state.phase.value).toBe('downloading');
+    expect(statusText(back)).toContain('downloading… 50%');
+    // No second install can be started: the button is not offered at all while the operation runs,
+    // and the channel that would recompute the offer is locked with it.
+    expect(back.findAll('button').some((button) => button.text() === 'Update to last version on channel')).toBe(false);
+    expect(back.find('#update_channel').attributes()).toHaveProperty('disabled');
+
+    // The rest of the image arrives and the operation carries on to the upload on its own.
+    download.release();
+    await flushPromises();
+    expect(vi.mocked(api).mock.calls.filter((call) => call[0] === 'update')).toHaveLength(1);
+    expect(state.phase.value).toBe('rebooting');
+
+    // The device reboots (uptime drops) and comes back on the new version. The clock is moved just
+    // past the settle pause: the first poll already sees the drop, and stopping there leaves the
+    // reload timer armed instead of reloading the page out from under the test.
+    infoRef.value = makeInfo('1.1.0');
+    uptimeSeconds = 5;
+    await vi.advanceTimersByTimeAsync(REBOOT_SETTLE_MS + 1);
+    await flushPromises();
+
+    expect(state.phase.value).toBe('verified');
+    expect(statusText(back)).toContain('updated to 1.1.0');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Nothing of the operation is left ticking: the one extra timer is the deliberate reload into
+    // the new interface, not a stall timer, a hard cap or an uptime poll.
+    expect(vi.getTimerCount()).toBe(timersBefore + 1);
+    expect(rejections).toEqual([]);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    process.off('unhandledRejection', onUnhandledRejection);
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    back.unmount();
   });
 });
