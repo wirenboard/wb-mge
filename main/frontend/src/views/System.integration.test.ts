@@ -1,28 +1,44 @@
 /**
- * Integration tests for the firmware card on System.vue — the channel selector, the two-channel
- * row and the update button. The channel-release composable is the real one; fw-releases (fetch)
- * and the device (api) are stubbed.
+ * Integration tests for the firmware card on System.vue — the channel selector, the update row and
+ * its status line. The channel-release composable is the real one; fw-releases (fetch) and the
+ * device (api) are stubbed.
  *
  * SYS-I-001 — the offer comes from the manifest channel, not from latest.txt: exactly one fetch,
- *              to release-versions.yaml, and the button offers the stable version.
- * SYS-I-002 — the channels row shows BOTH versions from that single download, the selected channel
- *              is highlighted and the version equal to the installed one is marked "installed".
+ *              to release-versions.yaml, and the update button is offered.
+ * SYS-I-002 — the channel dropdown carries BOTH versions from that single download in its option
+ *              labels, the selected channel is the value of the select and the version equal to the
+ *              installed one is marked "installed".
  * SYS-I-003 — a channel whose version cannot be read is shown as a dash while the other channel
  *              still resolves and the update button still works.
  * SYS-I-004 — a failed channel save shows an alert, puts the selector back to the saved value and
  *              leaves the offer untouched.
- * SYS-I-005 — both channels equal to the installed version: two "installed" marks, no button.
+ * SYS-I-005 — both channels equal to the installed version: two "installed" marks, no button and
+ *              no status line repeating the version.
  * SYS-I-006 — a save the device accepted whose read-back failed keeps the selector on the new
  *              channel and reports the failed re-read, not a failed save.
+ * SYS-I-007 — switching the channel costs exactly one POST /settings and no second manifest
+ *              request, and the offer follows the new channel.
+ * SYS-I-008 — a manifest that could not be downloaded: channel names without a version suffix,
+ *              "update check unavailable" in the status line, no update button, re-check offered.
+ * SYS-I-009 — a board with no published channels gets its own sentence, not the failed-check one.
+ * SYS-I-010 — the status line carries the phase texts: download percent, reboot, "updated to X",
+ *              "the version did not change".
+ * SYS-I-011 — in `conflict` there is no update button, the conflict sentence is in the status line
+ *              and "Check state" is the only way forward.
+ * SYS-I-012 — a manual upload in flight disables the update button and the channel selector.
+ * SYS-I-013 — the manual install posts to /update and reports the 409 conflict, not a generic
+ *              update error.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
-import { ref, shallowRef } from 'vue';
+import { nextTick, ref, shallowRef } from 'vue';
 import { createI18n } from 'vue-i18n';
 import { createRouter, createMemoryHistory, matchedRouteKey } from 'vue-router';
+import { useFirmware } from '@/common/firmware';
 import { messages } from '@/i18n/messages';
 import manifest from '@/common/__fixtures__/release-versions.sample.yaml?raw';
+import { api } from '@/utils/api';
 import type { Info, Settings } from '@/common/types';
 
 // Enough of /info and /settings for the page and the sidebar to render.
@@ -147,6 +163,22 @@ const stubManifest = (text: string) => {
   return fetchMock;
 };
 
+// The phases the card renders are produced by a long device conversation (download, upload, reboot,
+// verify). The tests that only check what a phase looks like drive the composable's own state
+// instead of replaying that conversation — it is the very state the card reads.
+const channelReleaseState = async () => {
+  const { useChannelRelease } = await import('@/common/channelRelease');
+  return useChannelRelease();
+};
+
+const channelLabels = (wrapper: { findAll: (s: string) => { text: () => string }[] }) =>
+  wrapper.findAll('#update_channel option').map((option) => option.text().replace(/\s+/g, ' ').trim());
+
+const statusText = (wrapper: { find: (s: string) => { exists: () => boolean; text: () => string } }) => {
+  const status = wrapper.find('.firmware-update-status');
+  return status.exists() ? status.text() : '';
+};
+
 beforeEach(() => {
   infoRef.value = makeInfo('1.0.0');
   settingsRef.value = makeSettings();
@@ -154,6 +186,10 @@ beforeEach(() => {
   updateSettingsMock.mockReset().mockResolvedValue(undefined);
   partialRefreshMock.mockReset().mockResolvedValue(undefined);
   showAlertMock.mockReset();
+  vi.mocked(api).mockReset().mockResolvedValue({});
+  // Module state of useFirmware: a test that leaves an upload "in flight" would disable the card
+  // for every test after it.
+  useFirmware().isUpdating.value = false;
 });
 
 afterEach(() => {
@@ -169,29 +205,22 @@ describe('System.vue — firmware channels', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('release-versions.yaml');
     // No request to latest.txt anywhere.
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('latest'))).toBe(false);
-    expect(wrapper.text()).toContain('Update to 1.1.0');
+    // The label carries no version any more: the offer is read from the channel row.
+    expect(wrapper.text()).toContain('Update to last version on channel');
+    expect(channelLabels(wrapper)).toContain('Stable (last 1.1.0)');
 
     wrapper.unmount();
   });
 
-  it('SYS-I-002: shows both channels, marks the selected one and the installed one', async () => {
+  it('SYS-I-002: both options carry their version, the selected one is the saved channel', async () => {
     infoRef.value = makeInfo('1.1.1');
     stubManifest(manifest);
     const wrapper = await mountSystem();
 
-    const row = wrapper.findAll('.firmware-channels');
-    expect(row).toHaveLength(1);
-    const text = row[0].text();
-    expect(text).toContain('stable: 1.1.0');
-    expect(text).toContain('testing: 1.1.1');
-    // The installed version (testing) carries the mark, the other one does not.
-    const marks = row[0].findAll('.firmware-note');
-    expect(marks).toHaveLength(1);
-    expect(marks[0].text()).toBe('installed');
-    // The selected channel is the highlighted one.
-    const selected = row[0].findAll('.firmware-channel-selected');
-    expect(selected).toHaveLength(1);
-    expect(selected[0].text()).toContain('stable');
+    // Both versions come out of the one download, so the closed dropdown already answers "what is
+    // in this channel" and opening it answers it for the other one.
+    expect(channelLabels(wrapper)).toEqual(['Stable (last 1.1.0)', 'Testing (installed 1.1.1)']);
+    expect((wrapper.find('#update_channel').element as HTMLSelectElement).value).toBe('stable');
 
     wrapper.unmount();
   });
@@ -204,10 +233,8 @@ describe('System.vue — firmware channels', () => {
     stubManifest(mixed);
     const wrapper = await mountSystem();
 
-    const text = wrapper.find('.firmware-channels').text();
-    expect(text).toContain('stable: 1.1.0');
-    expect(text).toContain('testing: —');
-    expect(wrapper.text()).toContain('Update to 1.1.0');
+    expect(channelLabels(wrapper)).toEqual(['Stable (last 1.1.0)', 'Testing (last —)']);
+    expect(wrapper.text()).toContain('Update to last version on channel');
 
     wrapper.unmount();
   });
@@ -217,16 +244,19 @@ describe('System.vue — firmware channels', () => {
     updateSettingsMock.mockRejectedValue(new Error('connection_error'));
     const wrapper = await mountSystem();
 
-    const select = wrapper.find('#update_channel');
-    await select.setValue('testing');
+    await wrapper.find('#update_channel').setValue('testing');
     await flushPromises();
 
     expect(updateSettingsMock).toHaveBeenCalledWith({ update_channel: 'testing' });
     expect(showAlertMock).toHaveBeenCalled();
     expect(settingsRef.value.update_channel).toBe('stable');
-    // The offer still names the stable version: nothing was recomputed for a channel the device
-    // never accepted.
-    expect(wrapper.text()).toContain('Update to 1.1.0');
+    // The offer must not have been recomputed for a channel the device never accepted: a check()
+    // run before (or regardless of) the roll-back would leave the card offering 1.1.1 — and the
+    // confirm dialog naming it — while the selector says Stable. The selector value itself is
+    // bound with v-model, so asserting it would only restate the line above.
+    const state = await channelReleaseState();
+    expect(state.resolvedChannel.value).toBe('stable');
+    expect(state.release.value).toEqual({ ok: true, version: '1.1.0', url: expect.stringContaining('1.1.0.bin') });
 
     wrapper.unmount();
   });
@@ -238,8 +268,7 @@ describe('System.vue — firmware channels', () => {
     updateSettingsMock.mockRejectedValue(new SettingsRefreshErrorMock('connection_error'));
     const wrapper = await mountSystem();
 
-    const select = wrapper.find('#update_channel');
-    await select.setValue('testing');
+    await wrapper.find('#update_channel').setValue('testing');
     await flushPromises();
 
     expect(settingsRef.value.update_channel).toBe('testing');
@@ -251,7 +280,7 @@ describe('System.vue — firmware channels', () => {
     wrapper.unmount();
   });
 
-  it('SYS-I-005: when both channels are already installed there is no update button', async () => {
+  it('SYS-I-005: when both channels are already installed there is no update button and no status', async () => {
     const same = manifest.replace(
       '    testing: fw/by-signature/mge_v3/main/1.1.1.bin',
       '    testing: fw/by-signature/mge_v3/main/1.1.0.bin',
@@ -260,9 +289,148 @@ describe('System.vue — firmware channels', () => {
     stubManifest(same);
     const wrapper = await mountSystem();
 
-    expect(wrapper.find('.firmware-channels').findAll('.firmware-note')).toHaveLength(2);
-    expect(wrapper.text()).not.toContain('Update to');
-    expect(wrapper.text()).toContain('in stable: 1.1.0');
+    expect(channelLabels(wrapper)).toEqual(['Stable (installed 1.1.0)', 'Testing (installed 1.1.0)']);
+    expect(wrapper.text()).not.toContain('Update to last version on channel');
+    // The version the channel offers is in the channel row only — no second copy in the status.
+    expect(statusText(wrapper)).toBe('');
+
+    wrapper.unmount();
+  });
+
+  it('SYS-I-007: switching the channel costs one POST and no second manifest download', async () => {
+    // Installed = the stable version, so the card starts with nothing to offer.
+    infoRef.value = makeInfo('1.1.0');
+    const fetchMock = stubManifest(manifest);
+    const wrapper = await mountSystem();
+
+    expect(wrapper.text()).not.toContain('Update to last version on channel');
+
+    await wrapper.find('#update_channel').setValue('testing');
+    await flushPromises();
+
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
+    expect(updateSettingsMock).toHaveBeenCalledWith({ update_channel: 'testing' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The offer follows the channel the device confirmed.
+    expect(wrapper.text()).toContain('Update to last version on channel');
+    expect(channelLabels(wrapper)).toEqual(['Stable (installed 1.1.0)', 'Testing (last 1.1.1)']);
+
+    wrapper.unmount();
+  });
+
+  it('SYS-I-008: an undownloadable manifest leaves the channels bare and says the check failed', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    const wrapper = await mountSystem();
+
+    // No suffix at all: "last —" would claim a lookup that never happened.
+    expect(channelLabels(wrapper)).toEqual(['Stable', 'Testing']);
+    expect(statusText(wrapper)).toContain('update check unavailable');
+    expect(wrapper.text()).not.toContain('Update to last version on channel');
+    expect(statusText(wrapper)).toContain('Check state');
+
+    wrapper.unmount();
+  });
+
+  it('SYS-I-009: a board without published channels gets its own sentence', async () => {
+    infoRef.value = makeInfo('1.0.0', 'not_in_manifest');
+    stubManifest(manifest);
+    const wrapper = await mountSystem();
+
+    expect(statusText(wrapper)).toContain('no update channels published for this board yet');
+    expect(statusText(wrapper)).not.toContain('update check unavailable');
+    expect(channelLabels(wrapper)).toEqual(['Stable', 'Testing']);
+
+    wrapper.unmount();
+  });
+
+  it('SYS-I-010: the status line carries the phase texts', async () => {
+    stubManifest(manifest);
+    const wrapper = await mountSystem();
+    const state = await channelReleaseState();
+
+    state.phase.value = 'downloading';
+    state.progress.value = 42;
+    await nextTick();
+    expect(statusText(wrapper)).toContain('downloading… 42%');
+
+    state.phase.value = 'rebooting';
+    await nextTick();
+    expect(statusText(wrapper)).toContain('the device is rebooting…');
+
+    state.phase.value = 'verified';
+    state.message.value = '1.1.0';
+    await nextTick();
+    expect(statusText(wrapper)).toContain('updated to 1.1.0');
+
+    state.phase.value = 'not_applied';
+    await nextTick();
+    expect(statusText(wrapper)).toContain('the version did not change');
+
+    state.phase.value = 'idle';
+    state.message.value = null;
+    wrapper.unmount();
+  });
+
+  it('SYS-I-011: in conflict the card offers a re-check instead of an update', async () => {
+    stubManifest(manifest);
+    const wrapper = await mountSystem();
+    const state = await channelReleaseState();
+
+    state.phase.value = 'conflict';
+    await nextTick();
+
+    expect(statusText(wrapper)).toContain('An update is already running, the device will reboot shortly');
+    expect(wrapper.text()).not.toContain('Update to last version on channel');
+    expect(statusText(wrapper)).toContain('Check state');
+
+    state.phase.value = 'idle';
+    wrapper.unmount();
+  });
+
+  it('SYS-I-012: a manual upload in flight disables the update button and the channel selector', async () => {
+    stubManifest(manifest);
+    const wrapper = await mountSystem();
+
+    useFirmware().isUpdating.value = true;
+    await nextTick();
+
+    const updateButton = wrapper.findAll('button').find((button) => button.text() === 'Update to last version on channel');
+    expect(updateButton).toBeDefined();
+    expect(updateButton!.attributes()).toHaveProperty('disabled');
+    expect(wrapper.find('#update_channel').attributes()).toHaveProperty('disabled');
+
+    wrapper.unmount();
+  });
+
+  it('SYS-I-013: the manual install posts to /update and reports a 409 as a conflict', async () => {
+    stubManifest(manifest);
+    const wrapper = await mountSystem();
+
+    // Only the upload is refused: the card keeps reading /uptime while the alert is shown.
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === 'update') {
+        throw Object.assign(new Error('http_error'), { response: { status: 409 } });
+      }
+      return {} as never;
+    });
+
+    const fileInput = wrapper.find('input[type="file"]');
+    Object.defineProperty(fileInput.element, 'files', {
+      value: [new File([new Uint8Array([0xe9])], 'firmware.bin')],
+      configurable: true,
+    });
+    await fileInput.trigger('change');
+    const uploadButton = wrapper.findAll('.fileUpload-wrapper button').at(-1);
+    await uploadButton!.trigger('click');
+    await flushPromises();
+
+    expect(vi.mocked(api)).toHaveBeenCalledWith('update', expect.objectContaining({ method: 'POST' }));
+    expect(showAlertMock).toHaveBeenCalledWith(
+      'An update is already running, the device will reboot shortly',
+      expect.objectContaining({ type: 'error' }),
+    );
+    expect(showAlertMock).not.toHaveBeenCalledWith('Firmware update error', expect.anything());
 
     wrapper.unmount();
   });
