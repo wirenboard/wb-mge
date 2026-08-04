@@ -32,9 +32,16 @@ extern int mock_port_manager_apply_settings_skipped[BRIDGES_COUNT];
 extern int mock_port_manager_ports_frozen_called;
 extern bool mock_port_manager_ports_frozen_return_value;
 
+// port_manager_apply_cache_settings(): the runtime apply of the cache_en_N keys. Synchronous, so
+// the call id lets a test place it against the async task's release/acquire phases.
+extern int mock_port_manager_apply_cache_settings_called;
+extern unsigned mock_port_manager_apply_cache_settings_call_seq;
+extern esp_err_t mock_port_manager_apply_cache_settings_return_value;
+
 bool port_manager_check_settings_changed(unsigned port_index);
 esp_err_t port_manager_release(unsigned port_index);
 esp_err_t port_manager_apply_settings(unsigned port_index);
 bool port_manager_ports_frozen(void);
+esp_err_t port_manager_apply_cache_settings(void);
 
 void mock_port_manager_reset(void);

@@ -120,8 +120,27 @@ static bool s_subsystems_ready = false;
 // with the per-port locks.
 static SemaphoreHandle_t s_cache_decision_mutex;
 
+// Serialises a WHOLE cache-overlay move — the release of the old holder, the enable of the new
+// one and the single global sync that follows them — against another move.
+//
+// It exists because that sequence spans two different pm_locks taken one after the other (they
+// are deliberately not nested; see port_manager_set_cache()), so its check-then-act is not
+// atomic on its own: two concurrent movers can both find no holder and both enable, leaving two
+// ports feeding one port-blind pool. That used to be excluded by the premise "the only caller is
+// the REST handler, on the single esp_http_server request task". POST /settings broke it — the
+// runtime apply of cache_en reaches port_manager_apply_cache_settings() from settings_update(),
+// which also runs on the config-button task (factory reset on a long press, main.c). So the
+// invariant is now enforced here rather than assumed.
+//
+// Lock order: s_cache_move_mutex -> pm_lock -> s_cache_decision_mutex. This one is the OUTERMOST
+// of the three and is taken only at the top of the two public cache entry points, with no other
+// lock held, so it adds no cycle: nothing takes a pm_lock (or the cache-decision mutex) and then
+// asks for this. It deliberately does NOT replace the pm_locks below it — those also guard the
+// port reinit paths, which know nothing about the cache.
+static SemaphoreHandle_t s_cache_move_mutex;
+
 // Backing store for every lock this module owns — the per-port init mutexes in pm_ctx[] and
-// s_cache_decision_mutex above. Static (BSS), not heap, and that is the load-bearing part:
+// the two cache mutexes above. Static (BSS), not heap, and that is the load-bearing part:
 // xSemaphoreCreateMutexStatic() hands back the very buffer it was given, so creation cannot
 // fail and port_manager_locks_init() has no error to report or to swallow.
 //
@@ -132,9 +151,10 @@ static SemaphoreHandle_t s_cache_decision_mutex;
 // holds for every build target, including the ones with no sdkconfig checked in.
 static StaticSemaphore_t s_pm_init_mutex_buf[BRIDGES_COUNT];
 static StaticSemaphore_t s_cache_decision_mutex_buf;
+static StaticSemaphore_t s_cache_move_mutex_buf;
 
-// Create every lock this module owns: one init mutex per port plus the cache-decision mutex.
-// See the contract in port_manager.h for when this must run.
+// Create every lock this module owns: one init mutex per port, the cache-decision mutex and the
+// cache-move mutex. See the contract in port_manager.h for when this must run.
 //
 // Cannot fail, so it returns nothing and logs nothing. See the buffers above for why — that
 // is exactly what the static storage buys, and it is the reason this boot-path function needs
@@ -155,6 +175,12 @@ void port_manager_locks_init(void)
     }
     if (s_cache_decision_mutex == NULL) {
         s_cache_decision_mutex = xSemaphoreCreateMutexStatic(&s_cache_decision_mutex_buf);
+    }
+    // Created LAST, after the cache-decision mutex, and the order is depended upon: the tests
+    // identify each lock by its position in the creation sequence, so a new lock goes at the
+    // end rather than in the middle.
+    if (s_cache_move_mutex == NULL) {
+        s_cache_move_mutex = xSemaphoreCreateMutexStatic(&s_cache_move_mutex_buf);
     }
 }
 
@@ -202,6 +228,21 @@ static void cache_decision_unlock(void)
 {
     assert(s_cache_decision_mutex != NULL);
     xSemaphoreGive(s_cache_decision_mutex);
+}
+
+// Take the outermost of the three locks — see s_cache_move_mutex. Must be taken with no other
+// port_manager lock held, or the documented order is inverted.
+static void cache_move_lock(void)
+{
+    // Init-order guard only; see pm_lock() for why that is all it can be.
+    assert(s_cache_move_mutex != NULL);
+    xSemaphoreTake(s_cache_move_mutex, portMAX_DELAY);
+}
+
+static void cache_move_unlock(void)
+{
+    assert(s_cache_move_mutex != NULL);
+    xSemaphoreGive(s_cache_move_mutex);
 }
 
 // Bring the global cache pool in line with persisted per-port intent.
@@ -977,12 +1018,11 @@ static esp_err_t cache_overlay_apply_locked(unsigned index, bool enabled)
     return ret;
 }
 
-esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
+// Move the cache overlay onto port_index (enabled) or drop it from that port (!enabled).
+// The whole body of port_manager_set_cache(); the caller MUST hold s_cache_move_mutex, which is
+// what makes the check-then-act below atomic against another mover.
+static esp_err_t cache_move_locked(unsigned port_index, bool enabled)
 {
-    if (port_index >= BRIDGES_COUNT) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
     // Single-port cache invariant (review #51): the multimaster cache is one global
     // pool keyed by slave_id, and the Cache-TCP interface answers by unit_id (it is
     // port-blind), so it can only meaningfully serve one RS-485 port. Enabling the
@@ -1011,18 +1051,18 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
     // locks are deliberately NOT nested: pm_lock is held across whole port reinits, and
     // nesting would add a pm_lock[i] -> pm_lock[j] ordering rule to keep on top of the
     // existing pm_lock -> cache_decision_mutex one.
-    // The price is that the check-then-act spans TWO separate critical sections — the
-    // other port is read and cleared under its lock, this port is set under a different
-    // one — so it is race-free only because port_manager_set_cache() is called solely
-    // from the single esp_http_server request task and its calls are therefore
-    // serialised. That is the only caller today. Under that premise the overlay is held
-    // by NO port between the two sections and never by two: a concurrent reader sees the
-    // cache off for a moment, never two buses feeding one pool. Two concurrent callers
-    // would break it: one scanning while the other sits between its release and its
-    // enable finds no holder, releases nothing, and then sets its own port — so both end
-    // up set. A second caller (settings_update, MQTT, Modbus control) must therefore
-    // make the whole move atomic first, by holding both pm_locks across it, taken in
-    // ascending index order to stay deadlock-free.
+    // The price is that the check-then-act below spans TWO separate critical sections —
+    // the other port is read and cleared under its lock, this port is set under a
+    // different one — so on its own it is not atomic: one mover scanning while another
+    // sits between its release and its enable finds no holder, releases nothing, and then
+    // sets its own port, leaving BOTH set. That used to be excluded by a premise rather
+    // than by a lock ("the only caller is the REST handler, on the single esp_http_server
+    // request task"), and POST /settings retired that premise — see s_cache_move_mutex,
+    // which every caller of this function now holds for the whole move. Under that lock
+    // the overlay is held by NO port between the two sections and never by two: a
+    // concurrent reader sees the cache off for a moment, never two buses feeding one
+    // pool. A new caller must go through one of the two public entry points (or take
+    // s_cache_move_mutex itself); it must NOT call this function directly.
     esp_err_t release_ret = ESP_OK;
     bool moved = false;
     // Which port release_ret came from — needed only for the log below, and captured
@@ -1118,6 +1158,95 @@ esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
         return sync_ret;
     }
     return (ret != ESP_OK) ? ret : release_ret;
+}
+
+esp_err_t port_manager_set_cache(unsigned port_index, bool enabled)
+{
+    if (port_index >= BRIDGES_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    cache_move_lock();
+    esp_err_t ret = cache_move_locked(port_index, enabled);
+    cache_move_unlock();
+    return ret;
+}
+
+esp_err_t port_manager_apply_cache_settings(void)
+{
+    // Held across the read of the stored intent, the read of the runtime holder AND the move
+    // that reconciles them, so no other mover can slip in between deciding and acting.
+    cache_move_lock();
+
+    // Stored intent, resolved by the SAME rule the boot normalisation in
+    // port_manager_init_subsystems() uses: the cache is single-port, and the lowest index that
+    // asks for it wins. Any other tie-break here would let a reboot reinterpret what this call
+    // just applied — the device would come back with the overlay on the other port.
+    unsigned wanted = BRIDGES_COUNT;    // BRIDGES_COUNT == "no port asks for the cache"
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        if (setting_items_read_bool(cache_en_nvs_key(i))) {
+            wanted = i;
+            break;
+        }
+    }
+
+    // One POST /settings can set cache_en on BOTH ports in a single request
+    // ({"rs485_1":{"cache_en":true},"rs485_2":{"cache_en":true}}) — settings_manager writes the
+    // two keys independently and knows nothing about the invariant. The move below would leave
+    // the loser's key standing (it releases by RUNTIME overlay, and the loser may not hold it),
+    // so /settings would keep reporting cache_en true for a port /info reports as not caching:
+    // the very divergence this function exists to close. Clear the surplus keys here, exactly as
+    // the boot normalisation clears them.
+    // Reported like any other failed persist (persist-6): the runtime state below is still
+    // correct, the stored one is not, and a reboot would hand the overlay back.
+    esp_err_t surplus_ret = ESP_OK;
+    for (unsigned i = wanted + 1; i < BRIDGES_COUNT; i++) {
+        if (!setting_items_read_bool(cache_en_nvs_key(i))) {
+            continue;
+        }
+        ESP_LOGW(TAG, "Port[%u]: clearing stale cache overlay — cache is single-port (review #51)", i + 1);
+        esp_err_t r = setting_items_save_bool(cache_en_nvs_key(i), false);
+        if (r != ESP_OK && surplus_ret == ESP_OK) {
+            surplus_ret = r;
+        }
+    }
+
+    // The runtime holder. Read without any pm_lock, which is safe for the same reason
+    // cache_sync_global() reads the same field without one: cache_overlay is written in exactly
+    // two places — the boot normalisation (single-threaded, before httpd exists) and
+    // cache_overlay_apply_locked(), reachable only from cache_move_locked() below — and this
+    // call holds the lock that excludes every one of those.
+    unsigned holder = BRIDGES_COUNT;
+    for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
+        if (pm_ctx[i].cache_overlay) {
+            holder = i;
+            break;
+        }
+    }
+
+    // Nothing else to do when the runtime already matches: no NVS rewrite, no sniffer re-arm and
+    // above all no cache_multimaster_clear(). Every POST /settings comes through here, and a
+    // move that ran unconditionally would drop the accumulated register values on a request that
+    // only changed the Wi-Fi password.
+    esp_err_t ret = ESP_OK;
+    if (holder != wanted) {
+        ESP_LOGI(TAG, "Cache overlay: NVS asks for %s, runtime has %s — applying",
+                 (wanted == BRIDGES_COUNT) ? "no port" : (wanted == 0 ? "port 1" : "port 2"),
+                 (holder == BRIDGES_COUNT) ? "no port" : (holder == 0 ? "port 1" : "port 2"));
+        // Exactly ONE cache_move_locked() call per apply, whichever way the state changed, so
+        // the single cache_sync_global() per operation stays single (C9). Doing it as "disable
+        // the old holder, then enable the new one" would sync twice, and between the two syncs
+        // no port would want the pool: it would be freed and reallocated on every move, which is
+        // the failure mode C9 removed.
+        ret = (wanted != BRIDGES_COUNT) ? cache_move_locked(wanted, true)
+                                        : cache_move_locked(holder, false);
+    }
+
+    cache_move_unlock();
+
+    // Same precedence as cache_move_locked()'s own: a live failure (the pool, the sniffer) is
+    // worse news than a stale NVS key, so it wins when both happened.
+    return (ret != ESP_OK) ? ret : surplus_ret;
 }
 
 void port_manager_set_ports_frozen(bool frozen)
@@ -1559,15 +1688,16 @@ void port_manager_clear_locks_for_test(void)
         pm_ctx[i].init_mutex = NULL;
     }
     s_cache_decision_mutex = NULL;
+    s_cache_move_mutex = NULL;
 }
 
 void port_manager_reset_for_test(void)
 {
     memset(pm_ctx, 0, sizeof(pm_ctx));
-    /* The memset above already dropped the per-port handles; this is here for the one that
-     * lives outside pm_ctx. Without it the cache-decision mutex would survive from whichever
-     * test ran first, and "reset" would mean something different for it than for the
-     * per-port locks. */
+    /* The memset above already dropped the per-port handles; this is here for the ones that
+     * live outside pm_ctx (the cache-decision and cache-move mutexes). Without it they would
+     * survive from whichever test ran first, and "reset" would mean something different for
+     * them than for the per-port locks. */
     port_manager_clear_locks_for_test();
     __atomic_store_n(&s_ports_frozen, false, __ATOMIC_SEQ_CST);
     /* Clear the one-shot guard so each test starts from a device that has not

@@ -51,8 +51,9 @@ typedef enum {
 #define PM_ERR_PORTS_FROZEN  ((esp_err_t)0x10000)
 
 /**
- * @brief Create the port_manager locks: the per-port init mutexes and the
- *        global cache-decision mutex.
+ * @brief Create the port_manager locks: the per-port init mutexes, the global
+ *        cache-decision mutex and the cache-move mutex that serialises a whole
+ *        overlay move against another one.
  *
  * Called from the top of port_manager_init_subsystems(), which main.c runs on the
  * main task before http_server_init(). That ordering is the contract: the URI
@@ -250,15 +251,16 @@ const char *port_manager_mode_to_str(pm_mode_t mode);
  * Enabling on the port that already holds it leaves the overlay where it is, but
  * is NOT a no-op: it re-writes the NVS key and re-arms the sniffer.
  *
- * NOT thread-safe against itself. The move releases the old holder and enables
- * the new one under two DIFFERENT pm_locks, one after the other, so two
- * concurrent calls can both find no holder and both enable — leaving two ports
- * feeding the pool. The single-port invariant therefore rests on calls being
- * serialised, which today they are: the only caller is the REST handler, running
- * on the single esp_http_server request task. A second caller must serialise
- * against it (see the locking note in port_manager_set_cache()); the boot-time
- * normalisation in port_manager_init() is what enforces the invariant on stored
- * NVS, and it is not a runtime guard.
+ * Thread-safe against itself and against port_manager_apply_cache_settings().
+ * The move releases the old holder and enables the new one under two DIFFERENT
+ * pm_locks, one after the other, so on its own its check-then-act would let two
+ * concurrent calls both find no holder and both enable — two ports feeding one
+ * port-blind pool. That is why both entry points hold a dedicated cache-move
+ * mutex for the whole operation (see the locking note in port_manager.c). It
+ * used to rest on a premise instead — "the only caller is the REST handler, on
+ * the single esp_http_server request task" — which POST /settings retired.
+ * The boot-time normalisation in port_manager_init_subsystems() is what enforces
+ * the invariant on stored NVS, and it is not a runtime guard.
  *
  * @param port_index  0-based port index (< BRIDGES_COUNT).
  * @param enabled     True to make this port the cache source, false to drop the
@@ -279,6 +281,48 @@ const char *port_manager_mode_to_str(pm_mode_t mode);
  *         running" is worse news than "it will not survive a reboot".
  */
 esp_err_t port_manager_set_cache(unsigned port_index, bool enabled);
+
+/**
+ * @brief Bring the runtime cache overlay in line with the cache_en_N keys in NVS.
+ *
+ * The settings-driven counterpart of port_manager_set_cache(): POST /settings (and
+ * POST /cmd set_default_settings, and the factory-reset button) write cache_en_N
+ * straight to NVS through settings_manager's key mapping, which knows nothing about
+ * the runtime overlay. Without this call the two silently diverge and STAY diverged —
+ * NVS says the cache is on port 2, the sniffer overlay stays on port 1, and not one
+ * packet reaches the pool until someone issues a POST /ports/N/cache. Nothing at
+ * runtime heals it, because the only other place that re-reads the stored overlay is
+ * the boot normalisation.
+ *
+ * Reconciles both directions and the surplus: it moves the overlay onto the port NVS
+ * asks for, drops it when no port asks for it, and clears any additional cache_en key
+ * a single request may have set (the cache is single-port; lowest index wins, the same
+ * rule the boot normalisation applies, so a reboot cannot reinterpret the result).
+ * A no-op — no NVS write, no sniffer re-arm, no cache_multimaster_clear() — when the
+ * runtime already matches NVS, which is the common case for a settings write that does
+ * not mention caching at all.
+ *
+ * Runs at most ONE move, so the single cache_sync_global() per operation stays single
+ * and a move never frees and reallocates the 32 KB pool.
+ *
+ * Not gated on the factory-test freeze, unlike port_manager_apply_settings(): this
+ * touches no TX/DE pin. Its only live action is sniffer_enable/disable on a port whose
+ * serial is open, and the frozen ports have none — so during the test it records the
+ * intent, and the exit path's port_manager_apply_settings() arms the sniffer from it.
+ *
+ * Called from settings_update(), on the caller's task (an HTTP task, or the
+ * config-button task on a factory reset), NOT from settings_update_task: the result has
+ * to reach the POST /settings response, which is sent long before that task runs.
+ *
+ * @return ESP_OK when nothing had to change or the change was applied and persisted;
+ *         otherwise the same codes as port_manager_set_cache() — ESP_ERR_NO_MEM when
+ *         the pool would not allocate, ESP_ERR_INVALID_STATE when the cache module
+ *         never initialised, or an NVS error when the overlay was applied live but
+ *         could not be persisted (persist-6). Callers must surface it: the request was
+ *         accepted and saved, so silence would tell the user the cache is where they
+ *         put it when it is not.
+ */
+esp_err_t port_manager_apply_cache_settings(void);
 
 /**
  * @brief Return the persisted cache-overlay state for a port.

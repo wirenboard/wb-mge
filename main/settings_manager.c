@@ -16,8 +16,10 @@ static const char *TAG = "settings_manager";
 #define SETTING_KEY_BUF_SIZE 64
 #define WARNING_MSG_BUF_SIZE 224
 
-// Machine-readable code of a warning reported in the response's "warnings" array.
+// Machine-readable codes of the warnings reported in the response's "warnings" array.
 #define WARNING_CODE_PORT_COLLISION "port_collision"
+// The cache_en change was saved but could not be applied to the running ports.
+#define WARNING_CODE_CACHE_APPLY    "cache_apply_failed"
 
 typedef struct {
     const char *json_key;
@@ -378,6 +380,24 @@ static void add_warning(cJSON *warnings, const char *code, const char *message)
     }
 
     cJSON_AddItemToArray(warnings, entry);
+}
+
+// Hand the collected warnings to the response, or drop them when there is nothing to report.
+// "warnings" is an OPTIONAL addition: it is present only when there is something to say, so a
+// clean request still gets exactly the response it got before and the API contract does not
+// change for clients that never look at it.
+//
+// Called on EVERY exit path of settings_process_request_json(), including the ones that answer
+// success:false — a warning describes the resulting configuration, not this request's verdict,
+// so it is reported whether the request was accepted or rejected. Takes ownership of `warnings`
+// either way, and tolerates a NULL one (cJSON_CreateArray() came up empty-handed).
+static void attach_warnings(cJSON *response_json, cJSON *warnings)
+{
+    if (cJSON_GetArraySize(warnings) > 0) {
+        cJSON_AddItemToObject(response_json, "warnings", warnings);
+    } else {
+        cJSON_Delete(warnings);
+    }
 }
 
 // Cross-field validation: no two TCP services may listen on the same port. Allowing it leaves one
@@ -803,9 +823,12 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     }
 
     /* Phase 1: validate all fields before writing anything */
-    // Collects the non-fatal findings of the validation (currently only the inherited port
-    // collisions that are accepted rather than rejected). They are advisory, so an allocation
-    // failure here just means no warnings are reported, not a failed request.
+    // Collects the non-fatal findings of the request: the inherited port collisions that are
+    // accepted rather than rejected (Phase 1), and a cache overlay that was saved but could not
+    // be applied to the running ports (after settings_update(), at the bottom). They are
+    // advisory, so an allocation failure here just means no warnings are reported, not a failed
+    // request. Attached to the response by attach_warnings() on every exit path below — it must
+    // outlive the validation, because the last contributor to it runs after the writes.
     cJSON *warnings = cJSON_CreateArray();
 
     // When wifi is permanently disabled, skip WiFi group validation entirely
@@ -823,17 +846,9 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         validate_rs485_settings(request_json) &&
         validate_port_collisions(request_json, warnings);
 
-    // "warnings" is an OPTIONAL addition to the response: it is present only when there is
-    // something to report, so a clean request still gets exactly the response it got before and
-    // the API contract does not change for clients that never look at it.
-    if (cJSON_GetArraySize(warnings) > 0) {
-        cJSON_AddItemToObject(*response_json, "warnings", warnings);
-    } else {
-        cJSON_Delete(warnings);
-    }
-
     if (!settings_valid) {
         ESP_LOGE(TAG, "Settings validation failed — rejecting request");
+        attach_warnings(*response_json, warnings);
         cJSON_AddBoolToObject(*response_json, "success", false);
         cJSON_AddStringToObject(*response_json, "error", "Invalid settings value");
         return ESP_OK; // Return OK so HTTP layer sends the error JSON
@@ -848,6 +863,7 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         esp_err_t ret = setting_items_save(KEY_WIFI_PERM_DISABLE, perm_val);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to save wifi_perm_disable: %s", esp_err_to_name(ret));
+            attach_warnings(*response_json, warnings);
             cJSON_AddBoolToObject(*response_json, "success", false);
             cJSON_AddStringToObject(*response_json, "error", "Failed to save wifi_perm_disable");
             return ESP_OK; // Return OK so HTTP layer sends the error JSON
@@ -865,6 +881,7 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
             // instead of a partial-write acknowledged as success.
             if (!save_setting_from_json(item, mapping->setting_key)) {
                 ESP_LOGE(TAG, "Failed to save top-level setting '%s'", mapping->setting_key);
+                attach_warnings(*response_json, warnings);
                 cJSON_AddBoolToObject(*response_json, "success", false);
                 cJSON_AddStringToObject(*response_json, "error", "Failed to save setting");
                 return ESP_OK; // Return OK so HTTP layer sends the error JSON
@@ -879,6 +896,7 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
             // Return early on any NVS write failure; do not report success:true for partial writes.
             if (save_group_settings(wifi_json, wifi_mappings, ARRAY_SIZE(wifi_mappings), NULL) != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to save WiFi settings");
+                attach_warnings(*response_json, warnings);
                 cJSON_AddBoolToObject(*response_json, "success", false);
                 cJSON_AddStringToObject(*response_json, "error", "Failed to save WiFi settings");
                 return ESP_OK; // Return OK so HTTP layer sends the error JSON
@@ -893,6 +911,7 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
             // Return early on any NVS write failure; do not report success:true for partial writes.
             if (save_group_settings(eth_json, ethernet_mappings, ARRAY_SIZE(ethernet_mappings), NULL) != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to save Ethernet settings");
+                attach_warnings(*response_json, warnings);
                 cJSON_AddBoolToObject(*response_json, "success", false);
                 cJSON_AddStringToObject(*response_json, "error", "Failed to save Ethernet settings");
                 return ESP_OK; // Return OK so HTTP layer sends the error JSON
@@ -903,6 +922,7 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     // Return early on any NVS write failure inside RS485 processing.
     if (process_rs485_settings(request_json) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to save RS485 settings");
+        attach_warnings(*response_json, warnings);
         cJSON_AddBoolToObject(*response_json, "success", false);
         cJSON_AddStringToObject(*response_json, "error", "Failed to save RS485 settings");
         return ESP_OK; // Return OK so HTTP layer sends the error JSON
@@ -913,7 +933,27 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     // running state against NVS and reconciles the ones that actually changed. Doing it here, in
     // the HTTP handler, meant the cache server was restarted BEFORE settings_update() re-applied
     // the RS-485 ports and the web server, so no port could be handed over between them.
-    settings_update();
+    //
+    // One step of it is synchronous and reports back: moving the runtime cache overlay onto the
+    // port rs485_N.cache_en now names. Everything else settings_update() does is either applied
+    // by the async task (long after this response is sent) or retried by the next settings write,
+    // so this is the one failure the client can be told about while it is still listening.
+    esp_err_t cache_apply_err = ESP_OK;
+    settings_update_with_status(&cache_apply_err);
+
+    // success stays TRUE: the settings WERE saved, and a reboot will apply the overlay from NVS.
+    // What failed is only the attempt to move it on the running device, which is precisely what a
+    // warning is for — the same shape as an inherited port collision above.
+    if (cache_apply_err != ESP_OK) {
+        char message[WARNING_MSG_BUF_SIZE];
+        snprintf(message, sizeof(message),
+                 "Caching was saved but could not be applied to the running ports (%s); the cache "
+                 "keeps working as it did until the setting is saved again or the device restarts",
+                 esp_err_to_name(cache_apply_err));
+        add_warning(warnings, WARNING_CODE_CACHE_APPLY, message);
+    }
+
+    attach_warnings(*response_json, warnings);
 
     // Add success flag
     cJSON_AddBoolToObject(*response_json, "success", true);

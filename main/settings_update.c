@@ -299,8 +299,12 @@ static void settings_update_task(void *arg)
 }
 
 
-esp_err_t settings_update(void)
+esp_err_t settings_update_with_status(esp_err_t *cache_apply_err)
 {
+    if (cache_apply_err != NULL) {
+        *cache_apply_err = ESP_OK;
+    }
+
     // The factory clock_out test owns part of the RS-485 hardware while it runs: it forces
     // V-out on, drives the TX pins of BOTH ports with the LEDC, and holds the DE pin of
     // both ports as a plain GPIO — port 1's HIGH (that driver transmits), port 2's LOW
@@ -368,6 +372,37 @@ esp_err_t settings_update(void)
         }
     }
 
+    // The runtime cache overlay, reconciled against the cache_en_N keys the settings write just
+    // put in NVS. settings_manager maps rs485_N.cache_en straight onto those keys and stops
+    // there, so before this call the overlay only ever moved through POST /ports/N/cache: a
+    // device could report cache_en=true on port 2 in /settings, cache_enabled=true on port 1 in
+    // /info, and packets_processed stuck at 0 forever — and nothing at runtime healed it.
+    //
+    // HERE, and not in settings_update_task, for two reasons.
+    //   - The result has to reach the client. settings_update_task is created below and runs
+    //     after this function has returned, by which time settings_process_request_json() has
+    //     already built and sent the POST /settings response; a failure raised there could only
+    //     ever be a log line. Run synchronously, it becomes a "warnings" entry the UI shows.
+    //   - It owns no listening socket, so it has no business in the release/acquire two-phase
+    //     apply the task performs. Running it BEFORE that task also means each port comes back
+    //     up already knowing the final overlay: port_init_mode() arms SNIFF_REASON_CACHE from
+    //     it, so a port whose serial parameters changed in the same request is not armed twice.
+    //
+    // Not gated on port_manager_ports_frozen() either, unlike the two calls above: this touches
+    // no TX/DE pin (its only live action is sniffer_enable/disable on a port whose serial is
+    // open, and a frozen port has none), so during the factory test it merely records the
+    // intent, which wb_test's exit path then applies along with everything else.
+    esp_err_t cache_ret = port_manager_apply_cache_settings();
+    if (cache_ret != ESP_OK) {
+        // Logged whether or not anyone is listening — the out-parameter is optional and the
+        // factory-reset paths pass NULL.
+        ESP_LOGE(TAG, "Failed to apply the cache overlay to the running ports: %s",
+                 esp_err_to_name(cache_ret));
+        if (cache_apply_err != NULL) {
+            *cache_apply_err = cache_ret;
+        }
+    }
+
     uint32_t flags = 0;
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -413,6 +448,11 @@ esp_err_t settings_update(void)
     }
 
     return ESP_OK;
+}
+
+esp_err_t settings_update(void)
+{
+    return settings_update_with_status(NULL);
 }
 
 #ifdef __unittest_env__

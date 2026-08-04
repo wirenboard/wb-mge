@@ -386,6 +386,111 @@ void test_settings_update_ports_frozen_skips_rs485_and_tx_disabled(void)
 }
 
 // ===================================================================
+// Runtime apply of the per-port cache overlay (rs485_N.cache_en)
+//
+// POST /settings maps rs485_N.cache_en onto the NVS keys cache_en_N and stops there, so
+// something has to move the RUNTIME overlay to match. That something is settings_update():
+// without the call, a device saved "cache on port 2" and went on sniffing port 1 for the rest
+// of its uptime — /settings, /info and /cache/status each told a different story and nothing
+// reconciled them short of a POST /ports/N/cache or a reboot.
+// ===================================================================
+
+// Every settings write reconciles the overlay, whether or not this request mentioned caching:
+// the reconcile is a no-op when NVS already matches, and gating it on "did the request carry
+// cache_en" would need settings_update() to know what the request said, which it does not.
+void test_settings_update_applies_the_cache_overlay(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache overlay applied at runtime");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_port_manager_apply_cache_settings_called,
+        "settings_update() must apply the stored cache overlay to the running ports — "
+        "writing cache_en_N to NVS alone leaves the sniffer overlay wherever it was");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTaskCreate_data.called,
+        "and it must do so synchronously: nothing changed, so there is no update task at all");
+}
+
+// Synchronously, and BEFORE the async task's release/acquire phases. Both halves matter: the
+// result has to reach the POST /settings response (the task runs after it has been sent), and a
+// port that is re-initialised in the same request must find the final overlay already in place,
+// so port_init_mode() arms SNIFF_REASON_CACHE once rather than for the wrong port first.
+void test_settings_update_applies_the_cache_overlay_before_the_ports(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache overlay applied before the ports");
+    LOG_MESSAGE();
+
+    mock_port_manager_check_settings_changed_return_value[0] = true;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_port_manager_apply_cache_settings_called,
+        "the overlay must be applied on the caller's task, before xTaskCreate() returns to it");
+    verify_task_created();
+    execute_task_function();
+
+    TEST_ASSERT_GREATER_THAN_MESSAGE(mock_port_manager_apply_cache_settings_call_seq,
+        mock_port_manager_release_call_seq[0],
+        "the cache overlay must be reconciled before the port is torn down, not after");
+}
+
+// Unlike release()/apply_settings(), the overlay apply is NOT skipped while the factory
+// clock_out test owns the ports: it touches no TX/DE pin. Its only live action is
+// sniffer_enable/disable on a port whose serial is open, and a frozen port has none — so it
+// records the intent, and wb_test's exit path arms the sniffer from it.
+void test_settings_update_applies_the_cache_overlay_while_frozen(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - cache overlay applied while frozen");
+    LOG_MESSAGE();
+
+    mock_port_manager_ports_frozen_return_value = true;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update(), "Settings update should succeed");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_port_manager_apply_cache_settings_called,
+        "the cache overlay apply must not be gated on the factory-test freeze — it drives no "
+        "pin the test owns, and skipping it would lose the setting the user just saved");
+}
+
+// A failed apply must reach the caller that can report it. POST /settings turns this into a
+// "warnings" entry: the settings ARE saved, but the cache is not where the user just put it,
+// and nothing retries it before the next settings write or a reboot.
+void test_settings_update_reports_a_failed_cache_apply(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - failed cache apply surfaced");
+    LOG_MESSAGE();
+
+    mock_port_manager_apply_cache_settings_return_value = ESP_ERR_NO_MEM;
+
+    esp_err_t cache_err = ESP_OK;
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update_with_status(&cache_err),
+        "a cache overlay that would not move is not a reason to report the whole update failed "
+        "— the return value means 'the update task could not be created'");
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_NO_MEM, cache_err,
+        "the failure must be handed to the caller through the out-parameter, not swallowed");
+}
+
+// The out-parameter is cleared up front, so a caller that reuses the variable cannot read a
+// stale error as this request's result.
+void test_settings_update_reports_ok_when_the_cache_apply_succeeds(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - successful cache apply reported as OK");
+    LOG_MESSAGE();
+
+    esp_err_t cache_err = ESP_FAIL;   // whatever the caller's variable happened to hold
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_update_with_status(&cache_err), "Settings update should succeed");
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, cache_err,
+        "a successful apply must overwrite the caller's variable, or every settings write after "
+        "a failed one would keep reporting the old failure");
+}
+
+// ===================================================================
 // Cache Modbus TCP server lifecycle (check/release/acquire driven by settings_update)
 // ===================================================================
 
@@ -985,6 +1090,13 @@ int main(void)
     RUN_TEST(test_settings_update_all_changed);
     RUN_TEST(test_settings_update_task_creation_failure);
     RUN_TEST(test_settings_update_task_already_running);
+
+    // Runtime apply of the per-port cache overlay
+    RUN_TEST(test_settings_update_applies_the_cache_overlay);
+    RUN_TEST(test_settings_update_applies_the_cache_overlay_before_the_ports);
+    RUN_TEST(test_settings_update_applies_the_cache_overlay_while_frozen);
+    RUN_TEST(test_settings_update_reports_a_failed_cache_apply);
+    RUN_TEST(test_settings_update_reports_ok_when_the_cache_apply_succeeds);
 
     // Cache Modbus TCP server lifecycle
     RUN_TEST(test_settings_update_cache_server_started_when_enabled);

@@ -18,8 +18,11 @@ extern esp_err_t mock_setting_items_validate_error;
 extern int       mock_setting_items_save_call_count;
 void             mock_setting_items_reset(void);
 
-extern int mock_settings_update_call_count;
-void       mock_settings_update_reset(void);
+extern int       mock_settings_update_call_count;
+// What settings_update_with_status() reports back as the result of the synchronous runtime
+// cache-overlay apply; ESP_OK unless a test asks for a failure.
+extern esp_err_t mock_settings_update_cache_apply_result;
+void             mock_settings_update_reset(void);
 
 // -------------------------------------------------------------------
 // Helpers
@@ -878,6 +881,126 @@ void test_inherited_collision_reported_in_response_warnings(void)
     cJSON_Delete(resp);
 }
 
+// rs485_N.cache_en is written to NVS by the mapping loop and applied to the running ports by
+// settings_update(). When that apply fails the settings ARE saved — the request succeeded and a
+// reboot will pick the overlay up — but the cache is not where the user just put it, and nothing
+// retries it before the next settings write. The response warning is the only way they find out.
+void test_failed_cache_apply_reported_in_response_warnings(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "cache_en saved but the runtime apply failed -> success:true + cache_apply_failed warning");
+    LOG_MESSAGE();
+
+    // The pool would not allocate when settings_update() moved the overlay.
+    mock_settings_update_cache_apply_result = ESP_ERR_NO_MEM;
+
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON_AddBoolToObject(rs485, "cache_en", true);
+    cJSON_AddItemToObject(req, "rs485_2", rs485);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "the write itself succeeded — a failed RUNTIME apply must not be reported as a failed "
+        "save, or the UI would roll the field back and show the opposite of what NVS holds");
+
+    cJSON *warnings = response_warnings(resp);
+    TEST_ASSERT_NOT_NULL_MESSAGE(warnings,
+        "a cache overlay that was saved but not applied must be reported back to the client");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, cJSON_GetArraySize(warnings), "exactly one warning");
+
+    cJSON *warning = cJSON_GetArrayItem(warnings, 0);
+    cJSON *code = cJSON_GetObjectItem(warning, "code");
+    cJSON *message = cJSON_GetObjectItem(warning, "message");
+
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsString(code), "warning must carry a machine-readable code");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("cache_apply_failed", code->valuestring,
+        "the code identifies the warning as a failed runtime cache apply");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsString(message), "warning must carry a human-readable message");
+    // The message also carries esp_err_to_name(cache_apply_err), which is what tells a retry
+    // from a dead end — but only on the device: CONFIG_ESP_ERR_TO_NAME_LOOKUP is set in
+    // sdkconfig and not in the unit-test build, where every code comes back as "UNKNOWN ERROR".
+    // So the wording is what is pinned here, not the error name.
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(message->valuestring, "could not be applied"),
+        "the message must say the setting was saved but not applied — the client is being told "
+        "success:true, so the wording is the only thing that separates the two");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// The mirror image, and what keeps the test above honest: a settings write whose cache apply
+// succeeded must carry no warning at all. Every POST /settings runs the apply, so a warning
+// raised unconditionally would fire on requests that never mentioned caching.
+void test_successful_cache_apply_reports_no_warning(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "cache_en saved and applied -> no warnings field");
+    LOG_MESSAGE();
+
+    cJSON *req = cJSON_CreateObject();
+    cJSON *rs485 = cJSON_CreateObject();
+    cJSON_AddBoolToObject(rs485, "cache_en", true);
+    cJSON_AddItemToObject(req, "rs485_2", rs485);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "the request must succeed");
+    TEST_ASSERT_FALSE_MESSAGE(cJSON_HasObjectItem(resp, "warnings"),
+        "an applied cache overlay is not something to warn about");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// A request that fails HALFWAY still reports the warnings the validation collected: a warning
+// describes the saved configuration, not this request's verdict. The attach point had to move
+// below the NVS writes when the cache-apply warning was added (that one is only known after
+// settings_update()), so every early return grew an attach of its own — this pins that none of
+// them lost its warnings on the way. The chosen exit is a Phase 2 NVS write failure; a Phase 1
+// rejection cannot show this, because validate_port_collisions() is the last check in the chain
+// and an earlier failure short-circuits it before it has collected anything.
+void test_failed_write_still_reports_its_warnings(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "inherited collision + a failed NVS write -> success:false and the warning is still there");
+    LOG_MESSAGE();
+
+    // Saved (inherited) broken config: both bridge gateways already listen on 502.
+    setting_items_save(KEY_BRIDGE_PORT2, "502");
+
+    // A valid request — it passes every check, including the collision one that files the
+    // warning — whose write to NVS then fails.
+    cJSON *req = make_request_string("hostname", "my-device");
+    cJSON *resp = NULL;
+    mock_setting_items_save_error = ESP_ERR_NVS_NOT_ENOUGH_SPACE;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp), "the failed write must be reported");
+
+    cJSON *warnings = response_warnings(resp);
+    TEST_ASSERT_NOT_NULL_MESSAGE(warnings,
+        "the inherited collision is a fact about the saved configuration and must be reported "
+        "whether or not this particular request went through");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, cJSON_GetArraySize(warnings), "exactly one warning");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
 // The warnings array is an OPTIONAL addition to the response: a request applied onto a clean
 // configuration must produce exactly the response it produced before — not even an empty array.
 void test_clean_request_reports_no_warnings(void)
@@ -1238,6 +1361,9 @@ int main(void)
     RUN_TEST(test_web_port_equal_cache_port_rejected);
     RUN_TEST(test_inherited_collision_does_not_block_unrelated_request);
     RUN_TEST(test_inherited_collision_reported_in_response_warnings);
+    RUN_TEST(test_failed_cache_apply_reported_in_response_warnings);
+    RUN_TEST(test_successful_cache_apply_reports_no_warning);
+    RUN_TEST(test_failed_write_still_reports_its_warnings);
     RUN_TEST(test_clean_request_reports_no_warnings);
     RUN_TEST(test_inherited_collision_still_rejected_when_request_touches_a_port);
     RUN_TEST(test_enabling_cache_server_onto_a_bridge_port_rejected);

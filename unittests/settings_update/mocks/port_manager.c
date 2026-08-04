@@ -17,6 +17,10 @@ int mock_port_manager_apply_settings_skipped[BRIDGES_COUNT] = {0};
 int mock_port_manager_ports_frozen_called = 0;
 bool mock_port_manager_ports_frozen_return_value = false;
 
+int mock_port_manager_apply_cache_settings_called = 0;
+unsigned mock_port_manager_apply_cache_settings_call_seq = 0;
+esp_err_t mock_port_manager_apply_cache_settings_return_value = ESP_OK;
+
 bool port_manager_check_settings_changed(unsigned port_index)
 {
     if (port_index < BRIDGES_COUNT) {
@@ -65,10 +69,24 @@ bool port_manager_ports_frozen(void)
     return mock_port_manager_ports_frozen_return_value;
 }
 
+// Deliberately NOT gated on mock_port_manager_ports_frozen_return_value, unlike release() and
+// apply_settings() above: the real one is not gated either — it touches no TX/DE pin, so the
+// factory test has nothing to protect from it.
+esp_err_t port_manager_apply_cache_settings(void)
+{
+    mock_port_manager_apply_cache_settings_called++;
+    mock_port_manager_apply_cache_settings_call_seq = call_sequence_get_call_id();
+    return mock_port_manager_apply_cache_settings_return_value;
+}
+
 void mock_port_manager_reset(void)
 {
     mock_port_manager_ports_frozen_called = 0;
     mock_port_manager_ports_frozen_return_value = false;
+
+    mock_port_manager_apply_cache_settings_called = 0;
+    mock_port_manager_apply_cache_settings_call_seq = 0;
+    mock_port_manager_apply_cache_settings_return_value = ESP_OK;
 
     for (unsigned i = 0; i < BRIDGES_COUNT; i++) {
         mock_port_manager_check_settings_changed_called[i] = 0;
