@@ -10,6 +10,7 @@ import CheckmarkIcon from '@/assets/checkmarkIcon.svg?component';
 import { useSettings } from '@/common/settings';
 import { useInfo } from '@/common/info';
 import { api } from '@/utils/api';
+import { downloadFile, exportFileName } from '@/utils/downloadFile';
 import { sendPacketToPort } from '@/utils/modbusUtils';
 import {
   type SniffRow,
@@ -633,12 +634,9 @@ function exportCsv() {
     csvRows.push(row.join(','));
   }
   const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `sniffer_port${portFilter.value}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  // Go through downloadFile() rather than a local anchor: it is the one download path that
+  // appends the anchor to the DOM, which Firefox requires for the click to do anything.
+  downloadFile(exportFileName(`sniffer-port${portFilter.value}`, 'csv'), blob);
 }
 </script>
 

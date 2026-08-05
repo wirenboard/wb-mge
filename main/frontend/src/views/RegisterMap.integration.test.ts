@@ -1091,7 +1091,8 @@ describe('RM-I-07: downloadJsonExport', () => {
     // Anchor element was appended (download triggered)
     expect(appendChildSpy).toHaveBeenCalled();
     const anchorEl = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement;
-    expect(anchorEl.download).toMatch(/^register-map-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.json$/);
+    // Unified export naming: wb-mge-<what>-<timestamp>.<ext> (see utils/downloadFile.ts).
+    expect(anchorEl.download).toMatch(/^wb-mge-register-map-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.json$/);
 
     // Anchor must have been clicked to trigger the download
     expect(clickSpy).toHaveBeenCalledTimes(1);

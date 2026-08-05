@@ -5,7 +5,7 @@ import { useSettings } from '@/common/settings';
 import type { Settings } from '@/common/types';
 import Button from '@/components/Button.vue';
 import InfoRow from '@/components/InfoRow.vue';
-import { downloadFile } from '@/utils/downloadFile';
+import { downloadFile, exportFileName } from '@/utils/downloadFile';
 
 const { t } = useI18n();
 const fileInput = ref<any>();
@@ -14,7 +14,7 @@ const { data, updateSettings } = useSettings();
 defineProps<{ loadedMethod?: string; cmd: (command: string, confirmText?: string) => Promise<void> }>();
 
 const downloadSettings = () => {
-  const fileName = `wb-mge3-settings-${new Date().toISOString()}.json`;
+  const fileName = exportFileName('settings', 'json');
   const formattedData = JSON.stringify(data.value, null, 2);
   const file = new File([formattedData], fileName, {
     type: 'application/json'

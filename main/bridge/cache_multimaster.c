@@ -828,8 +828,13 @@ static esp_err_t cache_csv_handler(httpd_req_t *req)
     }
 
     httpd_resp_set_type(req, "text/csv");
+    /* Same naming scheme as every export the web UI produces:
+     * wb-mge-<what>-<timestamp>.<ext>, documented in main/frontend/src/utils/downloadFile.ts.
+     * The timestamp is omitted here on purpose: the device has no RTC and SNTP is optional, so
+     * at this point the wall clock is frequently still 1970 and stamping the name with it would
+     * be worse than leaving it out. */
     httpd_resp_set_hdr(req, "Content-Disposition",
-                       "attachment; filename=\"modbus_cache.csv\"");
+                       "attachment; filename=\"wb-mge-modbus-cache.csv\"");
 
     /* Send CSV header line — includes a type column for holding/input/coil/discrete */
     const char *header = "slave_id,type,address,value,age_s\r\n";

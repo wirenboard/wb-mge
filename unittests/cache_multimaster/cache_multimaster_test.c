@@ -2330,6 +2330,55 @@ void test_cache_csv_handler_enabled_but_empty(void)
         "CSV response must contain only the header — no data rows for an empty pool");
 }
 
+/* ---- CM-U-039c: cache_csv_handler — Content-Disposition file name --------- */
+
+/* The name the browser saves this file under comes from here and nowhere else, so it is the
+ * firmware's half of the unified export naming scheme
+ * (wb-mge-<what>[-<timestamp>].<ext>, documented in main/frontend/src/utils/downloadFile.ts).
+ * The timestamp is deliberately absent: the device has no RTC and SNTP is optional. */
+void test_cache_csv_handler_sets_export_filename(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-039c: cache_csv_handler must offer the file under the unified export name");
+    LOG_MESSAGE();
+
+    cache_multimaster_init();
+    cache_multimaster_enable();
+
+    httpd_req_t req = {0};
+    esp_err_t ret = cache_multimaster_test_csv_handler(&req);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, ret, "cache_csv_handler must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(mock_http_resp_set_hdr_last_field,
+        "cache_csv_handler must set a response header");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("Content-Disposition", mock_http_resp_set_hdr_last_field,
+        "the header carrying the file name must be Content-Disposition");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(
+        "attachment; filename=\"wb-mge-modbus-cache.csv\"",
+        mock_http_resp_set_hdr_last_value,
+        "the offered file name must follow the wb-mge-<what>.<ext> export scheme");
+}
+
+/* A cache that is off never reaches the download, so it must not offer a file name either —
+ * the 409 body is a plain-text error, not an attachment. */
+void test_cache_csv_handler_disabled_sets_no_filename(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "CM-U-039d: a 409 from cache_csv_handler must not carry a Content-Disposition");
+    LOG_MESSAGE();
+
+    /* init only — the cache is left disabled, same pre-condition as CM-U-039 */
+    cache_multimaster_init();
+
+    httpd_req_t req = {0};
+    (void)cache_multimaster_test_csv_handler(&req);
+
+    TEST_ASSERT_NULL_MESSAGE(mock_http_resp_set_hdr_last_field,
+        "the disabled path must not set any response header");
+}
+
 /* ---- CM-U-040: cache_csv_handler — 2 entries, correct CSV format ---------- */
 
 /* Verify that the CSV handler emits one correct data row per cached entry. */
@@ -3298,6 +3347,8 @@ int main(void)
     RUN_TEST(test_cache_status_handler_same_slave);
     RUN_TEST(test_cache_csv_handler_disabled_returns_409);
     RUN_TEST(test_cache_csv_handler_enabled_but_empty);
+    RUN_TEST(test_cache_csv_handler_sets_export_filename);
+    RUN_TEST(test_cache_csv_handler_disabled_sets_no_filename);
     RUN_TEST(test_cache_csv_handler_two_entries);
     RUN_TEST(test_cache_csv_handler_type_mapping);
     RUN_TEST(test_cache_json_handler_null_mutex);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { downloadFile } from './downloadFile';
+import { downloadFile, exportFileName, exportTimestamp } from './downloadFile';
 
 describe('downloadFile', () => {
   // Reference to the captured anchor element created during the test
@@ -93,5 +93,34 @@ describe('downloadFile', () => {
     // The captured anchor must not be present in document.body
     expect(capturedAnchor).not.toBeNull();
     expect(document.body.contains(capturedAnchor)).toBe(false);
+  });
+});
+
+/**
+ * The export naming scheme is the single place where every downloadable file gets its name;
+ * these tests pin the shape the three call sites (settings, register map, sniffer) rely on.
+ */
+describe('exportFileName / exportTimestamp', () => {
+  // Fixed local-time instant used by the deterministic cases below.
+  const instant = new Date(2026, 7, 5, 9, 4, 3); // 2026-08-05 09:04:03 local
+
+  // DF-U-05: the timestamp is local wall clock, zero-padded, and colon-free.
+  it('DF-U-05: exportTimestamp is local time in colon-free YYYY-MM-DDTHH-mm-ss form', () => {
+    expect(exportTimestamp(instant)).toBe('2026-08-05T09-04-03');
+    // A colon is illegal in a Windows file name — it must never appear.
+    expect(exportTimestamp(instant)).not.toContain(':');
+  });
+
+  // DF-U-06: full name follows wb-mge-<what>-<timestamp>.<ext>.
+  it('DF-U-06: exportFileName builds wb-mge-<what>-<timestamp>.<ext>', () => {
+    expect(exportFileName('settings', 'json', instant)).toBe('wb-mge-settings-2026-08-05T09-04-03.json');
+    expect(exportFileName('register-map', 'json', instant)).toBe('wb-mge-register-map-2026-08-05T09-04-03.json');
+    expect(exportFileName('sniffer-port2', 'csv', instant)).toBe('wb-mge-sniffer-port2-2026-08-05T09-04-03.csv');
+  });
+
+  // DF-U-07: with no explicit instant the name still matches the scheme.
+  it('DF-U-07: default (now) argument still produces a scheme-conforming name', () => {
+    expect(exportFileName('settings', 'json'))
+      .toMatch(/^wb-mge-settings-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.json$/);
   });
 });

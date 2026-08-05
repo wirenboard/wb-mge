@@ -20,7 +20,7 @@ import {
   resolvePortSelection,
   buildDevices, buildRegsByKey, buildExportPayload, filterDevices,
 } from '@/utils/registerMapUtils';
-import { downloadFile } from '@/utils/downloadFile';
+import { downloadFile, exportFileName } from '@/utils/downloadFile';
 
 const { t } = useI18n();
 const { info, fetchInfo } = useInfo();
@@ -292,16 +292,8 @@ function downloadJsonExport(): void {
   const payload = buildExportPayload(rawEntries.value);
   const fullPayload = { exported_at: new Date().toISOString(), ...payload };
 
-  // Generate filename suffix from local time: YYYY-MM-DDTHH-mm-ss
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const suffix =
-    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
-    `T${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-  const filename = `register-map-${suffix}.json`;
-
   const blob = new Blob([JSON.stringify(fullPayload, null, 2)], { type: 'application/json' });
-  downloadFile(filename, blob);
+  downloadFile(exportFileName('register-map', 'json'), blob);
 }
 
 // Toggle a device node open/closed
