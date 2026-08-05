@@ -4,7 +4,6 @@
 #include <stdbool.h>
 
 #define SETTING_ITEM_MAX_STR_LEN            64          // WPA2 passwords can be up to 63 characters + null terminator
-#define SETTING_ITEMS_NUM_MAX               50
 
 // Keys for storing settings
 #define KEY_HOSTNAME                "hostname"
@@ -27,6 +26,7 @@
 #define KEY_ETH_GW_STATIC           "eth_gw_static"
 #define KEY_ETH_DHCPC               "eth_dhcpc"
 
+#define KEY_WIFI_PERM_DISABLE       "wifi_perm_dis"
 #define KEY_WIFI_MODE               "wifi_mode"
 #define KEY_WIFI_AUTH_AP            "ap_auth"
 #define KEY_WIFI_AUTH_STA           "sta_auth"
@@ -56,6 +56,8 @@
 #define KEY_485_TERM_2              "485_term_2"
 #define KEY_485_FAIL_SAFE_1         "485_fail_safe_1"
 #define KEY_485_FAIL_SAFE_2         "485_fail_safe_2"
+#define KEY_485_TX_DISABLED_1       "485_tx_dis_1"
+#define KEY_485_TX_DISABLED_2       "485_tx_dis_2"
 
 // Enable MIO on RS485-2
 #define KEY_IO_BUS_ENABLED          "io_bus"
@@ -91,6 +93,35 @@
 #define BRIDGE_MODE_SERVER_STR      "server"
 #define BRIDGE_MODE_CLIENT_STR      "client"
 
+// Port manager mode keys (per-port NVS keys)
+#define KEY_PORT_MODE1              "port_mode_1"
+#define KEY_PORT_MODE2              "port_mode_2"
+
+// Per-port cache overlay enable keys (persisted, orthogonal to transport mode)
+#define KEY_CACHE_EN_1              "cache_en_1"
+#define KEY_CACHE_EN_2              "cache_en_2"
+
+// Cache Modbus TCP server port NVS key (max 15 chars for ESP32 NVS)
+#define KEY_CACHE_MODBUS_PORT               "cache_mb_port"
+// Cache Modbus TCP server enable/disable NVS key (max 15 chars for ESP32 NVS)
+#define KEY_CACHE_MODBUS_SERVER_ENABLED     "cache_mb_srv_en"
+// Cache value timeout in seconds NVS key (max 15 chars for ESP32 NVS)
+#define KEY_CACHE_VALUE_TIMEOUT_S           "cache_val_tout"
+
+// Firmware update channel NVS key (max 15 chars for ESP32 NVS)
+#define KEY_UPDATE_CHANNEL                  "upd_channel"
+
+// Port manager mode string values (transport-only)
+#define PORT_MODE_DISABLED_STR      "disabled"
+#define PORT_MODE_TCP_BRIDGE_STR    "tcp_bridge"
+#define PORT_MODE_PASSIVE_STR       "passive"
+#define PORT_MODE_REPEATER_STR      "repeater"
+
+// Firmware update channel string values. These names are used verbatim as lookup
+// keys in the wb-releases manifest, so they must not be renamed.
+#define UPDATE_CHANNEL_STABLE_STR   "stable"
+#define UPDATE_CHANNEL_TESTING_STR  "testing"
+
 // Setting types - used for type checking and JSON mapping
 typedef enum {
     SETTING_ITEM_TYPE_STRING,
@@ -104,6 +135,8 @@ typedef struct {
     bool (*has_key)(const char* key);
     esp_err_t (*write_str)(const char* key, const char* value);
     esp_err_t (*read_str)(const char* key, char* value);
+    // Optional: remove a key from storage. May be NULL for backends that cannot erase.
+    esp_err_t (*erase_key)(const char* key);
 } setting_storage_iface_t;
 
 // Core functions
@@ -120,6 +153,11 @@ esp_err_t setting_items_save_bool(const char *key, bool value);
 esp_err_t setting_items_save_int(const char *key, int value);
 esp_err_t setting_items_set_defaults(bool only_uninitialized);
 
+// One-time legacy migration: derive port_mode_N from a pre-existing bridge_mode_N
+// (old single-axis firmware) when port_mode_N is absent. Idempotent and best-effort
+// per port. Must run after the storage interface is set and BEFORE set_defaults().
+esp_err_t setting_items_migrate_port_mode(void);
+
 // Iterator functions for all settings
 size_t setting_items_get_count(void);
 const char *setting_items_get_key_at(size_t index);
@@ -130,3 +168,8 @@ const char *setting_items_get_default_value(const char *key);
 // Type introspection functions
 setting_item_type_t setting_items_get_type(const char *key);
 const char *setting_items_type_to_string(setting_item_type_t type);
+
+// Validate a setting value without writing to NVS.
+// Returns ESP_OK if valid (or no validator), ESP_ERR_INVALID_ARG if validation fails,
+// ESP_ERR_NOT_FOUND if the key is unknown.
+esp_err_t setting_items_validate(const char *key, const char *value);

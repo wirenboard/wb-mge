@@ -1,6 +1,7 @@
 #include "wifi_scan.h"
 #include "json_utils.h"
 #include "auth.h"
+#include "setting_items.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -37,9 +38,13 @@ static struct {
 static const char *TAG = "wifi_scan";
 
 static SemaphoreHandle_t wifi_scan_mutex = NULL;
+#if !(QEMU_BUILD)
+/* Used only in non-QEMU builds where WiFi events are registered. */
 static esp_event_handler_instance_t wifi_scan_event_handler_instance = NULL;
+#endif
 static EventGroupHandle_t wifi_scan_event_group = NULL;
 
+#if !(QEMU_BUILD)
 static const wifi_scan_config_t wifi_scan_config = {
         .ssid = NULL,
         .bssid = NULL,
@@ -53,6 +58,7 @@ static const wifi_scan_config_t wifi_scan_config = {
             }
         }
     };
+#endif
 
 
 static void wifi_scan_reset_state(void)
@@ -73,11 +79,13 @@ static void wifi_scan_prepare_for_start(void)
 }
 
 
+#if !(QEMU_BUILD)
 static void wifi_scan_handle_start_failure(esp_err_t error)
 {
     wifi_scan_state.scan_in_progress = false;
     wifi_scan_state.last_scan_result = error;
 }
+#endif
 
 
 static void wifi_scan_handle_completion(uint16_t ap_count, esp_err_t result)
@@ -89,6 +97,7 @@ static void wifi_scan_handle_completion(uint16_t ap_count, esp_err_t result)
 }
 
 
+#if !(QEMU_BUILD)
 static void wifi_scan_event_handler(void *arg, esp_event_base_t event_base,
                                     int32_t event_id, void *event_data)
 {
@@ -96,14 +105,39 @@ static void wifi_scan_event_handler(void *arg, esp_event_base_t event_base,
         xEventGroupSetBits(wifi_scan_event_group, WIFI_SCAN_DONE_BIT);
     }
 }
+#endif
 
 
 static void wifi_scan_task(void* pvParameter)
 {
     while (1) {
+#if (QEMU_BUILD)
+        /* In QEMU, WIFI_EVENT_SCAN_DONE is never generated — only START_BIT is used. */
+        EventBits_t bits_to_wait = WIFI_SCAN_START_BIT;
+#else
         EventBits_t bits_to_wait = WIFI_SCAN_START_BIT | WIFI_SCAN_DONE_BIT;
+#endif
         EventBits_t bits = xEventGroupWaitBits(wifi_scan_event_group, bits_to_wait, pdTRUE, pdFALSE, portMAX_DELAY);
         if (bits & WIFI_SCAN_START_BIT) {
+#if (QEMU_BUILD)
+            /* In QEMU, WiFi hardware is not available. Immediately complete the scan
+             * with a few fake access points so integration tests can verify the API. */
+            xSemaphoreTake(wifi_scan_mutex, portMAX_DELAY);
+            memset(wifi_scan_state.ap_records, 0, sizeof(wifi_scan_state.ap_records));
+            /* Fake AP 1 */
+            strncpy((char *)wifi_scan_state.ap_records[0].ssid, "QEMU-TestNetwork-1",
+                    sizeof(wifi_scan_state.ap_records[0].ssid) - 1);
+            wifi_scan_state.ap_records[0].rssi = -55;
+            wifi_scan_state.ap_records[0].primary = 6;
+            /* Fake AP 2 */
+            strncpy((char *)wifi_scan_state.ap_records[1].ssid, "QEMU-TestNetwork-2",
+                    sizeof(wifi_scan_state.ap_records[1].ssid) - 1);
+            wifi_scan_state.ap_records[1].rssi = -72;
+            wifi_scan_state.ap_records[1].primary = 11;
+            wifi_scan_handle_completion(2, ESP_OK);
+            xSemaphoreGive(wifi_scan_mutex);
+            ESP_LOGI(TAG, "QEMU: WiFi scan mocked with 2 fake access points");
+#else
             wifi_sta_connect_scan_lock();
             esp_err_t scan_result = esp_wifi_scan_start(&wifi_scan_config, false);
             if (scan_result != ESP_OK) {
@@ -115,7 +149,9 @@ static void wifi_scan_task(void* pvParameter)
             } else {
                 ESP_LOGI(TAG, "WiFi networks scan started");
             }
+#endif
         }
+#if !(QEMU_BUILD)
         if (bits & WIFI_SCAN_DONE_BIT) {
             xSemaphoreTake(wifi_scan_mutex, portMAX_DELAY);
             uint16_t ap_count = WIFI_SCAN_MAX_RESULTS;
@@ -130,6 +166,7 @@ static void wifi_scan_task(void* pvParameter)
             wifi_sta_connect_scan_unlock();
             xSemaphoreGive(wifi_scan_mutex);
         }
+#endif
     }
 }
 
@@ -156,6 +193,7 @@ esp_err_t wifi_scan_init(void)
 
     wifi_scan_reset_state();
 
+#if !(QEMU_BUILD)
     esp_err_t ret = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_scan_event_handler,
                                                         NULL, &wifi_scan_event_handler_instance);
     if (ret != ESP_OK) {
@@ -165,6 +203,7 @@ esp_err_t wifi_scan_init(void)
         wifi_scan_mutex = NULL;
         return ESP_FAIL;
     }
+#endif
 
     xTaskCreate(wifi_scan_task, "wifi_scan_task", WIFI_SCAN_TASK_STACK_SIZE,
                 NULL, WIFI_SCAN_TASK_PRIORITY, NULL);
@@ -196,6 +235,12 @@ static esp_err_t wifi_scan_start(void)
 {
     if (wifi_scan_mutex == NULL) {
         ESP_LOGE(TAG, "WiFi scan not initialized");
+        return ESP_FAIL;
+    }
+
+    // When WiFi is permanently disabled, scanning is not available
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        ESP_LOGE(TAG, "WiFi scan not available: WiFi is permanently disabled");
         return ESP_FAIL;
     }
 

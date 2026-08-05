@@ -1,10 +1,11 @@
 #include "modbus_helpers.h"
 
+#include "freertos/FreeRTOS.h"
+
 #include <string.h>
 #include <esp_log.h>
 
 #define MODBUS_EXCEPTION_FLAG                   0x80        // Modbus exception flag (set by OR with function code)
-#define MODBUS_TCP_PROTOCOL_ID                  0x0000      // Modbus TCP protocol ID
 
 #define MODBUS_RTU_CRC_BASE                     0xFFFF
 #define MODBUS_RTU_CRC16_LEN                    sizeof(uint16_t)
@@ -193,4 +194,43 @@ size_t modbus_tcp_from_rtu(uint16_t transaction_id, const uint8_t *data, size_t 
     memcpy(&out_buf[sizeof(mb_tcp_header_t)], &data[sizeof(mb_rtu_header_t)], data_len);
 
     return tcp_len;
+}
+
+size_t modbus_pdu_build_exception(uint8_t *buf, uint16_t tid_net, uint8_t unit_id, uint8_t fc, uint8_t exc)
+{
+    mb_tcp_header_t *h = (mb_tcp_header_t *)buf;
+    h->transaction_id = tid_net;                          /* echoed verbatim (network order) */
+    h->protocol_id    = modbus_swap16(MODBUS_TCP_PROTOCOL_ID);
+    h->length         = modbus_swap16(3);                 /* unit_id + (fc|0x80) + exc code  */
+    h->unit_id        = unit_id;
+    h->function       = (uint8_t)(fc | MODBUS_EXCEPTION_FLAG);
+    buf[sizeof(mb_tcp_header_t)] = exc;
+    return sizeof(mb_tcp_header_t) + 1u;
+}
+
+void modbus_pdu_parse_read_request(const uint8_t *pdu, uint16_t *start_addr, uint16_t *count)
+{
+    *start_addr = ((uint16_t)pdu[0] << 8) | pdu[1];
+    *count      = ((uint16_t)pdu[2] << 8) | pdu[3];
+}
+
+// Reserve for packet reception with silence interval and Fast Modbus arbitration (in frames)
+#define MODBUS_RTU_RECV_RESERVE_LEN     10
+// Bits per UART frame: 8 data + start + 2 stop
+#define RS485_BITS_PER_FRAME            11
+// Extra reserve on the reception timeout, compensating FreeRTOS scheduling and log lag
+#define MODBUS_RTU_RECV_TOUT_RESERVE_MS 30
+
+unsigned modbus_rtu_response_timeout_ticks(unsigned baudrate)
+{
+    static const unsigned max_resp_len = MODBUS_RTU_MAX_FRAME_LEN + MODBUS_RTU_RECV_RESERVE_LEN;
+
+    unsigned bytes_rate = baudrate / RS485_BITS_PER_FRAME;
+    if (bytes_rate == 0) {
+        bytes_rate = 1;  /* guard against division by zero at very low baudrates */
+    }
+    unsigned timeout_ms = ((1000 * max_resp_len) + bytes_rate - 1) / bytes_rate;
+    timeout_ms += MODBUS_RTU_RECV_TOUT_RESERVE_MS;
+
+    return (timeout_ms * configTICK_RATE_HZ + 999) / 1000;
 }

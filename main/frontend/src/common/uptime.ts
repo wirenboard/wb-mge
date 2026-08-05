@@ -6,7 +6,9 @@ import { api } from '@/utils/api';
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 const uptime = ref<Uptime | null>(null);
-const isReconnecting = ref(false);
+// Exported as a ref, not only through useUptime(): the firmware update flow has to raise the
+// reconnect overlay from an async continuation, where the composable's injection context is gone.
+export const isReconnecting = ref(false);
 
 export const useUptime = () => {
   const router = useRouter();
@@ -43,9 +45,17 @@ export const useUptime = () => {
     }, 10000);
   };
 
+  const stopPolling = () => {
+    if (intervalId) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+  };
+
   return {
     uptime,
     isReconnecting,
     startPolling,
+    stopPolling,
   };
 };

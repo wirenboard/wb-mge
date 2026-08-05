@@ -17,3 +17,8 @@ esp_err_t auth_session_check_handler(httpd_req_t *req);
 
 // Authentication middleware check. Returns true if the request is authenticated.
 bool auth_middleware_check(httpd_req_t *req);
+
+#ifdef __unittest_env__
+// Drop every session and un-initialise the module, so each test starts from a cold boot.
+void auth_reset_for_test(void);
+#endif /* __unittest_env__ */

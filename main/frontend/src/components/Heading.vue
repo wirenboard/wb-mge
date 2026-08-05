@@ -30,7 +30,9 @@ watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostnam
     <div class="heading-container">
       <div>
         <h1 class="heading-title">{{ title }}</h1>
-        <div v-if="crumbs" class="heading-crumbs">{{ crumbs }}</div>
+        <div v-if="$slots.crumbs || crumbs" class="heading-crumbs">
+          <slot name="crumbs">{{ crumbs }}</slot>
+        </div>
       </div>
     </div>
 
@@ -79,5 +81,12 @@ watch([() => locale.value, () => data.value?.hostname, () => isChanged(['hostnam
   display: flex;
   gap: 12px;
   height: min-content;
+  flex-wrap: wrap;
+  row-gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 560px) {
+  .heading-actions { width: 100%; }
 }
 </style>

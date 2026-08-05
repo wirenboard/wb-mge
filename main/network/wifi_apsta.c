@@ -82,6 +82,8 @@ static void sta_event_handler(void* arg, esp_event_base_t event_base, int32_t ev
                 xEventGroupSetBits(wifi_ctx.sta_event_group, WIFI_STA_DISCONNECTED_BIT);
                 break;
             }
+            default:
+                break;
         }
     } else if ((event_base == IP_EVENT) && (event_id == IP_EVENT_STA_GOT_IP)) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
@@ -452,6 +454,12 @@ esp_err_t wifi_init_apsta(wifi_apsta_config_t* apsta_cfg, char* netif_hostname)
     wifi_ctx.initialized = true;
 
     return ESP_OK;
+}
+
+
+bool wifi_apsta_is_initialized(void)
+{
+    return wifi_ctx.initialized;
 }
 
 

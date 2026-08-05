@@ -3,6 +3,9 @@
 #include "auth.h"
 #include "setting_items.h"
 #include "bridge.h"
+#include "bridge/port_manager.h"
+#include "bridge/repeater.h"
+#include "bridge/cache_modbus_server.h"
 #include "wifi_apsta.h"
 #include "config.h"
 #include "sys_info.h"
@@ -13,6 +16,7 @@
 #include <esp_wifi.h>
 #include <esp_timer.h>
 #include <esp_netif.h>
+#include <esp_heap_caps.h>
 #include <string.h>
 
 static const char *TAG = "info_handlers";
@@ -52,35 +56,45 @@ static esp_err_t info_build_network_json(cJSON **network_json)
         return ESP_FAIL;
     }
 
-    cJSON_AddBoolToObject(wifi, "enabled", sys_info.wifi_enabled);
-    cJSON_AddStringToObject(wifi, "mode", sys_info.wifi_mode);
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        // WiFi hardware was never initialised — only report the disabled/perm_disabled state.
+        // Do NOT call esp_wifi_get_mac or esp_wifi_sta_get_ap_info here: they will crash
+        // because the WiFi driver was never started.
+        cJSON_AddBoolToObject(wifi, "enabled", false);
+        cJSON_AddBoolToObject(wifi, "perm_disabled", true);
+    } else {
+        cJSON_AddBoolToObject(wifi, "enabled", sys_info.wifi_enabled);
+        cJSON_AddBoolToObject(wifi, "perm_disabled", false);
+        cJSON_AddStringToObject(wifi, "mode", sys_info.wifi_mode);
 
-    cJSON_AddBoolToObject(wifi, "con_sta", sys_info.wifi_sta_is_connected);
-    cJSON_AddStringToObject(wifi, "con_sta_ssid", sys_info.wifi_sta_con_ssid);
-    cJSON_AddStringToObject(wifi, "sta_ip", sys_info.wifi_sta_ip);
-    cJSON_AddStringToObject(wifi, "sta_mask", sys_info.wifi_sta_mask);
-    cJSON_AddStringToObject(wifi, "sta_gw", sys_info.wifi_sta_gw);
+        cJSON_AddBoolToObject(wifi, "con_sta", sys_info.wifi_sta_is_connected);
+        cJSON_AddStringToObject(wifi, "con_sta_ssid", sys_info.wifi_sta_con_ssid);
+        cJSON_AddStringToObject(wifi, "sta_ip", sys_info.wifi_sta_ip);
+        cJSON_AddStringToObject(wifi, "sta_mask", sys_info.wifi_sta_mask);
+        cJSON_AddStringToObject(wifi, "sta_gw", sys_info.wifi_sta_gw);
 
-    cJSON_AddNumberToObject(wifi, "con_ap", sys_info.wifi_ap_connections_count);
-    cJSON_AddStringToObject(wifi, "ap_ip", sys_info.wifi_ap_ip);
-    cJSON_AddStringToObject(wifi, "ap_mask", sys_info.wifi_ap_mask);
-    cJSON_AddStringToObject(wifi, "ap_gw", sys_info.wifi_ap_gw);
+        cJSON_AddNumberToObject(wifi, "con_ap", sys_info.wifi_ap_connections_count);
+        cJSON_AddStringToObject(wifi, "ap_ip", sys_info.wifi_ap_ip);
+        cJSON_AddStringToObject(wifi, "ap_mask", sys_info.wifi_ap_mask);
+        cJSON_AddStringToObject(wifi, "ap_gw", sys_info.wifi_ap_gw);
 
-    // Add WiFi STA RSSI
-    if (sys_info.wifi_sta_is_connected) {
-        wifi_ap_record_t ap_info;
-        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-            cJSON_AddNumberToObject(wifi, "sta_rssi", ap_info.rssi);
+        // Add WiFi STA RSSI
+        if (sys_info.wifi_sta_is_connected) {
+            wifi_ap_record_t ap_info;
+            if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+                cJSON_AddNumberToObject(wifi, "sta_rssi", ap_info.rssi);
+            } else {
+                cJSON_AddNumberToObject(wifi, "sta_rssi", -128);
+            }
         } else {
             cJSON_AddNumberToObject(wifi, "sta_rssi", -128);
         }
-    } else {
-        cJSON_AddNumberToObject(wifi, "sta_rssi", -128);
+
+        cJSON_AddNumberToObject(wifi, "ap_channel", WIFI_CHAN_AP);
+        cJSON_AddStringToObject(wifi, "sta_mac", sys_info.wifi_sta_mac);
+        cJSON_AddStringToObject(wifi, "ap_mac", sys_info.wifi_ap_mac);
     }
 
-    cJSON_AddNumberToObject(wifi, "ap_channel", WIFI_CHAN_AP);
-    cJSON_AddStringToObject(wifi, "sta_mac", sys_info.wifi_sta_mac);
-    cJSON_AddStringToObject(wifi, "ap_mac", sys_info.wifi_ap_mac);
     cJSON_AddItemToObject(*network_json, "wifi", wifi);
 
     return ESP_OK;
@@ -103,6 +117,13 @@ static cJSON *create_rs485_port_json(int port_num)
         cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_error_percentage[1]);
         cJSON_AddNumberToObject(rs485_port, "server_connections_count", tcp_server_active_connections(TCP_SERVER_2));
     }
+
+    // Add the active port_manager mode so the UI can display the real operating mode.
+    unsigned port_index = (unsigned)(port_num - 1);  // convert 1-based port_num to 0-based index
+    cJSON_AddStringToObject(rs485_port, "port_mode",
+                            port_manager_mode_to_str(port_manager_get_mode(port_index)));
+    // Cache overlay is orthogonal to the transport mode; expose it separately.
+    cJSON_AddBoolToObject(rs485_port, "cache_enabled", port_manager_get_cache(port_index));
 
     return rs485_port;
 }
@@ -167,6 +188,12 @@ static esp_err_t info_build_ap_clients_json(cJSON **clients_json)
 {
     if (clients_json == NULL) {
         return ESP_FAIL;
+    }
+
+    // When WiFi is permanently disabled, return an empty clients list
+    if (setting_items_read_bool(KEY_WIFI_PERM_DISABLE)) {
+        *clients_json = cJSON_CreateArray();
+        return (*clients_json != NULL) ? ESP_OK : ESP_FAIL;
     }
 
     *clients_json = cJSON_CreateArray();
@@ -257,6 +284,16 @@ esp_err_t info_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(response_json, "git_info", sys_info.firmware_git_info);
     cJSON_AddNumberToObject(response_json, "serial_num", sys_info.device_serial_num);
 
+    // Heap statistics: both values use MALLOC_CAP_INTERNAL (internal DRAM only,
+    // excludes external PSRAM) to ensure heap_free <= heap_total always holds.
+    size_t heap_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
+    size_t heap_free  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    cJSON_AddNumberToObject(response_json, "heap_total", (double)heap_total);
+    cJSON_AddNumberToObject(response_json, "heap_free",  (double)heap_free);
+    // Minimum free heap since boot — useful diagnostic for worst-case memory pressure
+    size_t heap_min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    cJSON_AddNumberToObject(response_json, "heap_min_free", (double)heap_min_free);
+
     // Add system voltage measurement
     float system_voltage = voltage_monitor_get_sys_voltage();
     cJSON_AddNumberToObject(response_json, "system_voltage", system_voltage);
@@ -264,6 +301,10 @@ esp_err_t info_get_handler(httpd_req_t *req)
     // Add config button press count
     uint32_t button_presses = config_button_get_press_count();
     cJSON_AddNumberToObject(response_json, "config_button_presses", button_presses);
+
+    // Add PSRAM info
+    cJSON_AddBoolToObject(response_json, "psram_available", sys_info.psram_available);
+    cJSON_AddNumberToObject(response_json, "psram_size_kb", sys_info.psram_size_kb);
 
     // Build network info
     cJSON *network_json = NULL;
@@ -296,6 +337,56 @@ esp_err_t info_get_handler(httpd_req_t *req)
 
         cJSON_Delete(rs485_json);
     }
+
+    // Serial<->serial repeater statistics (top-level "repeater" object).
+    repeater_stats_t rep = {0};
+    repeater_get_stats(&rep);
+    cJSON *repeater_json = cJSON_CreateObject();
+    if (repeater_json) {
+        cJSON_AddBoolToObject(repeater_json, "active", rep.active);
+        cJSON_AddNumberToObject(repeater_json, "uptime_ms", (double)rep.uptime_ms);
+        cJSON_AddNumberToObject(repeater_json, "bytes_1to2", (double)rep.bytes_1to2);
+        cJSON_AddNumberToObject(repeater_json, "bytes_2to1", (double)rep.bytes_2to1);
+        cJSON_AddNumberToObject(repeater_json, "dropped_1", (double)rep.dropped_1);
+        cJSON_AddNumberToObject(repeater_json, "dropped_2", (double)rep.dropped_2);
+        cJSON_AddItemToObject(response_json, "repeater", repeater_json);
+    }
+
+    // Report the configured port from NVS, not the runtime state.
+    // This way the frontend shows the correct port even when the server is stopped.
+    cJSON_AddNumberToObject(response_json, "cache_modbus_port",
+                            setting_items_read_int(KEY_CACHE_MODBUS_PORT));
+    // Report the configured enabled flag from NVS (not runtime state).
+    // This matches the semantics of cache_modbus_port above and keeps
+    // GET /info consistent with GET /settings for this field.
+    cJSON_AddBoolToObject(response_json, "cache_modbus_server_enabled",
+                          setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED));
+    // Runtime counterpart of the two configured fields above: the port the server is
+    // actually bound to. Without it a failed start is invisible over REST — it is only
+    // logged over UART, so /info would keep advertising enabled=true on a port nobody
+    // is listening on. A boolean "running" would be too coarse: a failed port change
+    // restarts the server on the port it was already serving rather than leaving it
+    // down, so the running port may legitimately differ from the configured one. The
+    // three states a reader must be able to tell apart:
+    //   0                      — nothing is listening. A failed start is one cause, not the
+    //                            only one: the server is also down while disabled, before
+    //                            port_manager_init() runs (httpd answers throughout main.c's
+    //                            wait-for-network loop) and across the restart window of a
+    //                            settings apply;
+    //   == cache_modbus_port   — healthy;
+    //   != cache_modbus_port   — a failed move left the server on its previous port, and the
+    //                            settings layer still reports the change as pending, so the
+    //                            next POST /settings retries it; or cache_modbus_port is
+    //                            stored <= 0, which cache_modbus_port reports raw while both
+    //                            start paths substitute the compiled-in default that
+    //                            cache_modbus_active_port then shows — nothing is pending
+    //                            then, so that mismatch stays until the stored value is
+    //                            corrected.
+    cJSON_AddNumberToObject(response_json, "cache_modbus_active_port",
+                            cache_modbus_server_get_port());
+    // Report the configured value timeout from NVS.
+    cJSON_AddNumberToObject(response_json, "cache_value_timeout_s",
+                            setting_items_read_int(KEY_CACHE_VALUE_TIMEOUT_S));
 
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;
@@ -360,3 +451,12 @@ esp_err_t hostname_get_handler(httpd_req_t *req)
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;
 }
+
+#ifdef __unittest_env__
+/* Thin shim exposing the static AP-clients JSON builder for unit tests, so the
+ * wifi_perm_disable early-return branch can be exercised without an HTTP request. */
+esp_err_t info_handlers_test_build_ap_clients_json(cJSON **clients_json)
+{
+    return info_build_ap_clients_json(clients_json);
+}
+#endif /* __unittest_env__ */

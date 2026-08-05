@@ -31,7 +31,8 @@ const cancelChoice = () => {
   <form class="fileUpload" autocomplete="off">
     <input ref="fileInput" class="fileUpload-input" type="file" required :accept="accept" @change="handleFileChange" />
     <Button v-if="!files?.length" type="button" @click="fileInput!.click()">{{ placeholder }}</Button>
-    <div v-else>
+    <div v-else class="fileUpload-selected">
+      <span class="fileUpload-name mono" :title="files[0]?.name">{{ files[0]?.name }}</span>
       <div class="fileUpload-wrapper">
         <input v-show="false" v-model="destinationPath" type="text" name="destination_path" required>
         <Button type="button" variant="gray" :disabled="disabled" @click="cancelChoice">{{ t('cancel') }}</Button>
@@ -44,6 +45,22 @@ const cancelChoice = () => {
 <style scoped>
 .fileUpload-input {
   display: none;
+}
+
+.fileUpload-selected {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.fileUpload-name {
+  max-width: 200px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fileUpload-wrapper {

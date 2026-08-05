@@ -6,11 +6,17 @@
 #include "rs485_control.h"
 #include "mio_control.h"
 
+extern int mock_port_manager_set_tx_disabled_called;
+extern unsigned mock_port_manager_set_tx_disabled_port[];
+extern bool mock_port_manager_set_tx_disabled_value[];
+extern void mock_port_manager_reset(void);
+
 void setUp(void)
 {
     mock_rs485_control_reset();
     mock_mio_control_reset();
     mock_setting_items_reset();
+    mock_port_manager_reset();
 }
 
 void tearDown(void)
@@ -73,7 +79,7 @@ static void verify_rs485_function_not_called(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_rs485_bus_vout_on_off_called, "rs485_bus_vout_on_off should not be called");
 }
 
-// Тестируем update_rs485_control с включенными настройками
+// Test update_rs485_control with all settings enabled
 void test_update_rs485_control_all_enabled(void)
 {
     LOG_MESSAGE();
@@ -88,7 +94,7 @@ void test_update_rs485_control_all_enabled(void)
 
     update_rs485_control();
 
-    // Verify setting_items_read_bool was called 5 times
+    // Verify setting_items_read_bool was called 5 times (GPIO settings only; TX disabled is handled by update_serial_tx_disabled)
     TEST_ASSERT_EQUAL_INT_MESSAGE(5, mock_setting_items_read_bool_called,
         "setting_items_read_bool should be called 5 times");
 
@@ -113,7 +119,7 @@ void test_update_rs485_control_all_enabled(void)
         "mio_control_io_bus_onoff should not be called");
 }
 
-// Тестируем update_rs485_control с выключенными настройками
+// Test update_rs485_control with all settings disabled
 void test_update_rs485_control_all_disabled(void)
 {
     LOG_MESSAGE();
@@ -137,7 +143,7 @@ void test_update_rs485_control_all_disabled(void)
         "mio_control_io_bus_onoff should not be called");
 }
 
-// Тестируем "бегущую единицу" - только одна настройка включена
+// Test "walking one" — only one setting enabled at a time
 void test_update_rs485_control_walking_one_failsafe_1(void)
 {
     LOG_MESSAGE();
@@ -233,7 +239,7 @@ void test_update_rs485_control_walking_one_vout(void)
     verify_rs485_vout_call(true);
 }
 
-// Тестируем "бегущий ноль" - только одна настройка выключена
+// Test "walking zero" — only one setting disabled at a time
 void test_update_rs485_control_walking_zero_failsafe_1(void)
 {
     LOG_MESSAGE();
@@ -329,7 +335,7 @@ void test_update_rs485_control_walking_zero_vout(void)
     verify_rs485_vout_call(false);
 }
 
-// Тестируем update_io_bus_control с включенной IO шиной
+// Test update_io_bus_control with IO bus enabled
 void test_update_io_bus_control_enabled(void)
 {
     LOG_MESSAGE();
@@ -350,7 +356,7 @@ void test_update_io_bus_control_enabled(void)
     verify_rs485_function_not_called();
 }
 
-// Тестируем update_io_bus_control с выключенной IO шиной
+// Test update_io_bus_control with IO bus disabled
 void test_update_io_bus_control_disabled(void)
 {
     LOG_MESSAGE();
@@ -369,6 +375,75 @@ void test_update_io_bus_control_disabled(void)
 
     verify_io_bus_call(false);
     verify_rs485_function_not_called();
+}
+
+// Tests for update_serial_tx_disabled()
+void test_update_serial_tx_disabled_both_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_serial_tx_disabled - both ports tx_disabled=false");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_TX_DISABLED_1, false);
+    mock_setting_items_set_bool(KEY_485_TX_DISABLED_2, false);
+
+    update_serial_tx_disabled();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_setting_items_read_bool_called,
+        "setting_items_read_bool should be called twice");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(KEY_485_TX_DISABLED_1, mock_setting_items_read_bool_keys[0],
+        "First read should be KEY_485_TX_DISABLED_1");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(KEY_485_TX_DISABLED_2, mock_setting_items_read_bool_keys[1],
+        "Second read should be KEY_485_TX_DISABLED_2");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_port_manager_set_tx_disabled_called,
+        "port_manager_set_tx_disabled should be called twice");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_port_manager_set_tx_disabled_port[0],
+        "First call should be for port 0");
+    TEST_ASSERT_EQUAL_MESSAGE(false, mock_port_manager_set_tx_disabled_value[0],
+        "Port 0 tx_disabled should be false");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_port_manager_set_tx_disabled_port[1],
+        "Second call should be for port 1");
+    TEST_ASSERT_EQUAL_MESSAGE(false, mock_port_manager_set_tx_disabled_value[1],
+        "Port 1 tx_disabled should be false");
+}
+
+void test_update_serial_tx_disabled_both_enabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_serial_tx_disabled - both ports tx_disabled=true");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_TX_DISABLED_1, true);
+    mock_setting_items_set_bool(KEY_485_TX_DISABLED_2, true);
+
+    update_serial_tx_disabled();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_port_manager_set_tx_disabled_called,
+        "port_manager_set_tx_disabled should be called twice");
+    TEST_ASSERT_EQUAL_MESSAGE(true, mock_port_manager_set_tx_disabled_value[0],
+        "Port 0 tx_disabled should be true");
+    TEST_ASSERT_EQUAL_MESSAGE(true, mock_port_manager_set_tx_disabled_value[1],
+        "Port 1 tx_disabled should be true");
+}
+
+void test_update_serial_tx_disabled_mixed(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_serial_tx_disabled - port 0 disabled, port 1 enabled");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_TX_DISABLED_1, true);
+    mock_setting_items_set_bool(KEY_485_TX_DISABLED_2, false);
+
+    update_serial_tx_disabled();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_port_manager_set_tx_disabled_called,
+        "port_manager_set_tx_disabled should be called twice");
+    TEST_ASSERT_EQUAL_MESSAGE(true, mock_port_manager_set_tx_disabled_value[0],
+        "Port 0 tx_disabled should be true");
+    TEST_ASSERT_EQUAL_MESSAGE(false, mock_port_manager_set_tx_disabled_value[1],
+        "Port 1 tx_disabled should be false");
 }
 
 int main(void)
@@ -392,6 +467,10 @@ int main(void)
 
     RUN_TEST(test_update_io_bus_control_enabled);
     RUN_TEST(test_update_io_bus_control_disabled);
+
+    RUN_TEST(test_update_serial_tx_disabled_both_disabled);
+    RUN_TEST(test_update_serial_tx_disabled_both_enabled);
+    RUN_TEST(test_update_serial_tx_disabled_mixed);
 
     return UNITY_END();
 }

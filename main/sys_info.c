@@ -1,9 +1,15 @@
 #include "sys_info.h"
 
+// Explicit: the PSRAM detection below is guarded by #if CONFIG_SPIRAM. Relying on a
+// transitive sdkconfig.h would silently disable detection on mgu_v1 if header order
+// ever changed, and the host tests (which pass CONFIG_SPIRAM via -D) would not catch it.
+#include "sdkconfig.h"
+
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "nv_storage.h"
 #include "esp_efuse.h"
+#include "esp_psram.h"
 
 #include <inttypes.h>
 
@@ -102,6 +108,11 @@ esp_err_t sys_info_init(void)
         if (!strlen(sys_info.device_signature)) {
             snprintf(sys_info.device_signature, sizeof(sys_info.device_signature), "mge_v3");
         }
+        // In QEMU the eFuse MAC is all-zeros, so the generated serial is 0 which
+        // violates the OpenAPI minimum:1 constraint. Use a fixed non-zero placeholder.
+        if (sys_info.device_serial_num == 0) {
+            sys_info.device_serial_num = 83798374;
+        }
     #endif
 
     #if CONFIG_EFUSE_VIRTUAL
@@ -119,6 +130,28 @@ esp_err_t sys_info_init(void)
     ESP_LOGI(TAG, "Serial number: %" PRIu64, sys_info.device_serial_num);
     ESP_LOGI(TAG, "Firmware version: %s", sys_info.firmware_ver);
     ESP_LOGI(TAG, "Firmware GIT info: %s", sys_info.firmware_git_info);
+
+    // Detect PSRAM availability. The esp_psram component (and thus
+    // esp_psram_is_initialized/esp_psram_get_size) is only linked when
+    // CONFIG_SPIRAM is enabled (WB-MGU / mgu_v1); WB-MGE (mge_v3) builds it out.
+#if CONFIG_SPIRAM
+    sys_info.psram_available = esp_psram_is_initialized();
+    if (sys_info.psram_available) {
+        sys_info.psram_size_kb = (uint32_t)(esp_psram_get_size() / 1024);
+        ESP_LOGI(TAG, "PSRAM available: %" PRIu32 " KB", sys_info.psram_size_kb);
+    } else {
+        sys_info.psram_size_kb = 0;
+        // PSRAM is soldered on every shipped MGU, so a chip that does not come up is a
+        // hardware fault, not a board variant - hence WARNING and not the neutral INFO
+        // used by the #else branch. CONFIG_SPIRAM_IGNORE_NOTFOUND=y (mgu_v1) keeps the
+        // device booting either way, so nothing else makes the fault stand out.
+        ESP_LOGW(TAG, "PSRAM expected on this board but did not initialize, running with reduced memory");
+    }
+#else
+    sys_info.psram_available = false;
+    sys_info.psram_size_kb = 0;
+    ESP_LOGI(TAG, "PSRAM not supported on this board");
+#endif
 
     return ESP_OK;
 }

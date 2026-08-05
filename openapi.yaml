@@ -123,6 +123,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            An update is already running, or the firmware has been written and the device is
+            waiting to reboot into it. The connection is closed right after this response;
+            retry once the device is back up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Internal server error
           content:
@@ -177,6 +186,60 @@ paths:
                     minimum: 0
                     maximum: 1000
                     description: "Number of config button presses"
+                  heap_free:
+                    type: integer
+                    minimum: 0
+                    description: "Free heap in bytes"
+                  heap_min_free:
+                    type: integer
+                    minimum: 0
+                    description: "Minimum free heap observed since boot, in bytes"
+                  heap_total:
+                    type: integer
+                    minimum: 0
+                    description: "Total heap size in bytes"
+                  psram_available:
+                    type: boolean
+                    description: "Whether PSRAM is present and initialized"
+                  psram_size_kb:
+                    type: integer
+                    minimum: 0
+                    description: "PSRAM size in kilobytes"
+                  cache_modbus_server_enabled:
+                    type: boolean
+                    description: "Cache Modbus server enabled"
+                  cache_modbus_port:
+                    type: integer
+                    minimum: 1
+                    maximum: 65535
+                    description: "TCP port of the cache Modbus server"
+                  cache_modbus_active_port:
+                    type: integer
+                    minimum: 0
+                    maximum: 65535
+                    description: >-
+                      TCP port the cache Modbus server is actually listening on right now, as opposed
+                      to the configured cache_modbus_port. 0 means nothing is listening, which is not
+                      necessarily a failure: it also reads 0 while the server is disabled, during the
+                      brief restart window of a settings update, and at boot between the network
+                      coming up and the ports being initialized — the boot loop notices the link
+                      within its one-second poll and starts the server right after, so that window is
+                      short but a request arriving inside it does report 0. A non-zero value that
+                      differs from cache_modbus_port is usually a failed port change, leaving the
+                      server on the port it was serving before, with the requested change still
+                      pending for the next settings update. It also appears when cache_modbus_port
+                      itself is stored as an invalid value (<= 0). Such a value cannot be produced
+                      through this API — the device rejects any port outside 1..65535, which is why
+                      cache_modbus_port is documented above with minimum 1 — so it only reaches a
+                      device in NVS written by other firmware, and such a device reports a
+                      cache_modbus_port outside the range documented here. This field then reports
+                      the built-in default port the server actually fell back to, nothing is
+                      pending, and the mismatch persists until the stored port is corrected.
+                  cache_value_timeout_s:
+                    type: integer
+                    minimum: 0
+                    maximum: 65535
+                    description: "Cached value lifetime in seconds; 0 disables the timeout"
                   ethernet:
                     type: object
                     properties:
@@ -200,6 +263,9 @@ paths:
                     type: object
                     properties:
                       enabled: { type: boolean }
+                      perm_disabled:
+                        type: boolean
+                        description: "WiFi permanently disabled"
                       mode:
                         type: string
                         enum: ["ap", "sta", "none"]
@@ -255,6 +321,38 @@ paths:
                     $ref: '#/components/schemas/RS485Status'
                   rs485_2:
                     $ref: '#/components/schemas/RS485Status'
+                  repeater:
+                    type: object
+                    description: "Serial<->serial repeater statistics (Port 1 <-> Port 2 raw byte forwarding)"
+                    properties:
+                      active:
+                        type: boolean
+                        description: "True when BOTH ports are running in repeater mode"
+                      uptime_ms:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                        description: "Milliseconds since the repeater started forwarding (0 if inactive)"
+                      bytes_1to2:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                        description: "Bytes forwarded Port 1 RX -> Port 2 TX"
+                      bytes_2to1:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                        description: "Bytes forwarded Port 2 RX -> Port 1 TX"
+                      dropped_1:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                        description: "Bytes received on Port 1 that were lost: forward failures plus RX-stage drops (receive-buffer / driver-ring overflow)"
+                      dropped_2:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                        description: "Bytes received on Port 2 that were lost: forward failures plus RX-stage drops (receive-buffer / driver-ring overflow)"
         '400':
           description: Bad request
           content:
@@ -312,6 +410,13 @@ paths:
                 properties:
                   success:
                     type: boolean
+                  warnings:
+                    type: array
+                    description: >-
+                      Non-fatal findings about the resulting configuration. Optional: omitted when there
+                      is nothing to report. A client may ignore it, but should surface it to the user.
+                    items:
+                      $ref: '#/components/schemas/SettingsWarning'
                 additionalProperties:
                   type: boolean
                   description: Individual field update status (true/false for each field)
@@ -342,7 +447,7 @@ paths:
               properties:
                 cmd:
                   type: string
-                  enum: [reboot, set_default_settings, write_factory_data]
+                  enum: [reboot, set_default_settings]
               required: [cmd]
       responses:
         '200':
@@ -454,7 +559,7 @@ paths:
                           maxLength: 31
                         rssi:
                           type: integer
-                          minimum: -100
+                          minimum: -128
                           maximum: 0
                         bssid:
                           type: string
@@ -582,7 +687,7 @@ paths:
 
   /wb_test:
     get:
-      summary: Get WB test status (only for internal use!)
+      summary: Get WB test status — clock signal and all front-panel LEDs (only for internal use!)
       responses:
         '200':
           description: Status
@@ -593,6 +698,14 @@ paths:
                 properties:
                   clock_out:
                     type: boolean
+                    description: >-
+                      Current state: when true, the 100 kHz clock_out factory test is
+                      running — a 100 kHz square wave is driven on the TX line of BOTH
+                      RS-485 ports, but only the RS-485-1 transceiver is enabled for
+                      transmission, so the signal reaches the RS-485-1 bus while the
+                      RS-485-2 bus stays silent (its TX line only blinks the RS-485-2
+                      activity LED); all front-panel LEDs (Wi-Fi, Eth, Status, V-out)
+                      are lit.
         '400':
           description: Bad request
           content:
@@ -608,7 +721,37 @@ paths:
         '401':
           $ref: '#/components/responses/UnauthorizedError'
     post:
-      summary: WB test control (only for internal use!)
+      summary: WB test control — clock signal and all front-panel LEDs (only for internal use!)
+      description: >
+        Factory production test. While it is on, the firmware owns the RS-485 hardware:
+
+        * a 100 kHz square wave is driven by the LEDC on the TX line of BOTH RS-485
+          ports, but only the RS-485-1 transceiver is enabled for transmission (DE
+          high), so the signal is emitted on the RS-485-1 bus — do not run it with live
+          devices attached to RS-485-1;
+
+        * the RS-485-2 pair stays silent on purpose: the firmware drives that port's DE
+          line low and holds it there for the whole test, so its transceiver driver is
+          off and the port-2 TX line only toggles on the logic side, blinking the
+          RS-485-2 activity LED. Nothing is emitted on the RS-485-2 pair, which is
+          shared with the MIO transceiver and wired out to the RS-485-2 terminals;
+
+        * both ports are forced to "disabled" at runtime so the LEDC can own their TX
+          pins (the firmware also takes both DE pins: RS-485-1 raised, RS-485-2 held
+          low). This is NOT persisted: NVS keeps the configured port_mode, and both
+          ports are restored from it when the test is switched off;
+
+        * the I/O bus is NOT touched: the MIO controller keeps whatever state
+          io_bus_enabled put it in, during the test and after it, and a POST /settings
+          that changes io_bus_enabled still takes effect immediately;
+
+        * port_mode is frozen: POST /ports/{n}/mode is refused with 409 while the test
+          runs, and the vout / serial tx_disabled settings are not re-applied. POST
+          /settings still accepts and persists any setting, including port_mode — it
+          only writes NVS, and the values take effect when the test ends;
+
+        * all front-panel LEDs (Wi-Fi, Eth, Status, V-out) are lit; V-out is forced on,
+          which energises the RS-485 bus V-out output.
       requestBody:
         required: true
         content:
@@ -618,6 +761,9 @@ paths:
               properties:
                 clock_out:
                   type: boolean
+                  description: >-
+                    true starts the test described above, false stops it and restores
+                    the ports and V-out from the persisted settings.
               required: [clock_out]
       responses:
         '200':
@@ -644,6 +790,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: >
+            The test could not be started: either an RS-485 port could not be disabled
+            (driving its TX/DE pins would have collided with the UART that still owns
+            them), or the LEDC refused to produce the waveform. The entry is rolled back
+            (both ports restored from the persisted settings, the transceivers left in
+            receive mode) and the test stays off — the device is left exactly as it was.
+            The request itself was valid, so the same request may succeed on retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Cannot start clock_out test: the RS-485 ports or the clock generator could not be set up"
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -715,6 +876,524 @@ paths:
                 type: string
                 format: binary
 
+  /roboto-latin-wght-normal.woff2:
+    get:
+      summary: Get Roboto (latin subset) web font
+      description: Serves the embedded Roboto latin variable font (WOFF2). Public static asset served for the login page before authentication.
+      security: []  # No authentication required for static font asset
+      responses:
+        '200':
+          description: Roboto latin variable font (WOFF2)
+          content:
+            font/woff2:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: ['public, max-age=31536000, immutable']
+
+  /roboto-cyrillic-wght-normal.woff2:
+    get:
+      summary: Get Roboto (cyrillic subset) web font
+      description: Serves the embedded Roboto cyrillic variable font (WOFF2). Public static asset served for the login page before authentication.
+      security: []  # No authentication required for static font asset
+      responses:
+        '200':
+          description: Roboto cyrillic variable font (WOFF2)
+          content:
+            font/woff2:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: ['public, max-age=31536000, immutable']
+
+  /roboto-cyrillic-ext-wght-normal.woff2:
+    get:
+      summary: Get Roboto (cyrillic-ext subset) web font
+      description: Serves the embedded Roboto cyrillic-ext variable font (WOFF2). Public static asset served for the login page before authentication.
+      security: []  # No authentication required for static font asset
+      responses:
+        '200':
+          description: Roboto cyrillic-ext variable font (WOFF2)
+          content:
+            font/woff2:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: ['public, max-age=31536000, immutable']
+
+  /hostname:
+    get:
+      summary: Get device hostname
+      security: []  # No authentication required for hostname
+      responses:
+        '200':
+          description: Current hostname
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hostname:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                    pattern: '^[a-zA-Z0-9-]+$'
+              example:
+                hostname: "my-device"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /sniffer/status:
+    get:
+      summary: Get sniffer status for all ports
+      description: Returns a map of port names to their sniffer active state.
+      responses:
+        '200':
+          description: Sniffer status per port
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  port_1: { type: boolean }
+                  port_2: { type: boolean }
+              example:
+                port_1: true
+                port_2: false
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /sniffer/ws:
+    get:
+      summary: WebSocket stream for packet sniffer
+      description: >
+        Upgrade this connection to WebSocket to receive real-time sniffer packets.
+        Each message is a JSON object describing a captured Modbus packet.
+      responses:
+        '101':
+          description: WebSocket connection established
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /cache/status:
+    get:
+      summary: Get Modbus cache status
+      responses:
+        '200':
+          description: Cache status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  entries:
+                    type: integer
+                    minimum: 0
+                  max_entries:
+                    type: integer
+                    minimum: 0
+                  slaves:
+                    type: integer
+                    minimum: 0
+                  packets_processed:
+                    type: integer
+                    minimum: 0
+                  entries_dropped:
+                    type: integer
+                    minimum: 0
+                    description: "Number of register values dropped because the cache pool was full"
+                  last_packet_age_us:
+                    type: integer
+                    minimum: 0
+                  map_age_us:
+                    type: integer
+                    minimum: 0
+                  memory_bytes:
+                    type: integer
+                    minimum: 0
+              example:
+                enabled: true
+                entries: 42
+                max_entries: 1024
+                slaves: 3
+                packets_processed: 1000
+                entries_dropped: 7
+                last_packet_age_us: 500000
+                map_age_us: 1200000
+                memory_bytes: 4096
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /cache/csv:
+    get:
+      summary: Download Modbus register cache as CSV
+      description: >
+        Returns a CSV file containing the cached Modbus register values.
+        The CSV header is: slave_id,type,address,value,age_s
+        where type is one of: holding, input, coil, discrete.
+
+
+        The cache is active only while at least one port carries the cache overlay
+        (POST /ports/{n}/cache); GET /cache/status reports it as `enabled`. With the
+        cache off there is nothing to export and the endpoint returns 409 rather than
+        a file holding nothing but a header row. Unlike /cache/json — polled by the UI,
+        where an empty cache is a normal state — this endpoint is a user-initiated
+        download, so the empty case is worth an explicit error.
+      responses:
+        '200':
+          description: CSV file with cached register data
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="modbus_cache.csv"'
+          content:
+            text/csv:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '409':
+          description: >
+            Cache is disabled — nothing to export. The check runs before the response
+            body starts, so no (empty) file is sent and no Content-Disposition header
+            is set.
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: cache disabled
+
+  /cache/json:
+    get:
+      summary: Get Modbus register cache as JSON
+      responses:
+        '200':
+          description: Cached register data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  d:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        s:
+                          type: integer
+                          minimum: 1
+                          maximum: 247
+                          description: "Modbus slave ID"
+                        t:
+                          type: string
+                          enum: ["h", "i", "c", "d"]
+                          description: "Register type: h=holding, i=input, c=coil, d=discrete"
+                        a:
+                          type: integer
+                          minimum: 0
+                          maximum: 65535
+                          description: "Register address (0-based)"
+                        v:
+                          type: integer
+                          minimum: 0
+                          maximum: 65535
+                          description: "Register value"
+                        age:
+                          type: integer
+                          minimum: 0
+                          maximum: 65535
+                          description: "Seconds since last update"
+              example:
+                d:
+                  - s: 3
+                    t: "h"
+                    a: 100
+                    v: 1234
+                    age: 42
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /ports/{port_number}/mode:
+    post:
+      summary: Set port operating mode
+      parameters:
+        - name: port_number
+          in: path
+          required: true
+          description: "Port number (1 or 2)"
+          schema:
+            type: integer
+            enum: [1, 2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: ["disabled", "tcp_bridge", "passive", "repeater"]
+              required: [mode]
+            example:
+              mode: "repeater"
+      responses:
+        '200':
+          description: Port mode updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                    enum: ["disabled", "tcp_bridge", "passive", "repeater"]
+              example:
+                mode: "repeater"
+        '400':
+          description: >
+            Bad request: the body is not valid JSON, the "mode" field is missing or is
+            not a string, or its value is not one of the modes listed above. Returned
+            ONLY for a malformed request — a valid request the device fails to carry out
+            returns 500.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Unknown mode value"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '409':
+          description: >
+            Conflict: the request body was valid, but the port cannot be switched to the
+            requested mode right now. One of two cases.
+
+
+            (1) Port mode is locked: the clock_out factory test is active and owns the
+            RS-485 TX lines of both ports and both DE lines — retry once the test has been
+            switched off. This endpoint applies the mode immediately, which is why it is
+            refused. To change port_mode during the test, write it with POST /settings
+            instead: that only persists the value (200) and it takes effect when the test
+            ends.
+
+
+            (2) Port collision: switching to "tcp_bridge" (with the saved bridge in
+            "server" mode) would bind a TCP port another local listener already uses — the
+            web server, the cache Modbus server, or the other RS-485 bridge gateway. This
+            mirrors the collision check POST /settings runs and is rejected up front instead
+            of failing later at bind(). Resolve the port conflict first (e.g. via POST
+            /settings) and retry.
+
+
+            Returned ONLY for these conflicts; a port that fails to initialize for any
+            other reason returns 500.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Port mode is locked while the clock_out factory test is active"
+        '500':
+          description: >
+            The request was valid but the device could not carry it out. Either the port
+            refused to initialize in the requested mode — a "tcp_bridge" whose persisted
+            bridge_mode is invalid or left over from a legacy firmware, a serial port that
+            could not be opened, out of memory — in which case the port keeps its previous
+            mode (or is left disabled if that rollback also fails); or the mode was applied
+            but could not be written to NVS, in which case it
+            is live now but will be reverted to the persisted one on the next settings cycle
+            or reboot. The error field carries the underlying esp_err_t name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "ESP_ERR_INVALID_STATE"
+
+  /ports/{port_number}/send:
+    post:
+      summary: Send raw bytes out the serial port
+      description: >
+        Transmits a raw byte frame out of the given serial port.
+        The payload is supplied as a hex string (two hex characters per byte).
+        Maximum frame length is 265 bytes (530 hex characters): the longest frame on the bus is a
+        Fast Modbus command, which wraps a 256-byte RTU ADU in a 9-byte Fast Modbus envelope.
+      parameters:
+        - name: port_number
+          in: path
+          required: true
+          description: "Port number (1 or 2)"
+          schema:
+            type: integer
+            enum: [1, 2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hex:
+                  type: string
+                  pattern: '^([0-9A-Fa-f]{2})*$'
+                  maxLength: 530
+                  description: "Bytes to send, encoded as an even-length hex string (max 265 bytes / 530 hex characters: a Fast Modbus frame is a 256-byte RTU ADU plus a 9-byte Fast Modbus envelope)"
+              required: [hex]
+            example:
+              hex: "01030000000A"
+      responses:
+        '200':
+          description: Bytes sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: integer
+                    minimum: 0
+                    description: "Number of bytes transmitted"
+              example:
+                sent: 6
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /ports/{port_number}/cache:
+    post:
+      summary: Toggle the Modbus cache overlay for the port
+      description: >
+        The cache overlay is orthogonal to the port mode and survives mode changes.
+
+        The cache is single-port: the register pool is keyed by slave address only,
+        and the cache Modbus TCP interface answers by unit id, so only one RS-485 port
+        can feed it. Enabling the overlay therefore MOVES it — the other port, if it
+        was the cache source, is switched off as a side effect of this call (its
+        cache_enabled in GET /info becomes false) and does not have to be disabled
+        first. This request is never refused because of the other port's state.
+
+        The move drops the cached register values: they were read from the other bus
+        and there is no port dimension in the pool to keep them apart from the new
+        one. GET /cache/status reports the cache as reset afterwards. The pool itself
+        is NOT released and reallocated — it is wiped in place — so a move cannot fail
+        on a memory allocation and cannot cost you a working cache. Only switching the
+        cache on from off allocates, and only switching the last holder off frees.
+
+        Errors: a 400 is always a bad request (malformed JSON, a missing or non-boolean
+        `enabled`) and means nothing was applied. Everything else is the device failing
+        a valid request, and the live change is applied before it is persisted, so those
+        mean "applied, but not fully". A 503 says the register pool could not be
+        allocated: the overlay IS recorded on this port in memory, and in NVS too when
+        that write succeeded, but the cache is off and GET /cache/status reports it as
+        disabled — repeat the request to retry the allocation. A 500 says the live change could not be persisted, so it is in
+        effect now but a reboot would revert it; both of a move's two writes count, and
+        a failure on the RELEASED port's key is reported the same way, because the
+        stored state then still names the old port as well and a reboot may resolve back
+        to it. Re-read GET /info and GET /cache/status for the state that actually took.
+      parameters:
+        - name: port_number
+          in: path
+          required: true
+          description: "Port number (1 or 2)"
+          schema:
+            type: integer
+            enum: [1, 2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                  description: "Enable or disable the cache overlay for this port"
+              required: [enabled]
+            example:
+              enabled: true
+      responses:
+        '200':
+          description: Cache overlay state updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cache_enabled:
+                    type: boolean
+              example:
+                cache_enabled: true
+        '400':
+          description: Bad request — malformed JSON or a missing/non-boolean `enabled`; nothing was applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          description: >
+            The overlay is live but could not be persisted, so a reboot would revert it
+            (a move reports a failure on either of its two NVS keys this way), or the
+            cache module never initialised. Repeating the request does not help.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: >
+            The register pool could not be allocated. The overlay is recorded on this
+            port in memory, and in NVS too when that write succeeded, but the cache is
+            not running — GET /cache/status reports it as disabled. Retry: the
+            allocation is attempted again on the next request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /gcov:
+    get:
+      summary: Stream on-target code-coverage data (coverage builds only)
+      description: >
+        Streams the concatenated gcfn+gcda records for every instrumented
+        translation unit as a chunked application/octet-stream. On the host
+        the stream is reassembled via `xtensa-esp-elf-gcov-tool merge-stream`.
+        This endpoint is present ONLY in coverage builds (COVERAGE_BUILD) and
+        is absent from production firmware.
+      security: []  # No authentication required
+      responses:
+        '200':
+          description: Concatenated gcfn+gcda coverage stream
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
 components:
   securitySchemes:
     sessionCookie:
@@ -746,12 +1425,22 @@ components:
           type: integer
           minimum: 0
           maximum: 10
+        port_mode:
+          type: string
+          enum: ["disabled", "tcp_bridge", "passive", "repeater"]
+          description: "Current operating mode of the RS-485 port"
+        cache_enabled:
+          type: boolean
+          description: "Whether the Modbus cache overlay is active on this port"
 
     RS485Settings:
       type: object
       properties:
         term: { type: boolean }
         fail_safe: { type: boolean }
+        tx_disabled:
+          type: boolean
+          description: "Disable the transmitter (TX) on this RS-485 port"
         baudrate:
           type: integer
           minimum: 1200
@@ -766,6 +1455,23 @@ components:
         databits:
           type: string
           enum: ["5", "6", "7", "8"]
+        port_mode:
+          type: string
+          enum: ["disabled", "tcp_bridge", "passive", "repeater"]
+        cache_en:
+          type: boolean
+          description: >-
+            Make this port the source of the multimaster cache. Applied to the running device by
+            the same request, exactly as POST /ports/{n}/cache would — GET /info's
+            rs485_N.cache_enabled follows immediately, no reboot needed.
+
+            The cache is single-port: setting it on one port MOVES it off the other (whose cache_en
+            becomes false in a following GET /settings) and drops the values read from the old bus.
+            A request that sets it on BOTH ports is normalised the same way the device normalises
+            it at boot — the lower-numbered port keeps it.
+
+            If the overlay cannot be moved on the running device the settings are still saved and
+            the response carries a cache_apply_failed warning; see SettingsWarning.
         bridge:
           type: object
           properties:
@@ -815,7 +1521,7 @@ components:
           type: string
           minLength: 1
           maxLength: 31
-          pattern: '^[\\x20-\\x7E]{1,31}$'
+          pattern: '^[ -~]{1,31}$'
           description: "Access point SSID, 1-31 printable ASCII characters"
         ap_pass:
           type: string
@@ -825,10 +1531,10 @@ components:
           description: "WPA password, 8-63 printable ASCII characters"
         sta_ssid:
           type: string
-          minLength: 1
+          minLength: 0
           maxLength: 31
-          pattern: '^[\\x20-\\x7E]{1,31}$'
-          description: "Station network SSID, 1-31 printable ASCII characters"
+          pattern: '^[ -~]{0,31}$'
+          description: "Station network SSID, 0-31 printable ASCII characters. Empty means no station network is configured — this is the factory default and is accepted on write"
         sta_pass:
           type: string
           minLength: 0
@@ -897,6 +1603,58 @@ components:
           maximum: 65535
           default: 80
         io_bus: { type: boolean }
+        cache_modbus_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 504
+          description: "TCP port of the cache Modbus server"
+        cache_modbus_server_enabled:
+          type: boolean
+          default: true
+          description: "Serve cached register values over Modbus TCP"
+        cache_value_timeout_s:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          default: 60
+          description: "Cached value lifetime in seconds; 0 disables the timeout"
+        update_channel:
+          type: string
+          enum: [stable, testing]
+          default: stable
+          description: "Firmware update channel. Used as the lookup key for the release manifest"
+        wifi_perm_disable:
+          type: boolean
+          default: false
+          description: "Permanently disable WiFi. Always present in GET; when true the response omits the wifi sub-object"
+
+    SettingsWarning:
+      type: object
+      description: >-
+        A non-fatal finding reported alongside a settings update. The request itself was processed
+        normally; the warning describes a property of the resulting configuration the user should
+        know about.
+      properties:
+        code:
+          type: string
+          enum: [port_collision, cache_apply_failed]
+          description: >-
+            Machine-readable warning code.
+            port_collision — two TCP listeners (web_port, cache_modbus_port, an RS-485 bridge gateway
+            in server mode) share the same port in the saved configuration. The request is accepted
+            because it changes neither of them, but one of the two will fail to bind and stay down
+            until the ports are made distinct.
+            cache_apply_failed — rs485_N.cache_en was saved, but the multimaster cache overlay could
+            not be moved on the running device (typically the 32 KB register pool would not
+            allocate). The stored settings are correct and a reboot applies them; until then the
+            cache keeps recording from whichever port it recorded from before, which GET /info
+            (rs485_N.cache_enabled) and GET /cache/status report. Saving the settings again retries
+            the apply.
+        message:
+          type: string
+          maxLength: 255
+          description: "Human-readable description naming the listeners and the port involved"
 
     ErrorResponse:
       type: object

@@ -5,7 +5,8 @@
 #include <string.h>
 
 #define MOCK_TASK_HANDLE                ((TaskHandle_t)0xCCCCCCCC)
-#define CONFIG_FREERTOS_HZ              500
+// CONFIG_FREERTOS_HZ is provided by FreeRTOS.h (via task.h) as 500u; defining it
+// again here (as 500) triggered -Wmacro-redefined. Rely on the FreeRTOS.h value.
 
 mock_xTaskCreate_t mock_xTaskCreate_data = {0};
 mock_vTaskDelete_t mock_vTaskDelete_data = {0};
@@ -67,9 +68,24 @@ TickType_t mock_pdMS_TO_TICKS(TickType_t ms)
     return (ms * CONFIG_FREERTOS_HZ) / 1000;
 }
 
+/* Controllable tick counter — reset to 0 in mock_freertos_task_reset().
+ * Use mock_set_tick_count() in tests that need simulated time progression. */
+TickType_t mock_tick_count = 0;
+
+void mock_set_tick_count(TickType_t ticks)
+{
+    mock_tick_count = ticks;
+}
+
+TickType_t xTaskGetTickCount(void)
+{
+    return mock_tick_count;
+}
+
 void mock_freertos_task_reset(void)
 {
     memset(&mock_xTaskCreate_data, 0, sizeof(mock_xTaskCreate_data));
     memset(&mock_vTaskDelete_data, 0, sizeof(mock_vTaskDelete_data));
     memset(&mock_vTaskDelay_data, 0, sizeof(mock_vTaskDelay_data));
+    mock_tick_count = 0; /* reset simulated clock to 0 */
 }

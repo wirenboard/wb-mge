@@ -6,27 +6,12 @@
 extern "C" {
 #endif
 
-// Hardware mock functions for QEMU builds
+// Hardware mock functions for QEMU builds.
+// Only voltage_monitor stays excluded and mocked; all other hardware-logic
+// modules run for real against the virtual IO bus (see virtual_io_qemu.c).
 
 // System voltage
 float voltage_monitor_get_sys_voltage(void);
-
-// Config button
-uint32_t config_button_get_press_count(void);
-void config_button_init(void);
-
-// RS485 control
-void update_rs485_control(void);
-void rs485_control_init(void);
-
-// IO bus control
-void update_io_bus_control(void);
-
-// MIO control
-void mio_control_init(void);
-
-// GPIO states
-void update_rs485_mio_gpio_states(void);
 
 #ifdef __cplusplus
 }

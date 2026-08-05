@@ -77,7 +77,7 @@ static void verify_adc_read(void)
     TEST_ASSERT_EQUAL_MESSAGE(VOLTAGE_ADC_CHANNEL_NUM, mock_adc_oneshot_read_channel, "ADC channel mismatch");
 }
 
-// Тестируем случай успешной инициализации system_voltage_init с калибровкой
+// Test the successful initialization case of system_voltage_init with calibration
 void test_system_voltage_init_success_with_calibration(void)
 {
     LOG_MESSAGE();
@@ -92,7 +92,7 @@ void test_system_voltage_init_success_with_calibration(void)
     verify_calibration_config();
 }
 
-// Тестируем случай успешной инициализации system_voltage_init без калибровки
+// Test the successful initialization case of system_voltage_init without calibration
 void test_system_voltage_init_success_without_calibration(void)
 {
     LOG_MESSAGE();
@@ -109,7 +109,7 @@ void test_system_voltage_init_success_without_calibration(void)
     verify_calibration_config();
 }
 
-// Тестируем повторную инициализацию system_voltage_init
+// Test repeated initialization of system_voltage_init
 void test_system_voltage_init_already_initialized(void)
 {
     LOG_MESSAGE();
@@ -139,7 +139,7 @@ void test_system_voltage_init_already_initialized(void)
     );
 }
 
-// Тестируем ошибки инициализации system_voltage_init
+// Test initialization errors of system_voltage_init
 void test_system_voltage_init_adc_unit_init_failure(void)
 {
     LOG_MESSAGE();
@@ -186,7 +186,7 @@ void test_system_voltage_init_adc_channel_config_failure(void)
     );
 }
 
-// Тестируем успешное чтение напряжения с калибровкой
+// Test successful voltage reading with calibration
 void test_system_voltage_read_success_with_calibration(void)
 {
     LOG_MESSAGE();
@@ -211,7 +211,7 @@ void test_system_voltage_read_success_with_calibration(void)
     );
 }
 
-// Тестируем чтение напряжения без калибровки
+// Test voltage reading without calibration
 void test_system_voltage_read_success_without_calibration(void)
 {
     LOG_MESSAGE();
@@ -232,7 +232,7 @@ void test_system_voltage_read_success_without_calibration(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_adc_cali_raw_to_voltage_called, "Calibration should not be used when not initialized");
 }
 
-// Тестируем чтение напряжения с ошибкой калибровки
+// Test voltage reading with calibration failure fallback
 void test_system_voltage_read_calibration_failure_fallback(void)
 {
     LOG_MESSAGE();
@@ -259,7 +259,7 @@ void test_system_voltage_read_calibration_failure_fallback(void)
     );
 }
 
-// Тестируем чтение напряжения без инициализации
+// Test voltage reading without initialization
 void test_system_voltage_read_not_initialized(void)
 {
     LOG_MESSAGE();
@@ -273,7 +273,7 @@ void test_system_voltage_read_not_initialized(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_adc_cali_raw_to_voltage_called, "Calibration conversion should not be attempted");
 }
 
-// Тестируем чтение напряжения с ошибкой чтения ADC
+// Test voltage reading with ADC read failure
 void test_system_voltage_read_adc_read_failure(void)
 {
     LOG_MESSAGE();
@@ -294,7 +294,7 @@ void test_system_voltage_read_adc_read_failure(void)
     );
 }
 
-// Тестируем чтение напряжения с нулевым значением ADC
+// Test voltage reading with zero ADC value
 void test_system_voltage_read_zero_adc_value(void)
 {
     LOG_MESSAGE();
@@ -307,6 +307,33 @@ void test_system_voltage_read_zero_adc_value(void)
 
     float voltage = system_voltage_read();
     TEST_ASSERT_EQUAL_FLOAT_MESSAGE(0.0f, voltage, "Zero ADC value should give 0.0V");
+}
+
+// Test full-scale reading (raw == VOLTAGE_ADC_MAX_VALUE) without calibration.
+// At raw=4095 the linear conversion must use the exact 4095 denominator, giving
+// precisely 36.3V. A 4096 denominator (off-by-one) would yield ~36.291V.
+void test_system_voltage_read_without_calibration_full_scale_exact(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test system_voltage_read - full-scale raw without calibration is exactly 36.3V");
+    LOG_MESSAGE();
+
+    mock_adc_cali_create_scheme_line_fitting_return_value = ESP_FAIL;
+
+    system_voltage_init();
+
+    mock_adc_oneshot_read_out_raw_value = VOLTAGE_ADC_MAX_VALUE;  // 4095, full scale
+
+    float voltage = system_voltage_read();
+    /* Tight tolerance: original (denominator 4095) is exactly 36.3V; a 4096
+       denominator drifts by ~0.0089V, which this bound excludes. */
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(
+        0.004f, 36.3f, voltage, "Full-scale ADC must convert with the 4095 denominator to exactly 36.3V"
+    );
+
+    verify_adc_read();
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_adc_cali_raw_to_voltage_called, "Calibration should not be used when not initialized");
 }
 
 int main(void)
@@ -326,6 +353,7 @@ int main(void)
     RUN_TEST(test_system_voltage_read_adc_read_failure);
 
     RUN_TEST(test_system_voltage_read_zero_adc_value);
+    RUN_TEST(test_system_voltage_read_without_calibration_full_scale_exact);
 
     return UNITY_END();
 }

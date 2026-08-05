@@ -1,0 +1,19 @@
+--- a/components/esp_driver_uart/src/uart.c
++++ b/components/esp_driver_uart/src/uart.c
+@@ -2017,9 +2017,15 @@
+
+     uart_release_pin(uart_num, true, true, true, true);
+
+-    esp_intr_free(p_uart_obj[uart_num]->intr_handle);
++    /* bug01 fix: disable UART peripheral interrupts BEFORE freeing the ISR.
++     * The original order (esp_intr_free first) leaves a race window: the ISR
++     * handler is already detached but the UART interrupt is still enabled.
++     * If an interrupt fires in that window it lands in xt_unhandled_interrupt,
++     * which never clears the interrupt source, causing infinite re-firing
++     * ("Unhandled interrupt N on cpu 0!"). Masking first closes the window. */
+     uart_disable_rx_intr(uart_num);
+     uart_disable_tx_intr(uart_num);
++    esp_intr_free(p_uart_obj[uart_num]->intr_handle);
+     uart_pattern_link_free(uart_num);
+     uart_free_driver_obj(p_uart_obj[uart_num]);
+     p_uart_obj[uart_num] = NULL;

@@ -1,185 +1,168 @@
-# Тесты WB-MGE API
+# WB-MGE API Tests
 
-## Описание
+## Overview
 
-Простые автоматические тесты для проверки HTTP API устройства WB-MGE.
+Automated integration tests for the WB-MGE HTTP API. Uses **pytest**; execution order is determined by numeric file name prefixes (`01_`, `02_`, …). Tests cover:
 
-## Что тестируется
+- **Auth and sessions** — login, logout, password change, endpoint protection
+- **Device info** — structure, data types (heap, PSRAM, cache), field formats
+- **Settings** — read, write, validation, partial update
+- **Modbus TCP** — bridge parameters, limit validation
+- **WiFi** — scanning, edge cases, network fields, AP clients
+- **Cache** — /cache/status, /cache/csv, /cache/json, server toggle, multimaster
+- **Ports** — port modes, sniffer, WB test endpoint
+- **Misc** — uptime, hostname, static files, HTTP method guard, commands
+- **Reboot** — device reboot with uptime verification
 
-- ✅ **Авторизация** - правильные/неправильные логин/пароль
-- ✅ **Информация об устройстве** - структура, типы данных, запись параметров
-- ✅ **Настройки** - чтение, запись, валидация ограничений
-- ✅ **WiFi сканер** - запуск сканирования, получение результатов
-- ✅ **Клиенты AP** - список подключенных устройств
-- ✅ **Статические файлы** - HTML, CSS, JS, favicon
-- ✅ **Защита доступа** - проверка авторизации для защищенных эндпоинтов
+---
 
-## Установка и запуск
+## File Structure
 
-### 1. Установить зависимости
+```text
+api_tests/
+├── conftest.py              # pytest fixtures (api client, --ip, --qemu, connection check)
+├── api_client.py            # WBMGEAPI class — HTTP client for all endpoints
+├── modbus_helpers.py        # Modbus TCP utilities (encode/decode, worker threads, staleness)
+├── pytest.ini               # pytest configuration
+├── requirements.txt         # Dependencies
+│
+├── 01_test_auth.py          # Auth, sessions, password change
+├── 02_test_info.py          # Device info
+├── 03_test_settings.py      # Settings, validation, partial update
+├── 04_test_uptime.py        # Uptime
+├── 05_test_modbus.py        # Modbus TCP parameters
+├── 06_test_wifi.py          # WiFi scanner, edge cases, AP clients
+├── 07_test_static_files.py  # Static files
+├── 08_test_http.py          # HTTP method guard
+├── 09_test_commands.py      # Commands (set_default_settings)
+├── 10_test_hostname.py      # Hostname endpoint
+├── 11_test_cache.py         # Cache endpoints, multimaster
+├── 12_test_sniffer_ws.py    # WebSocket sniffer
+├── 13_test_ports.py         # Ports, sniffer, WB test
+├── 14_test_reboot.py        # Reboot, uptime verification
+├── 15_test_ws_pong_race.py  # WebSocket pong race condition (long-running)
+└── 16_test_uart_teardown_crash.py  # UART teardown crash (long-running, always last)
+```
+
+---
+
+## Running Against a Real Device
+
+### 1. Install dependencies
+
 ```bash
-pip install -r requirements.txt
+pip install -r api_tests/requirements.txt
 ```
 
-### 2. Найти IP адрес устройства
+### 2. Run tests
 
-**Способ 1: В браузере**
-- Откройте устройство в браузере
-- По умолчанию WB-MGE создает точку доступа `192.168.5.1`
-- Или найдите IP в настройках роутера если подключено к сети
-
-**Способ 2: Сканирование сети**
 ```bash
-# Сканировать локальную сеть
-nmap -sn 192.168.1.0/24
-# или
-arp -a | grep wirenboard
+# All tests with explicit IP
+pytest api_tests/ --ip localhost:8080
+
+# Default (localhost:8080)
+pytest api_tests/
 ```
 
-### 3. Изменить IP адрес в коде или использовать параметр
-В файле `test_api.py` в функции `main()` замените IP адрес на адрес вашего устройства:
-```python
-api = WBMGEAPI("http://192.168.5.1")  # Замените на IP вашего устройства
-```
+**Additional options:**
 
-Или используйте параметр командной строки:
 ```bash
-python test_api.py --ip 192.168.1.100
+# Stop on first failure
+pytest api_tests/ --ip localhost:8080 -x
+
+# Run a specific file
+pytest api_tests/01_test_auth.py --ip localhost:8080
+
+# Run a specific test by name
+pytest api_tests/ --ip localhost:8080 -k test_cache_multimaster
+
+# Quiet output (no print)
+pytest api_tests/ --ip localhost:8080 --no-header -q
 ```
 
-### 4. Запустить тесты
+---
+
+## Running Against QEMU (e2e without a real device)
+
+QEMU runs the firmware in an emulator and tests the HTTP API without physical hardware. All hardware-specific features are mocked:
+
+- **WiFi**: scanning returns two fake networks (`QEMU-TestNetwork-1`, `QEMU-TestNetwork-2`)
+- **RS-485 / Modbus RTU**: a mock task injects synthetic packets into the sniffer to populate the cache
+- **Cache Modbus TCP server**: runs on port 50504 (QEMU forwards `localhost:50504 → ESP32:50504`)
+
+> **CI:** Jenkins does **not** run this suite by default. Tick the `RUN_E2E` build parameter to
+> enable the `E2E tests (QEMU)` stage; `Coverage (QEMU e2e)` needs `RUN_COVERAGE` as well.
+> On a branch Jenkins has never built, the checkbox is not there yet — a `parameters` block only
+> takes effect from the second build onwards, so build once, then rebuild with the parameter set.
+
+### 1. Build firmware
+
 ```bash
-# С IP адресом по умолчанию (192.168.5.1)
-python test_api.py
-
-# Указать IP адрес устройства
-python test_api.py --ip 192.168.1.100
+make qemu-build
 ```
 
-### 4. Запустить тесты
+### 2. Run tests via make (recommended)
+
 ```bash
-python test_api.py
+make qemu-test
 ```
 
-**Дополнительные опции:**
+This boots QEMU, runs the full pytest suite, and stops QEMU automatically.
+
+> **Note:** The `--qemu` flag means "launch and manage QEMU yourself".
+> To run tests against an **already-running** QEMU instance (e.g. started with `make qemu-web`),
+> do **not** use `--qemu` — just point `--ip` at it:
+> ```bash
+> cd api_tests && .venv/bin/python -m pytest --ip localhost:8080
+> ```
+
+Filter by test name:
+
 ```bash
-# Остановиться на первой ошибке (по умолчанию продолжает все тесты)
-python test_api.py --stop-on-failure
-
-# Подробный вывод
-python test_api.py --verbose
-
-# Комбинированные опции
-python test_api.py --stop-on-failure --verbose
+make qemu-test PYTEST_ARGS="-k test_cache_multimaster"
 ```
 
-## Ожидаемый вывод
+### 3. Run QEMU manually with web UI
 
-```
-Запуск тестов WB-MGE API
-========================================
-Устройство: http://192.168.5.1
-========================================
-
-=== Тест неавторизованного доступа ===
-✓ Защищенные эндпоинты требуют авторизацию
-✓ Статические файлы доступны без авторизации
-
-=== Тест авторизации ===
-✓ Неправильная авторизация отклонена
-✓ Правильная авторизация принята
-
-=== Тест информации об устройстве ===
-✓ Структура информации корректна
-✓ Запись параметров информации работает
-
-=== Тест настроек ===
-✓ Структура настроек корректна
-✓ Запись настроек с валидными данными работает
-✓ Настройки корректно сохраняются
-✓ Обработка невалидных настроек работает
-
-=== Тест сканера WiFi ===
-✓ Запуск сканирования WiFi работает
-✓ Получение результатов сканирования работает
-
-=== Тест списка клиентов AP ===
-✓ Получение списка клиентов AP работает
-
-=== Тест времени работы ===
-✓ Получение времени работы работает
-
-=== Тест выполнения команд ===
-✓ Выполнение команд работает
-
-=== Тест статических файлов ===
-✓ Статический файл index доступен
-✓ Статический файл index.css доступен
-✓ Статический файл index.js доступен
-✓ Статический файл favicon.webp доступен
-
-========================================
-Пройдено тестов: 9
-Провалено тестов: 0
-🎉 ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО!
-```
-
-## Устранение проблем
-
-### Ошибка соединения "Connection reset by peer"
-Эта ошибка часто возникает когда устройство доступно в браузере, но не отвечает на API запросы:
-
-**Проверьте подключение:**
 ```bash
-# Проверить доступность устройства
-ping 192.168.5.1
-
-# Проверить открытые порты (должен быть порт 80)
-telnet 192.168.5.1 80
-
-# Или с помощью curl
-curl -I http://192.168.5.1
+make qemu-web
 ```
 
-**Возможные причины:**
-- Устройство блокирует запросы без определенных заголовков
-- Веб-сервер перегружен
-- Проблемы с сетевым подключением
-- Firewall блокирует соединения
+Then in a separate terminal:
 
-**Решения:**
-1. Попробуйте другой IP адрес (например, Ethernet интерфейс)
-2. Проверьте настройки WiFi - переключитесь в AP режим если нужно
-3. Перезагрузите устройство
-4. Убедитесь что используете правильный порт (по умолчанию 80)
+```bash
+cd api_tests && .venv/bin/python -m pytest --ip localhost:8080
+```
 
-### Ошибка соединения
-- Проверьте что устройство включено и доступно по сети
-- Убедитесь что IP адрес в коде правильный
-- Проверьте что веб-сервер запущен на устройстве
+Wait for the QEMU console to print:
 
-### Ошибки авторизации
-- По умолчанию используется логин `admin` и пароль `admin`
-- Если вы изменили учетные данные, обновите их в коде
+```text
+I (XXXX) http_server: HTTP server started on port: 80
+```
 
-### Ошибки валидации
-- Проверьте что OpenAPI спецификация соответствует фактическому API
-- Некоторые ограничения могут отличаться в реальной реализации
+---
 
-## Расширение тестов
+## QEMU-Specific Test Behaviour
 
-Для добавления новых тестов:
+| Test | Behaviour in QEMU |
+| ---- | ----------------- |
+| `test_wifi_scanner` | Completes immediately with 2 fake networks |
+| `test_cache_multimaster` | Switches port 1 to `cache_bus`, waits for cache fill (~2 s), connects to `localhost:50504` |
+| `test_reboot` | Reboots the QEMU emulator, waits for it to come back |
 
-1. Добавьте новую функцию `test_xxx(api)`
-2. Вызовите ее в функции `main()`
-3. Используйте стандартные `assert` для проверок
+---
 
-Пример:
+## Adding a New Test
+
+1. Add a function to a suitable file, or create a new file with an appropriate numeric prefix (e.g. `11a_test_cache_extra.py`)
+2. Use the `api` fixture — it provides an authenticated `WBMGEAPI` client
+3. Execution order is determined by the file's numeric prefix; within a file, by function definition order
+
 ```python
 def test_new_feature(api):
-    response = api.session.get(f"{api.base_url}/new_endpoint")
+    response = api.session.get(f"{api.base_url}/new_endpoint", timeout=10)
     assert response.status_code == 200
     data = response.json()
     assert "expected_field" in data
-    print("✓ Новая функция работает")
+    print("✓ New feature works")
 ```

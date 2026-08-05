@@ -1,0 +1,69 @@
+# Extra sdkconfig overrides for QEMU builds.
+# Applied on top of sdkconfig.qemu.minimal (which is auto-generated).
+# Add any QEMU-specific config options here instead of editing the generated file.
+
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# Keep the lwIP socket pool at 20 — the SAME value the production build now ships
+# in sdkconfig.defaults, so QEMU and hardware run one socket budget (see the socket
+# accounting in that file).
+#
+# This override cannot be dropped even though the two values now agree: the QEMU
+# build's defaults chain is "sdkconfig.qemu.minimal;sdkconfig.qemu.extra" (see
+# qemu.mk) and does NOT include sdkconfig.defaults, and the auto-generated
+# sdkconfig.qemu.minimal pins CONFIG_LWIP_MAX_SOCKETS=15. Without this line QEMU
+# would silently fall back to 15 and the table-exhaustion test (9 simultaneous
+# Modbus TCP connections on top of httpd, the bridge listen sockets, mDNS and DHCP)
+# would start failing. If you change the value here, change sdkconfig.defaults too.
+CONFIG_LWIP_MAX_SOCKETS=20
+CONFIG_SPIRAM=y
+
+# Use a QEMU-specific partition table with factory + ota_0 + ota_1.
+# sdkconfig.qemu.minimal defaults to single-app (partitions_singleapp.csv),
+# which makes esp_ota_get_next_update_partition() return NULL.
+# partitions_qemu.csv adds a factory partition at 0x10000 (where qemu_mge.bin
+# is loaded) and ota_0/ota_1 targets so /update can actually write firmware.
+CONFIG_PARTITION_TABLE_SINGLE_APP=n
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_qemu.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions_qemu.csv"
+
+# Virtual eFuse so main/sys_info.c can write the device signature at boot
+# (write_device_signature_to_efuse() is guarded by #if CONFIG_EFUSE_VIRTUAL).
+# Without this the signature stays empty and the OTA handler rejects any
+# upload with "Device signature is empty, OTA not allowed".
+CONFIG_EFUSE_VIRTUAL=y
+
+# Disable the bootloader RTC watchdog (RWDT) for the QEMU build.
+# The bootloader arms RWDT with a 9 s timeout (CONFIG_BOOTLOADER_WDT_TIME_MS=9000
+# in sdkconfig.qemu.minimal) and the app only disables it once early init reaches
+# user code. Under QEMU emulation a reset boot routinely takes 13-23 s of (timer-)
+# time to reach app_main — far longer than the 9 s window — so the RWDT fires
+# mid-boot, resets the chip (rst:0xc), and the boot retries. When several reboot
+# tests run back-to-back this turns into a reset LOOP: the device never stays up
+# long enough to answer the test client, appears dead for minutes, and cascades
+# the whole module to failure (observed intermittently: file 33 au01 + the rest).
+# There is no watchdog need under emulation (a genuine early-boot hang surfaces as
+# a test timeout regardless), so disable it outright — same rationale as the Task
+# WDT below. The hardware build is unaffected (keeps the default RWDT enabled).
+CONFIG_BOOTLOADER_WDT_ENABLE=n
+
+# Disable the esp_io_expander component's GPIO-API wrapper for the QEMU build.
+# That component otherwise links its own (non-weak) __wrap_gpio_config /
+# __wrap_gpio_set_level / __wrap_gpio_get_level / __wrap_gpio_set_direction /
+# __wrap_gpio_reset_pin AND adds the matching -Wl,--wrap options, which would
+# collide with the QEMU GPIO shim (main/qemu/gpio_shim_qemu.c) that transparently
+# mirrors the firmware's real GPIO/UART calls into the virtual native model.
+# The QEMU build never routes GPIO calls through the esp_io_expander wrapper (the
+# virtual expander in virtual_io_qemu.c implements gpio_expander.h directly), so
+# disabling the wrapper here is safe and frees the __wrap_gpio_* symbols for the
+# shim. The hardware build is unaffected (its sdkconfig keeps the default =y).
+CONFIG_IO_EXPANDER_ENABLE_GPIO_API_WRAPPER=n
+
+# Do not initialize the Task Watchdog Timer for the QEMU build.
+# Under emulation the idle tasks are not scheduled with hardware-like timing,
+# so the TWDT (enabled with INIT=y in sdkconfig.qemu.minimal) eventually trips
+# and aborts the firmware mid-run, making the QEMU test suite fail.
+# Disabling only the auto-init keeps the TWDT subsystem compiled in
+# (CONFIG_ESP_TASK_WDT_EN stays =y) but prevents the spurious resets.
+CONFIG_ESP_TASK_WDT_INIT=n

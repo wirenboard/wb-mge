@@ -18,18 +18,42 @@ export interface Uptime {
   seconds: number;
 }
 
+export type PortMode = 'disabled' | 'tcp_bridge' | 'passive' | 'repeater';
+
 export interface RsStatus {
   is_busy: boolean;
   error_percentage: number;
   server_connections_count: number;
+  port_mode: PortMode;
+  cache_enabled: boolean;
+}
+
+// Live stats for the transparent RS-485 repeater (Port 1 <-> Port 2 passthrough).
+export interface RepeaterStats {
+  // true when both ports are in repeater mode
+  active: boolean;
+  // milliseconds since forwarding became active (0 if inactive)
+  uptime_ms: number;
+  // bytes forwarded Port 1 -> Port 2 (the TX->RX / forward arrow)
+  bytes_1to2: number;
+  // bytes forwarded Port 2 -> Port 1 (the RX<-TX / reverse arrow)
+  bytes_2to1: number;
+  // bytes dropped on Port 1
+  dropped_1: number;
+  // bytes dropped on Port 2
+  dropped_2: number;
 }
 
 export interface Info {
   device_name: string;
+  signature?: string; // device signature, e.g. 'mge_v3' (WB-MGE) or 'mgu_v1' (WB-MGU)
   serial_num: number;
   firmware: string;
   hardware: string;
   system_voltage: number;
+  heap_total: number; // total heap size in bytes
+  heap_free: number; // currently free heap bytes
+  heap_min_free: number; // minimum free heap since boot (high water mark)
   ethernet: {
     con_eth: boolean;
     ip: string;
@@ -43,6 +67,7 @@ export interface Info {
     con_sta: boolean;
     con_sta_ssid: string;
     enabled: boolean;
+    perm_disabled?: boolean;
     sta_ip: string;
     sta_mask: string;
     sta_gw: string;
@@ -54,6 +79,12 @@ export interface Info {
   };
   rs485_1: RsStatus;
   rs485_2: RsStatus;
+  repeater?: RepeaterStats; // optional: older firmware may omit it
+  cache_modbus_port: number;
+  cache_modbus_server_enabled: boolean;
+  cache_value_timeout_s: number;
+  psram_available: boolean;
+  psram_size_kb: number;
 }
 
 export type WiFiSecuityProtocol = 'open' | 'wpa2_psk' | 'wpa3_psk';
@@ -70,9 +101,12 @@ export type BridgeMode = 'client' | 'server';
 
 export type WiFiMode = 'none' | 'ap' | 'sta';
 
+export type UpdateChannel = 'stable' | 'testing';
+
 export interface RsSettings {
   term: boolean;
   fail_safe: boolean;
+  tx_disabled: boolean;
   baudrate: Baudrate;
   stopbits: Stopbits;
   parity: Parity;
@@ -92,7 +126,12 @@ export interface Settings {
   web_port: number;
   io_bus: boolean;
   vout: boolean;
-  wifi: {
+  cache_modbus_port: number;
+  cache_modbus_server_enabled: boolean;
+  cache_value_timeout_s: number;
+  update_channel: UpdateChannel;
+  wifi_perm_disable?: boolean;
+  wifi?: {
     mode: WiFiMode;
     ap_ip_static: string;
     ap_mask_static: string;
@@ -141,8 +180,19 @@ export interface LogoutResponse {
   logout: boolean;
 }
 
+// One advisory warning attached to an ACCEPTED settings write: the firmware saved the settings,
+// but something about the resulting configuration needs the user's attention (today: an inherited
+// TCP port collision — two services on one port, one of which will not bind).
+// `code` is the machine-readable identifier the UI translates; `message` is the firmware's own
+// English text, used as a fallback for codes this build does not know yet.
+export interface SettingsWarning {
+  code: string;
+  message: string;
+}
+
 export interface UpdateSettingsResponse {
   success: boolean;
+  warnings?: SettingsWarning[];
 }
 
 export interface CommandResponse {

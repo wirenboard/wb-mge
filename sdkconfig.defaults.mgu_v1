@@ -1,0 +1,38 @@
+#
+# WB-MGU (mgu_v1) — external PSRAM. GPIO9 is the PSRAM chip-select (CE), so RS485
+# is routed away from it (see main/boards/mgu_v1.h). Must NOT be set on WB-MGE.
+#
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_TYPE_ESPPSRAM64=y
+CONFIG_PICO_PSRAM_CS_IO=9
+# Allow boot without PSRAM chip; esp_psram_is_initialized() will return false
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+
+#
+# UART driver allocations (mutexes, ring buffers) must stay in internal RAM.
+# Without this, UART_MALLOC_CAPS = MALLOC_CAP_DEFAULT, which with SPIRAM enabled
+# can route semaphore/ring-buffer allocations to PSRAM, causing LoadProhibited
+# crashes in xQueueSemaphoreTake when PSRAM cache is unavailable (e.g. in uart_flush_input).
+# Setting this forces UART_MALLOC_CAPS = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT.
+#
+CONFIG_UART_ISR_IN_IRAM=y
+
+#
+# ADC oneshot driver control structures must stay in internal RAM.
+# Without this, ADC_MEM_ALLOC_CAPS = MALLOC_CAP_DEFAULT, which with SPIRAM enabled
+# allocates adc_oneshot_unit_ctx_t (incl. chan_configs[].bitwidth) to PSRAM.
+# adc_oneshot_read() calls portENTER_CRITICAL() before reading from that struct,
+# making PSRAM cache unavailable and causing HAL_ASSERT(false) in adc_oneshot_ll_set_output_bits.
+# Setting this forces ADC_MEM_ALLOC_CAPS = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT.
+#
+CONFIG_ADC_ONESHOT_CTRL_FUNC_IN_IRAM=y
+
+#
+# I2C master driver internal structures (semaphores, queues, bus context) must stay
+# in internal RAM. Without this, I2C_MEM_ALLOC_CAPS = MALLOC_CAP_DEFAULT, which with
+# SPIRAM enabled routes i2c_master_bus_t and its semaphores to PSRAM.
+# i2c_master_transmit() calls xQueueSemaphoreTake on those semaphores, which can
+# crash with LoadProhibited when PSRAM is not accessible (EXCVADDR in PSRAM range).
+# Setting this forces I2C_MEM_ALLOC_CAPS = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT.
+#
+CONFIG_I2C_ISR_IRAM_SAFE=y

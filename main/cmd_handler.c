@@ -14,6 +14,10 @@
 #include <freertos/task.h>
 #include <string.h>
 
+#if (QEMU_BUILD)
+    #include <soc/timer_group_reg.h>   /* TIMG_LACTCONFIG_REG etc. — LACT shutdown */
+#endif
+
 static const char *TAG = "cmd_handler";
 
 #define CMD_NAME_MAX_LEN        32
@@ -49,14 +53,41 @@ static void reboot_task(void *pvParameters)
         rs485_bus_vout_on_off(false);
     #endif
 
-    vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
+    /* Bug 08 fix: under QEMU host starvation, vTaskDelay(1 s) can hang forever.
+     * Use 100 ms in QEMU — enough for httpd to send the HTTP response before
+     * esp_restart() tears down the chip, small enough to avoid the starvation window. */
+    #if (QEMU_BUILD)
+        vTaskDelay(pdMS_TO_TICKS(100));
+    #else
+        vTaskDelay(pdMS_TO_TICKS(REBOOT_DELAY_MS));
+    #endif
+
+    #if (QEMU_BUILD)
+        /* Silence the LACT timer before rebooting. In QEMU, SW_CPU_RESET does not
+         * reinitialize the .data section (unlike real hardware), so s_alarm_handler
+         * in BSS becomes NULL. If the LACT interrupt fires between the reset and
+         * esp_timer_impl_init(), it calls through a NULL pointer -> panic -> boot-loop.
+         * Stopping LACT here prevents this (bug 05 mitigation). */
+        REG_WRITE(TIMG_LACTCONFIG_REG(0), 0);
+        REG_CLR_BIT(TIMG_INT_ENA_TIMERS_REG(0), TIMG_LACT_INT_ENA);
+        REG_WRITE(TIMG_INT_CLR_TIMERS_REG(0), TIMG_LACT_INT_CLR);
+    #endif
+
     esp_restart();
 }
 
 void cmd_reboot_device(void)
 {
     ESP_LOGI(TAG, "Scheduling device reboot");
-    xTaskCreate(reboot_task, "reboot_task", REBOOT_TASK_STACK_SIZE, NULL, REBOOT_TASK_PRIORITY, NULL);
+    BaseType_t created = xTaskCreate(reboot_task, "reboot_task", REBOOT_TASK_STACK_SIZE, NULL,
+                                     REBOOT_TASK_PRIORITY, NULL);
+    // Still best effort: there is nothing to fall back to here, the caller owns the HTTP response.
+    // But OTA calls this exactly when the heap has just run out, and a reboot that silently never
+    // happens leaves the device refusing every further update — the log is the only way to tell.
+    if (created != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create the reboot task (%d), the device will not reboot on its own",
+                 (int)created);
+    }
 }
 
 static int cmd_get_code(const char *cmd_str)
@@ -141,7 +172,7 @@ esp_err_t cmd_post_handler(httpd_req_t *req)
 
     cJSON *request_json = json_utils_receive_json(req);
     if (request_json == NULL) {
-        return ESP_FAIL;
+        return json_utils_send_error(req, "Invalid command request JSON");
     }
 
     // Validate request and extract command

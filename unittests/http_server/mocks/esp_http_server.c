@@ -47,6 +47,15 @@ httpd_req_t* mock_last_set_hdr_req = NULL;
 httpd_req_t* mock_last_send_req = NULL;
 httpd_req_t* mock_current_request = NULL;
 
+char mock_header_fields[MOCK_MAX_HEADERS][128] = {{0}};
+char mock_header_values[MOCK_MAX_HEADERS][128] = {{0}};
+int  mock_header_count = 0;
+
+char mock_last_status[64] = {0};
+
+bool mock_request_header_set = false;
+char mock_request_header_value[128] = {0};
+
 static httpd_req_t mock_request_object;
 
 mock_uri_registry_entry_t mock_uri_registry[MAX_URI_HANDLERS];
@@ -79,6 +88,16 @@ void esp_http_server_init(void)
     mock_last_set_hdr_req = NULL;
     mock_last_send_req = NULL;
     mock_current_request = NULL;
+
+    memset(mock_header_fields, 0, sizeof(mock_header_fields));
+    memset(mock_header_values, 0, sizeof(mock_header_values));
+    mock_header_count = 0;
+
+    strncpy(mock_last_status, "200 OK", sizeof(mock_last_status) - 1);
+    mock_last_status[sizeof(mock_last_status) - 1] = '\0';
+
+    mock_request_header_set = false;
+    memset(mock_request_header_value, 0, sizeof(mock_request_header_value));
 
     memset(mock_uri_registry, 0, sizeof(mock_uri_registry));
     mock_uri_registry_count = 0;
@@ -172,7 +191,51 @@ esp_err_t httpd_resp_set_hdr(httpd_req_t *req, const char *field, const char *va
     if (value) {
         strncpy(mock_last_header_value, value, sizeof(mock_last_header_value) - 1);
     }
+    // Also record into the per-header arrays so tests can assert each header set
+    // by handlers that write more than one (e.g. Content-Encoding + ETag + Cache-Control).
+    if (mock_header_count < MOCK_MAX_HEADERS) {
+        if (field) {
+            strncpy(mock_header_fields[mock_header_count], field, sizeof(mock_header_fields[0]) - 1);
+        }
+        if (value) {
+            strncpy(mock_header_values[mock_header_count], value, sizeof(mock_header_values[0]) - 1);
+        }
+        mock_header_count++;
+    }
     return ESP_OK;
+}
+
+esp_err_t httpd_resp_set_status(httpd_req_t *req, const char *status)
+{
+    (void)req;
+    if (status) {
+        strncpy(mock_last_status, status, sizeof(mock_last_status) - 1);
+        mock_last_status[sizeof(mock_last_status) - 1] = '\0';
+    }
+    return ESP_OK;
+}
+
+esp_err_t httpd_req_get_hdr_value_str(httpd_req_t *req, const char *field, char *val, size_t val_size)
+{
+    (void)req;
+    (void)field;
+    if (!mock_request_header_set || val == NULL || val_size == 0) {
+        return ESP_FAIL;  // header absent
+    }
+    strncpy(val, mock_request_header_value, val_size - 1);
+    val[val_size - 1] = '\0';
+    return ESP_OK;
+}
+
+void mock_set_request_header(const char* value)
+{
+    mock_request_header_set = (value != NULL);
+    if (value) {
+        strncpy(mock_request_header_value, value, sizeof(mock_request_header_value) - 1);
+        mock_request_header_value[sizeof(mock_request_header_value) - 1] = '\0';
+    } else {
+        memset(mock_request_header_value, 0, sizeof(mock_request_header_value));
+    }
 }
 
 esp_err_t httpd_resp_send(httpd_req_t *req, const char *buf, ssize_t buf_len)

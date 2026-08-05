@@ -70,7 +70,7 @@ static void verify_timer_and_callback(void)
     TEST_ASSERT_EQUAL_MESSAGE(EVENT_BIT_READY, mock_xEventGroupSetBits_data.uxBitsToSet[0], "READY flag should be set");
 }
 
-// Тестируем успешную инициализацию таймера
+// Test successful timer initialization
 void test_settings_save_timer_auto_init_success(void)
 {
     LOG_MESSAGE();
@@ -87,7 +87,7 @@ void test_settings_save_timer_auto_init_success(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called, "vEventGroupDelete should not be called");
 }
 
-// Тестируем инициализацию при ошибке создания группы событий
+// Test initialization when event group creation fails
 void test_settings_save_timer_auto_init_event_group_creation_fails(void)
 {
     LOG_MESSAGE();
@@ -105,7 +105,7 @@ void test_settings_save_timer_auto_init_event_group_creation_fails(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called, "vEventGroupDelete should not be called");
 }
 
-// Тестируем инициализацию при ошибке создания таймера
+// Test initialization when timer creation fails
 void test_settings_save_timer_auto_init_timer_creation_fails(void)
 {
     LOG_MESSAGE();
@@ -130,7 +130,7 @@ void test_settings_save_timer_auto_init_timer_creation_fails(void)
     );
 }
 
-// Тестируем повторную инициализацию (должна быть игнорирована)
+// Test repeated initialization (should be ignored)
 void test_settings_save_timer_auto_init_multiple_calls(void)
 {
     LOG_MESSAGE();
@@ -151,7 +151,7 @@ void test_settings_save_timer_auto_init_multiple_calls(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTimerCreate_called, "xTimerCreate should not be called again");
 }
 
-// Тестируем settings_save_timer_wait с установленным флагом READY
+// Test settings_save_timer_wait with the READY flag set
 void test_settings_save_timer_wait_ready_flag_set(void)
 {
     LOG_MESSAGE();
@@ -186,7 +186,7 @@ void test_settings_save_timer_wait_ready_flag_set(void)
     verify_timer_and_callback();
 }
 
-// Тестируем settings_save_timer_wait с таймаутом (флаг READY не установлен)
+// Test settings_save_timer_wait with timeout (READY flag not set)
 void test_settings_save_timer_wait_timeout(void)
 {
     LOG_MESSAGE();
@@ -204,7 +204,7 @@ void test_settings_save_timer_wait_timeout(void)
     verify_timer_and_callback();
 }
 
-// Тестируем ожидание без инициализации (fail-safe)
+// Test waiting without initialization (fail-safe)
 void test_settings_save_timer_wait_without_init(void)
 {
     LOG_MESSAGE();
@@ -226,7 +226,7 @@ void test_settings_save_timer_wait_without_init(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_xTimerStart_called, "xTimerStart should not be called");
 }
 
-// Тестируем timer_callback с event_group == NULL
+// Test timer_callback with event_group == NULL
 void test_settings_save_timer_callback_with_null_event_group(void)
 {
     LOG_MESSAGE();

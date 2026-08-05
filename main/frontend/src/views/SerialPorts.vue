@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
+import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
@@ -9,6 +10,9 @@ import Switch from '@/components/Switch.vue';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
+// info (incl. device signature) is loaded by the route's beforeEnter fetchInfo() and the
+// global poller in App.vue, so this component only needs to read the shared singleton.
+const { info } = useInfo();
 </script>
 
 <template>
@@ -30,13 +34,14 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
             field="rs485_2"
             :title="t('port_2')"
             :sub="t('port2_sub')"
+            :signature="info?.signature"
           />
 
           <section class="card">
             <form @submit.prevent="updateSettings({ io_bus: data.io_bus })">
               <div class="card-header">
                 <div class="card-title-wrap">
-                  <div class="title">I/O Bus</div>
+                  <div class="title">{{ t('io_bus') }}</div>
                   <div class="sub">{{ t('io_bus_sub') }}</div>
                 </div>
                 <Button
@@ -50,16 +55,22 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
               <div class="card-body">
                 <div class="field">
                   <label for="io_bus">{{ t('io_bus_enable') }}</label>
-                  <div class="switch-end"><Switch id="io_bus" v-model="data.io_bus" /></div>
+                  <div class="field-switch"><Switch id="io_bus" v-model="data.io_bus" /></div>
                 </div>
               </div>
             </form>
           </section>
-        </div>
+</div>
       </div>
     </div>
   </Layout>
 </template>
+
+<style scoped>
+.field-switch {
+  justify-self: end;
+}
+</style>
 
 <i18n>
 {
@@ -69,32 +80,35 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "save": "Save",
     "io_bus_sub": "WB-MIO chip connected to RS-485 Port 2. Default address 247.",
     "io_bus_enable": "Enable I/O Bus",
-    "port1_sub": "Wired terminal · left",
-    "port2_sub": "Wired terminal · right + I/O bus",
+    "io_bus": "I/O Bus",
     "port_1": "RS-485 · Port 1",
-    "port_2": "RS-485 · Port 2"
+    "port_2": "RS-485 · Port 2",
+    "port1_sub": "Wired terminal · left",
+    "port2_sub": "Wired terminal · right + I/O bus"
   },
   "ru": {
     "title": "Последовательные порты",
     "crumbs": "Интерфейсы RS-485",
     "save": "Сохранить",
-    "io_bus_sub": "Чип WB-MIO, подключённый ко второму порту RS-485. Адрес по умолчанию 247.",
+    "io_bus_sub": "Чип WB-MIO, подключённый к RS-485 Port 2. Адрес по умолчанию 247.",
     "io_bus_enable": "Включить I/O Bus",
-    "port1_sub": "Левый клеммник",
-    "port2_sub": "Правый клеммник + I/O bus",
+    "io_bus": "I/O Bus",
     "port_1": "RS-485 · Порт 1",
-    "port_2": "RS-485 · Порт 2"
+    "port_2": "RS-485 · Порт 2",
+    "port1_sub": "Левый клеммник",
+    "port2_sub": "Правый клеммник + I/O bus"
   },
   "kk": {
     "title": "Сериялық порттар",
     "crumbs": "RS-485 интерфейстері",
     "save": "Сақтау",
-    "io_bus_sub": "RS-485 Порт 2-ге қосылған WB-MIO чипі. Әдепкі адресі 247.",
+    "io_bus_sub": "RS-485 Port 2-ге қосылған WB-MIO чипі. Әдепкі адресі 247.",
     "io_bus_enable": "I/O Bus қосу",
-    "port1_sub": "Сымды клемма · сол",
-    "port2_sub": "Сымды клемма · оң + I/O bus",
+    "io_bus": "I/O Bus",
     "port_1": "RS-485 · Порт 1",
-    "port_2": "RS-485 · Порт 2"
+    "port_2": "RS-485 · Порт 2",
+    "port1_sub": "Сымды клемма · сол",
+    "port2_sub": "Сымды клемма · оң + I/O bus"
   },
   "it": {
     "title": "Porte seriali",
@@ -102,10 +116,11 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "save": "Salva",
     "io_bus_sub": "Chip WB-MIO collegato alla RS-485 Port 2. Indirizzo predefinito 247.",
     "io_bus_enable": "Abilita I/O Bus",
-    "port1_sub": "Morsettiera · sinistra",
-    "port2_sub": "Morsettiera · destra + I/O bus",
+    "io_bus": "I/O Bus",
     "port_1": "RS-485 · Porta 1",
-    "port_2": "RS-485 · Porta 2"
+    "port_2": "RS-485 · Porta 2",
+    "port1_sub": "Morsettiera · sinistra",
+    "port2_sub": "Morsettiera · destra + I/O bus"
   },
   "de": {
     "title": "Serielle Schnittstellen",
@@ -113,10 +128,12 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
     "save": "Speichern",
     "io_bus_sub": "WB-MIO-Chip an RS-485 Port 2 angeschlossen. Standardadresse 247.",
     "io_bus_enable": "I/O Bus aktivieren",
-    "port1_sub": "Klemmenleiste · links",
-    "port2_sub": "Klemmenleiste · rechts + I/O bus",
+    "io_bus": "I/O Bus",
     "port_1": "RS-485 · Port 1",
-    "port_2": "RS-485 · Port 2"
+    "port_2": "RS-485 · Port 2",
+    "port1_sub": "Klemmenleiste · links",
+    "port2_sub": "Klemmenleiste · rechts + I/O bus"
   }
 }
+
 </i18n>

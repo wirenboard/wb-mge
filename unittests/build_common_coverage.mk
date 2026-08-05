@@ -63,8 +63,9 @@ $(UNCOVERED_SRC_LIST_FILE): $(COVERAGE_TARGETS)
 	@echo "\nUncovered files list saved: $@"
 
 # Generate an empty JSON trace data file to get "gcovr/format_version" value from it
+# EIM_ACTIVATE is sourced so that gcovr is on PATH (EIM/local installs do not export it globally).
 $(GCOVR_FORMAT_VERSION_FILE):
-	@gcovr -r $(COVERAGE_REPORT_DIR) --json-pretty -o $@
+	@$(EIM_ACTIVATE) && gcovr -r $(COVERAGE_REPORT_DIR) --json-pretty -o $@
 
 endif #ifneq ($(COVERAGE_NO_ADD_UNCOVERED_FILES),1)
 
@@ -88,9 +89,10 @@ coverage: $(COVERAGE_DEPS)
 	@echo "\nCoverage data files found: $(JSON_LIST)\n"
 
 #	Generate .html coverage report
-	@gcovr $(COVERAGE_ADD_TRACE_FILES) $(COVERAGE_FUNC_MERGE_MODE) $(COVERAGE_FILTERS_STR) --html-details $(COVERAGE_REPORT_FILE)
+#	EIM_ACTIVATE is sourced so that gcovr is on PATH (EIM/local installs do not export it globally).
+	@$(EIM_ACTIVATE) && gcovr $(COVERAGE_ADD_TRACE_FILES) $(COVERAGE_FUNC_MERGE_MODE) $(COVERAGE_FILTERS_STR) --html-details $(COVERAGE_REPORT_FILE)
 #	Print project coverage report with optional check minimum coverage level
-	@gcovr -s $(COVERAGE_ADD_TRACE_FILES) $(COVERAGE_FUNC_MERGE_MODE) $(COVERAGE_FILTERS_STR) $(COVERAGE_EXTRA_FLAGS)
+	@$(EIM_ACTIVATE) && gcovr -s $(COVERAGE_ADD_TRACE_FILES) $(COVERAGE_FUNC_MERGE_MODE) $(COVERAGE_FILTERS_STR) $(COVERAGE_EXTRA_FLAGS)
 #	Print information about generated .html report
 	@echo "\nSummary project coverage report saved: $(COVERAGE_REPORT_FILE)\n"
 
@@ -98,8 +100,9 @@ coverage: $(COVERAGE_DEPS)
 $(COVERAGE_TARGETS): $(COVERAGE_DATA_LIST_FILE)
 	$(eval COV_DIR := $(subst COVERAGE_,,$@))
 #	Usage: coverage_helper.sh --make-coverage TEST_DIR OUT_COVR_DATA_FILE
+#	EIM_ACTIVATE is sourced so that IDF_PATH is available for sub-make (unity.c path).
 	@if [ -f "$(COV_DIR)/Makefile" ]; then \
-		./unittests/coverage_helper.sh --make-coverage $(COV_DIR) $(COVERAGE_DATA_LIST_FILE); \
+		$(EIM_ACTIVATE) && ./unittests/coverage_helper.sh --make-coverage $(COV_DIR) $(COVERAGE_DATA_LIST_FILE); \
 	fi
 
 # Create an empty file in which the list of coverage data files will be written

@@ -10,6 +10,7 @@ import type { Auth } from '@/common/types';
 import AlertsWrapper from '@/components/AlertsWrapper.vue';
 import { api } from '@/utils/api';
 import { useHostname } from '@/common/hostname';
+import { hasSession } from '@/common/session';
 
 const { t, locale } = useI18n();
 const router = useRouter();
@@ -28,6 +29,9 @@ const login = async () => {
   try {
     const { auth } = await api<Auth>('auth', { method: 'POST', json: data });
     if (auth) {
+      // Mark the session authed before navigating so the post-login guard passes
+      // without issuing another /session probe.
+      hasSession.value = true;
       await router.push(route.query.redirect ? `/${route.query.redirect}` : '/');
     } else {
       showAlert(t('wrong_credentials'));

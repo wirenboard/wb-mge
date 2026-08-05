@@ -26,7 +26,7 @@ defineProps<{ label: string }>();
 }
 .info-row:last-child { border-bottom: 0; }
 .info-row-label { color: var(--text-secondary); }
-.info-row-value { color: var(--text-color); text-align: right; }
+.info-row-value { color: var(--text-color); text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .info-row-value :deep(.mono) { font-size: 12.5px; }
 .info-row-hint {
   grid-column: 1 / -1;

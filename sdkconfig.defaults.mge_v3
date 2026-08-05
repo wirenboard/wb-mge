@@ -1,0 +1,6 @@
+#
+# WB-MGE (mge_v3) — no PSRAM. Disabling SPIRAM frees GPIO9 for RS485-1 RX and
+# removes the PSRAM CS (output) vs UART RX (input) conflict on IO9. The
+# PSRAM-only MALLOC_CAPS IRAM workarounds are unnecessary here.
+#
+CONFIG_SPIRAM=n

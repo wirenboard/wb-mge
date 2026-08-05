@@ -19,7 +19,8 @@ static const char *FAST_MODBUS_RESPONSE_STR = "WB-FAST-MODBUS-OK";
 
 static const char *TAG = "fast_modbus";
 
-enum fast_modbus_probe_result fast_modbus_send_probe_response(uint8_t port, tcp_desc_t *tcp_desc, uint8_t *tcp_req_buf)
+enum fast_modbus_probe_result fast_modbus_send_probe_response(uint8_t port, tcp_desc_t *tcp_desc, int client_sock,
+                                                              uint32_t conn_generation, uint8_t *tcp_req_buf)
 {
     mb_tcp_header_t *tcp_req_header = (mb_tcp_header_t *)tcp_req_buf;
     if ((tcp_req_header->function == MODBUS_MGE_DETECT_FCODE) &&
@@ -54,7 +55,14 @@ enum fast_modbus_probe_result fast_modbus_send_probe_response(uint8_t port, tcp_
     memcpy(&tcp_resp_buf[sizeof(mb_tcp_header_t)], FAST_MODBUS_RESPONSE_STR, tcp_resp_data_len);
 
     ESP_LOGD(TAG, "Port[%d]: Sending Fast Modbus support TCP response", port);
-    esp_err_t send_result = tcp_server_send(tcp_desc, tcp_resp_buf, tcp_resp_len);
+    /* Addressed by the (socket, generation) pair the request carried, not by the bare fd:
+     * this runs in modbus_tcp_server_task(), so the connection's receiver task may be
+     * closing that socket concurrently and lwIP may already have handed the fd number to a
+     * different peer. tcp_server_send_to_captured_client() validates the pair and sends
+     * under the descriptor's connection lock, so a stale probe response is dropped instead
+     * of being written into a stranger's socket. */
+    esp_err_t send_result = tcp_server_send_to_captured_client(tcp_desc, client_sock, conn_generation,
+                                                               tcp_resp_buf, tcp_resp_len);
 
     free(tcp_resp_buf);
 

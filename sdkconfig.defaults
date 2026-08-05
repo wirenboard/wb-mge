@@ -8,6 +8,7 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_table.csv"
 # HTTP Server
 #
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+CONFIG_HTTPD_WS_SUPPORT=y
 
 #
 # Serial flasher config
@@ -25,7 +26,17 @@ CONFIG_FREERTOS_HZ=500
 #
 # LWIP
 #
-CONFIG_LWIP_MAX_SOCKETS=15
+# Socket budget. The pool has to cover, concurrently:
+#   - httpd: MAX_OPEN_SOCKETS = 12 client sockets (main/http_server.c) + its listen socket
+#   - the two bridge TCP servers: a listen socket each, plus their client sockets
+#   - the cache Modbus TCP server: listen + client sockets
+#   - the WebSocket sniffer stream
+#   - system users: mDNS (IPv4 + IPv6), DHCP, etc.
+# httpd alone can take 13 of them, so 15 leaves nothing for the bridges and the
+# cache server, and the loser of the race gets an ESP_FAIL it cannot distinguish
+# from a busy port (see the comment in main/settings_update.c). 20 is the value
+# the QEMU test runs have been using.
+CONFIG_LWIP_MAX_SOCKETS=20
 CONFIG_LWIP_STATS=y
 
 # Task Watchdog Timer panic on timeout (reset system)

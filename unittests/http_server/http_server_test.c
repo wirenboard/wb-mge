@@ -10,8 +10,8 @@
 
 #define WEB_PORT                            8080
 
-extern const uint8_t favicon_start[] asm("_binary_favicon_webp_gz_start");
-extern const uint8_t favicon_end[] asm("_binary_favicon_webp_gz_end");
+extern const uint8_t favicon_start[] asm("_binary_favicon_webp_start");
+extern const uint8_t favicon_end[] asm("_binary_favicon_webp_end");
 
 extern const uint8_t index_css_start[] asm("_binary_index_css_gz_start");
 extern const uint8_t index_css_end[] asm("_binary_index_css_gz_end");
@@ -29,6 +29,19 @@ typedef struct {
 
 void mock_setting_items_set_web_port(int port);
 
+// Return the value recorded for a response header set during request handling,
+// or NULL if the handler never set that header. Handlers may set multiple
+// headers, so we scan the full recorded list rather than only the last one.
+static const char* find_response_header(const char* field)
+{
+    for (int i = 0; i < mock_header_count; i++) {
+        if (strcmp(mock_header_fields[i], field) == 0) {
+            return mock_header_values[i];
+        }
+    }
+    return NULL;
+}
+
 void setUp(void)
 {
     esp_http_server_init();
@@ -40,7 +53,7 @@ void tearDown(void)
 
 }
 
-// Тестируем, что при инициализации HTTP сервера используется заданный порт, а также вызываются необходимые функции
+// Test that HTTP server initialization uses the configured port and calls all required functions
 void test_http_server_init_success(void)
 {
     LOG_MESSAGE();
@@ -82,7 +95,7 @@ void test_http_server_init_success(void)
     );
 }
 
-// Тестируем, что при задании порта 0 используется порт по умолчанию (80)
+// Test that port 0 falls back to the default port (80)
 void test_http_server_init_default_port_fallback(void)
 {
     LOG_MESSAGE();
@@ -106,7 +119,7 @@ void test_http_server_init_default_port_fallback(void)
     );
 }
 
-// Тестируем, что при неудачной инициализации WiFi модуля HTTP сервер также инициализируется неудачно
+// Test that HTTP server initialization fails when WiFi module initialization fails
 void test_http_server_init_wifi_scan_failure(void)
 {
     LOG_MESSAGE();
@@ -137,7 +150,7 @@ void test_http_server_init_wifi_scan_failure(void)
     );
 }
 
-// Тестируем, что при неудачной инициализации модуля аутентификации HTTP сервер также инициализируется неудачно
+// Test that HTTP server initialization fails when authentication module initialization fails
 void test_http_server_init_auth_failure(void)
 {
     LOG_MESSAGE();
@@ -168,7 +181,7 @@ void test_http_server_init_auth_failure(void)
     );
 }
 
-// Тестируем, что при неудачной инициализации модуля httpd_start HTTP сервер также инициализируется неудачно
+// Test that HTTP server initialization fails when httpd_start fails
 void test_http_server_init_httpd_start_failure(void)
 {
     LOG_MESSAGE();
@@ -205,7 +218,7 @@ void test_http_server_init_httpd_start_failure(void)
     );
 }
 
-// Тестируем установку конфигурационных параметров HTTP сервера при инициализации
+// Test that HTTP server configuration parameters are set correctly during initialization
 void test_http_server_config_parameters(void)
 {
     LOG_MESSAGE();
@@ -245,9 +258,15 @@ void test_http_server_config_parameters(void)
         mock_captured_config.server_port,
         "server_port should be set to configured value"
     );
+
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+        HTTP_RECV_WAIT_TIMEOUT_S,
+        mock_captured_config.recv_wait_timeout,
+        "recv_wait_timeout must be set explicitly: the OTA stall limit is derived from it"
+    );
 }
 
-// Тестируем регистрацию обработчиков URI при инициализации HTTP сервера
+// Test URI handler registration during HTTP server initialization
 void test_http_server_uri_handlers_registration(void)
 {
     LOG_MESSAGE();
@@ -317,7 +336,7 @@ void test_http_server_uri_handlers_registration(void)
     }
 }
 
-// Тестируем граничные значения портов при инициализации HTTP сервера
+// Test port edge cases during HTTP server initialization
 void test_http_server_port_edge_cases(void)
 {
     LOG_MESSAGE();
@@ -348,7 +367,7 @@ void test_http_server_port_edge_cases(void)
     }
 }
 
-// Тестируем множественные вызовы инициализации HTTP сервера
+// Test multiple HTTP server initialization calls
 void test_http_server_multiple_init_calls(void)
 {
     LOG_MESSAGE();
@@ -372,7 +391,7 @@ void test_http_server_multiple_init_calls(void)
     );
 }
 
-// Тестируем симуляцию HTTP запроса GET / -> index_html_get_handler
+// Test HTTP request simulation GET / -> index_html_get_handler
 void test_http_request_index_html(void)
 {
     LOG_MESSAGE();
@@ -397,12 +416,17 @@ void test_http_request_index_html(void)
                                  "httpd_resp_set_type should be called once");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("text/html", mock_last_content_type,
                                    "Content type should be set to text/html");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_set_hdr_call_count,
-                                 "httpd_resp_set_hdr should be called once");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("Content-Encoding", mock_last_header_field,
-                                   "Header field should be Content-Encoding");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("gzip", mock_last_header_value,
-                                   "Header value should be gzip");
+
+    const char *enc = find_response_header("Content-Encoding");
+    TEST_ASSERT_NOT_NULL_MESSAGE(enc, "Content-Encoding header should be set");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("gzip", enc, "Content-Encoding should be gzip");
+
+    const char *etag = find_response_header("ETag");
+    TEST_ASSERT_NOT_NULL_MESSAGE(etag, "ETag header should be set on the 200 path");
+
+    const char *cc = find_response_header("Cache-Control");
+    TEST_ASSERT_NOT_NULL_MESSAGE(cc, "Cache-Control header should be set");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("no-cache", cc, "Cache-Control should be no-cache");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
                                  "httpd_resp_send should be called once");
@@ -412,7 +436,47 @@ void test_http_request_index_html(void)
                                  "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем симуляцию HTTP запроса GET /index.css -> index_css_get_handler
+// Test that a matching If-None-Match on / yields 304 Not Modified with an empty body
+void test_http_request_index_html_not_modified(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request simulation - GET / with matching ETag -> 304");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_web_port(WEB_PORT);
+
+    esp_err_t result = http_server_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
+
+    // First, a normal request to capture the asset's ETag.
+    mock_simulate_http_request(HTTP_GET, "/");
+    const char *etag = find_response_header("ETag");
+    TEST_ASSERT_NOT_NULL_MESSAGE(etag, "ETag header should be set on the 200 path");
+
+    char etag_copy[128];
+    strncpy(etag_copy, etag, sizeof(etag_copy) - 1);
+    etag_copy[sizeof(etag_copy) - 1] = '\0';
+
+    // Now replay the request with a matching If-None-Match header.
+    mock_handlers_reset();
+    mock_header_count = 0;
+    mock_httpd_resp_send_call_count = 0;
+    mock_set_request_header(etag_copy);
+
+    mock_simulate_http_request(HTTP_GET, "/");
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("304 Not Modified", mock_last_status,
+                                   "Matching If-None-Match should yield 304 Not Modified");
+    const char *etag304 = find_response_header("ETag");
+    TEST_ASSERT_NOT_NULL_MESSAGE(etag304, "ETag header should still be set on the 304 path");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(etag_copy, etag304, "304 ETag should match the asset ETag");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
+                                 "httpd_resp_send should be called once for the 304");
+    TEST_ASSERT_NULL_MESSAGE(mock_last_send_buf, "304 body should be empty (NULL buffer)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_last_send_buf_len, "304 body length should be 0");
+}
+
+// Test HTTP request simulation GET /index.css -> index_css_get_handler
 void test_http_request_index_css(void)
 {
     LOG_MESSAGE();
@@ -437,12 +501,17 @@ void test_http_request_index_css(void)
                                  "httpd_resp_set_type should be called once");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("text/css", mock_last_content_type,
                                    "Content type should be set to text/css");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_set_hdr_call_count,
-                                 "httpd_resp_set_hdr should be called once");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("Content-Encoding", mock_last_header_field,
-                                   "Header field should be Content-Encoding");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("gzip", mock_last_header_value,
-                                   "Header value should be gzip");
+
+    const char *enc = find_response_header("Content-Encoding");
+    TEST_ASSERT_NOT_NULL_MESSAGE(enc, "Content-Encoding header should be set");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("gzip", enc, "Content-Encoding should be gzip");
+
+    const char *etag = find_response_header("ETag");
+    TEST_ASSERT_NOT_NULL_MESSAGE(etag, "ETag header should be set on the 200 path");
+
+    const char *cc = find_response_header("Cache-Control");
+    TEST_ASSERT_NOT_NULL_MESSAGE(cc, "Cache-Control header should be set");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("no-cache", cc, "Cache-Control should be no-cache");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
                                  "httpd_resp_send should be called once");
@@ -452,7 +521,7 @@ void test_http_request_index_css(void)
                                  "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем симуляцию HTTP запроса GET /index.js -> index_js_get_handler
+// Test HTTP request simulation GET /index.js -> index_js_get_handler
 void test_http_request_index_js(void)
 {
     LOG_MESSAGE();
@@ -477,12 +546,17 @@ void test_http_request_index_js(void)
                                  "httpd_resp_set_type should be called once");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("application/javascript", mock_last_content_type,
                                    "Content type should be set to application/javascript");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_set_hdr_call_count,
-                                 "httpd_resp_set_hdr should be called once");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("Content-Encoding", mock_last_header_field,
-                                   "Header field should be Content-Encoding");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("gzip", mock_last_header_value,
-                                   "Header value should be gzip");
+
+    const char *enc = find_response_header("Content-Encoding");
+    TEST_ASSERT_NOT_NULL_MESSAGE(enc, "Content-Encoding header should be set");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("gzip", enc, "Content-Encoding should be gzip");
+
+    const char *etag = find_response_header("ETag");
+    TEST_ASSERT_NOT_NULL_MESSAGE(etag, "ETag header should be set on the 200 path");
+
+    const char *cc = find_response_header("Cache-Control");
+    TEST_ASSERT_NOT_NULL_MESSAGE(cc, "Cache-Control header should be set");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("no-cache", cc, "Cache-Control should be no-cache");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
                                  "httpd_resp_send should be called once");
@@ -492,7 +566,7 @@ void test_http_request_index_js(void)
                                  "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем симуляцию HTTP запроса GET /favicon.webp -> favicon_get_handler
+// Test HTTP request simulation GET /favicon.webp -> favicon_get_handler
 void test_http_request_favicon(void)
 {
     LOG_MESSAGE();
@@ -508,8 +582,6 @@ void test_http_request_favicon(void)
 
     TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_type_req,
                                  "httpd_resp_set_type should be called with correct req parameter");
-    TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_set_hdr_req,
-                                 "httpd_resp_set_hdr should be called with correct req parameter");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(mock_current_request, mock_last_send_req,
                                  "httpd_resp_send should be called with correct req parameter");
 
@@ -517,12 +589,10 @@ void test_http_request_favicon(void)
                                  "httpd_resp_set_type should be called once");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("image/webp", mock_last_content_type,
                                    "Content type should be set to image/webp");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_set_hdr_call_count,
-                                 "httpd_resp_set_hdr should be called once");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("Content-Encoding", mock_last_header_field,
-                                   "Header field should be Content-Encoding");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("gzip", mock_last_header_value,
-                                   "Header value should be gzip");
+
+    // favicon.webp is embedded raw now: it must NOT carry a gzip Content-Encoding.
+    TEST_ASSERT_NULL_MESSAGE(find_response_header("Content-Encoding"),
+                            "favicon should not have a Content-Encoding header");
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
                                  "httpd_resp_send should be called once");
@@ -532,7 +602,37 @@ void test_http_request_favicon(void)
                                  "httpd_resp_send should be called with correct buffer length");
 }
 
-// Тестируем симуляцию HTTP запросов для всех внешних обработчиков
+// Test that the Roboto woff2 font is served raw (no gzip) with immutable caching
+void test_http_request_font_roboto_latin(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test HTTP request simulation - GET roboto-latin woff2 (raw, no gzip)");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_web_port(WEB_PORT);
+
+    esp_err_t result = http_server_init();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "HTTP server should initialize successfully");
+
+    mock_simulate_http_request(HTTP_GET, "/roboto-latin-wght-normal.woff2");
+
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("font/woff2", mock_last_content_type,
+                                   "Content type should be set to font/woff2");
+
+    // woff2 is already compressed and embedded raw: no gzip Content-Encoding.
+    TEST_ASSERT_NULL_MESSAGE(find_response_header("Content-Encoding"),
+                            "font should not have a Content-Encoding header");
+
+    const char *cc = find_response_header("Cache-Control");
+    TEST_ASSERT_NOT_NULL_MESSAGE(cc, "font Cache-Control header should be set");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("public, max-age=31536000, immutable", cc,
+                                   "font Cache-Control should be long-lived immutable");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_httpd_resp_send_call_count,
+                                 "httpd_resp_send should be called once");
+}
+
+// Test HTTP request simulation for all external handlers
 void test_http_request_external_handlers(void)
 {
     LOG_MESSAGE();
@@ -638,9 +738,11 @@ int main(void)
     RUN_TEST(test_http_server_port_edge_cases);
     RUN_TEST(test_http_server_multiple_init_calls);
     RUN_TEST(test_http_request_index_html);
+    RUN_TEST(test_http_request_index_html_not_modified);
     RUN_TEST(test_http_request_index_css);
     RUN_TEST(test_http_request_index_js);
     RUN_TEST(test_http_request_favicon);
+    RUN_TEST(test_http_request_font_roboto_latin);
     RUN_TEST(test_http_request_external_handlers);
 
     return UNITY_END();

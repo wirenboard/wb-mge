@@ -9,8 +9,14 @@ module.exports = {
          jsx: true
       }
    },
-   extends: ['plugin:vue/vue3-recommended', 'plugin:@typescript-eslint/recommended'],
+   extends: [
+      'plugin:vue/vue3-recommended',
+      'plugin:@typescript-eslint/recommended',
+      'plugin:@intlify/vue-i18n/base',
+   ],
+   plugins: ['@stylistic'],
    rules: {
+      '@intlify/vue-i18n/no-missing-keys-in-other-locales': 'error',
       camelcase: 0,
       semi: 'off',
       indent: 'off',
@@ -22,8 +28,6 @@ module.exports = {
       'no-angle-bracket-type-assertion': 0,
       'no-var-requires': 0,
       'no-return-await': 0,
-      '@typescript-eslint/no-var-requires': 0,
-      '@typescript-eslint/no-angle-bracket-type-assertion': 0,
       '@typescript-eslint/explicit-module-boundary-types': 0,
       'import/no-webpack-loader-syntax': 0,
       'one-var': 0,
@@ -42,6 +46,9 @@ module.exports = {
       'vue/no-v-html': 0,
       'lines-between-class-members': 0,
       'no-unused-expressions': 0,
+      // @typescript-eslint/no-unused-expressions was added to the recommended set in v8;
+      // the base no-unused-expressions rule above is intentionally off, so keep the TS variant off too.
+      '@typescript-eslint/no-unused-expressions': 0,
       'no-unused-vars': 0,
       'object-curly-spacing': ['warn', 'always'],
       'vue/singleline-html-element-content-newline': 0,
@@ -62,25 +69,28 @@ module.exports = {
       'brace-style': 'off',
       'comma-dangle': 'off',
       'comma-spacing': 'off',
-      '@typescript-eslint/quotes': ['error', 'single', { allowTemplateLiterals: true }],
-      '@typescript-eslint/comma-spacing': ['error', { before: false, after: true }],
-      '@typescript-eslint/comma-dangle': 'off',
-      '@typescript-eslint/brace-style': ['error', '1tbs'],
-      '@typescript-eslint/func-call-spacing': ['error', 'never'],
+      '@stylistic/quotes': ['error', 'single', { allowTemplateLiterals: true }],
+      '@stylistic/comma-spacing': ['error', { before: false, after: true }],
+      '@stylistic/comma-dangle': 'off',
+      '@stylistic/brace-style': ['error', '1tbs'],
+      '@stylistic/func-call-spacing': ['error', 'never'],
       '@typescript-eslint/array-type': 'off',
       '@typescript-eslint/no-unused-vars': [
          'warn',
          {
-            argsIgnorePattern: '^h$'
+            argsIgnorePattern: '^h$',
+            // Restore the pre-v8 default: v8 changed caughtErrors from 'none' to 'all',
+            // which would newly flag unused catch bindings. Keep prior behavior.
+            caughtErrors: 'none'
          }
       ],
       '@typescript-eslint/ban-ts-comment': 0,
       '@typescript-eslint/no-explicit-any': 0,
       '@typescript-eslint/no-this-alias': 0,
       '@typescript-eslint/no-inferrable-types': 0,
-      '@typescript-eslint/semi': ['warn'],
-      '@typescript-eslint/indent': 0,
-      '@typescript-eslint/member-delimiter-style': [
+      '@stylistic/semi': ['warn'],
+      '@stylistic/indent': 0,
+      '@stylistic/member-delimiter-style': [
          'error',
          {
             multiline: {

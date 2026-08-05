@@ -1,0 +1,494 @@
+#pragma once
+
+#include "esp_err.h"
+#include "bridge.h"  // for BRIDGES_COUNT
+#include <stdbool.h>
+
+#ifndef __unittest_env__
+#include "esp_http_server.h"
+#else
+typedef void *httpd_handle_t;
+#endif
+
+/**
+ * @brief Transport operating mode for each RS-485 port.
+ *
+ * The transport mode is orthogonal to the sniffer and cache overlays: the
+ * sniffer (live WS display) and the cache overlay can be enabled additively
+ * on top of any non-disabled transport mode.
+ *
+ * PM_MODE_DISABLED   — serial port is not opened; port is fully inactive.
+ * PM_MODE_TCP_BRIDGE — serial port is open; traffic is forwarded over TCP
+ *                      (transparent or Modbus framing, driven by bridge settings).
+ * PM_MODE_PASSIVE    — serial port is open, no TCP forwarding (passive listener).
+ *                      This is the serial-only base that the cache overlay and
+ *                      the live sniffer can attach to.
+ * PM_MODE_REPEATER   — serial port is open and raw bytes are transparently
+ *                      forwarded to the other RS-485 port (and vice-versa) to
+ *                      extend the line / restore signal integrity.
+ */
+typedef enum {
+    PM_MODE_DISABLED   = 0,
+    PM_MODE_TCP_BRIDGE = 1,
+    PM_MODE_PASSIVE    = 2,
+    PM_MODE_REPEATER   = 3,
+} pm_mode_t;
+
+/**
+ * @brief port_manager_set_mode() refused the change: the ports are frozen by the
+ *        factory clock_out test (see port_manager_set_ports_frozen()).
+ *
+ * A dedicated code, NOT ESP_ERR_INVALID_STATE: that one is not exclusive to the
+ * freeze — bridge_port_init() returns exactly ESP_ERR_INVALID_STATE for a port
+ * whose bridge_mode is invalid/legacy, and it reaches the caller through
+ * port_init_mode(). Mapping ESP_ERR_INVALID_STATE to 409 "clock_out test active"
+ * would answer a corrupt-NVS device with a conflict about a test that is not
+ * running. Only this code means "frozen".
+ *
+ * 0x10000 is above every base the IDF hands out in esp_err.h and its components
+ * (the highest is ESP_ERR_MEMPROT_BASE, 0xd000), so it cannot alias a real code.
+ */
+#define PM_ERR_PORTS_FROZEN  ((esp_err_t)0x10000)
+
+/**
+ * @brief Create the port_manager locks: the per-port init mutexes, the global
+ *        cache-decision mutex and the cache-move mutex that serialises a whole
+ *        overlay move against another one.
+ *
+ * Called from the top of port_manager_init_subsystems(), which main.c runs on the
+ * main task before http_server_init(). That ordering is the contract: the URI
+ * handlers registered there (POST /ports/N/mode, /ports/N/cache, /ports/N/send,
+ * /settings, /wb_test) take these locks, and so does the config-button long-press
+ * callback, both of which can fire long before port_manager_init() leaves the
+ * wait-for-network loop. Creating a lock on demand inside the lock path is not atomic, whether
+ * it creates the mutex there (two tasks see NULL, two mutexes, no mutual exclusion) or calls
+ * back into this function (both re-enter, and the second create re-initialises a live mutex as
+ * free). So production calls it from port_manager_init_subsystems() and nowhere else — held by
+ * a source-text test for the call shapes it can recognise, port_manager_reset_for_test() aside.
+ *
+ * Runs up to twice per boot, and only the first run is single-threaded. main.c calls
+ * port_manager_init_subsystems() before http_server_init(); port_manager_init() calls it again
+ * if the wait-for-network loop it sits behind ever releases, by which time httpd and other
+ * tasks are up. The first call is the one that establishes the handles and it is what the
+ * contract above is about. The second is safe for a different reason: every handle is already
+ * set, so it only READS them and writes nothing. Do not fold the NULL checks away to "simplify"
+ * it — handing a live mutex's buffer back to xSemaphoreCreateMutexStatic() would
+ * reinitialise a lock another task may be holding.
+ *
+ * Cannot fail, hence no return value. The mutexes live in statically allocated buffers,
+ * so xSemaphoreCreateMutexStatic() returns the buffer itself — there is no allocation to
+ * come up short and nothing to report. That is deliberate rather than incidental: this
+ * runs on the boot path, where every available failure policy is wrong. Aborting turns a
+ * low-memory boot into a reboot loop; logging and continuing leaves a NULL handle for the
+ * lock paths on the HTTP tasks to have an opinion about. Removing the failure mode is the
+ * only answer that needs neither.
+ */
+void port_manager_locks_init(void);
+
+/**
+ * @brief Initialise the shared subsystems that do NOT need a network interface.
+ *
+ * Brings up the RS-485 monitors, the repeater mutex, the sniffer (queue, per-port
+ * response timers, WS mutex and WS task) and the multimaster cache mutex. Also calls
+ * port_manager_locks_init() first, above its own one-shot guard, so the port_manager
+ * locks exist even if everything below it fails.
+ *
+ * Also loads the per-port cache overlay from NVS and normalises it to the single-port
+ * invariant (review #51). That is here, and not in port_manager_init(), because it has to be
+ * true before the first request: a POST /ports/N/mode answered while it was still false would
+ * bring the port up with neither the cache sniffer reason nor the pool, and nothing would arm
+ * them afterwards. It runs inside the one-shot guard, so exactly one pass per boot.
+ *
+ * Must be called BEFORE http_server_init(). The URI handlers registered there —
+ * the sniffer WS endpoint above all — drive these FreeRTOS handles, and FreeRTOS
+ * configASSERTs on a NULL one, so a request that arrives before this ran used to
+ * panic and reboot the device. Each of those entry points now checks its own
+ * handle and degrades (the WS endpoint answers 503), so the order decides whether
+ * the feature works, not whether the device survives.
+ *
+ * The window is real but not where the wait-for-network loop in main.c suggests:
+ * that loop is released by link/association events (ETHERNET_EVENT_CONNECTED,
+ * WIFI_EVENT_STA_CONNECTED, WIFI_EVENT_AP_STACONNECTED), not by GOT_IP. Under
+ * SoftAP it is therefore narrower — a client is counted when it associates, before
+ * it has DHCPed, let alone requested a page — but not closed: that loop polls once
+ * a second, so a client that skips DHCP (static address, cached lease) still has
+ * most of that second to ask for a page. The exposure is Ethernet/STA with a static
+ * address, where the interface answers as soon as the link is up while the main task
+ * can still be a full second (its 1 s poll) from leaving the loop.
+ *
+ * Everything that needs a network interface (the cache Modbus TCP server and the
+ * ports themselves) stays in port_manager_init(), behind that loop.
+ *
+ * One attempt per boot for the subsystems: the first call brings them up, every later call
+ * re-runs the idempotent port_manager_locks_init() above and then returns ESP_OK without
+ * touching them — including after a partial failure, which is NOT retried. Two
+ * of the subsystems are not idempotent (sniffer_init() would create a second queue,
+ * timers and task and leak the first set; cache_multimaster_init() would leak its
+ * mutex), and a retry cannot fix the only failure cause there is, which is a lack
+ * of memory.
+ *
+ * @return ESP_OK on success, or the first subsystem init error. An error is worth
+ *         logging, not aborting on: the device runs degraded, not broken.
+ */
+esp_err_t port_manager_init_subsystems(void);
+
+/**
+ * @brief Initialize the port manager.
+ *
+ * Reads the active mode for each port from NVS and brings up the appropriate
+ * subsystems.  Also starts the cache Modbus TCP server (when enabled in NVS) —
+ * the part of the shared infrastructure that was previously done by bridge_init()
+ * and that needs a network interface to bind its socket.
+ *
+ * Calls port_manager_init_subsystems() itself, so it remains self-contained when used alone; if
+ * main.c already ran it before starting the HTTP server (it does), that call re-runs only the
+ * idempotent port_manager_locks_init() and returns ESP_OK. A failure there is logged and the
+ * ports are brought up anyway — it is not reflected in the return value.
+ *
+ * Must be called once after NVS and settings are ready AND after the network is up,
+ * in place of the old bridge_init() + cache_modbus_server_init() calls in main.c.
+ *
+ * httpd is already answering by then (main.c starts it above the wait-for-network loop this
+ * sits behind), so the per-port bring-up runs under pm_lock and brings up only the ports that
+ * are still down: a port a POST /ports/N/mode or POST /settings got to first is left running
+ * as it is, and a port the factory clock_out test has frozen is left to that test's exit path,
+ * which restores both ports from NVS. A port whose init merely FAILED is not skipped.
+ *
+ * Leaving a port running is safe only because the cache overlay is loaded earlier, in
+ * port_manager_init_subsystems() — the request that brought it up had the stored overlay in
+ * hand and armed the cache for it.
+ *
+ * @return ESP_OK — always, as of today. Everything that can fail here (the subsystems,
+ *         the cache Modbus TCP server, each port) is logged and stepped over, because
+ *         none of it is worth leaving the RS-485 ports down for. The esp_err_t return
+ *         is kept so a future failure that IS worth reporting has somewhere to go;
+ *         callers must still check it rather than assume this stays true.
+ */
+esp_err_t port_manager_init(void);
+
+/**
+ * @brief Switch a port to a new operating mode.
+ *
+ * Deinitialises the current mode, saves the new mode to NVS, then initialises
+ * the new mode.
+ *
+ * Rejected with PM_ERR_PORTS_FROZEN while the ports are frozen by the factory
+ * test (see port_manager_set_ports_frozen()): re-initialising the port would take
+ * its TX and DE pins back from the test — the TX pins from the LEDC that is driving
+ * the waveform, the DE pins from the plain-GPIO levels the test holds them at
+ * (port 1 HIGH, port 2 LOW).
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param mode        Target mode.
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         PM_ERR_PORTS_FROZEN if the ports are frozen by the factory test
+ *         (nothing is changed, neither live nor in NVS);
+ *         the init error if the new mode failed to initialise (the previous mode
+ *         is rolled back) — note that this can itself be ESP_ERR_INVALID_STATE,
+ *         e.g. a tcp_bridge whose bridge_mode is invalid/legacy;
+ *         or the NVS save error if the mode initialised live
+ *         but could not be persisted — in that case the mode is applied now but
+ *         not persisted (persist-6).
+ */
+esp_err_t port_manager_set_mode(unsigned port_index, pm_mode_t mode);
+
+/**
+ * @brief Switch a port to a new operating mode WITHOUT persisting it to NVS.
+ *
+ * Behaves exactly like port_manager_set_mode() (deinit, init, rollback on init
+ * failure) except that the new mode is never written to NVS: the port_mode key
+ * keeps the user's configured value.
+ *
+ * Intended for temporary runtime overrides — the factory 100 kHz test disables
+ * both ports so the LEDC can take over their TX pins, and must not clobber the
+ * persisted configuration if power is lost while the test is running. Restore the
+ * configured mode afterwards with port_manager_apply_settings(), which re-reads
+ * the mode from NVS and re-initialises the port.
+ *
+ * Do NOT use this for REST/settings-driven mode changes — those must persist.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param mode        Target mode.
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         or the init error if the new mode failed to initialise (the previous
+ *         mode is rolled back).
+ */
+esp_err_t port_manager_set_mode_transient(unsigned port_index, pm_mode_t mode);
+
+/**
+ * @brief Return the currently active mode for a port.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @return Active pm_mode_t, or PM_MODE_DISABLED if port_index is out of range.
+ */
+pm_mode_t port_manager_get_mode(unsigned port_index);
+
+/**
+ * @brief Convert a pm_mode_t value to its NVS/JSON string representation.
+ *
+ * @param mode  Mode value.
+ * @return Pointer to a constant string ("disabled", "tcp_bridge", "passive", "repeater"),
+ *         or "unknown" for unrecognised values.
+ */
+const char *port_manager_mode_to_str(pm_mode_t mode);
+
+/**
+ * @brief Make this port the cache source, or drop the cache overlay from it.
+ *
+ * The cache overlay is persisted (KEY_CACHE_EN_1/2) and is orthogonal to the
+ * transport mode: it survives transport-mode changes. When enabled and the
+ * port's serial is open, the sniffer is driven (via SNIFF_REASON_CACHE) to
+ * feed the global multimaster cache.
+ *
+ * The cache is single-port by design (review #51): the pool is keyed by slave_id
+ * and the Cache-TCP interface answers by unit_id, with no port dimension in
+ * either. Enabling therefore MOVES the overlay rather than being refused — any
+ * other port holding it is released first (memory, NVS and live data flow), and
+ * the accumulated cache contents are dropped with it, since they describe the bus
+ * the cache is being moved away from. The pool itself is NOT freed and
+ * reallocated across a move: it is wiped in place (cache_multimaster_clear()), so
+ * a move cannot fail on a 32 KB allocation and cannot destroy a working cache.
+ * Enabling on the port that already holds it leaves the overlay where it is, but
+ * is NOT a no-op: it re-writes the NVS key and re-arms the sniffer.
+ *
+ * Thread-safe against itself and against port_manager_apply_cache_settings().
+ * The move releases the old holder and enables the new one under two DIFFERENT
+ * pm_locks, one after the other, so on its own its check-then-act would let two
+ * concurrent calls both find no holder and both enable — two ports feeding one
+ * port-blind pool. That is why both entry points hold a dedicated cache-move
+ * mutex for the whole operation (see the locking note in port_manager.c). It
+ * used to rest on a premise instead — "the only caller is the REST handler, on
+ * the single esp_http_server request task" — which POST /settings retired.
+ * The boot-time normalisation in port_manager_init_subsystems() is what enforces
+ * the invariant on stored NVS, and it is not a runtime guard.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param enabled     True to make this port the cache source, false to drop the
+ *                    overlay from it.
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range;
+ *         ESP_ERR_NO_MEM if the global pool would not allocate (only reachable
+ *         when the cache was off beforehand — a move never reallocates it), or
+ *         ESP_ERR_INVALID_STATE if the cache module never initialised: the
+ *         overlay is recorded on the port but the cache is NOT running, and the
+ *         caller must not report it as enabled;
+ *         or the NVS save error if the overlay was applied live but could not be
+ *         persisted — the live state is applied but not persisted (persist-6).
+ *         A failed NVS write on the RELEASED port is reported the same way: the
+ *         move is live, but the stored state still names the old port too, and
+ *         the boot-time normalisation (lowest index wins) may hand the overlay
+ *         back to it.
+ *         A pool failure outranks a persistence failure: "the cache is not
+ *         running" is worse news than "it will not survive a reboot".
+ */
+esp_err_t port_manager_set_cache(unsigned port_index, bool enabled);
+
+/**
+ * @brief Bring the runtime cache overlay in line with the cache_en_N keys in NVS.
+ *
+ * The settings-driven counterpart of port_manager_set_cache(): POST /settings (and
+ * POST /cmd set_default_settings, and the factory-reset button) write cache_en_N
+ * straight to NVS through settings_manager's key mapping, which knows nothing about
+ * the runtime overlay. Without this call the two silently diverge and STAY diverged —
+ * NVS says the cache is on port 2, the sniffer overlay stays on port 1, and not one
+ * packet reaches the pool until someone issues a POST /ports/N/cache. Nothing at
+ * runtime heals it, because the only other place that re-reads the stored overlay is
+ * the boot normalisation.
+ *
+ * Reconciles both directions and the surplus: it moves the overlay onto the port NVS
+ * asks for, drops it when no port asks for it, and clears any additional cache_en key
+ * a single request may have set (the cache is single-port; lowest index wins, the same
+ * rule the boot normalisation applies, so a reboot cannot reinterpret the result).
+ * A no-op — no NVS write, no sniffer re-arm, no cache_multimaster_clear() — when the
+ * runtime already matches NVS, which is the common case for a settings write that does
+ * not mention caching at all.
+ *
+ * Runs at most ONE move, so the single cache_sync_global() per operation stays single
+ * and a move never frees and reallocates the 32 KB pool.
+ *
+ * Not gated on the factory-test freeze, unlike port_manager_apply_settings(): this
+ * touches no TX/DE pin. Its only live action is sniffer_enable/disable on a port whose
+ * serial is open, and the frozen ports have none — so during the test it records the
+ * intent, and the exit path's port_manager_apply_settings() arms the sniffer from it.
+ *
+ * Called from settings_update(), on the caller's task (an HTTP task, or the
+ * config-button task on a factory reset), NOT from settings_update_task: the result has
+ * to reach the POST /settings response, which is sent long before that task runs.
+ *
+ * @return ESP_OK when nothing had to change or the change was applied and persisted;
+ *         otherwise the same codes as port_manager_set_cache() — ESP_ERR_NO_MEM when
+ *         the pool would not allocate, ESP_ERR_INVALID_STATE when the cache module
+ *         never initialised, or an NVS error when the overlay was applied live but
+ *         could not be persisted (persist-6). Callers must surface it: the request was
+ *         accepted and saved, so silence would tell the user the cache is where they
+ *         put it when it is not.
+ */
+esp_err_t port_manager_apply_cache_settings(void);
+
+/**
+ * @brief Return the persisted cache-overlay state for a port.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @return true if the cache overlay is enabled, false otherwise or if OOB.
+ */
+bool port_manager_get_cache(unsigned port_index);
+
+/**
+ * @brief Freeze / unfreeze all ports for the duration of the factory test.
+ *
+ * The factory 100 kHz clock-out test drives the RS-485 pins directly, after
+ * transiently forcing both ports to PM_MODE_DISABLED (runtime only — NVS keeps
+ * the user's configured mode): the TX pin of both ports carries the LEDC waveform,
+ * and the DE pin of both ports is held as a plain GPIO — port 1 HIGH (its driver
+ * transmits), port 2 LOW (its driver stays in receive). That mismatch between
+ * the runtime mode and NVS would otherwise make port_manager_check_settings_changed()
+ * report "changed" for every port, so any unrelated POST /settings would run
+ * port_manager_apply_settings() and re-init the ports on top of the running
+ * waveform.
+ *
+ * While frozen:
+ *   - port_manager_check_settings_changed() always reports false;
+ *   - port_manager_apply_settings() is a no-op returning ESP_OK;
+ *   - port_manager_set_mode() is rejected with PM_ERR_PORTS_FROZEN (the REST
+ *     handler turns that — and only that — into 409 Conflict);
+ *   - port_manager_set_mode_transient() still works — it is how the test itself
+ *     puts the ports into PM_MODE_DISABLED.
+ *
+ * Note that POST /settings may still write a new port_mode to NVS during the test and
+ * is answered 200, while POST /ports/N/mode is answered 409. That is the intended
+ * split, not an inconsistency: /ports/N/mode applies the mode immediately (a deinit +
+ * re-init of a port whose TX and DE pins the test is driving), whereas /settings only
+ * records it — apply_settings() is frozen, and the value takes effect when the test ends.
+ * See the port_mode entry in settings_manager.c's rs485_base_mappings.
+ *
+ * NVS is not affected either way. Unfreeze first, then call
+ * port_manager_apply_settings() for each port to bring them back up from NVS
+ * (this also picks up any settings written while the test was running).
+ *
+ * @param frozen  True to freeze the ports, false to release them.
+ */
+void port_manager_set_ports_frozen(bool frozen);
+
+/**
+ * @brief Return whether the ports are currently frozen by the factory test.
+ *
+ * @return true if frozen (see port_manager_set_ports_frozen()).
+ */
+bool port_manager_ports_frozen(void);
+
+/**
+ * @brief Deinitialise a port, releasing its serial port and its TCP listening socket.
+ *
+ * Release half of the two-phase settings apply: settings_update() releases EVERY subsystem
+ * whose socket must change before ANY of them binds a new one, so that a TCP port can be
+ * handed over between subsystems — an RS-485 gateway moving onto the port the web server or
+ * the cache Modbus server is vacating, or the two gateways swapping ports — without the new
+ * bind() hitting EADDRINUSE. port_manager_apply_settings() has no rollback, so a bind that
+ * fails leaves the port dead until the next settings write or a reboot.
+ *
+ * Follow it with port_manager_apply_settings() to bring the port back up. Calling it on an
+ * already-released (disabled) port is a no-op.
+ *
+ * No-op (returns ESP_OK without touching the port) while the ports are frozen by the factory
+ * test — see port_manager_set_ports_frozen(). It has to be: apply_settings() is frozen too,
+ * so a port torn down here would stay down until the test ends.
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG if port_index is out of range.
+ */
+esp_err_t port_manager_release(unsigned port_index);
+
+/**
+ * @brief Re-apply settings for a port, re-reading mode and parameters from NVS.
+ *
+ * Deinitialises the current mode and re-initialises from the current NVS
+ * settings, including the port mode.  Called by settings_update when any
+ * serial, bridge, or mode parameters change — as the acquire half of the
+ * two-phase apply, after port_manager_release().
+ *
+ * No-op (returns ESP_OK without touching the port) while the ports are frozen
+ * by the factory test — see port_manager_set_ports_frozen().
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @return ESP_OK on success.
+ */
+esp_err_t port_manager_apply_settings(unsigned port_index);
+
+/**
+ * @brief Check whether any relevant settings have changed for a port.
+ *
+ * For TCP_BRIDGE mode this delegates to bridge_port_check_settings_changed().
+ * For other modes it compares the saved serial config and port mode against
+ * the current NVS values.
+ *
+ * Always reports false while the ports are frozen by the factory test — see
+ * port_manager_set_ports_frozen().
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @return true if settings have changed and port_manager_apply_settings()
+ *         should be called.
+ */
+bool port_manager_check_settings_changed(unsigned port_index);
+
+/**
+ * @brief Register HTTP handlers for port mode management.
+ *
+ * Registers:
+ *   POST /ports/1/mode        — set mode for port 1 (RS-485 Port 1)
+ *   POST /ports/2/mode        — set mode for port 2 (RS-485 Port 2)
+ *
+ * Port mode status is exposed via the existing GET /info endpoint
+ * (rs485_1.port_mode and rs485_2.port_mode fields) — no separate
+ * status endpoint is needed.
+ *
+ * All handlers require authentication via auth_middleware_check().
+ *
+ * @param server  Running httpd_handle_t.
+ * @return ESP_OK on success.
+ */
+esp_err_t port_manager_register_handlers(httpd_handle_t server);
+
+/**
+ * @brief Set or clear the TX-disabled flag for a running RS-485 port immediately.
+ *
+ * When disabled is true, the RS-485 line driver is physically switched off
+ * (dir_pin forced LOW) and serial_send() will silently drop outgoing data.
+ * When disabled is false, the dir_pin is returned to UART half-duplex control
+ * and normal transmission resumes.
+ *
+ * Changing tx_disabled does NOT trigger a port restart.
+ * If the port is not currently running, the call is a no-op (setting will be
+ * applied on the next port_init_mode() invocation).
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param disabled    True to disable TX, false to re-enable.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if port_index is out of range.
+ */
+esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled);
+
+/**
+ * @brief Send raw bytes to an RS-485 port.
+ *
+ * Uses the same serial_desc regardless of transport mode (PASSIVE, TCP_BRIDGE).
+ * If port is disabled (no serial_desc) or serial_send fails, returns ESP_FAIL.
+ * If tx_disabled is set on the descriptor, serial_send silently drops data (returns ESP_OK).
+ *
+ * @param port_index  0-based port index (< BRIDGES_COUNT).
+ * @param data        Pointer to byte buffer.
+ * @param len         Number of bytes to send.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if port_index is out of range,
+ *         ESP_FAIL if no serial_desc or transmission fails.
+ */
+esp_err_t port_manager_send_raw(unsigned port_index, const uint8_t *data, size_t len);
+
+#ifdef __unittest_env__
+void port_manager_reset_for_test(void);
+
+/* Null every lock handle without recreating it — the "port_manager_locks_init() has not run
+ * yet" state, which no production path can reach. Only useful to a test that wants to watch a
+ * production entry point create the locks. */
+void port_manager_clear_locks_for_test(void);
+
+/* hex_str_to_bytes: exposed for unit testing */
+int hex_str_to_bytes(const char *hex, uint8_t *out, size_t out_max);
+#endif /* __unittest_env__ */
+

@@ -2,7 +2,14 @@
 #include "system_voltage.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
+#ifdef __unittest_env__
+#define VM_STATIC
+#else
+#define VM_STATIC static
+#endif
 
 #define VM_TASK_STACK_SIZE                  4096
 #define VM_TASK_PRIORITY                    13
@@ -39,14 +46,14 @@ static SemaphoreHandle_t vm_ctx_mutex = NULL;
 static const char* TAG = "voltage_monitor";
 
 
-static float exp_filter(float cur_value, float new_value)
+VM_STATIC float exp_filter(float cur_value, float new_value)
 {
     float value = cur_value + EXP_FILTER_ALPHA_COEF * (new_value - cur_value);
     return value;
 }
 
 
-static bool check_sys_voltage_bounds(float sys_voltage, bool ok_state)
+VM_STATIC bool check_sys_voltage_bounds(float sys_voltage, bool ok_state)
 {
     if (ok_state) {
         if ((sys_voltage < SYS_VOLTAGE_MIN_FAIL) || (sys_voltage > SYS_VOLTAGE_MAX_FAIL)) {
@@ -62,39 +69,50 @@ static bool check_sys_voltage_bounds(float sys_voltage, bool ok_state)
 }
 
 
-static bool sys_voltage_prot_engine(bool bounds_ok)
-{
-    static bool initialized = false;
-    static bool prot_state = false;
-    static bool release_wait = false;
-    static TickType_t time_stamp = 0;
+// File-level state for sys_voltage_prot_engine, extracted so they can be reset in unit tests.
+static bool prot_engine_initialized = false;
+static bool prot_engine_prot_state = false;
+static bool prot_engine_release_wait = false;
+static TickType_t prot_engine_time_stamp = 0;
 
-    if (!initialized) {
-        prot_state = bounds_ok;
-        release_wait = false;
-        time_stamp = xTaskGetTickCount();
-        initialized = true;
+#ifdef __unittest_env__
+void voltage_monitor_reset_prot_engine(void)
+{
+    prot_engine_initialized = false;
+    prot_engine_prot_state = false;
+    prot_engine_release_wait = false;
+    prot_engine_time_stamp = 0;
+}
+#endif
+
+VM_STATIC bool sys_voltage_prot_engine(bool bounds_ok)
+{
+    if (!prot_engine_initialized) {
+        prot_engine_prot_state = bounds_ok;
+        prot_engine_release_wait = false;
+        prot_engine_time_stamp = xTaskGetTickCount();
+        prot_engine_initialized = true;
     }
 
     if (!bounds_ok) {
-        prot_state = false;
-        release_wait = false;
-        return prot_state;
+        prot_engine_prot_state = false;
+        prot_engine_release_wait = false;
+        return prot_engine_prot_state;
     }
 
-    if (!prot_state) {
-        if (!release_wait) {
-            time_stamp = xTaskGetTickCount();
-            release_wait = true;
+    if (!prot_engine_prot_state) {
+        if (!prot_engine_release_wait) {
+            prot_engine_time_stamp = xTaskGetTickCount();
+            prot_engine_release_wait = true;
         } else {
-            if ((xTaskGetTickCount() - time_stamp) >= pdMS_TO_TICKS(SYS_VOLTAGE_PROT_RELEASE_DELAY_MS)) {
-                prot_state = true;
-                release_wait = false;
+            if ((xTaskGetTickCount() - prot_engine_time_stamp) >= pdMS_TO_TICKS(SYS_VOLTAGE_PROT_RELEASE_DELAY_MS)) {
+                prot_engine_prot_state = true;
+                prot_engine_release_wait = false;
             }
         }
     }
 
-    return prot_state;
+    return prot_engine_prot_state;
 }
 
 

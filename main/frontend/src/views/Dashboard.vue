@@ -1,47 +1,52 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useChannelRelease } from '@/common/channelRelease';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
-import { firmwareLatest, firmwareLatestVersion } from '@/common/links';
 import { useRouter } from 'vue-router';
-import SettingsIcon from '@/assets/settings.svg?component';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
-import InfoRow from '@/components/InfoRow.vue';
 import Layout from '@/components/Layout.vue';
 import RsStatus from '@/components/RsStatus.vue';
+import InfoRow from '@/components/InfoRow.vue';
+import GearIcon from '@/assets/gearIcon.svg?component';
 
 const { t } = useI18n();
-const { info, startPolling, stopPolling } = useInfo();
-const { data: settings, updateSettings } = useSettings();
+const { info } = useInfo();
+const { data: settings } = useSettings();
 const { uptime } = useUptime();
 const router = useRouter();
 
-const latestVersion = ref<string | null>(null);
-const latestVersionError = ref(false);
-
-onMounted(async () => {
-  try {
-    const res = await fetch(firmwareLatestVersion);
-    if (!res.ok) throw new Error();
-    latestVersion.value = (await res.text()).trim();
-  } catch {
-    latestVersionError.value = true;
-  }
-});
-
-const hasUpdate = computed(() =>
-  latestVersion.value && info.value?.firmware && latestVersion.value !== info.value.firmware
-);
+// The offer comes from the shared composable, so this page and System always name the same
+// version — and the manifest is downloaded once, no matter which page is opened first.
+const { phase: updatePhase, release, resolvedChannel, check: checkUpdates } = useChannelRelease();
 
 onMounted(() => {
-  startPolling();
+  checkUpdates();
 });
 
-onUnmounted(() => {
-  stopPolling();
+const hasUpdate = computed(() => updatePhase.value === 'available');
+
+const firmwareNote = computed(() => {
+  const found = release.value;
+  switch (updatePhase.value) {
+    case 'checking':
+      return t('firmware_checking');
+    case 'available':
+      return found?.ok ? t('firmware_in_channel', { channel: resolvedChannel.value, v: found.version }) : '';
+    // Naming the channel version here too would read as "1.1.0 (in stable: 1.1.0)" — the same
+    // number twice, with nothing telling the user it means there is nothing to install.
+    case 'up_to_date':
+      return t('firmware_up_to_date');
+    case 'unavailable':
+      return found && !found.ok && found.reason === 'no-signature'
+        ? t('firmware_channels_unavailable')
+        : t('firmware_check_failed');
+    default:
+      return '';
+  }
 });
 
 const getDisplayValue = (val: string | boolean | number) => {
@@ -64,12 +69,12 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">{{ t('ethernet') }}</div>
-              <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
-                <SettingsIcon />
+              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/network')">
+                <GearIcon />
               </button>
             </div>
-            <span class="pill ok" v-if="info!.ethernet.con_eth"><span class="dot" />{{ t('connected') }}</span>
-            <span class="pill muted" v-else>{{ t('not_connected') }}</span>
+            <span v-if="info!.ethernet.con_eth" class="pill ok"><span class="dot" />{{ t('connected') }}</span>
+            <span v-else class="pill muted">{{ t('not_connected') }}</span>
           </div>
           <div class="card-body">
             <InfoRow :label="t('ip')"><span class="mono">{{ getDisplayValue(info!.ethernet.ip) }}</span></InfoRow>
@@ -81,12 +86,12 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">{{ t('wifi') }}</div>
-              <button class="card-edit-btn" @click="router.push('/network')" :title="t('edit_settings')">
-                <SettingsIcon />
+              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/network')">
+                <GearIcon />
               </button>
             </div>
-            <span class="pill ok" v-if="info!.wifi.enabled"><span class="dot" />{{ t('enabled') }}</span>
-            <span class="pill muted" v-else>{{ t('disabled') }}</span>
+            <span v-if="info!.wifi.enabled" class="pill ok"><span class="dot" />{{ t('enabled') }}</span>
+            <span v-else class="pill muted">{{ t('disabled') }}</span>
           </div>
           <div class="card-body">
             <InfoRow :label="t('status')">{{ getDisplayValue(info!.wifi.enabled) }}</InfoRow>
@@ -117,9 +122,9 @@ const getDisplayValue = (val: string | boolean | number) => {
             <div class="title">{{ t('gateway') }}</div>
           </div>
           <div class="card-body">
-            <InfoRow :label="t('power')"><span class="mono">{{ Number(info?.system_voltage.toFixed(1)) }} {{ t('v') }}</span></InfoRow>
+            <InfoRow :label="t('power')"><span class="mono">{{ info?.system_voltage?.toFixed(1) }} {{ t('v') }}</span></InfoRow>
             <InfoRow :label="t('uptime')">
-              <span class="muted dashboard-uptimeValue">
+              <span class="muted uptime-value">
                 <template v-if="uptime">
                   <template v-if="uptime.days">
                     <span>{{ t('uptime_days', { n: uptime.days }) }}</span>
@@ -127,8 +132,7 @@ const getDisplayValue = (val: string | boolean | number) => {
                   <template v-if="uptime.hours">
                     <span>{{ t('uptime_hours', { n: uptime.hours }) }}</span>
                   </template>
-                  <span v-if="uptime.minutes > 0 || (!uptime.days && !uptime.hours && !uptime.seconds)">{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
-                  <span v-if="uptime.seconds > 0 || (!uptime.days && !uptime.hours && !uptime.minutes)">{{ t('uptime_seconds', { n: uptime.seconds }) }}</span>
+                  <span>{{ t('uptime_minutes', { n: uptime.minutes }) }}</span>
                 </template>
                 <template v-else>
                   <span>—</span>
@@ -136,8 +140,8 @@ const getDisplayValue = (val: string | boolean | number) => {
               </span>
             </InfoRow>
             <InfoRow :label="t('firmware_version')">
-              <span class="dashboard-firmwareRow">
-                <span class="mono">{{ info?.firmware }}<template v-if="latestVersion && !hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest') }})</span></template><template v-else-if="hasUpdate"> <span class="muted firmware-hint">({{ t('firmware_latest_label') }} <span class="mono">{{ latestVersion }}</span>)</span></template></span>
+              <span class="firmware-row">
+                <span class="mono">{{ info?.firmware }}<template v-if="firmwareNote"><span class="muted firmware-note"> ({{ firmwareNote }})</span></template></span>
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
               </span>
             </InfoRow>
@@ -150,15 +154,15 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">{{ t('port_1') }}</div>
-              <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
-                <SettingsIcon />
+              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/settings')">
+                <GearIcon />
               </button>
             </div>
-            <span class="pill ok" v-if="info!.rs485_1.is_busy"><span class="dot" />{{ t('active') }}</span>
-            <span class="pill muted" v-else>{{ t('inactive') }}</span>
+            <span v-if="info!.rs485_1.is_busy" class="pill ok"><span class="dot" />{{ t('active') }}</span>
+            <span v-else class="pill muted">{{ t('inactive') }}</span>
           </div>
           <div class="card-body">
-            <RsStatus title="RS-485 1" :info="info!.rs485_1" :settings="settings!.rs485_1" />
+            <RsStatus :title="t('rs_status_1')" :info="info!.rs485_1" :settings="settings!.rs485_1" />
           </div>
         </section>
 
@@ -166,15 +170,15 @@ const getDisplayValue = (val: string | boolean | number) => {
           <div class="card-header">
             <div class="card-title-row">
               <div class="title">{{ t('port_2') }}</div>
-              <button class="card-edit-btn" @click="router.push('/settings')" :title="t('edit_settings')">
-                <SettingsIcon />
+              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/settings')">
+                <GearIcon />
               </button>
             </div>
-            <span class="pill ok" v-if="info!.rs485_2.is_busy"><span class="dot" />{{ t('active') }}</span>
-            <span class="pill muted" v-else>{{ t('inactive') }}</span>
+            <span v-if="info!.rs485_2.is_busy" class="pill ok"><span class="dot" />{{ t('active') }}</span>
+            <span v-else class="pill muted">{{ t('inactive') }}</span>
           </div>
           <div class="card-body">
-            <RsStatus title="RS-485 2" :info="info!.rs485_2" :settings="settings!.rs485_2" />
+            <RsStatus :title="t('rs_status_2')" :info="info!.rs485_2" :settings="settings!.rs485_2" />
           </div>
         </section>
       </div>
@@ -184,15 +188,27 @@ const getDisplayValue = (val: string | boolean | number) => {
 </template>
 
 <style>
-.dashboard-uptimeValue {
+.uptime-value {
   display: flex;
   gap: 4px;
 }
-.dashboard-firmwareRow {
+.firmware-row {
   display: flex;
   align-items: center;
   gap: 8px;
   justify-content: flex-end;
+}
+.firmware-update-link {
+  font-size: 11.5px;
+  color: var(--color-primary, #2563eb);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.firmware-update-link:hover {
+  text-decoration: underline;
+}
+.firmware-note {
+  font-size: 11.5px;
 }
 </style>
 
@@ -230,15 +246,19 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Settings",
     "uptime": "Uptime",
     "uptime_days": "- | {n} day | {n} days | {n} days",
-    "uptime_hours": "less than an hour | {n} hour | {n} hours | {n} hours",
-    "uptime_minutes": "minute | {n} minute | {n} minutes | {n} minutes",
-    "uptime_seconds": "second | {n} second | {n} seconds | {n} seconds",
+    "uptime_hours": "less than an hour | {n} h | {n} h | {n} h",
+    "uptime_minutes": "{n} min",
     "firmware_version": "Firmware",
-    "firmware_latest": "up to date",
-    "firmware_latest_label": "latest",
+    "firmware_checking": "checking for updates…",
+    "firmware_in_channel": "in {channel}: {v}",
+    "firmware_up_to_date": "up to date",
+    "firmware_check_failed": "update check unavailable",
+    "firmware_channels_unavailable": "no update channels published for this board yet",
     "firmware_update_btn": "Update",
     "port_1": "RS-485 · Port 1",
-    "port_2": "RS-485 · Port 2"
+    "port_2": "RS-485 · Port 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   },
   "ru": {
     "title": "Обзор",
@@ -272,15 +292,19 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Настройки",
     "uptime": "Время работы",
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
-    "uptime_hours": "- | {n} час | {n} часа | {n} часов",
-    "uptime_minutes": "минута | {n} минута | {n} минуты | {n} минут",
-    "uptime_seconds": "секунда | {n} секунда | {n} секунды | {n} секунд",
+    "uptime_hours": "- | {n} ч | {n} ч | {n} ч",
+    "uptime_minutes": "{n} мин",
     "firmware_version": "Прошивка",
-    "firmware_latest": "актуальная",
-    "firmware_latest_label": "последняя",
+    "firmware_checking": "проверка обновлений…",
+    "firmware_in_channel": "в канале {channel}: {v}",
+    "firmware_up_to_date": "актуальная",
+    "firmware_check_failed": "проверка обновлений недоступна",
+    "firmware_channels_unavailable": "для этой платы каналы обновлений пока не опубликованы",
     "firmware_update_btn": "Обновить",
     "port_1": "RS-485 · Порт 1",
-    "port_2": "RS-485 · Порт 2"
+    "port_2": "RS-485 · Порт 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   },
   "kk": {
     "title": "Шолу",
@@ -314,15 +338,19 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Баптаулар",
     "uptime": "Жұмыс уақыты",
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
-    "uptime_hours": "бір сағаттан аз | {n} сағат | {n} сағат | {n} сағат",
-    "uptime_minutes": "минут | {n} минут | {n} минут | {n} минут",
-    "uptime_seconds": "секунд | {n} секунд | {n} секунд | {n} секунд",
+    "uptime_hours": "- | {n} сағ | {n} сағ | {n} сағ",
+    "uptime_minutes": "{n} мин",
     "firmware_version": "Бағдарлама",
-    "firmware_latest": "өзекті",
-    "firmware_latest_label": "соңғы",
+    "firmware_checking": "жаңартулар тексерілуде…",
+    "firmware_in_channel": "{channel} арнасында: {v}",
+    "firmware_up_to_date": "өзекті",
+    "firmware_check_failed": "жаңарту тексерісі қолжетімсіз",
+    "firmware_channels_unavailable": "бұл тақта үшін жаңарту арналары әзірге жарияланбаған",
     "firmware_update_btn": "Жаңарту",
     "port_1": "RS-485 · Порт 1",
-    "port_2": "RS-485 · Порт 2"
+    "port_2": "RS-485 · Порт 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   },
   "it": {
     "title": "Dashboard",
@@ -356,15 +384,19 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Impostazioni",
     "uptime": "Tempo di attività",
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
-    "uptime_hours": "meno di un'ora | {n} ora | {n} ore | {n} ore",
-    "uptime_minutes": "minuto | {n} minuto | {n} minuti | {n} minuti",
-    "uptime_seconds": "secondo | {n} secondo | {n} secondi | {n} secondi",
+    "uptime_hours": "- | {n} h | {n} h | {n} h",
+    "uptime_minutes": "{n} min",
     "firmware_version": "Firmware",
-    "firmware_latest": "aggiornato",
-    "firmware_latest_label": "ultima",
+    "firmware_checking": "controllo aggiornamenti…",
+    "firmware_in_channel": "nel canale {channel}: {v}",
+    "firmware_up_to_date": "aggiornato",
+    "firmware_check_failed": "controllo aggiornamenti non disponibile",
+    "firmware_channels_unavailable": "per questa scheda i canali di aggiornamento non sono ancora pubblicati",
     "firmware_update_btn": "Aggiorna",
     "port_1": "RS-485 · Porta 1",
-    "port_2": "RS-485 · Porta 2"
+    "port_2": "RS-485 · Porta 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   },
   "de": {
     "title": "Übersicht",
@@ -398,15 +430,19 @@ const getDisplayValue = (val: string | boolean | number) => {
     "edit_settings": "Einstellungen",
     "uptime": "Betriebszeit",
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
-    "uptime_hours": "weniger als eine Stunde | {n} Stunde | {n} Stunden | {n} Stunden",
-    "uptime_minutes": "Minute | {n} Minute | {n} Minuten | {n} Minuten",
-    "uptime_seconds": "Sekunde | {n} Sekunde | {n} Sekunden | {n} Sekunden",
+    "uptime_hours": "- | {n} h | {n} h | {n} h",
+    "uptime_minutes": "{n} min",
     "firmware_version": "Firmware",
-    "firmware_latest": "aktuell",
-    "firmware_latest_label": "neueste",
+    "firmware_checking": "Update-Prüfung läuft…",
+    "firmware_in_channel": "im Kanal {channel}: {v}",
+    "firmware_up_to_date": "aktuell",
+    "firmware_check_failed": "Update-Prüfung nicht verfügbar",
+    "firmware_channels_unavailable": "für diese Platine sind noch keine Update-Kanäle veröffentlicht",
     "firmware_update_btn": "Aktualisieren",
     "port_1": "RS-485 · Port 1",
-    "port_2": "RS-485 · Port 2"
+    "port_2": "RS-485 · Port 2",
+    "rs_status_1": "RS-485 1",
+    "rs_status_2": "RS-485 2"
   }
 }
 </i18n>

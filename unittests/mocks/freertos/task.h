@@ -49,3 +49,10 @@ void vTaskDelay(const TickType_t xTicksToDelay);
 
 #define pdMS_TO_TICKS(ms)   mock_pdMS_TO_TICKS(ms)
 TickType_t mock_pdMS_TO_TICKS(TickType_t ms);
+
+TickType_t xTaskGetTickCount(void);
+
+/* Controllable tick counter for unit tests that need simulated time progression.
+ * Call mock_set_tick_count() to advance the simulated clock before assertions. */
+extern TickType_t mock_tick_count;
+void mock_set_tick_count(TickType_t ticks);

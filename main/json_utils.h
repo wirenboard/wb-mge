@@ -5,7 +5,7 @@
 
 // Buffer size for HTTP requests
 // Use a reasonable default size for JSON requests
-#define JSON_UTILS_REQ_RECV_BUF_SIZE 1024
+#define JSON_UTILS_REQ_RECV_BUF_SIZE 4096
 
 /**
  * @brief Receive and parse JSON from HTTP request
@@ -23,7 +23,18 @@ cJSON *json_utils_receive_json(httpd_req_t *req);
 void json_utils_send_response(httpd_req_t *req, cJSON *req_json, cJSON *resp_json);
 
 /**
- * @brief Send error JSON response
+ * @brief Send error JSON response with an explicit HTTP status line
+ * @param req HTTP request handle
+ * @param status HTTP status line, e.g. "409 Conflict". Must be a string literal or
+ *               otherwise outlive the request: esp_http_server stores the pointer.
+ * @param error_message Error message string
+ * @return ESP_OK on success
+ */
+esp_err_t json_utils_send_error_status(httpd_req_t *req, const char *status,
+                                       const char *error_message);
+
+/**
+ * @brief Send error JSON response with status 400 Bad Request
  * @param req HTTP request handle
  * @param error_message Error message string
  * @return ESP_OK on success

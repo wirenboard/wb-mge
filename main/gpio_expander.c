@@ -143,4 +143,9 @@ esp_err_t gpio_expander_get_level(uint32_t pin_num_mask, uint32_t *level_mask)
         i2c_handle = NULL;
         gpio_expander_mutex = NULL;
     }
+
+    void gpio_expander_test_set_mutex_null(void)
+    {
+        gpio_expander_mutex = NULL;
+    }
 #endif

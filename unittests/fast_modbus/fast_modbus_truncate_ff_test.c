@@ -16,7 +16,7 @@ void tearDown(void)
 
 }
 
-// Тестируем функцию fast_modbus_truncate_ff с буфером без байтов 0xFF
+// Test the fast_modbus_truncate_ff function with a buffer containing no 0xFF bytes
 void test_fast_modbus_truncate_ff_no_ff_bytes(void)
 {
     LOG_MESSAGE();
@@ -35,7 +35,7 @@ void test_fast_modbus_truncate_ff_no_ff_bytes(void)
     TEST_ASSERT_EQUAL(0x01, *data_ptr);
 }
 
-// Тестируем функцию fast_modbus_truncate_ff с ведущими байтами 0xFF
+// Test the fast_modbus_truncate_ff function with leading 0xFF bytes
 void test_fast_modbus_truncate_ff_with_leading_ff(void)
 {
     LOG_MESSAGE();
@@ -53,7 +53,7 @@ void test_fast_modbus_truncate_ff_with_leading_ff(void)
     TEST_ASSERT_EQUAL(0x01, *data_ptr);
 }
 
-// Тестируем функцию fast_modbus_truncate_ff, где все байты 0xFF
+// Test the fast_modbus_truncate_ff function where all bytes are 0xFF
 void test_fast_modbus_truncate_ff_all_ff_bytes(void)
 {
     LOG_MESSAGE();
@@ -70,7 +70,7 @@ void test_fast_modbus_truncate_ff_all_ff_bytes(void)
     TEST_ASSERT_EQUAL_PTR(&test_data[5], data_ptr);
 }
 
-// Тестируем функцию fast_modbus_truncate_ff с пустым буфером
+// Test the fast_modbus_truncate_ff function with an empty buffer
 void test_fast_modbus_truncate_ff_empty_buffer(void)
 {
     LOG_MESSAGE();
@@ -87,7 +87,7 @@ void test_fast_modbus_truncate_ff_empty_buffer(void)
     TEST_ASSERT_EQUAL_PTR(test_data, data_ptr);
 }
 
-// Тестируем функцию fast_modbus_truncate_ff со смешанным паттерном 0xFF
+// Test the fast_modbus_truncate_ff function with a mixed 0xFF pattern
 void test_fast_modbus_truncate_ff_mixed_pattern(void)
 {
     LOG_MESSAGE();
@@ -105,7 +105,7 @@ void test_fast_modbus_truncate_ff_mixed_pattern(void)
     TEST_ASSERT_EQUAL(0x01, *data_ptr);
 }
 
-// Тестируем функцию fast_modbus_truncate_ff с реальным примером Modbus RTU
+// Test the fast_modbus_truncate_ff function with a real Modbus RTU example
 void test_fast_modbus_truncate_ff_real_modbus_example(void)
 {
     LOG_MESSAGE();
@@ -127,7 +127,7 @@ void test_fast_modbus_truncate_ff_real_modbus_example(void)
     TEST_ASSERT_EQUAL(0x46, *(data_ptr + 1));
 }
 
-// Тестируем функцию fast_modbus_truncate_ff с буфером, содержащим только один байт 0xFF
+// Test the fast_modbus_truncate_ff function with a buffer containing only one 0xFF byte
 void test_fast_modbus_truncate_ff_single_ff_byte(void)
 {
     LOG_MESSAGE();
@@ -144,7 +144,7 @@ void test_fast_modbus_truncate_ff_single_ff_byte(void)
     TEST_ASSERT_EQUAL_PTR(&test_data[1], data_ptr);
 }
 
-// Тестируем функцию fast_modbus_truncate_ff с буфером, содержащим 15 байт 0xFF
+// Test the fast_modbus_truncate_ff function with a buffer containing 15 leading 0xFF bytes
 void test_fast_modbus_truncate_ff_many_leading_ff(void)
 {
     LOG_MESSAGE();
@@ -169,6 +169,25 @@ void test_fast_modbus_truncate_ff_many_leading_ff(void)
     TEST_ASSERT_EQUAL(0x01, *data_ptr);
 }
 
+// Test that the loop stops at the logical len boundary even when 0xFF bytes follow in memory
+void test_fast_modbus_truncate_ff_all_ff_stops_at_len_boundary(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test fast_modbus_truncate_ff - stops at len boundary");
+    LOG_MESSAGE();
+
+    // Buffer holds 4 bytes; only the first 2 are within the logical length.
+    // Bytes [2] and [3] are 0xFF beyond len: the loop must NOT consume them.
+    uint8_t test_data[] = {0xFF, 0xFF, 0xFF, 0xFF};
+    uint8_t *data_ptr = test_data;
+    size_t len = 2;
+
+    size_t result_len = fast_modbus_truncate_ff(&data_ptr, len);
+
+    TEST_ASSERT_EQUAL(0, result_len);
+    TEST_ASSERT_EQUAL_PTR(&test_data[2], data_ptr);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -181,6 +200,7 @@ int main(void)
     RUN_TEST(test_fast_modbus_truncate_ff_mixed_pattern);
     RUN_TEST(test_fast_modbus_truncate_ff_real_modbus_example);
     RUN_TEST(test_fast_modbus_truncate_ff_many_leading_ff);
+    RUN_TEST(test_fast_modbus_truncate_ff_all_ff_stops_at_len_boundary);
 
     return UNITY_END();
 }

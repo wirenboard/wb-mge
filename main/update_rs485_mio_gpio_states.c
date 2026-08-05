@@ -1,13 +1,17 @@
-#include "rs485_control.h"
-#include "mio_control.h"
 #include "setting_items.h"
+#include "bridge/port_manager.h"
 #include "esp_log.h"
 
 #include <stdbool.h>
 
+#include "rs485_control.h"
+#include "mio_control.h"
+
 static const char *TAG = "update_rs485_mio_gpio_states";
 
-// Updates the state of pull-ups, power and RS485 terminators according to current settings
+// Updates the state of pull-ups, power and RS485 terminators according to current settings.
+// On hardware this drives the TCA9535 GPIO expander; in QEMU it drives the virtual
+// expander shadow (see virtual_io_qemu.c), so it runs in both builds.
 void update_rs485_control(void)
 {
     bool pullup_1_enabled = setting_items_read_bool(KEY_485_FAIL_SAFE_1);
@@ -25,10 +29,30 @@ void update_rs485_control(void)
     ESP_LOGI(TAG, "RS485 control updated");
 }
 
+// Updates the IO bus (MIO) enable state according to current settings.
+// On hardware this drives the TCA9535 GPIO expander; in QEMU it drives the virtual
+// expander shadow (see virtual_io_qemu.c), so it runs in both builds.
 void update_io_bus_control(void)
 {
     bool io_bus_enabled = setting_items_read_bool(KEY_IO_BUS_ENABLED);
 
     mio_control_io_bus_onoff(io_bus_enabled);
     ESP_LOGI(TAG, "IO bus control updated: %s", io_bus_enabled ? "enabled" : "disabled");
+}
+
+// Applies the tx_disabled setting to the running serial ports for both RS-485 ports.
+// It does not touch the GPIO expander, but it is not a purely software flag either:
+// down in serial_set_tx_disabled() it takes the port's dir_pin (the SoC-side DE/RE line,
+// SERIAL_IO_PIN_1/2) away from the UART and drives it LOW; the re-enable direction hands
+// back not only that dir_pin but also the port's TX and RX pins (SERIAL_OUTPUT_PIN_1/2,
+// SERIAL_INPUT_PIN_1/2), which uart_set_pin() has to re-apply explicitly. Callers that
+// share any of those pins with something else must not call this while that other owner
+// is active: the factory clock_out test owns both DE lines as plain GPIOs for its whole
+// run (port 1 raised so its transceiver transmits, port 2 held LOW so its transceiver
+// stays silent), and it owns both TX pins through the LEDC that generates the waveform —
+// so the LEDC is a conflicting owner too, on the re-enable path.
+void update_serial_tx_disabled(void)
+{
+    port_manager_set_tx_disabled(0, setting_items_read_bool(KEY_485_TX_DISABLED_1));
+    port_manager_set_tx_disabled(1, setting_items_read_bool(KEY_485_TX_DISABLED_2));
 }

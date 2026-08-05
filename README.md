@@ -5,10 +5,139 @@ Wiren Board Multiprotocol Gateway
 
 WB-MGE is designed to connect devices with RS-485 interface and WBIO I/O side modules to an automation server via Ethernet or Wi-Fi.
 
+All functions described below are configured and monitored through the built-in web interface:
+
+![WB-MGE web interface — Dashboard](docs/images/dashboard.png)
+
 Two modes are available for each port:
 
- - Modbus TCP — for Modbus devices only
- - Transparent gateway — suitable for any protocols running over RS-485.
+ - **Modbus TCP** — for Modbus devices only: a full **Modbus TCP ↔ Modbus RTU** converter.
+   Toward the network the gateway acts as a Modbus TCP server, and on the RS-485 bus as a Modbus
+   RTU master: it strips the MBAP header from the TCP request, builds an RTU frame (appends the
+   CRC), polls the device and wraps the RTU reply back into Modbus TCP.
+ - **Transparent gateway** — suitable for any protocols running over RS-485; bytes are forwarded
+   as-is, without frame parsing. It can run as a TCP **server** (waits for incoming connections)
+   or a TCP **client** (connects out to a remote `ip:port`).
+
+   ![Per-port mode — Modbus TCP and Transparent bridge](docs/images/tcp-gateway.png)
+
+   *Each port is switched independently between **Modbus TCP** and **Transparent bridge**
+   (server/client) on the TCP gateway page.*
+
+On top of either mode, each port can additionally enable:
+
+ - **Cache (Cache TCP)** — passively tracks the Modbus traffic on the bus, stores the latest
+   register and coil values and serves them over a dedicated Modbus TCP server without
+   re-polling the devices (a "from cache" reply). Also exposed via `GET /cache/json` and `/cache/csv`.
+
+   ![Cache — Register map page](docs/images/register-map.png)
+
+   *The **Register map** page shows the cache auto-built from observed bus traffic, the value
+   timeout and reset controls, CSV/JSON export, and the Modbus TCP server (port 504) that replies
+   straight from cache.*
+
+ - **Sniffer** — captures RS-485 traffic in both directions, decodes Modbus frames and streams
+   them to the web UI over WebSocket for diagnostics.
+
+   ![Sniffer — packet capture and Send packet tool](docs/images/sendpacket-read.png)
+
+   *Press **Start** to stream live decoded frames (filter by Slave ID / function code, click a
+   row to decode it); the **Send packet** tool builds and injects read (FC01–FC04) and write
+   (FC05/06/15/16) requests with an automatically computed CRC and a live frame preview.*
+
+Separately, both ports together can run as a:
+
+ - **Repeater** — a transparent serial-to-serial passthrough that links the two RS-485 ports
+   directly to each other instead of to the network: bytes received on Port 1 are forwarded to
+   Port 2 and vice versa, as-is, without frame parsing. It is used to extend the RS-485 line and
+   restore signal integrity. The mode activates only when **both** ports are switched to repeater
+   mode; the *Repeater* page of the web UI shows live forwarding statistics — bytes forwarded in
+   each direction, dropped bytes per port, uptime and average throughput (the raw counters are
+   also exposed under the `repeater` object of `GET /info`). **Warning:** while the repeater is
+   active, the two segments behave as if they were electrically connected — if a master is present
+   on both sides, the buses collide and communication fails.
+
+   ![Repeater — Port 1 ↔ Port 2 bridge](docs/images/repeater.png)
+
+   *The Repeater page shows the enable toggle and live forwarding statistics; the mode activates
+   only when both ports are switched to repeater mode.*
+
+## Device Register Map (Unit ID 255)
+
+The gateway itself answers Modbus polls on its own address **Unit ID 255 (0xFF)** — per the
+Modbus Messaging Implementation Guide this address is reserved for the TCP gateway itself.
+It works in both **Modbus TCP** and **Cache TCP** modes, regardless of cache state (in Modbus
+TCP mode such a request is NOT forwarded to RS-485). Read functions **FC03** and **FC04** are
+supported.
+
+### Registers (FC03/FC04, read-only)
+
+| Address (dec) | Address (hex) | Regs | Type   | Description                                                         |
+|---------------|---------------|------|--------|---------------------------------------------------------------------|
+| 104–105       | 0x0068–0x0069 | 2    | u32    | Uptime since boot, seconds                                          |
+| 121           | 0x0079        | 1    | u16    | Current supply voltage, mV                                          |
+| 200–219       | 0x00C8–0x00DB | 20   | string | Device model                                                        |
+| 220–244       | 0x00DC–0x00F4 | 25   | string | Commit hash and branch the firmware was built from                  |
+| 250–265       | 0x00FA–0x0109 | 16   | string | Firmware version (string)                                           |
+| 266–267       | 0x010A–0x010B | 2    | u32    | Serial number generation scheme (4 = derived from the 48-bit MAC)   |
+| 268–271       | 0x010C–0x010F | 4    | u64    | Serial number, MSW-first (the 48-bit MAC in the low bits)           |
+| 290–301       | 0x0122–0x012D | 12   | string | Firmware signature                                                  |
+| 320           | 0x0140        | 1    | u16    | Firmware version: MAJOR                                             |
+| 321           | 0x0141        | 1    | u16    | Firmware version: MINOR                                             |
+| 322           | 0x0142        | 1    | u16    | Firmware version: PATCH                                             |
+| 323           | 0x0143        | 1    | s16    | Firmware version: SUFFIX (+N for `+wbN`, −N for `-rcN`, 0 if none)  |
+| 324–325       | 0x0144–0x0145 | 2    | u32    | Numeric firmware version (little-endian word order: 324 = low word) |
+| 326–327       | 0x0146–0x0147 | 2    | u32    | Numeric firmware version (big-endian word order: 326 = high word)   |
+| 528–529       | 0x0210–0x0211 | 2    | u32    | Packets processed (since last cache reset)                          |
+| 530–531       | 0x0212–0x0213 | 2    | u32    | Seconds since the last packet on the bus                            |
+| 532           | 0x0214        | 1    | u16    | Devices currently on the bus (unique slave_ids in cache)            |
+| 533           | 0x0215        | 1    | u16    | Average bus poll rate, polls/min                                    |
+| 534           | 0x0216        | 1    | u16    | Cache value timeout, seconds                                        |
+| 65505         | 0xFFE1        | 1    | u16    | Total RAM, KB                                                       |
+| 65506         | 0xFFE2        | 1    | u16    | Used RAM, KB                                                        |
+| 65507         | 0xFFE3        | 1    | u16    | Free RAM, KB                                                        |
+| 65508         | 0xFFE4        | 1    | u16    | Last MCU reboot reason                                              |
+
+### Register map notes
+
+- **FC03 and FC04 share one address space**: every address in the table answers on both function
+  codes with the same value, which is why one table covers both. For cross-referencing the Wiren
+  Board common register map: that map files the firmware signature (290–301) as holding registers
+  and every other field listed here as an input register.
+- **Strings (model, firmware version, signature)**: MEM_8 packing — 1 character per register in
+  the low byte, high byte = 0x00; the tail is zero-padded.
+- **Git info**: 2 characters per register, first character in the low byte; the tail is zero-padded.
+- **Multi-register integers** (except 324–325) use big-endian word order — the most significant
+  word is at the lower register address.
+- **Numeric version** is computed per the Wiren Board rule
+  ([wiki](https://wiki.wirenboard.com/wiki/Modbus-hardware-version)):
+  `if (SUFFIX >= 0) enc = SUFFIX + 128; else enc = -1 - SUFFIX;`
+  `VERSION = (MAJOR << 24) | (MINOR << 16) | (PATCH << 8) | enc`.
+- **RAM block** (65505–65507) follows the Wiren Board common register map (total / used / free),
+  but is reported in **kilobytes**, not the bytes that map specifies: an ESP32 heap is hundreds of
+  KB and a byte count would sit saturated at 0xFFFF in a u16. "Total RAM" is the total size of the
+  internal **heap**, not the full SRAM of the chip, so it reads well below the datasheet figure.
+  Of the WB diagnostics block (65504–65508), register **65504** — the "maximum used stack" slot —
+  is the only one deliberately not implemented: this firmware is multi-tasking and has no single
+  stack to report.
+- **Reboot reason** (65508): 1 — LPWR (brownout / wake from sleep), 2 — WWDG (interrupt
+  watchdog), 3 — IWDG (task / generic watchdog), 4 — SFT (software reset / panic), 5 — POR
+  (power-on), 6 — PIN (external reset), 0 — unknown. Mapped from `esp_reset_reason()`.
+- **Bus statistics** (528–534) come from the multimaster cache; with the cache inactive these
+  fields read as 0. The block sits at 528 to stay clear of the Wiren Board common register map —
+  in particular of the bootloader-version field, which is **8 holding registers from 330**
+  (330–337, `modbus_client -t0x03 -r330 -c8`) and is left undefined here.
+- Reading a range where at least one address is undefined returns exception **0x02** (illegal
+  data address); a function other than FC03/FC04 returns exception **0x01** (illegal function).
+
+## Manual UI Test Procedures
+
+Manual UI verification scenarios. Each document contains step-by-step procedures with
+expected outcomes.
+
+- [docs/ui_smoke_test.md](docs/ui_smoke_test.md) — high-level visual smoke test of the
+  whole web UI: every menu page opens, buttons react, forms accept input, mobile
+  viewport works. Russian.
 
 ## Manual Build Instructions
 
@@ -20,53 +149,105 @@ Two modes are available for each port:
 
 **Note:** These instructions are for Debian/Ubuntu systems
 
-### 0. Install Node.js 20.x
+### 1. Install Node.js 20.x
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
-### 1. Install ESP-IDF
+### 2. Install EIM (ESP-IDF Installation Manager)
 
+Debian:
 ```bash
-# Clone ESP-IDF repository
-git clone --branch v5.4 --single-branch --depth 1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-idf.git
-
-# Run the installation script
-cd esp-idf
-./install.sh
-
-# Set up environment variables
-source export.sh
+echo "deb [trusted=yes] https://dl.espressif.com/dl/eim/apt/ stable main" | sudo tee /etc/apt/sources.list.d/espressif.list
+sudo apt update
+sudo apt install eim-cli
 ```
 
-For MacOS:
-
+RPM-Based Linux:
 ```bash
-# Install Espressif Installation Manager
+sudo tee /etc/yum.repos.d/espressif-eim.repo << 'EOF'
+[eim]
+name=ESP-IDF Installation Manager
+baseurl=https://dl.espressif.com/dl/eim/rpm/$basearch
+enabled=1
+gpgcheck=0
+EOF
+
+sudo dnf install eim-cli
+```
+
+MacOS:
+```bash
+brew tap espressif/eim
 brew install eim
-
-# Install ESP-IDF
-eim install -i v5.4
-
-# Activate the environment
-source ~/.espressif/tools/activate_idf_v5.4.sh
 ```
 
-### 2. Clone the Repository
+
+### 3. Install ESP-IDF
+
+
+```bash
+eim install -i v5.4.4
+```
+
+**Note:** the ESP-IDF version is pinned in four places, and they must all agree — plus the IDF actually installed must match them:
+
+| Where | What it pins |
+| ----- | ------------ |
+| `EIM_IDF_VERSION` in `Makefile` | the version local/EIM builds activate and expect (`v5.4.4`) |
+| `FROM espressif/idf:<tag>` in `Dockerfile` | the version CI and container builds use |
+| `idf` version range in `main/idf_component.yml` | the versions the component manager accepts (`>=5.4.4,<5.5.0`) |
+| `idf` version in `dependencies.lock` | the version the checked-in lock was resolved against (`5.4.4`) |
+
+Two mechanical checks enforce this, and each one has its own escape hatch that disables only itself:
+
+- `make check-idf-pins` compares `EIM_IDF_VERSION` with every `FROM espressif/idf:` tag in `Dockerfile` and with the `idf` version in `dependencies.lock`. It runs automatically before every firmware build (hardware, QEMU, and `make flash`). `IDF_PINS_CHECK=0` skips it, printing a warning.
+- `scripts/idf_env.sh` compares the IDF actually in use with `EIM_IDF_VERSION` on every recipe that touches the IDF. `IDF_VERSION_CHECK=0` skips that comparison only — `IDF_PATH` must still point at a real IDF checkout.
+
+The range in `main/idf_component.yml` is not a third check: it is a constraint the component manager evaluates only when it actually re-resolves the dependencies. With `dependencies.lock` committed and the manifest untouched it is never re-evaluated, so it does **not** catch a build on an off-pin IDF. It bites when a re-resolve does happen — no lock, an edited manifest, a changed set of direct dependencies — and then rejects an IDF outside the range with `no versions of idf match`. There is no environment override for it; the range is widened in the file.
+
+**Building against a different ESP-IDF** (e.g. on v5.4.2, to reproduce the `uart_set_pin` regression that v5.4.2/v5.4.3 and v5.5/v5.5.1 carry) therefore takes three steps:
+
+```bash
+# 1. Install the version you want to build against
+eim install -i v5.4.2
+
+# 2. Widen the range in main/idf_component.yml by hand, e.g.
+#      idf:
+#        version: '>=5.4.2,<5.5.0'
+#    Editing the manifest is itself what forces a dependency re-resolve (its hash
+#    changes), and that re-resolve is the only moment the range is checked — so
+#    the range must already cover the IDF you are moving to, or the re-resolve
+#    you just triggered stops with "no versions of idf match".
+
+# 3. Build with the pin override; IDF_PINS_CHECK=0 waives the cross-check
+#    against Dockerfile/dependencies.lock, which still name the pinned version.
+make IDF_PINS_CHECK=0 EIM_IDF_VERSION=v5.4.2 build-idf-project
+```
+
+Such a build re-resolves the dependencies and rewrites `dependencies.lock`; revert it together with `main/idf_component.yml` when done. Moving the project to a new IDF for good is the same thing done properly: update all four pins (and this README), and no override is needed.
+
+### 4. Clone the Repository
 
 ```bash
 git clone git@github.com:wirenboard/wb-mge.git
 cd wb-mge
 ```
 
-### 3. Build the Project
+### 5. Build the Project
 
-For a complete build (unit tests + frontend + firmware):
+For a complete build (frontend + firmware):
 
 ```bash
 make
+```
+
+To run all tests (C unit tests + frontend tests):
+
+```bash
+make test
 ```
 
 If building components separately, first build the frontend:
@@ -79,6 +260,50 @@ Then build the firmware:
 
 ```bash
 make build-idf-project
+```
+
+## Make Dependency Graph
+
+```mermaid
+graph TD
+    B["🔨 Full build"] --> all
+    T["🧪 Run all tests"] --> test
+    F["⚡ Flash firmware"] --> flash
+    FA["⚡ Flash all partitions"] --> flash-all
+    M["🔍 Device console"] --> monitor
+    O["🌐 OTA update"] --> ota-flash
+    C["🧹 Clean artifacts"] --> clean
+
+    all --> build-frontend
+    all --> build-idf-project
+    build-idf-project --> prepare_release
+    test --> unittests
+    test --> test-frontend
+```
+
+```mermaid
+graph TD
+    BQ["🔨 Build for QEMU"] --> qemu-build
+    W["🌐 QEMU web UI at localhost:8080"] --> qemu-web
+    T["🧪 Run API tests in QEMU"] --> qemu-test
+    R["⚡ Run QEMU basic mode"] --> qemu-run
+    MC["🔍 QEMU console"] --> qemu-monitor
+    CQ["🧹 Clean QEMU artifacts"] --> qemu-clean
+
+    qemu-build --> build-frontend
+    qemu-build --> build-idf-project-qemu
+
+    qemu-web --> qemu-create-flash-image
+    qemu-web --> qemu-create-efuse-image
+    qemu-run --> qemu-create-flash-image
+    qemu-run --> qemu-create-efuse-image
+    qemu-test --> qemu-create-flash-image
+    qemu-test --> qemu-create-efuse-image
+    qemu-create-flash-image --> build-idf-project-qemu
+    build-idf-project-qemu --> qemu-apply-idf-patches
+    build-idf-project --> apply-idf-patches
+    qemu-apply-idf-patches --> check-idf-pins
+    apply-idf-patches --> check-idf-pins
 ```
 
 ## Building with Docker
@@ -98,7 +323,7 @@ docker build -t wb-mge-builder .
 ```
 
 This will create a Docker image with:
-- ESP-IDF v5.4
+- ESP-IDF v5.4.4
 - Node.js 20.x
 - All necessary build tools
 
@@ -120,17 +345,25 @@ You can build the project without entering the container:
 docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 ```
 
+> **Note:** After running `docker run … make`, artifacts in `build/` and `release/` are owned by root.
+> Use `sudo make clean` or `sudo rm -rf build release` before any subsequent host build.
 
 ## Flashing the Device
 
 ```bash
-idf.py -p /dev/ttyACM* flash
+make flash
+```
+
+To flash all partitions explicitly (bootloader, partition table, OTA data, app):
+
+```bash
+make flash-all
 ```
 
 ## Connecting to Device Console
 
 ```bash
-idf.py monitor
+make monitor
 ```
 
 To disconnect from the monitor, press `Ctrl+]`.
@@ -151,3 +384,158 @@ Remove Docker image:
 ```bash
 docker rmi wb-mge-builder
 ```
+
+## Test infrastructure setup from scratch (Debian 13)
+
+Steps to provision a clean Debian 13 (trixie) host to build the QEMU firmware and run the `api_tests/` suite end-to-end. Performed as `root`.
+
+### 1. OS packages
+
+```bash
+apt-get update
+apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg lsb-release \
+    git make cmake ninja-build \
+    python3 python3-pip python3-venv \
+    libusb-1.0-0 libssl-dev libffi-dev \
+    libsdl2-2.0-0 libpixman-1-0 libslirp0 libglib2.0-0 \
+    file flex bison gperf wget xz-utils dfu-util
+```
+
+### 2. Node.js 20.x
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+```
+
+### 3. ESP-IDF v5.4.4 via EIM (Espressif Installation Manager)
+
+Add the official EIM apt repository and install `eim-cli`:
+
+```bash
+echo "deb [trusted=yes] https://dl.espressif.com/dl/eim/apt/ stable main" \
+    > /etc/apt/sources.list.d/espressif.list
+apt-get update
+apt-get install -y eim-cli
+```
+
+Install ESP-IDF (uses `/var/tmp/eim-work` as scratch space to avoid filling `/tmp`):
+
+```bash
+mkdir -p /var/tmp/eim-work
+TMPDIR=/var/tmp/eim-work eim install --idf-versions v5.4.4 --target esp32 --non-interactive true -v
+```
+
+After install, ESP-IDF lives in `/root/.espressif/v5.4.4/esp-idf` and is activated with:
+
+```bash
+source /root/.espressif/tools/activate_idf_v5.4.4.sh
+```
+
+### 4. QEMU xtensa
+
+EIM does not install QEMU. Use `idf_tools.py` from the activated environment:
+
+```bash
+source /root/.espressif/tools/activate_idf_v5.4.4.sh
+python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
+```
+
+This places the binary at `/root/.espressif/tools/tools/qemu-xtensa/esp_develop_*/qemu/bin/qemu-system-xtensa`, which the `make qemu-*` targets discover automatically.
+
+### 5. Clone the repository
+
+```bash
+cd /root
+git clone https://github.com/wirenboard/wb-mge.git
+cd wb-mge
+```
+
+### 6. Python virtualenv for `api_tests/`
+
+```bash
+python3 -m venv api_tests/.venv
+api_tests/.venv/bin/pip install -r api_tests/requirements.txt
+```
+
+The `make qemu-test` target selects the Python interpreter via `PYTEST_PYTHON`: it prefers
+`api_tests/.venv/bin/python` (developer workflow) and falls back to `/opt/api_tests_venv/bin/python`
+(CI/Docker image, where the venv is pre-baked). Override with `make qemu-test PYTEST_PYTHON=/path/to/python` if needed.
+
+### 7. Build firmware + frontend and run tests
+
+Build everything for QEMU (frontend + firmware with QEMU config):
+
+```bash
+cd /root/wb-mge
+make qemu-build
+```
+
+Generate flash and eFuse images:
+
+```bash
+make qemu-create-flash-image
+make qemu-create-efuse-image
+```
+
+Run the API test suite (boots QEMU, runs pytest, kills QEMU):
+
+```bash
+make qemu-test
+```
+
+Filter tests by name:
+
+```bash
+make qemu-test PYTEST_ARGS="-k test_auth"
+```
+
+Run QEMU with web UI at http://localhost:8080:
+
+```bash
+make qemu-web
+```
+
+If a previous QEMU run left a stale process, kill it before retrying:
+
+```bash
+pkill -9 -f qemu-system-xtensa
+```
+
+### Notes
+
+- Initial run downloads ~2 GB of toolchains/components (EIM + xtensa toolchain + IDF managed components); expect ~10 minutes on a fresh host.
+- ESP-IDF tools occupy ~5 GB under `/root/.espressif`. Allocate at least 15 GB of free disk before starting.
+- `make qemu-create-flash-image` depends on `build-idf-project-qemu` and compiles QEMU firmware (incremental) before merging images. If `build/` contains a hardware build, it automatically runs `fullclean` and rebuilds for QEMU.
+
+## Permanently Disabling Wi-Fi
+
+WB-MGE supports a one-way permanent Wi-Fi disable mode. When activated, the Wi-Fi hardware driver
+is never initialised — the radio stays off across all boots. The Wi-Fi settings section is hidden
+in the web UI. This mode cannot be reversed via the API.
+
+**Activate via API (requires reboot to take effect):**
+
+```bash
+# Authenticate first
+curl -s -c cookies.txt -X POST http://192.168.0.7/auth \
+  -H 'Content-Type: application/json' \
+  -d '{"login":"admin","pass":"admin"}'
+
+# Permanently disable Wi-Fi
+curl -s -b cookies.txt -X POST http://192.168.0.7/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"wifi_perm_disable": true}'
+
+# Reboot to apply
+curl -s -b cookies.txt -X POST http://192.168.0.7/cmd \
+  -H 'Content-Type: application/json' \
+  -d '{"cmd": "reboot"}'
+```
+
+After reboot, `GET /settings` no longer includes a `wifi` group and returns `"wifi_perm_disable": true`.
+Sending `{"wifi_perm_disable": false}` is silently ignored.
+
+> **Warning:** This operation is irreversible via the API. To restore Wi-Fi, perform a factory reset
+> via the Config button (hold 5 seconds) or flash the device firmware again.

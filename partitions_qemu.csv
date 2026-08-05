@@ -1,0 +1,11 @@
+# Partition table for QEMU builds.
+# Includes a factory app partition at 0x10000 (where qemu_mge.bin is flashed)
+# plus ota_0 and ota_1 so esp_ota_get_next_update_partition() works.
+# Keep sizes >= the built firmware image (currently ~812 KB).
+# Name,     Type,   SubType,    Offset,     Size,   Flags
+nvs,        data,   nvs,        0x9000,     16K,
+otadata,    data,   ota,        0xd000,     8K,
+phy_init,   data,   phy,        0xf000,     4K,
+factory,    app,    factory,    0x10000,    1M,
+ota_0,      app,    ota_0,      0x110000,   1M,
+ota_1,      app,    ota_1,      0x210000,   1M,

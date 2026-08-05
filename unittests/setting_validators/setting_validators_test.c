@@ -2,6 +2,45 @@
 #include "console_log.h"
 
 #include "setting_validators.h"
+#include "setting_items.h"
+
+#include "esp_efuse.h"
+#include "esp_mac.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#define TEST_BUFFER_SIZE                    300
+
+// Storage backend for the settings table: every read misses, which makes
+// setting_items_read() fall back to the EFFECTIVE default — the dynamically generated
+// one for hostname/ap_ssid/ap_pass. Writes are accepted so init still succeeds.
+static bool stub_has_key(const char *key)
+{
+    (void)key;
+    return false;
+}
+
+static esp_err_t stub_write_str(const char *key, const char *value)
+{
+    (void)key;
+    (void)value;
+    return ESP_OK;
+}
+
+static esp_err_t stub_read_str(const char *key, char *value)
+{
+    (void)key;
+    (void)value;
+    return ESP_ERR_NOT_FOUND;
+}
+
+static const setting_storage_iface_t stub_storage = {
+    .has_key = stub_has_key,
+    .write_str = stub_write_str,
+    .read_str = stub_read_str,
+    .erase_key = NULL,
+};
 
 void setUp(void)
 {
@@ -57,6 +96,47 @@ void test_validate_ssid(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_ssid("12345678901234567890123456789012"), "32-character SSID should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\tssid"), "SSID with tab should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\x7Fssid"), "SSID with extended ASCII should be invalid");
+}
+
+// Test validate_ssid printable-range boundary characters (0x20 space, 0x7E '~')
+void test_validate_ssid_printable_range_boundaries(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_ssid - inclusive printable-range boundaries 0x20 and 0x7E");
+    LOG_MESSAGE();
+
+    // Inclusive lower bound: space (0x20) is the lowest allowed printable char
+    TEST_ASSERT_TRUE_MESSAGE(validate_ssid("my ssid"), "SSID with space (0x20) must be valid (inclusive lower bound)");
+    TEST_ASSERT_TRUE_MESSAGE(validate_ssid(" "), "Single space (0x20) must be valid (inclusive lower bound)");
+
+    // Inclusive upper bound: tilde (0x7E) is the highest allowed printable char
+    TEST_ASSERT_TRUE_MESSAGE(validate_ssid("wifi~ssid"), "SSID with tilde (0x7E) must be valid (inclusive upper bound)");
+    TEST_ASSERT_TRUE_MESSAGE(validate_ssid("~"), "Single tilde (0x7E) must be valid (inclusive upper bound)");
+
+    // Just outside the bounds must be rejected
+    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\x1Fssid"), "SSID with 0x1F (just below space) must be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_ssid("wifi\x7Fssid"), "SSID with 0x7F (just above tilde) must be invalid");
+}
+
+// Test validate_sta_ssid function
+void test_validate_sta_ssid(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_sta_ssid function");
+    LOG_MESSAGE();
+
+    // The empty string is the factory default for sta_ssid ("no station network
+    // configured"), so it must be accepted or the device rejects its own defaults
+    TEST_ASSERT_TRUE_MESSAGE(validate_sta_ssid(""), "Empty station SSID should be valid (no station network configured)");
+
+    // Non-empty values follow exactly the same rules as the AP SSID
+    TEST_ASSERT_TRUE_MESSAGE(validate_sta_ssid("Station-SSID"), "Simple station SSID should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_sta_ssid("1234567890123456789012345678901"), "31-character station SSID should be valid");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_sta_ssid(NULL), "NULL station SSID should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_sta_ssid("12345678901234567890123456789012"), "32-character station SSID should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_sta_ssid("wifi\x19ssid"), "Station SSID with control character (0x19) should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_sta_ssid("wifi\x7Fssid"), "Station SSID with character above 0x7E should be invalid");
 }
 
 // Test validate_port function
@@ -257,6 +337,56 @@ void test_validate_bridge_mode(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode("SERVER"), "Uppercase bridge mode should be invalid");
 }
 
+// Test validate_port_mode function
+void test_validate_port_mode(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_port_mode function");
+    LOG_MESSAGE();
+
+    // Valid port modes
+    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("disabled"), "Port mode 'disabled' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("tcp_bridge"), "Port mode 'tcp_bridge' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("passive"), "Port mode 'passive' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("repeater"), "Port mode 'repeater' should be valid");
+
+    // Invalid port modes
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode(NULL), "NULL port mode should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode(""), "Empty port mode should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("bogus"), "Port mode 'bogus' should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("server"), "Bridge role 'server' should not be a valid port mode");
+    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("TCP_BRIDGE"), "Uppercase port mode should be invalid");
+}
+
+// Test validate_update_channel function
+void test_validate_update_channel(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_update_channel function");
+    LOG_MESSAGE();
+
+    // Valid update channels
+    TEST_ASSERT_TRUE_MESSAGE(validate_update_channel("stable"), "Update channel 'stable' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_update_channel("testing"), "Update channel 'testing' should be valid");
+
+    // Invalid update channels
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel(NULL), "NULL update channel should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel(""), "Empty update channel should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel("unstable"),
+                              "Update channel 'unstable' should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel("Stable"),
+                              "Uppercase update channel should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel("stable "),
+                              "Update channel with a trailing space should be invalid");
+
+    // A value longer than the setting string buffer must not be accepted
+    char too_long[SETTING_ITEM_MAX_STR_LEN + 10];
+    memset(too_long, 'a', sizeof(too_long) - 1);
+    too_long[sizeof(too_long) - 1] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_update_channel(too_long),
+                              "Update channel longer than SETTING_ITEM_MAX_STR_LEN should be invalid");
+}
+
 // Test validate_bool function
 void test_validate_bool(void)
 {
@@ -304,6 +434,33 @@ void test_validate_login(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_login("user|name"), "Login with pipe should be invalid");
 }
 
+// Test validate_timeout function
+void test_validate_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_timeout function");
+    LOG_MESSAGE();
+
+    // NULL and empty string are invalid
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout(NULL), "NULL timeout should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout(""), "Empty timeout should be invalid");
+
+    // 0 = disable timeout — valid
+    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("0"), "Timeout '0' (disable) should be valid");
+
+    // Valid range 1..65535
+    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("1"), "Timeout '1' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("100"), "Timeout '100' should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("65535"), "Timeout '65535' should be valid");
+
+    // Out-of-range
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("65536"), "Timeout '65536' should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("-1"), "Negative timeout should be invalid");
+
+    // Non-numeric
+    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("abc"), "Non-numeric timeout should be invalid");
+}
+
 // Test validate_password function
 void test_validate_password(void)
 {
@@ -313,7 +470,6 @@ void test_validate_password(void)
 
     // Valid passwords
     TEST_ASSERT_TRUE_MESSAGE(validate_password("admin"), "Simple password should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_password(""), "Empty password should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_password("Password123!"), "Complex password should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_password(" "), "Single space password should be valid");
     TEST_ASSERT_TRUE_MESSAGE(validate_password("~"), "Tilde password should be valid");
@@ -321,6 +477,7 @@ void test_validate_password(void)
 
     // Invalid passwords
     TEST_ASSERT_FALSE_MESSAGE(validate_password(NULL), "NULL password should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_password(""), "Empty password should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_password("12345678901234567890123456789012"), "32-character password should be invalid");
 
     // Test non-printable ASCII characters (coverage for ASCII range check)
@@ -337,12 +494,127 @@ void test_validate_password(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_password(invalid_password_with_null), "Password with control character should be invalid");
 }
 
+// Test validate_wifi_password function (sta_pass / ap_pass)
+void test_validate_wifi_password(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_wifi_password function");
+    LOG_MESSAGE();
+
+    // Valid Wi-Fi passphrases
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password(""), "Empty Wi-Fi password (open network) should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password("12345678"), "8-character Wi-Fi password should be valid (inclusive lower length bound)");
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password("pass with space"), "Wi-Fi password with space should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password("P@ssw0rd!~"), "Wi-Fi password with special chars and tilde (0x7E upper bound) should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password("        "), "8 spaces (0x20 lower printable bound) should be valid");
+
+    // Exactly 63 printable chars is the maximum WPA2 passphrase length (valid)
+    char wifi_pass_63[64];
+    memset(wifi_pass_63, 'A', 63);
+    wifi_pass_63[63] = '\0';
+    TEST_ASSERT_TRUE_MESSAGE(validate_wifi_password(wifi_pass_63), "63-character Wi-Fi password should be valid (inclusive upper length bound)");
+
+    // Invalid Wi-Fi passphrases
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(NULL), "NULL Wi-Fi password should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password("1234567"), "7-character (non-empty, too short) Wi-Fi password should be invalid");
+
+    // 64 printable chars exceeds the maximum length (invalid)
+    char wifi_pass_64[65];
+    memset(wifi_pass_64, 'A', 64);
+    wifi_pass_64[64] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_64), "64-character Wi-Fi password should be invalid");
+
+    // Non-printable characters within an otherwise valid-length password
+    char wifi_pass_with_tab[] = "pass\twords";  // Tab character (ASCII 9)
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_with_tab), "Wi-Fi password with tab character should be invalid");
+
+    char wifi_pass_with_us[] = "pass\x1Fwords";  // Unit Separator character (ASCII 31)
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_with_us), "Wi-Fi password with control character (0x1F) should be invalid");
+
+    char wifi_pass_with_del[] = "password\x7F";  // DEL character (ASCII 127)
+    TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_with_del), "Wi-Fi password with DEL character (0x7F) should be invalid");
+}
+
+// Table-wide invariant: every entry of the settings table must be accepted by the real
+// validator bound to it. A key whose own default its own validator rejects is unusable
+// over the settings API — the device writes the value on first boot, exports it via
+// GET /settings and then refuses the very same document on POST /settings, and because
+// validation is all-or-nothing that kills the whole import. sta_ssid was exactly that
+// case: an empty DEFAULT_STA_SSID bound to the AP-strict validate_ssid.
+//
+// This lives in the setting_validators suite rather than next to the table because the
+// setting_items suite links mock validators that accept almost anything, so the same
+// loop there would prove nothing.
+void test_setting_defaults_pass_their_validators(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test that every settings default is accepted by its own validator");
+    LOG_MESSAGE();
+
+    // Pin the inputs of the generated defaults instead of inheriting whatever the shared
+    // mocks happen to initialise themselves to. Both generators derive from the MAC (the
+    // eFuse is reset to "no factory Wi-Fi password", which is the documented MAC-fallback
+    // path), and both cache their result on first use — so this must run before the first
+    // read below. Should esp_read_mac() ever start failing by default, the generators
+    // would quietly return the literal table defaults and the second half of this test
+    // would stop covering anything.
+    mock_esp_efuse_reset();
+    mock_esp_mac_reset();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_init_with_storage(&stub_storage),
+                                  "Initialising the settings table should succeed");
+
+    size_t count = setting_items_get_count();
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, count, "Settings table should not be empty");
+
+    for (size_t i = 0; i < count; i++) {
+        const char *key = setting_items_get_key_at(i);
+        TEST_ASSERT_NOT_NULL_MESSAGE(key, "Key should not be NULL");
+
+        char log_message[TEST_BUFFER_SIZE];
+
+        // The literal default stored in the table
+        const char *table_default = setting_items_get_default_value(key);
+        TEST_ASSERT_NOT_NULL_MESSAGE(table_default, "Default value should not be NULL");
+        snprintf(log_message, sizeof(log_message),
+                 "Table default '%s' of setting '%s' is rejected by its own validator", table_default, key);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_validate(key, table_default), log_message);
+
+        // The value the device actually writes on first boot and then exports — for
+        // hostname, ap_ssid and ap_pass that is generated at runtime, not the literal above
+        char effective_default[SETTING_ITEM_MAX_STR_LEN] = {0};
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(key, effective_default),
+                                      "Reading the effective default should succeed");
+        snprintf(log_message, sizeof(log_message),
+                 "Effective default '%s' of setting '%s' is rejected by its own validator", effective_default, key);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_validate(key, effective_default), log_message);
+
+        // Guard the check above against degrading into a copy of the one before it: a
+        // generator that falls back (esp_read_mac() failing is how that happens today)
+        // returns exactly the table default, and the generated path would then go
+        // untested without a single test failing. This catches hostname and ap_ssid today;
+        // for ap_pass the fallback is the literal "wirenboard" rather than the empty table
+        // default, so that branch is a forward guard for the day either side changes.
+        if ((strncmp(key, KEY_HOSTNAME, SETTING_ITEM_MAX_STR_LEN) == 0) ||
+            (strncmp(key, KEY_AP_SSID, SETTING_ITEM_MAX_STR_LEN) == 0) ||
+            (strncmp(key, KEY_AP_PASS, SETTING_ITEM_MAX_STR_LEN) == 0)) {
+            snprintf(log_message, sizeof(log_message),
+                     "Setting '%s' must get a generated default, but it fell back to the table default '%s'",
+                     key, table_default);
+            TEST_ASSERT_TRUE_MESSAGE(strncmp(effective_default, table_default, SETTING_ITEM_MAX_STR_LEN) != 0,
+                                     log_message);
+        }
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
 
     RUN_TEST(test_validate_hostname);
     RUN_TEST(test_validate_ssid);
+    RUN_TEST(test_validate_ssid_printable_range_boundaries);
+    RUN_TEST(test_validate_sta_ssid);
     RUN_TEST(test_validate_port);
     RUN_TEST(test_validate_baudrate);
     RUN_TEST(test_validate_stopbits);
@@ -352,9 +624,15 @@ int main(void)
     RUN_TEST(test_validate_wifi_mode);
     RUN_TEST(test_validate_wifi_auth);
     RUN_TEST(test_validate_bridge_mode);
+    RUN_TEST(test_validate_port_mode);
+    RUN_TEST(test_validate_update_channel);
     RUN_TEST(test_validate_bool);
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);
+    RUN_TEST(test_validate_wifi_password);
+    RUN_TEST(test_validate_timeout);
+
+    RUN_TEST(test_setting_defaults_pass_their_validators);
 
     return UNITY_END();
 }

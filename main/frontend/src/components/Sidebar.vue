@@ -1,32 +1,46 @@
 <script setup lang="ts">
-import { ref, watch, computed, type Component } from 'vue';
+import { ref, watch, computed } from 'vue';
+import type { Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { RouteRecordRaw } from 'vue-router';
 import Logo from '@/assets/logo.svg?component';
 import MenuIcon from '@/assets/menu.svg?component';
-import DocsIcon from '@/assets/docs.svg?component';
-import SupportIcon from '@/assets/support.svg?component';
-import ShopIcon from '@/assets/shop.svg?component';
 import LogoutIcon from '@/assets/logout.svg?component';
-import GaugeIcon from '@/assets/gauge.svg?component';
-import SlidersIcon from '@/assets/sliders.svg?component';
-import NetworkIcon from '@/assets/network.svg?component';
-import CpuIcon from '@/assets/cpu.svg?component';
-import PlugIcon from '@/assets/plug.svg?component';
+import DocsIcon from '@/assets/docsIcon.svg?component';
+import EmailIcon from '@/assets/emailIcon.svg?component';
+import CartIcon from '@/assets/cartIcon.svg?component';
+import GaugeIcon from '@/assets/gaugeIcon.svg?component';
+import SlidersIcon from '@/assets/slidersIcon.svg?component';
+import NetworkIcon from '@/assets/networkIcon.svg?component';
+import CpuIcon from '@/assets/cpuIcon.svg?component';
+import ActivityIcon from '@/assets/activityIcon.svg?component';
+import PlugIcon from '@/assets/plugIcon.svg?component';
+import GridSidebarIcon from '@/assets/gridSidebarIcon.svg?component';
+import RepeatIcon from '@/assets/repeatIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { documentation, support, email, website } from '@/common/links';
 
-// Map from route meta.menuIcon string to the corresponding SVG component
-const menuIconMap: Record<string, Component> = {
+const MENU_ICONS: Record<string, Component> = {
   gauge: GaugeIcon,
   sliders: SlidersIcon,
   network: NetworkIcon,
   cpu: CpuIcon,
+  activity: ActivityIcon,
   plug: PlugIcon,
+  grid: GridSidebarIcon,
+  repeat: RepeatIcon,
 };
+
+function getMenuIcon(key: unknown): Component | undefined {
+  return typeof key === 'string' ? MENU_ICONS[key] : undefined;
+}
+
+function getMenuName(name: unknown): string {
+  return typeof name === 'string' ? name : '';
+}
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -61,12 +75,28 @@ watch(
       <RouterLink to="/" class="sidebar-logo">
         <Logo alt="Wiren Board" />
       </RouterLink>
-      <a v-if="hostname" :href="`http://${hostname}.local`" target="_blank" rel="noopener noreferrer" class="sidebar-hostname">{{ hostname }}</a>
+      <div v-if="hostname" class="sidebar-hostname">{{ hostname }}</div>
     </div>
 
-    <MenuIcon class="sidebar-burger" @click="isShowMenu = !isShowMenu" />
+    <button
+      type="button"
+      class="sidebar-burger"
+      :aria-expanded="isShowMenu"
+      aria-controls="sidebar-nav"
+      :aria-label="t('toggle_menu')"
+      @click="isShowMenu = !isShowMenu"
+    >
+      <MenuIcon />
+    </button>
+
+    <div
+      v-if="isShowMenu"
+      class="sidebar-scrim"
+      @click="isShowMenu = false"
+    />
 
     <nav
+      id="sidebar-nav"
       :class="{
       'sidebar-navigation': true,
       'sidebar-navigationHide': !isShowMenu,
@@ -78,12 +108,8 @@ watch(
             v-for="link in routes"
             :key="link.path"
             :to="link.path">
-            <component
-              v-if="menuIconMap[link.meta?.menuIcon as string]"
-              :is="menuIconMap[link.meta?.menuIcon as string]"
-              class="sidebar-icon"
-            />
-            {{ t(link.meta?.menuName as string) }}
+            <component :is="getMenuIcon(link.meta?.menuIcon)" class="sidebar-icon" />
+            {{ t(getMenuName(link.meta?.menuName)) }}
           </RouterLink>
         </template>
       </div>
@@ -92,21 +118,31 @@ watch(
           <div class="sb-port-head">
             <span class="sb-port-name">{{ t('port_1') }}</span>
             <span :class="['sb-port-state', info.rs485_1.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_1.is_busy ? t('active') : t('idle') }}
+              <span class="dot" />{{ info.rs485_1.is_busy ? t('status_active') : t('status_idle') }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-row-key">{{ t('mode') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.bridge.modbus ? t('modbus_tcp') : t('transparent') }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-row-key">{{ t('line') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_1.port_mode}`, info.rs485_1.port_mode) }}</span></div>
+          <div class="sb-port-row mono">
+            <span class="sb-port-k">{{ t('line') }}</span>
+            <span class="sb-port-v">
+              {{ savedSettings.rs485_1.baudrate }} · 8{{ savedSettings.rs485_1.parity === 'none' ? 'N' : savedSettings.rs485_1.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_1.stopbits }}<template v-if="savedSettings.rs485_1.tx_disabled"> · <span class="sb-tx-off">TX</span></template>
+            </span>
+          </div>
         </div>
         <div class="sb-port">
           <div class="sb-port-head">
             <span class="sb-port-name">{{ t('port_2') }}</span>
             <span :class="['sb-port-state', info.rs485_2.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_2.is_busy ? t('active') : t('idle') }}
+              <span class="dot" />{{ info.rs485_2.is_busy ? t('status_active') : t('status_idle') }}
             </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-row-key">{{ t('mode') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.bridge.modbus ? t('modbus_tcp') : t('transparent') }}</span></div>
-          <div class="sb-port-row mono"><span class="sb-port-row-key">{{ t('line') }}</span><span class="sb-port-row-value">{{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}</span></div>
+          <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_2.port_mode}`, info.rs485_2.port_mode) }}</span></div>
+          <div class="sb-port-row mono">
+            <span class="sb-port-k">{{ t('line') }}</span>
+            <span class="sb-port-v">
+              {{ savedSettings.rs485_2.baudrate }} · 8{{ savedSettings.rs485_2.parity === 'none' ? 'N' : savedSettings.rs485_2.parity === 'even' ? 'E' : 'O' }}{{ savedSettings.rs485_2.stopbits }}<template v-if="savedSettings.rs485_2.tx_disabled"> · <span class="sb-tx-off">TX</span></template>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -116,11 +152,11 @@ watch(
           {{ t('link_docs') }}
         </a>
         <a :href="locale === 'ru' ? support : `mailto:${email}`" target="_blank" class="sb-link">
-          <SupportIcon />
+          <EmailIcon />
           {{ t('link_support') }}
         </a>
         <a :href="website" target="_blank" class="sb-link">
-          <ShopIcon />
+          <CartIcon />
           {{ t('link_buy') }}
         </a>
       </div>
@@ -146,9 +182,11 @@ watch(
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-    height: auto;
+    height: 56px;
     border-right: none;
     border-bottom: 1px solid var(--border-sidebar);
+    position: relative;
+    z-index: 2;
   }
 }
 
@@ -181,11 +219,10 @@ watch(
 }
 
 .sidebar-hostname {
-  font-size: 11.8px; /* +0.8px for Roboto */
+  font-size: 11px;
   color: var(--text-on-dark-muted);
   margin-top: 6px;
   word-break: break-all;
-  text-decoration: none;
 
   @media (max-width: 680px) {
     margin-top: 0;
@@ -202,12 +239,14 @@ watch(
 
   @media (max-width: 680px) {
     position: fixed;
-    height: calc(100dvh - 60px);
-    top: 60px;
-    width: 220px;
+    height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px));
+    top: 56px;
+    width: 240px;
     right: 0;
     background: var(--bg-sidebar);
-    padding: 12px 10px;
+    padding: 12px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+    z-index: 2;
+    border-left: 1px solid var(--border-sidebar);
   }
 }
 
@@ -218,7 +257,7 @@ watch(
 }
 
 .group-label {
-  font-size: 10.8px; /* +0.8px for Roboto */
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: #6e7580;
@@ -234,7 +273,7 @@ watch(
   align-items: center;
   gap: 10px;
   cursor: pointer;
-  font-size: 13.8px; /* +0.8px for Roboto */
+  font-size: 13px;
   line-height: 1.2;
   transition: background 0.1s;
 }
@@ -263,18 +302,49 @@ watch(
 }
 
 .sidebar-burger {
-  width: 36px;
+  width: 44px;
+  height: 44px;
   margin-right: 6px;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
   fill: var(--text-on-dark);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 
   @media (min-width: 680px) {
     display: none;
   }
 }
 
-.sidebar-burger:hover {
+.sidebar-burger :deep(svg) {
+  width: 28px;
+  height: 28px;
+  fill: inherit;
+}
+
+.sidebar-burger:hover,
+.sidebar-burger:focus-visible {
   fill: var(--brand-on-dark);
+  outline: none;
+}
+
+.sidebar-scrim {
+  display: none;
+
+  @media (max-width: 680px) {
+    display: block;
+    position: fixed;
+    top: 56px;
+    right: 240px;
+    bottom: 0;
+    left: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 1;
+  }
 }
 
 .sidebar-links {
@@ -311,7 +381,7 @@ watch(
 }
 
 .sb-port-name {
-  font-size: 12px; /* original size — data display block */
+  font-size: 12px;
   font-weight: 600;
   color: #fff;
   letter-spacing: 0.01em;
@@ -321,7 +391,7 @@ watch(
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px; /* original size — data display block */
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 500;
@@ -353,7 +423,7 @@ watch(
 .sb-port-row {
   display: flex;
   justify-content: space-between;
-  font-size: 11px; /* original size — data display block */
+  font-size: 11px;
   color: var(--text-on-dark-muted);
 }
 
@@ -362,12 +432,17 @@ watch(
   letter-spacing: 0.02em;
 }
 
-.sb-port-row-key {
+.sb-port-k {
   color: #6e7580;
 }
 
-.sb-port-row-value {
+.sb-port-v {
   color: var(--text-on-dark);
+}
+
+.sb-tx-off {
+  text-decoration: line-through;
+  color: var(--danger-color);
 }
 
 .sb-links {
@@ -379,7 +454,7 @@ watch(
 .sidebar-navigation a.sb-link {
   padding: 6px 10px;
   color: var(--text-on-dark-muted);
-  font-size: 12.8px; /* +0.8px for Roboto */
+  font-size: 12px;
   gap: 9px;
 }
 
@@ -396,7 +471,7 @@ watch(
   border-radius: 0;
   color: var(--text-on-dark-muted);
   text-decoration: none;
-  font-size: 12.8px; /* +0.8px for Roboto */
+  font-size: 12px;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -421,15 +496,17 @@ watch(
     "link_support": "Support",
     "link_buy": "Buy devices",
     "logout": "Logout",
-    "active": "ACTIVE",
-    "idle": "IDLE",
-    "mode": "Mode",
-    "line": "Line",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Transparent bridge",
+    "toggle_menu": "Toggle navigation menu",
     "port_1": "Port 1",
     "port_2": "Port 2",
-    "serial_ports": "Serial ports"
+    "status_active": "ACTIVE",
+    "status_idle": "IDLE",
+    "line": "Line",
+    "mode": "Mode",
+    "port_mode_disabled": "Disabled",
+    "port_mode_tcp_bridge": "TCP bridge",
+    "port_mode_passive": "Passive listen",
+    "port_mode_repeater": "Repeater"
   },
   "ru": {
     "group_overview": "Обзор",
@@ -439,15 +516,17 @@ watch(
     "link_support": "Техподдержка",
     "link_buy": "Купить устройства",
     "logout": "Выйти",
-    "active": "ACTIVE",
-    "idle": "IDLE",
-    "mode": "Режим",
-    "line": "Параметры",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Прозрачный мост",
+    "toggle_menu": "Открыть меню",
     "port_1": "Порт 1",
     "port_2": "Порт 2",
-    "serial_ports": "Порты"
+    "status_active": "АКТИВЕН",
+    "status_idle": "ПРОСТОЙ",
+    "line": "Линия",
+    "mode": "Режим",
+    "port_mode_disabled": "Отключён",
+    "port_mode_tcp_bridge": "TCP-мост",
+    "port_mode_passive": "Пассивный (прослушка)",
+    "port_mode_repeater": "Повторитель"
   },
   "kk": {
     "group_overview": "Шолу",
@@ -457,15 +536,17 @@ watch(
     "link_support": "Қолдау",
     "link_buy": "Құрылғыларды сатып алу",
     "logout": "Шығу",
-    "active": "ACTIVE",
-    "idle": "IDLE",
-    "mode": "Режим",
-    "line": "Желі",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Мөлдір көпір",
+    "toggle_menu": "Мәзірді ашу",
     "port_1": "Порт 1",
     "port_2": "Порт 2",
-    "serial_ports": "Сериялық порттар"
+    "status_active": "БЕЛСЕНДІ",
+    "status_idle": "БОС",
+    "line": "Желі",
+    "mode": "Режим",
+    "port_mode_disabled": "Өшірілген",
+    "port_mode_tcp_bridge": "TCP көпір",
+    "port_mode_passive": "Пассивті тыңдау",
+    "port_mode_repeater": "Қайталағыш"
   },
   "it": {
     "group_overview": "Panoramica",
@@ -475,15 +556,17 @@ watch(
     "link_support": "Supporto",
     "link_buy": "Acquista dispositivi",
     "logout": "Esci",
-    "active": "ACTIVE",
-    "idle": "IDLE",
-    "mode": "Modalità",
-    "line": "Linea",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Bridge trasparente",
+    "toggle_menu": "Apri menu",
     "port_1": "Porta 1",
     "port_2": "Porta 2",
-    "serial_ports": "Porte seriali"
+    "status_active": "ATTIVO",
+    "status_idle": "INATTIVO",
+    "line": "Linea",
+    "mode": "Modalità",
+    "port_mode_disabled": "Disabilitato",
+    "port_mode_tcp_bridge": "Bridge TCP",
+    "port_mode_passive": "Ascolto passivo",
+    "port_mode_repeater": "Ripetitore"
   },
   "de": {
     "group_overview": "Übersicht",
@@ -493,15 +576,17 @@ watch(
     "link_support": "Support",
     "link_buy": "Geräte kaufen",
     "logout": "Abmelden",
-    "active": "ACTIVE",
-    "idle": "IDLE",
-    "mode": "Modus",
-    "line": "Leitung",
-    "modbus_tcp": "Modbus TCP",
-    "transparent": "Transparente Brücke",
+    "toggle_menu": "Menü öffnen",
     "port_1": "Port 1",
     "port_2": "Port 2",
-    "serial_ports": "Serielle Schnittst."
+    "status_active": "AKTIV",
+    "status_idle": "INAKTIV",
+    "line": "Leitung",
+    "mode": "Modus",
+    "port_mode_disabled": "Deaktiviert",
+    "port_mode_tcp_bridge": "TCP-Bridge",
+    "port_mode_passive": "Passives Mithören",
+    "port_mode_repeater": "Repeater"
   }
 }
 </i18n>

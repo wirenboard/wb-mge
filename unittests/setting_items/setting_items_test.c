@@ -18,6 +18,7 @@ setting_storage_iface_t test_storage = {
     .has_key = rams_has_key,
     .write_str = rams_write_str,
     .read_str = rams_read_str,
+    .erase_key = rams_erase_key,
 };
 
 typedef struct {
@@ -33,6 +34,8 @@ const mock_setting_item_t expected_items[] = {
     {"web_port", "80", SETTING_ITEM_TYPE_INT},
     {"io_bus", "true", SETTING_ITEM_TYPE_BOOL},
     {"vout", "true", SETTING_ITEM_TYPE_BOOL},
+
+    {"wifi_perm_dis", "false", SETTING_ITEM_TYPE_BOOL},
 
     {"wifi_mode", "ap", SETTING_ITEM_TYPE_STRING},
     {"ap_auth", "wpa2_psk", SETTING_ITEM_TYPE_STRING},
@@ -60,6 +63,8 @@ const mock_setting_item_t expected_items[] = {
     {"databits_1", "8", SETTING_ITEM_TYPE_STRING},
     {"485_term_1", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_fail_safe_1", "true", SETTING_ITEM_TYPE_BOOL},
+    {"485_tx_dis_1", "false", SETTING_ITEM_TYPE_BOOL},
+    {"cache_en_1", "false", SETTING_ITEM_TYPE_BOOL},
     {"bridge_mode_1", "server", SETTING_ITEM_TYPE_STRING},
     {"bridge_port_1", "502", SETTING_ITEM_TYPE_INT},
     {"bridge_ip_1", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
@@ -71,10 +76,20 @@ const mock_setting_item_t expected_items[] = {
     {"databits_2", "8", SETTING_ITEM_TYPE_STRING},
     {"485_term_2", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_fail_safe_2", "true", SETTING_ITEM_TYPE_BOOL},
+    {"485_tx_dis_2", "false", SETTING_ITEM_TYPE_BOOL},
+    {"cache_en_2", "false", SETTING_ITEM_TYPE_BOOL},
     {"bridge_mode_2", "server", SETTING_ITEM_TYPE_STRING},
     {"bridge_port_2", "503", SETTING_ITEM_TYPE_INT},
     {"bridge_ip_2", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
     {"bridge_modbus_2", "false", SETTING_ITEM_TYPE_BOOL},
+
+    {"port_mode_1", "tcp_bridge", SETTING_ITEM_TYPE_STRING},
+    {"port_mode_2", "tcp_bridge", SETTING_ITEM_TYPE_STRING},
+    {"cache_mb_port", "504", SETTING_ITEM_TYPE_INT},
+    {"cache_mb_srv_en", "true", SETTING_ITEM_TYPE_BOOL},
+    {"cache_val_tout", "60", SETTING_ITEM_TYPE_INT},
+
+    {"upd_channel", "stable", SETTING_ITEM_TYPE_STRING},
 };
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))
@@ -101,7 +116,7 @@ void tearDown(void)
 
 }
 
-// Тестируем инициализацию setting_items, write_str возвращает ошибку -> setting_items_init должен вернуть ошибку
+// Test setting_items initialization, write_str returns an error -> setting_items_init must return an error
 void test_setting_items_init_function(void)
 {
     LOG_MESSAGE();
@@ -111,7 +126,7 @@ void test_setting_items_init_function(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_FAIL, setting_items_init(), "Initialization should fail when write_str returns error");
 }
 
-// Тестируем, что при инициализации и отсутствии ключей в хранилище записываются значения по умолчанию
+// Test that default values are written during initialization when keys are absent from storage
 void test_setting_items_init_with_storage(void)
 {
     LOG_MESSAGE();
@@ -173,7 +188,7 @@ void test_setting_items_init_with_storage(void)
     }
 }
 
-// Тестируем содержимое массива setting_items
+// Test the contents of the setting_items array
 void test_setting_items_array_contents(void)
 {
     LOG_MESSAGE();
@@ -208,7 +223,7 @@ void test_setting_items_array_contents(void)
     }
 }
 
-// Тестируем, что нужные валидаторы вызываются для соответствующих настроек
+// Test that the correct validators are called for the corresponding settings
 void test_authentication_validators(void)
 {
     LOG_MESSAGE();
@@ -251,6 +266,16 @@ void test_port_validators(void)
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_BRIDGE_PORT2, "80"));
     TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for bridge port 2");
+
+    // Test cache modbus port validator
+    mock_reset_validator_flags();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_CACHE_MODBUS_PORT, "502"));
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for cache modbus port");
+
+    // Test cache value timeout validator
+    mock_reset_validator_flags();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_CACHE_VALUE_TIMEOUT_S, "120"));
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_timeout_called, "validate_timeout should be called for cache_val_tout");
 }
 
 void test_ip_validators(void)
@@ -300,16 +325,16 @@ void test_wifi_validators(void)
 
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_STA_SSID, "test-sta"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_ssid_called, "validate_ssid should be called for STA SSID");
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_sta_ssid_called, "validate_sta_ssid should be called for STA SSID");
 
     // Test WiFi password validators
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_AP_PASS, "wifipass123"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_password_called, "validate_password should be called for AP password");
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_wifi_password_called, "validate_wifi_password should be called for AP password");
 
     mock_reset_validator_flags();
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_STA_PASS, "wifipass456"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_password_called, "validate_password should be called for STA password");
+    TEST_ASSERT_TRUE_MESSAGE(mock_validate_wifi_password_called, "validate_wifi_password should be called for STA password");
 }
 
 void test_serial_validators(void)
@@ -379,7 +404,7 @@ void test_bridge_and_bool_validators(void)
     }
 }
 
-// Тестируем все ошибочные условия в функции setting_items_save
+// Test all error conditions in the setting_items_save function
 void test_setting_items_save_error_conditions(void)
 {
     LOG_MESSAGE();
@@ -488,7 +513,7 @@ void test_setting_items_save_error_conditions(void)
     TEST_ASSERT_TRUE_MESSAGE(mock_validate_hostname_called, "Validator should be called even when write fails");
 }
 
-// Тестируем успешное чтение настроек
+// Test successful reading of settings
 void test_setting_items_read_success(void)
 {
     LOG_MESSAGE();
@@ -515,7 +540,7 @@ void test_setting_items_read_success(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(test_value, read_buffer, "Should read back the exact saved value");
 }
 
-// Тестируем все ошибочные условия в функции setting_items_read
+// Test all error conditions in the setting_items_read function
 void test_setting_items_read_error_conditions(void)
 {
     LOG_MESSAGE();
@@ -565,7 +590,7 @@ void test_setting_items_read_error_conditions(void)
     );
 }
 
-// Тестируем функцию setting_items_get_key_at
+// Test the setting_items_get_key_at function
 void test_setting_items_get_key_at(void)
 {
     LOG_MESSAGE();
@@ -608,7 +633,7 @@ void test_setting_items_get_key_at(void)
     }
 }
 
-// Тестируем функцию setting_items_read_int
+// Test the setting_items_read_int function
 void test_setting_items_read_int(void)
 {
     LOG_MESSAGE();
@@ -640,7 +665,7 @@ void test_setting_items_read_int(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, read_value, "Should return 0 for non-numeric setting");
 }
 
-// Тестируем функцию setting_items_read_bool
+// Test the setting_items_read_bool function
 void test_setting_items_read_bool(void)
 {
     LOG_MESSAGE();
@@ -670,7 +695,7 @@ void test_setting_items_read_bool(void)
     TEST_ASSERT_TRUE_MESSAGE(read_value, "Should return default 485_term_1 value (true) from default_value");
 }
 
-// Тестируем функцию setting_items_save_int
+// Test the setting_items_save_int function
 void test_setting_items_save_int(void)
 {
     LOG_MESSAGE();
@@ -696,7 +721,7 @@ void test_setting_items_save_int(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(8080, read_value, "Should read back the same positive integer value");
 }
 
-// Тестируем функцию setting_items_save_bool
+// Test the setting_items_save_bool function
 void test_setting_items_save_bool(void)
 {
     LOG_MESSAGE();
@@ -729,7 +754,7 @@ void test_setting_items_save_bool(void)
     TEST_ASSERT_FALSE_MESSAGE(read_value, "Should read back false value");
 }
 
-// Тестируем функцию setting_items_get_default_value
+// Test the setting_items_get_default_value function
 void test_setting_items_get_default_value(void)
 {
     LOG_MESSAGE();
@@ -749,7 +774,7 @@ void test_setting_items_get_default_value(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE("WB-MGE", default_value, "Default value for hostname should match expected");
 }
 
-// Тестируем функцию setting_items_get_type
+// Test the setting_items_get_type function
 void test_setting_items_get_type(void)
 {
     LOG_MESSAGE();
@@ -779,7 +804,7 @@ void test_setting_items_get_type(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(SETTING_ITEM_TYPE_INT, type, "KEY_WEB_PORT should be INT type");
 }
 
-// Тестируем функцию setting_items_type_to_string
+// Test the setting_items_type_to_string function
 void test_setting_items_type_to_string(void)
 {
     LOG_MESSAGE();
@@ -819,8 +844,8 @@ void test_setting_items_type_to_string(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE("UNKNOWN", type_string, "Should return 'UNKNOWN' for negative type value");
 }
 
-// Тестируем get_dynamic_ap_pass_default и get_dynamic_hostname_default в случае, когда esp_read_mac возвращает ошибку,
-// а затем повторный вызов setting_items_init_with_storage
+// Test get_dynamic_ap_pass_default and get_dynamic_hostname_default when esp_read_mac returns an error,
+// then a repeated call to setting_items_init_with_storage
 void test_dynamic_defaults_generation_mac_error(void)
 {
     LOG_MESSAGE();
@@ -846,14 +871,14 @@ void test_dynamic_defaults_generation_mac_error(void)
 
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_read_mac_called, "esp_read_mac should be called twice");
 
-    // Повторный вызов get_dynamic_ap_pass_default и get_dynamic_hostname_default не должен вызывать esp_read_mac снова
+    // Repeated calls to get_dynamic_ap_pass_default and get_dynamic_hostname_default must not call esp_read_mac again
     rams_init();
     result = setting_items_init_with_storage(&test_storage);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_esp_read_mac_called, "esp_read_mac should not be called again");
 }
 
-// Тестируем генерацию пароля на основе MAC-адреса, когда MAC-адрес короткий
+// Test MAC-address-based password generation when the MAC address is short
 void test_generate_mac_based_password_short_mac(void)
 {
     LOG_MESSAGE();
@@ -874,7 +899,7 @@ void test_generate_mac_based_password_short_mac(void)
     TEST_ASSERT_EQUAL_MESSAGE(10, strlen(buffer), "Generated password length should be 10");
 }
 
-// Тестируем функцию read_wifi_pass_from_efuse с разной длиной пароля в efuse
+// Test the read_wifi_pass_from_efuse function with various password lengths in efuse
 void test_read_wifi_pass_from_efuse_7_symbols(void)
 {
     LOG_MESSAGE();
@@ -971,6 +996,337 @@ void test_read_wifi_pass_from_efuse_read_error(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(ap_pass_default, buffer, "Should return MAC-based password when eFuse read fails");
 }
 
+// Test setting_items_validate function
+void test_setting_items_validate(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_validate function");
+    LOG_MESSAGE();
+
+    // NULL key must return ESP_ERR_INVALID_ARG
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_ERR_INVALID_ARG,
+        setting_items_validate(NULL, "100"),
+        "NULL key should return ESP_ERR_INVALID_ARG"
+    );
+
+    // Unknown key must return ESP_ERR_NOT_FOUND
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_ERR_NOT_FOUND,
+        setting_items_validate("nonexistent_key_xyz", "100"),
+        "Unknown key should return ESP_ERR_NOT_FOUND"
+    );
+
+    // Known key with valid value must return ESP_OK
+    // validate_timeout mock always returns true, so "100" is valid
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_OK,
+        setting_items_validate(KEY_CACHE_VALUE_TIMEOUT_S, "100"),
+        "Known key with valid value should return ESP_OK"
+    );
+
+    // Known key with invalid value: validate_hostname mock rejects empty strings
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        ESP_ERR_INVALID_ARG,
+        setting_items_validate(KEY_HOSTNAME, ""),
+        "Known key with invalid value should return ESP_ERR_INVALID_ARG"
+    );
+}
+
+// Test that setting_items_set_defaults(false) force-overwrites existing values with defaults
+void test_setting_items_set_defaults_force(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test setting_items_set_defaults - force reset overwrites existing values");
+    LOG_MESSAGE();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    // Read the value that was written by init (this is the effective default for this key)
+    char default_buf[SETTING_ITEM_MAX_STR_LEN];
+    memset(default_buf, 0, sizeof(default_buf));
+    result = setting_items_read(KEY_HOSTNAME, default_buf);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Reading initial hostname should succeed");
+
+    // Write a custom value that differs from the default
+    result = setting_items_save(KEY_HOSTNAME, "custom-hostname");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Saving custom hostname should succeed");
+
+    // Confirm the custom value is stored
+    char buf[SETTING_ITEM_MAX_STR_LEN];
+    memset(buf, 0, sizeof(buf));
+    result = setting_items_read(KEY_HOSTNAME, buf);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Reading hostname should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("custom-hostname", buf, "Custom hostname should be stored before force reset");
+
+    // Force-reset all settings to defaults
+    result = setting_items_set_defaults(false);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "setting_items_set_defaults(false) should return ESP_OK");
+
+    // Verify hostname was reset to the default value (not the custom value)
+    memset(buf, 0, sizeof(buf));
+    result = setting_items_read(KEY_HOSTNAME, buf);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Reading hostname after force reset should succeed");
+
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(
+        0, strcmp(buf, "custom-hostname"),
+        "Force reset must overwrite the custom hostname — 'custom-hostname' must no longer be stored"
+    );
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(
+        default_buf, buf,
+        "Hostname after force reset must equal the value written during initialization"
+    );
+}
+
+// Test that KEY_WIFI_PERM_DISABLE defaults to false after initialization
+void test_wifi_perm_disable_default_is_false(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test wifi_perm_disable default is false");
+    LOG_MESSAGE();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    bool value = setting_items_read_bool(KEY_WIFI_PERM_DISABLE);
+    TEST_ASSERT_FALSE_MESSAGE(value, "wifi_perm_disable should default to false after initialization");
+}
+
+// Test that KEY_WIFI_PERM_DISABLE can be set to true and read back correctly
+void test_wifi_perm_disable_can_be_set_to_true(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test wifi_perm_disable can be set to true");
+    LOG_MESSAGE();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    result = setting_items_save(KEY_WIFI_PERM_DISABLE, "true");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Saving wifi_perm_disable=true should succeed");
+
+    bool value = setting_items_read_bool(KEY_WIFI_PERM_DISABLE);
+    TEST_ASSERT_TRUE_MESSAGE(value, "wifi_perm_disable should read back as true after saving 'true'");
+}
+
+// Test that KEY_WIFI_PERM_DISABLE exists in the setting_items array with the correct type
+void test_wifi_perm_disable_key_exists_in_setting_items(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test wifi_perm_disable key exists in setting_items");
+    LOG_MESSAGE();
+
+    setting_item_type_t type = setting_items_get_type(KEY_WIFI_PERM_DISABLE);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        SETTING_ITEM_TYPE_BOOL,
+        type,
+        "KEY_WIFI_PERM_DISABLE (\"wifi_perm_dis\") should be of type BOOL in setting_items"
+    );
+
+    const char *default_value = setting_items_get_default_value(KEY_WIFI_PERM_DISABLE);
+    TEST_ASSERT_NOT_NULL_MESSAGE(default_value, "KEY_WIFI_PERM_DISABLE should have a default value");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("false", default_value, "Default value for wifi_perm_disable should be 'false'");
+}
+
+// ── Legacy port_mode migration (setting_items_migrate_port_mode) ──────────────
+// On an upgraded device port_mode_N does not exist; it is derived from the legacy
+// bridge_mode_N value BEFORE defaults run, so the previous on/off state survives.
+
+// Upgraded device, port was OFF: legacy bridge_mode_1="disabled", no port_mode_1.
+// After init port_mode_1 must be "disabled" (default "tcp_bridge" must NOT win).
+void test_migrate_port_mode_legacy_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - legacy bridge_mode 'disabled'");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "disabled"),
+                                  "Pre-seeding legacy bridge_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_DISABLED_STR, value,
+                                     "Legacy disabled bridge should migrate to port_mode 'disabled'");
+
+    // The legacy "disabled" sentinel is not a valid bridge_mode any more: it must be erased
+    // after migration so it does not linger in NVS. set_defaults() then restores the default
+    // role (DEFAULT_BRIDGE_MODE == BRIDGE_MODE_SERVER_STR).
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
+                                     "Stale legacy bridge_mode must be replaced by the default role");
+}
+
+// Upgraded device, port was an active bridge: legacy bridge_mode_1="client",
+// no port_mode_1. After init port_mode_1 must be "tcp_bridge".
+//
+// The legacy value is deliberately "client", not "server": "server" is also
+// DEFAULT_BRIDGE_MODE, so a "server" fixture would still pass if the migration
+// erased bridge_mode_1 and set_defaults() recreated it from the default - i.e. it
+// could not tell role preservation apart from role loss. "client" differs from the
+// default, so it only survives if the migration really keeps the key.
+void test_migrate_port_mode_legacy_client(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - legacy bridge_mode 'client'");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, BRIDGE_MODE_CLIENT_STR),
+                                  "Pre-seeding legacy bridge_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
+                                     "Legacy client bridge should migrate to port_mode 'tcp_bridge'");
+
+    // "client" is still a valid TCP role, so the migration must NOT erase it - otherwise
+    // set_defaults() would silently reset the user's role to "server" after an upgrade.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_CLIENT_STR, value,
+                                     "A still-valid bridge role must be preserved by the migration");
+}
+
+// Upgraded device carrying an UNKNOWN legacy bridge_mode_1 (junk from some older
+// build). The port was not "disabled", so it becomes a tcp_bridge - but the value
+// itself is not a valid bridge_mode, so it must be erased just like the sentinel:
+// set_defaults() only fills MISSING keys, so leaving it would hand an invalid role
+// to the bridge on the next read.
+void test_migrate_port_mode_legacy_unknown_value(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - unknown legacy bridge_mode");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "bogus_mode"),
+                                  "Pre-seeding legacy bridge_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
+                                     "A non-disabled legacy value means the port was active");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
+                                     "An invalid legacy bridge_mode must be replaced by the default role");
+}
+
+// Both keys already present (e.g. user already set port_mode_1="passive"). The
+// migration must NOT overwrite an existing port_mode value.
+void test_migrate_port_mode_existing_value_preserved(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - existing value preserved");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "server"),
+                                  "Pre-seeding legacy bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_PASSIVE_STR),
+                                  "Pre-seeding existing port_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_PASSIVE_STR, value,
+                                     "Existing port_mode_1 must be preserved, not overwritten by migration");
+}
+
+// Interrupted migration: port_mode_1 was already written by an earlier boot, but the
+// power was lost before the stale legacy bridge_mode_1 could be erased (they are two
+// independent NVS commits). The cleanup must therefore be idempotent and run on every
+// boot, not only on the boot that derives port_mode: set_defaults() only fills MISSING
+// keys, so an invalid bridge_mode left here would stay in NVS forever and
+// string_to_bridge_mode() would silently map it to BRIDGE_MODE_DISABLED, bringing a
+// tcp_bridge port up with no serial_desc.
+void test_migrate_port_mode_stale_legacy_cleaned_after_reboot(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - stale legacy cleaned on a later boot");
+    LOG_MESSAGE();
+
+    // NVS as an interrupted migration would leave it: port_mode_1 derived and saved,
+    // the invalid legacy bridge_mode_1 still there.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_DISABLED_STR),
+                                  "Pre-seeding already-migrated port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "disabled"),
+                                  "Pre-seeding stale legacy bridge_mode_1 should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_DISABLED_STR, value,
+                                     "An already-migrated port_mode must not be overwritten by the cleanup");
+
+    // The stale record is erased and set_defaults() recreates the key with the default
+    // role, so no invalid bridge_mode survives the reboot.
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
+                                     "A stale legacy bridge_mode left by an interrupted migration must be cleaned up");
+}
+
+// Same interrupted-migration shape, but the surviving legacy value is still a VALID
+// role: the cleanup must leave it alone (erasing it would let set_defaults() reset the
+// user's role to "server"). Guards the idempotent cleanup against over-reach.
+void test_migrate_port_mode_valid_legacy_kept_after_reboot(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - valid legacy role kept on a later boot");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_TCP_BRIDGE_STR),
+                                  "Pre-seeding already-migrated port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, BRIDGE_MODE_CLIENT_STR),
+                                  "Pre-seeding valid bridge_mode_1 role should succeed");
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
+                                  "Reading bridge_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_CLIENT_STR, value,
+                                     "A valid bridge role must survive the idempotent cleanup");
+}
+
+// Fresh device (neither key present). The migration is a no-op and the default
+// "tcp_bridge" is written by setting_items_set_defaults().
+void test_migrate_port_mode_fresh_device_default(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - fresh device default");
+    LOG_MESSAGE();
+
+    esp_err_t result = setting_items_init_with_storage(&test_storage);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
+                                  "Reading port_mode_1 should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
+                                     "Fresh device should get the default port_mode 'tcp_bridge'");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1006,6 +1362,21 @@ int main(void)
     RUN_TEST(test_read_wifi_pass_from_efuse_12_symbols);
     RUN_TEST(test_read_wifi_pass_from_efuse_13_symbols);
     RUN_TEST(test_read_wifi_pass_from_efuse_read_error);
+
+    RUN_TEST(test_setting_items_validate);
+    RUN_TEST(test_setting_items_set_defaults_force);
+
+    RUN_TEST(test_wifi_perm_disable_default_is_false);
+    RUN_TEST(test_wifi_perm_disable_can_be_set_to_true);
+    RUN_TEST(test_wifi_perm_disable_key_exists_in_setting_items);
+
+    RUN_TEST(test_migrate_port_mode_legacy_disabled);
+    RUN_TEST(test_migrate_port_mode_legacy_client);
+    RUN_TEST(test_migrate_port_mode_legacy_unknown_value);
+    RUN_TEST(test_migrate_port_mode_existing_value_preserved);
+    RUN_TEST(test_migrate_port_mode_stale_legacy_cleaned_after_reboot);
+    RUN_TEST(test_migrate_port_mode_valid_legacy_kept_after_reboot);
+    RUN_TEST(test_migrate_port_mode_fresh_device_default);
 
     return UNITY_END();
 }

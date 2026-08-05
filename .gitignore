@@ -1,14 +1,31 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
 # VS Code Settings
 .vscode/
+wb-mge.code-workspace
 
 # JetBrains IDEA
 .idea
 
 # Build
 build/**
-sdkconfig
-sdkconfig.old
-dependencies.lock
+# Generated sdkconfig files: sdkconfig.<signature> (one per MODEL_LIST entry in
+# the Makefile), sdkconfig.qemu_build, a bare sdkconfig from a manual idf.py run,
+# and the .old backup idf.py leaves next to each. Matched by pattern so that
+# signatures are named only in MODEL_LIST, and anchored with / so the pattern
+# cannot reach nested paths such as unittests/mocks/sdkconfig.h. The negations
+# re-include the checked-in inputs (note !/sdkconfig.qemu.* assumes a generated
+# QEMU config is never named sdkconfig.qemu.<something>: today's has an
+# underscore), and the trailing /sdkconfig.*.old wins over them for their backups.
+/sdkconfig
+/sdkconfig.*
+!/sdkconfig.defaults
+!/sdkconfig.defaults.*
+!/sdkconfig.qemu.*
+/sdkconfig.*.old
 **/build/
 
 # Release
@@ -18,7 +35,15 @@ release/
 managed_components/
 
 .clang-format
-.clang-tidy
 
 # Coverage reports
 **/covr_report/
+*.gcov
+
+# Python
+__pycache__
+.venv/
+api_tests/.venv/
+
+
+eim_config.toml

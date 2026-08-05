@@ -21,12 +21,17 @@
 
 void bridge_reset(void);
 
+// Declared here because serial mock header is not exposed; the symbol is defined in mocks/serial.c
+extern bool mock_serial_init_should_succeed;
+void mock_serial_reset(void);
+
 static void mocks_reset(void)
 {
     mock_setting_items_reset();
     mock_modbus_tcp_reset();
     mock_transparent_tcp_reset();
     mock_rs485_stats_reset();
+    mock_serial_reset();
 }
 
 void setUp(void)
@@ -98,7 +103,7 @@ static void verify_setting_items_not_called(unsigned index)
 
 static_assert(sizeof(mock_modbus_tcp_t) == sizeof(mock_transparent_tcp_t), "Struct sizes do not match");
 
-// Структуры mock_modbus_tcp_t и mock_transparent_tcp_t идентичны, поэтому используем одну функцию для проверки обоих типов
+// Structures mock_modbus_tcp_t and mock_transparent_tcp_t are identical, so we use one function to verify both types
 static void verify_mode_tcp_init_port(unsigned index, void *mode_tcp_struct)
 {
     TEST_ASSERT_LESS_THAN_UINT_MESSAGE(BRIDGES_COUNT, index, "verify_mode_tcp_init_port called with invalid index");
@@ -268,7 +273,7 @@ static void verify_mode_tcp_deinit_port_calls(unsigned index, int expected_modbu
     );
 }
 
-// Тестируем bridge_init
+// Test bridge_init
 void test_bridge_init(void)
 {
     LOG_MESSAGE();
@@ -278,16 +283,18 @@ void test_bridge_init(void)
     esp_err_t result = bridge_init();
     TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_init should return ESP_OK");
 
+    // rs485_busy_monitor_init() and rs485_stats_init() have been moved to
+    // port_manager_init(), so they are NOT called from bridge_init() any more.
     TEST_ASSERT_EQUAL_MESSAGE(
-        1,
+        0,
         mock_rs485_stats.busy_monitor_init_called,
-        "rs485_busy_monitor_init should be called once"
+        "rs485_busy_monitor_init should not be called from bridge_init"
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
-        1,
+        0,
         mock_rs485_stats.stats_init_called,
-        "rs485_stats_init should be called once"
+        "rs485_stats_init should not be called from bridge_init"
     );
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -296,7 +303,7 @@ void test_bridge_init(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init в режиме Modbus TCP и разными настройками последовательного порта
+// Test bridge_port_init initialization in Modbus TCP mode with various serial port settings
 void test_bridge_port_init_server_modbus_tcp_various_settings_1(void)
 {
     LOG_MESSAGE();
@@ -392,7 +399,7 @@ void test_bridge_port_init_server_modbus_tcp_invalid_settings(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init в режиме Modbus TCP с ошибкой инициализации Modbus TCP порта
+// Test bridge_port_init initialization in Modbus TCP mode when modbus_tcp_init_port fails
 void test_bridge_port_init_modbus_tcp_mode_fail(void)
 {
     LOG_MESSAGE();
@@ -413,7 +420,7 @@ void test_bridge_port_init_modbus_tcp_mode_fail(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init в режиме прозрачного шлюза и разными настройками последовательного порта и режимами моста
+// Test bridge_port_init initialization in transparent gateway mode with various serial port settings and bridge modes
 void test_bridge_port_init_transparent_mode_various_settings_1(void)
 {
     LOG_MESSAGE();
@@ -525,7 +532,7 @@ void test_bridge_port_init_transparent_mode_invalid_settings(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init в режиме прозрачного шлюза с ошибкой инициализации прозрачного TCP порта
+// Test bridge_port_init initialization in transparent gateway mode when transparent_tcp_init_port fails
 void test_bridge_port_init_transparent_mode_fail(void)
 {
     LOG_MESSAGE();
@@ -546,7 +553,7 @@ void test_bridge_port_init_transparent_mode_fail(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init с ошибками чтения настроек
+// Test bridge_port_init initialization with setting read errors
 void test_bridge_port_init_setting_read_errors_1(void)
 {
     LOG_MESSAGE();
@@ -619,7 +626,7 @@ void test_bridge_port_init_setting_read_errors_4(void)
     }
 }
 
-// Тестируем повторную инициализацию bridge_port_init с разными режимами портов
+// Test repeated bridge_port_init initialization with different port modes
 void test_bridge_port_init_already_initialized(void)
 {
     LOG_MESSAGE();
@@ -662,30 +669,15 @@ void test_bridge_port_init_already_initialized(void)
     }
 }
 
-// Тестируем инициализацию bridge_port_init с отключенными портами
-void test_bridge_port_init_disabled_ports(void)
+// Test bridge_port_init with an invalid/legacy bridge_mode in settings.
+// port_mode is the authoritative on/off axis now: a tcp_bridge port whose bridge_mode
+// maps to BRIDGE_MODE_DISABLED (corrupt/legacy value) must NOT be half-initialized.
+// bridge_port_init() returns an error so port_manager_set_mode() rolls the port back
+// instead of leaving a zombie tcp_bridge. The port must stay uninitialized.
+void test_bridge_port_init_invalid_bridge_mode_in_settings(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with both ports disabled");
-    LOG_MESSAGE();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_disable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK");
-
-        result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK when port is disabled");
-
-        verify_setting_items_not_called(index);
-        verify_mode_tcp_init_port_calls(index, 0, 0);
-    }
-}
-
-// Тестируем инициализацию bridge_port_init, отключив порты в настройках
-void test_bridge_port_init_disabled_ports_in_settings(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with both ports disabled in settings");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init with invalid/legacy bridge_mode in settings");
     LOG_MESSAGE();
 
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
@@ -695,14 +687,18 @@ void test_bridge_port_init_disabled_ports_in_settings(void)
         strcpy(mock_settings_items_bridge_cfg[index].bridge_mode, "disabled");
 
         esp_err_t result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK when port is disabled in settings");
+        TEST_ASSERT_EQUAL_MESSAGE(
+            ESP_ERR_INVALID_STATE, result,
+            "bridge_port_init should return ESP_ERR_INVALID_STATE for invalid/legacy bridge_mode"
+        );
 
+        // Config was read, but no TCP transport was brought up.
         verify_setting_items_read_calls(index);
         verify_mode_tcp_init_port_calls(index, 0, 0);
     }
 }
 
-// Тестируем bridge_port_init и bridge_port_deinit с невалидным номером порта
+// Test bridge_port_init and bridge_port_deinit with an invalid port number
 void test_bridge_port_init_deinit_invalid_index(void)
 {
     LOG_MESSAGE();
@@ -720,7 +716,7 @@ void test_bridge_port_init_deinit_invalid_index(void)
     );
 }
 
-// Тестируем bridge_port_deinit с неинициализированными портами
+// Test bridge_port_deinit with uninitialized ports
 void test_bridge_port_deinit_not_initialized(void)
 {
     LOG_MESSAGE();
@@ -735,7 +731,7 @@ void test_bridge_port_deinit_not_initialized(void)
     }
 }
 
-// Тестируем успешную деинициализацию bridge_port_deinit
+// Test successful bridge_port_deinit deinitialization
 void test_bridge_port_deinit_success(void)
 {
     LOG_MESSAGE();
@@ -751,133 +747,14 @@ void test_bridge_port_deinit_success(void)
         result = bridge_port_deinit(index);
         TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_deinit should return ESP_OK");
 
-        verify_rs485_reset_calls(index, 1, 1);
+        // rs485_busy_monitor_reset() and rs485_stats_reset() have been moved to
+        // port_manager, so they are NOT called from bridge_port_deinit() any more.
+        verify_rs485_reset_calls(index, 0, 0);
         verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
     }
 }
 
-// Тестируем функции bridge_disable_port и bridge_enable_port с невалидным индексом
-void test_bridge_disable_enable_port_invalid_index(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_disable_port and bridge_enable_port - invalid index");
-    LOG_MESSAGE();
-
-    esp_err_t result = bridge_disable_port(BRIDGES_COUNT);
-    TEST_ASSERT_EQUAL_MESSAGE(
-        ESP_ERR_INVALID_ARG, result, "bridge_disable_port should return ESP_ERR_INVALID_ARG for invalid index"
-    );
-
-    result = bridge_enable_port(BRIDGES_COUNT);
-    TEST_ASSERT_EQUAL_MESSAGE(
-        ESP_ERR_INVALID_ARG, result, "bridge_enable_port should return ESP_ERR_INVALID_ARG for invalid index"
-    );
-}
-
-// Тестируем функцию bridge_disable_port с инициализированным bridge_port_init
-void test_bridge_disable_port_initialized(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_disable_port - initialized port");
-    LOG_MESSAGE();
-
-    configure_port_modes();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
-
-        result = bridge_disable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK for initialized port");
-
-        verify_rs485_reset_calls(index, 1, 1);
-        verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-    }
-}
-
-// Тестируем функцию bridge_enable_port с неинициализированным портом без запроса инициализации
-void test_bridge_enable_port_not_initialized_no_request(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_enable_port - not initialized port without init request");
-    LOG_MESSAGE();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_enable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_enable_port should return ESP_OK");
-
-        verify_setting_items_not_called(index);
-        verify_mode_tcp_init_port_calls(index, 0, 0);
-    }
-}
-
-// Тестируем функцию bridge_enable_port с неинициализированным портом, который был отключен до попытки инициализации
-void test_bridge_enable_port_disabled_during_init(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_enable_port - port disabled during initialization");
-    LOG_MESSAGE();
-
-    configure_port_modes();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_disable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK");
-
-        // Try to initialize disabled port - should set init_request flag
-        result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK for disabled port");
-
-        // Verify port was not actually initialized
-        verify_setting_items_not_called(index);
-        verify_mode_tcp_init_port_calls(index, 0, 0);
-
-        // Now enable the ports - should trigger actual initialization
-        result = bridge_enable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_enable_port should return ESP_OK");
-        verify_setting_items_read_calls(index);
-        verify_mode_tcp_init_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-    }
-
-    verify_mode_tcp_init_port(0, &mock_modbus_tcp[0]);
-    verify_mode_tcp_init_port(1, &mock_transparent_tcp[1]);
-}
-
-// Тестируем автоматическую инициализацию bridge_port_init после отключения и включения порта
-void test_bridge_port_init_after_switching(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init - after disable");
-    LOG_MESSAGE();
-
-    configure_port_modes();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_port_init(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
-        verify_setting_items_read_calls(index);
-        verify_mode_tcp_init_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-
-        result = bridge_disable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_disable_port should return ESP_OK");
-        verify_mode_tcp_deinit_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-        verify_rs485_reset_calls(index, 1, 1);
-
-    }
-
-    mocks_reset();
-
-    configure_port_modes();
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        esp_err_t result = bridge_enable_port(index);
-        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_enable_port should return ESP_OK");
-        verify_setting_items_read_calls(index);
-        verify_mode_tcp_init_port_calls(index, index == 0 ? 1 : 0, index == 1 ? 1 : 0);
-    }
-}
-
-// Тестируем tcp_server_active_connections с невалидным номером сервера
+// Test tcp_server_active_connections with an invalid server number
 void test_tcp_server_active_connections_invalid_server_num(void)
 {
     LOG_MESSAGE();
@@ -891,7 +768,10 @@ void test_tcp_server_active_connections_invalid_server_num(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, result, "tcp_server_active_connections should return 0 for server_num >= TCP_SERVER_COUNT");
 }
 
-// Тестируем tcp_server_active_connections с отключенным портом
+// Test tcp_server_active_connections on a port that was never brought up.
+// Named for the old mode-based guard; since the guard moved to bridge_ctx[].initialized the
+// function does not look at bridge_mode at all, so what this pins now is the un-initialized
+// port, not the DISABLED mode.
 void test_tcp_server_active_connections_disabled_mode(void)
 {
     LOG_MESSAGE();
@@ -900,11 +780,11 @@ void test_tcp_server_active_connections_disabled_mode(void)
 
     for (unsigned index = 0; index < TCP_SERVER_COUNT; index++) {
         int result = tcp_server_active_connections(index);
-        TEST_ASSERT_EQUAL_MESSAGE(0, result, "tcp_server_active_connections should return 0 when bridge mode is DISABLED");
+        TEST_ASSERT_EQUAL_MESSAGE(0, result, "tcp_server_active_connections should return 0 for a port that was never initialized");
     }
 }
 
-// Тестируем tcp_server_active_connections с нулевым tcp_desc
+// Test tcp_server_active_connections with a NULL tcp_desc
 void test_tcp_server_active_connections_null_tcp_desc(void)
 {
     LOG_MESSAGE();
@@ -926,7 +806,7 @@ void test_tcp_server_active_connections_null_tcp_desc(void)
     }
 }
 
-// Тестируем tcp_server_active_connections с активными соединениями
+// Test tcp_server_active_connections with active connections
 void test_tcp_server_active_connections_exist(void)
 {
     LOG_MESSAGE();
@@ -953,7 +833,194 @@ void test_tcp_server_active_connections_exist(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed с невалидным индексом
+// Regression C7: GET /info read a freed tcp_desc after a port was torn down.
+//
+// bridge_port_deinit() used to clear only serial_desc and initialized, never tcp_desc,
+// while the descriptor itself had already been free()d inside
+// modbus_tcp_deinit_port()/transparent_tcp_deinit_port(). tcp_server_active_connections()
+// is called unconditionally for both ports on every GET /info, and its old guard
+// (bridge_current_cfg[].bridge_mode != DISABLED, a field deinit does not clear either) let
+// the call through to ->active_connections on freed memory.
+//
+// The invariant asserted here is not "the number is 0" but "the descriptor is no longer
+// reachable from bridge_ctx": a NULL pointer is what makes it impossible for the reader to
+// touch the freed block at all.
+void test_tcp_server_active_connections_after_deinit(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test tcp_server_active_connections - after deinit (C7)");
+    LOG_MESSAGE();
+
+    configure_port_modes();
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
+    }
+
+    // Non-zero on purpose: a port that reports 0 only because the count happened to be 0
+    // would prove nothing about the guard.
+    (*(mock_modbus_tcp[0].tcp_desc))->active_connections = 3;
+    (*(mock_transparent_tcp[1].tcp_desc))->active_connections = 4;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_deinit(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_deinit should return ESP_OK");
+    }
+
+    TEST_ASSERT_NULL_MESSAGE(
+        *(mock_modbus_tcp[0].tcp_desc),
+        "bridge_port_deinit should clear tcp_desc so the freed descriptor is unreachable"
+    );
+    TEST_ASSERT_NULL_MESSAGE(
+        *(mock_transparent_tcp[1].tcp_desc),
+        "bridge_port_deinit should clear tcp_desc so the freed descriptor is unreachable"
+    );
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        TEST_ASSERT_NULL_MESSAGE(
+            bridge_get_serial_desc(index),
+            "bridge_port_deinit should clear serial_desc"
+        );
+        int result = tcp_server_active_connections(index);
+        TEST_ASSERT_EQUAL_MESSAGE(0, result, "tcp_server_active_connections should return 0 after deinit");
+    }
+}
+
+// Regression C7, ordering half: the clear must happen BEFORE the descriptors are freed.
+//
+// bridge_port_deinit() used to unpublish the context only after
+// modbus_tcp_deinit_port()/transparent_tcp_deinit_port() had returned, leaving a window
+// that spans the whole teardown (which joins the TCP receiver tasks and the UART event
+// task) during which the httpd task could still reach the descriptor being freed.
+//
+// The mocks stand where the real modules free the descriptors and sample both bridge_ctx
+// readers there; both must already come up empty.
+void test_bridge_ctx_unpublished_before_descriptors_are_freed(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_deinit - context unpublished before the free (C7)");
+    LOG_MESSAGE();
+
+    configure_port_modes();
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init should return ESP_OK");
+    }
+
+    (*(mock_modbus_tcp[0].tcp_desc))->active_connections = 3;
+    (*(mock_transparent_tcp[1].tcp_desc))->active_connections = 4;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_deinit(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_deinit should return ESP_OK");
+    }
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        0,
+        mock_modbus_tcp_calls[0].deinit_observed_active_conns,
+        "tcp_server_active_connections must already report 0 when modbus_tcp_deinit_port frees the descriptor"
+    );
+    TEST_ASSERT_NULL_MESSAGE(
+        mock_modbus_tcp_calls[0].deinit_observed_serial_desc,
+        "bridge_get_serial_desc must already be NULL when modbus_tcp_deinit_port frees the descriptor"
+    );
+
+    TEST_ASSERT_EQUAL_MESSAGE(
+        0,
+        mock_transparent_tcp_calls[1].deinit_observed_active_conns,
+        "tcp_server_active_connections must already report 0 when transparent_tcp_deinit_port frees the descriptor"
+    );
+    TEST_ASSERT_NULL_MESSAGE(
+        mock_transparent_tcp_calls[1].deinit_observed_serial_desc,
+        "bridge_get_serial_desc must already be NULL when transparent_tcp_deinit_port frees the descriptor"
+    );
+}
+
+// Regression C7, second path: a FAILED bridge_port_init() left the same dangling pointers.
+//
+// The modules' late failure paths free the descriptors they had already written to the
+// out-parameters; modbus_tcp.c's task-creation branch used to leave both pointers behind,
+// and clearing them there is part of this same change. bridge_port_init() propagated the
+// error with bridge_ctx[index].initialized still false, so bridge_port_deinit() would
+// early-return "not initialized" and never clean up — the stale pointers survived
+// indefinitely.
+//
+// The mock deliberately leaves both out-parameters set on its late-failure path: the clear
+// under test is bridge.c's, and it must hold whatever the callee does.
+void test_bridge_ctx_cleared_after_failed_init(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init - context cleared after a late failure (C7)");
+    LOG_MESSAGE();
+
+    configure_port_modes();
+    mock_modbus_tcp_init_port_should_fail_late = true;
+    mock_transparent_tcp_init_port_should_fail_late = true;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, result, "bridge_port_init should return ESP_FAIL on a late module failure");
+    }
+
+    TEST_ASSERT_NULL_MESSAGE(
+        *(mock_modbus_tcp[0].tcp_desc),
+        "bridge_port_init should clear tcp_desc when modbus_tcp_init_port fails after creating it"
+    );
+    TEST_ASSERT_NULL_MESSAGE(
+        *(mock_transparent_tcp[1].tcp_desc),
+        "bridge_port_init should clear tcp_desc when transparent_tcp_init_port fails after creating it"
+    );
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        TEST_ASSERT_NULL_MESSAGE(
+            bridge_get_serial_desc(index),
+            "bridge_port_init should clear serial_desc when the module fails after creating it"
+        );
+        int result = tcp_server_active_connections(index);
+        TEST_ASSERT_EQUAL_MESSAGE(0, result, "tcp_server_active_connections should return 0 after a failed init");
+    }
+}
+
+// Regression C7, guard half: tcp_server_active_connections() must not depend on
+// bridge_current_cfg[].bridge_mode.
+//
+// This is the one state the caller-side clear cannot cover, because bridge.c has not
+// regained control yet: inside a failing module init, bridge_ctx[index].tcp_desc points at
+// the descriptor the module is about to free and bridge_current_cfg[index].bridge_mode
+// already says SERVER/CLIENT. The old mode-based guard therefore let a concurrent GET /info
+// through; only a guard that consults `initialized` reports 0 here.
+void test_tcp_server_active_connections_during_failed_init(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test tcp_server_active_connections - during a failing init (C7)");
+    LOG_MESSAGE();
+
+    configure_port_modes();
+    mock_modbus_tcp_init_port_should_fail_late = true;
+    mock_transparent_tcp_init_port_should_fail_late = true;
+
+    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
+        esp_err_t result = bridge_port_init(index);
+        TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, result, "bridge_port_init should return ESP_FAIL on a late module failure");
+    }
+
+    // 0, not MOCK_TCP_FAIL_LATE_ACTIVE_CONNS: the port is not initialized, whatever the
+    // stale bridge_mode says. -1 would mean the mock never reached the observation point.
+    TEST_ASSERT_EQUAL_MESSAGE(
+        0,
+        mock_modbus_tcp_calls[0].init_fail_observed_active_conns,
+        "tcp_server_active_connections must report 0 while modbus_tcp_init_port is failing"
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(
+        0,
+        mock_transparent_tcp_calls[1].init_fail_observed_active_conns,
+        "tcp_server_active_connections must report 0 while transparent_tcp_init_port is failing"
+    );
+}
+
+// Test bridge_port_check_settings_changed with an invalid index
 void test_bridge_port_check_settings_changed_invalid_index(void)
 {
     LOG_MESSAGE();
@@ -964,7 +1031,7 @@ void test_bridge_port_check_settings_changed_invalid_index(void)
     TEST_ASSERT_FALSE_MESSAGE(result, "bridge_port_check_settings_changed should return false for invalid index");
 }
 
-// Тестируем bridge_port_check_settings_changed с ошибками чтения настроек
+// Test bridge_port_check_settings_changed with setting read errors
 void test_bridge_port_check_settings_changed_read_errors(void)
 {
     LOG_MESSAGE();
@@ -980,7 +1047,7 @@ void test_bridge_port_check_settings_changed_read_errors(void)
     TEST_ASSERT_FALSE_MESSAGE(result, "bridge_port_check_settings_changed should return false when bridge config read fails");
 }
 
-// Тестируем bridge_port_check_settings_changed для неинициализированного порта с отключенным режимом
+// Test bridge_port_check_settings_changed for an uninitialized port with disabled mode
 void test_bridge_port_check_settings_changed_not_initialized_disabled(void)
 {
     LOG_MESSAGE();
@@ -999,7 +1066,7 @@ void test_bridge_port_check_settings_changed_not_initialized_disabled(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для неинициализированного порта с включенным режимом
+// Test bridge_port_check_settings_changed for an uninitialized port with enabled mode
 void test_bridge_port_check_settings_changed_not_initialized_enabled(void)
 {
     LOG_MESSAGE();
@@ -1018,7 +1085,7 @@ void test_bridge_port_check_settings_changed_not_initialized_enabled(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта без изменений
+// Test bridge_port_check_settings_changed for an initialized port with no changes
 void test_bridge_port_check_settings_changed_initialized_no_changes(void)
 {
     LOG_MESSAGE();
@@ -1038,7 +1105,7 @@ void test_bridge_port_check_settings_changed_initialized_no_changes(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+// Test bridge_port_check_settings_changed for an initialized port with changes
 void test_bridge_port_check_settings_changed_initialized_changes_1(void)
 {
     LOG_MESSAGE();
@@ -1061,7 +1128,7 @@ void test_bridge_port_check_settings_changed_initialized_changes_1(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+// Test bridge_port_check_settings_changed for an initialized port with changes
 void test_bridge_port_check_settings_changed_initialized_changes_2(void)
 {
     LOG_MESSAGE();
@@ -1084,7 +1151,7 @@ void test_bridge_port_check_settings_changed_initialized_changes_2(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+// Test bridge_port_check_settings_changed for an initialized port with changes
 void test_bridge_port_check_settings_changed_initialized_changes_3(void)
 {
     LOG_MESSAGE();
@@ -1110,7 +1177,7 @@ void test_bridge_port_check_settings_changed_initialized_changes_3(void)
     }
 }
 
-// Тестируем bridge_port_check_settings_changed для инициализированного порта с изменениями
+// Test bridge_port_check_settings_changed for an initialized port with changes
 void test_bridge_port_check_settings_changed_initialized_changes_4(void)
 {
     LOG_MESSAGE();
@@ -1136,6 +1203,71 @@ void test_bridge_port_check_settings_changed_initialized_changes_4(void)
     }
 }
 
+// Tests for bridge_port_init_serial_only
+
+void test_bridge_port_init_serial_only_invalid_index(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - invalid index");
+    LOG_MESSAGE();
+
+    serial_desc_t *desc = NULL;
+    esp_err_t result = bridge_port_init_serial_only(BRIDGES_COUNT, &desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_port_init_serial_only should return ESP_ERR_INVALID_ARG for index >= BRIDGES_COUNT");
+}
+
+void test_bridge_port_init_serial_only_null_out(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - NULL serial_desc_out");
+    LOG_MESSAGE();
+
+    esp_err_t result = bridge_port_init_serial_only(0, NULL);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, result, "bridge_port_init_serial_only should return ESP_ERR_INVALID_ARG for NULL serial_desc_out");
+}
+
+void test_bridge_port_init_serial_only_read_config_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - read_serial_port_config fails");
+    LOG_MESSAGE();
+
+    /* Cause read_serial_port_config to fail by making parity read return an error */
+    mock_setting_items_calls[0].read_result.parity = ESP_FAIL;
+
+    serial_desc_t *desc = NULL;
+    esp_err_t result = bridge_port_init_serial_only(0, &desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, result,
+        "bridge_port_init_serial_only should return ESP_FAIL when read_serial_port_config fails");
+    TEST_ASSERT_NULL_MESSAGE(desc, "serial_desc_out should remain NULL when config read fails");
+}
+
+void test_bridge_port_init_serial_only_serial_init_fail(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - serial_init returns NULL");
+    LOG_MESSAGE();
+
+    // mock_serial_init_should_succeed is false by default (set in setUp via mocks_reset)
+    serial_desc_t *desc = NULL;
+    esp_err_t result = bridge_port_init_serial_only(0, &desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, result, "bridge_port_init_serial_only should return ESP_FAIL when serial_init returns NULL");
+    TEST_ASSERT_NULL_MESSAGE(desc, "serial_desc_out should remain NULL on failure");
+}
+
+void test_bridge_port_init_serial_only_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge_port_init_serial_only - success");
+    LOG_MESSAGE();
+
+    mock_serial_init_should_succeed = true;
+    serial_desc_t *desc = NULL;
+    esp_err_t result = bridge_port_init_serial_only(0, &desc);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "bridge_port_init_serial_only should return ESP_OK on success");
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_desc_out should point to a valid descriptor on success");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1158,24 +1290,20 @@ int main(void)
     RUN_TEST(test_bridge_port_init_setting_read_errors_4);
 
     RUN_TEST(test_bridge_port_init_already_initialized);
-    RUN_TEST(test_bridge_port_init_disabled_ports);
-    RUN_TEST(test_bridge_port_init_disabled_ports_in_settings);
+    RUN_TEST(test_bridge_port_init_invalid_bridge_mode_in_settings);
     RUN_TEST(test_bridge_port_init_deinit_invalid_index);
 
     RUN_TEST(test_bridge_port_deinit_not_initialized);
     RUN_TEST(test_bridge_port_deinit_success);
 
-    RUN_TEST(test_bridge_disable_enable_port_invalid_index);
-    RUN_TEST(test_bridge_disable_port_initialized);
-
-    RUN_TEST(test_bridge_enable_port_not_initialized_no_request);
-    RUN_TEST(test_bridge_enable_port_disabled_during_init);
-    RUN_TEST(test_bridge_port_init_after_switching);
-
     RUN_TEST(test_tcp_server_active_connections_invalid_server_num);
     RUN_TEST(test_tcp_server_active_connections_disabled_mode);
     RUN_TEST(test_tcp_server_active_connections_null_tcp_desc);
     RUN_TEST(test_tcp_server_active_connections_exist);
+    RUN_TEST(test_tcp_server_active_connections_after_deinit);
+    RUN_TEST(test_bridge_ctx_unpublished_before_descriptors_are_freed);
+    RUN_TEST(test_bridge_ctx_cleared_after_failed_init);
+    RUN_TEST(test_tcp_server_active_connections_during_failed_init);
 
     RUN_TEST(test_bridge_port_check_settings_changed_invalid_index);
     RUN_TEST(test_bridge_port_check_settings_changed_read_errors);
@@ -1186,6 +1314,12 @@ int main(void)
     RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_2);
     RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_3);
     RUN_TEST(test_bridge_port_check_settings_changed_initialized_changes_4);
+
+    RUN_TEST(test_bridge_port_init_serial_only_invalid_index);
+    RUN_TEST(test_bridge_port_init_serial_only_null_out);
+    RUN_TEST(test_bridge_port_init_serial_only_read_config_fail);
+    RUN_TEST(test_bridge_port_init_serial_only_serial_init_fail);
+    RUN_TEST(test_bridge_port_init_serial_only_success);
 
     return UNITY_END();
 }

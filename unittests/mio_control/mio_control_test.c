@@ -21,7 +21,7 @@ void tearDown(void)
 
 }
 
-// Валидация выполнения функции mio_control_init()
+// Validate execution of the mio_control_init() function
 void validate_mio_control_init_run(void)
 {
     TEST_ASSERT_EQUAL_INT_MESSAGE(
@@ -62,7 +62,7 @@ void validate_mio_control_init_run(void)
     );
 }
 
-// Тестируем успешное выполнение mio_control_init()
+// Test successful execution of mio_control_init()
 void test_mio_control_init_success(void)
 {
     LOG_MESSAGE();
@@ -75,7 +75,7 @@ void test_mio_control_init_success(void)
     validate_mio_control_init_run();
 }
 
-// Тестируем mio_control_init() при ошибке gpio_expander_set_out_dir_and_level()
+// Test mio_control_init() when gpio_expander_set_out_dir_and_level() fails
 void test_mio_control_init_fail(void)
 {
     LOG_MESSAGE();
@@ -90,7 +90,7 @@ void test_mio_control_init_fail(void)
     validate_mio_control_init_run();
 }
 
-// Валидация выполнения mio_control_io_bus_onoff()
+// Validate execution of mio_control_io_bus_onoff()
 void validate_mio_control_io_bus_onoff_run(bool enabled)
 {
     TEST_ASSERT_EQUAL_INT_MESSAGE(
@@ -131,7 +131,7 @@ void validate_mio_control_io_bus_onoff_run(bool enabled)
     );
 }
 
-// Тестируем успешное выполнение mio_control_io_bus_onoff()
+// Test successful execution of mio_control_io_bus_onoff()
 void test_mio_control_io_bus_onoff_success(void)
 {
     LOG_MESSAGE();
@@ -158,7 +158,7 @@ void test_mio_control_io_bus_onoff_success(void)
     validate_mio_control_io_bus_onoff_run(enabled);
 }
 
-// Тестируем mio_control_io_bus_onoff() с ошибкой выполнения gpio_expander_set_level()
+// Test mio_control_io_bus_onoff() with gpio_expander_set_level() execution failure
 void test_mio_control_io_bus_onoff_fail(void)
 {
     LOG_MESSAGE();

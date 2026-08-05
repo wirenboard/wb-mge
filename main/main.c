@@ -1,4 +1,4 @@
-#include "bridge.h"
+#include "port_manager.h"
 #include "config.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -14,17 +14,21 @@
 #include "settings_update.h"
 #include "debug_log.h"
 
+// Hardware-logic headers: needed by both builds. In QEMU these resolve to the
+// virtual IO bus (gpio_expander.h symbols come from virtual_io_qemu.c).
+#include "rs485_control.h"
+#include "mio_control.h"
+#include "update_rs485_mio_gpio_states.h"
+#include "indication.h"
+#include "gpio_expander.h"
+
 // QEMU build conditional includes
 #if (QEMU_BUILD)
     #include "wifi_qemu_mock.h"
+    #include "virtual_io_qemu.h"
 #else
     #include "esp_io_expander_tca95xx_16bit.h"
     #include "driver/gpio.h"
-    #include "rs485_control.h"
-    #include "mio_control.h"
-    #include "update_rs485_mio_gpio_states.h"
-    #include "indication.h"
-    #include "gpio_expander.h"
 #endif
 
 
@@ -38,26 +42,28 @@
 static const char *TAG = "main";
 
 
+// Available in both builds: config button + factory reset only touch
+// setting_items/settings_update/indication, all of which run in QEMU too.
+static void factory_reset(void)
+{
+    ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
+    ESP_ERROR_CHECK(setting_items_set_defaults(false));
+
+    ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
+    ESP_LOGI(TAG, "Device will continue running with default configuration.");
+}
+
+// Button long press callback for factory reset
+static void config_button_longpress_callback(unsigned press_time_ms)
+{
+    ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
+    indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
+    factory_reset();
+    settings_update();
+}
+
 #if (!QEMU_BUILD)
-    static void factory_reset(void)
-    {
-        ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
-        ESP_ERROR_CHECK(setting_items_set_defaults(false));
-
-        ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
-        ESP_LOGI(TAG, "Device will continue running with default configuration.");
-    }
-
-    // Button long press callback for factory reset
-    static void config_button_longpress_callback(unsigned press_time_ms)
-    {
-        ESP_LOGW(TAG, "Factory reset triggered by 5-second config button hold!");
-        indication_status_led_blink_n_times(STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS, STATUS_LED_FACTORY_RESET_BLINK_COUNT);
-        factory_reset();
-        settings_update();
-    }
-
-    // System voltage monitoring event
+    // System voltage monitoring event (voltage_monitor is excluded from QEMU).
     static void sys_voltage_event_callback(float voltage, bool is_ok)
     {
         rs485_bus_vout_set_allowed(is_ok);
@@ -103,13 +109,14 @@ void app_main(void)
 {
     debug_log_init();
 
-    #if (!QEMU_BUILD)
-        // Initialize GPIO expander before voltage monitoring
-        // to reset all GPIOs to safe state anyway
-        gpio_expander_init(NULL);
-        rs485_control_init();
-        mio_control_init();
+    // Initialize GPIO expander before voltage monitoring
+    // to reset all GPIOs to safe state anyway.
+    // In QEMU these resolve to the virtual IO bus (RAM-backed expander).
+    gpio_expander_init(NULL);
+    rs485_control_init();
+    mio_control_init();
 
+    #if (!QEMU_BUILD)
         ESP_ERROR_CHECK(voltage_monitor_init(sys_voltage_event_callback));
         float voltage = voltage_monitor_get_sys_voltage();
         if (!voltage_monitor_sys_voltage_is_ok()) {
@@ -124,22 +131,108 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
 
-    #if (!QEMU_BUILD)
-        update_io_bus_control();
-    #endif // QEMU_BUILD
+    update_io_bus_control();
 
     print_setting_items();
 
     ESP_ERROR_CHECK(network_init());
-    ESP_ERROR_CHECK(http_server_init());
 
-    #if (!QEMU_BUILD)
-        update_rs485_control();
-        indication_init();
-        indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
-        config_button_init();
-        config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
+    // Bring up the network-independent subsystems BEFORE the HTTP server starts: the sniffer
+    // (queue, per-port response timers, WS mutex, WS task), the multimaster cache mutex, the
+    // repeater mutex, the RS-485 monitors and — first of all, above that function's own
+    // one-shot guard — the port_manager locks (the two per-port init mutexes and the
+    // cache-decision mutex, via port_manager_locks_init()). Those last ones are why the order
+    // is load-bearing in a second, harder way than the rest: they used to be created lazily
+    // inside the lock paths, and a lazy create is not atomic, so two tasks arriving together
+    // would each end up holding a mutex of their own and serialise nothing. Neither the POST
+    // /ports/N/* handlers registered below nor the config-button long-press callback
+    // (config_button_init() further down, then settings_update() -> update_serial_tx_disabled()
+    // -> port_manager_set_tx_disabled()) waits for port_manager_init(), so that race had the
+    // whole wait-for-network window to happen in. The lock paths now assert the handle exists,
+    // which is a check on THIS ordering and nothing else: those mutexes sit in static buffers,
+    // so their creation cannot fail and a NULL handle can only mean this call did not run.
+    //
+    // The original reason stands unchanged. http_server_init() registers URI handlers that
+    // reach straight into those FreeRTOS handles — the sniffer WS endpoint is one "enable" +
+    // "disable" message away from xTimerStop() on the response timer — and FreeRTOS
+    // configASSERTs on a NULL handle, which on this build is a panic and a reboot, not a failed
+    // request. Keep this call above http_server_init(), and do not fold it back into
+    // port_manager_init(): that one stays behind the wait-for-network loop at the end of this
+    // function, because the rest of it (cache Modbus server, TCP bridges) needs an interface to
+    // bind to. The order is still an invariant.
+    //
+    // It is no longer the only thing holding this up, though. Every public entry point of the
+    // sniffer now checks the handle it is about to use and degrades instead of panicking — the
+    // WS endpoint answers 503 — the way cache_multimaster has always done with its mutex. The
+    // order keeps the feature working; the checks keep a stray early request from rebooting the
+    // device.
+    //
+    // How wide that window really is, since the loop below invites a wrong reading: it is
+    // released by sys_info flags that network.c sets on LINK/ASSOCIATION events —
+    // ETHERNET_EVENT_CONNECTED, WIFI_EVENT_STA_CONNECTED, WIFI_EVENT_AP_STACONNECTED — and NOT
+    // on IP_EVENT_ETH_GOT_IP / IP_EVENT_STA_GOT_IP, which only fill in the address strings.
+    // Under SoftAP the window is therefore narrower — the counter is bumped when a client
+    // associates, before it has finished DHCP and asked for a page — but narrower is not
+    // closed: the loop below only samples that counter once a second
+    // (vTaskDelay(pdMS_TO_TICKS(1000))), so the association happening early buys nothing
+    // against a client that skips DHCP. One with a static address or a cached lease can
+    // request a page almost anywhere inside that second. The real exposure is Ethernet/STA
+    // on a static address (eth_dhcpc off), where the interface starts answering the instant
+    // the link comes up while this task is still up to a poll interval from noticing. A web
+    // UI tab left open somewhere, retrying its WebSocket, lands inside that second easily.
+    //
+    // Deliberately NOT ESP_ERROR_CHECK, for the same reason as http_server_init() below: the
+    // only way any of this fails is out of memory. These subsystems used to be brought up
+    // behind the wait-for-network loop, so a device with no network never reached them at all
+    // and still served its configuration interface over SoftAP quite happily. Aborting here
+    // would put a fresh boot-loop trigger exactly where the old code degraded — and a device
+    // that cannot spare a mutex has no better luck on the next boot. Continuing is safe
+    // precisely because of the checks described above: a handler that arrives now gets a
+    // refusal, not a NULL handle.
+    esp_err_t subsys_ret = port_manager_init_subsystems();
+    if (subsys_ret != ESP_OK) {
+        ESP_LOGE(TAG, "port_manager_init_subsystems failed: %s - continuing without the "
+                      "affected subsystem, the gateway keeps running", esp_err_to_name(subsys_ret));
+    }
+
+    // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
+    // This device is a Modbus gateway first — routing RS-485/TCP traffic is what it is installed
+    // for, and it does that with no web interface at all. Nothing below needs a running httpd
+    // either: every URI handler is registered inside http_server_init() itself, and
+    // port_manager_init() (the gateway) does not touch it. The opposite direction — what those
+    // handlers need from the rest of the boot — is what the call above takes care of.
+    // An abort() here panics and reboots, and every cause that can make the start fail — too
+    // little heap, no free LWIP socket, a web_port already held by another listener, a refused
+    // auth/wifi_scan init — survives the reboot and meets the next boot the same way: a panic
+    // loop that takes the gateway down too, instead of one degraded feature.
+    //
+    // The collision cause is back on that list. It was dropped while a bridge gateway and httpd
+    // disagreed about address family and could therefore both listen on one port; they agree now
+    // (create_listen_socket(), bridge/tcp_server.c binds the same dual-stack form httpd does),
+    // so whoever takes a shared port second gets EADDRINUSE from lwIP instead of quietly
+    // becoming a second listener on it. Note which side loses it HERE, though: this call runs
+    // before port_manager_init() opens any bridge or cache socket, so at boot httpd is always
+    // the first listener and the refusal goes to the other side. httpd is the one refused on the
+    // runtime path instead, where settings_update.c re-acquires the web server socket AFTER the
+    // ports (settings_update.c:264-279) — and that call site handles it exactly as this one
+    // does: log it, carry on, leave the web interface down until the device is power-cycled.
+    esp_err_t http_ret = http_server_init();
+    if (http_ret != ESP_OK) {
+        ESP_LOGE(TAG, "http_server_init failed: %s - continuing without the web interface, "
+                      "the gateway keeps running", esp_err_to_name(http_ret));
+    }
+
+    #if (QEMU_BUILD)
+        // Bring up the virtual IO state bus after the network is up and BEFORE
+        // indication/button init, so the bus is ready to capture LED task activity.
+        virtual_io_init();
     #endif // QEMU_BUILD
+
+    update_rs485_control();
+    indication_init();
+    indication_status_led_blink(STATUS_LED_REGULAR_BLINK_PERIOD_MS);
+    config_button_init();
+    config_button_set_longpress_callback(config_button_longpress_callback, CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS);
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 
@@ -149,7 +242,27 @@ void app_main(void)
             sys_info.eth_is_connected ||
             sys_info.wifi_sta_is_connected)
         {
-            ESP_ERROR_CHECK(bridge_init());
+            // Deliberately NOT ESP_ERROR_CHECK, for the same reason as the two calls above:
+            // this is the call that brings the RS-485 ports up, so aborting on it takes down
+            // the one function the device is installed for. It used to abort — the cache
+            // Modbus TCP server was started through ESP_RETURN_ON_ERROR inside, so a mutex or
+            // socket it could not allocate, or a listen() refused because cache_modbus_port
+            // collides with another listener (a bridge port, or httpd on web_port), left the
+            // ports down and rebooted. A reboot clears none of that: the allocation failures
+            // recur on a deterministic boot path; a collision with web_port comes back
+            // unchanged, because http_server_init() above binds it on every boot before this
+            // runs; and a collision with a bridge port only swaps which side loses it, because
+            // the cache server starts before the port loop (the mechanics are in
+            // port_manager_init()). A panic loop is the one outcome to avoid.
+            //
+            // As of today the function has no failure path left to report — it logs each one
+            // and returns ESP_OK. The check stays anyway: it costs two lines, and it is what
+            // keeps the next error path added in there from silently aborting the boot again.
+            esp_err_t pm_ret = port_manager_init();
+            if (pm_ret != ESP_OK) {
+                ESP_LOGE(TAG, "port_manager_init failed: %s - continuing with whatever came "
+                              "up, the device stays reachable", esp_err_to_name(pm_ret));
+            }
             break;
         } else {
             vTaskDelay(pdMS_TO_TICKS(1000));

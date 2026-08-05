@@ -12,6 +12,8 @@
 #include "rs485_stats.h"
 
 #include "freertos/FreeRTOS.h"
+#include "array_size.h"
+#include "board_pins.h"
 #include <string.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
@@ -19,14 +21,7 @@
 
 
 #define SERIAL_PORT_NUM_1             1
-#define SERIAL_INPUT_PIN_1            GPIO_NUM_9
-#define SERIAL_OUTPUT_PIN_1           GPIO_NUM_10
-#define SERIAL_IO_PIN_1               GPIO_NUM_4
-
 #define SERIAL_PORT_NUM_2             2
-#define SERIAL_INPUT_PIN_2            GPIO_NUM_12
-#define SERIAL_OUTPUT_PIN_2           GPIO_NUM_14
-#define SERIAL_IO_PIN_2               GPIO_NUM_15
 
 #define RS485_BUSY_TIMEOUT_MS         5000
 
@@ -41,6 +36,8 @@ static const char *TAG = "bridge";
 static bridge_mode_t string_to_bridge_mode(const char *str);
 
 
+// When adding/removing a field, update bridge_config_equal() below —
+// it compares this struct field by field.
 typedef struct {
     serial_config_t serial_config;
     bridge_mode_t bridge_mode;
@@ -53,12 +50,48 @@ typedef struct {
     serial_desc_t* serial_desc;
     tcp_desc_t* tcp_desc;
     bool initialized;
-    bool disabled;
-    bool init_request;
 } bridge_ctx_t;
 
+// The configuration this port was LAST INITIALIZED WITH, not "the configuration of this
+// port": deinit deliberately leaves it behind (bridge_port_deinit() still needs bridge_mb
+// to pick the module to tear down), so after a deinit it describes a port that no longer
+// exists — bridge_mode in particular keeps saying SERVER/CLIENT for a port that is now
+// passive. It is meaningful only while bridge_ctx[index].initialized is true, and every
+// reader must gate on that flag rather than on anything found in here.
+//
+// With exactly one exception, and it is in this file: bridge_port_deinit() reads
+// cfg->bridge_mb AFTER bridge_ctx_unpublish() has already cleared `initialized`. It has to
+// — bridge_mb is what selects the module to tear down. It is safe because bridge_mb is
+// written only by bridge_port_init(), and in production both functions are reached only
+// through port_init_mode()/port_deinit_mode(), which port_manager.c serialises per port
+// with pm_lock(index); so no init can be rewriting the field while a deinit reads it. See
+// the interlock paragraph at the unpublish in bridge_port_deinit() for the limits of that.
 static bridge_config_t bridge_current_cfg[BRIDGES_COUNT] = {0};
 static bridge_ctx_t bridge_ctx[BRIDGES_COUNT] = {0};
+
+/* Unpublish a port's descriptors: after this returns, no reader that has not already
+ * started can reach them through bridge_ctx.
+ *
+ * It does NOT make the descriptors unreachable outright, and nothing here should be read as
+ * claiming that. tcp_server_active_connections() runs unsynchronised on the httpd task (see
+ * the note in bridge_port_deinit()): a reader that has already passed the `initialized`
+ * check and loaded tcp_desc can be preempted — or, on this dual-core part, simply be
+ * executing in parallel on the other core — and dereference the pointer after the free.
+ * What this buys is the SIZE of that window: from the whole teardown, which joins the TCP
+ * receiver tasks and the UART event task and can run for hundreds of ms, down to the few
+ * instructions between the guard and the dereference. Narrowed, not closed — the same
+ * distinction transparent_tcp_deinit_port() draws about clearing a field without a lock.
+ *
+ * Called both from bridge_port_deinit() (before the descriptors are freed) and from every
+ * bridge_port_init() failure path — the two ways a descriptor stops being valid while the
+ * pointer to it lives on in this module. All three fields go together on purpose: a
+ * half-cleared context is what makes a reader disagree with its own guard. */
+static inline void bridge_ctx_unpublish(unsigned index)
+{
+    bridge_ctx[index].initialized = false;
+    bridge_ctx[index].serial_desc = NULL;
+    bridge_ctx[index].tcp_desc    = NULL;
+}
 
 int tcp_server_active_connections(tcp_server_num_t server_num)
 {
@@ -67,45 +100,33 @@ int tcp_server_active_connections(tcp_server_num_t server_num)
         return 0;
     }
 
-    if (bridge_current_cfg[server_num].bridge_mode == BRIDGE_MODE_DISABLED) {
+    // Gated on the context, NOT on bridge_current_cfg[].bridge_mode as this used to be.
+    // This is called unconditionally for both ports on every GET /info (info_handlers.c),
+    // from the httpd task, with no idea what mode the port is in — and bridge_mode still
+    // reads SERVER for a port that has since been torn down or switched to another mode
+    // (see the note on bridge_current_cfg above). The old guard therefore let a request
+    // through to a tcp_desc that modbus_tcp_deinit_port()/transparent_tcp_deinit_port()
+    // had already free()d, and the /info poll of the web UI reported whatever the freed
+    // block happened to hold — or another port's connection count once the same-sized
+    // block was handed out again by calloc().
+    //
+    // initialized is the only field that is true exactly while the descriptors are alive:
+    // it is set last by bridge_port_init() and cleared by bridge_ctx_unpublish() before
+    // anything is freed. The NULL check below is kept as belt-and-braces — and it is a real
+    // check only because the pointer is loaded ONCE into a local. bridge_ctx[].tcp_desc is
+    // not volatile, so nothing obliges the compiler to fold two reads of it into one; with
+    // two, bridge_ctx_unpublish() could land between the test and the dereference and turn
+    // the guarded read into a NULL one (LoadProhibited on ESP32).
+    if (!bridge_ctx[server_num].initialized) {
         return 0;
     }
 
-    if (!bridge_ctx[server_num].tcp_desc) {
+    tcp_desc_t *desc = bridge_ctx[server_num].tcp_desc;
+    if (!desc) {
         return 0;
     }
 
-    return bridge_ctx[server_num].tcp_desc->active_connections;
-}
-
-esp_err_t bridge_disable_port(unsigned index)
-{
-    if (index >= BRIDGES_COUNT) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    bridge_ctx[index].disabled = true;
-
-    if (bridge_ctx[index].initialized) {
-        bridge_ctx[index].init_request = true;
-        bridge_port_deinit(index);
-    }
-
-    return ESP_OK;
-}
-
-esp_err_t bridge_enable_port(unsigned index)
-{
-    if (index >= BRIDGES_COUNT) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    bridge_ctx[index].disabled = false;
-
-    if (bridge_ctx[index].init_request) {
-        bridge_ctx[index].init_request = false;
-        bridge_port_init(index);
-    }
-
-    return ESP_OK;
+    return (int)desc->active_connections;
 }
 
 static bridge_mode_t string_to_bridge_mode(const char *str) {
@@ -115,6 +136,18 @@ static bridge_mode_t string_to_bridge_mode(const char *str) {
         return BRIDGE_MODE_CLIENT;
     }
     return BRIDGE_MODE_DISABLED;
+}
+
+/* Map a string value to its corresponding integer constant using a lookup table.
+ * Returns default_val when the string does not match any entry. */
+static int lookup_str_to_int(const char *str, const char * const keys[], const int vals[], int count, int default_val)
+{
+    for (int i = 0; i < count; i++) {
+        if (strncmp(str, keys[i], SETTING_ITEM_MAX_STR_LEN) == 0) {
+            return vals[i];
+        }
+    }
+    return default_val;
 }
 
 static esp_err_t read_serial_port_config(const int index, serial_config_t* serial_config)
@@ -139,43 +172,41 @@ static esp_err_t read_serial_port_config(const int index, serial_config_t* seria
         return ESP_FAIL;
     }
 
+    static const char * const parity_keys[] = {
+        UART_PARITY_DISABLE_STR, UART_PARITY_EVEN_STR, UART_PARITY_ODD_STR
+    };
+    static const int parity_vals[] = {
+        UART_PARITY_DISABLE, UART_PARITY_EVEN, UART_PARITY_ODD
+    };
     snprintf(key_buf, sizeof(key_buf), "parity_%d", index + 1);
     ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read parity for port %d", index + 1);
-    if (strncmp(value_str, UART_PARITY_DISABLE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->parity = UART_PARITY_DISABLE;
-    } else if (strncmp(value_str, UART_PARITY_EVEN_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->parity = UART_PARITY_EVEN;
-    } else if (strncmp(value_str, UART_PARITY_ODD_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->parity = UART_PARITY_ODD;
-    } else {
-        serial_config->parity = UART_PARITY_DISABLE;
-    }
+    serial_config->parity = (uart_parity_t)lookup_str_to_int(
+        value_str, parity_keys, parity_vals, ARRAY_SIZE(parity_keys), UART_PARITY_DISABLE
+    );
 
+    static const char * const stopbits_keys[] = {
+        UART_STOP_BITS_1_STR, UART_STOP_BITS_1_5_STR, UART_STOP_BITS_2_STR
+    };
+    static const int stopbits_vals[] = {
+        UART_STOP_BITS_1, UART_STOP_BITS_1_5, UART_STOP_BITS_2
+    };
     snprintf(key_buf, sizeof(key_buf), "stopbits_%d", index + 1);
     ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read stopbits for port %d", index + 1);
-    if (strncmp(value_str, UART_STOP_BITS_1_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->stopbits = UART_STOP_BITS_1;
-    } else if (strncmp(value_str, UART_STOP_BITS_1_5_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->stopbits = UART_STOP_BITS_1_5;
-    } else if (strncmp(value_str, UART_STOP_BITS_2_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->stopbits = UART_STOP_BITS_2;
-    } else {
-        serial_config->stopbits = UART_STOP_BITS_2;
-    }
+    serial_config->stopbits = (uart_stop_bits_t)lookup_str_to_int(
+        value_str, stopbits_keys, stopbits_vals, ARRAY_SIZE(stopbits_keys), UART_STOP_BITS_2
+    );
 
+    static const char * const databits_keys[] = {
+        UART_DATA_5_BITS_STR, UART_DATA_6_BITS_STR, UART_DATA_7_BITS_STR, UART_DATA_8_BITS_STR
+    };
+    static const int databits_vals[] = {
+        UART_DATA_5_BITS, UART_DATA_6_BITS, UART_DATA_7_BITS, UART_DATA_8_BITS
+    };
     snprintf(key_buf, sizeof(key_buf), "databits_%d", index + 1);
     ESP_RETURN_ON_ERROR(setting_items_read(key_buf, value_str), TAG, "Failed to read databits for port %d", index + 1);
-    if (strncmp(value_str, UART_DATA_5_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->databits = UART_DATA_5_BITS;
-    } else if (strncmp(value_str, UART_DATA_6_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->databits = UART_DATA_6_BITS;
-    } else if (strncmp(value_str, UART_DATA_7_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->databits = UART_DATA_7_BITS;
-    } else if (strncmp(value_str, UART_DATA_8_BITS_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        serial_config->databits = UART_DATA_8_BITS;
-    } else {
-        serial_config->databits = UART_DATA_8_BITS;
-    }
+    serial_config->databits = (uart_word_length_t)lookup_str_to_int(
+        value_str, databits_keys, databits_vals, ARRAY_SIZE(databits_keys), UART_DATA_8_BITS
+    );
 
     return ESP_OK;
 }
@@ -208,10 +239,10 @@ static esp_err_t read_tcp_bridge_config(const int index, bridge_mode_t* mode, ui
 
 esp_err_t bridge_init(void)
 {
-    // Start RS485 busy monitor task and init error percentage statistics
-    rs485_busy_monitor_init();
-    rs485_stats_init();
-
+    // Note: rs485_busy_monitor_init() and rs485_stats_init() have been moved to
+    // port_manager_init_subsystems() (called from main.c before the HTTP server starts,
+    // and again from port_manager_init(), where its one-shot guard skips them) so they are
+    // called even when bridge_init() is not used directly.
     for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
         bridge_port_init(index);
     }
@@ -230,11 +261,6 @@ esp_err_t bridge_port_init(unsigned index)
         ESP_LOGW(TAG, "Port %u already initialized", index + 1);
         return ESP_ERR_NOT_ALLOWED;
     }
-    if (bridge_ctx[index].disabled) {
-        ESP_LOGW(TAG, "Port %u is disabled", index + 1);
-        bridge_ctx[index].init_request = true;
-        return ESP_OK;
-    }
 
     ESP_LOGD(TAG, "Port[%u]: Initializing...", index + 1);
 
@@ -245,24 +271,55 @@ esp_err_t bridge_port_init(unsigned index)
                         TAG, "Port[%u]: Failed to read bridge config", index + 1);
 
     if (bridge_current_cfg[index].bridge_mode == BRIDGE_MODE_DISABLED) {
-        ESP_LOGW(TAG, "Port[%d] is disabled", bridge_current_cfg[index].serial_config.port_num);
-        return ESP_OK;
+        // port_mode is the authoritative on/off axis now: if a port is set to
+        // tcp_bridge, its bridge_mode must be a valid server/client TCP role.
+        // BRIDGE_MODE_DISABLED here means a corrupt/legacy bridge_mode value, so we
+        // refuse to half-initialize. Returning an error (instead of the old
+        // ESP_OK with initialized=false) lets port_manager_set_mode() roll the port
+        // back rather than leave a zombie tcp_bridge that reports active but isn't.
+        ESP_LOGE(TAG, "Port[%d]: invalid/legacy bridge_mode for tcp_bridge; refusing to init",
+                 bridge_current_cfg[index].serial_config.port_num);
+        return ESP_ERR_INVALID_STATE;
     }
 
+    // The two out-parameters below are the module's ONLY way back into bridge_ctx, and a
+    // failed init is the one case where a module can have created a descriptor, freed it
+    // again in its own cleanup, and left the pointer written here. Both modules NULL their
+    // out-parameters on every such path today — modbus_tcp.c had to be taught to on its
+    // task-creation branch, transparent_tcp.c already did — but that is THEIR invariant to
+    // keep, not ours to rely on. The clear happens HERE because this is the one place that
+    // knows the init failed: whichever module was called, and whichever of its internal
+    // branches returned.
+    //
+    // Leaving it to the callee is not merely redundant, it is unsafe: bridge_ctx[index].
+    // initialized stays false on this path, so bridge_port_deinit() would early-return
+    // ("not initialized") and never clean up. The stale pointers would then survive for as
+    // long as the firmware runs, with GET /info reading through them.
+    esp_err_t init_err;
     if (bridge_current_cfg[index].bridge_mb) {
-        ESP_RETURN_ON_ERROR(modbus_tcp_init_port(index, &bridge_current_cfg[index].serial_config, bridge_current_cfg[index].bridge_mode,
-                                                    bridge_current_cfg[index].bridge_port, bridge_current_cfg[index].bridge_ip,
-                                                    &bridge_ctx[index].serial_desc, &bridge_ctx[index].tcp_desc),
-                            TAG, "Failed to initialize port %u in Modbus TCP mode", index + 1);
+        init_err = modbus_tcp_init_port(index, &bridge_current_cfg[index].serial_config, bridge_current_cfg[index].bridge_mode,
+                                        bridge_current_cfg[index].bridge_port, bridge_current_cfg[index].bridge_ip,
+                                        &bridge_ctx[index].serial_desc, &bridge_ctx[index].tcp_desc);
+        if (init_err != ESP_OK) {
+            bridge_ctx_unpublish(index);
+            ESP_LOGE(TAG, "Failed to initialize port %u in Modbus TCP mode", index + 1);
+            return init_err;
+        }
         ESP_LOGI(TAG, "Port[%d] initialized in Modbus TCP mode", bridge_current_cfg[index].serial_config.port_num);
     } else {
-        ESP_RETURN_ON_ERROR(transparent_tcp_init_port(index, &bridge_current_cfg[index].serial_config, bridge_current_cfg[index].bridge_mode,
-                                                        bridge_current_cfg[index].bridge_port, bridge_current_cfg[index].bridge_ip,
-                                                        &bridge_ctx[index].serial_desc, &bridge_ctx[index].tcp_desc),
-                            TAG, "Failed to initialize port %u in transparent bridge mode", index + 1);
+        init_err = transparent_tcp_init_port(index, &bridge_current_cfg[index].serial_config, bridge_current_cfg[index].bridge_mode,
+                                             bridge_current_cfg[index].bridge_port, bridge_current_cfg[index].bridge_ip,
+                                             &bridge_ctx[index].serial_desc, &bridge_ctx[index].tcp_desc);
+        if (init_err != ESP_OK) {
+            bridge_ctx_unpublish(index);
+            ESP_LOGE(TAG, "Failed to initialize port %u in transparent bridge mode", index + 1);
+            return init_err;
+        }
         ESP_LOGI(TAG, "Port[%d] initialized in transparent bridge mode", bridge_current_cfg[index].serial_config.port_num);
     }
 
+    // Note: sniffer_attach() is now called by port_manager after bridge_port_init(),
+    // so it is not called here to avoid double-attach.
     bridge_ctx[index].initialized = true;
     ESP_LOGD(TAG, "Port[%u]: Initialized", index + 1);
 
@@ -284,21 +341,109 @@ esp_err_t bridge_port_deinit(unsigned index)
     bridge_config_t* cfg = &bridge_current_cfg[index];
 
     ESP_LOGD(TAG, "Port[%u]: Deinitializing...", index + 1);
+
+    /* Unpublish BEFORE the module deinit, which is what frees the two descriptors
+     * (tcp_server_deinit()/tcp_client_deinit() free the tcp_desc, serial_deinit() the
+     * serial_desc). Clearing afterwards — as this used to — leaves a window that spans the
+     * whole teardown, and teardown is not quick: it joins the TCP receiver tasks and the
+     * UART event task, and a receiver parked in uart_write_bytes() at 1200 baud can hold it
+     * there for the best part of a second.
+     *
+     * The reader that window belongs to is on another task: tcp_server_active_connections()
+     * runs on the httpd task for every GET /info, which the web UI polls continuously, and
+     * dereferences bridge_ctx[index].tcp_desc. Nothing serialises the two, so ordering is
+     * the whole defence — the same clear-then-free ordering that modbus_tcp_deinit_port()
+     * applies to its own context, but for a DIFFERENT reason. There the clear is defence in
+     * depth: a stale pointer used to be able to MATCH in find_ctx_by_tcp_desc()/
+     * find_ctx_by_serial_desc() once the address was recycled, and those lookups now skip
+     * contexts that are not initialized, so the flag is what guards it.
+     *
+     * What makes a flag enough there and not enough here is NOT that this side lacks one: it
+     * has exactly the same flag, bridge_ctx[index].initialized, and
+     * tcp_server_active_connections() above gates on it. The difference is where the test
+     * sits relative to the memory access. There it is INSIDE the lookup, and what the lookup
+     * does with the stale pointer is COMPARE it — so the worst a missing flag buys is a
+     * mis-identified context, never a read of freed memory, and the paths that go on to
+     * dereference the descriptor are held safe by the task joins that note describes rather
+     * than by the flag. Here the httpd task tests the flag and then dereferences the
+     * descriptor itself: a check-then-use gap on memory another task is freeing, which no
+     * flag can close.
+     *
+     * Ordering alone is NOT sufficient here, and this note should not be read as claiming
+     * it is. The residual interleaving: the httpd task passes the `initialized` check and
+     * loads tcp_desc, is preempted (or runs on the other core), this task unpublishes and
+     * the module frees the descriptor, and the httpd task resumes and reads
+     * ->active_connections out of freed memory. What the ordering buys is the size of that
+     * window — a few instructions instead of the whole teardown.
+     *
+     * The two bridge_ctx readers are not symmetric in this. bridge_get_serial_desc() is
+     * reached only from port_manager.c, and every path there — the tx_disabled, send_raw
+     * and set_cache handlers, and port_init_mode() itself — runs under pm_lock(index), the
+     * same lock every teardown path holds, so it is serialised against this function rather
+     * than racing it. There is no exception any more: port_manager_init()'s boot loop used to
+     * call port_init_mode() unlocked, and now takes pm_lock(i) per iteration like every other
+     * caller. tcp_server_active_connections() is the one with no lock anywhere:
+     * info_handlers.c calls it straight from GET /info on the httpd task — which is what makes
+     * it both the only unsynchronised reader and the only one that dereferences. Closing the
+     * window for good means routing the connection count through
+     * port_manager, which already holds pm_lock, instead of letting info_handlers.c call
+     * into bridge.c directly. Deliberately not done here.
+     *
+     * Clearing `initialized` this early also drops an interlock: it used to stay true for
+     * the whole teardown, so a concurrent bridge_port_init(index) was rejected by the
+     * "already initialized" check at the top of that function. Init/deinit mutual exclusion
+     * now rests entirely on pm_lock(index) — held across port_init_mode()/port_deinit_mode()
+     * by port_set_mode_impl(), port_manager_apply_settings(), port_manager_release() and the
+     * boot loop in port_manager_init(), i.e. by every call site with none left over. Both
+     * functions are public in bridge.h, so a caller that ever bypasses port_manager must
+     * take that lock itself.
+     *
+     * Safe to clear this early because nothing reachable from here reads bridge_ctx:
+     * modbus_tcp_deinit_port() and transparent_tcp_deinit_port() take an index and work
+     * entirely from their own module-level context copies, and the only two functions that
+     * read bridge_ctx from outside this file's own init/deinit path — this file's
+     * tcp_server_active_connections() and bridge_get_serial_desc() — are called from
+     * info_handlers.c and port_manager.c, never from inside a deinit. (bridge_port_init(),
+     * bridge_port_deinit() and bridge_port_check_settings_changed() read it as well; none of
+     * those is reachable from a module deinit either.) That is also why the modules cannot
+     * clear these pointers themselves: deinit has no out-parameter, so bridge_ctx is out of
+     * their reach.
+     *
+     * cfg is read (bridge_mb, just below) after the unpublish and must be: it is what
+     * selects the module to tear down, and bridge_current_cfg is deliberately not cleared
+     * here — see the note on its declaration. */
+    bridge_ctx_unpublish(index);
+
+    // Note: sniffer_detach() is called by port_manager after bridge_port_deinit()
+    // returns (so the transport tasks are already joined), not here — avoids double-detach.
     if (cfg->bridge_mb) {
         modbus_tcp_deinit_port(index);
     } else {
         transparent_tcp_deinit_port(index);
     }
 
-    bridge_ctx[index].initialized = false;
-
-    rs485_busy_monitor_reset(index);
-    rs485_stats_reset(index);
-
     ESP_LOGD(TAG, "Port[%u]: Deinitialized", index + 1);
     return ESP_OK;
 }
 
+
+// Field-by-field compare (memcmp is unsafe due to struct padding).
+// Keep in sync with bridge_config_t: every field must be compared here.
+static inline bool bridge_config_equal(const bridge_config_t *a, const bridge_config_t *b)
+{
+    return (a->serial_config.port_num == b->serial_config.port_num) &&
+           (a->serial_config.tx_pin == b->serial_config.tx_pin) &&
+           (a->serial_config.rx_pin == b->serial_config.rx_pin) &&
+           (a->serial_config.dir_pin == b->serial_config.dir_pin) &&
+           (a->serial_config.baudrate == b->serial_config.baudrate) &&
+           (a->serial_config.parity == b->serial_config.parity) &&
+           (a->serial_config.stopbits == b->serial_config.stopbits) &&
+           (a->serial_config.databits == b->serial_config.databits) &&
+           (a->bridge_mode == b->bridge_mode) &&
+           (a->bridge_ip == b->bridge_ip) &&
+           (a->bridge_port == b->bridge_port) &&
+           (a->bridge_mb == b->bridge_mb);
+}
 
 bool bridge_port_check_settings_changed(unsigned index)
 {
@@ -324,11 +469,49 @@ bool bridge_port_check_settings_changed(unsigned index)
         }
     }
 
-    if (memcmp(&bridge_current_cfg[index], &new_cfg, sizeof(new_cfg)) == 0) {
+    if (bridge_config_equal(&bridge_current_cfg[index], &new_cfg)) {
         return false;
     } else {
         return true;
     }
+}
+
+esp_err_t bridge_port_init_serial_only(unsigned index, serial_desc_t **serial_desc_out)
+{
+    if (index >= BRIDGES_COUNT || !serial_desc_out) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    serial_config_t serial_config = {0};
+    ESP_RETURN_ON_ERROR(read_serial_port_config(index, &serial_config),
+                        TAG, "Port[%u]: Failed to read serial config", index + 1);
+
+    // Pass NULL as receive_handler; sniffer uses only sniff_handler set by sniffer_attach().
+    serial_desc_t *desc = serial_init(&serial_config, NULL);
+    if (!desc) {
+        ESP_LOGE(TAG, "Port[%u]: Failed to initialize serial port", index + 1);
+        return ESP_FAIL;
+    }
+
+    *serial_desc_out = desc;
+    ESP_LOGI(TAG, "Port[%u]: Serial-only initialized", index + 1);
+    return ESP_OK;
+}
+
+serial_desc_t *bridge_get_serial_desc(unsigned index)
+{
+    if (index >= BRIDGES_COUNT) {
+        return NULL;
+    }
+    return bridge_ctx[index].serial_desc;
+}
+
+esp_err_t bridge_read_serial_config(unsigned index, serial_config_t *config)
+{
+    if (index >= BRIDGES_COUNT || !config) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return read_serial_port_config(index, config);
 }
 
 #ifdef __unittest_env__

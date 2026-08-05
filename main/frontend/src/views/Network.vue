@@ -1,28 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { onBeforeRouteLeave } from 'vue-router';
 import Select from 'vue-multiselect';
 import ReloadIcon from '@/assets/reload.svg?component';
 import { useWifi } from '@/common/network';
 import { useSettings } from '@/common/settings';
-import { useInfo } from '@/common/info';
 import type { Settings, WiFiNetwork, WiFiSecuityProtocol } from '@/common/types';
 import Button from '@/components/Button.vue';
-import InfoRow from '@/components/InfoRow.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
 import IpInput from '@/components/IpInput.vue';
+import PasswordInput from '@/components/PasswordInput.vue';
 import Switch from '@/components/Switch.vue';
 import { onCustomValidation } from '@/utils/validation';
 
 const { t } = useI18n();
 const { data, initData, isChanged, isLoading, updateSettings } = useSettings();
-const { info, fetchInfo } = useInfo();
-onMounted(() => {
-  // Fetch current info once if not already loaded (e.g. user navigated directly to this page)
-  if (!info.value) fetchInfo();
-});
 const { wifi, isPolling, startPolling, stopPolling } = useWifi();
 const selectedWifi = ref();
 const wifiSelect = ref();
@@ -31,20 +25,20 @@ const addedWifiNetworks = ref([]);
 const computedWifiNetworks = computed(() => {
   const networks: Partial<WiFiNetwork>[] = [...addedWifiNetworks.value, ...wifi.value];
   // @ts-ignore
-  if (data.value?.wifi.sta_ssid && !networks.find((item: WiFiNetwork) => item?.ssid === data.value?.wifi.sta_ssid)) {
-    networks.unshift({ ssid: data.value?.wifi.sta_ssid });
+  if (data.value?.wifi?.sta_ssid && !networks.find((item: WiFiNetwork) => item?.ssid === data.value?.wifi?.sta_ssid)) {
+    networks.unshift({ ssid: data.value?.wifi?.sta_ssid });
   }
   return networks;
 });
 
-watch(() => data.value?.wifi.mode, () => {
-  if (initData.value?.wifi.mode !== 'none') {
+watch(() => data.value?.wifi?.mode, () => {
+  if (initData.value?.wifi?.mode !== 'none') {
     startPolling();
   }
 }, { immediate: true });
 
-watch([() => data.value?.wifi.sta_ssid, () => wifi.value], () => {
-  selectedWifi.value = computedWifiNetworks.value.find(item => item.ssid === data.value?.wifi.sta_ssid);
+watch([() => data.value?.wifi?.sta_ssid, () => wifi.value], () => {
+  selectedWifi.value = computedWifiNetworks.value.find(item => item.ssid === data.value?.wifi?.sta_ssid);
 });
 
 onBeforeRouteLeave(() => {
@@ -53,28 +47,31 @@ onBeforeRouteLeave(() => {
 
 const securityProtocol: WiFiSecuityProtocol[] = ['open', 'wpa2_psk', 'wpa3_psk'];
 
+// Non-optional accessor used in the template; only rendered when !data.wifi_perm_disable (wifi is present)
+const wifiSettings = computed(() => data.value!.wifi as NonNullable<Settings['wifi']>);
+
 const updateWifiSettings = async () => {
   const val: Partial<Settings['wifi']> = {
-    mode: data.value!.wifi.mode,
+    mode: data.value!.wifi!.mode,
   };
 
-  if (data.value!.wifi.mode === 'ap') {
-    val.ap_ssid = data.value!.wifi.ap_ssid;
-    val.ap_auth = data.value!.wifi.ap_auth;
-    val.ap_pass = data.value!.wifi.ap_auth === 'open' ? '' : data.value!.wifi.ap_pass;
-    val.ap_ip_static = data.value!.wifi.ap_ip_static;
-    val.ap_mask_static = data.value!.wifi.ap_mask_static;
-    val.ap_gw_static = data.value!.wifi.ap_gw_static;
-  } else if (data.value!.wifi.mode === 'sta') {
-    val.sta_ssid = data.value?.wifi.sta_ssid;
-    val.sta_auth = data.value!.wifi.sta_auth;
-    val.sta_pass = val.sta_auth === 'open' ? '' : data.value!.wifi.sta_pass;
-    val.sta_dhcpc = data.value!.wifi.sta_dhcpc;
+  if (data.value!.wifi!.mode === 'ap') {
+    val.ap_ssid = data.value!.wifi!.ap_ssid;
+    val.ap_auth = data.value!.wifi!.ap_auth;
+    val.ap_pass = data.value!.wifi!.ap_auth === 'open' ? '' : data.value!.wifi!.ap_pass;
+    val.ap_ip_static = data.value!.wifi!.ap_ip_static;
+    val.ap_mask_static = data.value!.wifi!.ap_mask_static;
+    val.ap_gw_static = data.value!.wifi!.ap_gw_static;
+  } else if (data.value!.wifi!.mode === 'sta') {
+    val.sta_ssid = data.value?.wifi?.sta_ssid;
+    val.sta_auth = data.value!.wifi!.sta_auth;
+    val.sta_pass = val.sta_auth === 'open' ? '' : data.value!.wifi!.sta_pass;
+    val.sta_dhcpc = data.value!.wifi!.sta_dhcpc;
 
     if (!val.sta_dhcpc) {
-      val.sta_ip_static = data.value!.wifi.sta_ip_static;
-      val.sta_gw_static = data.value!.wifi.sta_gw_static;
-      val.sta_mask_static = data.value!.wifi.sta_mask_static;
+      val.sta_ip_static = data.value!.wifi!.sta_ip_static;
+      val.sta_gw_static = data.value!.wifi!.sta_gw_static;
+      val.sta_mask_static = data.value!.wifi!.sta_mask_static;
     }
   }
 
@@ -82,14 +79,14 @@ const updateWifiSettings = async () => {
 };
 
 const changeWifi = ({ ssid }: WiFiNetwork) => {
-  data.value!.wifi.sta_ssid = ssid;
+  data.value!.wifi!.sta_ssid = ssid;
 };
 
 const addNetwork = () => {
   const val = { ssid: searhcValue.value };
   // @ts-ignore
   addedWifiNetworks.value.push(val);
-  data.value!.wifi.sta_ssid = searhcValue.value;
+  data.value!.wifi!.sta_ssid = searhcValue.value;
   wifiSelect.value.deactivate();
   selectedWifi.value = val;
 };
@@ -124,15 +121,8 @@ const addNetwork = () => {
             <div class="card-body">
               <div class="field">
                 <label for="eth_dhcpc">{{ t('dhcp_client') }}</label>
-                <div class="switch-end"><Switch id="eth_dhcpc" v-model="data.ethernet.dhcpc" /></div>
+                <div class="network-switchEnd"><Switch id="eth_dhcpc" v-model="data.ethernet.dhcpc" /></div>
               </div>
-
-              <!-- Show current DHCP-assigned IP as read-only info row when DHCP is enabled -->
-              <template v-if="data.ethernet.dhcpc">
-                <InfoRow :label="t('current_ip')">
-                  <span class="mono">{{ info?.ethernet?.ip || '-' }}</span>
-                </InfoRow>
-              </template>
 
               <template v-if="!data.ethernet.dhcpc">
                 <div class="field">
@@ -152,6 +142,7 @@ const addNetwork = () => {
           </form>
         </section>
 
+        <template v-if="!data.wifi_perm_disable">
         <section class="card">
           <form @submit.prevent="updateWifiSettings">
             <div class="card-header">
@@ -167,68 +158,67 @@ const addNetwork = () => {
             <div class="card-body">
               <div class="field">
                 <label for="wifi_mode">{{ t('wifi_mode') }}</label>
-                <select id="wifi_mode" v-model="data.wifi.mode" name="wifi_mode">
+                <select id="wifi_mode" v-model="wifiSettings.mode" name="wifi_mode">
                   <option value="none">{{ t('disabled') }}</option>
                   <option value="ap">{{ t('ap') }}</option>
                   <option value="sta">{{ t('sta') }}</option>
                 </select>
               </div>
 
-              <template v-if="data.wifi.mode === 'ap'">
+              <template v-if="wifiSettings.mode === 'ap'">
                 <div class="field">
                   <label for="ap_ssid">{{ t('ssid') }}</label>
                   <input
                     id="ap_ssid"
-                    v-model="data.wifi.ap_ssid"
+                    v-model="wifiSettings.ap_ssid"
                     type="text"
                     name="ap_ssid"
                     pattern="^[\x20-\x7E]{1,31}$"
                     minlength="1"
-                    maxlength="32"
+                    maxlength="31"
                     required
                     @input="(ev) => onCustomValidation(ev, t('wrong_ssid_pattern'))"
                   />
                 </div>
                 <div class="field">
                   <label for="ap_auth">{{ t('wifi_pass_security') }}</label>
-                  <select id="ap_auth" v-model="data.wifi.ap_auth" name="ap_auth">
+                  <select id="ap_auth" v-model="wifiSettings.ap_auth" name="ap_auth">
                     <option v-for="item in securityProtocol" :key="item" :value="item">{{ t(item) }}</option>
                   </select>
                 </div>
 
-                <template v-if="data.wifi.ap_auth !== 'open'">
+                <template v-if="wifiSettings.ap_auth !== 'open'">
                   <div class="field">
                     <label for="ap_pass">{{ t('password') }}</label>
-                    <input
+                    <PasswordInput
                       id="ap_pass"
-                      v-model="data.wifi.ap_pass"
+                      v-model="wifiSettings.ap_pass"
                       required
                       :placeholder="t('pass_placeholder')"
                       pattern="[\x20-\x7E]{8,63}"
                       minlength="8"
                       maxlength="63"
-                      type="password"
                       name="ap_pass"
-                      @input="(ev) => onCustomValidation(ev, t('wrong_pass_pattern'))"
+                      @input="(ev: Event) => onCustomValidation(ev, t('wrong_pass_pattern'))"
                     />
                   </div>
                 </template>
 
                 <div class="field">
                   <label for="ap_ip_static">{{ t('ip') }}</label>
-                  <IpInput id="ap_ip_static" v-model="data.wifi.ap_ip_static" name="ap_ip_static" />
+                  <IpInput id="ap_ip_static" v-model="wifiSettings.ap_ip_static" name="ap_ip_static" />
                 </div>
                 <div class="field">
                   <label for="ap_mask_static">{{ t('mask') }}</label>
-                  <IpInput id="ap_mask_static" v-model="data.wifi.ap_mask_static" name="ap_mask_static" />
+                  <IpInput id="ap_mask_static" v-model="wifiSettings.ap_mask_static" name="ap_mask_static" />
                 </div>
                 <div class="field">
                   <label for="ap_gw_static">{{ t('gateway') }}</label>
-                  <IpInput id="ap_gw_static" v-model="data.wifi.ap_gw_static" name="ap_gw_static" />
+                  <IpInput id="ap_gw_static" v-model="wifiSettings.ap_gw_static" name="ap_gw_static" />
                 </div>
               </template>
 
-              <template v-if="data.wifi.mode === 'sta'">
+              <template v-if="wifiSettings.mode === 'sta'">
                 <div class="field">
                   <label for="sta_ssid">{{ t('ssid') }}</label>
                   <div class="network-dropdown">
@@ -238,7 +228,7 @@ const addNetwork = () => {
                       label="ssid"
                       track-by="ssid"
                       open-direction="bottom"
-                      :placeholder="isPolling ? (data?.wifi.sta_ssid || '') : ''"
+                      :placeholder="isPolling ? (wifiSettings.sta_ssid || '') : ''"
                       :options="computedWifiNetworks"
                       :disabled="isPolling"
                       :max-height="600"
@@ -264,7 +254,7 @@ const addNetwork = () => {
                       </template>
                     </Select>
 
-                    <Button variant="outline" type="button" class="network-reloadButton" :disabled="isPolling" @click="startPolling">
+                    <Button variant="outline" type="button" class="network-reloadButton" :aria-label="t('reload_networks')" :disabled="isPolling" @click="startPolling">
                       <ReloadIcon
                         class="network-reload"
                         :class="{
@@ -277,47 +267,62 @@ const addNetwork = () => {
 
                 <div class="field">
                   <label for="sta_auth">{{ t('wifi_pass_security') }}</label>
-                  <select id="sta_auth" v-model="data.wifi.sta_auth" name="sta_auth">
+                  <select id="sta_auth" v-model="wifiSettings.sta_auth" name="sta_auth">
                     <option v-for="item in securityProtocol" :key="item" :value="item">{{ t(item) }}</option>
                   </select>
                 </div>
 
-                <template v-if="data.wifi.sta_auth !== 'open'">
+                <template v-if="wifiSettings.sta_auth !== 'open'">
                   <div class="field">
                     <label for="sta_pass">{{ t('password') }}</label>
-                    <input id="sta_pass" v-model="data.wifi.sta_pass" required :placeholder="t('pass_placeholder')" type="password" name="sta_pass" />
+                    <PasswordInput
+                      id="sta_pass"
+                      v-model="wifiSettings.sta_pass"
+                      required
+                      :placeholder="t('pass_placeholder')"
+                      pattern="[\x20-\x7E]{8,63}"
+                      minlength="8"
+                      maxlength="63"
+                      name="sta_pass"
+                      @input="(ev: Event) => onCustomValidation(ev, t('wrong_pass_pattern'))"
+                    />
                   </div>
                 </template>
 
                 <div class="field">
                   <label for="sta_dhcpc">{{ t('dhcp_client') }}</label>
-                  <div class="switch-end"><Switch id="sta_dhcpc" v-model="data.wifi.sta_dhcpc" /></div>
+                  <div class="network-switchEnd"><Switch id="sta_dhcpc" v-model="wifiSettings.sta_dhcpc" /></div>
                 </div>
 
-                <template v-if="!data.wifi.sta_dhcpc">
+                <template v-if="!wifiSettings.sta_dhcpc">
                   <div class="field">
                     <label for="sta_ip_static">{{ t('ip') }}</label>
-                    <IpInput id="sta_ip_static" v-model="data.wifi.sta_ip_static" name="sta_ip_static" />
+                    <IpInput id="sta_ip_static" v-model="wifiSettings.sta_ip_static" name="sta_ip_static" />
                   </div>
                   <div class="field">
                     <label for="sta_gw_static">{{ t('mask') }}</label>
-                    <IpInput id="sta_mask_static" v-model="data.wifi.sta_mask_static" name="sta_mask_static" />
+                    <IpInput id="sta_mask_static" v-model="wifiSettings.sta_mask_static" name="sta_mask_static" />
                   </div>
                   <div class="field">
                     <label for="sta_mask_static">{{ t('gateway') }}</label>
-                    <IpInput id="sta_gw_static" v-model="data.wifi.sta_gw_static" name="sta_gw_static" />
+                    <IpInput id="sta_gw_static" v-model="wifiSettings.sta_gw_static" name="sta_gw_static" />
                   </div>
                 </template>
               </template>
             </div>
           </form>
         </section>
+        </template>
       </div>
     </div>
   </Layout>
 </template>
 
 <style>
+.network-switchEnd {
+  justify-self: end;
+}
+
 .network-dropdown {
   width: 100%;
   max-width: 100%;
@@ -357,7 +362,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP client",
-    "current_ip": "Current IP address",
     "ip": "Static IP",
     "gateway": "Gateway",
     "mask": "Subnet mask",
@@ -369,6 +373,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Add ssid",
+    "reload_networks": "Reload networks",
     "wrong_ssid_pattern": "Enter a string of 1–31 characters: Latin letters, numbers, spaces, and special characters",
     "wrong_pass_pattern": "Enter a string of 8–63 characters: Latin letters, numbers, spaces, and special characters"
   },
@@ -378,7 +383,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "Клиент DHCP",
-    "current_ip": "Текущий IP-адрес",
     "ip": "IP",
     "gateway": "Шлюз",
     "mask": "Маска",
@@ -390,6 +394,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Добавить ssid",
+    "reload_networks": "Обновить список сетей",
     "wrong_ssid_pattern": "Введите строку из 1–31 символов: латиница, цифры, пробелы и спецсимволы",
     "wrong_pass_pattern": "Введите строку из 8–63 символов: латиница, цифры, пробелы и спецсимволы"
   },
@@ -399,7 +404,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP клиенті",
-    "current_ip": "Ағымдағы IP мекенжайы",
     "ip": "Тұрақты IP",
     "gateway": "Шлюз",
     "mask": "Маска",
@@ -411,6 +415,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "SSID қосу",
+    "reload_networks": "Желілер тізімін жаңарту",
     "wrong_ssid_pattern": "1–31 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар",
     "wrong_pass_pattern": "8–63 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар"
   },
@@ -420,7 +425,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "Client DHCP",
-    "current_ip": "Indirizzo IP corrente",
     "ip": "IP statico",
     "gateway": "Gateway",
     "mask": "Maschera",
@@ -432,6 +436,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "Aggiungi SSID",
+    "reload_networks": "Ricarica reti",
     "wrong_ssid_pattern": "Inserisci una stringa di 1–31 caratteri: lettere latine, numeri, spazi e caratteri speciali",
     "wrong_pass_pattern": "Inserisci una stringa di 8–63 caratteri: lettere latine, numeri, spazi e caratteri speciali"
   },
@@ -441,7 +446,6 @@ const addNetwork = () => {
 
     "ethernet": "Ethernet",
     "dhcp_client": "DHCP-Client",
-    "current_ip": "Aktuelle IP-Adresse",
     "ip": "Statische IP",
     "gateway": "Gateway",
     "mask": "Maske",
@@ -453,6 +457,7 @@ const addNetwork = () => {
     "wpa2_psk": "WPA2-PSK",
     "wpa3_psk": "WPA3-PSK",
     "add_ssid": "SSID hinzufügen",
+    "reload_networks": "Netzwerke neu laden",
     "wrong_ssid_pattern": "Geben Sie eine Zeichenfolge mit 1–31 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen",
     "wrong_pass_pattern": "Geben Sie eine Zeichenfolge mit 8–63 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen"
   }

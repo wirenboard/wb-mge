@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{ id: string; ariaLabel?: string }>();
+defineProps<{ id: string; ariaLabel?: string; disabled?: boolean }>();
 const value = defineModel<boolean>();
 </script>
 
@@ -12,6 +12,7 @@ const value = defineModel<boolean>();
       :id="id"
       type="checkbox"
       :checked="value"
+      :disabled="disabled"
       :aria-label="ariaLabel"
       @change="(ev: Event) => value = (ev.target as HTMLInputElement).checked"
     />
@@ -44,6 +45,8 @@ const value = defineModel<boolean>();
 
 .toggle-switchy > input[disabled] { cursor: not-allowed; }
 .toggle-switchy > input[disabled] ~ .toggle { opacity: 0.5; cursor: not-allowed; }
+/* Checked+disabled keeps full opacity — shows "always on" without looking broken */
+.toggle-switchy > input[disabled]:checked ~ .toggle { opacity: 1; }
 
 .toggle-switchy .toggle {
   position: absolute;

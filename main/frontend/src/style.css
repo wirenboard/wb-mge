@@ -76,6 +76,15 @@
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
   --shadow-md: 0 2px 6px rgba(15, 23, 42, 0.06);
 
+  /* Modbus sniffer */
+  --mb-master: oklch(0.55 0.15 250);
+  --mb-slave: oklch(0.55 0.12 160);
+  --mb-err: oklch(0.58 0.18 25);
+  --mb-ok: oklch(0.64 0.14 145);
+  --mb-data: oklch(0.45 0.08 260);
+  --mb-hex-slot: oklch(0.50 0.10 290);
+  --mb-hex-crc: oklch(0.55 0.10 60);
+
   /* Legacy compat */
   --gray-color: #e2e5e8;
   --gray-text: #bdbdbd;
@@ -239,6 +248,11 @@ legend {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--text-muted);
 }
+/* Normalize pill height inside kv value cells to match text row height */
+.kv .v .pill { padding-top: 0; padding-bottom: 0; }
+/* Normalize button height inside kv value cells to match text row height */
+.kv .v button,
+.kv .v .button { height: auto; padding-top: 3px; padding-bottom: 3px; line-height: 1.5; }
 
 /* Card edit button */
 .card-edit-btn {

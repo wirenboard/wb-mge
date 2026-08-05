@@ -5,6 +5,7 @@
 #include "sys_info.h"
 #include "esp_mac.h"
 #include "esp_efuse.h"
+#include "esp_psram.h"
 
 #include <string.h>
 
@@ -14,6 +15,7 @@ void setUp(void)
 {
     mock_esp_mac_reset();
     mock_esp_efuse_reset();
+    mock_esp_psram_reset();
     memset(&sys_info, 0, sizeof(sys_info));
 }
 
@@ -22,7 +24,7 @@ void tearDown(void)
 
 }
 
-// Тестируем успешную инициализацию sys_info
+// Test successful sys_info initialization
 void test_sys_info_init_success(void)
 {
     LOG_MESSAGE();
@@ -45,7 +47,7 @@ void test_sys_info_init_success(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
 }
 
-// Тестируем инициализацию sys_info при ошибке чтения MAC
+// Test sys_info initialization when MAC read fails
 void test_sys_info_init_mac_read_failure(void)
 {
     LOG_MESSAGE();
@@ -67,7 +69,7 @@ void test_sys_info_init_mac_read_failure(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(TEST_DEVICE_SIGNATURE, sys_info.device_signature, "Device signature should match mock value");
 }
 
-// Тестируем инициализацию sys_info при ошибке чтения eFuse
+// Test sys_info initialization when eFuse read fails
 void test_sys_info_init_efuse_read_failure(void)
 {
     LOG_MESSAGE();
@@ -93,7 +95,7 @@ void test_sys_info_init_efuse_read_failure(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
-// Тестируем инициализацию sys_info с пустой сигнатурой устройства
+// Test sys_info initialization with an empty device signature
 void test_sys_info_init_empty_device_signature(void)
 {
     LOG_MESSAGE();
@@ -115,7 +117,7 @@ void test_sys_info_init_empty_device_signature(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
-// Тестируем инициализацию sys_info с максимально длинной сигнатурой устройства
+// Test sys_info initialization with a maximum-length device signature
 void test_sys_info_init_long_device_signature(void)
 {
     LOG_MESSAGE();
@@ -142,7 +144,7 @@ void test_sys_info_init_long_device_signature(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
-// Тестируем инициализацию sys_info с обрезкой сигнатуры устройства
+// Test sys_info initialization with device signature truncation
 void test_sys_info_init_signature_truncation(void)
 {
     LOG_MESSAGE();
@@ -167,6 +169,64 @@ void test_sys_info_init_signature_truncation(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DEVICE_MODEL, sys_info.device_name, "Device name should be DEVICE_MODEL");
 }
 
+// Test sys_info_init when PSRAM is available and initialized
+void test_sys_info_init_psram_available(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - PSRAM available");
+    LOG_MESSAGE();
+
+    mock_esp_psram_is_initialized_return = true;
+    mock_esp_psram_get_size_return = 4 * 1024 * 1024; // 4 MB
+
+    esp_err_t result = sys_info_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK when PSRAM is available");
+    TEST_ASSERT_TRUE_MESSAGE(sys_info.psram_available, "psram_available should be true when PSRAM is initialized");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(4096, sys_info.psram_size_kb, "psram_size_kb should be 4096 for 4 MB PSRAM");
+}
+
+// Test sys_info_init when PSRAM is not available
+void test_sys_info_init_psram_not_available(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - PSRAM not available");
+    LOG_MESSAGE();
+
+    mock_esp_psram_is_initialized_return = false;
+    /* Set non-zero size to verify the else-branch actually writes 0, not just relies on mock default */
+    mock_esp_psram_get_size_return = 2 * 1024 * 1024;
+
+    esp_err_t result = sys_info_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK when PSRAM is not available");
+    TEST_ASSERT_FALSE_MESSAGE(sys_info.psram_available, "psram_available should be false when PSRAM is not initialized");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, sys_info.psram_size_kb, "psram_size_kb should be 0 when PSRAM is not available");
+}
+
+// Test that the signature buffer is zeroed before the eFuse read, so a failed
+// read leaves an empty signature even when the destination was pre-stained.
+void test_sys_info_init_signature_zeroed_on_efuse_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sys_info_init - signature buffer zeroed on eFuse read failure");
+    LOG_MESSAGE();
+
+    /* Pre-stain the destination buffer with non-zero garbage. The defensive
+       memset in get_device_signature must clear it before the (failing) read. */
+    memset(sys_info.device_signature, 'X', sizeof(sys_info.device_signature) - 1);
+    sys_info.device_signature[sizeof(sys_info.device_signature) - 1] = '\0';
+
+    mock_esp_efuse_read_block_return = ESP_FAIL;
+
+    esp_err_t result = sys_info_init();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "sys_info_init should return ESP_OK even when eFuse read fails");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(
+        "", sys_info.device_signature, "Signature buffer must be zeroed before read, leaving empty string on failure"
+    );
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -177,6 +237,9 @@ int main(void)
     RUN_TEST(test_sys_info_init_empty_device_signature);
     RUN_TEST(test_sys_info_init_long_device_signature);
     RUN_TEST(test_sys_info_init_signature_truncation);
+    RUN_TEST(test_sys_info_init_psram_available);
+    RUN_TEST(test_sys_info_init_psram_not_available);
+    RUN_TEST(test_sys_info_init_signature_zeroed_on_efuse_failure);
 
     return UNITY_END();
 }

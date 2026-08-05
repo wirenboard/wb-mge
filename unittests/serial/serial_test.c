@@ -16,7 +16,6 @@
 #include <string.h>
 
 #define SERIAL_BUF_SIZE                 (1000)
-#define SERIAL_READ_TOUT                10
 #define SERIAL_TASK_STACK_SIZE          (1024 * 4)
 #define SERIAL_TASK_PRIORITY            12
 #define SERIAL_QUEUE_SIZE               20
@@ -27,19 +26,60 @@
 
 #define SERIAL_EVENT_WAIT_TIMEOUT_MS    50
 
+#define MOCK_RECEIVE_HANDLER_MAX_CALLS  8
+
+typedef struct {
+    size_t len;
+    uint8_t data[SERIAL_BUF_SIZE];
+} mock_receive_call_t;
+
 typedef struct {
     int called;
     serial_desc_t *desc;
-    uint8_t *data;
-    size_t len;
+    uint8_t *data;      // points to mock_receive_buffer — stores last call's data
+    size_t len;         // last call's length
+    mock_receive_call_t calls[MOCK_RECEIVE_HANDLER_MAX_CALLS]; // per-call history
 } mock_receive_handler_t;
 
 static uint8_t mock_receive_buffer[SERIAL_BUF_SIZE];
 mock_receive_handler_t mock_receive_handler_data = {0};
 
+/* A second, independent handler mock used to verify the additive sniffer feed.
+ * It mirrors mock_receive_handler_t but tracks its own call history so a test can
+ * assert that BOTH the bridge receive_handler AND the sniff_handler fired. */
+typedef struct {
+    int called;
+    serial_desc_t *desc;
+    size_t len;                 // last call's length
+    uint8_t data[SERIAL_BUF_SIZE];
+    mock_receive_call_t calls[MOCK_RECEIVE_HANDLER_MAX_CALLS];
+} mock_sniff_handler_t;
+
+static mock_sniff_handler_t mock_sniff_handler_data = {0};
+
+/* Capture for the drop handler: records that bytes were dropped at the RX stage
+ * (receive-buffer / driver-ring overflow) along with the per-call and total counts. */
+typedef struct {
+    int called;
+    serial_desc_t *desc;
+    size_t total;
+    size_t last_len;
+} mock_drop_handler_t;
+
+static mock_drop_handler_t mock_drop_handler_data;
+
+static void mock_drop_handler(serial_desc_t *desc, size_t dropped_len)
+{
+    mock_drop_handler_data.called++;
+    mock_drop_handler_data.desc = desc;
+    mock_drop_handler_data.last_len = dropped_len;
+    mock_drop_handler_data.total += dropped_len;
+}
+
 void setUp(void)
 {
     mock_uart_reset();
+    mock_gpio_reset();
     mock_freertos_event_groups_reset();
     mock_freertos_task_reset();
     mock_freertos_queue_reset();
@@ -48,6 +88,10 @@ void setUp(void)
     memset(&mock_receive_handler_data, 0, sizeof(mock_receive_handler_data));
     memset(mock_receive_buffer, 0, sizeof(mock_receive_buffer));
     mock_receive_handler_data.data = mock_receive_buffer;
+
+    memset(&mock_sniff_handler_data, 0, sizeof(mock_sniff_handler_data));
+
+    memset(&mock_drop_handler_data, 0, sizeof(mock_drop_handler_data));
 }
 
 void tearDown(void)
@@ -57,10 +101,33 @@ void tearDown(void)
 
 static void mock_receive_handler(serial_desc_t *desc, uint8_t *data, size_t len)
 {
+    int idx = mock_receive_handler_data.called;
     mock_receive_handler_data.called++;
     mock_receive_handler_data.desc = desc;
-    memcpy(mock_receive_handler_data.data, data, len);
-    mock_receive_handler_data.len = len;
+    memcpy(mock_receive_handler_data.data, data, len);  // last call (backward compat)
+    mock_receive_handler_data.len = len;                // last call (backward compat)
+    if (idx < MOCK_RECEIVE_HANDLER_MAX_CALLS) {         // record per-call history
+        mock_receive_handler_data.calls[idx].len = len;
+        memcpy(mock_receive_handler_data.calls[idx].data, data, len);
+    }
+}
+
+/* Independent sniffer-handler mock — same signature as the receive handler. */
+static void mock_sniff_handler(serial_desc_t *desc, uint8_t *data, size_t len)
+{
+    int idx = mock_sniff_handler_data.called;
+    mock_sniff_handler_data.called++;
+    mock_sniff_handler_data.desc = desc;
+    mock_sniff_handler_data.len = len;
+    if (len <= sizeof(mock_sniff_handler_data.data)) {
+        memcpy(mock_sniff_handler_data.data, data, len);
+    }
+    if (idx < MOCK_RECEIVE_HANDLER_MAX_CALLS) {
+        mock_sniff_handler_data.calls[idx].len = len;
+        if (len <= sizeof(mock_sniff_handler_data.calls[idx].data)) {
+            memcpy(mock_sniff_handler_data.calls[idx].data, data, len);
+        }
+    }
 }
 
 static void init_default_config(serial_config_t *config)
@@ -239,9 +306,9 @@ static void verify_uart_set_rx_timeout_args(void)
     );
 
     TEST_ASSERT_EQUAL_MESSAGE(
-        SERIAL_READ_TOUT,
+        SERIAL_RX_TOUT_SNIFFER,
         mock_uart_set_rx_timeout_data.rx_timeout,
-        "uart_set_rx_timeout should be called with SERIAL_READ_TOUT"
+        "uart_set_rx_timeout should be called with SERIAL_RX_TOUT_SNIFFER"
     );
 }
 
@@ -480,7 +547,7 @@ static void verify_serial_init_calls(
     );
 }
 
-// Тестируем serial_init с NULL serial_config
+// Test serial_init with NULL serial_config
 void test_serial_init_null_config(void)
 {
     LOG_MESSAGE();
@@ -494,24 +561,26 @@ void test_serial_init_null_config(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем serial_init с NULL serial_receive_handler
+// Test serial_init with NULL serial_receive_handler - should succeed (cache_bus mode uses serial without a receive handler)
 void test_serial_init_null_handler(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with NULL receive handler");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init with NULL receive handler - should succeed");
     LOG_MESSAGE();
 
     serial_config_t config;
     init_default_config(&config);
 
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
     serial_desc_t *desc = serial_init(&config, NULL);
 
-    TEST_ASSERT_NULL_MESSAGE(desc, "serial_init should return NULL when handler is NULL");
-    verify_serial_init_calls(0, 0, 0, 0, 0, 0, 0, 0, 0);
-    verify_malloc_tracking(0, 0);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed when handler is NULL");
+    verify_serial_init_calls(1, 1, 1, 1, 1, 1, 0, 1, 1);
+    verify_malloc_tracking(1, 0);
+    serial_deinit(desc);
 }
 
-// Тестируем serial_init с ошибкой при выделении памяти для serial_desc_t
+// Test serial_init with memory allocation failure for serial_desc_t
 void test_serial_init_memory_allocation_failure(void)
 {
     LOG_MESSAGE();
@@ -530,7 +599,7 @@ void test_serial_init_memory_allocation_failure(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем serial_init с ошибкой создания xEventGroupCreate
+// Test serial_init with xEventGroupCreate failure
 void test_serial_init_event_group_create_failure(void)
 {
     LOG_MESSAGE();
@@ -556,7 +625,7 @@ void test_serial_init_event_group_create_failure(void)
     );
 }
 
-// Тестируем serial_init с ошибкой вызова uart_driver_install
+// Test serial_init with uart_driver_install call failure
 void test_serial_init_uart_driver_install_failure(void)
 {
     LOG_MESSAGE();
@@ -577,7 +646,7 @@ void test_serial_init_uart_driver_install_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой вызова uart_param_config
+// Test serial_init with uart_param_config call failure
 void test_serial_init_uart_param_config_failure(void)
 {
     LOG_MESSAGE();
@@ -599,7 +668,7 @@ void test_serial_init_uart_param_config_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой вызова uart_set_pin
+// Test serial_init with uart_set_pin call failure
 void test_serial_init_uart_set_pin_failure(void)
 {
     LOG_MESSAGE();
@@ -622,7 +691,7 @@ void test_serial_init_uart_set_pin_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой вызова uart_set_mode
+// Test serial_init with uart_set_mode call failure
 void test_serial_init_uart_set_mode_failure(void)
 {
     LOG_MESSAGE();
@@ -646,7 +715,7 @@ void test_serial_init_uart_set_mode_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой вызова uart_set_rx_timeout
+// Test serial_init with uart_set_rx_timeout call failure
 void test_serial_init_uart_set_rx_timeout_failure(void)
 {
     LOG_MESSAGE();
@@ -672,7 +741,7 @@ void test_serial_init_uart_set_rx_timeout_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_init с ошибкой создания задачи
+// Test serial_init with task creation failure
 void test_serial_init_task_create_failure(void)
 {
     LOG_MESSAGE();
@@ -699,7 +768,7 @@ void test_serial_init_task_create_failure(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем инициализацию serial_init без фактического запуска задачи
+// Test serial_init initialization without actual task execution
 void test_serial_init_success_no_task_execution(void)
 {
     LOG_MESSAGE();
@@ -726,8 +795,8 @@ void test_serial_init_success_no_task_execution(void)
     verify_malloc_tracking(1, 0);
 }
 
-// Тестируем инициализацию serial_init c запуском задачи и возникновением события EVENT_TASK_EXIT_REQ,
-// без получения данных по UART
+// Test serial_init initialization with task execution and EVENT_TASK_EXIT_REQ event,
+// without receiving any UART data
 void test_serial_init_success_with_task_execution_no_uart_event(void)
 {
     LOG_MESSAGE();
@@ -753,7 +822,10 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     verify_xEventGroupSetBits_args(1, EVENT_TASK_FINISHED);
     verify_uart_flush_input_args(1);
     verify_xQueueReceive_args(4, desc->uart_queue, pdMS_TO_TICKS(SERIAL_EVENT_WAIT_TIMEOUT_MS));
-    verify_malloc_tracking(2, 1);
+    // 3 allocations now: serial_desc_t + UART read buffer (dtmp) + sniffer accumulator
+    // (sniff_tmp). The two task-owned buffers are freed on task exit (2 frees); desc is
+    // freed by serial_deinit, which this test does not call.
+    verify_malloc_tracking(3, 2);
 
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
         sizeof(serial_desc_t),
@@ -769,6 +841,15 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
         was_ptr_freed(allocated_ptrs[1].ptr),
         "UART read buffer should be freed on task exit"
     );
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        SERIAL_BUF_SIZE,
+        allocated_ptrs[2].size,
+        "Memory size mismatch for sniffer accumulator allocation"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(
+        was_ptr_freed(allocated_ptrs[2].ptr),
+        "Sniffer accumulator should be freed on task exit"
+    );
 
     TEST_ASSERT_EQUAL_MESSAGE(1, mock_vTaskDelete_data.called, "vTaskDelete should be called once");
     TEST_ASSERT_NULL_MESSAGE(mock_vTaskDelete_data.xTaskToDelete, "vTaskDelete should be called to delete self");
@@ -776,7 +857,7 @@ void test_serial_init_success_with_task_execution_no_uart_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_DATA с установленным флагом тайм-аута приема
+// Test receiving UART_DATA event with receive timeout flag set
 void test_serial_init_success_with_uart_data_event_tout(void)
 {
     LOG_MESSAGE();
@@ -828,7 +909,11 @@ void test_serial_init_success_with_uart_data_event_tout(void)
     );
 }
 
-// Тестируем получение события UART_DATA со сброшенным флагом тайм-аута приема
+// Test receiving UART_DATA event with receive timeout flag cleared:
+// bytes are accumulated but receive_handler must NOT be called until the idle timeout fires.
+// This only applies when wait_for_idle=true (Modbus gateway mode).
+// The test uses serial_test_run_uart_event_task() to allow setting wait_for_idle=true
+// on the descriptor BEFORE the task processes any queued UART events.
 void test_serial_init_success_with_uart_data_event_no_tout(void)
 {
     LOG_MESSAGE();
@@ -847,21 +932,35 @@ void test_serial_init_success_with_uart_data_event_no_tout(void)
     mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
     mock_xQueueReceive_data.array_len = 1;
 
-    mock_xTaskCreate_data.self_execution = true;
-    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED | EVENT_TASK_EXIT_REQ;
+    // Do NOT run the task inline: we need to set wait_for_idle=true before the task sees events.
+    mock_xTaskCreate_data.self_execution = false;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 1;   // EXIT_REQ fires after 1 loop iteration
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    // Enable Modbus gateway mode: handler only fires on idle timeout.
+    desc->wait_for_idle = true;
+
+    // Run the task now, after wait_for_idle has been configured.
+    serial_test_run_uart_event_task(desc);
+
     verify_uart_read_bytes_args(1, size_to_read, portMAX_DELAY);
 
+    // timeout_flag is NOT set and wait_for_idle=true: bytes are buffered, handler must NOT fire.
     TEST_ASSERT_EQUAL_MESSAGE(
         0,
         mock_receive_handler_data.called,
-        "Receive handler should not be called when the timeout_flag is not set"
+        "Receive handler must NOT be called when timeout_flag is false (mid-frame RXFIFO_FULL)"
     );
 }
 
-// Тестируем получение двух событий UART_DATA со сброшенным и установленным флагом тайм-аута приема
+// Test receiving two UART_DATA events: first without timeout (mid-frame fragment),
+// second with timeout (idle detected). Bytes accumulate across both events and
+// receive_handler is called exactly once, after the second event, with all 30 bytes.
+// Uses deferred task execution (wait_for_idle=true) to test Modbus RTU accumulation.
 void test_serial_init_success_with_two_uart_data_events(void)
 {
     LOG_MESSAGE();
@@ -879,19 +978,31 @@ void test_serial_init_success_with_two_uart_data_events(void)
     mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
     mock_xQueueReceive_data.array_len = 2;
 
-    mock_xTaskCreate_data.self_execution = true;
+    // Do NOT run the task inline: we need to set wait_for_idle=true before the task sees events.
+    // set_event_on_call=3: serial_init uses call 0, task loop uses calls 1 and 2 (events),
+    // then the empty-queue iteration uses call 3 (3>3? No wait — called becomes 4, 4>3 → exit).
+    mock_xTaskCreate_data.self_execution = false;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.set_event_on_call = 2;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
     mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    // Enable Modbus gateway mode: accumulate bytes until idle timeout fires.
+    desc->wait_for_idle = true;
+
+    // Run the task now, after wait_for_idle has been configured.
+    serial_test_run_uart_event_task(desc);
+
     verify_uart_read_bytes_args(2, 20, portMAX_DELAY);  // Last (second) read length should be 20 bytes
 
+    // event_1 (no timeout, wait_for_idle=true): bytes buffered, handler NOT called.
+    // event_2 (timeout set): handler called ONCE with accumulated 30 bytes (10 + 20).
     TEST_ASSERT_EQUAL_MESSAGE(
         1,
         mock_receive_handler_data.called,
-        "Receive handler should be called once"
+        "Receive handler should be called once (only when timeout_flag is set)"
     );
 
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
@@ -900,25 +1011,34 @@ void test_serial_init_success_with_two_uart_data_events(void)
         "Receive handler should be called with correct serial descriptor"
     );
 
+    // The single call delivers all accumulated bytes: event_1 (10) + event_2 (20) = 30.
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
         30,
         mock_receive_handler_data.len,
-        "Receive handler should be called with correct data length"
+        "Receive handler should receive all accumulated bytes from both events"
     );
 
-    char expected_data[30];
-    memcpy(expected_data, MOCK_DATA_FROM_UART_READ, 10);
-    memcpy(&expected_data[10], MOCK_DATA_FROM_UART_READ, 20);
-
+    // Verify actual data content:
+    //   read_1 (10 bytes at buf[0]): MOCK_DATA_FROM_UART_READ[0..9]  = "HELLO_WORL"
+    //   read_2 (20 bytes at buf[10]): MOCK_DATA_FROM_UART_READ[0..19] = "HELLO_WORLD_FROM_MGE"
+    //   combined (30 bytes): "HELLO_WORLHELLO_WORLD_FROM_MGE"
+    static const char expected_buf2[] = "HELLO_WORLHELLO_WORLD_FROM_MGE";
     TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        expected_data,
-        mock_receive_handler_data.data,
+        expected_buf2,
+        (const char *)mock_receive_handler_data.calls[0].data,
         30,
-        "Receive handler should be called with correct data"
+        "Receive handler should be called with correct accumulated data from both events"
     );
 }
 
-// Тестируем получение трех событий UART_DATA со сброшенным и дважды с установленным флагом тайм-аута приема
+// Test receiving three UART_DATA events: first without timeout (mid-frame fragment),
+// then two with timeout (each marks end of an RTU frame).
+// Expected behaviour:
+//   event_1 (no timeout): 10 bytes buffered, handler NOT called.
+//   event_2 (timeout):    10 + 20 = 30 bytes delivered → handler call #1, buffer reset.
+//   event_3 (timeout):    15 bytes delivered → handler call #2, buffer reset.
+// Total: 2 handler calls.
+// Uses deferred task execution (wait_for_idle=true) to test Modbus RTU accumulation.
 void test_serial_init_success_with_three_uart_data_events(void)
 {
     LOG_MESSAGE();
@@ -937,19 +1057,30 @@ void test_serial_init_success_with_three_uart_data_events(void)
     mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
     mock_xQueueReceive_data.array_len = 3;
 
-    mock_xTaskCreate_data.self_execution = true;
+    // Do NOT run the task inline: we need to set wait_for_idle=true before the task sees events.
+    // set_event_on_call=4: serial_init uses call 0, task loop uses calls 1-3 (events),
+    // then the empty-queue iteration uses call 4 (called becomes 5, 5>4 → exit).
+    mock_xTaskCreate_data.self_execution = false;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 4;
     mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    // Enable Modbus gateway mode: accumulate bytes until idle timeout fires.
+    desc->wait_for_idle = true;
+
+    // Run the task now, after wait_for_idle has been configured.
+    serial_test_run_uart_event_task(desc);
+
     verify_uart_read_bytes_args(3, 15, portMAX_DELAY);  // Last (third) read length should be 15 bytes
 
+    // 2 handler calls: once for event_2 (with 30 accumulated bytes), once for event_3 (15 bytes).
     TEST_ASSERT_EQUAL_MESSAGE(
         2,
         mock_receive_handler_data.called,
-        "Receive handler should be called once"
+        "Receive handler should be called twice (once per timeout event)"
     );
 
     TEST_ASSERT_EQUAL_PTR_MESSAGE(
@@ -958,22 +1089,50 @@ void test_serial_init_success_with_three_uart_data_events(void)
         "Receive handler should be called with correct serial descriptor"
     );
 
+    // Last call (event_3): 15 bytes only (buffer was reset after event_2's delivery).
     TEST_ASSERT_EQUAL_size_t_MESSAGE(
         15,
         mock_receive_handler_data.len,
-        "Receive handler should be called with correct data length on second call"
+        "Last handler call should deliver event_3's 15 bytes"
     );
 
-    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
-        MOCK_DATA_FROM_UART_READ,
-        mock_receive_handler_data.data,
+    // First call (event_2): accumulated 10 (event_1) + 20 (event_2) = 30 bytes.
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        30,
+        mock_receive_handler_data.calls[0].len,
+        "First call: receive handler should have accumulated 30 bytes (event_1 + event_2)"
+    );
+
+    // Second call (event_3): 15 bytes.
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
         15,
-        "Receive handler should be called with correct data on second call"
+        mock_receive_handler_data.calls[1].len,
+        "Second call: receive handler should have event_3's 15 bytes"
+    );
+
+    // Verify actual data content for both calls:
+    //   call #0: read_1(10 bytes at buf[0])="HELLO_WORL" + read_2(20 bytes at buf[10])="HELLO_WORLD_FROM_MGE"
+    //   combined (30 bytes): "HELLO_WORLHELLO_WORLD_FROM_MGE"
+    static const char expected_call0[] = "HELLO_WORLHELLO_WORLD_FROM_MGE";
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        expected_call0,
+        (const char *)mock_receive_handler_data.calls[0].data,
+        30,
+        "First handler call should contain accumulated data from event_1 + event_2"
+    );
+
+    //   call #1: read_3(15 bytes at fresh buf[0])=MOCK_DATA_FROM_UART_READ[0..14]="HELLO_WORLD_FRO"
+    static const char expected_call1[] = "HELLO_WORLD_FRO";
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        expected_call1,
+        (const char *)mock_receive_handler_data.calls[1].data,
+        15,
+        "Second handler call should contain event_3's 15 bytes of data"
     );
 }
 
 
-// Тестируем получение события UART_DATA с размером равным максимальному размеру буфера
+// Test receiving UART_DATA event with size equal to the maximum buffer size
 void test_serial_init_success_with_uart_data_event_buffer_max_size(void)
 {
     LOG_MESSAGE();
@@ -1016,7 +1175,7 @@ void test_serial_init_success_with_uart_data_event_buffer_max_size(void)
     );
 }
 
-// Тестируем получение события UART_DATA с размером больше буфера
+// Test receiving UART_DATA event with size larger than the buffer
 void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
 {
     LOG_MESSAGE();
@@ -1046,7 +1205,12 @@ void test_serial_init_success_with_uart_data_event_buffer_too_small(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение двух событий UART_DATA с переполнением буфера на втором событии
+// Test: two UART_DATA events where the second event overflows the buffer.
+// event_1 (no timeout, wait_for_idle=true) — bytes are buffered, handler NOT called.
+// event_2 size (SERIAL_BUF_SIZE + 1) exceeds the full buffer size
+// so the overflow path fires: flush + reset, no read, handler NOT called.
+// Total handler calls: 0.
+// Uses deferred task execution (wait_for_idle=true) to test Modbus RTU accumulation.
 void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
 {
     LOG_MESSAGE();
@@ -1056,30 +1220,45 @@ void test_serial_init_success_with_two_uart_data_events_buffer_overflow(void)
     serial_config_t config;
     init_default_config(&config);
 
+    // event_1: small, no timeout — bytes accumulated in buffer (wait_for_idle=true), handler NOT called.
+    // event_2: larger than the full buffer — overflow triggers flush+reset, handler NOT called.
     uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
-    uart_event_t event_2 = {.type = UART_DATA, .size = SERIAL_BUF_SIZE - 10 + 1, .timeout_flag = true};
+    uart_event_t event_2 = {.type = UART_DATA, .size = SERIAL_BUF_SIZE + 1, .timeout_flag = true};
     void* events_arr[2] = {&event_1, &event_2};
     size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
     mock_xQueueReceive_data.pvBuffer_arr = events_arr;
     mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
     mock_xQueueReceive_data.array_len = 2;
 
-    mock_xTaskCreate_data.self_execution = true;
+    // Do NOT run the task inline: we need to set wait_for_idle=true before the task sees events.
+    mock_xTaskCreate_data.self_execution = false;
     mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
-    mock_xEventGroupWaitBits_data.set_event_on_call = 2;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
     mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
 
     serial_desc_t *desc = serial_init(&config, mock_receive_handler);
     TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
-    verify_uart_read_bytes_args(1, 10, portMAX_DELAY);  // uart_read_bytes() should be called only once for first event
+
+    // Enable Modbus gateway mode: accumulate bytes until idle timeout fires.
+    desc->wait_for_idle = true;
+
+    // Run the task now, after wait_for_idle has been configured.
+    serial_test_run_uart_event_task(desc);
+
+    // event_1: uart_read_bytes called once (10 bytes), no handler call (no timeout, wait_for_idle=true).
+    // event_2: overflow path — uart_read_bytes NOT called, flush+reset triggered.
+    verify_uart_read_bytes_args(1, 10, portMAX_DELAY);
 
     verify_uart_flush_input_args(2);
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_xQueueReset_data.called, "xQueueReset should be called twice");
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
-    TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
+
+    // Neither event triggered the handler: event_1 buffered (wait_for_idle=true, no timeout), event_2 hit overflow.
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called (event_1 buffered, event_2 overflowed)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_get_buffered_data_len_data.called, "uart_get_buffered_data_len must not be called when drop_handler is NULL");
 }
 
-// Тестируем получение события UART_FIFO_OVF
+// Test receiving UART_FIFO_OVF event
 void test_serial_init_success_with_uart_fifo_ovf_event(void)
 {
     LOG_MESSAGE();
@@ -1107,9 +1286,10 @@ void test_serial_init_success_with_uart_fifo_ovf_event(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_get_buffered_data_len_data.called, "uart_get_buffered_data_len must not be called when drop_handler is NULL");
 }
 
-// Тестируем получение события UART_BUFFER_FULL
+// Test receiving UART_BUFFER_FULL event
 void test_serial_init_success_with_uart_buffer_full_event(void)
 {
     LOG_MESSAGE();
@@ -1137,9 +1317,112 @@ void test_serial_init_success_with_uart_buffer_full_event(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(desc->uart_queue, mock_xQueueReset_data.handle, "xQueueReset should be called with correct queue handle");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_read_bytes_data.called, "uart_read_bytes should not be called");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_get_buffered_data_len_data.called, "uart_get_buffered_data_len must not be called when drop_handler is NULL");
 }
 
-// Тестируем получение события UART_BREAK
+// Test that the drop handler fires on a UART_DATA receive-buffer overflow.
+// event_1 (10 bytes, no timeout, wait_for_idle=true) is buffered (data_len=10).
+// event_2 (SERIAL_BUF_SIZE+1 bytes, timeout) overflows: the partial frame (10) plus
+// the incoming chunk (SERIAL_BUF_SIZE+1) are both flushed, so the drop handler must be
+// invoked once with dropped_len = 10 + (SERIAL_BUF_SIZE+1).
+void test_serial_drop_handler_uart_data_overflow(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test drop handler fires on UART_DATA receive buffer overflow");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = SERIAL_BUF_SIZE + 1, .timeout_flag = true};
+    void* events_arr[2] = {&event_1, &event_2};
+    size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 2;
+
+    // Defer task execution so wait_for_idle and drop_handler can be set before events run.
+    mock_xTaskCreate_data.self_execution = false;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    desc->wait_for_idle = true;        // buffer event_1 instead of forwarding it
+    desc->drop_handler = mock_drop_handler;
+
+    serial_test_run_uart_event_task(desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_drop_handler_data.called, "Drop handler should fire once on overflow");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(desc, mock_drop_handler_data.desc, "Drop handler should be called with correct descriptor");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        (size_t)(10 + (SERIAL_BUF_SIZE + 1)),
+        mock_drop_handler_data.last_len,
+        "Drop handler should report buffered partial frame plus the chunk that did not fit"
+    );
+}
+
+// Shared driver: buffer a 12-byte partial frame (UART_DATA, no timeout, wait_for_idle=true),
+// then deliver an overflow event of `type` with the driver ring mocked to `ring_len` bytes.
+// The drop handler must fire once reporting data_len(12) + ring_len — this exercises BOTH
+// terms of the sum on the FIFO_OVF / BUFFER_FULL paths.
+static void run_drop_overflow_case(uart_event_type_t type, size_t ring_len)
+{
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_uart_get_buffered_data_len_data.size = ring_len;
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 12, .timeout_flag = false};
+    uart_event_t event_2 = {.type = type, .size = 0, .timeout_flag = false};
+    void* events_arr[2] = {&event_1, &event_2};
+    size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 2;
+
+    mock_xTaskCreate_data.self_execution = false;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+
+    desc->wait_for_idle = true;            // buffer event_1 (12 bytes) instead of forwarding it
+    desc->drop_handler = mock_drop_handler;
+
+    serial_test_run_uart_event_task(desc);
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_drop_handler_data.called, "Drop handler should fire once on overflow");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(desc, mock_drop_handler_data.desc, "Drop handler should be called with correct descriptor");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        (size_t)(12 + ring_len),
+        mock_drop_handler_data.last_len,
+        "Drop handler should report buffered partial frame (data_len) plus the driver-ring bytes"
+    );
+}
+
+void test_serial_drop_handler_uart_fifo_ovf(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test drop handler fires on UART_FIFO_OVF event");
+    LOG_MESSAGE();
+    run_drop_overflow_case(UART_FIFO_OVF, 700);
+}
+
+void test_serial_drop_handler_uart_buffer_full(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test drop handler fires on UART_BUFFER_FULL event");
+    LOG_MESSAGE();
+    run_drop_overflow_case(UART_BUFFER_FULL, 1000);
+}
+
+// Test receiving UART_BREAK event
 void test_serial_init_success_with_uart_break_event(void)
 {
     LOG_MESSAGE();
@@ -1168,7 +1451,7 @@ void test_serial_init_success_with_uart_break_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_PARITY_ERR
+// Test receiving UART_PARITY_ERR event
 void test_serial_init_success_with_uart_parity_err_event(void)
 {
     LOG_MESSAGE();
@@ -1197,7 +1480,7 @@ void test_serial_init_success_with_uart_parity_err_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение события UART_FRAME_ERR
+// Test receiving UART_FRAME_ERR event
 void test_serial_init_success_with_uart_frame_err_event(void)
 {
     LOG_MESSAGE();
@@ -1226,7 +1509,7 @@ void test_serial_init_success_with_uart_frame_err_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем получение неизвестного события
+// Test receiving an unknown event
 void test_serial_init_success_with_unknown_uart_event(void)
 {
     LOG_MESSAGE();
@@ -1255,7 +1538,7 @@ void test_serial_init_success_with_unknown_uart_event(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called, "Receive handler should not be called");
 }
 
-// Тестируем успешную отправку serial_send
+// Test successful serial_send transmission
 void test_serial_send_success(void)
 {
     LOG_MESSAGE();
@@ -1280,7 +1563,7 @@ void test_serial_send_success(void)
     TEST_ASSERT_EQUAL_MESSAGE(bytes_to_send, mock_uart_write_bytes_data.size, "uart_write_bytes should be called with correct size");
 }
 
-// Тестируем serial_send с ошибкой записи
+// Test serial_send with a write error
 void test_serial_send_partial_write(void)
 {
     LOG_MESSAGE();
@@ -1304,7 +1587,7 @@ void test_serial_send_partial_write(void)
 }
 
 
-// Тестируем serial_wait_tx_done
+// Test serial_wait_tx_done
 void test_serial_wait_tx_done_success(void)
 {
     LOG_MESSAGE();
@@ -1327,7 +1610,7 @@ void test_serial_wait_tx_done_success(void)
     TEST_ASSERT_EQUAL_MESSAGE(timeout, mock_uart_wait_tx_done_data.ticks_to_wait, "uart_wait_tx_done should be called with correct timeout");
 }
 
-// Тестируем serial_wait_tx_done с ошибками
+// Test serial_wait_tx_done with errors
 void test_serial_wait_tx_done_errors(void)
 {
     LOG_MESSAGE();
@@ -1354,7 +1637,7 @@ void test_serial_wait_tx_done_errors(void)
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_uart_wait_tx_done_data.called, "uart_wait_tx_done should be called twice");
 }
 
-// Тестируем serial_deinit с NULL дескриптором
+// Test serial_deinit with NULL descriptor
 void test_serial_deinit_null_descriptor(void)
 {
     LOG_MESSAGE();
@@ -1371,7 +1654,7 @@ void test_serial_deinit_null_descriptor(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем serial_deinit с уже деинициализированным дескриптором (task_handle == NULL)
+// Test serial_deinit with an already deinitialized descriptor (task_handle == NULL)
 void test_serial_deinit_already_deinitialized_task(void)
 {
     LOG_MESSAGE();
@@ -1399,7 +1682,7 @@ void test_serial_deinit_already_deinitialized_task(void)
     verify_malloc_tracking(1, 0);
 }
 
-// Тестируем serial_deinit с уже деинициализированным дескриптором (event_group == NULL)
+// Test serial_deinit with an already deinitialized descriptor (event_group == NULL)
 void test_serial_deinit_already_deinitialized_event_group(void)
 {
     LOG_MESSAGE();
@@ -1427,7 +1710,7 @@ void test_serial_deinit_already_deinitialized_event_group(void)
     verify_malloc_tracking(1, 0);
 }
 
-// Тестируем serial_deinit успешно
+// Test serial_deinit successfully
 void test_serial_deinit_success(void)
 {
     LOG_MESSAGE();
@@ -1455,7 +1738,7 @@ void test_serial_deinit_success(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем serial_deinit когда задача не завершается вовремя
+// Test serial_deinit when the task does not finish in time
 void test_serial_deinit_task_not_finished(void)
 {
     LOG_MESSAGE();
@@ -1481,6 +1764,662 @@ void test_serial_deinit_task_not_finished(void)
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_driver_delete_data.called, "uart_driver_delete should not be called when task doesn't finish");
     TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called, "vEventGroupDelete should not be called when task doesn't finish");
     verify_malloc_tracking(1, 0);
+}
+
+// Test serial_set_rx_timeout — success path
+void test_serial_set_rx_timeout_success(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_rx_timeout - success path");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    /* Reset the mock counter so only the set_rx_timeout call is counted */
+    mock_uart_set_rx_timeout_data.called = 0;
+    mock_uart_set_rx_timeout_data.result = ESP_OK;
+
+    esp_err_t err = serial_set_rx_timeout(desc, 11);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_rx_timeout should return ESP_OK");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_rx_timeout_data.called, "uart_set_rx_timeout should be called once");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_NUM_1, mock_uart_set_rx_timeout_data.uart_num, "uart_set_rx_timeout called with wrong uart_num");
+    TEST_ASSERT_EQUAL_MESSAGE(11, mock_uart_set_rx_timeout_data.rx_timeout, "uart_set_rx_timeout called with wrong timeout value");
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_FINISHED;
+    serial_deinit(desc);
+    verify_malloc_tracking(1, 1);
+}
+
+// Test serial_set_rx_timeout — failure path
+void test_serial_set_rx_timeout_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_rx_timeout - failure path");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    /* Reset the mock counter and configure it to return an error */
+    mock_uart_set_rx_timeout_data.called = 0;
+    mock_uart_set_rx_timeout_data.result = ESP_FAIL;
+
+    esp_err_t err = serial_set_rx_timeout(desc, 11);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, err, "serial_set_rx_timeout should return ESP_FAIL on uart error");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_rx_timeout_data.called, "uart_set_rx_timeout should be called once");
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_FINISHED;
+    serial_deinit(desc);
+    verify_malloc_tracking(1, 1);
+}
+
+// Test sniffer mode (receive_handler == NULL): the sniff_handler must be delivered
+// the accumulated packet ONLY when the idle timeout fires, never on a mid-frame
+// (timeout_flag == false) UART_DATA fragment.
+// Kills mutant M7: dropping "&& event.timeout_flag" from the sniffer branch would
+// make the sniff_handler fire on every UART_DATA event (including non-timeout ones).
+void test_serial_sniffer_delivers_only_on_idle_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial sniffer mode - sniff_handler fires only on idle timeout");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    // event_1: mid-frame fragment (no idle timeout) -> bytes buffered, sniff_handler NOT called.
+    // event_2: idle timeout -> sniff_handler called ONCE with all accumulated bytes.
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    void* events_arr[2] = {&event_1, &event_2};
+    size_t event_size_arr[2] = {sizeof(event_1), sizeof(event_2)};
+    mock_xQueueReceive_data.pvBuffer_arr = events_arr;
+    mock_xQueueReceive_data.buffer_size_arr = event_size_arr;
+    mock_xQueueReceive_data.array_len = 2;
+
+    // Do NOT run the task inline: we need to install sniff_handler before the task sees events.
+    mock_xTaskCreate_data.self_execution = false;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = 3;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+
+    // Sniffer mode: serial_init with NULL receive_handler.
+    serial_desc_t *desc = serial_init(&config, NULL);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed in sniffer mode (NULL handler)");
+
+    // Install the sniff_handler (reuse the receive-handler mock; same signature).
+    desc->sniff_handler = mock_receive_handler;
+
+    // Run the task now, after the sniff_handler has been configured.
+    serial_test_run_uart_event_task(desc);
+
+    verify_uart_read_bytes_args(2, 20, portMAX_DELAY);  // both events read (10 then 20)
+
+    // event_1 (no timeout): buffered, sniff_handler NOT called.
+    // event_2 (timeout): sniff_handler called exactly ONCE with all 30 accumulated bytes.
+    TEST_ASSERT_EQUAL_MESSAGE(
+        1,
+        mock_receive_handler_data.called,
+        "Sniff handler must fire ONCE, only on the idle-timeout event (not on the mid-frame fragment)"
+    );
+
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(
+        desc,
+        mock_receive_handler_data.desc,
+        "Sniff handler should be called with correct serial descriptor"
+    );
+
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(
+        30,
+        mock_receive_handler_data.len,
+        "Sniff handler should receive all accumulated bytes (event_1 + event_2)"
+    );
+}
+
+// Test serial_set_tx_disabled gates serial_send: when TX is disabled, serial_send
+// returns ESP_OK immediately WITHOUT calling uart_write_bytes; re-enabling restores it.
+// Kills mutant M8: inverting the "disabled == serial_tx_disabled(desc)" no-state-change guard
+// would prevent the state transition, so the disable/enable would not take effect.
+void test_serial_set_tx_disabled_gates_send(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled - gates serial_send transmission");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+
+    // Disable TX: this is a real state change (default tx_disabled == false).
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    // With TX disabled, serial_send returns ESP_OK but must NOT write to the UART.
+    err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should return ESP_OK when TX is disabled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must NOT be called while TX is disabled");
+
+    // Re-enable TX: another real state change.
+    err = serial_set_tx_disabled(desc, false);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(false) should return ESP_OK");
+
+    // Now serial_send must actually transmit.
+    err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should return ESP_OK after TX re-enabled");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must be called once after TX re-enabled");
+}
+
+// Test serial_set_tx_disabled(true) drives the exact GPIO park sequence on dir_pin:
+// gpio_reset_pin -> gpio_set_direction(OUTPUT) -> gpio_set_level(0), in that order.
+void test_serial_set_tx_disabled_disable_gpio_sequence(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled(true) - GPIO park sequence");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    // serial_init itself calls uart/gpio; clear that noise before the assertion.
+    mock_gpio_reset();
+
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_gpio_reset_pin_data.called,
+        "gpio_reset_pin must be called exactly once");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_gpio_reset_pin_data.gpio_num,
+        "gpio_reset_pin must be called on dir_pin (GPIO_NUM_4)");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_gpio_set_direction_data.called,
+        "gpio_set_direction must be called exactly once");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_gpio_set_direction_data.gpio_num,
+        "gpio_set_direction must be called on dir_pin (GPIO_NUM_4)");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_MODE_OUTPUT, mock_gpio_set_direction_data.mode,
+        "gpio_set_direction must set OUTPUT mode");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_gpio_set_level_data.called,
+        "gpio_set_level must be called exactly once");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_gpio_set_level_data.gpio_num,
+        "gpio_set_level must be called on dir_pin (GPIO_NUM_4)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.level,
+        "gpio_set_level must force the dir_pin LOW (0)");
+
+    // Order: reset_pin -> set_level -> set_direction. The safe level is latched
+    // before the pin is switched to output, so it never drives an undefined level
+    // in the window between the direction change and the level change.
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_gpio_reset_pin_data.call_seq < mock_gpio_set_level_data.call_seq,
+        "gpio_reset_pin must precede gpio_set_level");
+    TEST_ASSERT_TRUE_MESSAGE(
+        mock_gpio_set_level_data.call_seq < mock_gpio_set_direction_data.call_seq,
+        "gpio_set_level must precede gpio_set_direction");
+}
+
+// Test serial_set_tx_disabled(false) re-attaches dir_pin to the UART via uart_set_pin,
+// re-applying the real TX/RX pins along with it, and must NOT touch the GPIO park path
+// (no gpio_reset_pin/set_direction/set_level).
+void test_serial_set_tx_disabled_enable_no_gpio_park(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled(false) - re-enable without GPIO park");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    // Move to the disabled state first (real state change).
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    // Clear noise from serial_init + the disable step right before the re-enable.
+    mock_gpio_reset();
+    mock_uart_reset();
+
+    err = serial_set_tx_disabled(desc, false);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(false) should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_pin_data.called,
+        "uart_set_pin must be called exactly once to restore dir_pin to the UART");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_NUM_1, mock_uart_set_pin_data.uart_num,
+        "uart_set_pin must be called on the descriptor's own UART port (UART_NUM_1)");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_4, mock_uart_set_pin_data.dir_pin,
+        "uart_set_pin must restore the dir_pin (rts) to GPIO_NUM_4");
+    // TX/RX must be re-applied explicitly rather than left as UART_PIN_NO_CHANGE;
+    // see the comment in serial_set_tx_disabled() in serial.c for why.
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_10, mock_uart_set_pin_data.tx_pin,
+        "uart_set_pin must re-apply the real tx_pin (GPIO_NUM_10)");
+    TEST_ASSERT_EQUAL_MESSAGE(GPIO_NUM_9, mock_uart_set_pin_data.rx_pin,
+        "uart_set_pin must re-apply the real rx_pin (GPIO_NUM_9)");
+    TEST_ASSERT_EQUAL_MESSAGE(UART_PIN_NO_CHANGE, mock_uart_set_pin_data.cts_pin,
+        "uart_set_pin cts_pin must be UART_PIN_NO_CHANGE");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_reset_pin_data.called,
+        "re-enable must NOT call gpio_reset_pin");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_direction_data.called,
+        "re-enable must NOT call gpio_set_direction");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
+        "re-enable must NOT call gpio_set_level");
+}
+
+// Test the uart_set_pin() failure path of serial_set_tx_disabled(false): the error is
+// returned to the caller and the port is left exactly as it was — still tx_disabled, so
+// serial_send() keeps gating, and with no GPIO touched. A re-enable that reports success
+// without having restored the routing would leave the descriptor lying about the bus.
+void test_serial_set_tx_disabled_enable_uart_set_pin_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled(false) - uart_set_pin failure");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    // Move to the disabled state first (real state change).
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    // Clear noise from serial_init + the disable step, then make the re-enable fail.
+    mock_gpio_reset();
+    mock_uart_reset();
+    mock_uart_set_pin_data.result = ESP_FAIL;
+
+    err = serial_set_tx_disabled(desc, false);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, err,
+        "serial_set_tx_disabled(false) must return the uart_set_pin error, not ESP_OK");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_set_pin_data.called,
+        "uart_set_pin must be attempted exactly once on the re-enable path");
+
+    // The failed re-enable must not have flipped the state: TX is still gated, so
+    // serial_send returns ESP_OK without reaching the UART.
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+    err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should return ESP_OK while TX is disabled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must NOT be called: a failed re-enable must leave TX disabled");
+
+    // The error path must not fall through to the GPIO park sequence either.
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_reset_pin_data.called,
+        "failed re-enable must NOT call gpio_reset_pin");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_direction_data.called,
+        "failed re-enable must NOT call gpio_set_direction");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
+        "failed re-enable must NOT call gpio_set_level");
+
+    // Keeping tx_disabled = true also keeps the port retryable: the next
+    // serial_set_tx_disabled(desc, false) still sees a state change, so it does NOT take the
+    // "already in that state" early return and really calls uart_set_pin() again. That is
+    // what makes the port recover by itself on the next settings_update().
+    mock_uart_set_pin_data.result = ESP_OK;
+
+    err = serial_set_tx_disabled(desc, false);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err,
+        "the retried serial_set_tx_disabled(false) should return ESP_OK");
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_uart_set_pin_data.called,
+        "the retry must reach uart_set_pin again, not short-circuit on the tx_disabled state");
+
+    // TX is really back: serial_send() no longer gates and reaches the UART.
+    err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should succeed after a successful retry");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must be called once TX has actually been re-enabled");
+    TEST_ASSERT_EQUAL_MESSAGE(sizeof(data), mock_uart_write_bytes_data.size,
+        "uart_write_bytes must be handed the whole payload");
+}
+
+// Test serial_set_tx_disabled(true) when already disabled is idempotent: it takes the
+// early return and must NOT re-park the dir_pin (no spurious bus glitch).
+void test_serial_set_tx_disabled_idempotent_disable(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled(true) - idempotent re-disable");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should succeed");
+
+    // First disable: real state change.
+    esp_err_t err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_set_tx_disabled(true) should return ESP_OK");
+
+    // Clear noise, then disable AGAIN (already disabled -> early return).
+    mock_gpio_reset();
+    err = serial_set_tx_disabled(desc, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "redundant serial_set_tx_disabled(true) should return ESP_OK");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_reset_pin_data.called,
+        "redundant disable must NOT call gpio_reset_pin");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_direction_data.called,
+        "redundant disable must NOT call gpio_set_direction");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
+        "redundant disable must NOT call gpio_set_level");
+}
+
+// Test serial_set_tx_disabled with a NULL descriptor returns ESP_ERR_INVALID_ARG and
+// touches no GPIO.
+void test_serial_set_tx_disabled_null_desc(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_set_tx_disabled - NULL descriptor");
+    LOG_MESSAGE();
+
+    mock_gpio_reset();
+
+    esp_err_t err = serial_set_tx_disabled(NULL, true);
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_INVALID_ARG, err,
+        "serial_set_tx_disabled(NULL) should return ESP_ERR_INVALID_ARG");
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_reset_pin_data.called,
+        "NULL descriptor must NOT call gpio_reset_pin");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_direction_data.called,
+        "NULL descriptor must NOT call gpio_set_direction");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_gpio_set_level_data.called,
+        "NULL descriptor must NOT call gpio_set_level");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Additive sniffer feed (part 2): the sniff_handler must observe RX traffic in
+// BOTH passive and tcp_bridge modes, via a dedicated accumulation buffer that is
+// independent of the bridge data path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: queue a sequence of UART_DATA events and run the event task inline,
+// after the caller has configured desc->receive_handler/sniff_handler/wait_for_idle.
+// set_event_on_call = n_events + 1 (serial_init consumes one EventGroupWaitBits call,
+// the task loop consumes one per event, then exits).
+static void run_events_inline(serial_desc_t *desc, uart_event_t **events,
+                              size_t *sizes, int n_events)
+{
+    mock_xQueueReceive_data.pvBuffer_arr = (void **)events;
+    mock_xQueueReceive_data.buffer_size_arr = sizes;
+    mock_xQueueReceive_data.array_len = n_events;
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    mock_xEventGroupWaitBits_data.set_event_on_call = n_events + 1;
+    mock_xEventGroupWaitBits_data.events_to_set = EVENT_TASK_EXIT_REQ;
+    serial_test_run_uart_event_task(desc);
+}
+
+// Modbus gateway (wait_for_idle=true) with a bridge receive_handler AND a sniffer:
+// a non-timeout fragment followed by an idle-timeout event delivers the WHOLE
+// accumulated frame to BOTH handlers exactly once.
+void test_serial_bridge_and_sniffer_both_fire_on_timeout(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test gateway bridge + sniffer: both fire once on idle timeout");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    uart_event_t *events[2] = {&event_1, &event_2};
+    size_t sizes[2] = {sizeof(event_1), sizeof(event_2)};
+
+    mock_xTaskCreate_data.self_execution = false;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+    desc->wait_for_idle = true;  // Modbus gateway
+
+    run_events_inline(desc, events, sizes, 2);
+
+    // Bridge handler: fired once on the timeout event with the full 30-byte frame.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_receive_handler_data.called,
+        "receive_handler must fire once on the idle-timeout event");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(30, mock_receive_handler_data.len,
+        "receive_handler must get the whole accumulated 30-byte frame");
+    // Sniffer: fired once with the same full frame, via its independent buffer.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "sniff_handler must ALSO fire once on the idle-timeout event (additive feed)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(30, mock_sniff_handler_data.len,
+        "sniff_handler must get the whole accumulated 30-byte frame");
+    TEST_ASSERT_EQUAL_PTR(desc, mock_sniff_handler_data.desc);
+}
+
+// Transparent bridge (wait_for_idle=false): the bridge receive_handler forwards
+// each chunk IMMEDIATELY (per UART_DATA event), while the sniffer accumulates and
+// delivers a single idle-delimited frame only on timeout_flag.
+void test_serial_transparent_bridge_per_chunk_sniffer_on_idle(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test transparent bridge: per-chunk forward + sniffer idle-frame");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    uart_event_t *events[2] = {&event_1, &event_2};
+    size_t sizes[2] = {sizeof(event_1), sizeof(event_2)};
+
+    mock_xTaskCreate_data.self_execution = false;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+    desc->wait_for_idle = false;  // transparent: forward each chunk immediately
+
+    run_events_inline(desc, events, sizes, 2);
+
+    // Bridge handler fired twice, once per chunk (10 then 20), unchanged behavior.
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_receive_handler_data.called,
+        "transparent bridge must forward each chunk immediately (2 calls)");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(10, mock_receive_handler_data.calls[0].len,
+        "first chunk forwarded with 10 bytes");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(20, mock_receive_handler_data.calls[1].len,
+        "second chunk forwarded with 20 bytes");
+    // Sniffer fired ONCE, with the idle-delimited frame accumulated across chunks.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "sniffer must deliver a single idle-delimited frame on timeout");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(30, mock_sniff_handler_data.len,
+        "sniffer frame must be the full 30 bytes accumulated across both chunks");
+}
+
+// Passive (no bridge receive_handler): the sniffer still receives idle-delimited
+// frames and the bridge handler is never called. Guards R4.
+void test_serial_passive_sniffer_frame_no_bridge(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test passive: sniffer idle-frame, bridge handler never called");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    uart_event_t event_1 = {.type = UART_DATA, .size = 10, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 20, .timeout_flag = true};
+    uart_event_t *events[2] = {&event_1, &event_2};
+    size_t sizes[2] = {sizeof(event_1), sizeof(event_2)};
+
+    mock_xTaskCreate_data.self_execution = false;
+    serial_desc_t *desc = serial_init(&config, NULL);  // passive: no receive_handler
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+
+    run_events_inline(desc, events, sizes, 2);
+
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_receive_handler_data.called,
+        "passive: bridge receive_handler must never be called");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "passive: sniffer must deliver one idle-delimited frame");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(30, mock_sniff_handler_data.len,
+        "passive: sniffer frame must be the full 30 bytes");
+}
+
+// Overflow guard: in transparent mode the bridge resets the main buffer every
+// event, but the sniffer accumulator grows until an idle timeout. If accumulation
+// would exceed SERIAL_BUF_SIZE the accumulator resets without corrupting memory,
+// and the next delivered frame stays bounded.
+void test_serial_sniff_accumulator_overflow_guard(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test sniffer accumulator overflow guard resets safely");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+
+    // Each event is 600 bytes (<= SERIAL_BUF_SIZE so the main-buffer check passes
+    // because transparent mode resets data_len every event). The sniffer accumulator
+    // would reach 1200 on the second event (> 1000) → guard resets it to 0 first.
+    uart_event_t event_1 = {.type = UART_DATA, .size = 600, .timeout_flag = false};
+    uart_event_t event_2 = {.type = UART_DATA, .size = 600, .timeout_flag = false};
+    uart_event_t event_3 = {.type = UART_DATA, .size = 600, .timeout_flag = true};
+    uart_event_t *events[3] = {&event_1, &event_2, &event_3};
+    size_t sizes[3] = {sizeof(event_1), sizeof(event_2), sizeof(event_3)};
+
+    mock_xTaskCreate_data.self_execution = false;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+    desc->wait_for_idle = false;  // transparent: data buffer reset every event
+
+    run_events_inline(desc, events, sizes, 3);
+
+    // Sniffer delivered exactly once (on the timeout) and the frame length never
+    // exceeded the buffer — the guard reset accumulation instead of overrunning.
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "sniffer must deliver once on the timeout event");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(600, mock_sniff_handler_data.len,
+        "after overflow reset, the delivered frame is just the last 600-byte event");
+    TEST_ASSERT_TRUE_MESSAGE(mock_sniff_handler_data.len <= SERIAL_BUF_SIZE,
+        "sniffer frame length must never exceed the buffer size");
+}
+
+// TX visibility: a successful serial_send() feeds the transmitted bytes to the
+// sniff_handler (so the bridge's TCP->UART forwarding appears in the sniffer/cache).
+void test_serial_send_feeds_sniffer_when_enabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send feeds sniffer with TX bytes");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should succeed");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must be called");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_sniff_handler_data.called,
+        "serial_send must feed the sniffer once with the TX bytes");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(data), mock_sniff_handler_data.len,
+        "sniffer must receive the full TX length");
+    TEST_ASSERT_EQUAL_HEX8_ARRAY_MESSAGE(data, mock_sniff_handler_data.data, sizeof(data),
+        "sniffer must receive the exact TX bytes");
+}
+
+// TX visibility gate: when TX is disabled the bytes never go on the wire, so the
+// sniffer must NOT be fed (R2).
+void test_serial_send_no_sniffer_feed_when_tx_disabled(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send does NOT feed sniffer when TX disabled");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+
+    TEST_ASSERT_EQUAL(ESP_OK, serial_set_tx_disabled(desc, true));
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send returns OK even when TX disabled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must NOT be called when TX disabled");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniff_handler_data.called,
+        "sniffer must NOT be fed when TX is disabled (bytes never transmitted)");
+}
+
+// TX visibility gate: a partial/failed write was not fully transmitted, so the
+// sniffer must NOT be fed.
+void test_serial_send_no_sniffer_feed_on_partial_write(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send does NOT feed sniffer on partial write");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    desc->sniff_handler = mock_sniff_handler;
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD};
+    mock_uart_write_bytes_data.return_value = 3;  // force a short write (< len)
+
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, err, "serial_send must report ESP_FAIL on short write");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniff_handler_data.called,
+        "sniffer must NOT be fed when the write did not fully transmit");
+}
+
+// serial_send must not crash when no sniff_handler is attached (e.g. disabled overlay).
+void test_serial_send_no_sniff_handler_ok(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_send with no sniff_handler attached");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+    TEST_ASSERT_NOT_NULL(desc);
+    // sniff_handler is NULL by default after serial_init.
+
+    uint8_t data[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+    esp_err_t err = serial_send(desc, data, sizeof(data));
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, err, "serial_send should succeed with no sniff_handler");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_uart_write_bytes_data.called,
+        "uart_write_bytes must still be called");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_sniff_handler_data.called,
+        "no sniff_handler attached → nothing fed");
 }
 
 int main(void)
@@ -1510,13 +2449,35 @@ int main(void)
     RUN_TEST(test_serial_init_success_with_two_uart_data_events_buffer_overflow);
     RUN_TEST(test_serial_init_success_with_uart_fifo_ovf_event);
     RUN_TEST(test_serial_init_success_with_uart_buffer_full_event);
+    RUN_TEST(test_serial_drop_handler_uart_data_overflow);
+    RUN_TEST(test_serial_drop_handler_uart_fifo_ovf);
+    RUN_TEST(test_serial_drop_handler_uart_buffer_full);
     RUN_TEST(test_serial_init_success_with_uart_break_event);
     RUN_TEST(test_serial_init_success_with_uart_parity_err_event);
     RUN_TEST(test_serial_init_success_with_uart_frame_err_event);
     RUN_TEST(test_serial_init_success_with_unknown_uart_event);
 
+    RUN_TEST(test_serial_sniffer_delivers_only_on_idle_timeout);
+
+    // Additive sniffer feed (part 2) — RX in bridge + passive modes:
+    RUN_TEST(test_serial_bridge_and_sniffer_both_fire_on_timeout);
+    RUN_TEST(test_serial_transparent_bridge_per_chunk_sniffer_on_idle);
+    RUN_TEST(test_serial_passive_sniffer_frame_no_bridge);
+    RUN_TEST(test_serial_sniff_accumulator_overflow_guard);
+    // Additive sniffer feed (part 2) — TX visibility via serial_send:
+    RUN_TEST(test_serial_send_feeds_sniffer_when_enabled);
+    RUN_TEST(test_serial_send_no_sniffer_feed_when_tx_disabled);
+    RUN_TEST(test_serial_send_no_sniffer_feed_on_partial_write);
+    RUN_TEST(test_serial_send_no_sniff_handler_ok);
+
     RUN_TEST(test_serial_send_success);
     RUN_TEST(test_serial_send_partial_write);
+    RUN_TEST(test_serial_set_tx_disabled_gates_send);
+    RUN_TEST(test_serial_set_tx_disabled_disable_gpio_sequence);
+    RUN_TEST(test_serial_set_tx_disabled_enable_no_gpio_park);
+    RUN_TEST(test_serial_set_tx_disabled_enable_uart_set_pin_failure);
+    RUN_TEST(test_serial_set_tx_disabled_idempotent_disable);
+    RUN_TEST(test_serial_set_tx_disabled_null_desc);
 
     RUN_TEST(test_serial_wait_tx_done_success);
     RUN_TEST(test_serial_wait_tx_done_errors);
@@ -1526,6 +2487,9 @@ int main(void)
     RUN_TEST(test_serial_deinit_already_deinitialized_event_group);
     RUN_TEST(test_serial_deinit_success);
     RUN_TEST(test_serial_deinit_task_not_finished);
+
+    RUN_TEST(test_serial_set_rx_timeout_success);
+    RUN_TEST(test_serial_set_rx_timeout_failure);
 
     return UNITY_END();
 }

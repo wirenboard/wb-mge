@@ -10,12 +10,18 @@
 #include <string.h>
 
 #define MODBUS_TCP_TRANSACTION_ID               0x1234
-#define MODBUS_TCP_PROTOCOL_ID                  0x0000
 #define MODBUS_MGE_DETECT_LENGTH                17
 #define MODBUS_MGE_DETECT_UID                   0x00
 #define MODBUS_MGE_DETECT_FCODE                 0x47
 
 #define MODBUS_TCP_RESP_LENGTH                  25 // sizeof(mb_tcp_header_t) (8) + strlen(FAST_MODBUS_RESPONSE_STR) (17)
+
+// Connection generation the probe request arrived with. In production it is sampled by the
+// receive handler and travels through the packet queue with the request; fast_modbus must
+// hand it straight back to tcp_server_send_to_captured_client() so the reply is validated
+// against the connection that asked. A non-zero value on purpose: zero would also match a
+// zero-initialized mock field and hide a lost argument.
+#define TEST_CONN_GENERATION                    0x2Au
 
 typedef struct {
     int index;
@@ -29,7 +35,8 @@ static const mb_tcp_task_ctx_t test_ctx = {
     .tcp_desc = &mock_tcp_desc
 };
 
-static const char *FAST_MODBUS_REQUEST_STR = "WB-FAST-MODBUS?";
+static const char *FAST_MODBUS_REQUEST_STR  = "WB-FAST-MODBUS?";
+static const char *FAST_MODBUS_RESPONSE_STR = "WB-FAST-MODBUS-OK";
 static const size_t tcp_req_data_len = 15;
 static const size_t tcp_req_len = sizeof(mb_tcp_header_t) + tcp_req_data_len;
 
@@ -53,7 +60,7 @@ void tearDown(void)
     free(test_request);
 }
 
-// Тестируем успешную отправку ответа на запрос Быстрого Modbus
+// Test successful sending of a Fast Modbus probe response
 void test_fast_modbus_send_probe_response_success(void)
 {
     LOG_MESSAGE();
@@ -69,7 +76,7 @@ void test_fast_modbus_send_probe_response_success(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SUCCESS, result);
@@ -78,9 +85,89 @@ void test_fast_modbus_send_probe_response_success(void)
     TEST_ASSERT_EQUAL_PTR_MESSAGE(tcp_server_send_mock.desc, test_ctx.tcp_desc, "tcp_server_send called with incorrect tcp_desc");
     TEST_ASSERT_EQUAL_MESSAGE(MODBUS_TCP_RESP_LENGTH, tcp_server_send_mock.len, "tcp_server_send called with incorrect length");
     verify_malloc_tracking(1, 1);
+
+    /* The probe reply must be addressed by the connection identity the request came with,
+     * not by the bare fd: the generation the caller passed in has to reach the send path
+     * unchanged, otherwise tcp_server_send_to_captured_client() would validate against
+     * something else and the whole capture is pointless. */
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(TEST_CONN_GENERATION, tcp_server_send_mock.generation,
+        "probe response must carry the connection generation the request arrived with");
+
+    /* Verify response content: transaction_id must echo the request value */
+    mb_tcp_header_t *resp_header = (mb_tcp_header_t *)tcp_server_send_mock.last_data;
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(
+        MODBUS_TCP_TRANSACTION_ID,
+        resp_header->transaction_id,
+        "Response transaction_id must echo the request transaction_id"
+    );
+
+    /* Verify payload (after MBAP header) contains the Fast Modbus response string */
+    TEST_ASSERT_EQUAL_STRING_LEN_MESSAGE(
+        FAST_MODBUS_RESPONSE_STR,
+        (const char *)&tcp_server_send_mock.last_data[sizeof(mb_tcp_header_t)],
+        strlen(FAST_MODBUS_RESPONSE_STR),
+        "Response payload must contain WB-FAST-MODBUS-OK"
+    );
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другой код функции)
+// Test that the response MBAP 'length' field equals unit_id + function + payload bytes
+void test_fast_modbus_send_probe_response_mbap_length(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test fast_modbus_send_probe_response - MBAP length field");
+    LOG_MESSAGE();
+
+    test_request_header->transaction_id = MODBUS_TCP_TRANSACTION_ID;
+    test_request_header->protocol_id = MODBUS_TCP_PROTOCOL_ID;
+    test_request_header->length = modbus_swap16(MODBUS_MGE_DETECT_LENGTH);
+    test_request_header->unit_id = MODBUS_MGE_DETECT_UID;
+    test_request_header->function = MODBUS_MGE_DETECT_FCODE;
+    memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
+
+    enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request);
+
+    TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SUCCESS, result);
+    TEST_ASSERT_EQUAL_MESSAGE(1, tcp_server_send_mock.called, "tcp_server_send should be called once");
+
+    const uint16_t expected_mbap_length =
+        sizeof(((mb_tcp_header_t *)0)->unit_id) +
+        sizeof(((mb_tcp_header_t *)0)->function) +
+        (uint16_t)strlen(FAST_MODBUS_RESPONSE_STR);
+
+    mb_tcp_header_t *resp_header = (mb_tcp_header_t *)tcp_server_send_mock.last_data;
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(expected_mbap_length, modbus_swap16(resp_header->length),
+        "Response MBAP 'length' field must equal unit_id + function + payload bytes");
+}
+
+// Test that the response echoes the request unit_id and function fields
+void test_fast_modbus_send_probe_response_echoes_unit_id_and_function(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test fast_modbus_send_probe_response - echoes unit_id and function");
+    LOG_MESSAGE();
+
+    test_request_header->transaction_id = MODBUS_TCP_TRANSACTION_ID;
+    test_request_header->protocol_id = MODBUS_TCP_PROTOCOL_ID;
+    test_request_header->length = modbus_swap16(MODBUS_MGE_DETECT_LENGTH);
+    test_request_header->unit_id = MODBUS_MGE_DETECT_UID;
+    test_request_header->function = MODBUS_MGE_DETECT_FCODE;
+    memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
+
+    enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request);
+
+    TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SUCCESS, result);
+    TEST_ASSERT_EQUAL_MESSAGE(1, tcp_server_send_mock.called, "tcp_server_send should be called once");
+
+    mb_tcp_header_t *resp_header = (mb_tcp_header_t *)tcp_server_send_mock.last_data;
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(MODBUS_MGE_DETECT_UID, resp_header->unit_id,
+        "Response unit_id must echo the request unit_id");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(MODBUS_MGE_DETECT_FCODE, resp_header->function,
+        "Response function must echo the request function");
+}
+
+// Test the case when the request is not a Fast Modbus probe request (different function code)
 void test_fast_modbus_send_probe_response_not_probe_function(void)
 {
     LOG_MESSAGE();
@@ -96,7 +183,7 @@ void test_fast_modbus_send_probe_response_not_probe_function(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
@@ -104,7 +191,7 @@ void test_fast_modbus_send_probe_response_not_probe_function(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другой Unit ID)
+// Test the case when the request is not a Fast Modbus probe request (different Unit ID)
 void test_fast_modbus_send_probe_response_not_probe_unit_id(void)
 {
     LOG_MESSAGE();
@@ -120,7 +207,7 @@ void test_fast_modbus_send_probe_response_not_probe_unit_id(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
@@ -128,7 +215,7 @@ void test_fast_modbus_send_probe_response_not_probe_unit_id(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другая длина)
+// Test the case when the request is not a Fast Modbus probe request (different length)
 void test_fast_modbus_send_probe_response_not_probe_length(void)
 {
     LOG_MESSAGE();
@@ -144,7 +231,7 @@ void test_fast_modbus_send_probe_response_not_probe_length(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], FAST_MODBUS_REQUEST_STR, tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
@@ -152,7 +239,7 @@ void test_fast_modbus_send_probe_response_not_probe_length(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем случай, когда запрос не является запросом Быстрого Modbus (другая строка запроса)
+// Test the case when the request is not a Fast Modbus probe request (different request string)
 void test_fast_modbus_send_probe_response_not_probe_string(void)
 {
     LOG_MESSAGE();
@@ -168,7 +255,7 @@ void test_fast_modbus_send_probe_response_not_probe_string(void)
     memcpy(&test_request[sizeof(mb_tcp_header_t)], "INVALID_STRING", tcp_req_data_len);
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_NOT_PROBE, result);
@@ -176,7 +263,7 @@ void test_fast_modbus_send_probe_response_not_probe_string(void)
     verify_malloc_tracking(0, 0);
 }
 
-// Тестируем случай, когда tcp_server_send возвращает ошибку
+// Test the case when tcp_server_send returns an error
 void test_fast_modbus_send_probe_response_send_fail(void)
 {
     LOG_MESSAGE();
@@ -194,7 +281,7 @@ void test_fast_modbus_send_probe_response_send_fail(void)
     tcp_server_send_mock.result = ESP_FAIL;
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_SEND_FAIL, result);
@@ -204,7 +291,7 @@ void test_fast_modbus_send_probe_response_send_fail(void)
     verify_malloc_tracking(1, 1);
 }
 
-// Тестируем случай, когда malloc возвращает NULL
+// Test the case when malloc returns NULL
 void test_fast_modbus_send_probe_response_malloc_fail(void)
 {
     LOG_MESSAGE();
@@ -222,7 +309,7 @@ void test_fast_modbus_send_probe_response_malloc_fail(void)
     malloc_should_fail = true;
 
     enum fast_modbus_probe_result result = fast_modbus_send_probe_response(
-        test_ctx.index, test_ctx.tcp_desc, test_request
+        test_ctx.index, test_ctx.tcp_desc, -1, TEST_CONN_GENERATION, test_request
     );
 
     TEST_ASSERT_EQUAL(FAST_MODBUS_PROBE_MALLOC_FAIL, result);
@@ -235,6 +322,8 @@ int main(void)
     UNITY_BEGIN();
 
     RUN_TEST(test_fast_modbus_send_probe_response_success);
+    RUN_TEST(test_fast_modbus_send_probe_response_mbap_length);
+    RUN_TEST(test_fast_modbus_send_probe_response_echoes_unit_id_and_function);
     RUN_TEST(test_fast_modbus_send_probe_response_not_probe_function);
     RUN_TEST(test_fast_modbus_send_probe_response_not_probe_unit_id);
     RUN_TEST(test_fast_modbus_send_probe_response_not_probe_length);
