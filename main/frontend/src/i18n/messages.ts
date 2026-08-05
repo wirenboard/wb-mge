@@ -30,6 +30,7 @@ export const messages = {
     port_mode_disabled: 'Disabled',
     port_mode_tcp_bridge: 'TCP bridge',
     port_mode_passive: 'Passive listen',
+    port_mode_repeater: 'Repeater',
   },
   ru: {
     connection_error: 'Ошибка подключения',
@@ -62,6 +63,7 @@ export const messages = {
     port_mode_disabled: 'Отключён',
     port_mode_tcp_bridge: 'TCP-мост',
     port_mode_passive: 'Пассивный (прослушка)',
+    port_mode_repeater: 'Повторитель',
   },
   kk: {
     connection_error: 'Қосылым қатесі',
@@ -94,6 +96,7 @@ export const messages = {
     port_mode_disabled: 'Өшірілген',
     port_mode_tcp_bridge: 'TCP көпір',
     port_mode_passive: 'Пассивті тыңдау',
+    port_mode_repeater: 'Қайталағыш',
   },
   it: {
     connection_error: 'Errore di connessione',
@@ -126,6 +129,7 @@ export const messages = {
     port_mode_disabled: 'Disabilitato',
     port_mode_tcp_bridge: 'Bridge TCP',
     port_mode_passive: 'Ascolto passivo',
+    port_mode_repeater: 'Ripetitore',
   },
   de: {
     connection_error: 'Verbindungsfehler',
@@ -158,5 +162,6 @@ export const messages = {
     port_mode_disabled: 'Deaktiviert',
     port_mode_tcp_bridge: 'TCP-Bridge',
     port_mode_passive: 'Passives Mithören',
+    port_mode_repeater: 'Repeater',
   }
 };
