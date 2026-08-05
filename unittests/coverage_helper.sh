@@ -58,8 +58,12 @@ function make_coverage_handler()
 {
     cd $TEST_DIR
 
-    # Check for "coverage" target exist in Makefile
-    make -qp | $GREP_CMD '^coverage:' > /dev/null
+    # Check for "coverage" target exist in Makefile.
+    # stderr is dropped: make runs recipe lines containing $(MAKE) even under -q, so
+    # probing a Makefile whose default target is built from sub-makes prints a stray
+    # "*** [all] Error 1" per directory. The sub-make inherits -q and does nothing, so
+    # this is noise only. The pipeline status still comes from grep.
+    make -qp 2>/dev/null | $GREP_CMD '^coverage:' > /dev/null
     covr_exist=$?
     if [ $covr_exist -ne 0 ]; then
         echo "Skip test without coverage: $TEST_DIR"
