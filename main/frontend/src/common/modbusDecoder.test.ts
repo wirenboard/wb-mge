@@ -530,20 +530,55 @@ describe('Standard RTU — FC 04 Read Input Registers', () => {
   });
 });
 
+/**
+ * FC05 carries a coil STATE, not a register value: 0xFF00 = ON, 0x0000 = OFF, nothing else is
+ * legal. Reporting the raw word made a coil the user set to 1 read back as 65280, so the
+ * decoder must report the state and must never emit a numeric `value` field for FC05.
+ */
 describe('Standard RTU — FC 05 Write Single Coil', () => {
-  it('ON: coil 0x00AC = 0xFF00', () => {
+  it('ON: coil 0x00AC = 0xFF00 decodes to coil_state "on", not the raw word', () => {
     const r = decodePacket('01 05 00 AC FF 00 4C 1B', 'request');
     const p = pdu(r);
     expect(p.type).toBe('write_single_coil');
     expect(p.register).toBe('00AC');
-    expect(p.value).toBe(0xFF00);
+    expect(p.coil_state).toBe('on');
+    // The raw 0xFF00 word must not leak out as a number — that is the reported bug.
+    expect(p.value).toBeUndefined();
+    expect(p.coil_value).toBeUndefined();
   });
 
-  it('OFF: coil 0x00AC = 0x0000', () => {
+  it('OFF: coil 0x00AC = 0x0000 decodes to coil_state "off"', () => {
     const r = decodePacket('01 05 00 AC 00 00 0D EB', 'request');
     const p = pdu(r);
     expect(p.type).toBe('write_single_coil');
-    expect(p.value).toBe(0x0000);
+    expect(p.coil_state).toBe('off');
+    expect(p.value).toBeUndefined();
+  });
+
+  it('illegal state word is reported as invalid and the offending word is kept', () => {
+    // 0x1234 is neither 0x0000 nor 0xFF00 — a protocol violation, not a coil value.
+    const r = decodePacket('01 05 00 AC 12 34 6C E1', 'request');
+    const p = pdu(r);
+    expect(p.type).toBe('write_single_coil');
+    expect(p.coil_state).toBe('invalid');
+    expect(p.coil_value).toBe('1234');
+  });
+
+  it('response echo decodes the coil state the same way as the request', () => {
+    const r = decodePacket('01 05 00 AC FF 00 4C 1B', 'response');
+    const p = pdu(r);
+    expect(p.type).toBe('write_single_coil_response');
+    expect(p.register).toBe('00AC');
+    expect(p.coil_state).toBe('on');
+    expect(p.value).toBeUndefined();
+  });
+
+  it('response echo of an illegal state word is flagged as invalid', () => {
+    const r = decodePacket('01 05 00 AC 00 01 CC 1B', 'response');
+    const p = pdu(r);
+    expect(p.type).toBe('write_single_coil_response');
+    expect(p.coil_state).toBe('invalid');
+    expect(p.coil_value).toBe('0001');
   });
 });
 

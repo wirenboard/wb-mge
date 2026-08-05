@@ -247,6 +247,22 @@ function makeError(fc: number, bytes: number[]): PduResult {
   };
 }
 
+/**
+ * Decode the 2-byte state word of FC05 (write single coil), starting at offset i.
+ *
+ * The word is NOT a register value: the Modbus spec defines exactly two legal encodings,
+ * 0xFF00 = ON and 0x0000 = OFF. Reporting it as a number produces nonsense (a coil switched
+ * on reads back as 65280), so the legal words are collapsed into a `coil_state` field.
+ * Anything else is a protocol violation, which is reported as such — and the offending word
+ * is still exposed via `coil_value` so nothing is hidden from the user.
+ */
+function coilStateFields(bytes: number[], i: number): Record<string, string> {
+  const word = u16be(bytes, i);
+  if (word === 0xff00) return { coil_state: 'on' };
+  if (word === 0x0000) return { coil_state: 'off' };
+  return { coil_state: 'invalid', coil_value: toHex(bytes.slice(i, i + 2)) };
+}
+
 function decodeMei(bytes: number[], isResponse: boolean): PduResult | ParseError {
   if (bytes.length < 2) return { type: 'parse_error', reason: 'pdu_too_short', raw: toHex(bytes) };
   const fc = bytes[0];
@@ -296,8 +312,15 @@ export function decodeStdPduRequest(bytes: number[]): PduResult | ParseError {
     return { type: fcName(fc), raw: toHex(bytes.slice(0, 5)), fc: fcHex, register: toHex(bytes.slice(1, 3)), count: u16be(bytes, 3) };
   }
 
-  // FC 05, 06: write single (fc + addr(2) + value(2))
-  if (fc === 0x05 || fc === 0x06) {
+  // FC 05: write single coil (fc + addr(2) + state(2)) — the state word is a coil state,
+  // not a register value, so it gets its own decoding (see coilStateFields).
+  if (fc === 0x05) {
+    if (bytes.length < 5) return { type: 'parse_error', reason: 'pdu_too_short', raw };
+    return { type: fcName(fc), raw: toHex(bytes.slice(0, 5)), fc: fcHex, register: toHex(bytes.slice(1, 3)), ...coilStateFields(bytes, 3) };
+  }
+
+  // FC 06: write single register (fc + addr(2) + value(2))
+  if (fc === 0x06) {
     if (bytes.length < 5) return { type: 'parse_error', reason: 'pdu_too_short', raw };
     return { type: fcName(fc), raw: toHex(bytes.slice(0, 5)), fc: fcHex, register: toHex(bytes.slice(1, 3)), value: u16be(bytes, 3) };
   }
@@ -398,8 +421,15 @@ export function decodeStdPduResponse(bytes: number[]): PduResult | ParseError {
     return { type: fcName(fc) + '_response', raw: toHex(bytes.slice(0, 2 + byteCount)), fc: fcHex, byte_count: byteCount, data: toHex(bytes.slice(2, 2 + byteCount)) };
   }
 
-  // FC 05, 06: echo (fc + addr(2) + value(2))
-  if (fc === 0x05 || fc === 0x06) {
+  // FC 05: echo of the write single coil request (fc + addr(2) + state(2)).
+  // Being an echo, it carries the same coil state word — and needs the same decoding.
+  if (fc === 0x05) {
+    if (bytes.length < 5) return { type: 'parse_error', reason: 'pdu_too_short', raw };
+    return { type: fcName(fc) + '_response', raw: toHex(bytes.slice(0, 5)), fc: fcHex, register: toHex(bytes.slice(1, 3)), ...coilStateFields(bytes, 3) };
+  }
+
+  // FC 06: echo of the write single register request (fc + addr(2) + value(2))
+  if (fc === 0x06) {
     if (bytes.length < 5) return { type: 'parse_error', reason: 'pdu_too_short', raw };
     return { type: fcName(fc) + '_response', raw: toHex(bytes.slice(0, 5)), fc: fcHex, register: toHex(bytes.slice(1, 3)), value: u16be(bytes, 3) };
   }

@@ -5,6 +5,8 @@ import {
   rawToRange,
   fmtVal,
   fmtCoilData,
+  fmtCoilState,
+  fmtRegisterData,
   fieldRanges,
   flattenNode,
   modiconStr,
@@ -165,7 +167,10 @@ describe('fieldRanges', () => {
  */
 function treeLabels(hex: string, dir: 'request' | 'response' = 'request'): { depth: number; label: string; value?: string }[] {
   const decoded = decodePacket(hex, dir);
-  return flattenNode(decoded as Record<string, unknown>, 0, hex.toUpperCase(), 0)
+  // flattenNode matches node.raw against this string, so it must be the packet hex only —
+  // strip any whitespace the caller used to make the literal readable.
+  const flat = hex.replace(/\s+/g, '').toUpperCase();
+  return flattenNode(decoded as Record<string, unknown>, 0, flat, 0)
     .map(r => r.value !== undefined ? { depth: r.depth, label: r.label, value: r.value } : { depth: r.depth, label: r.label });
 }
 
@@ -214,7 +219,8 @@ describe('flattenNode', () => {
 
     // PDU fields at depth 3 — fc suppressed here
     expect(rows).toContainEqual({ depth: 3, label: 'Byte count', value: '4' });
-    expect(rows).toContainEqual({ depth: 3, label: 'Data', value: '0x00000000' });
+    // Register payloads are grouped one 16-bit register per group.
+    expect(rows).toContainEqual({ depth: 3, label: 'Data', value: '0x0000 0x0000' });
 
     // Exactly one 'Function code' row in the whole tree
     const fcRows = rows.filter(r => r.label === 'Function code');
@@ -306,6 +312,118 @@ describe('flattenNode', () => {
     const dataRow = rows.find(r => r.label === 'Data');
     expect(dataRow).toBeDefined();
     expect(dataRow?.value).toBe('0xCD6B05  (11001101 01101011 00000101)');
+  });
+
+  // ── Test 7 ──────────────────────────────────────────────────
+  // FC05 must show a coil state, not the raw 0xFF00/0x0000 word (which used to render as
+  // "0x65280 (414336)" — the number the reviewer saw).
+  it('write_single_coil ON: Coil state row replaces the numeric Value row', () => {
+    const rows = treeLabels('0105 00AC FF00 4C1B', 'request');
+
+    expect(rows).toContainEqual({ depth: 3, label: 'Coil state', value: 'ON (0xFF00)' });
+    expect(rows.some(r => r.label === 'Value')).toBe(false);
+  });
+
+  it('write_single_coil OFF: Coil state row shows OFF', () => {
+    const rows = treeLabels('0105 00AC 0000 0DEB', 'request');
+    expect(rows).toContainEqual({ depth: 3, label: 'Coil state', value: 'OFF (0x0000)' });
+  });
+
+  it('write_single_coil echo (response): Coil state row shows ON', () => {
+    const rows = treeLabels('0105 00AC FF00 4C1B', 'response');
+    expect(rows).toContainEqual({ depth: 3, label: 'Coil state', value: 'ON (0xFF00)' });
+    expect(rows.some(r => r.label === 'Value')).toBe(false);
+  });
+
+  it('write_single_coil with an illegal word: flagged as invalid, error-styled, word still shown', () => {
+    const full = flattenNode(
+      decodePacket('0105 00AC 1234 6CE1', 'request') as unknown as Record<string, unknown>,
+      0, '010500AC12346CE1', 0,
+    );
+    const stateRow = full.find(r => r.key === 'coil_state');
+    expect(stateRow?.value).toBe('Invalid (expected 0x0000 or 0xFF00)');
+    expect(stateRow?.isError).toBe(true);
+    // Both coil fields describe the same 2 bytes of the frame (offsets 4..6).
+    expect({ start: stateRow?.byteStart, end: stateRow?.byteEnd }).toEqual({ start: 4, end: 6 });
+
+    const valueRow = full.find(r => r.key === 'coil_value');
+    expect(valueRow?.value).toBe('0x1234');
+    expect({ start: valueRow?.byteStart, end: valueRow?.byteEnd }).toEqual({ start: 4, end: 6 });
+  });
+
+  // ── Test 8 ──────────────────────────────────────────────────
+  // FC06 carries a real register value. The decoder emits it as a NUMBER, which used to be
+  // pushed through the hex-string formatter and rendered "9600" as 0x9600 (38400).
+  it('write_single_register: numeric Value is rendered as hex + decimal of the same number', () => {
+    const rows = treeLabels('1106 0001 2580 CD8F', 'request');
+    expect(rows).toContainEqual({ depth: 3, label: 'Value', value: '0x2580 (9600)' });
+  });
+
+  // ── Test 9 ──────────────────────────────────────────────────
+  // Register payloads are grouped per 16-bit register instead of one continuous blob.
+  it('read_holding_registers_response: Data is grouped one register per group', () => {
+    // addr=0x11, FC=0x03, byte_count=12, 6 registers 0x0032..0x004B
+    const rows = treeLabels('1103 0C 0032 0037 003C 0041 0046 004B 0000', 'response');
+    expect(rows).toContainEqual({
+      depth: 3, label: 'Data', value: '0x0032 0x0037 0x003C 0x0041 0x0046 0x004B',
+    });
+  });
+
+  it('write_multiple_registers request: Data is grouped one register per group', () => {
+    // addr=0x11, FC=0x10, start=0x0001, count=2, byte_count=4, data=000A0102
+    const rows = treeLabels('1110 0001 0002 04 000A 0102 0000', 'request');
+    expect(rows).toContainEqual({ depth: 3, label: 'Data', value: '0x000A 0x0102' });
+  });
+
+  it('write_multiple_coils request: Data keeps the bit-packed binary rendering', () => {
+    // Coil payloads are bit-packed, not registers — they must not be regrouped.
+    // addr=0x11, FC=0x0F, start=0x0013, count=10, byte_count=2, data=CD01
+    const rows = treeLabels('110F 0013 000A 02 CD01 0000', 'request');
+    expect(rows).toContainEqual({ depth: 3, label: 'Data', value: '0xCD01  (11001101 00000001)' });
+  });
+});
+
+describe('fmtCoilState', () => {
+  it('"on" → "ON (0xFF00)"', () => {
+    expect(fmtCoilState('on')).toBe('ON (0xFF00)');
+  });
+
+  it('"off" → "OFF (0x0000)"', () => {
+    expect(fmtCoilState('off')).toBe('OFF (0x0000)');
+  });
+
+  it('"invalid" → explicit protocol-violation text', () => {
+    expect(fmtCoilState('invalid')).toBe('Invalid (expected 0x0000 or 0xFF00)');
+  });
+
+  it('an unknown state is passed through unchanged rather than swallowed', () => {
+    expect(fmtCoilState('something_else')).toBe('something_else');
+  });
+});
+
+describe('fmtRegisterData', () => {
+  it('three registers → one 0x group each', () => {
+    expect(fmtRegisterData('00320037003C')).toBe('0x0032 0x0037 0x003C');
+  });
+
+  it('single register → single group', () => {
+    expect(fmtRegisterData('01A4')).toBe('0x01A4');
+  });
+
+  it('lower-case input is upper-cased', () => {
+    expect(fmtRegisterData('00ab00cd')).toBe('0x00AB 0x00CD');
+  });
+
+  it('empty payload → empty string (no stray "0x")', () => {
+    expect(fmtRegisterData('')).toBe('');
+  });
+
+  it('odd trailing byte is emitted as its own short group, not dropped or padded', () => {
+    expect(fmtRegisterData('00320037 00'.replace(/\s/g, ''))).toBe('0x0032 0x0037 0x00');
+  });
+
+  it('a single stray byte does not crash', () => {
+    expect(fmtRegisterData('7F')).toBe('0x7F');
   });
 });
 

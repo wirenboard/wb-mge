@@ -77,9 +77,12 @@ export const FC_DISPLAY_NAMES: Record<string, string> = {
 };
 
 /** Fields whose values are plain hex strings — display with 0x prefix */
+// NOTE: 'value' is deliberately absent — the decoder emits it as a NUMBER (FC06 register value),
+// and treating "9600" as a hex string would render it as 0x9600 (38400). It is formatted
+// explicitly in flattenNode() instead.
 export const HEX_FIELDS = new Set([
   'address', 'crc', 'ext_byte', 'serial_number', 'modbus_address',
-  'fc', 'register', 'value', 'data', 'sub_function', 'events',
+  'fc', 'register', 'coil_value', 'data', 'sub_function', 'events',
   'read_register', 'write_register', 'write_data', 'additional_data',
   'fifo_pointer', 'mei_type', 'read_device_id_code', 'object_id',
   'conformity_level', 'more_follows', 'next_object_id',
@@ -89,7 +92,7 @@ export const HEX_FIELDS = new Set([
 ]);
 
 /** Fields that also need decimal shown in parentheses */
-export const DEC_ALSO = new Set(['serial_number', 'modbus_address', 'address', 'register', 'read_register', 'write_register', 'value', 'fifo_pointer']);
+export const DEC_ALSO = new Set(['serial_number', 'modbus_address', 'address', 'register', 'read_register', 'write_register', 'fifo_pointer']);
 
 /** Well-known special addresses with human-readable names */
 export const ADDR_NOTES: Record<number, string> = {
@@ -141,6 +144,7 @@ export const FIELD_LABELS: Record<string, string> = {
   subcommand: 'FM Subcommand',
   serial_number: 'Serial number', modbus_address: 'Modbus address',
   fc: 'Function code', function_code: 'Function', register: 'Register', count: 'Count', value: 'Value',
+  coil_state: 'Coil state', coil_value: 'Coil value',
   byte_count: 'Byte count', data: 'Data', sub_function: 'Sub-function',
   status: 'Status', event_count: 'Event count', message_count: 'Message count',
   events: 'Events', read_register: 'Read register', read_count: 'Read count',
@@ -173,7 +177,9 @@ export const FIELD_TOOLTIPS: Record<string, string> = {
   function_code: 'Function code of the nested Modbus PDU carried inside this Fast Modbus command.',
   register: 'Register address in the device address space.',
   count: 'Number of registers or coils to read/write.',
-  value: 'Value to write to the register or coil.',
+  value: 'Value to write to the register.',
+  coil_state: 'State of the single coil written by FC 05. The 2-byte field is not a number: 0xFF00 means ON, 0x0000 means OFF, and no other value is legal.',
+  coil_value: 'The illegal 2-byte word found in the coil state field. Shown only when it is neither 0x0000 nor 0xFF00.',
   byte_count: 'Number of data bytes that follow in this PDU.',
   data: 'Raw payload bytes. The meaning depends on the function code and direction.',
   sub_function: 'Sub-function code for the Diagnostics command (FC 08). Specifies the exact diagnostic operation.',
@@ -271,6 +277,48 @@ export const COIL_DATA_TYPES = new Set([
   'read_discrete_inputs_response',
   'write_multiple_coils',
 ]);
+
+/**
+ * PDU types whose `data` / `write_data` field is a sequence of whole 16-bit registers
+ * rather than an opaque byte blob. Their payload is displayed one register per group.
+ */
+export const REGISTER_DATA_TYPES = new Set([
+  'read_holding_registers_response', // FC 03
+  'read_input_registers_response', // FC 04
+  'write_multiple_registers', // FC 10 request
+  'read_write_multiple_registers', // FC 17 request (write_data)
+  'read_write_multiple_registers_response', // FC 17 response
+  'read_fifo_queue_response', // FC 18
+]);
+
+/** Display text for the FC05 coil state, keyed by the decoder's `coil_state` field. */
+const COIL_STATE_LABELS: Record<string, string> = {
+  on: 'ON (0xFF00)',
+  off: 'OFF (0x0000)',
+  invalid: 'Invalid (expected 0x0000 or 0xFF00)',
+};
+
+/**
+ * Format the FC05 coil state emitted by the decoder.
+ * Unknown states are passed through unchanged so a future decoder value is never swallowed.
+ */
+export function fmtCoilState(state: string): string {
+  return COIL_STATE_LABELS[state] ?? state;
+}
+
+/**
+ * Format a hex register payload as one `0x`-prefixed group per 16-bit register:
+ * '00320037003C' → '0x0032 0x0037 0x003C'. A continuous blob is unreadable once it is more
+ * than a couple of registers long, and register boundaries are exactly what the reader needs.
+ *
+ * A trailing odd byte (a malformed frame that the byte_count let through) is emitted as its
+ * own short group rather than being padded or dropped: '003200' → '0x0032 0x00'.
+ */
+export function fmtRegisterData(hexStr: string): string {
+  const upper = hexStr.toUpperCase();
+  if (!upper) return '';
+  return (upper.match(/.{1,4}/g) ?? []).map(g => `0x${g}`).join(' ');
+}
 
 /** Mapping from PDU type to Modicon address-space prefix digit */
 const MODICON_PREFIX: Record<string, number> = {
@@ -390,10 +438,17 @@ export function fieldRanges(obj: Record<string, unknown>, nodeByteStart: number)
     r.byte_count = { start: s + 1, end: s + 2 };
     const bc = obj.byte_count as number ?? 0;
     r.data = { start: s + 2, end: s + 2 + bc };
-  } else if (['write_single_coil', 'write_single_register', 'write_single_coil_response', 'write_single_register_response'].includes(t)) {
+  } else if (['write_single_register', 'write_single_register_response'].includes(t)) {
     r.fc = { start: s, end: s + 1 };
     r.register = { start: s + 1, end: s + 3 };
     r.value = { start: s + 3, end: s + 5 };
+  } else if (['write_single_coil', 'write_single_coil_response'].includes(t)) {
+    // Same wire layout as FC06, but the last 2 bytes carry a coil state, not a value.
+    // Both coil fields describe that same word, so both map onto the same byte range.
+    r.fc = { start: s, end: s + 1 };
+    r.register = { start: s + 1, end: s + 3 };
+    r.coil_state = { start: s + 3, end: s + 5 };
+    r.coil_value = { start: s + 3, end: s + 5 };
   } else if (['write_multiple_coils', 'write_multiple_registers'].includes(t)) {
     r.fc = { start: s, end: s + 1 };
     r.register = { start: s + 1, end: s + 3 };
@@ -478,8 +533,16 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
     const isDataField = k === 'data' || k === 'write_data';
     const label = (k === 'register' && REGISTER_LABELS[t]) ? REGISTER_LABELS[t] : (FIELD_LABELS[k] ?? k);
     let value: string;
-    if (k === 'data' && COIL_DATA_TYPES.has(t)) {
+    if (k === 'coil_state') {
+      value = fmtCoilState(String(v));
+    } else if (k === 'value' && typeof v === 'number') {
+      // FC06 register value — the decoder emits a number, so format it here instead of
+      // running it through the hex-string path (which would read "9600" as hex).
+      value = `0x${v.toString(16).toUpperCase().padStart(4, '0')} (${v})`;
+    } else if (k === 'data' && COIL_DATA_TYPES.has(t)) {
       value = fmtCoilData(String(v));
+    } else if ((k === 'data' || k === 'write_data') && REGISTER_DATA_TYPES.has(t)) {
+      value = fmtRegisterData(String(v));
     } else if ((k === 'register' || k === 'read_register' || k === 'write_register') && /^[0-9A-Fa-f]{2,}$/.test(String(v))) {
       // Format register with Modicon notation if PDU type is known
       const wireAddr = parseInt(String(v), 16);
@@ -521,7 +584,10 @@ export function flattenNode(obj: Record<string, unknown>, depth: number, fhex: s
         valueTooltip = `Exception response for FC 0x${origHex} (${FC_DISPLAY_NAMES[origHex] ?? 'Unknown'})`;
       }
     }
-    rows.push({ depth: depth + 1, label, key: k, value, tooltip: FIELD_TOOLTIPS[k], valueTooltip, byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError: k === 'reason', isDataField });
+    // An FC05 state word that is neither 0x0000 nor 0xFF00 violates the spec — flag it like a
+    // parse error so it is visually distinct from a normal ON/OFF row.
+    const isError = k === 'reason' || (k === 'coil_state' && v === 'invalid');
+    rows.push({ depth: depth + 1, label, key: k, value, tooltip: FIELD_TOOLTIPS[k], valueTooltip, byteStart: bStart, byteEnd: bEnd, isSection: false, isField: true, isError, isDataField });
   }
 
   if ((obj as Record<string, unknown>).reserved_address) {
