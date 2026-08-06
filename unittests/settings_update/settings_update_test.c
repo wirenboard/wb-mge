@@ -353,6 +353,43 @@ void test_settings_update_task_already_running(void)
     );
 }
 
+// The same join, when the previous task never finishes at all.
+//
+// This wait runs in the CALLER's task, and the caller that matters is the single
+// esp_http_server worker: POST /settings goes through here. While it spins, that worker
+// answers nothing — not /info, not GET /settings, not the POST that would undo whatever wedged
+// the previous apply — so an unbounded spin here is a device that stops responding entirely
+// until it is power-cycled. It must give up and report instead.
+//
+// Giving up also means applying NOTHING this time round: the previous apply still owns the
+// subsystems (it is inside the release/acquire window, mid-way through moving listening
+// sockets), so starting a second one on top of it is exactly the port corruption the two-phase
+// apply exists to prevent. Hence no second xTaskCreate. The values are already in NVS, and the
+// next settings write — or a reboot — applies them.
+void test_settings_update_gives_up_when_the_previous_task_never_finishes(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test settings_update - previous task never finishes");
+    LOG_MESSAGE();
+
+    mock_http_server_check_settings_changed_return_value = true;
+
+    esp_err_t result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, result, "Settings update should succeed");
+    verify_task_created();
+
+    // 0 = the mock never clears the task handle, i.e. the previous apply is wedged.
+    mock_vTaskDelay_data.task_handle_reset_on_count = 0;
+
+    result = settings_update();
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_TIMEOUT, result,
+        "a join that expired must be reported, not spun on forever");
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_xTaskCreate_data.called,
+        "no second apply may start while the previous one still owns the subsystems");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, mock_vTaskDelay_data.called,
+        "the join must actually have waited before giving up");
+}
+
 // The factory clock_out test forces V-out on and drives the TX pins of both ports plus
 // the port-1 DE pin with the LEDC. A POST /settings during the test must not undo any of
 // that: with the ports frozen, settings_update() must skip update_rs485_control() AND
@@ -1090,6 +1127,7 @@ int main(void)
     RUN_TEST(test_settings_update_all_changed);
     RUN_TEST(test_settings_update_task_creation_failure);
     RUN_TEST(test_settings_update_task_already_running);
+    RUN_TEST(test_settings_update_gives_up_when_the_previous_task_never_finishes);
 
     // Runtime apply of the per-port cache overlay
     RUN_TEST(test_settings_update_applies_the_cache_overlay);

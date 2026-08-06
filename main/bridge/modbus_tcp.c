@@ -843,7 +843,37 @@ esp_err_t modbus_tcp_deinit_port(unsigned index)
      * the one caller of serial_send() — modbus_tcp_server_task() — has already been joined
      * above. */
     serial_deinit(serial_desc);
-    tcp_server_deinit(tcp_desc);        /* waits for all receiver tasks to finish */
+    esp_err_t tcp_ret = tcp_server_deinit(tcp_desc);   /* joins the receiver tasks */
+
+    /* The teardown below is conditional on that join having SUCCEEDED, and the condition is
+     * load-bearing rather than tidy.
+     *
+     * tcp_server_deinit() bounds its joins now and returns ESP_ERR_TIMEOUT when a task did not
+     * come back — it abandons the descriptor instead of freeing it under a live task (see the
+     * note on that function). A receiver that outlived the join is still running arbitrary
+     * code inside process_data_from_tcp(), which is the one path that reaches ctx->tcp_queue
+     * and, through mbtcp_reasm_feed(), ctx->reasm and its mutex. Deleting those here would put
+     * back exactly the use-after-free tcp_server_deinit() just refused to commit — worse, on a
+     * mutex a live task is about to xSemaphoreGive().
+     *
+     * The `initialized = false` above and the cleared ctx->tcp_desc already turn away any
+     * receiver that ENTERS process_data_from_tcp() after this point (find_ctx_by_tcp_desc()
+     * misses), so the exposure is only a receiver already inside one — but "only" is not
+     * "never", and the whole point of the abandon-on-timeout policy is that a leak on a path
+     * that should never be taken beats a use-after-free that surfaces somewhere else.
+     *
+     * So the context keeps its event group, queue and reassembler, and they are never
+     * reclaimed. That costs memory, not function: `initialized` is already false, so
+     * modbus_tcp_init_port() accepts this index again and builds fresh ones over the top. The
+     * error return is what says the teardown was incomplete. */
+    if (tcp_ret != ESP_OK) {
+        /* The code is printed numerically rather than through esp_err_to_name(): this file is
+         * compiled into the host unit tests, whose link does not include esp_err_to_name.c. */
+        ESP_LOGE(TAG, "Port[%u]: tcp_server_deinit failed (0x%x) — leaving the context's event "
+                      "group, queue and reassembler allocated, a receiver task may still use them",
+                 index + 1, (unsigned)tcp_ret);
+        return tcp_ret;
+    }
 
     /* Clear each handle right after the call that destroys it, so this function leaves the
      * same kind of context the xTaskCreate failure path in modbus_tcp_init_port() does: one

@@ -22,6 +22,8 @@ extern int       mock_settings_update_call_count;
 // What settings_update_with_status() reports back as the result of the synchronous runtime
 // cache-overlay apply; ESP_OK unless a test asks for a failure.
 extern esp_err_t mock_settings_update_cache_apply_result;
+// What settings_update_with_status() returns; ESP_OK unless a test asks for a refused apply.
+extern esp_err_t mock_settings_update_return_value;
 void             mock_settings_update_reset(void);
 
 // -------------------------------------------------------------------
@@ -934,6 +936,50 @@ void test_failed_cache_apply_reported_in_response_warnings(void)
     cJSON_Delete(resp);
 }
 
+// settings_update_with_status() waits for the PREVIOUS apply before starting a new one, and that
+// wait runs right here, in the single esp_http_server worker. It is bounded now and gives up with
+// ESP_ERR_TIMEOUT rather than spinning, because a spin here is a device that answers no HTTP
+// request at all until it is power-cycled.
+//
+// Giving up means nothing reached the running subsystems, so the client has to be told: the save
+// itself succeeded (NVS holds the new values), but the device has not changed yet. Without the
+// warning the response is byte-for-byte a normal success and the user is left staring at a
+// setting that appears saved and does nothing.
+void test_refused_apply_reported_in_response_warnings(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "previous apply still running -> success:true + apply_busy warning");
+    LOG_MESSAGE();
+
+    mock_settings_update_return_value = ESP_ERR_TIMEOUT;
+
+    cJSON *req = make_request_string("hostname", "wb-mge-test");
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "the write itself succeeded — a refused runtime apply must not be reported as a failed "
+        "save, the values are in NVS and a restart applies them");
+
+    cJSON *warnings = response_warnings(resp);
+    TEST_ASSERT_NOT_NULL_MESSAGE(warnings,
+        "a settings write that changed nothing on the running device must say so");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, cJSON_GetArraySize(warnings), "exactly one warning");
+
+    cJSON *warning = cJSON_GetArrayItem(warnings, 0);
+    cJSON *code = cJSON_GetObjectItem(warning, "code");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsString(code), "warning must carry a machine-readable code");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("apply_busy", code->valuestring,
+        "the code must separate 'the previous apply is still running' from a failed cache apply");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
 // The mirror image, and what keeps the test above honest: a settings write whose cache apply
 // succeeded must carry no warning at all. Every POST /settings runs the apply, so a warning
 // raised unconditionally would fire on requests that never mentioned caching.
@@ -1362,6 +1408,7 @@ int main(void)
     RUN_TEST(test_inherited_collision_does_not_block_unrelated_request);
     RUN_TEST(test_inherited_collision_reported_in_response_warnings);
     RUN_TEST(test_failed_cache_apply_reported_in_response_warnings);
+    RUN_TEST(test_refused_apply_reported_in_response_warnings);
     RUN_TEST(test_successful_cache_apply_reports_no_warning);
     RUN_TEST(test_failed_write_still_reports_its_warnings);
     RUN_TEST(test_clean_request_reports_no_warnings);

@@ -435,7 +435,21 @@ esp_err_t cache_modbus_server_init(int port)
 esp_err_t cache_modbus_server_deinit(void)
 {
     if (s_tcp_desc == NULL) return ESP_OK;
-    esp_err_t ret = tcp_server_deinit(s_tcp_desc);   /* waits for the receiver tasks to exit */
+    esp_err_t ret = tcp_server_deinit(s_tcp_desc);   /* joins the acceptor and receiver tasks */
+    /* Everything below is gated on ESP_OK, and that gate is load-bearing.
+     *
+     * tcp_server_deinit() bounds its joins and answers ESP_ERR_TIMEOUT when a task did not come
+     * back, deliberately abandoning the descriptor rather than freeing it under a live task. A
+     * receiver that outlived the join is still running process_data_from_tcp(), i.e. still
+     * inside mbtcp_reasm_feed() and its mutex, so destroying the reassembler here would be the
+     * use-after-free that function just refused to commit.
+     *
+     * Keeping s_tcp_desc and s_port is what makes the failure recoverable rather than a dead
+     * end: settings_update's cache_modbus_server_check_settings_changed() compares the wanted
+     * port against s_port, so a server that could not be stopped keeps reporting "changed" and
+     * the next settings write retries this teardown — by then the stuck task has usually
+     * finished and the retry completes it. cache_modbus_server_acquire() meanwhile sees a
+     * non-zero running port and refuses to start a second listener on top of the first. */
     if (ret == ESP_OK) {
         /* Safe now: no task can still be inside mbtcp_reasm_feed(). */
         mbtcp_reasm_deinit(&s_reasm);

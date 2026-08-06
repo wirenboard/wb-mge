@@ -9,10 +9,16 @@ int mock_settings_update_call_count = 0;
 // case); set it to an error to exercise the "saved but not applied" response warning.
 esp_err_t mock_settings_update_cache_apply_result = ESP_OK;
 
+// What settings_update_with_status() RETURNS. ESP_OK by default; ESP_ERR_TIMEOUT is the one
+// value production can answer that the handler has to react to — it means the previous apply was
+// still running and nothing was applied this time round.
+esp_err_t mock_settings_update_return_value = ESP_OK;
+
 void mock_settings_update_reset(void)
 {
     mock_settings_update_call_count = 0;
     mock_settings_update_cache_apply_result = ESP_OK;
+    mock_settings_update_return_value = ESP_OK;
 }
 
 esp_err_t settings_update_with_status(esp_err_t *cache_apply_err)
@@ -21,7 +27,7 @@ esp_err_t settings_update_with_status(esp_err_t *cache_apply_err)
     if (cache_apply_err != NULL) {
         *cache_apply_err = mock_settings_update_cache_apply_result;
     }
-    return ESP_OK;
+    return mock_settings_update_return_value;
 }
 
 // Mirrors production: the no-status entry point is the same call with nowhere to report to, so

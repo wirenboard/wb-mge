@@ -20,6 +20,11 @@ static const char *TAG = "settings_manager";
 #define WARNING_CODE_PORT_COLLISION "port_collision"
 // The cache_en change was saved but could not be applied to the running ports.
 #define WARNING_CODE_CACHE_APPLY    "cache_apply_failed"
+// Everything was saved to NVS, but settings_update() refused to apply any of it because the
+// PREVIOUS apply was still running. Reported rather than swallowed: without it the response is
+// indistinguishable from a normal save, and the user is left wondering why the device did not
+// change. Distinct from cache_apply_failed, which is about one setting reaching the live ports.
+#define WARNING_CODE_APPLY_BUSY     "apply_busy"
 
 typedef struct {
     const char *json_key;
@@ -939,7 +944,17 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
     // by the async task (long after this response is sent) or retried by the next settings write,
     // so this is the one failure the client can be told about while it is still listening.
     esp_err_t cache_apply_err = ESP_OK;
-    settings_update_with_status(&cache_apply_err);
+    esp_err_t apply_err = settings_update_with_status(&cache_apply_err);
+
+    // settings_update_with_status() gives up rather than block forever when a previous apply is
+    // still running (see its join). That path used to be unreachable because the wait had no
+    // bound — and an unbounded wait here is an unresponsive DEVICE, since esp_http_server runs
+    // one worker for every request. Now it returns, and the client is told what happened.
+    if (apply_err == ESP_ERR_TIMEOUT) {
+        add_warning(warnings, WARNING_CODE_APPLY_BUSY,
+                    "Settings were saved but not applied: the previous settings update is still "
+                    "running. They take effect on the next save or after a restart");
+    }
 
     // success stays TRUE: the settings WERE saved, and a reboot will apply the overlay from NVS.
     // What failed is only the attempt to move it on the running device, which is precisely what a

@@ -22,6 +22,15 @@
 
 #define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
+// How long settings_update_with_status() waits for a previous apply to finish, and how often it
+// looks. See the join in that function for why the wait is bounded and what the number is sized
+// against. The poll interval is in MILLISECONDS on purpose: the loop used to pass a raw 10 to
+// vTaskDelay(), i.e. 10 ticks, which is 10 ms at the QEMU CONFIG_FREERTOS_HZ=1000 but 20 ms on
+// the device (CONFIG_FREERTOS_HZ=500) — a poll that silently means two different things, and
+// which no elapsed-time bound could be built on.
+#define SETTINGS_UPDATE_JOIN_TIMEOUT_MS     15000u
+#define SETTINGS_UPDATE_JOIN_POLL_MS        10u
+
 
 static const char *TAG = "settings_update";
 
@@ -365,10 +374,44 @@ esp_err_t settings_update_with_status(esp_err_t *cache_apply_err)
     // Independent of the freeze: the I/O bus is not part of what the test owns.
     update_io_bus_control();
 
+    // Join the previous apply before starting another one. This runs in the CALLER's task, and
+    // the caller that matters is the single esp_http_server worker (POST /settings, POST /cmd
+    // "set_default_settings"), so this wait is the one place where a wedged settings_update_task
+    // takes the whole web interface with it: while it spins, the worker cannot answer any
+    // request at all — not /info, not GET /settings, not the very POST that would undo the
+    // setting that wedged it.
+    //
+    // It used to spin with no bound, and that is exactly what turned one stuck subsystem
+    // teardown into a device that answered nothing until it was power-cycled. Bounded now, and
+    // the timeout is REPORTED rather than worked around: on expiry this returns without
+    // touching the running subsystems, because the previous apply still owns them (it is inside
+    // the release/acquire window, holding a pm_lock and mid-way through moving listening
+    // sockets) and a second one running through it concurrently is the port corruption the
+    // two-phase apply exists to prevent.
+    //
+    // Nothing is lost by giving up: NVS has already been written by the caller, so the values
+    // ARE saved. What is skipped is only applying them to the live device, which the next
+    // settings write retries — every check_settings_changed() below compares the running state
+    // against NVS, so the work simply stays pending — and which a reboot performs from NVS
+    // anyway.
+    //
+    // 15 s covers a healthy apply with room to spare: HTTP_NETWORK_UPDATE_DELAY_MS (1 s) plus
+    // two port re-inits plus the cache and web servers, which the QEMU e2e suite measures in
+    // the low seconds even under load, and each subsystem teardown inside it is itself capped
+    // (TCP_SERVER_DEINIT_WAIT_MS). It also stays clear of the ~30 s HTTP client timeout the API
+    // tests use, so the client gets a real response instead of giving up on the socket.
     if (update_task_handle != NULL) {
         ESP_LOGW(TAG, "Previous settings have not yet been applied, waiting for setting update task finished");
+        uint32_t waited_ms = 0;
         while (update_task_handle != NULL) {
-            vTaskDelay(10);
+            if (waited_ms >= SETTINGS_UPDATE_JOIN_TIMEOUT_MS) {
+                ESP_LOGE(TAG, "Previous settings update task has not finished in %ums; the values "
+                              "are saved in NVS but were not applied to the running device",
+                         (unsigned)SETTINGS_UPDATE_JOIN_TIMEOUT_MS);
+                return ESP_ERR_TIMEOUT;
+            }
+            vTaskDelay(pdMS_TO_TICKS(SETTINGS_UPDATE_JOIN_POLL_MS));
+            waited_ms += SETTINGS_UPDATE_JOIN_POLL_MS;
         }
     }
 

@@ -20,6 +20,40 @@
 #define EVENT_TASK_FINISHED             BIT1
 #define EVENT_TASK_EXIT_REQ             BIT8
 
+/* Upper bound on EACH of the two joins in tcp_server_deinit(): the acceptor task, and then
+ * every receiver task.
+ *
+ * Both were unbounded (portMAX_DELAY on EVENT_TASK_FINISHED, and an open
+ * `while (active_connections > 0)` poll), and the callers cannot afford that. Every
+ * production caller runs on the settings-apply path — cache_modbus_server_deinit() and
+ * port_manager's port_deinit_mode(), both driven by settings_update_task() — and the
+ * POST /settings handler joins THAT task with its own wait (settings_update.c). Since
+ * esp_http_server serves every request from a single worker task, one teardown that never
+ * returns takes the entire web interface down with it: the device keeps routing Modbus while
+ * nothing can be configured, or even read back, until the power is pulled.
+ *
+ * 5 s is measured against the slowest LEGITIMATE teardown, not against the fault. The
+ * acceptor needs at most one 200 ms accept() timeout to notice the exit flag
+ * (create_listen_socket() sets SO_RCVTIMEO for exactly that), a receiver at most one 100 ms
+ * recv() timeout plus one receive_handler() call, and both then queue behind conn_lock, which
+ * retire_client_conn() holds across close(). A healthy teardown therefore lands in the tens of
+ * milliseconds: instrumenting both waits over 179 teardowns in QEMU — every one of them with a
+ * client mid-poll, which is the case this is sized for — put the slowest at 89 ms. 5 s is
+ * ~50x that. Past it the wait is not "slow", it is a task that is not coming back, and
+ * reporting that beats hanging on it.
+ *
+ * It is deliberately NOT sized to cover lwIP's own worst case. netconn_close() retries while
+ * pbuf memory is short and gives up only after LWIP_TCP_CLOSE_TIMEOUT_MS_DEFAULT = 20 s
+ * (lwip/opt.h; no Kconfig symbol), and retire_client_conn() holds conn_lock across it, so a
+ * pathological close can outlast this timeout. That is the intended trade: a settings write
+ * that reports "the old server could not be stopped" and leaves the port alone is a far better
+ * outcome than a web interface that stops answering for 20 s per socket. */
+#define TCP_SERVER_DEINIT_WAIT_MS       5000u
+/* How often the receiver join looks at active_connections. Unchanged from the unbounded loop
+ * this replaced; it is also the unit the elapsed-time bound is counted in, so the two must stay
+ * the same number. */
+#define TCP_SERVER_DEINIT_POLL_MS       10u
+
 
 static const char *TAG = "tcp_server";
 
@@ -922,6 +956,29 @@ esp_err_t tcp_server_connected(tcp_desc_t *desc)
 }
 
 
+/* Stop the server and free its descriptor.
+ *
+ * Returns ESP_ERR_TIMEOUT when a task did not come back within TCP_SERVER_DEINIT_WAIT_MS. On
+ * that path the descriptor, its connection mutex and its event group are LEAKED ON PURPOSE.
+ * Do not "fix" that leak — read this first.
+ *
+ * The three teardown steps at the bottom (tcp_desc_conn_lock_deinit(), vEventGroupDelete(),
+ * free()) are safe only once no task can touch the descriptor again, and the two joins above
+ * them are the whole proof of that: the acceptor dereferences desc and desc->event_group on
+ * every loop iteration (check_task_exit_req(), the listen_sock atomic), and a receiver does
+ * the same on every packet plus takes desc->conn_lock in register_client_conn() and
+ * retire_client_conn(). A timeout says precisely that the proof failed — some task IS still in
+ * there. Freeing anyway would trade a hang for vSemaphoreDelete() on a mutex a live task is
+ * about to take and free() on memory it is about to write: a use-after-free that surfaces
+ * somewhere else entirely, long after the settings write that caused it. A bounded leak on a
+ * path that should never be taken is the cheaper half of that trade, and the error return
+ * makes it visible instead of silent.
+ *
+ * The leak is not necessarily permanent. Every caller keeps its handle when the deinit fails
+ * — cache_modbus_server_deinit() clears s_tcp_desc only on ESP_OK — so the next settings write
+ * retries the teardown on this same descriptor. By then the stuck task has usually finished,
+ * EVENT_TASK_FINISHED is already set (the bit is never cleared) and active_connections has
+ * drained, so the retry walks straight through and frees everything. */
 esp_err_t tcp_server_deinit(tcp_desc_t *desc)
 {
     if (desc == NULL) {
@@ -940,16 +997,34 @@ esp_err_t tcp_server_deinit(tcp_desc_t *desc)
 
     // Wait for acceptor task to finish.
     ESP_LOGD(TAG, "Waiting for TCP server acceptor task finished...");
-    xEventGroupWaitBits(desc->event_group, EVENT_TASK_FINISHED, pdFALSE, pdTRUE, portMAX_DELAY);
+    EventBits_t bits = xEventGroupWaitBits(desc->event_group, EVENT_TASK_FINISHED, pdFALSE, pdTRUE,
+                                           pdMS_TO_TICKS(TCP_SERVER_DEINIT_WAIT_MS));
+    if ((bits & EVENT_TASK_FINISHED) == 0) {
+        ESP_LOGE(TAG, "Port %d: acceptor task still running after %ums — abandoning the descriptor "
+                      "(see the leak note above) and reporting a failed deinit",
+                 desc->port, (unsigned)TCP_SERVER_DEINIT_WAIT_MS);
+        return ESP_ERR_TIMEOUT;
+    }
 
     // Wait for all receiver tasks to finish.  Each receiver task decrements
     // active_connections and calls vTaskDelete() immediately after, so polling
     // here is safe.  The event_group and desc must remain valid until every
     // receiver task has finished (receiver tasks access both via check_task_exit_req
     // and desc->port logs).
+    //
+    // Bounded on the same terms as the acceptor wait, and it abandons the descriptor for the
+    // same reason: a receiver that has not reached its decrement is still inside run_receiver()
+    // and still dereferences desc, its event group and its conn_lock.
     ESP_LOGD(TAG, "Waiting for TCP server receiver tasks finished...");
-    while (desc->active_connections > 0) {
-        vTaskDelay(pdMS_TO_TICKS(10));
+    for (uint32_t waited_ms = 0; desc->active_connections > 0; waited_ms += TCP_SERVER_DEINIT_POLL_MS) {
+        if (waited_ms >= TCP_SERVER_DEINIT_WAIT_MS) {
+            ESP_LOGE(TAG, "Port %d: %u receiver task(s) still running after %ums — abandoning the "
+                          "descriptor (see the leak note above) and reporting a failed deinit",
+                     desc->port, (unsigned)desc->active_connections,
+                     (unsigned)TCP_SERVER_DEINIT_WAIT_MS);
+            return ESP_ERR_TIMEOUT;
+        }
+        vTaskDelay(pdMS_TO_TICKS(TCP_SERVER_DEINIT_POLL_MS));
     }
 
     // Safe now: every receiver has released conn_lock before dropping the count that this

@@ -40,6 +40,7 @@ void mock_lwip_sockets_reset(void);
 /* ── Mock state from freertos mocks ────────────────────────────────────── */
 extern mock_xEventGroupCreate_t mock_xEventGroupCreate_data;
 extern mock_xEventGroupWaitBits_t mock_xEventGroupWaitBits_data;
+extern mock_vEventGroupDelete_t mock_vEventGroupDelete_data;
 extern mock_xTaskCreate_t mock_xTaskCreate_data;
 void mock_freertos_event_groups_reset(void);
 void mock_freertos_task_reset(void);
@@ -1160,9 +1161,14 @@ void test_deinit_claims_listen_sock_before_closing_it(void)
     g_fd_at_close = -99;
     mock_close_hook = sample_listen_sock_on_close;
 
-    /* The acceptor task never runs here (no self_execution), so EVENT_TASK_FINISHED is
-     * never set — the event-group mock returns from every wait immediately, and
-     * active_connections is 0, so deinit() runs straight through. */
+    /* The acceptor task never runs here (no self_execution), so nothing would ever set
+     * EVENT_TASK_FINISHED. deinit()'s join is bounded now and reports ESP_ERR_TIMEOUT when
+     * the bit is missing, so the mock has to stand in for the acceptor's exit and report the
+     * bit — otherwise this test would exercise the abandon-the-descriptor path instead of the
+     * successful teardown it is about. active_connections is 0, so the second join passes on
+     * its first look and deinit() runs straight through. */
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_FINISHED_BIT;
+
     TEST_ASSERT_EQUAL(ESP_OK, tcp_server_deinit(desc));
 
     mock_close_hook = NULL;
@@ -1175,6 +1181,57 @@ void test_deinit_claims_listen_sock_before_closing_it(void)
     TEST_ASSERT_EQUAL_MESSAGE(-1, g_listen_sock_during_close,
         "the number must already be out of the descriptor when close() runs, or the "
         "acceptor's exit path closes the same fd again");
+}
+
+/* Both joins in tcp_server_deinit() are bounded, and an expired join must be REPORTED and
+ * must leave the descriptor alone.
+ *
+ * The report matters because the only production callers run on the settings-apply path, which
+ * the single esp_http_server worker joins: an unbounded join there is a device that answers no
+ * HTTP request at all until it is power-cycled.
+ *
+ * Leaving the descriptor alone matters more. Everything deinit does after the joins —
+ * vSemaphoreDelete() on conn_lock, vEventGroupDelete(), free() — is safe only because the joins
+ * proved that no task is inside the descriptor any more. An expired join proves the opposite,
+ * so tearing down anyway would hand a live acceptor a deleted event group (it reads it on every
+ * loop, in check_task_exit_req()) and freed memory: a use-after-free instead of a hang, which is
+ * strictly worse. vEventGroupDelete is the cheapest observable proxy for "the teardown ran".
+ *
+ * Here the mock never reports EVENT_TASK_FINISHED, i.e. the acceptor is still running. */
+void test_deinit_reports_timeout_when_the_acceptor_never_finishes(void)
+{
+    tcp_desc_t *desc = NULL;
+    TEST_ASSERT_EQUAL(ESP_OK, tcp_server_init(502, stub_receive_handler, &desc));
+    TEST_ASSERT_NOT_NULL(desc);
+
+    mock_xEventGroupWaitBits_data.return_value = 0;   /* the acceptor never signals */
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_TIMEOUT, tcp_server_deinit(desc),
+        "an expired join must be reported to the caller, not swallowed as success");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called,
+        "the event group must outlive a failed deinit — the acceptor still reads it");
+
+    free(desc);   /* deinit leaked it on purpose; the test owns it from here */
+}
+
+/* Same rule for the second join: the acceptor is out, but a receiver task has not reached its
+ * active_connections decrement, so it is still inside run_receiver() — still logging desc->port
+ * and still taking desc->conn_lock in retire_client_conn(). */
+void test_deinit_reports_timeout_when_a_receiver_is_still_running(void)
+{
+    tcp_desc_t *desc = NULL;
+    TEST_ASSERT_EQUAL(ESP_OK, tcp_server_init(502, stub_receive_handler, &desc));
+    TEST_ASSERT_NOT_NULL(desc);
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_FINISHED_BIT;
+    desc->active_connections = 1;                     /* one receiver never finishes */
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_TIMEOUT, tcp_server_deinit(desc),
+        "a receiver that never finished must fail the deinit, not stall it forever");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mock_vEventGroupDelete_data.called,
+        "the descriptor must outlive a failed deinit — a receiver is still using it");
+
+    free(desc);
 }
 
 /* The other half of the same claim: an acceptor that finds the field already at -1 —
@@ -1427,8 +1484,10 @@ int tcp_server_test(void)
     RUN_TEST(test_listen_socket_requests_dual_stack_family);
     RUN_TEST(test_listen_socket_binds_fully_zeroed_any_address);
 
-    /* Section 9 — listen-socket ownership (C6) */
+    /* Section 9 — listen-socket ownership (C6) and bounded teardown joins */
     RUN_TEST(test_deinit_claims_listen_sock_before_closing_it);
+    RUN_TEST(test_deinit_reports_timeout_when_the_acceptor_never_finishes);
+    RUN_TEST(test_deinit_reports_timeout_when_a_receiver_is_still_running);
     RUN_TEST(test_acceptor_does_not_close_listen_sock_claimed_by_deinit);
     RUN_TEST(test_acceptor_stops_when_listen_sock_disappears_mid_loop);
     RUN_TEST(test_acceptor_skips_recreate_when_exit_requested_during_backoff);
