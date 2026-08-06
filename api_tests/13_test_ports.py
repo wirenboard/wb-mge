@@ -13,6 +13,17 @@ from io_bus_helpers import IoBus
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
+    # Defense in depth: explicitly clear tx_disabled on both ports before setting
+    # the port modes, so this file's "DE idles HIGH" premise
+    # (test_clock_out_keeps_rs485_2_de_low) cannot be silently broken by a
+    # tx_disabled=True leaked from an earlier test file. Order matters: the
+    # settings write lands before set_port_mode, so port init reads the cleared
+    # NVS and the shim drives DE HIGH.
+    resp = api.update_settings({
+        "rs485_1": {"tx_disabled": False},
+        "rs485_2": {"tx_disabled": False},
+    })
+    assert resp.status_code == 200, f"_baseline: clear tx_disabled failed: {resp.status_code} {resp.text}"
     resp = api.set_port_mode(1, "tcp_bridge")    # first assertion: sniffer.port_1 == False
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
     resp = api.set_port_mode(2, "tcp_bridge")    # first assertion: sniffer.port_2 == False
