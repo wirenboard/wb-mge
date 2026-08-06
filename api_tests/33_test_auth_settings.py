@@ -60,19 +60,60 @@ def _sessions_restored_after_reboot(offset, read_timeout=10.0):
         time.sleep(0.5)
 
 
-def _wait_device_up(base_url: str, timeout: int = 1800) -> bool:
-    """Poll until device responds to HTTP (without auth). Returns True if up within timeout."""
+def _wait_device_up(base_url: str, timeout: int = 1800, stable_polls: int = 3) -> bool:
+    """Poll until the device answers HTTP (without auth) STABLY.
+
+    Returns True only after `stable_polls` consecutive successful responses. A single
+    success is not enough right after a reboot: QEMU can briefly accept a connection
+    on the still-running pre-reset firmware, or answer once while the httpd is only
+    half-initialised, and the very next request then hits the device mid-recovery and
+    raises ConnectionError. Requiring consecutive successes (any blip resets the
+    counter) means callers — the post-reboot session checks and the fixture re-auth —
+    run against a device that is actually ready.
+    """
     plain = requests.Session()
     deadline = time.monotonic() + timeout
+    consecutive = 0
     while time.monotonic() < deadline:
-        time.sleep(2)
+        time.sleep(1)
         try:
             resp = plain.get(f"{base_url}/favicon.webp", timeout=5)
             if resp.status_code in (200, 401, 403):
-                return True
+                consecutive += 1
+                if consecutive >= stable_polls:
+                    return True
+                continue
         except requests.exceptions.RequestException:
             pass
+        consecutive = 0
     return False
+
+
+def _reboot_with_session(base_url, sid):
+    """Trigger a SW reboot via POST /cmd, authenticated with the given session id.
+
+    Used by the full-ring reboot tests, which fill the auth ring buffer and thereby
+    evict the api fixture's own session — so the reboot must be sent with one of the
+    still-valid fill sessions, otherwise /cmd returns 401 and the reboot never fires.
+
+    The firmware resets as part of handling the command and often closes the socket
+    before the HTTP response is flushed, so a dropped connection (RemoteDisconnected /
+    ConnectionError) is the SUCCESS path: the reboot fired. A clean 401, by contrast,
+    means the session was not accepted — a real error we must surface. Whether the
+    reboot actually took is then confirmed downstream by _wait_device_up() plus the
+    ESP_RST_SW check in _sessions_restored_after_reboot().
+    """
+    rb = requests.Session()
+    rb.cookies.set("session_id", sid)
+    try:
+        resp = rb.post(f"{base_url}/cmd", json={"cmd": "reboot"}, timeout=30)
+        assert resp.status_code == 200, \
+            f"reboot command was rejected ({resp.status_code}); the session used to " \
+            f"send it was not accepted (buffer-fill likely evicted it)"
+    except requests.exceptions.ConnectionError:
+        pass  # device reset before responding -> reboot fired (the intended outcome)
+    finally:
+        rb.close()
 
 
 @pytest.mark.timeout(2400)
@@ -150,18 +191,35 @@ def test_au05_full_buffer_preserved_after_sw_reboot(api):
             sids.append(sid)
             s.close()
 
-        # Trigger SW reboot
+        # Reboot via a still-valid fill session (NOT the api fixture's session, which
+        # the ring-fill above evicted). This makes the reboot actually fire — before,
+        # api.execute_command() got 401 and the reboot never happened, so the test
+        # passed by luck and flaked only when a stray /auth evicted the zero-margin
+        # ring's oldest slot. Sending it this way adds no post-fill /auth, so all
+        # MAX_SESSIONS entries are intact when RTC_NOINIT restores them.
         serial_offset = _serial_log_offset()
-        api.execute_command("reboot")
+        _reboot_with_session(base_url, sids[-1])
 
-        assert _wait_device_up(base_url, timeout=1800), \
-            "Device did not come back up within 1800 s after reboot"
-
-        if _sessions_restored_after_reboot(serial_offset) is False:
+        # Wait for the reboot to ACTUALLY occur before probing HTTP or checking
+        # sessions. The reboot is delayed — reboot_task (main/cmd_handler.c) does a
+        # vTaskDelay so the httpd can flush the response, then esp_restart() — so the
+        # device stays up for a moment after the command. Probing "is it up" (or
+        # running the whole check loop) too early races that pending reset: everything
+        # runs against the not-yet-rebooted device and the reset then lands mid-request
+        # (it was surfacing as a RemoteDisconnected in the finally's fixture re-auth).
+        # The firmware's post-boot auth-init marker only appears in the serial log
+        # after the SW reset, so it is the authoritative "the reboot happened" signal.
+        restored = _sessions_restored_after_reboot(serial_offset, read_timeout=120)
+        assert restored is not None, \
+            "Device did not reboot within 120 s after the reboot command was sent"
+        if restored is False:
             pytest.skip(
                 "QEMU warm reboot returned a non-SW reset (WDT/panic); firmware "
                 "intentionally wiped auth sessions. Infra flake, not a session-logic bug."
             )
+
+        assert _wait_device_up(base_url, timeout=1800), \
+            "Device did not come back up within 1800 s after reboot"
 
         # All MAX_SESSIONS sessions must survive SW reboot
         for i, sid in enumerate(sids):
@@ -183,11 +241,13 @@ def test_au05_full_buffer_preserved_after_sw_reboot(api):
                 ls.close()
             except requests.exceptions.RequestException:
                 pass
-        # Re-authenticate the api fixture
-        time.sleep(0.5)
-        resp = api.auth()
-        assert resp.status_code == 200 and resp.json().get("auth") is True, \
-            f"Re-auth after AU-05 failed: {resp.status_code} {resp.text}"
+        # Re-authenticate the api fixture with wait_for_ready(), NOT a bare auth():
+        # the reboot left the fixture session's HTTP keep-alive pool holding dead
+        # sockets, so a single auth() POST reuses a stale connection and raises
+        # RemoteDisconnected (the check loop above avoids this by using fresh
+        # requests.Session() objects). wait_for_ready() calls reconnect() to drop the
+        # stale pool and retries auth()+get_info() until the device answers.
+        api.wait_for_ready(timeout=1800)
 
 
 @pytest.mark.timeout(2400)
@@ -223,18 +283,33 @@ def test_au06_ring_wrap_preserved_after_sw_reboot(api):
         assert resp.status_code == 401, \
             f"sids[0] should be evicted by ring wrap before reboot, got {resp.status_code}"
 
-        # Trigger SW reboot
+        # Reboot via a session that survived the ring wrap (sids[-1], the newest),
+        # NOT the api fixture's session which the MAX_SESSIONS+1 fill evicted. As in
+        # AU-05, this makes the reboot actually fire and leaves the ring untouched, so
+        # the surviving sids[1..MAX_SESSIONS] are all restored from RTC_NOINIT.
         serial_offset = _serial_log_offset()
-        api.execute_command("reboot")
+        _reboot_with_session(base_url, sids[-1])
 
-        assert _wait_device_up(base_url, timeout=1800), \
-            "Device did not come back up within 1800 s after reboot"
-
-        if _sessions_restored_after_reboot(serial_offset) is False:
+        # Wait for the reboot to ACTUALLY occur before probing HTTP or checking
+        # sessions. The reboot is delayed — reboot_task (main/cmd_handler.c) does a
+        # vTaskDelay so the httpd can flush the response, then esp_restart() — so the
+        # device stays up for a moment after the command. Probing "is it up" (or
+        # running the whole check loop) too early races that pending reset: everything
+        # runs against the not-yet-rebooted device and the reset then lands mid-request
+        # (it was surfacing as a RemoteDisconnected in the finally's fixture re-auth).
+        # The firmware's post-boot auth-init marker only appears in the serial log
+        # after the SW reset, so it is the authoritative "the reboot happened" signal.
+        restored = _sessions_restored_after_reboot(serial_offset, read_timeout=120)
+        assert restored is not None, \
+            "Device did not reboot within 120 s after the reboot command was sent"
+        if restored is False:
             pytest.skip(
                 "QEMU warm reboot returned a non-SW reset (WDT/panic); firmware "
                 "intentionally wiped auth sessions. Infra flake, not a session-logic bug."
             )
+
+        assert _wait_device_up(base_url, timeout=1800), \
+            "Device did not come back up within 1800 s after reboot"
 
         # Sessions 1..MAX_SESSIONS must all survive SW reboot
         for i in range(1, MAX_SESSIONS + 1):
@@ -256,11 +331,11 @@ def test_au06_ring_wrap_preserved_after_sw_reboot(api):
                 ls.close()
             except requests.exceptions.RequestException:
                 pass
-        # Re-authenticate the api fixture
-        time.sleep(0.5)
-        resp = api.auth()
-        assert resp.status_code == 200 and resp.json().get("auth") is True, \
-            f"Re-auth after AU-06 failed: {resp.status_code} {resp.text}"
+        # Re-authenticate the api fixture with wait_for_ready(), NOT a bare auth():
+        # as in AU-05, the reboot leaves the fixture session's keep-alive pool with
+        # dead sockets, so a single auth() POST reuses a stale connection and raises
+        # RemoteDisconnected. wait_for_ready() reconnects and retries until ready.
+        api.wait_for_ready(timeout=1800)
 
 
 def test_st01_hostname_validation(api):
