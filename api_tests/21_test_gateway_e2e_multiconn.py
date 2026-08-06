@@ -109,12 +109,29 @@ def test_gateway_multiconn_concurrent_split_frames(gateway_slave):
             sock.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             req = make_mbap_request(txid, 1, 0x03, 0, 1)
-            # Send MBAP header only, pause, then send the PDU — exercises reassembly
-            sock.sendall(req[:6])
-            time.sleep(0.02)
-            sock.sendall(req[6:])
-            deadline = time.monotonic() + 10.0
-            response = recv_modbus_tcp_response(sock, deadline)
+            # The gateway validates each reply against a DESCRIPTOR-WIDE generation
+            # counter (conn_generation), not a per-fd one — see the explanatory
+            # comment in tcp_server_send_to_captured_client() in
+            # main/bridge/tcp_server.c. By that conscious firmware compromise, if any
+            # *other* client drops during our RTU turnaround the generation moves and
+            # our otherwise-valid reply is discarded; the accepted by-design cost is
+            # exactly ONE Modbus retry. Modbus is a timeout/retry protocol, so we
+            # mirror the contract: one initial attempt plus one retry on the same
+            # (still-open) socket. A second timeout is a genuine failure, not the
+            # documented compromise, and is re-raised.
+            response = None
+            for attempt in range(2):
+                # Send MBAP header only, pause, then send the PDU — exercises reassembly
+                sock.sendall(req[:6])
+                time.sleep(0.02)
+                sock.sendall(req[6:])
+                deadline = time.monotonic() + 10.0
+                try:
+                    response = recv_modbus_tcp_response(sock, deadline)
+                    break
+                except TimeoutError:
+                    if attempt == 1:
+                        raise
             with results_lock:
                 results[idx] = {"raw": response, "error": None, "txid": txid}
         except Exception as exc:
