@@ -9,7 +9,8 @@ rewrite. The covered properties are:
   - Bridge sniffer master->slave CAUSAL pairing (not just counts).
   - Sniffer + cache co-active on one tcp_bridge port across an enable/disable/
     re-enable cycle.
-  - Port-merged cache pool: port-2 feed + dual-port most-recent-wins / survival.
+  - Single-port cache pool: port-2 feed, plus the overlay takeover that hands the
+    pool from one port to the other and clears it on the way.
   - Cache overlay on a TRANSPARENT tcp_bridge port (populate + non-disturbance).
   - Cache coherency when toggled mid-traffic on a Modbus-gateway tcp_bridge.
   - Cache broadcast guard: a broadcast read must never become a cached entry.
@@ -74,8 +75,8 @@ SLAVE_FAKE_VALUE = 0x1234
 # verify that the masters appear in exactly the order we drove them.
 DRIVEN_ADDRS = [10, 20, 30, 40, 50]
 
-# Dual-port-merge test (formerly 45): a distinct slave id so these entries are
-# easy to single out, plus per-property probe addresses/values.
+# Cache-overlay port tests (formerly 45): a distinct slave id so these entries are
+# easy to single out, plus per-phase probe addresses/values.
 DPM_SLAVE_ID = 7
 
 P2_FC03_ADDR = 1010    # DPM-01: FC03 driven on port 2
@@ -83,17 +84,29 @@ P2_FC03_VALUE = 0xA001
 P2_FC04_ADDR = 1300    # DPM-01: FC04 driven on port 2
 P2_FC04_VALUE = 0xB002
 
-MERGE_ADDR = 1500      # DPM-02: same address observed on both ports
-MERGE_VALUE_P1 = 0x1111  # observed first on port 1
-MERGE_VALUE_P2 = 0x2222  # then on port 2 -> must win (most-recent)
+# One address probed on both ports across a takeover. The pool is keyed by
+# (slave, type, address) with no port dimension, so both writes below target the
+# very same key: the port-2 value is visible only because the move CLEARED the
+# port-1 one first, not because it "won" a merge.
+TAKEOVER_ADDR = 1500
+TAKEOVER_VALUE_P1 = 0x1111   # recorded while port 1 holds the overlay
+TAKEOVER_VALUE_P2 = 0x2222   # recorded after the overlay moves to port 2
 
-COEXIST_ADDR_P1 = 1600   # DPM-03: only on port 1
-COEXIST_VALUE_P1 = 0x3333
-COEXIST_ADDR_P2 = 1601   # DPM-03: only on port 2
-COEXIST_VALUE_P2 = 0x4444
+# Off-port probes: written on the port that does NOT hold the overlay, so they must
+# never reach the pool. Each is paired with a fence write on the port that DOES hold
+# it (see the fence comment in the takeover test) so that the absence is asserted
+# only after the pool has demonstrably been fed again.
+OFFPORT_ADDR_P1 = 1600       # written on port 1 while port 2 holds the overlay
+OFFPORT_VALUE_P1 = 0x3333
+FENCE_ADDR_P2 = 1601         # fence written on port 2 (the holder) right after
+FENCE_VALUE_P2 = 0x4444
+OFFPORT_ADDR_P2 = 1602       # written on port 2 after the overlay returns to port 1
+OFFPORT_VALUE_P2 = 0x6666
 
-SURVIVE_ADDR = 1700    # DPM-04: port-2 traffic after port-1 overlay disabled
-SURVIVE_VALUE = 0x5555
+# Port-1 traffic recorded after the overlay is handed back to port 1; doubles as the
+# fence for OFFPORT_ADDR_P2.
+REGAIN_ADDR = 1700
+REGAIN_VALUE = 0x5555
 
 # Transparent-bridge cache test (formerly 46): cache-population transaction.
 CACHE_SLAVE = 1
@@ -432,8 +445,9 @@ def _cache_server_reachable_host(host):
 def _find_entry(api, *, t, a, s=DPM_SLAVE_ID):
     """Return the /cache/json entry matching (s, t, a), or None.
 
-    The pool is port-merged, so there is at most one entry per (s, t, a) tuple
-    regardless of which port observed it.
+    The pool has no port dimension: the overlay feeds it from exactly ONE port at a
+    time (review #51) and lookup is by (slave_id, type, address) alone, so such a
+    tuple identifies at most one entry.
     """
     resp = api.get_cache_json()
     assert resp.status_code == 200, f"GET /cache/json failed: {resp.status_code}"
@@ -448,8 +462,8 @@ def _wait_for_value(api, *, t, a, v, s=DPM_SLAVE_ID, timeout=30.0):
     """Poll /cache/json until the (s, t, a) entry exists AND has value v.
 
     Returns the matching entry.  Deterministic: it waits for the specific value,
-    so it cannot race ahead of the injected observation (used to order the
-    most-recent-wins steps without relying on wall-clock timing).
+    so it cannot race ahead of the injected observation (used to order the takeover
+    phases, and to fence the negative checks, without relying on wall-clock timing).
     """
     deadline = time.monotonic() + timeout
     last = None
@@ -501,8 +515,9 @@ def _cache_json_holding_value(api, addr):
     """Return the cached holding-register value for `addr`, or None if absent.
 
     /cache/json entry shape: {"d":[{"s","t","a","v","age"}, ...]} where t=="h"
-    marks a holding register. The pool is port-merged, so a single (slave,
-    type, addr) key carries the most-recent value regardless of source port.
+    marks a holding register. The pool carries no port dimension — only one port
+    feeds it at a time (review #51) — so a (slave, type, addr) key maps to a single
+    value: the most recent observation of that register.
     """
     resp = api.get_cache_json()
     if resp.status_code != 200:
@@ -1109,7 +1124,7 @@ def test_bridge_sniffer_cache_coactive_through_cache_cycle(api, gateway_p1_modbu
 
 
 # ===========================================================================
-# DPM-01 — PORT-2 cache feed populates the merged pool; readable end-to-end
+# DPM-01 — PORT-2 cache feed populates the pool; readable end-to-end
 # ===========================================================================
 
 @pytest.mark.qemu
@@ -1201,7 +1216,8 @@ def test_port2_cache_feed_populates_pool(api):
 
 
 # ===========================================================================
-# DPM-02/03/04 — dual-port merge: most-recent-wins, coexistence, pool survival
+# DPM-02/03/04 — single-port overlay: the takeover moves the pool between ports,
+# clears it on every move, and the port that lost it stops feeding it
 # ===========================================================================
 
 @pytest.mark.qemu
@@ -1215,7 +1231,9 @@ def test_cache_single_port_takeover_moves_and_clears(api):
     main/bridge/port_manager.c logs "taking the cache overlay over from port N —
     the cache is single-port (review #51)" then cache_multimaster_clear()). The
     lookup is port-blind (slave_id, type, address only). This test verifies that
-    real contract in both directions.
+    real contract in both directions: port 1 -> port 2 and back, checking after each
+    move that the pool was cleared, that the new holder feeds it, and that the port
+    that lost the overlay no longer does.
 
     (Rewritten from the former test_dual_port_merge_most_recent_wins_and_pool_survival,
     which asserted a port-merged pool — the architecture rejected at review #51.)
@@ -1244,9 +1262,9 @@ def test_cache_single_port_takeover_moves_and_clears(api):
         time.sleep(0.3)
 
         # --- Phase 1: port 1 owns the overlay, records an observation ---------
-        _inject_fc03(1, MERGE_ADDR, MERGE_VALUE_P1)
-        _wait_for_value(api, t="h", a=MERGE_ADDR, v=MERGE_VALUE_P1)
-        print(f"  port-1 observation recorded ({MERGE_ADDR}=0x{MERGE_VALUE_P1:04X})")
+        _inject_fc03(1, TAKEOVER_ADDR, TAKEOVER_VALUE_P1)
+        _wait_for_value(api, t="h", a=TAKEOVER_ADDR, v=TAKEOVER_VALUE_P1)
+        print(f"  port-1 observation recorded ({TAKEOVER_ADDR}=0x{TAKEOVER_VALUE_P1:04X})")
 
         # --- Phase 2: enabling on port 2 TAKES OVER and CLEARS the pool -------
         resp = api.set_port_cache(2, True)
@@ -1261,7 +1279,7 @@ def test_cache_single_port_takeover_moves_and_clears(api):
             "it must stay enabled throughout a single-port takeover"
         )
         # The port-1 entry must be GONE — the move wiped the pool.
-        gone = _find_entry(api, t="h", a=MERGE_ADDR)
+        gone = _find_entry(api, t="h", a=TAKEOVER_ADDR)
         assert gone is None, (
             f"port-1 entry survived the takeover to port 2, but the move clears the "
             f"single-port pool (review #51): {gone!r}"
@@ -1270,50 +1288,78 @@ def test_cache_single_port_takeover_moves_and_clears(api):
               "(port-1 entry gone)")
 
         # --- Phase 3: port 2 now owns the overlay; its traffic is recorded ----
-        _inject_fc03(2, MERGE_ADDR, MERGE_VALUE_P2)
-        owned = _wait_for_value(api, t="h", a=MERGE_ADDR, v=MERGE_VALUE_P2)
+        _inject_fc03(2, TAKEOVER_ADDR, TAKEOVER_VALUE_P2)
+        owned = _wait_for_value(api, t="h", a=TAKEOVER_ADDR, v=TAKEOVER_VALUE_P2)
+        # The move cleared the pool and port 2 has since recorded exactly ONE
+        # observation, so the WHOLE pool must be that single entry. Counting the pool
+        # rather than the rows for one key is what makes this a real check: a
+        # port-blind pool has no mechanism to hold two rows for one key, so "exactly
+        # one row for this key" could never fail. The pool-wide count can: it fails if
+        # the takeover clear dropped only the key we happened to probe in phase 2, if
+        # cleared slots stay visible in /cache/json as ghost rows, or if anything other
+        # than the one observation we drove reached the pool.
         rows = api.get_cache_json().json().get("d", [])
-        same_key = [
-            r for r in rows
-            if r.get("s") == DPM_SLAVE_ID and r.get("t") == "h" and r.get("a") == MERGE_ADDR
-        ]
-        assert len(same_key) == 1, (
-            f"single-port pool must hold exactly ONE entry for "
-            f"(slave={DPM_SLAVE_ID}, holding, addr={MERGE_ADDR}); found {len(same_key)}: {same_key!r}"
+        # Compare identity fields only: "age" ticks between the poll inside
+        # _wait_for_value() and this read, so the raw rows are not comparable.
+        keys = [(r.get("s"), r.get("t"), r.get("a"), r.get("v")) for r in rows]
+        assert keys == [(DPM_SLAVE_ID, "h", TAKEOVER_ADDR, TAKEOVER_VALUE_P2)], (
+            f"after the takeover cleared the pool and port 2 recorded one observation, "
+            f"/cache/json must contain exactly that one entry; got {rows!r}"
         )
-        assert owned["v"] == MERGE_VALUE_P2, (
-            f"port-2 value not recorded after takeover: entry value 0x{owned['v']:04X}, "
-            f"expected 0x{MERGE_VALUE_P2:04X}"
-        )
-        print(f"✓ port 2 owns the overlay: {MERGE_ADDR}=0x{owned['v']:04X} recorded")
+        print(f"✓ port 2 owns the overlay: {TAKEOVER_ADDR}=0x{owned['v']:04X} recorded, "
+              f"and it is the only entry in the pool")
 
         # --- Phase 4: port 1 no longer feeds the pool (overlay is off there) ---
-        _inject_fc03(1, COEXIST_ADDR_P1, COEXIST_VALUE_P1)
-        time.sleep(2.0)  # bounded wait — this observation must NOT be recorded
-        leaked = _find_entry(api, t="h", a=COEXIST_ADDR_P1)
-        assert leaked is None, (
+        # This is a FENCE, not a sleep — do not "simplify" it back into one. Proving an
+        # absence needs a positive event to bound the wait: a bare sleep would also pass
+        # if the firmware DID record the port-1 write but took longer than the sleep, and
+        # the positive waits in this file budget up to 30 s for an observation to surface
+        # under QEMU. So write on port 1 FIRST, then write a distinguishable value on
+        # port 2 (the port that now holds the overlay) and wait for THAT to land. Both
+        # ports feed the pool through the same sniffer->cache path, so once the LATER
+        # write is demonstrably in the pool, an earlier write that was going to be
+        # recorded would already be there too — the absence is then evidence, not
+        # impatience.
+        _inject_fc03(1, OFFPORT_ADDR_P1, OFFPORT_VALUE_P1)
+        _inject_fc03(2, FENCE_ADDR_P2, FENCE_VALUE_P2)
+        _wait_for_value(api, t="h", a=FENCE_ADDR_P2, v=FENCE_VALUE_P2)
+        leaked_p1 = _find_entry(api, t="h", a=OFFPORT_ADDR_P1)
+        assert leaked_p1 is None, (
             f"port-1 traffic was recorded although the overlay moved to port 2: "
-            f"{leaked!r} (port 1 no longer feeds the single-port pool)"
+            f"{leaked_p1!r} (port 1 no longer feeds the single-port pool). A later "
+            f"port-2 write already surfaced in the pool, so this is not a missed wait."
         )
-        print(f"✓ port-1 traffic ignored after takeover (addr {COEXIST_ADDR_P1} absent)")
+        print(f"✓ port-1 traffic ignored after takeover (addr {OFFPORT_ADDR_P1} absent "
+              f"once the port-2 fence write landed)")
 
         # --- Phase 5: hand the overlay BACK to port 1 -> clears again ---------
         resp = api.set_port_cache(1, True)
         assert resp.status_code == 200, f"re-enable cache overlay on port 1 failed: {resp.status_code}"
         time.sleep(0.5)
-        cleared = _find_entry(api, t="h", a=MERGE_ADDR)
+        cleared = _find_entry(api, t="h", a=TAKEOVER_ADDR)
         assert cleared is None, (
             f"port-2 entry survived handing the overlay back to port 1: {cleared!r} "
             f"(the reverse move must clear the pool too)"
         )
-        _inject_fc03(1, SURVIVE_ADDR, SURVIVE_VALUE)
-        surv = _wait_for_value(api, t="h", a=SURVIVE_ADDR, v=SURVIVE_VALUE)
-        assert surv["v"] == SURVIVE_VALUE, (
-            "port-1 traffic did not update the pool after the overlay returned to it: "
-            f"addr {SURVIVE_ADDR} value=0x{surv['v']:04X}, expected 0x{SURVIVE_VALUE:04X}"
+
+        # --- Phase 6: the mirror of phase 4, so "both directions" is literal ---
+        # Same fence discipline the other way round: write on port 2 (which has just
+        # LOST the overlay) first, then on port 1 (which has just gained it), and wait
+        # for the port-1 write. That one write does double duty — it is the positive
+        # proof that port-1 traffic feeds the pool again after the reverse move, and the
+        # fence that makes the port-2 absence below meaningful.
+        _inject_fc03(2, OFFPORT_ADDR_P2, OFFPORT_VALUE_P2)
+        _inject_fc03(1, REGAIN_ADDR, REGAIN_VALUE)
+        regained = _wait_for_value(api, t="h", a=REGAIN_ADDR, v=REGAIN_VALUE)
+        leaked_p2 = _find_entry(api, t="h", a=OFFPORT_ADDR_P2)
+        assert leaked_p2 is None, (
+            f"port-2 traffic was recorded although the overlay moved back to port 1: "
+            f"{leaked_p2!r} (port 2 no longer feeds the single-port pool). A later "
+            f"port-1 write already surfaced in the pool, so this is not a missed wait."
         )
-        print(f"✓ takeover port2→port1: pool cleared again, port-1 traffic now recorded "
-              f"({SURVIVE_ADDR}=0x{surv['v']:04X})")
+        print(f"✓ takeover port2→port1: pool cleared again, port-1 traffic recorded "
+              f"({REGAIN_ADDR}=0x{regained['v']:04X}), port-2 traffic ignored "
+              f"(addr {OFFPORT_ADDR_P2} absent)")
 
     finally:
         for p in (1, 2):
@@ -1661,7 +1707,18 @@ def test_cache_toggle_mid_traffic_serves_fresh_value(api, gateway_p1_modbus_togg
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(90)
+# 135 s, not 90 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item — the file is in REBOOT_TEST_FILES, so all of its items are moved to the deferred
+# reboot group together and this one still closes the module's scope — so it also pays
+# conftest's _restore_rs485_settings teardown: up to two bounded POST /settings plus a
+# settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT). Raised rather than
+# left at 90 s on the argument that the body "usually" finishes early: 90 s is what the
+# body was budgeted to be ALLOWED to take, so a body that actually uses it leaves 0 s for
+# the teardown. This module's own gateway fixtures are function-scoped (built by
+# conftest.build_gateway_fixture), so the conftest restore is the whole module teardown.
+# 90 s body + 45 s teardown allowance.
+@pytest.mark.timeout(135)
 def test_broadcast_read_not_cached(api):
     """A broadcast FC03 (slave 0, unanswered) must not create any cache entry;
     a following unicast FC03 must be cached normally with its correct value."""
@@ -1741,7 +1798,7 @@ def test_broadcast_read_not_cached(api):
         assert st.json().get("entries", 0) >= 1, \
             "cache never populated from the unicast exchange within 30 s"
 
-        # Inspect the merged map via /cache/json: {"d":[{s,t,a,v,age},...]}.
+        # Inspect the cache map via /cache/json: {"d":[{s,t,a,v,age},...]}.
         cj = api.get_cache_json()
         assert cj.status_code == 200, f"GET /cache/json failed: {cj.status_code}"
         rows = cj.json().get("d", [])

@@ -60,6 +60,13 @@ MBTCP_MAX_CONNS = 8
 # overflow in the emulator.
 GATEWAY_CONNECT_TIMEOUT = 15.0
 
+# Per-attempt receive budget for the data phase, and the socket timeout that must be armed
+# alongside it. recv_modbus_tcp_response() checks its deadline only BEFORE each recv(), so a
+# socket timeout LARGER than the deadline makes the deadline unenforceable: with the 15 s
+# connect timeout still armed, the first recv() blocks for 15 s before the 10 s deadline is
+# ever looked at. Every socket must therefore be re-armed to DATA_TIMEOUT after connect().
+DATA_TIMEOUT = 10.0
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers
@@ -94,13 +101,29 @@ def test_gateway_multiconn_concurrent_split_frames(gateway_slave):
     state so that the partial data from one socket does not affect the other.
     Because the RTU bus serialises requests, one client may wait for the other;
     the per-test timeout (120 s) is generous enough to cover both round-trips.
+
+    One Modbus retry is tolerated (see MAX_ATTEMPTS below) but BUDGETED: the total
+    number of attempts across all clients is asserted at the end, so a firmware
+    regression that costs every client its first attempt cannot hide behind it.
     """
     NUM_CLIENTS = 2
+    # The gateway validates each reply against a DESCRIPTOR-WIDE generation counter
+    # (conn_generation), not a per-fd one — see the explanatory comment in
+    # tcp_server_send_to_captured_client() in main/bridge/tcp_server.c. By that
+    # conscious firmware compromise, if any *other* client drops during our RTU
+    # turnaround the generation moves and our otherwise-valid reply is discarded; the
+    # accepted by-design cost is exactly ONE Modbus retry for at most ONE client.
+    # Modbus is a timeout/retry protocol, so we mirror the contract: one initial
+    # attempt plus one retry on the same (still-open) socket. A second timeout is a
+    # genuine failure, not the documented compromise, and is re-raised.
+    MAX_ATTEMPTS = 2
     results = {}
     results_lock = threading.Lock()
 
     def gw_split_worker(idx: int):
-        txid = 200 + idx
+        base_txid = 200 + idx
+        txid = base_txid
+        attempts = 0
         # Initialize sock to None so the finally block is safe even if socket() raises.
         sock = None
         try:
@@ -108,35 +131,37 @@ def test_gateway_multiconn_concurrent_split_frames(gateway_slave):
             sock.settimeout(GATEWAY_CONNECT_TIMEOUT)
             sock.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            req = make_mbap_request(txid, 1, 0x03, 0, 1)
-            # The gateway validates each reply against a DESCRIPTOR-WIDE generation
-            # counter (conn_generation), not a per-fd one — see the explanatory
-            # comment in tcp_server_send_to_captured_client() in
-            # main/bridge/tcp_server.c. By that conscious firmware compromise, if any
-            # *other* client drops during our RTU turnaround the generation moves and
-            # our otherwise-valid reply is discarded; the accepted by-design cost is
-            # exactly ONE Modbus retry. Modbus is a timeout/retry protocol, so we
-            # mirror the contract: one initial attempt plus one retry on the same
-            # (still-open) socket. A second timeout is a genuine failure, not the
-            # documented compromise, and is re-raised.
+            # Re-arm for the data phase — see the DATA_TIMEOUT comment above for why the
+            # socket timeout must not stay at the larger connect value.
+            sock.settimeout(DATA_TIMEOUT)
             response = None
-            for attempt in range(2):
+            for attempt in range(MAX_ATTEMPTS):
+                # A FRESH TID per attempt. Reusing it would let a merely LATE reply to the
+                # first request satisfy the retry: the assertions would pass while the
+                # retried request went unserved (its orphaned reply then RST'd by close()).
+                # The documented compromise DROPS a reply, it does not delay it, so with a
+                # fresh TID a stale reply fails the TID check instead of masking the bug.
+                txid = base_txid + 1000 * attempt
+                req = make_mbap_request(txid, 1, 0x03, 0, 1)
+                attempts = attempt + 1
                 # Send MBAP header only, pause, then send the PDU — exercises reassembly
                 sock.sendall(req[:6])
                 time.sleep(0.02)
                 sock.sendall(req[6:])
-                deadline = time.monotonic() + 10.0
+                deadline = time.monotonic() + DATA_TIMEOUT
                 try:
                     response = recv_modbus_tcp_response(sock, deadline)
                     break
                 except TimeoutError:
-                    if attempt == 1:
+                    if attempt == MAX_ATTEMPTS - 1:
                         raise
             with results_lock:
-                results[idx] = {"raw": response, "error": None, "txid": txid}
+                results[idx] = {"raw": response, "error": None, "txid": txid,
+                                "attempts": attempts}
         except Exception as exc:
             with results_lock:
-                results[idx] = {"raw": b"", "error": str(exc), "txid": txid}
+                results[idx] = {"raw": b"", "error": str(exc), "txid": txid,
+                                "attempts": attempts}
         finally:
             if sock is not None:
                 sock.close()
@@ -156,17 +181,44 @@ def test_gateway_multiconn_concurrent_split_frames(gateway_slave):
         "A client thread did not finish (deadlock?)"
 
     for i in range(NUM_CLIENTS):
-        r = results.get(i, {})
+        # Explicit membership check first. Every later read of results[i] — r["raw"] here
+        # and results[i]["attempts"] in the retry budget below — indexes directly, so a
+        # worker that registered no result at all would surface as a bare KeyError with
+        # no indication of which client vanished.
+        assert i in results, f"Client {i} produced no result"
+        r = results[i]
         assert r.get("error") is None, f"Client {i} error: {r.get('error')}"
         raw = r["raw"]
         assert len(raw) >= 8, f"Client {i}: response too short: {raw.hex()!r}"
         resp_txid, _proto, _length = struct.unpack('>HHH', raw[:6])
         pdu = raw[6:]
-        assert resp_txid == r["txid"], \
+        assert resp_txid == r["txid"], (
             f"Client {i}: TID mismatch: expected {r['txid']}, got {resp_txid}"
+            + (" — this is the stale reply to the timed-out first attempt arriving "
+               "late, so that reply was DELAYED, not dropped; the retry accommodates "
+               "a dropped reply only" if r["attempts"] > 1 else "")
+        )
         assert not (pdu[1] & 0x80), \
             f"Client {i}: Modbus exception FC=0x{pdu[1]:02X}"
-        print(f"✓ Concurrent split [client {i}]: TID={resp_txid} FC=0x{pdu[1]:02X}")
+        print(f"✓ Concurrent split [client {i}]: TID={resp_txid} FC=0x{pdu[1]:02X} "
+              f"({r['attempts']} attempt(s))")
+
+    # Budget the retries. The generation counter only moves when a client socket is
+    # CLOSED (retire_client_conn() is its sole bumper), and in this test the only
+    # closes are the workers' own sock.close() calls on the way out. So at most one
+    # client — whichever is still mid-turnaround when the first one finishes — can
+    # lose a reply to the descriptor-wide check, which is exactly the one-retry cost
+    # tcp_server_send_to_captured_client() documents. Hence NUM_CLIENTS attempts plus
+    # at most one extra, in total, across all clients.
+    total_attempts = sum(results[i]["attempts"] for i in range(NUM_CLIENTS))
+    assert total_attempts <= NUM_CLIENTS + 1, (
+        f"{total_attempts} attempts for {NUM_CLIENTS} clients — more than one client "
+        f"needed a retry, which is outside the documented per-descriptor compromise "
+        f"(see tcp_server_send_to_captured_client() in main/bridge/tcp_server.c). "
+        f"Suspect a regression that loses the FIRST attempt for everyone: "
+        f"conn_generation bumping on every request, or an off-by-one in the "
+        f"reassembly slot dropping the first split frame."
+    )
 
 
 @pytest.mark.qemu
@@ -202,7 +254,11 @@ def test_gateway_multiconn_independent_buffers(gateway_slave):
         sock_b.connect((GATEWAY_HOST, GATEWAY_HOST_PORT))
         sock_b.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         sock_b.sendall(req_b)
-        deadline_b = time.monotonic() + 10.0
+        # Re-arm for the data phase — see the DATA_TIMEOUT comment at the top of the
+        # module. Without this, sock_b keeps the 15 s connect timeout and its 10 s
+        # deadline is never enforced: the real bound would be 15 s.
+        sock_b.settimeout(DATA_TIMEOUT)
+        deadline_b = time.monotonic() + DATA_TIMEOUT
         resp_b = recv_modbus_tcp_response(sock_b, deadline_b)
         assert len(resp_b) >= 8, f"Socket B: response too short: {resp_b.hex()!r}"
         resp_txid_b, _, _ = struct.unpack('>HHH', resp_b[:6])
@@ -216,8 +272,8 @@ def test_gateway_multiconn_independent_buffers(gateway_slave):
 
         # Complete socket A's request and verify it gets its own correct response
         sock_a.sendall(req_a[6:])
-        sock_a.settimeout(10.0)
-        deadline_a = time.monotonic() + 10.0
+        sock_a.settimeout(DATA_TIMEOUT)
+        deadline_a = time.monotonic() + DATA_TIMEOUT
         resp_a = recv_modbus_tcp_response(sock_a, deadline_a)
         assert len(resp_a) >= 8, f"Socket A: response too short: {resp_a.hex()!r}"
         resp_txid_a, _, _ = struct.unpack('>HHH', resp_a[:6])
@@ -235,7 +291,14 @@ def test_gateway_multiconn_independent_buffers(gateway_slave):
 
 
 @pytest.mark.qemu
-@pytest.mark.timeout(120)
+# 165 s, not 120 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# This module's own _baseline (:25) is setup-only and gateway_slave is function-scoped
+# (built by conftest.build_gateway_fixture), so the conftest restore is the whole module
+# teardown. 120 s body + 45 s teardown allowance.
+@pytest.mark.timeout(165)
 def test_gateway_multiconn_table_exhaustion(gateway_slave):
     """9th TCP client (beyond table limit of 8) falls back to single-pass mode; no crash.
 
@@ -263,9 +326,11 @@ def test_gateway_multiconn_table_exhaustion(gateway_slave):
         for i, s in enumerate(sockets):
             txid = 400 + i
             req = make_mbap_request(txid, 1, 0x03, 0, 1)
-            s.settimeout(10.0)
+            # Re-arm for the data phase — see the DATA_TIMEOUT comment at the top of
+            # the module.
+            s.settimeout(DATA_TIMEOUT)
             s.sendall(req)
-            deadline = time.monotonic() + 10.0
+            deadline = time.monotonic() + DATA_TIMEOUT
             try:
                 resp = recv_modbus_tcp_response(s, deadline)
                 responses[i] = {"raw": resp, "txid": txid, "error": None}
