@@ -87,7 +87,13 @@ def _skip_if_uart_unreachable(port: int) -> None:
 
 
 @pytest.mark.qemu
-@pytest.mark.timeout(40)
+# 65 s, not 40 s: an item's pytest-timeout budget covers SETUP as well as the call, and
+# this is the first item of the module. The module defines no fixtures of its own, but
+# when this file is run on its own the item still pays conftest's once-per-session rs485
+# snapshot (one bounded GET /settings, 20.1 s, see _RS485_HTTP_TIMEOUT) — in a full-suite
+# run that lands on the very first item of the session (00_test_heap_session.py) instead.
+# 40 s body + 20.1 s snapshot + slack.
+@pytest.mark.timeout(65)
 def test_repeater_bidirectional_forwarding(api):
     """E2E-1: with both ports in repeater, bytes flow 1->2 and 2->1, counters advance.
 
@@ -154,7 +160,12 @@ def test_repeater_bidirectional_forwarding(api):
 
 
 @pytest.mark.qemu
-@pytest.mark.timeout(40)
+# 85 s, not 40 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# 40 s body + 45 s teardown allowance.
+@pytest.mark.timeout(85)
 def test_repeater_single_port_drops_and_inactive(api):
     """E2E-2: with only one port in repeater, bytes are dropped and the link is inactive.
 

@@ -43,7 +43,15 @@ def _baseline(api):
 
 
 @pytest.mark.qemu
-@pytest.mark.timeout(60)
+# 150 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and this
+# is the module's ONLY item — so it pays both ends on top of its own body. Setup: the
+# module-scoped _baseline (:27, one POST /settings) plus conftest's once-per-session rs485
+# snapshot (one bounded GET /settings, 20.1 s, see _RS485_HTTP_TIMEOUT) when this file is
+# run on its own — in a full-suite run that lands on the very first item of the session
+# instead. Teardown: conftest's _restore_rs485_settings, up to two bounded POST /settings
+# plus a settle window (2 x 20.1 s + 1 s = 41.2 s).
+# 60 s body + 45 s setup allowance + 45 s teardown allowance.
+@pytest.mark.timeout(150)
 def test_tcp_server_deinit_completes_with_open_client(api):
     """
     tcp_server_deinit() must return quickly even when a TCP client connection

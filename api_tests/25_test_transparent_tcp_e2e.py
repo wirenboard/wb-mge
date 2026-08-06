@@ -582,7 +582,14 @@ def test_transparent_single_client_cap_block_new(transparent_bridge):
 # echoing, so that the serial side is the one that speaks first.
 
 @pytest.mark.qemu
-@pytest.mark.timeout(120)
+# 165 s, not 120 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# This module's own _baseline (:46) is setup-only and transparent_bridge is function-scoped
+# (built by conftest.build_gateway_fixture), so the conftest restore is the whole module
+# teardown. 120 s body + 45 s teardown allowance.
+@pytest.mark.timeout(165)
 def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
     """Serial data reaches a client that connected but never transmitted (B3).
 

@@ -326,7 +326,13 @@ def gateway_port(api):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# 55 s, not 30 s: an item's pytest-timeout budget covers SETUP as well as the call, and
+# this is the first item of the module, so it pays the module-scoped _baseline above
+# (:222, one POST /settings). When this file is run on its own it additionally pays
+# conftest's once-per-session rs485 snapshot (one bounded GET /settings, 20.1 s, see
+# _RS485_HTTP_TIMEOUT) — in a full-suite run that lands on the very first item of the
+# session (00_test_heap_session.py) instead. 30 s body + 20.1 s snapshot + slack.
+@pytest.mark.timeout(55)
 def test_gateway_small_response_baseline(gateway_port):
     """FC03 read 2 registers → 9-byte response: well below FIFO threshold.
 
@@ -401,7 +407,12 @@ def test_gateway_small_response_baseline(gateway_port):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# 75 s, not 30 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# 30 s body + 45 s teardown allowance.
+@pytest.mark.timeout(75)
 def test_gateway_large_response_fifo_split(gateway_port):
     """Regression test for RTU fragmentation bug.
 

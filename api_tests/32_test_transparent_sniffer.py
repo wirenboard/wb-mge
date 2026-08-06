@@ -1545,7 +1545,12 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(60)
+# 105 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# 60 s body + 45 s teardown allowance.
+@pytest.mark.timeout(105)
 def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
     """tcp_bridge round-trip works before, during, and after a WS sniffer overlay.
 

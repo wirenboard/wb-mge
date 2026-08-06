@@ -174,7 +174,14 @@ def test_bridge_sniffer_observes_master_and_slave(api, gateway_p1_modbus):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(120)
+# 165 s, not 120 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# This module defines no module-scoped fixtures of its own and gateway_p1_modbus (:50) is
+# function-scoped (built by conftest.build_gateway_fixture), so the conftest restore is the
+# whole module teardown. 120 s body + 45 s teardown allowance.
+@pytest.mark.timeout(165)
 def test_bridge_cache_populates_and_reads_back(api, gateway_p1_modbus):
     """With the cache overlay enabled on a Modbus-gateway tcp_bridge port, an FC03
     request->response transaction driven through the gateway populates the cache.

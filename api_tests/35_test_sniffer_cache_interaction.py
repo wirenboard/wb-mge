@@ -373,7 +373,15 @@ def test_sniffer_ws_restart_after_cache_disable_while_active(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(90)
+# 135 s, not 90 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# Raised rather than left at 90 s on the argument that the body "usually" finishes early:
+# 90 s is what the body was budgeted to be ALLOWED to take, so a body that actually uses it
+# leaves 0 s for the teardown. This module defines no fixtures of its own, so the conftest
+# restore is the whole teardown. 90 s body + 45 s teardown allowance.
+@pytest.mark.timeout(135)
 def test_sniffer_after_register_map_cache_toggle(api):
     """Sniffer WS works after a RegisterMap-style cache overlay toggle.
 

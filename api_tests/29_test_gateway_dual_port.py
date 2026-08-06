@@ -219,7 +219,20 @@ def dual_gateway_slave(api):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(60)
+# 165 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and this
+# is the module's ONLY item — so it pays every module-scoped fixture's setup AND teardown on
+# top of its own body. That is the heaviest setup in the suite:
+#   - _baseline (:52): POST /settings for both ports;
+#   - dual_gateway_slave (:79): GET /settings, 4 x POST /ports/N/mode, 2 x POST /settings,
+#     two 5 s gateway-listen polls and two RTU slaves each with a 5 s connect wait;
+#   - conftest's once-per-session rs485 snapshot (one bounded GET /settings, 20.1 s, see
+#     _RS485_HTTP_TIMEOUT) when this file is run on its own; in a full-suite run it is
+#     charged to the very first item of the session instead.
+# Teardown is dual_gateway_slave's full restore (stop both slaves, disable both ports,
+# POST the whole original settings object back, restore both port modes) plus conftest's
+# _restore_rs485_settings — up to two bounded POST /settings and a settle window
+# (2 x 20.1 s + 1 s = 41.2 s). 60 s body + 60 s setup allowance + 45 s teardown allowance.
+@pytest.mark.timeout(165)
 def test_gateway_dual_port_simultaneous(dual_gateway_slave):
     """FC03 requests to both gateways are served independently with correct values.
 

@@ -205,7 +205,22 @@ def cache_server_e2e(api: WBMGEAPI):
 # Tests
 # ---------------------------------------------------------------------------
 
-@pytest.mark.timeout(30)
+# 105 s, not 30 s: an item's pytest-timeout budget covers SETUP as well as the call, and
+# this is the FIRST item of the module, so it pays the setup of both module-scoped fixtures
+# before its own body starts. 30 s was structurally unfittable — smaller than the setup's
+# own documented ceiling — and that is what CI reported as
+# "failed on setup with Timeout (>30.0s)".
+#
+# Two contributors dominate:
+#   - cache_server_e2e (:83) polls for the cache to fill on a loop bounded at 30 s (:169-178)
+#     before it gives up with pytest.fail, plus a 1 s rebind sleep, three HTTP calls and the
+#     UART injection;
+#   - conftest's once-per-session rs485 snapshot (one bounded GET /settings, 20.1 s, see
+#     _RS485_HTTP_TIMEOUT), which lands here when this file is run on its own; in a
+#     full-suite run it is charged to the very first item of the session instead.
+# _baseline (:60) adds two more writes (POST /settings + POST /ports/1/mode).
+# 30 s body + 30 s cache-fill poll + 20.1 s snapshot + slack.
+@pytest.mark.timeout(105)
 def test_cm01_fc01_coil_response_lsb_bit_packing(cache_server_e2e):
     """FC01 response uses LSB-first bit packing: coil[addr] → bit 0 of byte 0.
 
@@ -482,7 +497,13 @@ def test_cm07_cache_miss_returns_illegal_address(cache_server_e2e):
         sock.close()
 
 
-@pytest.mark.timeout(60)
+# 105 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT)
+# — on top of this module's own module-scoped cache_server_e2e teardown. 60 s body + 45 s
+# teardown allowance.
+@pytest.mark.timeout(105)
 def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
     """When the cache overlay is disabled, FC03 → exception 0x02.
 

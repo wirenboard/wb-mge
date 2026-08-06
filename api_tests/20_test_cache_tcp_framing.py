@@ -456,7 +456,14 @@ def test_cache_tcp_large_split(cache_tcp_server):
         sock.close()
 
 
-@pytest.mark.timeout(60)
+# 105 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT)
+# — on top of this module's own cache_tcp_server teardown (:89: stop the injector, restore
+# cache_modbus_port, disable the cache overlay, restore the port mode) and _baseline (:25).
+# 60 s body + 45 s teardown allowance.
+@pytest.mark.timeout(105)
 def test_cache_tcp_close_mid_frame(cache_tcp_server):
     """Connection closed mid-frame → reassembly slot freed; server handles next connection normally.
 
