@@ -26,6 +26,10 @@ function error_exit()
 # Coverage data file filter for find command
 COV_JSON_FIND_FILTER="*_covr.json"
 
+# Goal name used to probe a test Makefile for a "coverage" target. It must NOT name a real
+# target in any test Makefile, see make_coverage_handler() for why.
+MAKE_PROBE_GOAL="__wb_coverage_probe__"
+
 # Read arguments provided with --make-coverage command
 function make_coverage_read_args()
 {
@@ -59,12 +63,43 @@ function make_coverage_handler()
     cd $TEST_DIR
 
     # Check for "coverage" target exist in Makefile.
-    # stderr is dropped: make runs recipe lines containing $(MAKE) even under -q, so
-    # probing a Makefile whose default target is built from sub-makes prints a stray
-    # "*** [all] Error 1" per directory. The sub-make inherits -q and does nothing, so
-    # this is noise only. The pipeline status still comes from grep.
-    make -qp 2>/dev/null | $GREP_CMD '^coverage:' > /dev/null
+    #
+    # The goal is deliberately one that does not exist: -p dumps the whole rule database
+    # before make tries to update anything, so "coverage:" still shows up, but no recipe of
+    # this Makefile is ever run. That matters because GNU make exempts recipe lines
+    # containing $(MAKE) from -q/-n/-t, and the default target of a test Makefile is built
+    # from sub-makes (see build_unittests.mk): probing with the default goal literally
+    # executed "$(MAKE) clean", i.e. "rm -rf build covr_report", and stayed harmless only
+    # because the sub-make inherited q through MAKEFLAGS and did nothing. That held on GNU
+    # Make 3.81, but it is not a property worth depending on; a nonexistent goal removes the
+    # dependency instead of documenting it. It also stops the sub-make from dumping the
+    # database a second time. The pipeline status still comes from grep.
+    #
+    # stderr is filtered, not dropped. make's one expected complaint is that it has no rule
+    # for the probe goal; anything else (a Makefile syntax error, an include that cannot be
+    # resolved, a $(error ...) from a guard) is a real failure that must stay visible,
+    # because in those cases grep finds nothing either and the suite would otherwise
+    # disappear from the combined coverage report while this script exits 0. Note that an
+    # unresolvable include reports as "No rule to make target <that file>", so the filter
+    # must not key on that phrase; it keys on the probe goal name, which also survives the
+    # quoting differences between make versions.
+    # Guarded, and with an explicit template so every mktemp implementation agrees. An
+    # unguarded mktemp that fails leaves probe_err_file empty, which turns 2>"$probe_err_file"
+    # into an ambiguous redirect: the whole probe pipeline then fails, grep finds no
+    # '^coverage:' line, and the suite silently drops out of the combined report through the
+    # very "exit 0" path the stderr filtering above exists to prevent.
+    probe_err_file=$(mktemp "${TMPDIR:-/tmp}/wb_covr_probe.XXXXXX")
+    if [ -z "$probe_err_file" ] || [ ! -f "$probe_err_file" ]; then
+        error_exit "$TEST_DIR: unable to create a temporary file for the make coverage probe"
+    fi
+    make -qp "$MAKE_PROBE_GOAL" 2>"$probe_err_file" | $GREP_CMD '^coverage:' > /dev/null
     covr_exist=$?
+    probe_err=$($GREP_CMD -vF "$MAKE_PROBE_GOAL" "$probe_err_file")
+    rm -f "$probe_err_file"
+    if [ -n "$probe_err" ]; then
+        echo "$probe_err" >&2
+    fi
+
     if [ $covr_exist -ne 0 ]; then
         echo "Skip test without coverage: $TEST_DIR"
         cd -
