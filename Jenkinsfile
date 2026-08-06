@@ -8,6 +8,24 @@ pipeline {
     }
     options {
         copyArtifactPermission('/s3_uploader');
+        // Serialise builds of this branch. This is about the QEMU e2e suite, not tidiness:
+        // that suite is CPU-starvation sensitive, and under contention its data-path tests
+        // get exactly zero bytes back (sent=..., got='' — never a partial read, and the
+        // firmware does not crash). Two builds of the same branch running the e2e stage at
+        // the same time on the same node ARE that contention, self-inflicted. Observed live:
+        // builds #2 and #4 of this branch ran the QEMU stage simultaneously on
+        // build-node-1-vm. Measured elsewhere: ~1.5x CPU oversubscription is already enough
+        // to reproduce the cascade, while with no contention the same suite is green three
+        // runs in a row. Removing this to drain the queue faster brings the flakiness back.
+        //
+        // Residual limitation, deliberately not solved here: this only stops the branch from
+        // doubling up on ITSELF. The node is shared — wb-release-tests, wb-mqtt-zigbee,
+        // release-test-orchestrator (x2) and wb-office-bot were all co-resident during the
+        // runs above — and nothing in this file isolates the suite from them. The fixes for
+        // that (a dedicated executor, a lock() from the Lockable Resources plugin, or cpuset
+        // pinning) are owner-level CI decisions, and the installed plugin set could not be
+        // confirmed from here.
+        disableConcurrentBuilds();
     }
     parameters {
         booleanParam(name: 'UPLOAD_FROM_BRANCH', description: 'Upload results to S3 even if it is not master branch', defaultValue: false)
@@ -117,12 +135,27 @@ pipeline {
             }
         }
         stage('E2E tests (QEMU)') {
-            // The e2e suite now gates CI on this branch: the deterministic failures it used to
-            // flag are fixed, so a red suite here means a real regression worth looking at.
-            // '!= false' — the same idiom as RUN_COVERAGE below, and it is load-bearing: on the
-            // first build after a parameter default changes, the parameters block has not taken
-            // effect yet and params.RUN_E2E is null. This parameter defaults to ON, so null must
-            // mean "enabled"; in Groovy 'null != false' is true, so the stage still runs.
+            // This suite REPORTS, it does not gate. The catchError below downgrades a failure
+            // to UNSTABLE (yellow), so a red suite here never fails the build and never blocks
+            // a merge — read it as a signal to investigate, not as a verdict.
+            //
+            // Gating is the goal, and the deferral is deliberate rather than lazy. The suite is
+            // starvation-sensitive (see the disableConcurrentBuilds comment in options): on a
+            // busy node its data-path tests read back zero bytes and the run goes red without
+            // any regression having happened. A gate that fires mostly because the node was
+            // busy is one people learn to click past, and a gate nobody believes is worse than
+            // no gate — it also devalues the red builds that are real.
+            //
+            // Criterion for flipping this to gating: the suite green for 10 consecutive builds
+            // on a node where it is not competing for CPU. Three clean runs is what we have so
+            // far, which is not enough to tell a fixed suite from a lucky one. When that holds,
+            // flip it by deleting the catchError wrapper below and leaving the post block as is.
+            //
+            // '!= false' is load-bearing: on the first build after a parameter default changes,
+            // the parameters block has not taken effect yet and params.RUN_E2E is null. This
+            // parameter defaults to ON, so null must mean "enabled"; in Groovy 'null != false'
+            // is true, so the stage still runs. RUN_COVERAGE below defaults OFF and uses the
+            // mirror-image '== true' for the same reason — the two idioms differ on purpose.
             when { expression { params.RUN_E2E != false } }
             steps {
                 // catchError keeps build UNSTABLE (yellow) on e2e failure — S3 Upload still runs
