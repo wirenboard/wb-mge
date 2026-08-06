@@ -811,13 +811,21 @@ def test_sniffer_status_unauthenticated(api):
 
 
 def test_sniffer_status_both_ports_independent(api):
-    """Starting/stopping port 1 and port 2 independently must be reflected in status."""
+    """Per-port sniffer state (port 1 vs port 2) must be independently controllable.
+
+    The sniffer WebSocket is a SINGLE client slot per device by design — a second
+    connection evicts the first ("one client, the newest wins"; see the comment in
+    main/bridge/sniffer.c, and the frontend Sniffer.vue which opens exactly one
+    socket and multiplexes both ports over it via {cmd,port} frames). Per-port
+    capture state, however, is genuinely independent (sniff_ctx[0]/[1]). This test
+    therefore drives BOTH ports over ONE socket and verifies that independence —
+    the earlier two-socket version was wrong: the second connect evicted the first,
+    so a later stop on the dead socket was silently dropped.
+    """
     original_mode_1 = None
     original_mode_2 = None
-    ws1 = None
-    ws2 = None
-    stop_ping1 = None
-    stop_ping2 = None
+    ws = None
+    stop_ping = None
 
     try:
         info = api.get_info()
@@ -826,62 +834,56 @@ def test_sniffer_status_both_ports_independent(api):
         original_mode_1 = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
         original_mode_2 = info_data.get("rs485_2", {}).get("port_mode", "tcp_bridge")
 
-        # Set port 1 to sniffer and start it
+        # Set port 1 to sniffer and start it (the single socket sends {start,port:1}).
         r = api.set_port_mode(1, "passive")
         assert r.status_code == 200, f"Failed to set passive mode for port 1: {r.status_code}"
         time.sleep(0.3)
 
-        ws1, stop_ping1, _ = _ws_connect(api, 1)
+        ws, stop_ping, _ = _ws_connect(api, 1)
         time.sleep(0.5)
 
         body = api.get_sniffer_status().json()
         assert body.get("port_1") is True, f"Expected port_1==True, got {body}"
         assert body.get("port_2") is False, f"Expected port_2==False, got {body}"
 
+        # Start port 2 over the SAME socket (do not open a second one — it would
+        # evict this session).
         r2 = api.set_port_mode(2, "passive")
         assert r2.status_code == 200, \
             f"set_port_mode(2, 'passive') expected 200, got {r2.status_code}"
         time.sleep(0.3)
 
-        ws2, stop_ping2, _ = _ws_connect(api, 2)
+        ws.send(json.dumps({"cmd": "start", "port": 2}))
         time.sleep(0.5)
 
         body = api.get_sniffer_status().json()
         assert body.get("port_1") is True, f"Expected port_1==True, got {body}"
         assert body.get("port_2") is True, f"Expected port_2==True, got {body}"
 
-        # Stop port 1
-        if ws1 is not None:
-            ws1.send(json.dumps({"cmd": "stop", "port": 1}))
-            time.sleep(0.3)
+        # Stop only port 1 over the same socket; port 2 must stay up (independence).
+        ws.send(json.dumps({"cmd": "stop", "port": 1}))
+        time.sleep(0.3)
 
-            body = api.get_sniffer_status().json()
-            assert body.get("port_1") is False, (
-                f"Expected port_1==False after stop, got {body}"
-            )
-        print("✓ port 1 and port 2 sniffer states are independent")
+        body = api.get_sniffer_status().json()
+        assert body.get("port_1") is False, (
+            f"Expected port_1==False after stop, got {body}"
+        )
+        assert body.get("port_2") is True, (
+            f"Expected port_2==True (unaffected by stopping port 1), got {body}"
+        )
+        print("✓ port 1 and port 2 sniffer states are independent over one socket")
 
     finally:
-        if stop_ping1 is not None:
-            stop_ping1.set()
-        if stop_ping2 is not None:
-            stop_ping2.set()
-        if ws1 is not None:
+        if stop_ping is not None:
+            stop_ping.set()
+        if ws is not None:
             try:
-                ws1.send(json.dumps({"cmd": "stop", "port": 1}))
+                ws.send(json.dumps({"cmd": "stop", "port": 1}))
+                ws.send(json.dumps({"cmd": "stop", "port": 2}))
             except Exception:
                 pass
             try:
-                ws1.close()
-            except Exception:
-                pass
-        if ws2 is not None:
-            try:
-                ws2.send(json.dumps({"cmd": "stop", "port": 2}))
-            except Exception:
-                pass
-            try:
-                ws2.close()
+                ws.close()
             except Exception:
                 pass
         if original_mode_1 is not None:
