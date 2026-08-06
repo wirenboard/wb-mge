@@ -2,6 +2,7 @@
 
 import os
 import time
+import warnings
 
 import pytest
 import requests
@@ -33,20 +34,27 @@ def _sessions_restored_after_reboot(offset, read_timeout=10.0):
     """Inspect QEMU serial written since `offset` for the firmware's auth-init decision.
 
     Returns True if sessions were restored (clean ESP_RST_SW reboot), False if
-    they were wiped (abnormal WDT/panic reset), or None if neither marker is
-    found within `read_timeout` (e.g. log unavailable) so the caller can fall
-    back to asserting.
+    they were wiped (abnormal WDT/panic reset), or None if the answer is unknown —
+    either because `offset` is None (no usable baseline, see below) or because
+    neither marker appeared within `read_timeout` — so the caller can fall back to
+    asserting.
 
     Re-reads the log on a bounded retry: QEMU writes the log from a separate
     process via its own stdio buffering, so the boot line may not be flushed to
     disk the instant the device starts answering HTTP again.
     """
+    if offset is None:
+        # _serial_log_offset() could not stat the log, so there is no baseline to scan
+        # from. Scanning the whole file instead would be actively harmful: it always
+        # contains the marker from the FIRST boot, so the answer would come back True
+        # instantly and a reboot that never happened would look like a successful one.
+        # Report "unknown" and let the caller decide (AU-05/AU-06 assert on it).
+        return None
     deadline = time.monotonic() + read_timeout
     while True:
         try:
             with open(_qemu_serial_log_path(), "r", errors="replace") as fh:
-                if offset:
-                    fh.seek(offset)
+                fh.seek(offset)
                 tail = fh.read()
         except OSError:
             tail = ""
@@ -114,6 +122,36 @@ def _reboot_with_session(base_url, sid):
         pass  # device reset before responding -> reboot fired (the intended outcome)
     finally:
         rb.close()
+
+
+def _rearm_api_session(api, label, timeout=300):
+    """Re-authenticate the api fixture from a `finally` block — bounded and non-fatal.
+
+    Uses wait_for_ready(), NOT a bare auth(): the reboot leaves the fixture session's
+    HTTP keep-alive pool holding dead sockets, so a single auth() POST reuses a stale
+    connection and raises RemoteDisconnected. wait_for_ready() calls reconnect() to
+    drop the stale pool and retries auth()+get_info() until the device answers.
+
+    Bounded at 300 s and non-fatal ON PURPOSE. This runs in `finally`, so when the test
+    body already failed the device is probably wedged: the usual 1800 s budget would
+    burn half an hour and then raise TimeoutError *from the finally block*, replacing
+    the original assertion in the report and demoting the real cause to __context__.
+    Warning instead lets the primary exception survive; a genuinely dead device is
+    caught by the next test anyway.
+    """
+    try:
+        api.wait_for_ready(timeout=timeout)
+    # Deliberately bare `Exception`, not a curated tuple. The contract above is "must never
+    # displace a primary exception from a finally block", and only catching everything
+    # actually delivers it: a narrower tuple lets any unanticipated failure inside
+    # wait_for_ready() (reconnect(), a cookie-jar or JSON error, an OSError from the socket
+    # layer) escape the finally and replace the real assertion in the report.
+    except Exception as exc:  # noqa: BLE001 - see above; breadth is the point
+        warnings.warn(
+            f"{label} teardown: device did not answer within {timeout} s ({exc!r}); "
+            f"the api fixture session may be stale for later tests.",
+            stacklevel=2,
+        )
 
 
 @pytest.mark.timeout(2400)
@@ -198,6 +236,13 @@ def test_au05_full_buffer_preserved_after_sw_reboot(api):
         # ring's oldest slot. Sending it this way adds no post-fill /auth, so all
         # MAX_SESSIONS entries are intact when RTC_NOINIT restores them.
         serial_offset = _serial_log_offset()
+        # Hard-fail on a missing baseline instead of scanning the whole log: without
+        # an offset the very first boot's marker would be found immediately and a
+        # reboot that never happened would be reported as a successful one.
+        assert serial_offset is not None, (
+            f"Cannot stat the QEMU serial log ({_qemu_serial_log_path()}); without a "
+            f"baseline offset a reboot cannot be detected reliably"
+        )
         _reboot_with_session(base_url, sids[-1])
 
         # Wait for the reboot to ACTUALLY occur before probing HTTP or checking
@@ -209,9 +254,14 @@ def test_au05_full_buffer_preserved_after_sw_reboot(api):
         # (it was surfacing as a RemoteDisconnected in the finally's fixture re-auth).
         # The firmware's post-boot auth-init marker only appears in the serial log
         # after the SW reset, so it is the authoritative "the reboot happened" signal.
-        restored = _sessions_restored_after_reboot(serial_offset, read_timeout=120)
+        # 600 s, not 120 s: every other post-reboot wait in this file is 1800 s
+        # (_wait_device_up, wait_for_ready) under a 2400 s test timeout. On a
+        # CPU-starved CI node a cold ESP32 boot under QEMU can take well over two
+        # minutes, and a 120 s budget here turns an infrastructure slowdown into a
+        # hard failure that reads as "the firmware never rebooted".
+        restored = _sessions_restored_after_reboot(serial_offset, read_timeout=600)
         assert restored is not None, \
-            "Device did not reboot within 120 s after the reboot command was sent"
+            "Device did not reboot within 600 s after the reboot command was sent"
         if restored is False:
             pytest.skip(
                 "QEMU warm reboot returned a non-SW reset (WDT/panic); firmware "
@@ -241,13 +291,10 @@ def test_au05_full_buffer_preserved_after_sw_reboot(api):
                 ls.close()
             except requests.exceptions.RequestException:
                 pass
-        # Re-authenticate the api fixture with wait_for_ready(), NOT a bare auth():
-        # the reboot left the fixture session's HTTP keep-alive pool holding dead
-        # sockets, so a single auth() POST reuses a stale connection and raises
-        # RemoteDisconnected (the check loop above avoids this by using fresh
-        # requests.Session() objects). wait_for_ready() calls reconnect() to drop the
-        # stale pool and retries auth()+get_info() until the device answers.
-        api.wait_for_ready(timeout=1800)
+        # Re-authenticate the api fixture. The check loop above dodges the reboot's
+        # stale keep-alive pool by using fresh requests.Session() objects; the fixture
+        # session cannot, so it needs the reconnect+retry in _rearm_api_session().
+        _rearm_api_session(api, "AU-05")
 
 
 @pytest.mark.timeout(2400)
@@ -288,6 +335,13 @@ def test_au06_ring_wrap_preserved_after_sw_reboot(api):
         # AU-05, this makes the reboot actually fire and leaves the ring untouched, so
         # the surviving sids[1..MAX_SESSIONS] are all restored from RTC_NOINIT.
         serial_offset = _serial_log_offset()
+        # Hard-fail on a missing baseline instead of scanning the whole log: without
+        # an offset the very first boot's marker would be found immediately and a
+        # reboot that never happened would be reported as a successful one.
+        assert serial_offset is not None, (
+            f"Cannot stat the QEMU serial log ({_qemu_serial_log_path()}); without a "
+            f"baseline offset a reboot cannot be detected reliably"
+        )
         _reboot_with_session(base_url, sids[-1])
 
         # Wait for the reboot to ACTUALLY occur before probing HTTP or checking
@@ -299,9 +353,14 @@ def test_au06_ring_wrap_preserved_after_sw_reboot(api):
         # (it was surfacing as a RemoteDisconnected in the finally's fixture re-auth).
         # The firmware's post-boot auth-init marker only appears in the serial log
         # after the SW reset, so it is the authoritative "the reboot happened" signal.
-        restored = _sessions_restored_after_reboot(serial_offset, read_timeout=120)
+        # 600 s, not 120 s: every other post-reboot wait in this file is 1800 s
+        # (_wait_device_up, wait_for_ready) under a 2400 s test timeout. On a
+        # CPU-starved CI node a cold ESP32 boot under QEMU can take well over two
+        # minutes, and a 120 s budget here turns an infrastructure slowdown into a
+        # hard failure that reads as "the firmware never rebooted".
+        restored = _sessions_restored_after_reboot(serial_offset, read_timeout=600)
         assert restored is not None, \
-            "Device did not reboot within 120 s after the reboot command was sent"
+            "Device did not reboot within 600 s after the reboot command was sent"
         if restored is False:
             pytest.skip(
                 "QEMU warm reboot returned a non-SW reset (WDT/panic); firmware "
@@ -331,11 +390,10 @@ def test_au06_ring_wrap_preserved_after_sw_reboot(api):
                 ls.close()
             except requests.exceptions.RequestException:
                 pass
-        # Re-authenticate the api fixture with wait_for_ready(), NOT a bare auth():
-        # as in AU-05, the reboot leaves the fixture session's keep-alive pool with
-        # dead sockets, so a single auth() POST reuses a stale connection and raises
-        # RemoteDisconnected. wait_for_ready() reconnects and retries until ready.
-        api.wait_for_ready(timeout=1800)
+        # Re-authenticate the api fixture; as in AU-05 the reboot leaves the fixture
+        # session's keep-alive pool holding dead sockets, so it needs the
+        # reconnect+retry in _rearm_api_session().
+        _rearm_api_session(api, "AU-06")
 
 
 def test_st01_hostname_validation(api):
