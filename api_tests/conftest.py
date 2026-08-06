@@ -471,8 +471,20 @@ def is_qemu(request):
 
 
 @pytest.fixture(scope="session")
-def api(request):
-    """Session-scoped API client: creates, checks connectivity, authenticates."""
+def api(request, qemu_process):
+    """Session-scoped API client: creates, checks connectivity, authenticates.
+
+    Requests qemu_process without using the handle, on purpose. That fixture is what
+    launches QEMU and waits for it to answer, and this one pytest.exit()s the entire
+    session when the device does not respond — so it must not run first. Their order
+    used to rest on nothing but pytest setting up session-scoped autouse fixtures
+    before non-autouse ones at the same scope, which is not a documented guarantee.
+    It stopped holding under pytest 9.1.1 once a module-scoped autouse fixture
+    (_restore_rs485_settings) started depending on `api`: the suite died on its first
+    item with "Preliminary connection check failed" before QEMU had been started.
+    Harmless without --qemu: qemu_process yields None and the device is whatever --ip
+    points at.
+    """
     ip = request.config.getoption("--ip")
     base_url = f"http://{ip}"
 
