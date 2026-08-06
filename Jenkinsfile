@@ -11,7 +11,10 @@ pipeline {
     }
     parameters {
         booleanParam(name: 'UPLOAD_FROM_BRANCH', description: 'Upload results to S3 even if it is not master branch', defaultValue: false)
-        booleanParam(name: 'RUN_COVERAGE', description: 'Run coverage (unit tests; the QEMU e2e and combined reports also need RUN_E2E)', defaultValue: true)
+        // TEMPORARY on this branch: coverage is off by default so a build runs the e2e suite
+        // once instead of twice — 'Coverage (QEMU e2e)' re-runs the whole suite on an
+        // instrumented build. Flip back to true once the suite is settled and gating.
+        booleanParam(name: 'RUN_COVERAGE', description: 'Run coverage (unit tests; the QEMU e2e and combined reports also need RUN_E2E). Temporarily off by default while the e2e suite is being stabilised', defaultValue: false)
         booleanParam(name: 'RUN_E2E', description: 'Run the QEMU e2e API suite; on by default. The QEMU coverage stage additionally needs RUN_COVERAGE', defaultValue: true)
     }
 
@@ -140,11 +143,13 @@ pipeline {
         // (yellow) on coverage failure so the firmware upload still runs. Unit coverage needs
         // only RUN_COVERAGE; the QEMU one additionally needs RUN_E2E, because it re-runs the
         // e2e suite (see that stage). When it runs, it runs after the clean e2e stage.
-        // '!= false' is deliberate: the parameters block only takes effect for the NEXT run,
-        // so on the first build after RUN_COVERAGE was introduced params.RUN_COVERAGE is null
-        // — treat that null as "enabled" instead of silently skipping all coverage stages
+        // '== true' is deliberate, and it flipped together with the default: the parameters
+        // block only takes effect for the NEXT run, so on the first build after the default
+        // changed params.RUN_COVERAGE is null. The default is now OFF, so that null has to
+        // read as "disabled" — in Groovy 'null == true' is false, so the stage is skipped.
+        // (It was '!= false' while the default was ON, for the mirror-image reason.)
         stage('Coverage (unit tests)') {
-            when { expression { params.RUN_COVERAGE != false } }
+            when { expression { params.RUN_COVERAGE == true } }
             steps {
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make coverage"'
@@ -165,8 +170,10 @@ pipeline {
             // Gated on RUN_E2E as well: 'make qemu-coverage' re-runs the very same e2e suite on
             // an instrumented build, so turning the gate off keeps that second, slower run out
             // of the build — the plain 'E2E tests (QEMU)' stage above already published junit.
-            // Same '!= false' null-handling as that stage and as RUN_COVERAGE next to it.
-            when { expression { params.RUN_COVERAGE != false && params.RUN_E2E != false } }
+            // Null-handling follows each parameter's own default: RUN_E2E defaults ON so null
+            // means enabled ('!= false'), RUN_COVERAGE defaults OFF so null means disabled
+            // ('== true'). The two idioms differ on purpose — do not unify them.
+            when { expression { params.RUN_COVERAGE == true && params.RUN_E2E != false } }
             steps {
                 // Re-runs the e2e suite on an instrumented firmware build with reboot/OTA tests
                 // deselected (--without-reboot: a reboot zeroes the in-RAM gcov counters).
@@ -197,7 +204,11 @@ pipeline {
             // a partial unit-coverage run still leaves some tracefiles on disk. No RUN_E2E check
             // is needed here: with e2e off the QEMU coverage stage never runs, so QEMU_COVERAGE_OK
             // stays unset and this stage skips on its own.
-            when { expression { params.RUN_COVERAGE != false && env.UNIT_COVERAGE_OK == 'true' && env.QEMU_COVERAGE_OK == 'true' } }
+            // '== true' to match RUN_COVERAGE's OFF default, like the two producer stages. The
+            // success flags already make this stage skip on their own, so the parameter check is
+            // belt-and-braces here — but leaving it as '!= false' would read as if the default
+            // were still ON and would be copied into the next gate that is not flag-guarded.
+            when { expression { params.RUN_COVERAGE == true && env.UNIT_COVERAGE_OK == 'true' && env.QEMU_COVERAGE_OK == 'true' } }
             steps {
                 // Merges the unit-test gcovr tracefiles with build/qemu_coverage/qemu_covr.json,
                 // hence this stage runs after both coverage stages above
