@@ -12,7 +12,7 @@ pipeline {
     parameters {
         booleanParam(name: 'UPLOAD_FROM_BRANCH', description: 'Upload results to S3 even if it is not master branch', defaultValue: false)
         booleanParam(name: 'RUN_COVERAGE', description: 'Run coverage (unit tests; the QEMU e2e and combined reports also need RUN_E2E)', defaultValue: true)
-        booleanParam(name: 'RUN_E2E', description: 'Run the QEMU e2e API suite; off by default. The QEMU coverage stage additionally needs RUN_COVERAGE', defaultValue: false)
+        booleanParam(name: 'RUN_E2E', description: 'Run the QEMU e2e API suite; on by default. The QEMU coverage stage additionally needs RUN_COVERAGE', defaultValue: true)
     }
 
     stages {
@@ -114,12 +114,13 @@ pipeline {
             }
         }
         stage('E2E tests (QEMU)') {
-            // The QEMU e2e suite is not stable enough to gate CI, so it runs on request only.
-            // '== true' — not the '!= false' idiom used for RUN_COVERAGE below: on the first
-            // build after a parameter is added the parameters block has not taken effect yet
-            // and params.RUN_E2E is null. This parameter defaults to OFF, so that null must
-            // mean "disabled"; in Groovy 'null == true' is false, so the stage is skipped.
-            when { expression { params.RUN_E2E == true } }
+            // The e2e suite now gates CI on this branch: the deterministic failures it used to
+            // flag are fixed, so a red suite here means a real regression worth looking at.
+            // '!= false' — the same idiom as RUN_COVERAGE below, and it is load-bearing: on the
+            // first build after a parameter default changes, the parameters block has not taken
+            // effect yet and params.RUN_E2E is null. This parameter defaults to ON, so null must
+            // mean "enabled"; in Groovy 'null != false' is true, so the stage still runs.
+            when { expression { params.RUN_E2E != false } }
             steps {
                 // catchError keeps build UNSTABLE (yellow) on e2e failure — S3 Upload still runs
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
@@ -162,10 +163,10 @@ pipeline {
         }
         stage('Coverage (QEMU e2e)') {
             // Gated on RUN_E2E as well: 'make qemu-coverage' re-runs the very same e2e suite on
-            // an instrumented build, so without this gate the suite would still run in every CI
-            // build — and with no junit published at all. Same '== true' null-handling as the
-            // 'E2E tests (QEMU)' stage above, inverted relative to RUN_COVERAGE next to it.
-            when { expression { params.RUN_COVERAGE != false && params.RUN_E2E == true } }
+            // an instrumented build, so turning the gate off keeps that second, slower run out
+            // of the build — the plain 'E2E tests (QEMU)' stage above already published junit.
+            // Same '!= false' null-handling as that stage and as RUN_COVERAGE next to it.
+            when { expression { params.RUN_COVERAGE != false && params.RUN_E2E != false } }
             steps {
                 // Re-runs the e2e suite on an instrumented firmware build with reboot/OTA tests
                 // deselected (--without-reboot: a reboot zeroes the in-RAM gcov counters).
