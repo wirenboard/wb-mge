@@ -488,6 +488,288 @@ def api(request):
     return client
 
 
+# Fields of an rs485_N object that a test module may clobber and that are safe to write
+# back verbatim.
+#
+# Deliberately excludes port_mode and the bridge sub-object: validate_port_collisions()
+# (main/settings_manager.c) marks a bridge listener as "touched" when the request carries
+# bridge.port, rs485_N.port_mode or bridge.mode, and a touched collision is a hard
+# rejection of the WHOLE request — so writing those back would turn a collision inherited
+# from an earlier test file into a refused restore. Writing port_mode additionally
+# re-initialises the running ports (main/settings_update.c), which is a side effect a
+# restore must not have.
+#
+# Also deliberately excludes cache_en, even though it IS an rs485_N base field
+# (rs485_base_mappings, main/settings_manager.c:91). port_manager_apply_cache_settings()
+# (main/bridge/port_manager.c:1175) runs on every settings write regardless of what the
+# request contained, but it is a no-op while the stored cache_en_N keys still agree with
+# the port that actually holds the runtime overlay. Writing cache_en back is what can make
+# them disagree, and a disagreement makes it call cache_move_locked() — which moves the
+# overlay to the other port or tears the pool down, dropping every register value the cache
+# had accumulated. A restore of serial line parameters has no business doing that.
+_RS485_RESTORE_KEYS = ("tx_disabled", "baudrate", "stopbits", "parity",
+                       "databits", "term", "fail_safe")
+
+# Fields of _RS485_RESTORE_KEYS we refuse to inherit from NVS, mapped to the value written
+# instead. The captured baseline is whatever the PREVIOUS run left behind (NVS survives the
+# suite — see the caveat in _rs485_session_baseline), so without this the leak this fixture
+# exists to stop becomes PERMANENT rather than merely forward-propagating: one run that
+# ends with rs485_1.tx_disabled=True — a restore that failed, or a run interrupted inside
+# any of the six files that set it (12, 16, 17, 20, 23, 34) — makes the next run capture
+# True as its baseline and dutifully write True back after every single module.
+# 13_test_ports.py::test_clock_out_keeps_rs485_2_de_low and
+# 44_test_io_state_bus.py:69::test_rs485_direction_pins_idle_high then fail on every
+# subsequent run, and re-running does not heal it. The removed per-file restore in
+# 12_test_sniffer_ws.py had restore.setdefault("tx_disabled", False) for exactly this
+# reason; this is that self-healing property, moved to where it covers the whole suite.
+#
+# ONLY for fields with an unambiguous known-good value. tx_disabled=False is both the
+# firmware default (DEFAULT_485_TX_DISABLED "false", main/config.h:21) and the premise
+# every DE/idle-HIGH test depends on. Do NOT add baudrate/parity/... here on the assumption
+# that DEFAULT_485_* is what a module wants: those are genuine per-module choices, and
+# pinning them would break files that legitimately run a non-default line configuration.
+_RS485_SAFE_DEFAULTS = {"tx_disabled": False}
+
+# Explicit HTTP timeout for this fixture pair's own requests, deliberately tighter than
+# WBMGEAPI's 30 s default (api_client.py:79/:83).
+#
+# pytest-timeout charges setup + call + teardown of an item to ONE budget, and a
+# module-scoped fixture is torn down inside the LAST item of its module — so the restore
+# POSTs below land in some ordinary test's timeout budget, and several modules run
+# per-test budgets of 30 s or less. Inheriting 30 s would let a single stalled request
+# eat a whole item budget on its own and report as "that test timed out", with nothing
+# pointing at conftest.
+#
+# A (connect, read) TUPLE, not a scalar. In requests a scalar timeout applies to EACH phase
+# separately, and _DelayedSession sends Connection: close (api_client.py:31) so every call
+# opens a fresh connection — a scalar 20 would therefore mean 20 s connect + 20 s read =
+# 40 s worst case PER CALL, i.e. an ~80 s teardown, not the 40 s the markers quote. There
+# are no retries to multiply that by: requests' HTTPAdapter defaults to max_retries=0.
+#
+# The split is asymmetric on purpose. Connect is a loopback TCP handshake to a QEMU
+# hostfwd port — it is either immediate or never, so 5 s is already far past generous.
+# The READ is the phase that can legitimately take tens of seconds, because /settings
+# serialises ~50 NVS-backed fields under emulated-flash load (see the note in pytest.ini);
+# 15 s covers that without letting one stalled response eat a whole item budget.
+#
+# Resulting ceilings, which the @pytest.mark.timeout comments across the suite quote:
+#   per call : 0.1 s (_DelayedSession.DELAY_S) + 5 s connect + 15 s read = 20.1 s
+#   teardown : 2 ports x 20.1 s + _RS485_RESTORE_SETTLE_S = 41.2 s  ("45 s allowance")
+_RS485_HTTP_TIMEOUT = (5, 15)
+
+# Settle window after the last restore POST — see the barrier note at the end of
+# _restore_rs485_settings for why a bounded sleep and not another request.
+_RS485_RESTORE_SETTLE_S = 1.0
+
+
+@pytest.fixture(scope="session")
+def _rs485_session_baseline(api):
+    """Capture the whitelisted rs485_1/rs485_2 fields ONCE for the whole session.
+
+    Deliberately session-scoped, not per-module. Two reasons:
+
+    1. Cost. A per-module snapshot meant one GET /settings per module entry — 52 of them
+       in a full run (50 test files, plus one extra entry for each file whose items are
+       split across groups by pytest_collection_modifyitems: today 00_test_heap_session.py
+       and 47_test_io_indication.py) — each charged to that module's FIRST test item,
+       including modules whose first test runs a 20-30 s pytest-timeout budget. Capturing
+       once removes the GET from every module's setup phase; only the teardown POSTs
+       remain (see _RS485_HTTP_TIMEOUT), and those land in the LAST item instead.
+
+    2. Semantics. Restoring to one fixed suite baseline means no module can inherit
+       another module's rs485 state. A per-module snapshot did the opposite: it faithfully
+       preserved whatever the previous module leaked, so contamination still propagated —
+       it merely stopped growing within a file.
+
+    Honest caveat: NVS persists across suite runs, so this baseline is whatever the
+    PREVIOUS run left behind, not necessarily the firmware default. That is still a strict
+    improvement (every module converges on one state instead of drifting through the run),
+    but it does not by itself guarantee that state is the factory one. _RS485_SAFE_DEFAULTS
+    plugs the one case where inheriting the previous run would be actively
+    self-perpetuating rather than merely imprecise — see the comment on that dict.
+
+    Returns a dict {"rs485_N": {field: value, ...}} ready to hand to POST /settings,
+    or {} when nothing usable could be captured (in which case it warns).
+    """
+    saved = {}
+    try:
+        # The underlying session, not api.get_settings(), so the timeout is ours.
+        resp = api.session.get(f"{api.base_url}/settings", timeout=_RS485_HTTP_TIMEOUT)
+        status = resp.status_code
+        before = resp.json()
+    except Exception as exc:  # noqa: BLE001 - the snapshot is best-effort by design
+        warnings.warn(
+            f"_rs485_session_baseline: could not snapshot settings ({exc!r}); rs485 "
+            f"settings will NOT be restored between test modules for this whole run.",
+            stacklevel=1,
+        )
+        return saved
+
+    # The status code is carried into every warning below on purpose. A 401 or a 500 still
+    # answers with a JSON OBJECT, so it sails past the isinstance() check and lands in the
+    # "carried no rs485_1/rs485_2" branch — which, without the code, reads like a firmware
+    # that stopped reporting the ports rather than a request that was never authorised.
+    # 33_test_auth_settings.py deliberately evicts the api fixture's own session from the
+    # auth ring, so a 401 envelope is a realistic body here.
+    if not isinstance(before, dict):
+        # Warn rather than degrade silently: this is exactly the case where contamination
+        # is most likely.
+        warnings.warn(
+            f"_rs485_session_baseline: GET /settings did not return a JSON object "
+            f"(HTTP {status}, body={before!r}); rs485 settings will NOT be restored "
+            f"between test modules for this whole run.",
+            stacklevel=1,
+        )
+        return saved
+
+    for port in ("rs485_1", "rs485_2"):
+        port_settings = before.get(port)
+        if not isinstance(port_settings, dict):
+            continue  # key absent (older firmware / error body) — nothing to restore
+        # _RS485_SAFE_DEFAULTS overrides the captured value for the fields we refuse to
+        # inherit from NVS; everything else is written back verbatim. Still gated on the
+        # key being present in the response, so a firmware that does not report a field
+        # never gets one invented for it. .get() is safe for a False default — it
+        # distinguishes a missing key from a falsy value.
+        fields = {}
+        for key in _RS485_RESTORE_KEYS:
+            if key in port_settings:
+                fields[key] = _RS485_SAFE_DEFAULTS.get(key, port_settings[key])
+        if fields:
+            saved[port] = fields
+
+    if not saved:
+        warnings.warn(
+            f"_rs485_session_baseline: GET /settings carried no rs485_1/rs485_2 object "
+            f"with any of {_RS485_RESTORE_KEYS} (HTTP {status}, body={before!r}); rs485 "
+            f"settings will NOT be restored between test modules for this whole run.",
+            stacklevel=1,
+        )
+    return saved
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_rs485_settings(_rs485_session_baseline, api, request):
+    """Write the session rs485 baseline back after every test module. Teardown only.
+
+    Why this exists (not just what it does):
+
+    Nearly every test file has a module-scoped `_baseline` fixture that writes
+    persistent NVS settings on the device, and almost none of them undo it. Because
+    the whole suite runs against ONE long-lived QEMU instance without a reboot, every
+    such write leaks forward into every later file, and the later file's failure looks
+    like a firmware bug rather than contamination from a file it never mentions.
+
+    That is not hypothetical. 12_test_sniffer_ws.py sets rs485_1.tx_disabled=True
+    (required for the QEMU sniffer). With no teardown it leaked into
+    13_test_ports.py::test_clock_out_keeps_rs485_2_de_low: bringing port 1 up calls
+    serial_set_tx_disabled(true), which drives the DE GPIO LOW instead of letting it
+    idle HIGH. That was misdiagnosed as a firmware regression for weeks. The currently
+    exposed victim of the same class is
+    44_test_io_state_bus.py:69::test_rs485_direction_pins_idle_high, which asserts
+    exactly the same "DE idles HIGH" property and is equally defenceless against any
+    earlier file leaving tx_disabled set.
+
+    Fixing each `_baseline` one at a time only moves the next leak; this fixture kills
+    the class. pytest sets a conftest-level fixture up before a test module's own
+    same-scope autouse fixture and tears it down after, so this brackets every
+    `_baseline` in the suite regardless of what that `_baseline` does.
+
+    It has NO setup body on purpose — the snapshot lives in the session-scoped
+    _rs485_session_baseline fixture, so nothing here is charged to a module's first test.
+
+    Scope is deliberately narrow — only the two rs485_N objects, only the serial fields
+    listed in _RS485_RESTORE_KEYS. Top-level settings are never touched:
+    wifi_perm_disable is a one-way latch on real hardware, `pass` comes back in
+    plaintext, and web_port always participates in collision validation.
+
+    Note: any file whose items are split across groups by pytest_collection_modifyitems
+    enters module scope more than once, so this fixture simply fires more than once for
+    that file. Harmless. Today that is 00_test_heap_session.py (its heap_baseline and
+    heap_final items are moved to the two ends of the run, around everything else) and
+    47_test_io_indication.py (only test_factory_reset_long_press is @pytest.mark.reboot,
+    so it joins the deferred reboot group while the file's other two items stay in the
+    body).
+    """
+    yield
+
+    # One POST PER PORT, never a single combined write. validate_rs485_settings()
+    # (main/settings_manager.c:565-620) returns false on the FIRST invalid field and the
+    # whole request is then rejected, so one bad legacy value in rs485_2 would silently
+    # abandon the rs485_1 restore too. Separate requests keep the two independent, and
+    # each failure is reported on its own.
+    restored_any = False
+    for port, fields in _rs485_session_baseline.items():
+        # Teardown must WARN, never raise: it runs after the module's tests, so an
+        # exception raised here would displace whatever real failure came before it.
+        try:
+            # The underlying session, not api.update_settings(), so the timeout is ours.
+            resp = api.session.post(f"{api.base_url}/settings", json={port: fields},
+                                    timeout=_RS485_HTTP_TIMEOUT)
+            # Body parsing kept OUT of the outer except: a non-JSON body means the request
+            # itself SUCCEEDED and answered with something unexpected, which is a different
+            # diagnosis from "request failed" and must not be reported as one.
+            try:
+                body = resp.json()
+            except ValueError:
+                body = None
+            # A REJECTED settings write answers HTTP 200 with {"success": false, ...}
+            # (settings_manager.c:849-855 returns ESP_OK so the HTTP layer can send the
+            # error JSON), so the status code alone proves nothing — the body must be
+            # checked. isinstance() before .get(): a JSON list or scalar has no .get, and
+            # the AttributeError would otherwise be swallowed by the outer except and
+            # misreported as a failed request. `is True`, not `is not False`: the whole
+            # point of this line is that the status code cannot be trusted, and a body
+            # with no "success" key at all is not a settings response the firmware
+            # produced on its happy path.
+            ok = (resp.status_code == 200 and isinstance(body, dict)
+                  and body.get("success") is True)
+            detail = f"HTTP {resp.status_code}, body={body!r}"
+        except Exception as exc:  # noqa: BLE001 - never let teardown mask a test failure
+            ok = False
+            detail = f"request failed: {exc!r}"
+        if ok:
+            restored_any = True
+        else:
+            warnings.warn(
+                f"_restore_rs485_settings: failed to restore {port} after "
+                f"{request.node.name} ({detail}); settings {fields} may leak into later "
+                f"test files.",
+                stacklevel=1,
+            )
+
+    if restored_any:
+        # Barrier. When a restore genuinely CHANGES a line parameter — i.e. exactly in the
+        # modules this fixture exists for — port_manager_check_settings_changed() returns
+        # true and settings_update() (main/settings_update.c:442) spawns
+        # settings_update_task, which releases and re-inits the port AFTER the POST
+        # response has already been sent. Without a pause here the next module's first test
+        # can start mid-re-init.
+        #
+        # Only the LAST POST is exposed. settings_update() self-synchronises on the NEXT
+        # POST /settings (settings_update.c:368 spins while update_task_handle != NULL), so
+        # the rs485_2 write already waits out the task the rs485_1 write spawned, and every
+        # module with its own POST-based `_baseline` waits out ours. The modules that do not
+        # are the ones that open a raw TCP/UART socket first — 13, 18, 43, 44-48 — and
+        # 44:69::test_rs485_direction_pins_idle_high, one of the two tests this fixture was
+        # written to protect, is among them.
+        #
+        # A bounded sleep, deliberately, and NOT a GET /info: /info would prove nothing.
+        # It is answered by the httpd task, which the rs485 flags never release, and its
+        # port fields come from port_manager_get_mode() (port_manager.c:833) and
+        # port_manager_get_cache() (:980), both plain unlocked reads of pm_ctx — so it
+        # returns immediately and happily reports a port that is mid-re-init. Nor would
+        # polling help: neither field changes across a re-init, so there is nothing to
+        # poll for. The only request that is a real barrier is another POST
+        # /settings, and a third bounded call would push the teardown ceiling from 41.2 s
+        # to 61.3 s, past the 45 s allowance every @pytest.mark.timeout comment in the
+        # suite quotes. 1 s is the same settle window the suite already uses for a port
+        # rebind (e.g. 20/31's cache fixtures) and comfortably covers the "few hundred
+        # milliseconds" the release->acquire window is documented to take
+        # (settings_update.c:231-244).
+        time.sleep(_RS485_RESTORE_SETTLE_S)
+
+
 @pytest.fixture(autouse=True)
 def _uart_leak_guard(request):
     """Diagnostic-only guard: warn if a test left a QEMU UART socket leaked.

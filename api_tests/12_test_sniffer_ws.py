@@ -28,18 +28,14 @@ from packet_injector import PacketInjector
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
-    # Snapshot the rs485_1 fields this fixture clobbers so they can be restored on
-    # teardown. This fixture sets tx_disabled=True (a persistent NVS setting); with
-    # no teardown it leaked into every later test file. In particular it drove
-    # 13_test_ports.py::test_clock_out_keeps_rs485_2_de_low to fail intermittently
-    # in the full suite: with tx_disabled=True still set, bringing port 1 up in
-    # tcp_bridge mode calls serial_set_tx_disabled(true), which drives GPIO4 LOW,
-    # so the DE line no longer idles HIGH. Restoring on teardown removes this whole
-    # class of cross-file contamination.
-    _CLOBBERED = ("tx_disabled", "baudrate", "stopbits", "parity", "databits")
-    before = api.get_settings().json().get("rs485_1", {})
-    saved = {k: before[k] for k in _CLOBBERED if k in before}
-
+    # This fixture sets tx_disabled=True, a PERSISTENT NVS setting. With no teardown
+    # it used to leak into every later test file — most visibly into
+    # 13_test_ports.py::test_clock_out_keeps_rs485_2_de_low, where bringing port 1 up
+    # calls serial_set_tx_disabled(true), drives GPIO4 LOW and stops the DE line from
+    # idling HIGH. The restore now lives in conftest.py::_restore_rs485_settings,
+    # which brackets every module in the suite, so no local snapshot/restore is needed
+    # here (and a local one is worse: a refused write returns HTTP 200 with
+    # success:false, not an exception, so a try/except around it hides nothing useful).
     resp = api.update_settings({
         "rs485_1": {
             "tx_disabled": True,    # required for QEMU sniffer mode (commit 9c8fd67)
@@ -54,16 +50,6 @@ def _baseline(api):
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
 
     yield
-
-    # Restore the clobbered rs485_1 fields so this module-scoped NVS mutation does
-    # not leak into later test files. Default tx_disabled back to False even if the
-    # snapshot came back empty, since False is the normal (DE idles HIGH) state.
-    restore = dict(saved)
-    restore.setdefault("tx_disabled", False)
-    try:
-        api.update_settings({"rs485_1": restore})
-    except Exception:
-        pass
 
 
 @pytest.mark.timeout(180)
