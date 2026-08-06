@@ -1206,14 +1206,19 @@ def test_port2_cache_feed_populates_pool(api):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(180)
-def test_dual_port_merge_most_recent_wins_and_pool_survival(api):
-    """Port-merged pool semantics with the overlay on BOTH ports:
+def test_cache_single_port_takeover_moves_and_clears(api):
+    """Single-port cache overlay: enabling it on a second port TAKES OVER and CLEARS.
 
-    DPM-02 most-recent-wins: same (slave, type, addr) on port 1 then port 2 with a
-           DIFFERENT value -> ONE entry, value = the port-2 (most recent) one.
-    DPM-03 coexistence: different addresses on each port both live in the one pool.
-    DPM-04 survival: after disabling the overlay on port 1 ONLY, fresh port-2
-           traffic still updates the live pool (pool alive while >=1 port wants it).
+    The cache is single-port by design (review #51): the overlay lives on exactly
+    one port. Enabling it on another port hands the overlay over from the previous
+    one and WIPES the pool (firmware: cache_move_locked() in
+    main/bridge/port_manager.c logs "taking the cache overlay over from port N —
+    the cache is single-port (review #51)" then cache_multimaster_clear()). The
+    lookup is port-blind (slave_id, type, address only). This test verifies that
+    real contract in both directions.
+
+    (Rewritten from the former test_dual_port_merge_most_recent_wins_and_pool_survival,
+    which asserted a port-merged pool — the architecture rejected at review #51.)
     """
     _require_uart(1)
     _require_uart(2)
@@ -1230,94 +1235,85 @@ def test_dual_port_merge_most_recent_wins_and_pool_survival(api):
         resp = api.update_settings({"cache_value_timeout_s": 60})
         assert resp.status_code == 200, f"set cache_value_timeout_s failed: {resp.status_code}"
 
-        # Both ports passive with the cache overlay enabled -> shared pool, two
-        # ports want it.
+        # Both ports passive; enable the overlay on PORT 1 ONLY (single-port).
         for p in (1, 2):
             resp = api.set_port_mode(p, "passive")
             assert resp.status_code == 200, f"set port {p} passive failed: {resp.status_code}"
-        for p in (1, 2):
-            resp = api.set_port_cache(p, True)
-            assert resp.status_code == 200, f"enable cache overlay on port {p} failed: {resp.status_code}"
+        resp = api.set_port_cache(1, True)
+        assert resp.status_code == 200, f"enable cache overlay on port 1 failed: {resp.status_code}"
         time.sleep(0.3)
 
-        # --- DPM-02: most-recent-wins -----------------------------------------
-        # Observe the SAME (slave, holding, MERGE_ADDR) on port 1 first.  Wait for
-        # the pool to actually show the port-1 value before injecting the port-2
-        # observation, so ordering is established by cache state (not wall clock).
+        # --- Phase 1: port 1 owns the overlay, records an observation ---------
         _inject_fc03(1, MERGE_ADDR, MERGE_VALUE_P1)
         _wait_for_value(api, t="h", a=MERGE_ADDR, v=MERGE_VALUE_P1)
-        print(f"  DPM-02: port-1 observation recorded "
-              f"({MERGE_ADDR}=0x{MERGE_VALUE_P1:04X})")
+        print(f"  port-1 observation recorded ({MERGE_ADDR}=0x{MERGE_VALUE_P1:04X})")
 
-        # Now observe the SAME address on port 2 with a DIFFERENT value.  Because
-        # the pool is port-merged with most-recent-wins, this overwrites the single
-        # entry.
+        # --- Phase 2: enabling on port 2 TAKES OVER and CLEARS the pool -------
+        resp = api.set_port_cache(2, True)
+        assert resp.status_code == 200, f"enable cache overlay on port 2 failed: {resp.status_code}"
+        time.sleep(0.5)
+
+        # The overlay is never torn down during the move (one port always wants it).
+        st = api.get_cache_status()
+        assert st.status_code == 200, f"GET /cache/status failed: {st.status_code}"
+        assert st.json().get("enabled") is True, (
+            "cache reported disabled after moving the overlay from port 1 to port 2; "
+            "it must stay enabled throughout a single-port takeover"
+        )
+        # The port-1 entry must be GONE — the move wiped the pool.
+        gone = _find_entry(api, t="h", a=MERGE_ADDR)
+        assert gone is None, (
+            f"port-1 entry survived the takeover to port 2, but the move clears the "
+            f"single-port pool (review #51): {gone!r}"
+        )
+        print("✓ takeover port1→port2: overlay stayed enabled, pool cleared "
+              "(port-1 entry gone)")
+
+        # --- Phase 3: port 2 now owns the overlay; its traffic is recorded ----
         _inject_fc03(2, MERGE_ADDR, MERGE_VALUE_P2)
-        merged = _wait_for_value(api, t="h", a=MERGE_ADDR, v=MERGE_VALUE_P2)
-
-        # There must be exactly ONE entry for this (slave, type, addr) — the pool
-        # is port-merged, so the two observations did not create two entries.
+        owned = _wait_for_value(api, t="h", a=MERGE_ADDR, v=MERGE_VALUE_P2)
         rows = api.get_cache_json().json().get("d", [])
         same_key = [
             r for r in rows
             if r.get("s") == DPM_SLAVE_ID and r.get("t") == "h" and r.get("a") == MERGE_ADDR
         ]
         assert len(same_key) == 1, (
-            f"port-merged pool must hold exactly ONE entry for "
+            f"single-port pool must hold exactly ONE entry for "
             f"(slave={DPM_SLAVE_ID}, holding, addr={MERGE_ADDR}); found {len(same_key)}: {same_key!r}"
         )
-        assert merged["v"] == MERGE_VALUE_P2, (
-            f"most-recent-wins violated: entry value 0x{merged['v']:04X}, "
-            f"expected the port-2 (most recent) value 0x{MERGE_VALUE_P2:04X}"
+        assert owned["v"] == MERGE_VALUE_P2, (
+            f"port-2 value not recorded after takeover: entry value 0x{owned['v']:04X}, "
+            f"expected 0x{MERGE_VALUE_P2:04X}"
         )
-        print(f"✓ DPM-02 most-recent-wins: one merged entry {MERGE_ADDR}="
-              f"0x{merged['v']:04X} (port-2 value wins over port-1 0x{MERGE_VALUE_P1:04X})")
+        print(f"✓ port 2 owns the overlay: {MERGE_ADDR}=0x{owned['v']:04X} recorded")
 
-        # --- DPM-03: coexistence of different addresses across ports ----------
+        # --- Phase 4: port 1 no longer feeds the pool (overlay is off there) ---
         _inject_fc03(1, COEXIST_ADDR_P1, COEXIST_VALUE_P1)
-        _inject_fc03(2, COEXIST_ADDR_P2, COEXIST_VALUE_P2)
-        e_p1 = _wait_for_value(api, t="h", a=COEXIST_ADDR_P1, v=COEXIST_VALUE_P1)
-        e_p2 = _wait_for_value(api, t="h", a=COEXIST_ADDR_P2, v=COEXIST_VALUE_P2)
-        assert e_p1["v"] == COEXIST_VALUE_P1 and e_p2["v"] == COEXIST_VALUE_P2, (
-            "different-address coexistence failed: "
-            f"addr {COEXIST_ADDR_P1}=0x{e_p1['v']:04X} (port 1), "
-            f"addr {COEXIST_ADDR_P2}=0x{e_p2['v']:04X} (port 2)"
+        time.sleep(2.0)  # bounded wait — this observation must NOT be recorded
+        leaked = _find_entry(api, t="h", a=COEXIST_ADDR_P1)
+        assert leaked is None, (
+            f"port-1 traffic was recorded although the overlay moved to port 2: "
+            f"{leaked!r} (port 1 no longer feeds the single-port pool)"
         )
-        print(f"✓ DPM-03 coexistence: {COEXIST_ADDR_P1}=0x{e_p1['v']:04X} (port 1) and "
-              f"{COEXIST_ADDR_P2}=0x{e_p2['v']:04X} (port 2) both present")
+        print(f"✓ port-1 traffic ignored after takeover (addr {COEXIST_ADDR_P1} absent)")
 
-        # --- DPM-04: shared pool survives port 1 leaving ----------------------
-        # Disable the overlay on PORT 1 ONLY.  Port 2 still wants the pool, so it
-        # must NOT be torn down: the previously merged entries remain AND new
-        # port-2 traffic still updates the live pool.
-        resp = api.set_port_cache(1, False)
-        assert resp.status_code == 200, f"disable cache overlay on port 1 failed: {resp.status_code}"
+        # --- Phase 5: hand the overlay BACK to port 1 -> clears again ---------
+        resp = api.set_port_cache(1, True)
+        assert resp.status_code == 200, f"re-enable cache overlay on port 1 failed: {resp.status_code}"
         time.sleep(0.5)
-
-        # Cache must still be reported enabled (port 2 keeps the pool alive).
-        st = api.get_cache_status()
-        assert st.status_code == 200, f"GET /cache/status failed: {st.status_code}"
-        assert st.json().get("enabled") is True, (
-            "shared pool was torn down after disabling only port 1, but port 2 "
-            "still has the overlay enabled — pool must stay alive while >=1 port wants it"
+        cleared = _find_entry(api, t="h", a=MERGE_ADDR)
+        assert cleared is None, (
+            f"port-2 entry survived handing the overlay back to port 1: {cleared!r} "
+            f"(the reverse move must clear the pool too)"
         )
-
-        # The merged entry from DPM-02 must still be present (pool not cleared).
-        survivor = _find_entry(api, t="h", a=MERGE_ADDR)
-        assert survivor is not None and survivor.get("v") == MERGE_VALUE_P2, (
-            "merged pool entry disappeared after disabling only port 1: "
-            f"{survivor!r} (pool must survive while port 2 wants it)"
-        )
-
-        # Fresh port-2 traffic must still update the live pool.
-        _inject_fc03(2, SURVIVE_ADDR, SURVIVE_VALUE)
+        _inject_fc03(1, SURVIVE_ADDR, SURVIVE_VALUE)
         surv = _wait_for_value(api, t="h", a=SURVIVE_ADDR, v=SURVIVE_VALUE)
         assert surv["v"] == SURVIVE_VALUE, (
-            "port-2 traffic did not update the pool after port 1 left the overlay: "
+            "port-1 traffic did not update the pool after the overlay returned to it: "
             f"addr {SURVIVE_ADDR} value=0x{surv['v']:04X}, expected 0x{SURVIVE_VALUE:04X}"
         )
-        print(f"✓ DPM-04 pool survival: after disabling port 1, port-2 traffic still "
-              f"updates the pool ({SURVIVE_ADDR}=0x{surv['v']:04X}); status.enabled=True")
+        print(f"✓ takeover port2→port1: pool cleared again, port-1 traffic now recorded "
+              f"({SURVIVE_ADDR}=0x{surv['v']:04X})")
 
     finally:
         for p in (1, 2):
