@@ -226,6 +226,50 @@ def _poll_tcp_connect(host: str, port: int, timeout: float = 5.0) -> bool:
     return False
 
 
+def _await_bridge_ready(host: str, port: int, hold: float = 0.5,
+                        settle: float = 0.4, timeout: float = 15.0) -> bool:
+    """Wait until a single-client bridge ADMITS and then FREES a connection.
+
+    _poll_tcp_connect() only proves the port bound for an instant, which is not
+    enough for a transparent bridge (server mode, max_connections == 1) under CPU
+    contention: the readiness probe's own connect()+close() occupies the single
+    slot, and the firmware may not have freed it (nor finished a still-pending
+    settings-update reconfiguration) by the time the test connects — so the test's
+    connection is rejected with "connection limit reached" or closed by a late port
+    deinit, the client sees EOF, and its serial->TCP bytes are dropped for lack of a
+    client (the got='' failures under load).
+
+    Confirm one connection is ADMITTED and held for `hold` seconds without an EOF
+    (an EOF means it was rejected by the cap or closed by a pending deinit), then
+    close it and wait `settle` for that slot to free before returning — so the
+    test's own connect lands on a free, stably-configured port. Kept light
+    (~hold+settle in the happy path) so it does not blow the tests' timeout budget.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3.0)
+        try:
+            sock.connect((host, port))
+        except OSError:
+            time.sleep(0.2)
+            continue
+        admitted = False
+        try:
+            sock.settimeout(hold)
+            try:
+                admitted = sock.recv(1) != b''   # b'' => admitted then closed (cap/deinit)
+            except socket.timeout:
+                admitted = True                  # no EOF for `hold` => admitted & stable
+        finally:
+            sock.close()
+        if admitted:
+            time.sleep(settle)                   # let the just-closed slot free
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
                            bridge_port: int, modbus: bool, fake_value: int = 0x1234):
     """Factory: returns a pytest fixture that configures a gateway on the given port.
@@ -305,10 +349,13 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
             resp = api.set_port_mode(port_num, "tcp_bridge")
             assert resp.status_code == 200, \
                 f"POST /ports/{port_num}/mode tcp_bridge failed: {resp.status_code}"
-            # Poll instead of fixed sleep: wait for the gateway TCP port to bind
-            ready = _poll_tcp_connect("127.0.0.1", tcp_host_port, timeout=5.0)
+            # Wait for the gateway to reliably admit AND free a connection, not just
+            # bind for an instant: under load a single-slot bridge can still be
+            # reconfiguring or holding the readiness probe's slot, which would reject
+            # or close the test's connection and drop its serial->TCP bytes.
+            ready = _await_bridge_ready("127.0.0.1", tcp_host_port, timeout=20.0)
             assert ready, (
-                f"Gateway did not start listening on host port {tcp_host_port} within 5 s"
+                f"Gateway did not become stably ready on host port {tcp_host_port} within 20 s"
             )
 
             # Step 6: start RTU slave (only for modbus=True)

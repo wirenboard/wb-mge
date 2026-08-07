@@ -30,7 +30,7 @@ import time
 
 import pytest
 
-from conftest import build_gateway_fixture, _poll_tcp_connect
+from conftest import build_gateway_fixture, _poll_tcp_connect, _await_bridge_ready
 from packet_injector import (
     PacketInjector,
     inject_bytes,
@@ -107,8 +107,8 @@ def transparent_bridge_p2(api):
         # Step 5: switch to tcp_bridge mode and wait for the port to open
         resp = api.set_port_mode(2, "tcp_bridge")
         assert resp.status_code == 200, f"set_port_mode(2, tcp_bridge) failed: {resp.status_code}"
-        ready = _poll_tcp_connect("127.0.0.1", TRANSPARENT_PORT2_HOST_PORT, timeout=5.0)
-        assert ready, f"Port {TRANSPARENT_PORT2_HOST_PORT} not ready within 5 s"
+        ready = _await_bridge_ready("127.0.0.1", TRANSPARENT_PORT2_HOST_PORT, timeout=20.0)
+        assert ready, f"Port {TRANSPARENT_PORT2_HOST_PORT} not stably ready within 20 s"
 
         yield None
 
@@ -638,7 +638,7 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(60)
 def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
     """1024-byte payload with embedded null bytes is forwarded correctly.
 
@@ -781,7 +781,7 @@ def test_transparent_client_mode_reconnect(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(60)
 def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
     """UART bytes are silently dropped when no TCP client is connected; firmware stays alive.
 
@@ -812,7 +812,7 @@ def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(60)
 def test_transparent_tx_disabled_port2(api):
     """tx_disabled=True on port 2 prevents firmware from forwarding TCP→UART2.
 
@@ -856,7 +856,7 @@ def test_transparent_tx_disabled_port2(api):
         resp = api.set_port_mode(2, "tcp_bridge")
         assert resp.status_code == 200, f"Failed to activate tcp_bridge on port 2"
 
-        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=5.0)
+        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=20.0)
         if not ready:
             pytest.skip(f"Port 50503 not ready after 5 s — UART2 chardev may be unavailable")
 
@@ -1456,7 +1456,7 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
         # traffic and verify packets arrive.
         resp = api.set_port_mode(1, "tcp_bridge")
         assert resp.status_code == 200, f"Failed to set tcp_bridge mode: {resp.status_code}"
-        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
+        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
         assert ready, "Port 50504 not ready after switching to tcp_bridge"
 
         probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
@@ -1486,7 +1486,7 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
         stop_ping = None
 
         # Phase 2: transport is already tcp_bridge; confirm the data path is ready.
-        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
+        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
         assert ready, "Port 50504 not ready after stopping the WS sniffer overlay"
 
         # Verify data path with echo round-trip
@@ -1603,7 +1603,7 @@ def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
         # ----------------------------------------------------------------
         resp = api.set_port_mode(1, "tcp_bridge")
         assert resp.status_code == 200, f"Phase 1: Failed to set tcp_bridge: {resp.status_code}"
-        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
+        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
         assert ready, "Phase 1: Port 50504 not ready"
 
         echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
@@ -1657,7 +1657,7 @@ def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
         # ----------------------------------------------------------------
         # Phase 3: tcp_bridge round-trip still works after the overlay is gone
         # ----------------------------------------------------------------
-        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
+        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
         assert ready, "Phase 3: Port 50504 not ready after stopping the WS sniffer overlay"
 
         echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
