@@ -332,10 +332,16 @@ def test_transparent_basic_roundtrip(transparent_bridge):
         )
         print(f"✓ Transparent bridge round-trip: {len(test_data)} bytes echoed correctly")
     finally:
-        if tcp_sock is not None:
-            tcp_sock.close()
+        # Stop the echo thread FIRST — that is the invariant this whole rework
+        # protects (a leaked daemon thread wedges the single-client UART chardev).
+        # Only then close the socket, wrapped so a close error cannot skip the stop.
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+        if tcp_sock is not None:
+            try:
+                tcp_sock.close()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -393,10 +399,16 @@ def test_transparent_zero_bytes_edge_case(transparent_bridge):
         )
         print(f"✓ Zero-byte edge case: connection stable, {len(received)} bytes echoed")
     finally:
-        if tcp_sock is not None:
-            tcp_sock.close()
+        # Stop the echo thread FIRST — that is the invariant this whole rework
+        # protects (a leaked daemon thread wedges the single-client UART chardev).
+        # Only then close the socket, wrapped so a close error cannot skip the stop.
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+        if tcp_sock is not None:
+            try:
+                tcp_sock.close()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -577,12 +589,15 @@ def test_transparent_single_client_cap_block_new(transparent_bridge):
         )
         print("✓ Single-client cap (C7): A retained and served, B rejected")
     finally:
-        if sock_a is not None:
-            sock_a.close()
-        if sock_b is not None:
-            sock_b.close()
+        # Stop the echo thread FIRST (the invariant), then close the sockets, wrapped.
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+        for _s in (sock_a, sock_b):
+            if _s is not None:
+                try:
+                    _s.close()
+                except OSError:
+                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -624,12 +639,16 @@ def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
     probe.close()
 
     # Drive the UART chardev by hand: no echo thread, this test needs the serial
-    # side to originate traffic rather than reflect it.
-    uart_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    uart_sock.settimeout(5.0)
-    tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
-    tcp_sock.settimeout(5.0)
+    # side to originate traffic rather than reflect it. Both sockets are created
+    # inside the try (and _connect_ready_bridge, which can raise, with them) so the
+    # finally always runs and never depends on statement order.
+    uart_sock = None
+    tcp_sock = None
     try:
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
+        tcp_sock.settimeout(5.0)
+        uart_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        uart_sock.settimeout(5.0)
         uart_sock.connect((GATEWAY_HOST, UART1_TCP_PORT))
 
         # 1. Client connects and stays completely silent.
@@ -657,5 +676,7 @@ def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
         )
         print(f"✓ B3: serial->TCP delivered {len(test_data)} bytes to a silent client")
     finally:
-        tcp_sock.close()
-        uart_sock.close()
+        if tcp_sock is not None:
+            tcp_sock.close()
+        if uart_sock is not None:
+            uart_sock.close()

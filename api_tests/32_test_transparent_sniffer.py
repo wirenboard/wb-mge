@@ -544,10 +544,15 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
         )
         print(f"✓ Port 2 transparent bridge round-trip: {len(test_data)} bytes echoed correctly")
     finally:
-        if tcp_sock is not None:
-            tcp_sock.close()
+        # Stop the echo thread FIRST (the invariant: a leaked daemon thread wedges
+        # the single-client UART chardev), then close the socket, wrapped.
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+        if tcp_sock is not None:
+            try:
+                tcp_sock.close()
+            except OSError:
+                pass
 
 
 # ===========================================================================
@@ -693,10 +698,15 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
         )
         print(f"✓ Large payload ({len(payload)} bytes, 5 nulls) forwarded correctly")
     finally:
-        if tcp_sock is not None:
-            tcp_sock.close()
+        # Stop the echo thread FIRST (the invariant: a leaked daemon thread wedges
+        # the single-client UART chardev), then close the socket, wrapped.
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+        if tcp_sock is not None:
+            try:
+                tcp_sock.close()
+            except OSError:
+                pass
 
 
 # ===========================================================================
@@ -796,11 +806,12 @@ def test_transparent_client_mode_reconnect(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 30 s, was 20: this test does NOT connect to the bridge (it verifies bytes are
-# dropped when there is no client), so there is no _connect_ready_bridge admission
-# wait — the only load-sensitive part is the transparent_bridge_p1 fixture's
-# settings-churn setup. 20 s was enough on a quiet node; 30 s adds jitter margin.
-@pytest.mark.timeout(30)
+# 60 s, was 20: this test does NOT connect to the bridge (no _connect_ready_bridge
+# admission wait), but it shares the transparent_bridge_p1 fixture, whose several
+# settings writes each trigger an async port deinit/reinit — GET/POST /settings can
+# take tens of seconds under QEMU (pytest.ini says so; api_client client timeout is
+# 30 s), so the setup alone can eat most of a small budget. Sized like its siblings.
+@pytest.mark.timeout(60)
 def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
     """UART bytes are silently dropped when no TCP client is connected; firmware stays alive.
 
@@ -831,10 +842,13 @@ def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 40 s, was 20: this test does its own port-2 setup (disable, settings write,
-# tcp_bridge) and then one _connect_ready_bridge admission (up to 15 s under jitter)
-# before the tx-disabled check; under heavy load that does not fit in 20 s.
-@pytest.mark.timeout(40)
+# 60 s, was 20: sized from the CLIENT timeouts, not from admission. This test makes
+# get_settings + set_port_mode + update_settings + set_port_mode in the body (and
+# three more in the finally), each with a 30 s api_client timeout, and pytest.ini
+# notes GET/POST /settings 'can take tens of seconds' under QEMU. One slow-but-
+# successful update_settings (~25 s) + a _connect_ready_bridge admission (<=15 s)
+# alone exceeds 40 s, and pytest-timeout counts setup + call + teardown.
+@pytest.mark.timeout(60)
 def test_transparent_tx_disabled_port2(api):
     """tx_disabled=True on port 2 prevents firmware from forwarding TCP→UART2.
 

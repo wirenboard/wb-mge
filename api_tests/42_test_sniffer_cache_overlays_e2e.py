@@ -360,10 +360,12 @@ def _roundtrip_once(host, tcp_port, payload, timeout=8.0):
     wait and the receive wait, so three calls cost ~3*timeout at worst, not 3*15."""
     sock = _connect_ready_bridge(host, tcp_port, timeout=timeout)
     try:
-        # Short per-recv timeout so the loop honours `deadline` instead of overshooting
-        # it by a whole `timeout` on the last blocking recv.
-        sock.settimeout(min(0.5, timeout))
+        sock.settimeout(timeout)
         sock.sendall(payload)
+        # Short per-recv timeout AFTER the send, so the recv loop honours `deadline`
+        # instead of overshooting it by a whole `timeout` on the last blocking recv
+        # (and without narrowing the send window itself).
+        sock.settimeout(min(0.5, timeout))
         received = b""
         deadline = time.monotonic() + timeout
         while len(received) < len(payload) and time.monotonic() < deadline:

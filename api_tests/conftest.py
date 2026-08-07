@@ -227,7 +227,7 @@ def _poll_tcp_connect(host: str, port: int, timeout: float = 5.0) -> bool:
 
 
 def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
-                          timeout: float = 15.0):
+                          timeout: float = 15.0, max_attempts: int = 8):
     """Return an ADMITTED, still-open socket to a single-client transparent bridge.
 
     Why a plain connect() is not enough: against a QEMU user-net (slirp) hostfwd
@@ -252,34 +252,45 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
     consuming anything — the returned socket is byte-for-byte clean for the caller
     (important where a test connects to the bridge before the serial side speaks).
     """
+    # Bounded on TWO axes: `timeout` is the hard wall-clock deadline (every per-op
+    # timeout is clamped to the remaining budget so the whole call cannot overshoot
+    # it), and `max_attempts` caps the retries. On a rejected connection the FIN/RST
+    # comes back instantly, so without a cap + backoff this could spin ~timeout/0.2
+    # (~75) connect/close cycles on the single-slot bridge under contention — the very
+    # churn that ripples into neighbouring ports. Exponential backoff (0.2, 0.4, …
+    # capped at 1 s) keeps it to a handful of attempts; 6–8 probes settle a real port.
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    for attempt in range(max_attempts):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(3.0)
+        sock.settimeout(min(3.0, remaining))
+        rejected = False
         try:
             sock.connect((host, port))
-        except OSError:
-            sock.close()
-            time.sleep(0.2)
-            continue
-        try:
-            sock.settimeout(hold)
-            # MSG_PEEK: b'' => FIN (rejected/closed); data => up and already pushing
-            # (leave it in the buffer for the caller); neither within `hold` => admitted.
-            if sock.recv(1, socket.MSG_PEEK) == b'':
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 sock.close()
-                time.sleep(0.2)
-                continue
+                break
+            sock.settimeout(min(hold, remaining))
+            # MSG_PEEK: b'' => FIN (rejected/closed); data => up and already pushing
+            # (left in the buffer for the caller); neither within `hold` => admitted.
+            if sock.recv(1, socket.MSG_PEEK) == b'':
+                rejected = True
         except (socket.timeout, TimeoutError):
-            pass                                 # held with no EOF/RST => admitted
-        except OSError:                          # RST/ECONNRESET => rejected, retry
-            sock.close()
-            time.sleep(0.2)
-            continue
-        sock.settimeout(None)
-        return sock                              # admitted, open, byte-clean for the caller
+            pass                                 # held with no FIN/RST => admitted
+        except OSError:                          # connect refused / RST => retry
+            rejected = True
+        if not rejected:
+            sock.settimeout(None)
+            return sock                          # admitted, open, byte-clean for the caller
+        sock.close()
+        # exponential backoff, never past the deadline
+        time.sleep(min(0.2 * (2 ** attempt), 1.0, max(0.0, deadline - time.monotonic())))
     raise TimeoutError(
-        f"bridge on {host}:{port} did not admit a connection within {timeout} s"
+        f"bridge on {host}:{port} did not admit a connection within {timeout} s "
+        f"({max_attempts} attempts)"
     )
 
 
@@ -363,7 +374,7 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
             assert resp.status_code == 200, \
                 f"POST /ports/{port_num}/mode tcp_bridge failed: {resp.status_code}"
             # No bridge-readiness PROBE here, on purpose. The old _poll_tcp_connect was
-            # a slirp no-op (accepts host-side before the guest sees the SYN), and a
+            # a slirp no-op (accepts host-side before the guest sees the SYN), and
             # a held readiness probe churns the single client slot and, under
             # CI jitter, ripples into the shared single-client UART chardev — turning
             # unrelated tests into spurious "chardev unreachable" SKIPs. Readiness is

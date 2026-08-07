@@ -117,14 +117,30 @@ def test_tcp_server_deinit_completes_with_open_client(api):
         # rejected by the cap — a rejection the test never notices because it does
         # not read client_sock, leaving active_connections == 0 so deinit returns
         # instantly and the assert passes VACUOUSLY, exercising no regression.
-        # _connect_ready_bridge() returns the connection only after confirming it was
-        # not immediately rejected (no FIN/RST within its hold window), so client_sock
-        # is a real, non-cap-dropped connection and the deinit-with-open-client path is
-        # actually exercised. (Detection is negative — a backlog>1 listen means a
-        # connection can briefly sit accepted-at-TCP-but-not-yet-served; see the
-        # helper docstring for why that residue is acceptable here.)
+        # _connect_ready_bridge() returns a connection that was not immediately
+        # rejected (no FIN/RST within its hold window). But that admission check is
+        # NEGATIVE, and a backlog>1 listen can leave a connection queued-but-unserved,
+        # so we POSITIVELY confirm the firmware actually admitted exactly one client
+        # before deinit — otherwise this test could pass vacuously (active_connections
+        # == 0 -> instant deinit -> no regression exercised).
         client_sock = _connect_ready_bridge("127.0.0.1", 50504, timeout=15.0)
         client_sock.settimeout(5.0)
+
+        # Poll (not a bare assert): accept() can lag the TCP handshake under load, so
+        # give the firmware a few seconds to register the client. If it never reaches
+        # exactly one, the client was not truly admitted and the deinit-with-open-client
+        # regression would not be exercised — fail rather than pass vacuously.
+        conns = None
+        conn_deadline = time.monotonic() + 5.0
+        while time.monotonic() < conn_deadline:
+            conns = api.get_info().json().get("rs485_1", {}).get("server_connections_count")
+            if conns == 1:
+                break
+            time.sleep(0.2)
+        assert conns == 1, (
+            f"firmware must see exactly one admitted transparent client before deinit, "
+            f"got server_connections_count={conns!r} within 5 s"
+        )
 
         # Step 7: record the start time immediately before the deinit call.
         t_start = time.monotonic()
