@@ -16,7 +16,6 @@ indefinitely waiting for active_connections == 0.
 Run this test alone:
   pytest api_tests/36_test_tcp_server_deinit_hang.py --qemu --qemu-skip-build -s
 """
-import socket
 import time
 
 import pytest
@@ -118,8 +117,12 @@ def test_tcp_server_deinit_completes_with_open_client(api):
         # rejected by the cap — a rejection the test never notices because it does
         # not read client_sock, leaving active_connections == 0 so deinit returns
         # instantly and the assert passes VACUOUSLY, exercising no regression.
-        # _connect_ready_bridge() returns a socket only after the guest has actually
-        # admitted it (held open, no FIN/RST), so the client is real when we deinit.
+        # _connect_ready_bridge() returns the connection only after confirming it was
+        # not immediately rejected (no FIN/RST within its hold window), so client_sock
+        # is a real, non-cap-dropped connection and the deinit-with-open-client path is
+        # actually exercised. (Detection is negative — a backlog>1 listen means a
+        # connection can briefly sit accepted-at-TCP-but-not-yet-served; see the
+        # helper docstring for why that residue is acceptable here.)
         client_sock = _connect_ready_bridge("127.0.0.1", 50504, timeout=15.0)
         client_sock.settimeout(5.0)
 

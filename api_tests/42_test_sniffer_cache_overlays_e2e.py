@@ -349,17 +349,20 @@ class _UartEchoThread(threading.Thread):
         self._stop_event.set()
 
 
-def _roundtrip_once(host, tcp_port, payload, timeout=5.0):
+def _roundtrip_once(host, tcp_port, payload, timeout=8.0):
     """Open an ADMITTED TCP client to the transparent bridge, send `payload`, and
     return the bytes echoed back (via the UART echo thread). Caller asserts.
 
     Uses _connect_ready_bridge() rather than a bare connect(): TBC-02 calls this
     three times in a row on a single-slot bridge (toggling the cache between each),
     and a plain connect() would race the previous connection's slot-free under load
-    and get an empty round-trip (review point 3)."""
-    sock = _connect_ready_bridge(host, tcp_port, timeout=15.0)
-    sock.settimeout(timeout)
+    and get an empty round-trip (review point 3). `timeout` bounds BOTH the admission
+    wait and the receive wait, so three calls cost ~3*timeout at worst, not 3*15."""
+    sock = _connect_ready_bridge(host, tcp_port, timeout=timeout)
     try:
+        # Short per-recv timeout so the loop honours `deadline` instead of overshooting
+        # it by a whole `timeout` on the last blocking recv.
+        sock.settimeout(min(0.5, timeout))
         sock.sendall(payload)
         received = b""
         deadline = time.monotonic() + timeout
@@ -370,7 +373,7 @@ def _roundtrip_once(host, tcp_port, payload, timeout=5.0):
                     break
                 received += chunk
             except socket.timeout:
-                break
+                continue
         return received
     finally:
         try:

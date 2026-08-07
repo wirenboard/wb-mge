@@ -226,68 +226,31 @@ def _poll_tcp_connect(host: str, port: int, timeout: float = 5.0) -> bool:
     return False
 
 
-def _await_bridge_ready(host: str, port: int, hold: float = 0.5,
-                        settle: float = 0.4, timeout: float = 15.0) -> bool:
-    """Wait until a single-client bridge ADMITS a connection (boolean readiness).
-
-    Why the old _poll_tcp_connect() was not enough: against a QEMU user-net
-    (slirp) hostfwd port, slirp accept()s on the HOST before it forwards the SYN to
-    the guest (see the connection-limit test's note), so connect()+close() returns
-    True instantly regardless of firmware state — it never reaches the guest. This
-    helper actually reaches the guest. For a transparent bridge (server mode,
-    max_connections == 1) it confirms a connection is ADMITTED: held for `hold`
-    seconds with no EOF (FIN) or RST — either of which means it was rejected by the
-    cap or closed by a pending port deinit — then closes it and waits `settle`.
-
-    HEURISTIC, not a guarantee: the freed-slot postcondition is NOT verified;
-    `settle` is a sleep that NARROWS, but does not close, the handoff window between
-    this probe's close and the caller's own subsequent connect(). Callers that
-    connect-and-use should prefer _connect_ready_bridge(), which returns the
-    admitted socket and removes the handoff by construction. This boolean form
-    exists for fixtures, which yield and cannot hand a socket to the test.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(3.0)
-        try:
-            sock.connect((host, port))
-        except OSError:
-            sock.close()
-            time.sleep(0.2)
-            continue
-        admitted = False
-        try:
-            sock.settimeout(hold)
-            try:
-                admitted = sock.recv(1) != b''   # b'' => FIN: rejected/closed
-            except (socket.timeout, TimeoutError):
-                admitted = True                  # held for `hold` with no EOF/RST
-            except OSError:
-                admitted = False                 # RST/ECONNRESET => rejected, retry
-        finally:
-            sock.close()
-        if admitted:
-            time.sleep(settle)                   # heuristic: let the slot free
-            return True
-        time.sleep(0.2)
-    return False
-
-
 def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
                           timeout: float = 15.0):
-    """Return an ADMITTED, still-open socket to a single-client bridge.
+    """Return an ADMITTED, still-open socket to a single-client transparent bridge.
 
-    Preferred over _await_bridge_ready() wherever a test connects and then USES the
-    connection: there is no probe-close-then-reconnect handoff, so the single-slot
-    admit/free race cannot occur by construction (review point 4). Retries connect
-    until one is admitted — held `hold` seconds with no EOF (FIN) or RST — and
-    returns THAT open socket; the caller owns and closes it. Raises TimeoutError if
-    no connection is admitted within `timeout`.
+    Why a plain connect() is not enough: against a QEMU user-net (slirp) hostfwd
+    port, slirp accept()s on the HOST before it even forwards the SYN to the guest,
+    so connect() succeeds instantly regardless of firmware state — the old
+    _poll_tcp_connect readiness never reached the guest at all. This helper reaches
+    the guest: for a transparent bridge (server mode, max_connections == 1) it
+    confirms the connection was ADMITTED — no EOF (FIN) or RST within `hold` (either
+    means the cap rejected it or a pending deinit closed it) — and RETURNS THAT open
+    socket for the caller to use. Because the connection the test uses IS the one
+    whose admission was confirmed, there is no probe-close-then-reconnect handoff and
+    the single-slot race cannot occur by construction. Raises TimeoutError if no
+    connection is admitted within `timeout` — a real failure the caller surfaces as a
+    test FAILURE, never a skip.
 
-    On an idle bridge the admission check's recv() only ever times out (nothing is
-    consumed from the stream), so the returned socket is clean for the caller's
-    first send/recv.
+    Admission detection is NEGATIVE (absence of FIN/RST within `hold`). The firmware
+    listens with a backlog > 1, so lwIP completes the TCP handshake before the app
+    accept()s; a just-opened connection can sit briefly in the accept queue —
+    admitted at TCP level but not yet served — indistinguishable from a served one.
+    That residue is acceptable: the caller's own first send/recv exercises the real
+    path. The check uses MSG_PEEK, so it distinguishes FIN from data WITHOUT
+    consuming anything — the returned socket is byte-for-byte clean for the caller
+    (important where a test connects to the bridge before the serial side speaks).
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -301,11 +264,12 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
             continue
         try:
             sock.settimeout(hold)
-            if sock.recv(1) == b'':              # FIN: rejected by cap / closed by deinit
+            # MSG_PEEK: b'' => FIN (rejected/closed); data => up and already pushing
+            # (leave it in the buffer for the caller); neither within `hold` => admitted.
+            if sock.recv(1, socket.MSG_PEEK) == b'':
                 sock.close()
                 time.sleep(0.2)
                 continue
-            # Unexpected data on an idle probe: the port is clearly up; accept it.
         except (socket.timeout, TimeoutError):
             pass                                 # held with no EOF/RST => admitted
         except OSError:                          # RST/ECONNRESET => rejected, retry
@@ -313,7 +277,7 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
             time.sleep(0.2)
             continue
         sock.settimeout(None)
-        return sock                              # admitted, open, handed to the caller
+        return sock                              # admitted, open, byte-clean for the caller
     raise TimeoutError(
         f"bridge on {host}:{port} did not admit a connection within {timeout} s"
     )
@@ -400,7 +364,7 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
                 f"POST /ports/{port_num}/mode tcp_bridge failed: {resp.status_code}"
             # No bridge-readiness PROBE here, on purpose. The old _poll_tcp_connect was
             # a slirp no-op (accepts host-side before the guest sees the SYN), and a
-            # held probe (_await_bridge_ready) churns the single client slot and, under
+            # a held readiness probe churns the single client slot and, under
             # CI jitter, ripples into the shared single-client UART chardev — turning
             # unrelated tests into spurious "chardev unreachable" SKIPs. Readiness is
             # now established where it belongs: at the test's own connection, via

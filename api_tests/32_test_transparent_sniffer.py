@@ -529,9 +529,12 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
         "UART echo thread could not connect to UART2 chardev"
 
     test_data = bytes(range(16))  # 16 distinct bytes: 0x00..0x0F
-    tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=15.0)
-    tcp_sock.settimeout(5.0)
+    # _connect_ready_bridge() inside the try so a raise still stops the echo thread
+    # (a leaked echo thread wedges the single-client UART chardev -> spurious skips).
+    tcp_sock = None
     try:
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=15.0)
+        tcp_sock.settimeout(5.0)
         tcp_sock.sendall(test_data)
 
         received = _collect_echo(tcp_sock, len(test_data), timeout=5.0)
@@ -541,7 +544,8 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
         )
         print(f"✓ Port 2 transparent bridge round-trip: {len(test_data)} bytes echoed correctly")
     finally:
-        tcp_sock.close()
+        if tcp_sock is not None:
+            tcp_sock.close()
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
 
@@ -551,10 +555,11 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 30: the transparent_bridge_p1 fixture's readiness ceiling grew from a
-# 5 s _poll_tcp_connect to a 20 s _await_bridge_ready (which actually reaches the
-# guest), and this test also drives an RST + reconnect. 30 s no longer covers the
-# fixture setup plus the test under heavy load.
+# 60 s, was 30: the fixture no longer probes readiness (it is faster than HEAD now),
+# but this test opens TWO admitted connections — client_a via _connect_ready_bridge
+# (up to 15 s admission under jitter) and, after an RST, client_b (a tight 2 s budget
+# on purpose) — plus the fixture's settings-churn setup and two round-trips. 30 s does
+# not cover that under heavy load.
 @pytest.mark.timeout(60)
 def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
     """After an abrupt RST disconnect, a new client connects and is served.
@@ -607,10 +612,13 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
         # Wait for the firmware to process the RST and free the single-client slot
         time.sleep(0.2)
 
-        # Connect client_b. The connect() alone proves nothing: the block-new cap rejects
-        # a surplus client only AFTER accept(), so the TCP handshake completes regardless.
-        # The round-trip asserted below is what proves the RST released A's slot.
-        client_b = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
+        # Connect client_b with a TIGHT 2 s admission budget on purpose: the subject of
+        # this test is that the RST freed A's slot promptly. A firmware that frees the
+        # slot slowly (e.g. only after an 8 s timeout — a regression) must FAIL here, so
+        # client_b must NOT be given the generous 15 s that would paper over it. (The
+        # round-trip asserted below then proves the slot was truly released, not just
+        # that the TCP handshake completed — the block-new cap rejects only after accept.)
+        client_b = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=2.0)
         client_b.settimeout(5.0)
         time.sleep(0.05)
 
@@ -639,10 +647,10 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 20: under heavy load the transparent_bridge_p1 setup alone (several
-# settings writes, each an async port deinit/reinit, plus a ~20 s worst-case
-# _await_bridge_ready) can take tens of seconds before the test body even starts;
-# 20 s was blown by the fixture, not by the 1 KiB round-trip it guards.
+# 60 s, was 20: the transparent_bridge_p1 fixture's settings-churn setup (several
+# settings writes, each an async port deinit/reinit) plus a _connect_ready_bridge
+# admission (up to 15 s under jitter) can take tens of seconds before the 1 KiB
+# round-trip this test guards even starts; 20 s was blown by setup, not the payload.
 @pytest.mark.timeout(60)
 def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
     """1024-byte payload with embedded null bytes is forwarded correctly.
@@ -665,9 +673,11 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
     payload = bytes([i % 251 for i in range(1024)])
     assert payload.count(0) == 5, "Payload must contain exactly 5 null bytes at expected indices"
 
-    tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
-    tcp_sock.settimeout(5.0)
+    # _connect_ready_bridge() inside the try so a raise still stops the echo thread.
+    tcp_sock = None
     try:
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
+        tcp_sock.settimeout(5.0)
         # Send entire payload at once; firmware now forwards UART_DATA events immediately
         # without buffering, so burst load no longer causes RX overflow.
         tcp_sock.sendall(payload)
@@ -683,7 +693,8 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
         )
         print(f"✓ Large payload ({len(payload)} bytes, 5 nulls) forwarded correctly")
     finally:
-        tcp_sock.close()
+        if tcp_sock is not None:
+            tcp_sock.close()
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
 
@@ -785,11 +796,11 @@ def test_transparent_client_mode_reconnect(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 20: same reason as test_transparent_large_payload_with_nulls — the
-# transparent_bridge_p1 fixture's settings-churn setup plus a ~20 s worst-case
-# _await_bridge_ready readiness can eat most of a 20 s budget under contention
-# before this test's own logic runs.
-@pytest.mark.timeout(60)
+# 30 s, was 20: this test does NOT connect to the bridge (it verifies bytes are
+# dropped when there is no client), so there is no _connect_ready_bridge admission
+# wait — the only load-sensitive part is the transparent_bridge_p1 fixture's
+# settings-churn setup. 20 s was enough on a quiet node; 30 s adds jitter margin.
+@pytest.mark.timeout(30)
 def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
     """UART bytes are silently dropped when no TCP client is connected; firmware stays alive.
 
@@ -820,10 +831,10 @@ def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 20: this test does its own port-2 transparent setup (disable, settings
-# write, tcp_bridge, then a 20 s worst-case _await_bridge_ready readiness) before
-# the tx-disabled check; under heavy load that setup does not fit in 20 s.
-@pytest.mark.timeout(60)
+# 40 s, was 20: this test does its own port-2 setup (disable, settings write,
+# tcp_bridge) and then one _connect_ready_bridge admission (up to 15 s under jitter)
+# before the tx-disabled check; under heavy load that does not fit in 20 s.
+@pytest.mark.timeout(40)
 def test_transparent_tx_disabled_port2(api):
     """tx_disabled=True on port 2 prevents firmware from forwarding TCP→UART2.
 
@@ -1412,12 +1423,12 @@ def test_sniffer_ws_disconnect_firmware_stays_alive(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 90 s, was 40: this test now waits for readiness TWICE with _await_bridge_ready
-# (up to 20 s each under load — it actually reaches the guest, unlike the old
-# instantaneous _poll_tcp_connect), plus a mode switch and two round-trips. Worst
-# case ~55 s of real waits under heavy contention; 40 s turned that into a
-# pytest-timeout kill instead of an informative assert.
-@pytest.mark.timeout(90)
+# 60 s, was 40: the readiness probes were replaced by a single _connect_ready_bridge
+# (up to 15 s admission under jitter — it actually reaches the guest, unlike the old
+# instantaneous _poll_tcp_connect), plus a sniffer-overlay mode switch and a
+# round-trip; the admission wait alone could blow 40 s under contention. (An earlier
+# note here said "twice" — there is a single bridge connect.)
+@pytest.mark.timeout(60)
 def test_sniffer_to_tcp_bridge_data_path_restored(api):
     """After running the WS sniffer overlay on a tcp_bridge port and stopping it,
     the transparent data path still works.
