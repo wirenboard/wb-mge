@@ -398,14 +398,14 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
             resp = api.set_port_mode(port_num, "tcp_bridge")
             assert resp.status_code == 200, \
                 f"POST /ports/{port_num}/mode tcp_bridge failed: {resp.status_code}"
-            # Wait for the gateway to reliably admit AND free a connection, not just
-            # bind for an instant: under load a single-slot bridge can still be
-            # reconfiguring or holding the readiness probe's slot, which would reject
-            # or close the test's connection and drop its serial->TCP bytes.
-            ready = _await_bridge_ready("127.0.0.1", tcp_host_port, timeout=20.0)
-            assert ready, (
-                f"Gateway did not become stably ready on host port {tcp_host_port} within 20 s"
-            )
+            # No bridge-readiness PROBE here, on purpose. The old _poll_tcp_connect was
+            # a slirp no-op (accepts host-side before the guest sees the SYN), and a
+            # held probe (_await_bridge_ready) churns the single client slot and, under
+            # CI jitter, ripples into the shared single-client UART chardev — turning
+            # unrelated tests into spurious "chardev unreachable" SKIPs. Readiness is
+            # now established where it belongs: at the test's own connection, via
+            # _connect_ready_bridge(), which retries until the guest admits it and
+            # RAISES (a real failure, never a skip) if it cannot.
 
             # Step 6: start RTU slave (only for modbus=True)
             if modbus:

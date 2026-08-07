@@ -24,7 +24,7 @@ import time
 
 import pytest
 
-from conftest import build_gateway_fixture
+from conftest import build_gateway_fixture, _connect_ready_bridge
 
 
 # ---------------------------------------------------------------------------
@@ -306,10 +306,9 @@ def test_transparent_basic_roundtrip(transparent_bridge):
         "UART echo thread could not connect to UART1 chardev"
 
     test_data = bytes(range(16))   # 16 distinct bytes: 0x00..0x0F
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
     tcp_sock.settimeout(5.0)
     try:
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
         tcp_sock.sendall(test_data)
 
         received = b''
@@ -354,11 +353,9 @@ def test_transparent_zero_bytes_edge_case(transparent_bridge):
     echo_thread.start()
     assert echo_thread.wait_connected(timeout=5.0), "Echo thread failed to connect"
 
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
     tcp_sock.settimeout(5.0)
     try:
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
-
         # Send 0 bytes — Python's socket.send(b'') is a no-op and won't even call
         # the syscall, so we can't truly test this at TCP level. Instead, send a
         # 1-byte keepalive and verify connection stays open.
@@ -518,13 +515,12 @@ def test_transparent_single_client_cap_block_new(transparent_bridge):
     echo_thread.start()
     assert echo_thread.wait_connected(timeout=5.0), "Echo thread failed to connect"
 
-    sock_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock_a = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
     sock_a.settimeout(5.0)
     sock_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock_b.settimeout(5.0)
     try:
         # 1. Client A connects and becomes the served socket (on accept).
-        sock_a.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
         time.sleep(0.2)   # let the firmware accept A and spawn its receiver
 
         # 2. Client B connects — the firmware must reject B and keep A.
@@ -612,13 +608,12 @@ def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
     # side to originate traffic rather than reflect it.
     uart_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     uart_sock.settimeout(5.0)
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
     tcp_sock.settimeout(5.0)
     try:
         uart_sock.connect((GATEWAY_HOST, UART1_TCP_PORT))
 
         # 1. Client connects and stays completely silent.
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
         time.sleep(0.3)   # let the firmware accept it and spawn its receiver
 
         # 2. The serial side speaks first.

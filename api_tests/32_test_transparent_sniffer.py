@@ -30,7 +30,7 @@ import time
 
 import pytest
 
-from conftest import build_gateway_fixture, _await_bridge_ready
+from conftest import build_gateway_fixture, _connect_ready_bridge
 from packet_injector import (
     PacketInjector,
     inject_bytes,
@@ -107,8 +107,8 @@ def transparent_bridge_p2(api):
         # Step 5: switch to tcp_bridge mode and wait for the port to open
         resp = api.set_port_mode(2, "tcp_bridge")
         assert resp.status_code == 200, f"set_port_mode(2, tcp_bridge) failed: {resp.status_code}"
-        ready = _await_bridge_ready("127.0.0.1", TRANSPARENT_PORT2_HOST_PORT, timeout=20.0)
-        assert ready, f"Port {TRANSPARENT_PORT2_HOST_PORT} not stably ready within 20 s"
+        # No bridge-readiness probe here (see build_gateway_fixture): the test
+        # establishes readiness at its own connection via _connect_ready_bridge().
 
         yield None
 
@@ -529,10 +529,9 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
         "UART echo thread could not connect to UART2 chardev"
 
     test_data = bytes(range(16))  # 16 distinct bytes: 0x00..0x0F
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=15.0)
     tcp_sock.settimeout(5.0)
     try:
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT))
         tcp_sock.sendall(test_data)
 
         received = _collect_echo(tcp_sock, len(test_data), timeout=5.0)
@@ -586,9 +585,8 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
     client_a = None
     client_b = None
     try:
-        client_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_a = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
         client_a.settimeout(5.0)
-        client_a.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
         time.sleep(0.05)  # allow server to accept A
 
         data_a = b'\x11\x22\x33\x44'
@@ -612,9 +610,8 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
         # Connect client_b. The connect() alone proves nothing: the block-new cap rejects
         # a surplus client only AFTER accept(), so the TCP handshake completes regardless.
         # The round-trip asserted below is what proves the RST released A's slot.
-        client_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_b = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
         client_b.settimeout(5.0)
-        client_b.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
         time.sleep(0.05)
 
         data_b = b'\xAA\xBB\xCC\xDD'
@@ -668,10 +665,9 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
     payload = bytes([i % 251 for i in range(1024)])
     assert payload.count(0) == 5, "Payload must contain exactly 5 null bytes at expected indices"
 
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
     tcp_sock.settimeout(5.0)
     try:
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
         # Send entire payload at once; firmware now forwards UART_DATA events immediately
         # without buffering, so burst load no longer causes RX overflow.
         tcp_sock.sendall(payload)
@@ -871,11 +867,6 @@ def test_transparent_tx_disabled_port2(api):
         resp = api.set_port_mode(2, "tcp_bridge")
         assert resp.status_code == 200, f"Failed to activate tcp_bridge on port 2"
 
-        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=20.0)
-        if not ready:
-            pytest.skip("Port 2 transparent bridge not stably ready within 20 s — "
-                        "UART2 chardev may be unavailable")
-
         # Start echo thread on UART2 chardev
         probe = _try_connect_tcp(GATEWAY_HOST, UART2_TCP_PORT, timeout=3.0)
         if probe is None:
@@ -888,8 +879,7 @@ def test_transparent_tx_disabled_port2(api):
             "Echo thread could not connect to UART2 chardev"
 
         # TCP client connects and sends 8 bytes
-        tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT))
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=15.0)
         tcp_sock.sendall(b'\x01\x02\x03\x04\x05\x06\x07\x08')
 
         # With tx_disabled=True, no bytes reach UART2, so echo thread sends nothing back
@@ -1477,9 +1467,6 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
         # traffic and verify packets arrive.
         resp = api.set_port_mode(1, "tcp_bridge")
         assert resp.status_code == 200, f"Failed to set tcp_bridge mode: {resp.status_code}"
-        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
-        assert ready, "Port 50504 not ready after switching to tcp_bridge"
-
         probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
         if probe is None:
             pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
@@ -1507,18 +1494,14 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
         stop_ping = None
 
         # Phase 2: transport is already tcp_bridge; confirm the data path is ready.
-        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
-        assert ready, "Port 50504 not ready after stopping the WS sniffer overlay"
-
         # Verify data path with echo round-trip
         echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
         echo_thread.start()
         assert echo_thread.wait_connected(timeout=5.0), \
             "Echo thread could not connect to UART1 chardev after mode switch"
 
-        tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
         tcp_sock.settimeout(5.0)
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
 
         test_data = b'\xDE\xAD\xBE\xEF\x01\x02\x03\x04'
         tcp_sock.sendall(test_data)
@@ -1624,17 +1607,14 @@ def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
         # ----------------------------------------------------------------
         resp = api.set_port_mode(1, "tcp_bridge")
         assert resp.status_code == 200, f"Phase 1: Failed to set tcp_bridge: {resp.status_code}"
-        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
-        assert ready, "Phase 1: Port 50504 not ready"
 
         echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
         echo_thread.start()
         assert echo_thread.wait_connected(timeout=5.0), \
             "Phase 1: Echo thread could not connect to UART1 chardev"
 
-        tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
         tcp_sock.settimeout(5.0)
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
 
         data_phase1 = b'\x11\x22\x33\x44\x55\x66\x77\x88'
         tcp_sock.sendall(data_phase1)
@@ -1678,17 +1658,13 @@ def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
         # ----------------------------------------------------------------
         # Phase 3: tcp_bridge round-trip still works after the overlay is gone
         # ----------------------------------------------------------------
-        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
-        assert ready, "Phase 3: Port 50504 not ready after stopping the WS sniffer overlay"
-
         echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
         echo_thread.start()
         assert echo_thread.wait_connected(timeout=5.0), \
             "Phase 3: Echo thread could not connect to UART1 chardev"
 
-        tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=15.0)
         tcp_sock.settimeout(5.0)
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
 
         data_phase3 = b'\xAA\xBB\xCC\xDD\x01\x02\x03\x04'
         tcp_sock.sendall(data_phase3)
