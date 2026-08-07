@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-from conftest import build_gateway_fixture, _poll_tcp_connect
+from conftest import build_gateway_fixture, _poll_tcp_connect, _await_bridge_ready
 from rtu_slave_helpers import ModbusRtuSlaveThread
 from modbus_helpers import make_mbap_request, send_and_receive, query_register_once
 from sniffer_helpers import _ws_connect, _collect_packets
@@ -1425,8 +1425,8 @@ def test_transparent_bridge_cache_populates(api, transparent_p1):
             "/info rs485_1.cache_enabled must be true after enabling the overlay"
 
         # A TCP client on the transparent bridge: its bytes become UART TX.
-        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
-        assert ready, "transparent bridge port not ready"
+        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
+        assert ready, "transparent bridge port not stably ready"
         tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tcp_sock.settimeout(5.0)
         tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT))
@@ -1529,8 +1529,8 @@ def test_transparent_bridge_cache_toggle_roundtrip_unchanged(api, transparent_p1
 
     echo = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
     try:
-        ready = _poll_tcp_connect(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=5.0)
-        assert ready, "transparent bridge port not ready"
+        ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT1_HOST_PORT, timeout=20.0)
+        assert ready, "transparent bridge port not stably ready"
 
         echo.start()
         assert echo.wait_connected(timeout=5.0), "echo thread could not connect to UART1"
