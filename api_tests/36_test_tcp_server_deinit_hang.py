@@ -49,7 +49,9 @@ def _baseline(api):
 # run on its own — in a full-suite run that lands on the very first item of the session
 # instead. Teardown: conftest's _restore_rs485_settings, up to two bounded POST /settings
 # plus a settle window (2 x 20.1 s + 1 s = 41.2 s).
-# 60 s body + 45 s setup allowance + 45 s teardown allowance.
+# 60 s body + 45 s setup allowance + 45 s teardown allowance. The body's admission poll
+# is bounded ~15 s, not 5 s: its 5 s wall-clock deadline is checked between iterations, and
+# a single api.get_info() can itself block up to its 10 s client timeout — well inside 60 s.
 @pytest.mark.timeout(150)
 def test_tcp_server_deinit_completes_with_open_client(api):
     """
@@ -133,9 +135,11 @@ def test_tcp_server_deinit_completes_with_open_client(api):
         conns = None
         conn_deadline = time.monotonic() + 5.0
         while time.monotonic() < conn_deadline:
-            conns = api.get_info().json().get("rs485_1", {}).get("server_connections_count")
-            if conns == 1:
-                break
+            info = api.get_info()
+            if info.status_code == 200:
+                conns = info.json().get("rs485_1", {}).get("server_connections_count")
+                if conns == 1:
+                    break
             time.sleep(0.2)
         assert conns == 1, (
             f"firmware must see exactly one admitted transparent client before deinit, "

@@ -509,7 +509,10 @@ def _collect_echo(sock: socket.socket, expected_len: int, timeout: float) -> byt
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(60)
+# No local timeout marker: the transparent_bridge_p2 fixture is function-scoped and
+# settings-heavy (several /settings writes, each up to a 30 s client budget), and its cost
+# is charged to this item on top of the bridge admission (<=15 s) and round-trip. Inherit
+# pytest.ini's global 180 s rather than keep re-guessing a number the fixture can blow.
 def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
     """Send 16 arbitrary bytes through the port 2 transparent bridge and receive echo.
 
@@ -560,12 +563,11 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 30: the fixture no longer probes readiness (it is faster than HEAD now),
-# but this test opens TWO admitted connections — client_a via _connect_ready_bridge
-# (up to 15 s admission under jitter) and, after an RST, client_b (a tight 2 s budget
-# on purpose) — plus the fixture's settings-churn setup and two round-trips. 30 s does
-# not cover that under heavy load.
-@pytest.mark.timeout(60)
+# No local timeout marker: this test opens TWO admitted connections — client_a via
+# _connect_ready_bridge (up to 15 s admission under jitter) and, after an RST, client_b
+# (a tight 2 s budget on purpose) — on top of the function-scoped transparent_bridge_p1
+# fixture's settings-churn setup (several /settings writes, each up to 30 s). That worst
+# case blows a small guess, so inherit pytest.ini's global 180 s.
 def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
     """After an abrupt RST disconnect, a new client connects and is served.
 
@@ -652,11 +654,10 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 20: the transparent_bridge_p1 fixture's settings-churn setup (several
-# settings writes, each an async port deinit/reinit) plus a _connect_ready_bridge
-# admission (up to 15 s under jitter) can take tens of seconds before the 1 KiB
-# round-trip this test guards even starts; 20 s was blown by setup, not the payload.
-@pytest.mark.timeout(60)
+# No local timeout marker: the function-scoped transparent_bridge_p1 fixture's settings-churn
+# setup (several writes, each an async port deinit/reinit, up to 30 s apiece) plus a
+# _connect_ready_bridge admission (up to 15 s under jitter) can take tens of seconds before
+# the 1 KiB round-trip even starts. Inherit pytest.ini's global 180 s instead of a guess.
 def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
     """1024-byte payload with embedded null bytes is forwarded correctly.
 
@@ -714,7 +715,11 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(40)
+# No local timeout marker: this is settings-heavy and does NOT use _connect_ready_bridge
+# (client mode). Even with instant HTTP it waits ~28 s unconditionally — get_settings +
+# 4 calls in _setup_client_mode_bridge + 3 in _teardown, each up to a 30 s client budget,
+# plus fixed 10+5+2+5+5 s settle windows. A guessed marker under-shot this three rounds
+# running (20 -> 30 -> 40); inherit pytest.ini's global 180 s instead of guessing a fourth.
 def test_transparent_client_mode_reconnect(api):
     """Firmware reconnects within TCP_CLIENT_RECONN_DELAY_MS after server closes connection.
 
@@ -806,12 +811,11 @@ def test_transparent_client_mode_reconnect(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 20: this test does NOT connect to the bridge (no _connect_ready_bridge
-# admission wait), but it shares the transparent_bridge_p1 fixture, whose several
-# settings writes each trigger an async port deinit/reinit — GET/POST /settings can
-# take tens of seconds under QEMU (pytest.ini says so; api_client client timeout is
-# 30 s), so the setup alone can eat most of a small budget. Sized like its siblings.
-@pytest.mark.timeout(60)
+# No local timeout marker: this test does NOT connect to the bridge, but it shares the
+# function-scoped transparent_bridge_p1 fixture, whose several settings writes each trigger
+# an async port deinit/reinit — GET/POST /settings can take tens of seconds under QEMU
+# (pytest.ini says so; api_client client timeout is 30 s), so the setup alone can eat most
+# of a small budget. Inherit pytest.ini's global 180 s rather than size it by hand.
 def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
     """UART bytes are silently dropped when no TCP client is connected; firmware stays alive.
 
@@ -842,13 +846,12 @@ def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 20: sized from the CLIENT timeouts, not from admission. This test makes
-# get_settings + set_port_mode + update_settings + set_port_mode in the body (and
-# three more in the finally), each with a 30 s api_client timeout, and pytest.ini
-# notes GET/POST /settings 'can take tens of seconds' under QEMU. One slow-but-
-# successful update_settings (~25 s) + a _connect_ready_bridge admission (<=15 s)
-# alone exceeds 40 s, and pytest-timeout counts setup + call + teardown.
-@pytest.mark.timeout(60)
+# No local timeout marker: this is settings-heavy. It makes get_settings + set_port_mode
+# + update_settings + set_port_mode in the body and three more /settings calls in the
+# finally, each with a 30 s api_client timeout, and pytest.ini notes GET/POST /settings
+# 'can take tens of seconds' under QEMU. Worst case (~210 s) exceeds any small guess — this
+# marker went 20 -> 30 -> 40 -> 60 across rounds and 60 still would not cover it. Inherit
+# pytest.ini's global 180 s rather than keep guessing a number that under-shoots.
 def test_transparent_tx_disabled_port2(api):
     """tx_disabled=True on port 2 prevents firmware from forwarding TCP→UART2.
 
@@ -1437,12 +1440,11 @@ def test_sniffer_ws_disconnect_firmware_stays_alive(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 60 s, was 40: the readiness probes were replaced by a single _connect_ready_bridge
-# (up to 15 s admission under jitter — it actually reaches the guest, unlike the old
-# instantaneous _poll_tcp_connect), plus a sniffer-overlay mode switch and a
-# round-trip; the admission wait alone could blow 40 s under contention. (An earlier
-# note here said "twice" — there is a single bridge connect.)
-@pytest.mark.timeout(60)
+# No local timeout marker: a single _connect_ready_bridge admission (up to 15 s under
+# jitter — it actually reaches the guest, unlike the old instantaneous _poll_tcp_connect)
+# plus a sniffer-overlay mode switch and its settings writes (each up to 30 s) and a
+# round-trip can blow a small budget under contention. Inherit pytest.ini's global 180 s.
+# (An earlier note here said "twice" — there is a single bridge connect.)
 def test_sniffer_to_tcp_bridge_data_path_restored(api):
     """After running the WS sniffer overlay on a tcp_bridge port and stopping it,
     the transparent data path still works.
@@ -1574,12 +1576,11 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-# 105 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
-# module-scoped fixtures are torn down inside the LAST item of the module. This is that
-# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
-# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
-# 60 s body + 45 s teardown allowance.
-@pytest.mark.timeout(105)
+# No local timeout marker: this is the module's LAST item, so on top of its own settings-heavy
+# double mode switch (tcp_bridge -> sniffer -> tcp_bridge, several /settings writes each up to
+# 30 s) it also pays conftest's _restore_rs485_settings teardown (up to 2 bounded POST /settings
+# + a settle window, ~41 s). The global 180 s from pytest.ini covers body + teardown with margin
+# and avoids hand-sizing a settings-heavy budget.
 def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
     """tcp_bridge round-trip works before, during, and after a WS sniffer overlay.
 

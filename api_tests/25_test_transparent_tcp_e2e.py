@@ -676,7 +676,9 @@ def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
         )
         print(f"✓ B3: serial->TCP delivered {len(test_data)} bytes to a silent client")
     finally:
-        if tcp_sock is not None:
-            tcp_sock.close()
-        if uart_sock is not None:
-            uart_sock.close()
+        for _s in (tcp_sock, uart_sock):
+            if _s is not None:
+                try:
+                    _s.close()
+                except OSError:
+                    pass

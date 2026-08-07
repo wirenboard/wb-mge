@@ -227,7 +227,7 @@ def _poll_tcp_connect(host: str, port: int, timeout: float = 5.0) -> bool:
 
 
 def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
-                          timeout: float = 15.0, max_attempts: int = 8):
+                          timeout: float = 15.0):
     """Return an ADMITTED, still-open socket to a single-client transparent bridge.
 
     Why a plain connect() is not enough: against a QEMU user-net (slirp) hostfwd
@@ -235,13 +235,13 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
     so connect() succeeds instantly regardless of firmware state — the old
     _poll_tcp_connect readiness never reached the guest at all. This helper reaches
     the guest: for a transparent bridge (server mode, max_connections == 1) it
-    confirms the connection was ADMITTED — no EOF (FIN) or RST within `hold` (either
-    means the cap rejected it or a pending deinit closed it) — and RETURNS THAT open
-    socket for the caller to use. Because the connection the test uses IS the one
-    whose admission was confirmed, there is no probe-close-then-reconnect handoff and
-    the single-slot race cannot occur by construction. Raises TimeoutError if no
-    connection is admitted within `timeout` — a real failure the caller surfaces as a
-    test FAILURE, never a skip.
+    confirms the connection was ADMITTED — the handshake COMPLETED and no EOF (FIN)
+    or RST arrived within `hold` (either means the cap rejected it or a pending
+    deinit closed it) — and RETURNS THAT open socket for the caller to use. Because
+    the connection the test uses IS the one whose admission was confirmed, there is
+    no probe-close-then-reconnect handoff and the single-slot race cannot occur by
+    construction. Raises TimeoutError if no connection is admitted within `timeout` —
+    a real failure the caller surfaces as a test FAILURE, never a skip.
 
     Admission detection is NEGATIVE (absence of FIN/RST within `hold`). The firmware
     listens with a backlog > 1, so lwIP completes the TCP handshake before the app
@@ -251,46 +251,64 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
     path. The check uses MSG_PEEK, so it distinguishes FIN from data WITHOUT
     consuming anything — the returned socket is byte-for-byte clean for the caller
     (important where a test connects to the bridge before the serial side speaks).
+
+    connect() and the hold-check are in SEPARATE try blocks on purpose. socket.timeout
+    IS TimeoutError (an alias) and TimeoutError subclasses OSError, and connect() times
+    out by raising TimeoutError — so a shared handler would misread a connect timeout
+    (handshake never completed) as "held with no FIN => admitted" and return a dead
+    socket. Only a timeout of the recv() AFTER a completed connect means "admitted".
     """
-    # Bounded on TWO axes: `timeout` is the hard wall-clock deadline (every per-op
-    # timeout is clamped to the remaining budget so the whole call cannot overshoot
-    # it), and `max_attempts` caps the retries. On a rejected connection the FIN/RST
-    # comes back instantly, so without a cap + backoff this could spin ~timeout/0.2
-    # (~75) connect/close cycles on the single-slot bridge under contention — the very
-    # churn that ripples into neighbouring ports. Exponential backoff (0.2, 0.4, …
-    # capped at 1 s) keeps it to a handful of attempts; 6–8 probes settle a real port.
-    deadline = time.monotonic() + timeout
-    for attempt in range(max_attempts):
+    # `timeout` is the sole bound: a hard wall-clock deadline. We loop until it, at a
+    # LIMITED FREQUENCY (backoff 0.2 -> 1.0 s between attempts) rather than a fixed
+    # attempt count — a fixed count would silently shrink the real readiness window
+    # (e.g. 8 attempts settle at ~6 s, so a port that opens at 7-14 s would be failed
+    # though the caller asked for 15). Frequency-limiting still tames the churn: on a
+    # rejected connection the FIN/RST returns instantly, so a naive spin would run
+    # ~timeout/epsilon connect/close cycles on the single-slot bridge and ripple into
+    # neighbouring ports; the backoff holds it to ~17 cycles over 15 s instead.
+    start = time.monotonic()
+    deadline = start + timeout
+    backoff = 0.2
+    while True:
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        # Floor: an attempt needs the FULL `hold` to reliably observe a FIN/RST. With
+        # less than `hold` left, a degraded sub-`hold` peek could miss the reject and
+        # falsely report "admitted" — the exact failure mode this helper exists to kill.
+        # So stop rather than run a probe we can't trust.
+        if remaining < hold:
             break
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(min(3.0, remaining))
         rejected = False
         try:
+            sock.settimeout(min(3.0, remaining))
             sock.connect((host, port))
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                sock.close()
-                break
-            sock.settimeout(min(hold, remaining))
-            # MSG_PEEK: b'' => FIN (rejected/closed); data => up and already pushing
-            # (left in the buffer for the caller); neither within `hold` => admitted.
-            if sock.recv(1, socket.MSG_PEEK) == b'':
-                rejected = True
-        except (socket.timeout, TimeoutError):
-            pass                                 # held with no FIN/RST => admitted
-        except OSError:                          # connect refused / RST => retry
+        except OSError:                          # refused / RST / connect timeout => retry
             rejected = True
+        else:
+            try:
+                sock.settimeout(hold)            # full hold; remaining >= hold guaranteed above
+                # MSG_PEEK: b'' => FIN (rejected/closed); data => up and already pushing
+                # (left in the buffer for the caller); neither within `hold` => admitted.
+                if sock.recv(1, socket.MSG_PEEK) == b'':
+                    rejected = True
+            except (socket.timeout, TimeoutError):
+                pass                             # held `hold` with no FIN/RST => admitted
+            except OSError:                      # RST during hold => retry
+                rejected = True
         if not rejected:
             sock.settimeout(None)
             return sock                          # admitted, open, byte-clean for the caller
         sock.close()
-        # exponential backoff, never past the deadline
-        time.sleep(min(0.2 * (2 ** attempt), 1.0, max(0.0, deadline - time.monotonic())))
+        # back off before the NEXT attempt only — never after a success, never past
+        # the deadline; if no budget is left, give up now instead of sleeping.
+        nap = min(backoff, deadline - time.monotonic())
+        if nap <= 0:
+            break
+        time.sleep(nap)
+        backoff = min(backoff * 2, 1.0)
     raise TimeoutError(
-        f"bridge on {host}:{port} did not admit a connection within {timeout} s "
-        f"({max_attempts} attempts)"
+        f"bridge on {host}:{port} did not admit a connection within "
+        f"{time.monotonic() - start:.1f} s (budget {timeout:.1f} s)"
     )
 
 
