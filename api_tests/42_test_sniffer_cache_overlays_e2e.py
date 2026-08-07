@@ -29,7 +29,8 @@ from urllib.parse import urlparse
 
 import pytest
 
-from conftest import build_gateway_fixture, _poll_tcp_connect, _await_bridge_ready
+from conftest import (build_gateway_fixture, _poll_tcp_connect,
+                      _await_bridge_ready, _connect_ready_bridge)
 from rtu_slave_helpers import ModbusRtuSlaveThread
 from modbus_helpers import make_mbap_request, send_and_receive, query_register_once
 from sniffer_helpers import _ws_connect, _collect_packets
@@ -349,12 +350,16 @@ class _UartEchoThread(threading.Thread):
 
 
 def _roundtrip_once(host, tcp_port, payload, timeout=5.0):
-    """Open a fresh TCP client to the transparent bridge, send `payload`, and
-    return the bytes echoed back (via the UART echo thread). Caller asserts."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    """Open an ADMITTED TCP client to the transparent bridge, send `payload`, and
+    return the bytes echoed back (via the UART echo thread). Caller asserts.
+
+    Uses _connect_ready_bridge() rather than a bare connect(): TBC-02 calls this
+    three times in a row on a single-slot bridge (toggling the cache between each),
+    and a plain connect() would race the previous connection's slot-free under load
+    and get an empty round-trip (review point 3)."""
+    sock = _connect_ready_bridge(host, tcp_port, timeout=15.0)
     sock.settimeout(timeout)
     try:
-        sock.connect((host, tcp_port))
         sock.sendall(payload)
         received = b""
         deadline = time.monotonic() + timeout

@@ -21,7 +21,7 @@ import time
 
 import pytest
 
-from conftest import _poll_tcp_connect
+from conftest import _connect_ready_bridge
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -107,17 +107,21 @@ def test_tcp_server_deinit_completes_with_open_client(api):
             f"set_port_mode(1, tcp_bridge) failed: {resp.status_code}"
         )
 
-        # Step 5: wait until the gateway is actually accepting connections.
-        ready = _poll_tcp_connect("127.0.0.1", 50504, timeout=5.0)
-        assert ready, "Gateway did not start listening on port 50504 within 5 s"
-        time.sleep(0.1)  # let the poll connection's receiver_task drain before opening client_sock
-
-        # Step 6: open a TCP client connection and intentionally keep it open.
-        # This simulates the race condition: the client FIN has not propagated yet
-        # when set_port_mode("disabled") is called.
-        client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # Step 5+6: open a TCP client connection that is GENUINELY ADMITTED by the
+        # bridge, and intentionally keep it open. This is the whole point of the
+        # test: deinit must not hang while a real client is connected.
+        #
+        # _poll_tcp_connect() was wrong here twice over: (1) against the QEMU slirp
+        # hostfwd port it returns True instantly without the guest admitting
+        # anything, and (2) its probe occupies the single server slot
+        # (max_connections == 1), so under load the client_sock below could be
+        # rejected by the cap — a rejection the test never notices because it does
+        # not read client_sock, leaving active_connections == 0 so deinit returns
+        # instantly and the assert passes VACUOUSLY, exercising no regression.
+        # _connect_ready_bridge() returns a socket only after the guest has actually
+        # admitted it (held open, no FIN/RST), so the client is real when we deinit.
+        client_sock = _connect_ready_bridge("127.0.0.1", 50504, timeout=15.0)
         client_sock.settimeout(5.0)
-        client_sock.connect(("127.0.0.1", 50504))
 
         # Step 7: record the start time immediately before the deinit call.
         t_start = time.monotonic()

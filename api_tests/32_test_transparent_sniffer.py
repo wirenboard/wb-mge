@@ -30,7 +30,7 @@ import time
 
 import pytest
 
-from conftest import build_gateway_fixture, _poll_tcp_connect, _await_bridge_ready
+from conftest import build_gateway_fixture, _await_bridge_ready
 from packet_injector import (
     PacketInjector,
     inject_bytes,
@@ -552,7 +552,11 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# 60 s, was 30: the transparent_bridge_p1 fixture's readiness ceiling grew from a
+# 5 s _poll_tcp_connect to a 20 s _await_bridge_ready (which actually reaches the
+# guest), and this test also drives an RST + reconnect. 30 s no longer covers the
+# fixture setup plus the test under heavy load.
+@pytest.mark.timeout(60)
 def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
     """After an abrupt RST disconnect, a new client connects and is served.
 
@@ -638,6 +642,10 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
 # ===========================================================================
 
 @pytest.mark.qemu
+# 60 s, was 20: under heavy load the transparent_bridge_p1 setup alone (several
+# settings writes, each an async port deinit/reinit, plus a ~20 s worst-case
+# _await_bridge_ready) can take tens of seconds before the test body even starts;
+# 20 s was blown by the fixture, not by the 1 KiB round-trip it guards.
 @pytest.mark.timeout(60)
 def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
     """1024-byte payload with embedded null bytes is forwarded correctly.
@@ -781,6 +789,10 @@ def test_transparent_client_mode_reconnect(api):
 # ===========================================================================
 
 @pytest.mark.qemu
+# 60 s, was 20: same reason as test_transparent_large_payload_with_nulls — the
+# transparent_bridge_p1 fixture's settings-churn setup plus a ~20 s worst-case
+# _await_bridge_ready readiness can eat most of a 20 s budget under contention
+# before this test's own logic runs.
 @pytest.mark.timeout(60)
 def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
     """UART bytes are silently dropped when no TCP client is connected; firmware stays alive.
@@ -812,6 +824,9 @@ def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
 # ===========================================================================
 
 @pytest.mark.qemu
+# 60 s, was 20: this test does its own port-2 transparent setup (disable, settings
+# write, tcp_bridge, then a 20 s worst-case _await_bridge_ready readiness) before
+# the tx-disabled check; under heavy load that setup does not fit in 20 s.
 @pytest.mark.timeout(60)
 def test_transparent_tx_disabled_port2(api):
     """tx_disabled=True on port 2 prevents firmware from forwarding TCP→UART2.
@@ -858,7 +873,8 @@ def test_transparent_tx_disabled_port2(api):
 
         ready = _await_bridge_ready(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=20.0)
         if not ready:
-            pytest.skip(f"Port 50503 not ready after 5 s — UART2 chardev may be unavailable")
+            pytest.skip("Port 2 transparent bridge not stably ready within 20 s — "
+                        "UART2 chardev may be unavailable")
 
         # Start echo thread on UART2 chardev
         probe = _try_connect_tcp(GATEWAY_HOST, UART2_TCP_PORT, timeout=3.0)
@@ -1406,7 +1422,12 @@ def test_sniffer_ws_disconnect_firmware_stays_alive(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(40)
+# 90 s, was 40: this test now waits for readiness TWICE with _await_bridge_ready
+# (up to 20 s each under load — it actually reaches the guest, unlike the old
+# instantaneous _poll_tcp_connect), plus a mode switch and two round-trips. Worst
+# case ~55 s of real waits under heavy contention; 40 s turned that into a
+# pytest-timeout kill instead of an informative assert.
+@pytest.mark.timeout(90)
 def test_sniffer_to_tcp_bridge_data_path_restored(api):
     """After running the WS sniffer overlay on a tcp_bridge port and stopping it,
     the transparent data path still works.
