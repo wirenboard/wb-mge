@@ -441,30 +441,44 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
             yield slave
 
         finally:
-            # Step 8: restore settings
-            api.set_port_mode(port_num, "disabled")
-            time.sleep(0.3)
+            # Step 8: restore settings, then Step 9: stop the RTU slave thread.
+            # Each restore call is a 30 s-read-timeout /settings request that can ReadTimeout
+            # under QEMU load. Two invariants: (a) one failing call must not skip the others
+            # (best-effort, each in its own try) and must not MASK the test's real error
+            # (print, never raise); (b) slave.stop() must ALWAYS run — it is a daemon
+            # ModbusRtuSlaveThread holding a live TCP connection to the single-client QEMU
+            # chardev (5561/5562), so a leaked one wedges that chardev and cascades skips
+            # across every module using this factory. So slave.stop() lives in a finally
+            # wrapped around the restore block.
+            try:
+                try:
+                    api.set_port_mode(port_num, "disabled")
+                    time.sleep(0.3)
+                except Exception as exc:
+                    print(f"✗ teardown set_port_mode(disabled) failed: {exc!r}")
 
-            restore_resp = api.update_settings(original_settings)
-            # Use print instead of assert: assert in finally would mask the original
-            # test failure with a teardown exception, hiding the real root cause.
-            if restore_resp.status_code != 200:
-                print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+                try:
+                    restore_resp = api.update_settings(original_settings)
+                    if restore_resp.status_code != 200:
+                        print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+                except Exception as exc:
+                    print(f"✗ teardown update_settings failed: {exc!r}")
 
-            original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
-            api.set_port_mode(port_num, original_mode)
-            time.sleep(0.3)
-
-            # Step 9: stop the RTU slave thread
-            if slave is not None:
-                slave.stop()
-                slave.join(timeout=3.0)
-                # Use print instead of assert: assert in finally masks the original test failure.
-                if slave.is_alive():
-                    print(
-                        f"✗ RTU slave thread on port {uart_tcp_port} did not stop within 3 s "
-                        "(port leak!)"
-                    )
+                try:
+                    original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
+                    api.set_port_mode(port_num, original_mode)
+                    time.sleep(0.3)
+                except Exception as exc:
+                    print(f"✗ teardown set_port_mode(restore) failed: {exc!r}")
+            finally:
+                if slave is not None:
+                    slave.stop()
+                    slave.join(timeout=3.0)
+                    if slave.is_alive():
+                        print(
+                            f"✗ RTU slave thread on port {uart_tcp_port} did not stop within 3 s "
+                            "(port leak!)"
+                        )
 
     return gateway_fixture
 
