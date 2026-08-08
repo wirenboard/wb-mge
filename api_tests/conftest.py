@@ -1,5 +1,6 @@
 """Pytest configuration and shared fixtures for WB-MGE API tests"""
 
+import ipaddress
 import os
 import signal
 import socket
@@ -7,6 +8,7 @@ import subprocess
 import time
 import warnings
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 import requests
@@ -87,6 +89,31 @@ def pytest_addoption(parser):
     parser.addoption("--without-reboot", action="store_true", default=False,
                      help="Deselect tests that reboot/restart the device "
                           "(by @pytest.mark.reboot or REBOOT_TEST_FILES)")
+
+
+# The active pytest Config, captured below. The UART-chardev helpers further down are
+# plain module functions, not fixtures: they are called from inside tests and from the
+# except handlers of helper threads, where there is no `request` to reach the config
+# through — yet the "is this chardev ours?" rule has to read a CLI option (--ip). This
+# hook is the one place pytest hands the config over outside a fixture.
+_PYTEST_CONFIG = None
+
+
+def pytest_configure(config):
+    """Capture the session config for the module-level helpers (see _PYTEST_CONFIG)."""
+    global _PYTEST_CONFIG
+    _PYTEST_CONFIG = config
+
+
+def pytest_unconfigure(config):
+    """Drop the captured config so a finished session cannot answer for the next one.
+
+    Matters when pytest runs more than once in a single process (pytester, an IDE
+    runner): a stale Config would keep reporting the previous run's --ip/--qemu.
+    """
+    global _PYTEST_CONFIG
+    if _PYTEST_CONFIG is config:
+        _PYTEST_CONFIG = None
 
 
 def quick_connection_test(base_url):
@@ -334,6 +361,195 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
     )
 
 
+# Host QEMU binds the UART chardevs on (see the -serial arguments in qemu_process).
+# Only a DEFAULT: call sites that carry their own host variable pass it explicitly, and
+# the two chardevs live on different ports (5561 = UART1, 5562 = UART2), so neither the
+# host nor the port may be baked into the helpers below.
+UART_CHARDEV_HOST = "127.0.0.1"
+
+# The one exact phrase _uart_leak_guard prints, kept as a constant because the hint
+# below tells the reader to grep for it: with two independently written strings, the
+# hint told people to search for 'leaked the QEMU UART chardev' while the guard printed
+# 'leaked a QEMU UART chardev', and the exact-phrase search they were told to run found
+# nothing. Interpolating one constant into both makes that class of drift impossible.
+UART_CHARDEV_LEAK_MARKER = "QEMU UART chardev stopped accepting connections"
+
+
+def _endpoint_host(ip_option) -> str:
+    """Host part of an --ip value: 'localhost:8080', '10.0.0.5', '[::1]:8080', a URL.
+
+    Returns '' for anything unparseable — callers treat that as "not local", i.e. the
+    conservative answer (skip rather than fail).
+    """
+    raw = (ip_option or "").strip()
+    if not raw:
+        return ""
+    # urlsplit only parses an authority when one is marked as such; '//' marks it. It
+    # then does the two fiddly parts for us: dropping the :port and unwrapping the IPv6
+    # bracket form ('[::1]:8080' -> '::1', which a naive rsplit(':') would mangle).
+    if "//" not in raw:
+        raw = "//" + raw
+    try:
+        return (urlsplit(raw).hostname or "").strip()
+    except ValueError:      # malformed authority, e.g. an unclosed '['
+        return ""
+
+
+def _is_local_host(host: str) -> bool:
+    """True when `host` names THIS machine, so a QEMU here is the device under test."""
+    host = (host or "").strip().rstrip(".").lower()
+    if not host:
+        return False
+    # RFC 6761: 'localhost' and anything under '.localhost' always resolve to loopback.
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:      # a real hostname (or garbage) — not resolved on purpose:
+        return False        # a DNS lookup here would be a surprise cost in a helper.
+    # is_unspecified: connecting to 0.0.0.0 / :: reaches this machine, same as loopback.
+    return addr.is_loopback or addr.is_unspecified
+
+
+def _uart_chardev_is_ours(is_qemu: bool = False, config=None) -> bool:
+    """True when the UART chardevs on 5561/5562 belong to THIS run's device under test.
+
+    The rule is "the device is a QEMU on this machine", which is --qemu (conftest starts
+    that QEMU itself) OR an --ip naming this machine (_is_local_host — the documented way
+    to drive an already-running QEMU; see uart_chardev_unreachable for why the flag alone
+    is the wrong signal).
+
+    `config` is passed explicitly by fixtures, which have one; plain helpers fall back to
+    the config captured in pytest_configure. Both `is_qemu` and the option are consulted
+    so a call site that already holds the fixture value keeps working even if the capture
+    is missing (a conftest imported outside a pytest session).
+    """
+    if is_qemu:
+        return True
+    config = _PYTEST_CONFIG if config is None else config
+    if config is None:
+        return False
+    try:
+        if config.getoption("--qemu", default=False):
+            return True
+        ip_option = config.getoption("--ip", default="")
+    except (ValueError, AttributeError):
+        return False
+    return _is_local_host(_endpoint_host(ip_option))
+
+# Appended to every under-QEMU "chardev unreachable" failure. The test that trips it is
+# almost never the culprit — see _uart_leak_guard for what it can and cannot tell you.
+_UART_CHARDEV_LEAK_HINT = (
+    "This run's QEMU creates this chardev (-serial tcp::PORT,server,nowait) — conftest "
+    "itself under --qemu, or whoever started the QEMU that a loopback --ip points at — "
+    "and it accepts exactly ONE client, so 'not connectable' is not an environment "
+    "property — it means an earlier test leaked its UART socket (typically a daemon "
+    "helper thread whose stop() was skipped by an exception) and still holds the single "
+    "accept slot. This test is a downstream victim, not the defect: search this run's "
+    f"output for the MOST RECENT '{UART_CHARDEV_LEAK_MARKER}' warning that names the "
+    "SAME port as this failure — the guard warns per port and prints the port numbers "
+    "— because _uart_leak_guard emits it with the last few tests that ran, and the leak "
+    "is in one of them. Deliberately not the earliest such warning: a healthy "
+    "run already contains one benign 5561 warning from 20_test_cache_tcp_framing.py, "
+    "whose module-scoped cache_tcp_server legitimately holds that chardev across all "
+    "six of its tests, and that module starts 74 items into a 229-item run — so for "
+    "anything that fails later, the earliest warning is reliably the wrong one. "
+    "It cannot narrow it further; see that fixture's docstring for why."
+)
+
+
+def uart_chardev_unreachable(uart_tcp_port: int, is_qemu: bool,
+                             host: str = UART_CHARDEV_HOST, detail=None):
+    """Report an unreachable QEMU UART chardev. Never returns — always raises.
+
+    The outcome is split by WHO OWNS THE CHARDEV, not by the --qemu flag:
+
+    * When the device under test is a QEMU on THIS machine, the chardev exists and takes
+      exactly one client, so unreachable == leaked == a defect of THIS suite, and it
+      FAILS. Degrading it to a skip is how one leaked socket once turned 1 skipped test
+      into 47 across nine files while the run still looked greener than the baseline —
+      skips are not failures.
+    * Against a REMOTE --ip (a real device on the LAN) there is no QEMU chardev on this
+      host at all, so skipping is legitimate and stays.
+
+    "A QEMU on this machine" is `--qemu OR a loopback --ip` (_uart_chardev_is_ours), and
+    the second half is not a corner case: the documented way to test an ALREADY-RUNNING
+    QEMU is exactly `pytest --ip localhost:8080` with NO --qemu, because --qemu means
+    "launch and manage QEMU yourself" and aborts on the ports it finds occupied
+    (README_QEMU.md, "Running tests against an already-running QEMU";
+    api_tests/README_API_Tests.md). localhost:8080 is also the --ip DEFAULT, so a bare
+    `pytest api_tests/` lands in the same mode. Keying the decision on --qemu alone left
+    every such local run silently skipping — the exact cascade this helper exists to
+    stop — and covered only the `make qemu-test` path.
+
+    The one case this deliberately gets wrong is a REAL device reached through a local
+    port-forward (`ssh -L 8080:device:80` plus `--ip localhost:8080`): the endpoint is
+    loopback but the chardev genuinely is not ours, so a test that needs UART TCP fails
+    instead of skipping. Nothing in this repo documents that setup, and the failure is
+    loud and self-explaining (the text below names the chardev port), which is the trade
+    this helper exists to make.
+
+    `detail` is the exception (or any object) that proves the endpoint is dead; it is
+    appended verbatim so the reader sees the real errno rather than a paraphrase.
+    """
+    # With --tb=short the traceback would otherwise point at the pytest.fail below for
+    # all 31 call sites; hiding this frame makes it point at the test that needed the
+    # chardev, which is the only part of it the reader cannot already guess.
+    __tracebackhide__ = True
+    where = f"{host}:{uart_tcp_port}"
+    suffix = f" ({detail})" if detail is not None else ""
+    if _uart_chardev_is_ours(is_qemu):
+        pytest.fail(f"UART chardev {where} is not connectable{suffix}. "
+                    f"{_UART_CHARDEV_LEAK_HINT}")
+    pytest.skip(
+        f"UART chardev TCP port {uart_tcp_port} not reachable on {host}{suffix}; "
+        "the device under test is remote (--ip), so there is no QEMU UART chardev here"
+    )
+
+
+def require_uart_chardev(uart_tcp_port: int, is_qemu: bool,
+                         host: str = UART_CHARDEV_HOST, timeout: float = 3.0):
+    """Return a CONNECTED probe socket to a QEMU UART chardev, or fail/skip trying.
+
+    The single entry point for "this test needs the UART chardev". Failure semantics live
+    in uart_chardev_unreachable() — fail when the chardev is this run's own (a QEMU on
+    this machine, whether started by --qemu or merely pointed at by a loopback --ip),
+    skip only against a remote device — so no call site has to re-decide them, and none
+    of them may re-add a pytest.skip of its own.
+
+    OWNERSHIP: the returned socket is the caller's, and it is deliberately NOT closed
+    here, so that a caller which wants to KEEP the connection can (18_test_uart_chardev
+    must hold the chardev open across a port-mode switch so QEMU buffers the TX bytes it
+    is about to check; handing it a socket that was already closed and asking it to
+    reconnect would race that switch).
+
+    Most callers do not want the connection, only the reachability answer, and the
+    `require_uart_chardev(...).close()` one-liner followed by a reconnect through some
+    other helper (_UartEchoThread, PacketInjector, ModbusRtuSlaveThread) is the normal,
+    supported shape — roughly every call site outside 18 is written that way. It is safe
+    because nothing competes for the slot inside a single test: close() releases it and
+    the helper's connect() takes it back. Do not read this note as a warning against that
+    pattern; the point is only that the choice belongs to the caller, not to this helper.
+
+    Callers that cannot use this (they open the chardev through another helper, e.g.
+    packet_injector.open_uart_socket) call uart_chardev_unreachable() from their own
+    except handler instead — same policy, no second connect.
+    """
+    # See uart_chardev_unreachable: keep this frame out of the --tb=short traceback so
+    # the failure names the call site rather than this helper.
+    __tracebackhide__ = True
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(timeout)
+    try:
+        probe.connect((host, uart_tcp_port))
+    except (ConnectionRefusedError, OSError, socket.timeout) as exc:
+        probe.close()
+        # Raises: pytest's Skipped/Failed derive from BaseException, so this is not
+        # swallowed by any `except Exception` around the call site.
+        uart_chardev_unreachable(uart_tcp_port, is_qemu, host=host, detail=exc)
+    return probe
+
+
 def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
                            bridge_port: int, modbus: bool, fake_value: int = 0x1234):
     """Factory: returns a pytest fixture that configures a gateway on the given port.
@@ -351,19 +567,11 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
         when modbus=False) and handles full setup/teardown.
     """
     @pytest.fixture
-    def gateway_fixture(api):
-        # Step 1: verify UART chardev is reachable
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.settimeout(3.0)
-        try:
-            probe.connect(("127.0.0.1", uart_tcp_port))
-            probe.close()
-        except (ConnectionRefusedError, OSError, socket.timeout):
-            probe.close()
-            pytest.skip(
-                f"Cannot connect to UART chardev TCP port {uart_tcp_port}. "
-                "QEMU may not expose this UART as TCP in this configuration."
-            )
+    def gateway_fixture(api, is_qemu):
+        # Step 1: verify UART chardev is reachable (fails when the QEMU is ours, skips
+        # against a remote device — see require_uart_chardev). The probe is only a
+        # reachability question here, so it is closed immediately, as before.
+        require_uart_chardev(uart_tcp_port, is_qemu).close()
 
         # Step 2: save original settings
         resp = api.get_settings()
@@ -893,37 +1101,187 @@ def _restore_rs485_settings(_rs485_session_baseline, api, request):
         time.sleep(_RS485_RESTORE_SETTLE_S)
 
 
-@pytest.fixture(autouse=True)
-def _uart_leak_guard(request):
-    """Diagnostic-only guard: warn if a test left a QEMU UART socket leaked.
+# How many EARLIER tests _uart_leak_guard names when it warns, on top of the test whose
+# teardown fired the probe. It cannot name one culprit (see its docstring: the listen
+# backlog hides the leaker's own teardown), so it hands over a short window instead.
+# Three covers the observed one-test lag with room to spare and still fits in a message
+# a human will actually read.
+_UART_LEAK_GUARD_WINDOW = 3
 
-    QEMU exposes each RS-485 UART as a single-client TCP chardev (5561/5562).
-    If a test wedges and leaks its UART socket, the one accept slot stays
-    occupied and every later UART connect() times out. On teardown we probe
-    both ports; if either is no longer connectable we warn (never fail — a
-    fatal probe would make the whole suite fragile) naming the just-finished
-    test as the likely leaker. Active only when running against QEMU.
+
+@pytest.fixture(scope="session")
+def _uart_leak_state():
+    """Session state for _uart_leak_guard: the recent test ids, and the warned ports.
+
+    `warned` is a SET OF PORTS, not one boolean. 5561 and 5562 are two independent
+    single-client resources, and one shared flag broke in two ways: a leak on 5562 that
+    began while 5561 was legitimately held (20_test_cache_tcp_framing's module-scoped
+    cache_tcp_server holds 5561 across all six of its tests) was never reported, and —
+    worse — once one port stayed wedged, the "both ports accept again" re-arm condition
+    could never hold again, so the flag stayed set and the guard went mute for the rest
+    of the session: exactly the failure the per-episode re-arm was introduced to
+    prevent, reached through the other port. Per port, each port's episode is
+    independent and a wedged 5562 cannot silence reporting on 5561.
+
+    A session-scoped fixture rather than an attribute stashed on request.config: this is
+    state that belongs to one guard for the length of one session, pytest already owns
+    exactly that lifetime, and the dependency shows up in the fixture graph instead of
+    being an undeclared attribute appearing on a shared Config object.
+    """
+    return {"recent": [], "warned": set()}
+
+
+@pytest.fixture(autouse=True)
+def _uart_leak_guard(request, _uart_leak_state):
+    """Diagnostic-only: warn when a QEMU UART chardev stops accepting connections.
+
+    QEMU exposes each RS-485 UART as a SINGLE-CLIENT TCP chardev (5561/5562), so one
+    leaked socket — typically a daemon helper thread whose stop() an exception skipped —
+    keeps the single accept slot and every later test that needs that UART fails. Those
+    downstream failures all name the wrong test, so this guard probes both ports after
+    each test and reports what it saw, to give the reader somewhere to start.
+
+    It WARNS and must NOT fail. Not out of a general caution about "fragile suites" —
+    that was the old reasoning here, and being a conclusion with no argument attached it
+    is exactly what let the two defects below sit in this fixture unnoticed. Both are
+    properties of the probe itself, and neither is fixed by making the probe angrier:
+
+    1. It cannot tell a leak from a legitimate long-lived owner. The guard is
+       function-scoped; the sockets it probes are not. 20_test_cache_tcp_framing's
+       module-scoped `cache_tcp_server` fixture holds a PacketInjector on 5561 across all
+       six tests of that module, so from the second test onward the probe finds 5561
+       unreachable in a perfectly healthy run. (29_test_gateway_dual_port's module-scoped
+       `dual_gateway_slave` holds both chardevs the same way, and escapes notice only
+       because that module contains exactly one test.) A failing guard would therefore
+       fail correct runs; a warning one was harmless only because nobody noticed it
+       firing.
+
+    2. It cannot attribute. QEMU's LISTENING socket stays open while its one client slot
+       is occupied, so the kernel completes the first connect() after a leak out of the
+       backlog and the probe SUCCEEDS. In the teardown of the test that actually leaked
+       the guard thus sees a reachable port and says nothing; the next test's teardown is
+       the one that times out. (Measured against a plain listen(1) socket that never
+       calls accept(): the first connect succeeds, the second and later time out.)
+       Whatever request.node.nodeid holds when this fires is therefore usually not the
+       culprit — which is why the message hands over a window of recent tests and says
+       the leak is in or shortly before them, rather than accusing one test.
+
+    Doing this properly needs ownership data the probe does not have: a registry of who
+    opened each chardev, in which wider-scope fixtures mark their sockets long-lived.
+    Until that exists this fixture reports an observation, never a verdict.
+
+    Warns at most once per PORT per EPISODE, and each port is tracked on its own (see
+    _uart_leak_state for what a single shared flag got wrong): a port is re-armed the
+    moment it accepts again, a warning names only the ports NEWLY seen unreachable, and
+    a port that is still wedged from an earlier warning stays quiet. A once-per-session
+    flag (the first version of this) would be spent by module 20's legitimate holder on
+    nearly every run — that module starts about a third of the way into the run (74 of
+    229 collected items precede it) — leaving the guard mute for the rest of the suite.
+    Edge-triggering still suppresses the wall of identical warnings a wedged port would
+    otherwise produce, without trading away every later report. It keeps probing while
+    suppressed, since that is how it notices the port coming back: on a genuinely wedged
+    port that costs one connect timeout per remaining test, exactly as it did before.
+
+    Active whenever the chardev is this run's own — --qemu, or an --ip pointing at a QEMU
+    on this machine (_uart_chardev_is_ours). The second half matters: `pytest --ip
+    localhost:8080` with no --qemu is the documented way to drive an already-running
+    QEMU, and it is the --ip default, so gating on --qemu alone left the guard mute in
+    the ordinary local run. Against a REMOTE --ip there is no chardev on this host to
+    probe, and 5561/5562 here belong to whatever else happens to be listening, so the
+    guard stays off.
     """
     yield
-    if not request.config.getoption("--qemu", default=False):
-        return
-    unreachable = []
-    for port in (5561, 5562):
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.settimeout(2.0)
-        try:
-            probe.connect(("127.0.0.1", port))
-        except (ConnectionRefusedError, OSError, socket.timeout):
-            unreachable.append(port)
-        finally:
+    # EVERYTHING below is wrapped, because this fixture must never break a run: an
+    # unwrapped warnings.warn() raises the warning under a `filterwarnings = error` this
+    # suite may adopt later, and nothing else here is worth an ERROR on an innocent
+    # test's teardown. A silent guard is merely useless; a guard that raises is worse
+    # than no guard. The wrapper is a BACKSTOP, not the plan: the one failure we can
+    # name — socket.socket() raising OSError: [Errno 24] Too many open files under the
+    # very descriptor leak this guard looks for — is handled per port inside the loop,
+    # because reaching this handler means losing the probe of the OTHER port and the
+    # warning with it. This handler must therefore stay loud (it prints) rather than
+    # swallow silently: anything landing here is unexpected by construction.
+    try:
+        if not _uart_chardev_is_ours(config=request.config):
+            return
+        recent = _uart_leak_state["recent"]
+        # Snapshot BEFORE appending: `predecessors` is the tests that ran BEFORE this
+        # one, so the message names _UART_LEAK_GUARD_WINDOW of them plus the current
+        # test, instead of spending the first window slot repeating the test it has
+        # already named in "after {nodeid}".
+        predecessors = list(recent)
+        recent.append(request.node.nodeid)
+        # Trim by COUNT, not by the negative-slice `del recent[:-WINDOW]`: that form is
+        # correct for WINDOW >= 1 but silently becomes `del recent[:0]` — a no-op that
+        # lets `recent` grow for the whole session — the moment someone sets the constant
+        # to 0 to turn the window off.
+        del recent[:max(0, len(recent) - _UART_LEAK_GUARD_WINDOW)]
+        unreachable = []
+        for port in (5561, 5562):
+            # socket() and settimeout() belong INSIDE this try. Under the descriptor leak
+            # this guard exists to point at, socket() itself raises EMFILE; from outside
+            # the try that escaped to the outer handler, so the second port was never
+            # probed and the guard reported nothing in exactly its headline scenario.
+            probe = None
             try:
-                probe.close()
-            except OSError:
-                pass
-    if unreachable:
+                probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                probe.settimeout(2.0)
+                probe.connect((UART_CHARDEV_HOST, port))
+            except (ConnectionRefusedError, OSError, socket.timeout) as exc:
+                if probe is None:
+                    # socket() failed: we never asked the port anything, so calling it
+                    # unreachable would be a lie. Say what happened and move on to the
+                    # other port — an EMFILE here is itself the leak symptom.
+                    print(f"UART leak guard: could not create a probe socket for port "
+                          f"{port} ({exc!r}); that port was NOT probed. An 'Errno 24 Too "
+                          f"many open files' here is the descriptor leak this guard looks "
+                          f"for, seen from the probe side.")
+                else:
+                    unreachable.append(port)
+            finally:
+                if probe is not None:
+                    try:
+                        probe.close()
+                    except OSError:
+                        pass
+        warned = _uart_leak_state["warned"]
+        # Re-arm every port that accepts again — whatever held it (a leak, or a
+        # wider-scope fixture that has since torn down) is gone. Per port and not "all
+        # ports free", so one wedged port cannot keep the other suppressed.
+        warned.intersection_update(unreachable)
+        newly = [port for port in unreachable if port not in warned]
+        if not newly:
+            return
+        # Ports still wedged from an EARLIER warning. Named in the message even though
+        # they are not re-reported: without them, the "5562 wedged, then 5561 wedges too"
+        # state printed `port(s) [5561]` and the closing "the other port is unaffected"
+        # read as a claim that 5562 was fine. Computed before warned.update(newly).
+        still = [port for port in unreachable if port in warned]
+        still_note = (f" Port(s) {still} were already reported unreachable earlier and "
+                      f"are STILL unreachable (not re-reported here)." if still else "")
+        warned.update(newly)
+        window = ", ".join(reversed(predecessors)) or "(none: first test of the session)"
         warnings.warn(
-            f"UART chardev port(s) {unreachable} not connectable after "
-            f"{request.node.nodeid} — a prior test may have leaked a UART "
-            f"socket (QEMU single-client).",
+            f"{UART_CHARDEV_LEAK_MARKER}: port(s) {newly} did not take a probe "
+            f"connection after {request.node.nodeid}. If a UART socket was leaked, it "
+            f"happened in that test or shortly before it — most recent first, the tests "
+            f"that ran before it are: {window}. This is a hint, not a verdict: the probe "
+            f"cannot distinguish a leak "
+            f"from a chardev legitimately held by a live module-scoped fixture (e.g. "
+            f"cache_tcp_server in 20_test_cache_tcp_framing.py holds 5561 for its whole "
+            f"module), and QEMU's listen backlog absorbs the first connect after a leak, "
+            f"so this warning lags the leak by roughly one test. Ignore it when one of "
+            f"the tests above is meant to be holding the chardev; otherwise look in them "
+            f"for a helper thread whose stop() an exception skipped. Port(s) {newly} "
+            f"stay suppressed until they accept again; every port is tracked "
+            f"separately.{still_note}",
             stacklevel=1,
         )
+    except Exception as exc:  # noqa: BLE001 - diagnostics must never break a run
+        # print, not warnings.warn/raise: this handler is the last line of the promise
+        # that the guard never breaks a run, and warn() would raise under a future
+        # `filterwarnings = error`. A bare `pass` here used to make the guard vanish
+        # without trace exactly when something unexpected was happening; the suite runs
+        # with -s (pytest.ini addopts), so this line reaches the log.
+        print(f"UART leak guard: skipped this teardown after an unexpected error: "
+              f"{exc!r}. Chardev leak diagnostics are incomplete for this run.")

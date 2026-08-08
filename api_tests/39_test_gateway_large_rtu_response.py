@@ -30,6 +30,7 @@ import time
 
 import pytest
 
+from conftest import require_uart_chardev
 from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 
 
@@ -240,7 +241,7 @@ def _baseline(api):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def gateway_port(api):
+def gateway_port(api, is_qemu):
     """Set up Modbus TCP gateway on RS-485 port 1, without starting an RTU slave.
 
     Configures port 1 in tcp_bridge mode with modbus=True (Modbus TCP gateway),
@@ -249,18 +250,9 @@ def gateway_port(api):
 
     Teardown: disables port 1 and restores original settings.
     """
-    # Verify UART1 chardev is reachable before proceeding
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.settimeout(3.0)
-    try:
-        probe.connect(("127.0.0.1", UART1_TCP_PORT))
-        probe.close()
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        probe.close()
-        pytest.skip(
-            f"Cannot connect to UART chardev TCP port {UART1_TCP_PORT}. "
-            "QEMU may not expose this UART as TCP in this configuration."
-        )
+    # Verify UART1 chardev is reachable before proceeding. Only a reachability
+    # question, so the probe socket is closed immediately.
+    require_uart_chardev(UART1_TCP_PORT, is_qemu).close()
 
     # Save original settings for teardown
     resp = api.get_settings()

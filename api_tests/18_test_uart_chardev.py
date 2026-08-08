@@ -5,6 +5,8 @@ import struct
 import time
 import pytest
 
+from conftest import require_uart_chardev
+
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
@@ -31,20 +33,8 @@ def _build_modbus_tcp_request(txid, unit_id, fc, addr, count):
     return mbap + bytes([unit_id, fc]) + pdu
 
 
-def _try_connect_tcp(host, port, timeout=3.0):
-    """Try to connect to a TCP port. Returns socket or None."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect((host, port))
-        return sock
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        sock.close()
-        return None
-
-
 @pytest.mark.qemu
-def test_uart1_chardev_receives_bytes(api):
+def test_uart1_chardev_receives_bytes(api, is_qemu):
     """Verify that UART1 TCP chardev (port 5561) receives bytes when tcp_bridge is active.
 
     This is a diagnostic test: it proves that QEMU -serial tcp::5561,server,nowait
@@ -58,12 +48,10 @@ def test_uart1_chardev_receives_bytes(api):
 
     # Connect to UART1 TCP socket BEFORE switching mode (QEMU server must have a
     # client connected to buffer any bytes that UART1 transmits)
-    uart1_sock = _try_connect_tcp("127.0.0.1", UART1_TCP_PORT, timeout=3.0)
-    if uart1_sock is None:
-        pytest.skip(
-            f"Cannot connect to UART1 chardev TCP port {UART1_TCP_PORT}. "
-            "QEMU may not expose UART1 as TCP in this configuration."
-        )
+    # The probe socket IS the socket this test uses — no close/reconnect handoff on a
+    # single-client chardev. Fails when the QEMU is ours (a leak), skips against a
+    # remote device.
+    uart1_sock = require_uart_chardev(UART1_TCP_PORT, is_qemu, timeout=3.0)
 
     try:
         uart1_sock.settimeout(2.0)

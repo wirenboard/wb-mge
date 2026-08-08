@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from conftest import _poll_tcp_connect
+from conftest import _poll_tcp_connect, require_uart_chardev
 from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 from rtu_slave_helpers import ModbusRtuSlaveThread
 
@@ -76,25 +76,16 @@ def _baseline(api):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def dual_gateway_slave(api):
+def dual_gateway_slave(api, is_qemu):
     """Configure both RS485 ports as Modbus TCP gateways and start RTU slaves.
 
     Yields (slave1, slave2) — ModbusRtuSlaveThread instances for RS485-1 and
     RS485-2 respectively.  Restores the original port configuration on teardown.
     """
-    # Verify both UART chardev TCP ports are reachable before proceeding
+    # Verify both UART chardev TCP ports are reachable before proceeding. Only a
+    # reachability question, so each probe socket is closed immediately.
     for uart_port in (UART1_TCP_PORT, UART2_TCP_PORT):
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.settimeout(3.0)
-        try:
-            probe.connect((GATEWAY_HOST, uart_port))
-            probe.close()
-        except (ConnectionRefusedError, OSError, socket.timeout):
-            probe.close()
-            pytest.skip(
-                f"Cannot connect to UART chardev TCP port {uart_port}. "
-                "QEMU may not expose this UART as TCP in this configuration."
-            )
+        require_uart_chardev(uart_port, is_qemu, host=GATEWAY_HOST).close()
 
     # Save original settings for full restore on teardown
     resp = api.get_settings()

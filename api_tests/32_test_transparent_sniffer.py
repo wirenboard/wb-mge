@@ -30,7 +30,8 @@ import time
 
 import pytest
 
-from conftest import build_gateway_fixture, _connect_ready_bridge
+from conftest import (build_gateway_fixture, _connect_ready_bridge,
+                      require_uart_chardev, uart_chardev_unreachable)
 from packet_injector import (
     PacketInjector,
     inject_bytes,
@@ -59,24 +60,14 @@ SNIFFER_RESP_TIMEOUT_MS = 200          # Must match firmware sniffer.c constant
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def transparent_bridge_p2(api):
+def transparent_bridge_p2(api, is_qemu):
     """Port 2 transparent bridge fixture (server mode).
 
     Explicitly forces tx_disabled=False to prevent state leak from TR-06
     which sets tx_disabled=True on port 2.
     """
     # Step 1: verify UART2 chardev is reachable
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.settimeout(3.0)
-    try:
-        probe.connect(("127.0.0.1", UART2_TCP_PORT))
-        probe.close()
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        probe.close()
-        pytest.skip(
-            f"Cannot connect to UART2 chardev TCP port {UART2_TCP_PORT}. "
-            "QEMU may not expose UART2 as TCP in this configuration."
-        )
+    require_uart_chardev(UART2_TCP_PORT, is_qemu).close()
 
     # Step 2: save original settings
     resp = api.get_settings()
@@ -157,22 +148,6 @@ def _baseline(api):
         },
     })
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code}"
-
-
-# ---------------------------------------------------------------------------
-# Helper: try to establish a TCP connection, return socket or None
-# ---------------------------------------------------------------------------
-
-def _try_connect_tcp(host: str, port: int, timeout: float = 3.0):
-    """Attempt a TCP connection; return the socket or None on failure."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect((host, port))
-        return sock
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        sock.close()
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +488,7 @@ def _collect_echo(sock: socket.socket, expected_len: int, timeout: float) -> byt
 # settings-heavy (several /settings writes, each up to a 30 s client budget), and its cost
 # is charged to this item on top of the bridge admission (<=15 s) and round-trip. Inherit
 # pytest.ini's global 180 s rather than keep re-guessing a number the fixture can blow.
-def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
+def test_transparent_port2_basic_roundtrip(transparent_bridge_p2, is_qemu):
     """Send 16 arbitrary bytes through the port 2 transparent bridge and receive echo.
 
     Setup:
@@ -521,10 +496,7 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
     - _UartEchoThread connects to UART2 chardev (port 5562) and echoes bytes.
     - TCP client connects to host port 50503, sends 16 bytes, expects echo back.
     """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART2_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART2 chardev TCP port {UART2_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART2_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     echo_thread = _UartEchoThread(GATEWAY_HOST, UART2_TCP_PORT)
     echo_thread.start()
@@ -533,7 +505,7 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
 
     test_data = bytes(range(16))  # 16 distinct bytes: 0x00..0x0F
     # _connect_ready_bridge() inside the try so a raise still stops the echo thread
-    # (a leaked echo thread wedges the single-client UART chardev -> spurious skips).
+    # (a leaked echo thread wedges the single-client UART chardev -> downstream failures).
     tcp_sock = None
     try:
         tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_PORT2_HOST_PORT, timeout=15.0)
@@ -568,7 +540,7 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2):
 # (a tight 2 s budget on purpose) — on top of the function-scoped transparent_bridge_p1
 # fixture's settings-churn setup (several /settings writes, each up to 30 s). That worst
 # case blows a small guess, so inherit pytest.ini's global 180 s.
-def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
+def test_transparent_server_reconnect_after_rst(transparent_bridge_p1, is_qemu):
     """After an abrupt RST disconnect, a new client connects and is served.
 
     Single-client scenario, as required by the block-new cap (max_connections == 1):
@@ -585,10 +557,7 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
        it is the echo in step 6 that proves the RST actually freed the single-client slot.
     6. Collect the echo on client_b; verify it matches what was sent.
     """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
     echo_thread.start()
@@ -658,7 +627,7 @@ def test_transparent_server_reconnect_after_rst(transparent_bridge_p1):
 # setup (several writes, each an async port deinit/reinit, up to 30 s apiece) plus a
 # _connect_ready_bridge admission (up to 15 s under jitter) can take tens of seconds before
 # the 1 KiB round-trip even starts. Inherit pytest.ini's global 180 s instead of a guess.
-def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
+def test_transparent_large_payload_with_nulls(transparent_bridge_p1, is_qemu):
     """1024-byte payload with embedded null bytes is forwarded correctly.
 
     Uses payload = bytes([(i % 251) for i in range(1024)]) which cycles
@@ -666,10 +635,7 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
     Payload is sent in one shot; the firmware forwards UART data immediately
     without waiting for idle timeout, so burst load does not cause RX overflow.
     """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
     echo_thread.start()
@@ -725,7 +691,7 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
 # genuinely pinned their 30 s ceiling this test SHOULD fail as a real firmware/infra
 # problem. A guessed marker under-shot three rounds running (20 -> 30 -> 40); inherit
 # pytest.ini's global 180 s rather than keep guessing.
-def test_transparent_client_mode_reconnect(api):
+def test_transparent_client_mode_reconnect(api, is_qemu):
     """Firmware reconnects within TCP_CLIENT_RECONN_DELAY_MS after server closes connection.
 
     A _TcpReconnectServer accepts connections sequentially.  The firmware is
@@ -733,10 +699,7 @@ def test_transparent_client_mode_reconnect(api):
     firmware should reconnect and data flow must be restored on the second
     connection.
     """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     reconnect_server = _TcpReconnectServer(host="0.0.0.0")
     reconnect_server.start()
@@ -805,7 +768,7 @@ def test_transparent_client_mode_reconnect(api):
 
     finally:
         # Stopping reconnect_server MUST NOT depend on the earlier steps: a leaked daemon
-        # server thread wedges the single-client chardev and cascades skips downstream.
+        # server thread wedges the single-client chardev and fails every later test.
         # uart_sock.close() and _teardown_client_mode_bridge (bare api.set_port_mode/
         # update_settings, each a 30 s-read-timeout /settings request that can ReadTimeout
         # under QEMU load) could otherwise throw and skip the stop(). Guard + nest.
@@ -831,18 +794,33 @@ def test_transparent_client_mode_reconnect(api):
 # an async port deinit/reinit — GET/POST /settings can take tens of seconds under QEMU
 # (pytest.ini says so; api_client client timeout is 30 s), so the setup alone can eat most
 # of a small budget. Inherit pytest.ini's global 180 s rather than size it by hand.
-def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
+def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api, is_qemu):
     """UART bytes are silently dropped when no TCP client is connected; firmware stays alive.
 
     The transparent_bridge_p1 fixture sets up the bridge but nobody connects
     to the TCP port.  Raw bytes injected via UART1 chardev must not crash the
     firmware; the API must remain responsive afterwards.
     """
-    # Inject 16 bytes directly into UART1 chardev — no TCP client is listening
+    # Inject 16 bytes directly into UART1 chardev — no TCP client is listening.
+    # Guard the connect only — same reasoning as the two sites below: an OSError out of
+    # inject_bytes() is an established socket breaking (EPIPE and friends), a different
+    # defect that must not be reported as "chardev not connectable" with a leak hint
+    # attached. The socket is closed immediately, exactly as the one-shot
+    # inject_bytes(port=...) it replaces did, so the single accept slot is not held
+    # across the API check below.
+    uart_sock = None
     try:
-        inject_bytes(port=1, data=bytes(range(16)))
-    except OSError as exc:
-        pytest.skip(f"UART1 chardev not reachable: {exc}")
+        try:
+            uart_sock = open_uart_socket(port=1)
+        except OSError as exc:
+            uart_chardev_unreachable(UART1_TCP_PORT, is_qemu, detail=exc)
+        inject_bytes(port=1, data=bytes(range(16)), sock=uart_sock)
+    finally:
+        if uart_sock is not None:
+            try:
+                uart_sock.close()
+            except OSError:
+                pass
 
     # Allow firmware to process the bytes and (silently) discard them
     time.sleep(0.2)
@@ -870,7 +848,7 @@ def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
 # exceed it) — if calls actually hit their ceiling this test SHOULD fail as a real
 # firmware/infra problem. This marker went 20 -> 30 -> 40 -> 60 across rounds and a small
 # guess kept under-shooting; inherit pytest.ini's global 180 s rather than guess again.
-def test_transparent_tx_disabled_port2(api):
+def test_transparent_tx_disabled_port2(api, is_qemu):
     """tx_disabled=True on port 2 prevents firmware from forwarding TCP→UART2.
 
     Steps:
@@ -914,10 +892,7 @@ def test_transparent_tx_disabled_port2(api):
         assert resp.status_code == 200, f"Failed to activate tcp_bridge on port 2"
 
         # Start echo thread on UART2 chardev
-        probe = _try_connect_tcp(GATEWAY_HOST, UART2_TCP_PORT, timeout=3.0)
-        if probe is None:
-            pytest.skip(f"UART2 chardev TCP port {UART2_TCP_PORT} not reachable")
-        probe.close()
+        require_uart_chardev(UART2_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
         echo_thread = _UartEchoThread(GATEWAY_HOST, UART2_TCP_PORT)
         echo_thread.start()
@@ -1028,7 +1003,7 @@ def test_sniffer_port2_packets_have_port2(api):
 @pytest.mark.qemu
 # No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
 # /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
-def test_sniffer_timeout_packet_when_slave_silent(api):
+def test_sniffer_timeout_packet_when_slave_silent(api, is_qemu):
     """When slave doesn't respond, the master request is immediately visible and no timeout packet is sent.
 
     Injects only an FC03 request with no response.  The firmware now emits the
@@ -1056,11 +1031,14 @@ def test_sniffer_timeout_packet_when_slave_silent(api):
 
         # Inject only a request — no response follows
         request_frame = build_fc03_request(slave=1, start_addr=0, reg_count=1)
+        # Only the connect is guarded: an OSError out of inject_bytes() is a broken
+        # already-established connection (EPIPE and friends), not an unreachable
+        # chardev, and reporting it as one would attach a leak hint to the wrong defect.
         try:
             uart_sock = open_uart_socket(port=1)
-            inject_bytes(port=1, data=request_frame, sock=uart_sock)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART1_TCP_PORT, is_qemu, detail=exc)
+        inject_bytes(port=1, data=request_frame, sock=uart_sock)
 
         # Collect all packets for 3× the sniffer timeout to let any potential
         # timeout event arrive if the firmware incorrectly sends one.
@@ -1121,7 +1099,7 @@ def test_sniffer_timeout_packet_when_slave_silent(api):
 @pytest.mark.qemu
 # No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
 # /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
-def test_sniffer_broadcast_classified_as_master(api):
+def test_sniffer_broadcast_classified_as_master(api, is_qemu):
     """Broadcast packet (slave_id=0x00) is classified as sender=='master'.
 
     Injects a broadcast FC03 request (slave=0x00) via UART1 chardev and
@@ -1144,11 +1122,14 @@ def test_sniffer_broadcast_classified_as_master(api):
 
         # Build broadcast FC03 request: slave=0x00
         broadcast_frame = build_fc03_request(slave=0, start_addr=0, reg_count=1)
+        # Guard the connect only — see the note in the timeout-packet test above: an
+        # OSError from inject_bytes() means the established socket broke, which is a
+        # different defect and must not be reported as "chardev not connectable".
         try:
             uart_sock = open_uart_socket(port=1)
-            inject_bytes(port=1, data=broadcast_frame, sock=uart_sock)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART1_TCP_PORT, is_qemu, detail=exc)
+        inject_bytes(port=1, data=broadcast_frame, sock=uart_sock)
 
         # Collect packets until one with slave_id==0 is found
         broadcast_pkts = _collect_packets(
@@ -1197,7 +1178,7 @@ def test_sniffer_broadcast_classified_as_master(api):
 @pytest.mark.qemu
 # No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
 # /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
-def test_sniffer_fast_modbus_classification(api):
+def test_sniffer_fast_modbus_classification(api, is_qemu):
     """Fast Modbus packets are classified correctly by subcmd field.
 
     subcmd=0x01 → fm_is_slave_subcmd(0x01) is False → sender=='master'
@@ -1224,7 +1205,7 @@ def test_sniffer_fast_modbus_classification(api):
         try:
             uart_sock = open_uart_socket(port=1)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART1_TCP_PORT, is_qemu, detail=exc)
 
         # Build FM master packet (subcmd=0x01, which is NOT a slave subcmd)
         stripped_pdu_master = bytes([0xFD, 0x46, 0x01, 0x00, 0x00, 0x00])
@@ -1304,7 +1285,7 @@ def test_sniffer_fast_modbus_classification(api):
 @pytest.mark.qemu
 # No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
 # /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
-def test_sniffer_orphan_response(api):
+def test_sniffer_orphan_response(api, is_qemu):
     """A slave response without preceding request (orphan) is emitted as sender=='slave'.
 
     When the sniffer is in SNIFF_IDLE state and receives a valid FC03 response
@@ -1332,7 +1313,7 @@ def test_sniffer_orphan_response(api):
         try:
             uart_sock = open_uart_socket(port=1)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART1_TCP_PORT, is_qemu, detail=exc)
 
         # Build orphan FC03 response: slave=1, FC=3, bytecount=2, reg value=0x1234
         # len=7: slave(1)+FC(1)+bytecount(1)+data(2)+CRC(2) = 7 → DIRECTION_RESPONSE
@@ -1471,7 +1452,7 @@ def test_sniffer_ws_disconnect_firmware_stays_alive(api):
 # plus a sniffer-overlay mode switch and its settings writes (each up to 30 s) and a
 # round-trip can blow a small budget under contention. Inherit pytest.ini's global 180 s.
 # (An earlier note here said "twice" — there is a single bridge connect.)
-def test_sniffer_to_tcp_bridge_data_path_restored(api):
+def test_sniffer_to_tcp_bridge_data_path_restored(api, is_qemu):
     """After running the WS sniffer overlay on a tcp_bridge port and stopping it,
     the transparent data path still works.
 
@@ -1520,10 +1501,7 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
         # traffic and verify packets arrive.
         resp = api.set_port_mode(1, "tcp_bridge")
         assert resp.status_code == 200, f"Failed to set tcp_bridge mode: {resp.status_code}"
-        probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-        if probe is None:
-            pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-        probe.close()
+        require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
         with PacketInjector(port=1, include_all_fc=False):
             ws, stop_ping, _ = _ws_connect(api, 1)
@@ -1607,7 +1585,7 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api):
 # 30 s) it also pays conftest's _restore_rs485_settings teardown (up to 2 bounded POST /settings
 # + a settle window, ~41 s). The global 180 s from pytest.ini covers body + teardown with margin
 # and avoids hand-sizing a settings-heavy budget.
-def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
+def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api, is_qemu):
     """tcp_bridge round-trip works before, during, and after a WS sniffer overlay.
 
     In the new model the sniffer is a display overlay on top of tcp_bridge, not a
@@ -1649,10 +1627,7 @@ def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api):
         time.sleep(0.3)
 
         # Check UART1 chardev is accessible
-        probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-        if probe is None:
-            pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-        probe.close()
+        require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
         # ----------------------------------------------------------------
         # Phase 1: tcp_bridge — verify round-trip

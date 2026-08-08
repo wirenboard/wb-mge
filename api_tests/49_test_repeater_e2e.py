@@ -14,6 +14,8 @@ import time
 
 import pytest
 
+from conftest import require_uart_chardev
+
 GATEWAY_HOST = "127.0.0.1"
 UART1_TCP_PORT = 5561        # QEMU UART1 chardev TCP (RS-485 port 1)
 UART2_TCP_PORT = 5562        # QEMU UART2 chardev TCP (RS-485 port 2)
@@ -75,15 +77,23 @@ def _read_repeater_stats(api) -> dict:
     return resp.json().get("repeater", {})
 
 
-def _skip_if_uart_unreachable(port: int) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(3.0)
-    try:
-        sock.connect((GATEWAY_HOST, port))
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        pytest.skip(f"UART chardev TCP port {port} not reachable")
-    finally:
-        sock.close()
+def _require_uart_tcp(tcp_port: int, is_qemu: bool) -> None:
+    """Require the QEMU UART chardev on `tcp_port` (5561 = port 1, 5562 = port 2).
+
+    Named _require_uart_TCP because it takes the chardev's TCP port, while the identically
+    shaped `_require_uart` in 42_test_sniffer_cache_overlays_e2e.py takes an RS-485 port
+    number (1 or 2). One name for two different argument spaces is a silent-wrong-port
+    trap the moment either helper is copied between files.
+
+    FAILS when the QEMU under test is on this machine (--qemu, or a loopback --ip) — the
+    chardev exists there, so unreachable can only mean an earlier test leaked the
+    single-client socket — and skips only against a remote device. Only a reachability
+    question here, so the probe socket is closed immediately.
+    """
+    # Keep this wrapper out of the --tb=short traceback (conftest's helpers do the same),
+    # so a failure points at the test that needed the chardev.
+    __tracebackhide__ = True
+    require_uart_chardev(tcp_port, is_qemu, host=GATEWAY_HOST).close()
 
 
 @pytest.mark.qemu
@@ -94,14 +104,14 @@ def _skip_if_uart_unreachable(port: int) -> None:
 # run that lands on the very first item of the session (00_test_heap_session.py) instead.
 # 40 s body + 20.1 s snapshot + slack.
 @pytest.mark.timeout(65)
-def test_repeater_bidirectional_forwarding(api):
+def test_repeater_bidirectional_forwarding(api, is_qemu):
     """E2E-1: with both ports in repeater, bytes flow 1->2 and 2->1, counters advance.
 
     User journey: the operator turns the repeater on for both ports and the gateway
     transparently bridges traffic in both directions.
     """
-    _skip_if_uart_unreachable(UART1_TCP_PORT)
-    _skip_if_uart_unreachable(UART2_TCP_PORT)
+    _require_uart_tcp(UART1_TCP_PORT, is_qemu)
+    _require_uart_tcp(UART2_TCP_PORT, is_qemu)
 
     info = api.get_info().json()
     orig1 = info.get("rs485_1", {}).get("port_mode", "disabled")
@@ -166,13 +176,13 @@ def test_repeater_bidirectional_forwarding(api):
 # POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
 # 40 s body + 45 s teardown allowance.
 @pytest.mark.timeout(85)
-def test_repeater_single_port_drops_and_inactive(api):
+def test_repeater_single_port_drops_and_inactive(api, is_qemu):
     """E2E-2: with only one port in repeater, bytes are dropped and the link is inactive.
 
     User journey: the operator enabled the repeater on a single port — the gateway
     must not send into a dead peer and must report the link as inactive.
     """
-    _skip_if_uart_unreachable(UART1_TCP_PORT)
+    _require_uart_tcp(UART1_TCP_PORT, is_qemu)
 
     info = api.get_info().json()
     orig1 = info.get("rs485_1", {}).get("port_mode", "disabled")

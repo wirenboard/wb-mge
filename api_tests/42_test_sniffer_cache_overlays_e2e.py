@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 import pytest
 
 from conftest import (build_gateway_fixture, _poll_tcp_connect,
-                      _connect_ready_bridge)
+                      _connect_ready_bridge, require_uart_chardev)
 from rtu_slave_helpers import ModbusRtuSlaveThread
 from modbus_helpers import make_mbap_request, send_and_receive, query_register_once
 from sniffer_helpers import _ws_connect, _collect_packets
@@ -506,19 +506,19 @@ def _inject_fc04(port, addr, value):
         sock.close()
 
 
-def _require_uart(port):
-    """Skip the test if the QEMU UART chardev for the given port is unreachable."""
-    uart_tcp = {1: 5561, 2: 5562}[port]
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.settimeout(3.0)
-    try:
-        if probe.connect_ex(("127.0.0.1", uart_tcp)) != 0:
-            pytest.skip(
-                f"UART{port} chardev TCP port {uart_tcp} not reachable; "
-                "QEMU may not expose this UART as TCP in this configuration."
-            )
-    finally:
-        probe.close()
+def _require_uart(port, is_qemu):
+    """Require the QEMU UART chardev for the given RS-485 port to be reachable.
+
+    Under --qemu an unreachable chardev is a leaked single-client socket and FAILS;
+    on a real device (--ip, no QEMU chardev at all) it still skips. Only a
+    reachability question here, so the probe socket is closed immediately.
+
+    `port` is an RS-485 port number (1 or 2), not a TCP port.
+    """
+    # Keep this wrapper out of the --tb=short traceback (conftest's helpers do the same),
+    # so a failure points at the test that needed the chardev.
+    __tracebackhide__ = True
+    require_uart_chardev(UART_TCP_PORT[port], is_qemu).close()
 
 
 def _cache_json_holding_value(api, addr):
@@ -557,41 +557,19 @@ def _cache_server_reachable():
         probe.close()
 
 
-def _uart_reachable(port: int) -> bool:
-    """Return True if the QEMU UART chardev for the given RS-485 port accepts a TCP connection."""
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.settimeout(3.0)
-    try:
-        probe.connect(("127.0.0.1", UART_TCP_PORT[port]))
-        return True
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        return False
-    finally:
-        probe.close()
-
-
 # ===========================================================================
 # Cache overlay persists across reboot (NVS round-trip) and re-populates live
 # ===========================================================================
 
 @pytest.mark.qemu
 @pytest.mark.timeout(2400)
-def test_cache_overlay_persists_across_reboot(api):
+def test_cache_overlay_persists_across_reboot(api, is_qemu):
     """Enable the cache on port 1, reboot, and assert the overlay is restored from
     NVS (rs485_1.cache_enabled still true) AND a fresh FC03 transaction repopulates
     GET /cache/json after reboot."""
-    # Skip early if the UART1 chardev is not reachable in this QEMU config.
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.settimeout(3.0)
-    try:
-        probe.connect((GATEWAY_HOST, UART1_TCP_PORT))
-        probe.close()
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        probe.close()
-        pytest.skip(
-            f"Cannot connect to UART1 chardev TCP port {UART1_TCP_PORT}; "
-            "QEMU may not expose this UART as TCP in this configuration."
-        )
+    # Bail out early if the UART1 chardev is not usable: a FAILURE under --qemu (it
+    # can only mean a leaked single-client socket), a skip on a real device.
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     # Save full original settings so teardown can restore the device verbatim.
     resp = api.get_settings()
@@ -1139,11 +1117,11 @@ def test_bridge_sniffer_cache_coactive_through_cache_cycle(api, gateway_p1_modbu
 
 @pytest.mark.qemu
 @pytest.mark.timeout(120)
-def test_port2_cache_feed_populates_pool(api):
+def test_port2_cache_feed_populates_pool(api, is_qemu):
     """With the cache overlay on PORT 2, FC03 and FC04 reads observed on UART2
     populate the shared pool and are readable via /cache/json and the cache
     Modbus TCP server (which is port-agnostic)."""
-    _require_uart(2)
+    _require_uart(2, is_qemu)
 
     host = _cache_host(api)
 
@@ -1232,7 +1210,7 @@ def test_port2_cache_feed_populates_pool(api):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(180)
-def test_cache_single_port_takeover_moves_and_clears(api):
+def test_cache_single_port_takeover_moves_and_clears(api, is_qemu):
     """Single-port cache overlay: enabling it on a second port TAKES OVER and CLEARS.
 
     The cache is single-port by design (review #51): the overlay lives on exactly
@@ -1248,8 +1226,8 @@ def test_cache_single_port_takeover_moves_and_clears(api):
     (Rewritten from the former test_dual_port_merge_most_recent_wins_and_pool_survival,
     which asserted a port-merged pool — the architecture rejected at review #51.)
     """
-    _require_uart(1)
-    _require_uart(2)
+    _require_uart(1, is_qemu)
+    _require_uart(2, is_qemu)
 
     info = api.get_info().json()
     orig_mode_p1 = info.get("rs485_1", {}).get("port_mode", "disabled")
@@ -1723,14 +1701,10 @@ def test_cache_toggle_mid_traffic_serves_fresh_value(api, gateway_p1_modbus_togg
 # conftest.build_gateway_fixture), so the conftest restore is the whole module teardown.
 # 90 s body + 45 s teardown allowance.
 @pytest.mark.timeout(135)
-def test_broadcast_read_not_cached(api):
+def test_broadcast_read_not_cached(api, is_qemu):
     """A broadcast FC03 (slave 0, unanswered) must not create any cache entry;
     a following unicast FC03 must be cached normally with its correct value."""
-    if not _uart_reachable(1):
-        pytest.skip(
-            f"Cannot connect to UART chardev TCP port {UART_TCP_PORT[1]}. "
-            "QEMU may not expose this UART as TCP in this configuration."
-        )
+    _require_uart(1, is_qemu)
 
     # Save original transport and cache-timeout settings so teardown restores them.
     info_resp = api.get_info()
