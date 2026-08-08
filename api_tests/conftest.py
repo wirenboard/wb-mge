@@ -270,12 +270,14 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
     # rejected connection the FIN/RST returns instantly, so a naive spin would run
     # ~timeout/epsilon connect/close cycles on the single-slot bridge and ripple into
     # neighbouring ports; the backoff holds it to ~17 cycles over 15 s instead.
-    if timeout < hold:
-        # The floor below would break before a single attempt and the helper would raise
-        # "within 0.0 s" — a confusing lie. Unreachable today (smallest caller timeout is
-        # 2.0), but fail loudly for the next caller instead of silently doing nothing.
+    if timeout <= hold:
+        # `<=`, not `<`: `remaining` is computed AFTER `start`, so at timeout == hold the
+        # first iteration already has remaining < hold and the floor below breaks before a
+        # single attempt — the helper would raise "within 0.0 s", a confusing lie. Reject the
+        # whole degenerate band up front. Unreachable today (smallest caller timeout is 2.0),
+        # but fail loudly for the next caller instead of silently doing nothing.
         raise ValueError(
-            f"timeout ({timeout:.3f} s) must be >= hold ({hold:.3f} s): a shorter budget "
+            f"timeout ({timeout:.3f} s) must be > hold ({hold:.3f} s): a shorter budget "
             f"cannot run even one trustworthy admission attempt"
         )
     start = time.monotonic()
@@ -318,11 +320,12 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
             return sock                          # admitted, open, byte-clean for the caller
         sock.close()
         # Back off before retrying (never after a success — that path returns above),
-        # clamped so we never sleep past the deadline. Note this can still sleep once
-        # after what turns out to be the final attempt: if the next iteration's
-        # `remaining < hold` floor will fire, we have already napped up to
-        # min(backoff, remaining) here. That wasted tail is bounded by `hold` (<= ~0.5 s),
-        # not `backoff` (1 s), and never crosses the deadline.
+        # clamped so we never sleep past the deadline. This can still sleep once after what
+        # turns out to be the final attempt: whenever the sleep leaves < hold on the clock
+        # (whether it started below hold, or started at remaining >= hold and this nap drops
+        # it under — e.g. remaining 1.4 -> nap 1.0 -> 0.4), the next iteration's `remaining <
+        # hold` floor fires and we stop. That wasted tail is bounded by `backoff` (<= 1 s),
+        # not `hold`, but it never crosses the deadline (nap is clamped to the remaining budget).
         nap = min(backoff, deadline - time.monotonic())
         if nap <= 0:
             break

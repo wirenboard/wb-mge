@@ -474,15 +474,30 @@ def _setup_client_mode_bridge(api, port_num: int, bridge_ip: str, bridge_port: i
 
 def _teardown_client_mode_bridge(api, port_num: int, original_settings: dict,
                                   rs485_key: str) -> None:
-    """Restore firmware to original state after client mode test."""
-    api.set_port_mode(port_num, "disabled")
-    time.sleep(0.3)
-    restore_resp = api.update_settings(original_settings)
-    if restore_resp.status_code != 200:
-        print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
-    original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
-    api.set_port_mode(port_num, original_mode)
-    time.sleep(0.3)
+    """Restore firmware to original state after client mode test.
+
+    Best-effort: this runs from a test's finally, and each call is a 30 s-read-timeout
+    /settings request that can ReadTimeout under QEMU load. Each step is wrapped so one
+    failure neither skips the remaining restore steps nor RAISES out of the finally (which
+    would mask the test's real assertion failure with a teardown exception). Mirrors 36_.
+    """
+    try:
+        api.set_port_mode(port_num, "disabled")
+        time.sleep(0.3)
+    except Exception as exc:
+        print(f"✗ teardown set_port_mode(disabled) failed: {exc!r}")
+    try:
+        restore_resp = api.update_settings(original_settings)
+        if restore_resp.status_code != 200:
+            print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+    except Exception as exc:
+        print(f"✗ teardown update_settings failed: {exc!r}")
+    try:
+        original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
+        api.set_port_mode(port_num, original_mode)
+        time.sleep(0.3)
+    except Exception as exc:
+        print(f"✗ teardown set_port_mode(restore) failed: {exc!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -716,15 +731,17 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
 
 @pytest.mark.qemu
 # No local timeout marker: this is settings-heavy and does NOT use _connect_ready_bridge
-# (client mode). It waits ~28 s unconditionally (fixed 10+5+2+5+5 s settle windows) plus
-# 8 /settings calls (get_settings + 4 in _setup_client_mode_bridge + 3 in _teardown). Each
-# /settings call carries a 30 s CLIENT-timeout ceiling, but that ceiling is theoretical:
-# observed GET/POST /settings latencies under QEMU are an order of magnitude smaller
-# (sub-second to a few seconds), so the realistic total is well under 180 s. 180 is chosen
-# as a safe compromise, NOT a proven worst-case bound (8x30+28 would exceed it) — if calls
-# genuinely pinned their 30 s ceiling this test SHOULD fail as a real firmware/infra
-# problem. A guessed marker under-shot three rounds running (20 -> 30 -> 40); inherit
-# pytest.ini's global 180 s rather than keep guessing.
+# (client mode). It spends up to ~28 s in bounded waits (early-return polls: wait_ready,
+# wait_connection, _collect_echo), of which only ~3 s is UNCONDITIONAL sleep (one
+# sleep(reconn_wait)=2.0 + four sleep(0.3)); the rest returns as soon as the condition holds.
+# On top of that, 8 /settings calls (get_settings + 4 in _setup_client_mode_bridge + 3 in
+# _teardown). Each /settings call carries a 30 s CLIENT-timeout ceiling, but that ceiling is
+# theoretical: observed GET/POST /settings latencies under QEMU are an order of magnitude
+# smaller (sub-second to a few seconds), so the realistic total is well under 180 s. 180 is
+# chosen as a safe compromise, NOT a proven worst-case bound (8x30 + the poll ceilings would
+# exceed it) — if calls genuinely pinned their 30 s ceiling this test SHOULD fail as a real
+# firmware/infra problem. A guessed marker under-shot three rounds running (20 -> 30 -> 40);
+# inherit pytest.ini's global 180 s rather than keep guessing.
 def test_transparent_client_mode_reconnect(api):
     """Firmware reconnects within TCP_CLIENT_RECONN_DELAY_MS after server closes connection.
 
