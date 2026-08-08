@@ -258,7 +258,11 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
     (handshake never completed) as "held with no FIN => admitted" and return a dead
     socket. Only a timeout of the recv() AFTER a completed connect means "admitted".
     """
-    # `timeout` is the sole bound: a hard wall-clock deadline. We loop until it, at a
+    # `timeout` bounds when we STOP STARTING attempts (a wall-clock deadline), not the
+    # absolute return time: an attempt begun with just `hold` left runs the full,
+    # deliberately-unclamped hold (see below), so the call can overshoot `timeout` by at
+    # most `hold`. That is the only source of overshoot — connect and the backoff sleep
+    # are both clamped to the remaining budget. We loop until the deadline at a
     # LIMITED FREQUENCY (backoff 0.2 -> 1.0 s between attempts) rather than a fixed
     # attempt count — a fixed count would silently shrink the real readiness window
     # (e.g. 8 attempts settle at ~6 s, so a port that opens at 7-14 s would be failed
@@ -266,6 +270,14 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
     # rejected connection the FIN/RST returns instantly, so a naive spin would run
     # ~timeout/epsilon connect/close cycles on the single-slot bridge and ripple into
     # neighbouring ports; the backoff holds it to ~17 cycles over 15 s instead.
+    if timeout < hold:
+        # The floor below would break before a single attempt and the helper would raise
+        # "within 0.0 s" — a confusing lie. Unreachable today (smallest caller timeout is
+        # 2.0), but fail loudly for the next caller instead of silently doing nothing.
+        raise ValueError(
+            f"timeout ({timeout:.3f} s) must be >= hold ({hold:.3f} s): a shorter budget "
+            f"cannot run even one trustworthy admission attempt"
+        )
     start = time.monotonic()
     deadline = start + timeout
     backoff = 0.2
@@ -286,7 +298,13 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
             rejected = True
         else:
             try:
-                sock.settimeout(hold)            # full hold; remaining >= hold guaranteed above
+                # Full `hold`, deliberately NOT clamped to the remaining budget: a
+                # shortened peek could miss a late FIN/RST and falsely report "admitted".
+                # connect() above may have eaten into the budget since the `remaining >=
+                # hold` floor was checked, so this is what can push the call up to `hold`
+                # past `timeout` (documented at the top). A false reject on overshoot is
+                # acceptable; a false admit is the bug we refuse to reintroduce.
+                sock.settimeout(hold)
                 # MSG_PEEK: b'' => FIN (rejected/closed); data => up and already pushing
                 # (left in the buffer for the caller); neither within `hold` => admitted.
                 if sock.recv(1, socket.MSG_PEEK) == b'':
@@ -299,8 +317,12 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
             sock.settimeout(None)
             return sock                          # admitted, open, byte-clean for the caller
         sock.close()
-        # back off before the NEXT attempt only — never after a success, never past
-        # the deadline; if no budget is left, give up now instead of sleeping.
+        # Back off before retrying (never after a success — that path returns above),
+        # clamped so we never sleep past the deadline. Note this can still sleep once
+        # after what turns out to be the final attempt: if the next iteration's
+        # `remaining < hold` floor will fire, we have already napped up to
+        # min(backoff, remaining) here. That wasted tail is bounded by `hold` (<= ~0.5 s),
+        # not `backoff` (1 s), and never crosses the deadline.
         nap = min(backoff, deadline - time.monotonic())
         if nap <= 0:
             break

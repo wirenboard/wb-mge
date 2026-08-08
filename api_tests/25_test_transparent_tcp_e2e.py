@@ -499,12 +499,22 @@ def test_transparent_client_mode(api):
         print(f"✓ Transparent bridge client mode: {len(test_data)} bytes echoed via 10.0.2.2:{echo_port}")
 
     finally:
-        if uart_sock:
-            uart_sock.close()
-        if original_settings is not None:
-            _teardown_client_mode_bridge(api, 1, original_settings, rs485_key)
-        echo_server.stop()
-        echo_server.join(timeout=3.0)
+        # Stopping echo_server MUST NOT depend on the earlier steps: a leaked daemon
+        # echo thread wedges the single-client chardev and cascades skips downstream.
+        # uart_sock.close() and _teardown_client_mode_bridge (bare api.set_port_mode/
+        # update_settings, each a 30 s-read-timeout /settings request that can ReadTimeout
+        # under QEMU load) could otherwise throw and skip the stop(). Guard + nest.
+        if uart_sock is not None:
+            try:
+                uart_sock.close()
+            except OSError:
+                pass
+        try:
+            if original_settings is not None:
+                _teardown_client_mode_bridge(api, 1, original_settings, rs485_key)
+        finally:
+            echo_server.stop()
+            echo_server.join(timeout=3.0)
 
 
 # ---------------------------------------------------------------------------

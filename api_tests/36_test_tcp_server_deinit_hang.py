@@ -133,7 +133,8 @@ def test_tcp_server_deinit_completes_with_open_client(api):
         # exactly one, the client was not truly admitted and the deinit-with-open-client
         # regression would not be exercised — fail rather than pass vacuously.
         conns = None
-        conn_deadline = time.monotonic() + 5.0
+        poll_start = time.monotonic()
+        conn_deadline = poll_start + 5.0
         while time.monotonic() < conn_deadline:
             info = api.get_info()
             if info.status_code == 200:
@@ -141,9 +142,12 @@ def test_tcp_server_deinit_completes_with_open_client(api):
                 if conns == 1:
                     break
             time.sleep(0.2)
+        poll_elapsed = time.monotonic() - poll_start
+        # Wall-clock deadline is 5 s, but a single api.get_info() can block up to its 10 s
+        # client timeout, so print the ACTUAL time waited rather than a fixed "within 5 s".
         assert conns == 1, (
             f"firmware must see exactly one admitted transparent client before deinit, "
-            f"got server_connections_count={conns!r} within 5 s"
+            f"got server_connections_count={conns!r} after polling {poll_elapsed:.1f} s"
         )
 
         # Step 7: record the start time immediately before the deinit call.

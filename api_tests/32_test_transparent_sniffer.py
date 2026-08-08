@@ -716,10 +716,15 @@ def test_transparent_large_payload_with_nulls(transparent_bridge_p1):
 
 @pytest.mark.qemu
 # No local timeout marker: this is settings-heavy and does NOT use _connect_ready_bridge
-# (client mode). Even with instant HTTP it waits ~28 s unconditionally — get_settings +
-# 4 calls in _setup_client_mode_bridge + 3 in _teardown, each up to a 30 s client budget,
-# plus fixed 10+5+2+5+5 s settle windows. A guessed marker under-shot this three rounds
-# running (20 -> 30 -> 40); inherit pytest.ini's global 180 s instead of guessing a fourth.
+# (client mode). It waits ~28 s unconditionally (fixed 10+5+2+5+5 s settle windows) plus
+# 8 /settings calls (get_settings + 4 in _setup_client_mode_bridge + 3 in _teardown). Each
+# /settings call carries a 30 s CLIENT-timeout ceiling, but that ceiling is theoretical:
+# observed GET/POST /settings latencies under QEMU are an order of magnitude smaller
+# (sub-second to a few seconds), so the realistic total is well under 180 s. 180 is chosen
+# as a safe compromise, NOT a proven worst-case bound (8x30+28 would exceed it) — if calls
+# genuinely pinned their 30 s ceiling this test SHOULD fail as a real firmware/infra
+# problem. A guessed marker under-shot three rounds running (20 -> 30 -> 40); inherit
+# pytest.ini's global 180 s rather than keep guessing.
 def test_transparent_client_mode_reconnect(api):
     """Firmware reconnects within TCP_CLIENT_RECONN_DELAY_MS after server closes connection.
 
@@ -799,11 +804,21 @@ def test_transparent_client_mode_reconnect(api):
         print(f"✓ Client mode reconnect: both connections exchanged data correctly")
 
     finally:
-        if uart_sock:
-            uart_sock.close()
-        _teardown_client_mode_bridge(api, 1, original_settings, rs485_key)
-        reconnect_server.stop()
-        reconnect_server.join(timeout=3.0)
+        # Stopping reconnect_server MUST NOT depend on the earlier steps: a leaked daemon
+        # server thread wedges the single-client chardev and cascades skips downstream.
+        # uart_sock.close() and _teardown_client_mode_bridge (bare api.set_port_mode/
+        # update_settings, each a 30 s-read-timeout /settings request that can ReadTimeout
+        # under QEMU load) could otherwise throw and skip the stop(). Guard + nest.
+        if uart_sock is not None:
+            try:
+                uart_sock.close()
+            except OSError:
+                pass
+        try:
+            _teardown_client_mode_bridge(api, 1, original_settings, rs485_key)
+        finally:
+            reconnect_server.stop()
+            reconnect_server.join(timeout=3.0)
 
 
 # ===========================================================================
@@ -848,10 +863,13 @@ def test_transparent_no_client_uart_bytes_dropped(transparent_bridge_p1, api):
 @pytest.mark.qemu
 # No local timeout marker: this is settings-heavy. It makes get_settings + set_port_mode
 # + update_settings + set_port_mode in the body and three more /settings calls in the
-# finally, each with a 30 s api_client timeout, and pytest.ini notes GET/POST /settings
-# 'can take tens of seconds' under QEMU. Worst case (~210 s) exceeds any small guess — this
-# marker went 20 -> 30 -> 40 -> 60 across rounds and 60 still would not cover it. Inherit
-# pytest.ini's global 180 s rather than keep guessing a number that under-shoots.
+# finally. Each carries a 30 s api_client-timeout CEILING, and pytest.ini notes GET/POST
+# /settings 'can take tens of seconds' under QEMU — but that ceiling is theoretical:
+# observed latencies are an order of magnitude smaller, so the realistic total is well
+# under 180 s. 180 is a safe compromise, NOT a proven worst-case bound (7x30 pinned would
+# exceed it) — if calls actually hit their ceiling this test SHOULD fail as a real
+# firmware/infra problem. This marker went 20 -> 30 -> 40 -> 60 across rounds and a small
+# guess kept under-shooting; inherit pytest.ini's global 180 s rather than guess again.
 def test_transparent_tx_disabled_port2(api):
     """tx_disabled=True on port 2 prevents firmware from forwarding TCP→UART2.
 
@@ -948,7 +966,10 @@ def test_transparent_tx_disabled_port2(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# No local timeout marker: settings-heavy by the same criterion as the transparent tests
+# above — two set_port_mode calls (sniffer enable + disable), each a 30 s-ceiling /settings
+# request. Inherit pytest.ini's global 180 s rather than a hand-picked value a load spike
+# could blow. (Observed latencies are far smaller; 180 is the safe compromise.)
 def test_sniffer_port2_packets_have_port2(api):
     """Sniffer started on port 2 must emit packets with port==2.
 
@@ -1005,7 +1026,8 @@ def test_sniffer_port2_packets_have_port2(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+# No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
+# /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
 def test_sniffer_timeout_packet_when_slave_silent(api):
     """When slave doesn't respond, the master request is immediately visible and no timeout packet is sent.
 
@@ -1097,7 +1119,8 @@ def test_sniffer_timeout_packet_when_slave_silent(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+# No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
+# /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
 def test_sniffer_broadcast_classified_as_master(api):
     """Broadcast packet (slave_id=0x00) is classified as sender=='master'.
 
@@ -1172,7 +1195,8 @@ def test_sniffer_broadcast_classified_as_master(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+# No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
+# /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
 def test_sniffer_fast_modbus_classification(api):
     """Fast Modbus packets are classified correctly by subcmd field.
 
@@ -1278,7 +1302,8 @@ def test_sniffer_fast_modbus_classification(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+# No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
+# /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
 def test_sniffer_orphan_response(api):
     """A slave response without preceding request (orphan) is emitted as sender=='slave'.
 
@@ -1365,7 +1390,8 @@ def test_sniffer_orphan_response(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
+# No local timeout marker: settings-heavy (two set_port_mode calls, each a 30 s-ceiling
+# /settings request); inherit pytest.ini's global 180 s instead of a hand-picked @20.
 def test_sniffer_ws_disconnect_firmware_stays_alive(api):
     """After WS disconnect without stop command, firmware remains responsive.
 
