@@ -297,12 +297,14 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
     # rejected connection the FIN/RST returns instantly, so a naive spin would run
     # ~timeout/epsilon connect/close cycles on the single-slot bridge and ripple into
     # neighbouring ports; the backoff holds it to ~17 cycles over 15 s instead.
-    if timeout < hold:
-        # The floor below would break before a single attempt and the helper would raise
-        # "within 0.0 s" — a confusing lie. Unreachable today (smallest caller timeout is
-        # 2.0), but fail loudly for the next caller instead of silently doing nothing.
+    if timeout <= hold:
+        # `<=`, not `<`: `remaining` is computed AFTER `start`, so at timeout == hold the
+        # first iteration already has remaining < hold and the floor below breaks before a
+        # single attempt — the helper would raise "within 0.0 s", a confusing lie. Reject the
+        # whole degenerate band up front. Unreachable today (smallest caller timeout is 2.0),
+        # but fail loudly for the next caller instead of silently doing nothing.
         raise ValueError(
-            f"timeout ({timeout:.3f} s) must be >= hold ({hold:.3f} s): a shorter budget "
+            f"timeout ({timeout:.3f} s) must be > hold ({hold:.3f} s): a shorter budget "
             f"cannot run even one trustworthy admission attempt"
         )
     start = time.monotonic()
@@ -345,11 +347,12 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
             return sock                          # admitted, open, byte-clean for the caller
         sock.close()
         # Back off before retrying (never after a success — that path returns above),
-        # clamped so we never sleep past the deadline. Note this can still sleep once
-        # after what turns out to be the final attempt: if the next iteration's
-        # `remaining < hold` floor will fire, we have already napped up to
-        # min(backoff, remaining) here. That wasted tail is bounded by `hold` (<= ~0.5 s),
-        # not `backoff` (1 s), and never crosses the deadline.
+        # clamped so we never sleep past the deadline. This can still sleep once after what
+        # turns out to be the final attempt: whenever the sleep leaves < hold on the clock
+        # (whether it started below hold, or started at remaining >= hold and this nap drops
+        # it under — e.g. remaining 1.4 -> nap 1.0 -> 0.4), the next iteration's `remaining <
+        # hold` floor fires and we stop. That wasted tail is bounded by `backoff` (<= 1 s),
+        # not `hold`, but it never crosses the deadline (nap is clamped to the remaining budget).
         nap = min(backoff, deadline - time.monotonic())
         if nap <= 0:
             break
@@ -649,30 +652,44 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
             yield slave
 
         finally:
-            # Step 8: restore settings
-            api.set_port_mode(port_num, "disabled")
-            time.sleep(0.3)
+            # Step 8: restore settings, then Step 9: stop the RTU slave thread.
+            # Each restore call is a 30 s-read-timeout /settings request that can ReadTimeout
+            # under QEMU load. Two invariants: (a) one failing call must not skip the others
+            # (best-effort, each in its own try) and must not MASK the test's real error
+            # (print, never raise); (b) slave.stop() must ALWAYS run — it is a daemon
+            # ModbusRtuSlaveThread holding a live TCP connection to the single-client QEMU
+            # chardev (5561/5562), so a leaked one wedges that chardev and cascades skips
+            # across every module using this factory. So slave.stop() lives in a finally
+            # wrapped around the restore block.
+            try:
+                try:
+                    api.set_port_mode(port_num, "disabled")
+                    time.sleep(0.3)
+                except Exception as exc:
+                    print(f"✗ teardown set_port_mode(disabled) failed: {exc!r}")
 
-            restore_resp = api.update_settings(original_settings)
-            # Use print instead of assert: assert in finally would mask the original
-            # test failure with a teardown exception, hiding the real root cause.
-            if restore_resp.status_code != 200:
-                print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+                try:
+                    restore_resp = api.update_settings(original_settings)
+                    if restore_resp.status_code != 200:
+                        print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+                except Exception as exc:
+                    print(f"✗ teardown update_settings failed: {exc!r}")
 
-            original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
-            api.set_port_mode(port_num, original_mode)
-            time.sleep(0.3)
-
-            # Step 9: stop the RTU slave thread
-            if slave is not None:
-                slave.stop()
-                slave.join(timeout=3.0)
-                # Use print instead of assert: assert in finally masks the original test failure.
-                if slave.is_alive():
-                    print(
-                        f"✗ RTU slave thread on port {uart_tcp_port} did not stop within 3 s "
-                        "(port leak!)"
-                    )
+                try:
+                    original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
+                    api.set_port_mode(port_num, original_mode)
+                    time.sleep(0.3)
+                except Exception as exc:
+                    print(f"✗ teardown set_port_mode(restore) failed: {exc!r}")
+            finally:
+                if slave is not None:
+                    slave.stop()
+                    slave.join(timeout=3.0)
+                    if slave.is_alive():
+                        print(
+                            f"✗ RTU slave thread on port {uart_tcp_port} did not stop within 3 s "
+                            "(port leak!)"
+                        )
 
     return gateway_fixture
 

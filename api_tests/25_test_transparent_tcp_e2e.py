@@ -258,15 +258,30 @@ def _setup_client_mode_bridge(api, port_num: int, bridge_ip: str, bridge_port: i
 
 def _teardown_client_mode_bridge(api, port_num: int, original_settings: dict,
                                   rs485_key: str) -> None:
-    """Restore firmware to original state after client mode test."""
-    api.set_port_mode(port_num, "disabled")
-    time.sleep(0.3)
-    restore_resp = api.update_settings(original_settings)
-    if restore_resp.status_code != 200:
-        print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
-    original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
-    api.set_port_mode(port_num, original_mode)
-    time.sleep(0.3)
+    """Restore firmware to original state after client mode test.
+
+    Best-effort: this runs from a test's finally, and each call is a 30 s-read-timeout
+    /settings request that can ReadTimeout under QEMU load. Each step is wrapped so one
+    failure neither skips the remaining restore steps nor RAISES out of the finally (which
+    would mask the test's real assertion failure with a teardown exception). Mirrors 36_.
+    """
+    try:
+        api.set_port_mode(port_num, "disabled")
+        time.sleep(0.3)
+    except Exception as exc:
+        print(f"✗ teardown set_port_mode(disabled) failed: {exc!r}")
+    try:
+        restore_resp = api.update_settings(original_settings)
+        if restore_resp.status_code != 200:
+            print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+    except Exception as exc:
+        print(f"✗ teardown update_settings failed: {exc!r}")
+    try:
+        original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
+        api.set_port_mode(port_num, original_mode)
+        time.sleep(0.3)
+    except Exception as exc:
+        print(f"✗ teardown set_port_mode(restore) failed: {exc!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -426,12 +441,21 @@ def test_transparent_client_mode(api, is_qemu):
     echo_port = echo_server.port
     print(f"Echo server listening on 0.0.0.0:{echo_port}")
 
-    original_settings = None
-    rs485_key = None
+    # Capture original settings BEFORE any firmware state change so teardown can always
+    # restore the port even if _setup_client_mode_bridge fails mid-way. Without this, a failure
+    # after its internal set_port_mode(1, "disabled") would leave original_settings unset, skip
+    # teardown, and strand port 1 in disabled/client mode for the whole no-reboot session (the
+    # module-scoped _restore_rs485_settings does not restore port_mode or bridge). Mirrors the
+    # same guard in 32_ test_transparent_client_mode_reconnect.
+    resp = api.get_settings()
+    assert resp.status_code == 200, f"GET /settings failed: {resp.status_code}"
+    original_settings = resp.json()
+    rs485_key = "rs485_1"
+
     uart_sock = None
     try:
         # Step 3: configure firmware for client mode
-        original_settings, rs485_key = _setup_client_mode_bridge(
+        _setup_client_mode_bridge(
             api, port_num=1,
             bridge_ip="10.0.2.2",   # QEMU host IP
             bridge_port=echo_port,
