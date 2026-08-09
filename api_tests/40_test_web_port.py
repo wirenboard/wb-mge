@@ -4,6 +4,7 @@ Requires QEMU with hostfwd 8081->8081 (see conftest.py).
 Skip on real hardware: no hostfwd guarantee exists there.
 """
 
+import qemu_ports
 import sys
 import time
 import warnings
@@ -15,11 +16,11 @@ from api_client import WBMGEAPI
 
 
 # Port inside the firmware (NVS key web_port)
-ALT_PORT_GUEST = 8081
+ALT_PORT_GUEST = qemu_ports.ALT_PORT_GUEST
 # Corresponding host-side QEMU hostfwd port (127.0.0.1:8081 -> guest:8081)
-ALT_PORT_HOST = 8081
+ALT_PORT_HOST = qemu_ports.ALT_PORT_HOST
 # Default host-side port for the default web port mapping (127.0.0.1:8080 -> guest:80)
-DEFAULT_PORT_HOST = 8080
+DEFAULT_PORT_HOST = qemu_ports.DEFAULT_PORT_HOST
 # Firmware-side default web port, i.e. what the hostfwd above maps onto
 # (HTTP_SERVER_DEFAULT_PORT in main/http_server.h).
 DEFAULT_PORT_GUEST = 80

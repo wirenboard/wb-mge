@@ -22,6 +22,7 @@ and required two clients to be admitted at once, which block-new (max_connection
 set for every transparent server port) makes impossible.
 """
 
+import qemu_ports
 import json
 import socket
 import struct
@@ -46,11 +47,11 @@ from sniffer_helpers import _ws_connect, _collect_packets
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
-UART1_TCP_PORT = 5561                  # QEMU UART1 chardev TCP
-UART2_TCP_PORT = 5562                  # QEMU UART2 chardev TCP
-TRANSPARENT_PORT2_HOST_PORT = 50503    # QEMU hostfwd: guest 503  → host 50503
-TRANSPARENT_PORT1_HOST_PORT = 50504    # QEMU hostfwd: guest 50504 → host 50504
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
+UART2_TCP_PORT = qemu_ports.UART2_TCP_PORT  # QEMU UART2 chardev TCP
+TRANSPARENT_PORT2_HOST_PORT = qemu_ports.TRANSPARENT_PORT2_HOST_PORT  # QEMU hostfwd: guest 503  → host 50503
+TRANSPARENT_PORT1_HOST_PORT = qemu_ports.TRANSPARENT_PORT1_HOST_PORT  # QEMU hostfwd: guest 50504 → host 50504
 TCP_CLIENT_RECONN_DELAY_MS = 1000      # Must match firmware tcp_client.c constant
 SNIFFER_RESP_TIMEOUT_MS = 200          # Must match firmware sniffer.c constant
 

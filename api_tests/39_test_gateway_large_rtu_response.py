@@ -23,6 +23,7 @@ mode). Transparent bridge mode (wait_for_idle=false) still forwards immediately
 on every UART_DATA event.
 """
 
+import qemu_ports
 import socket
 import struct
 import threading
@@ -38,8 +39,8 @@ from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST_PORT = 50502            # QEMU hostfwd: guest port 502 → host 50502
-UART1_TCP_PORT = 5561                # QEMU UART1 chardev TCP
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: guest port 502 → host 50502
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 UART_FIFO_FULL_THRESHOLD = 120      # ESP32 UART RXFIFO_FULL threshold in bytes
 # FC03 response size = 1(slave_id) + 1(FC) + 1(byte_count) + count*2(data) + 2(CRC) = 5 + count*2
 # For count=60: 5 + 120 = 125 bytes → exceeds FIFO threshold by 5 bytes

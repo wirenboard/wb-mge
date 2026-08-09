@@ -4,6 +4,7 @@ Requires QEMU launched with UART1 exposed as TCP port 5561 and port 502 forwarde
 Uses a Python RTU slave (rtu_slave_helpers.ModbusRtuSlaveThread) connected to UART1.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -29,9 +30,9 @@ def _baseline(api):
     # bridge.* and port_mode are set by the `gateway_slave` fixture
 
 # Gateway port forwarded from QEMU guest port 502 to host port 50502
-GATEWAY_HOST_PORT = 50502
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT
 # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
-UART1_TCP_PORT = 5561
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT
 # Fake register value returned by the RTU slave for any register read
 FAKE_VALUE = 0x1234
 

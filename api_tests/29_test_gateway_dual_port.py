@@ -14,6 +14,7 @@ GW-07. FC03 requests to port 50502 (RS485-1) and port 50503 (RS485-2) are
        does not bleed across ports.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -29,15 +30,15 @@ from rtu_slave_helpers import ModbusRtuSlaveThread
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
 
 # QEMU host-forwarded ports for both RS485 gateways
-RS485_1_HOST_PORT = 50502    # guest port 502
-RS485_2_HOST_PORT = 50503    # guest port 503
+RS485_1_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # guest port 502
+RS485_2_HOST_PORT = qemu_ports.TRANSPARENT_PORT2_HOST_PORT  # guest port 503
 
 # QEMU UART chardev TCP ports
-UART1_TCP_PORT = 5561        # UART1 (RS485-1)
-UART2_TCP_PORT = 5562        # UART2 (RS485-2)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 (RS485-1)
+UART2_TCP_PORT = qemu_ports.UART2_TCP_PORT  # UART2 (RS485-2)
 
 # Distinct fake values per port so responses can be verified independently
 FAKE_VALUE_RS485_1 = 0x1111

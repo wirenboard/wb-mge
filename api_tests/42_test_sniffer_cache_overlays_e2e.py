@@ -21,6 +21,7 @@ transparent bridge guest port 50504 forwarded to host 50504 (see conftest.py
 qemu_process hostfwd mapping).
 """
 
+import qemu_ports
 import json
 import socket
 import threading
@@ -48,13 +49,13 @@ from packet_injector import (
 # ===========================================================================
 # Constants (must match conftest.py qemu_process hostfwd / chardev mapping)
 # ===========================================================================
-GATEWAY_HOST = "127.0.0.1"
-GATEWAY_HOST_PORT = 50502        # QEMU hostfwd: guest 502   -> host 50502 (Modbus gateway)
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: guest 502   -> host 50502 (Modbus gateway)
 GATEWAY_GUEST_PORT = 502         # the TCP port the gateway binds to inside the firmware
-CACHE_MODBUS_HOST_PORT = 50504   # QEMU hostfwd: guest 50504 -> host 50504 (cache Modbus server)
-TRANSPARENT_PORT1_HOST_PORT = 50504  # QEMU hostfwd: guest 50504 -> host 50504 (transparent bridge)
-QEMU_CACHE_MODBUS_PORT = 50504   # cache Modbus TCP server: guest 50504 -> host 50504
-UART1_TCP_PORT = 5561            # QEMU UART1 (RS485-1) chardev
+CACHE_MODBUS_HOST_PORT = qemu_ports.CACHE_MODBUS_HOST_PORT  # QEMU hostfwd: guest 50504 -> host 50504 (cache Modbus server)
+TRANSPARENT_PORT1_HOST_PORT = qemu_ports.TRANSPARENT_PORT1_HOST_PORT  # QEMU hostfwd: guest 50504 -> host 50504 (transparent bridge)
+QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT  # cache Modbus TCP server: guest 50504 -> host 50504
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 (RS485-1) chardev
 CONNECT_TIMEOUT = 5.0
 
 # Modbus identity used by the gateway / sniffer tests.

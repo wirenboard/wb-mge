@@ -11,6 +11,7 @@ GW-06. Frames with protocol_id != 0 are silently dropped (no response, no TCP
        close); the connection remains usable for subsequent valid frames.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -25,9 +26,9 @@ from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
-GATEWAY_HOST_PORT = 50502    # QEMU hostfwd: guest port 502 → host 50502
-UART1_TCP_PORT = 5561        # QEMU UART1 chardev TCP
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: guest port 502 → host 50502
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 FAKE_VALUE = 0x1234          # register value returned by the RTU slave
 
 

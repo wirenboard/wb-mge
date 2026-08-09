@@ -1,5 +1,6 @@
 """Diagnostic test: verify UART1/2 are exposed as TCP sockets and receive data."""
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -20,9 +21,9 @@ def _baseline(api):
     resp = api.set_port_mode(1, "tcp_bridge")    # CRITICAL: TCP listener on port 502 only opens in tcp_bridge mode
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
 
-GATEWAY_PORT_1 = 50502   # hostfwd 50502 -> QEMU:502 (tcp_bridge port 1)
-UART1_TCP_PORT = 5561    # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
-UART2_TCP_PORT = 5562    # UART2 chardev TCP socket (QEMU -serial tcp::5562,server,nowait)
+GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT  # hostfwd 50502 -> QEMU:502 (tcp_bridge port 1)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
+UART2_TCP_PORT = qemu_ports.UART2_TCP_PORT  # UART2 chardev TCP socket (QEMU -serial tcp::5562,server,nowait)
 
 
 def _build_modbus_tcp_request(txid, unit_id, fc, addr, count):

@@ -9,6 +9,7 @@ Before the fix, cases 2 and 3 both failed because recv() was assumed to
 deliver exactly one complete Modbus TCP frame per call.
 """
 
+import qemu_ports
 import socket
 import struct
 import threading
@@ -40,7 +41,7 @@ def _baseline(api):
 # ---------------------------------------------------------------------------
 
 # QEMU host-forwarded port for the cache Modbus TCP server (guest port 50504).
-QEMU_CACHE_MODBUS_PORT = 50504
+QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT
 
 # Timeout for opening TCP connections to the cache server.
 # 15s is generous enough to ride out a SYN drop in QEMU's OpenETH (Linux retransmits

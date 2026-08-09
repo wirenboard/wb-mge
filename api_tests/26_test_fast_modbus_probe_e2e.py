@@ -7,6 +7,7 @@ and replies 'WB-FAST-MODBUS-OK' — without forwarding it to the RTU bus.
 Requires QEMU launched with port 502 forwarded to host 50502.
 """
 
+import qemu_ports
 import socket
 import struct
 
@@ -22,8 +23,8 @@ _PROBE_PAYLOAD = b'WB-FAST-MODBUS?'
 _PROBE_EXPECTED_RESPONSE = b'WB-FAST-MODBUS-OK'
 
 # Host-side port forwarded from QEMU guest port 502
-MODBUS_TCP_HOST_PORT = 50502
-GATEWAY_PORT_1 = 50502
+MODBUS_TCP_HOST_PORT = qemu_ports.MODBUS_TCP_HOST_PORT
+GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT
 
 _SOCKET_TIMEOUT = 5.0
 

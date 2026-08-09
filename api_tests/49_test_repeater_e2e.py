@@ -9,6 +9,7 @@ Coverage:
          and the link reports inactive.
 """
 
+import qemu_ports
 import socket
 import time
 
@@ -16,9 +17,9 @@ import pytest
 
 from conftest import require_uart_chardev
 
-GATEWAY_HOST = "127.0.0.1"
-UART1_TCP_PORT = 5561        # QEMU UART1 chardev TCP (RS-485 port 1)
-UART2_TCP_PORT = 5562        # QEMU UART2 chardev TCP (RS-485 port 2)
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP (RS-485 port 1)
+UART2_TCP_PORT = qemu_ports.UART2_TCP_PORT  # QEMU UART2 chardev TCP (RS-485 port 2)
 
 
 class _UartByteProbe:

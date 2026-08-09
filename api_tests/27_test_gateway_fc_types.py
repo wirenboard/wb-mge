@@ -12,6 +12,7 @@ GW-04. FC16 (Write Multiple Registers) forwarded without truncation; slave
        last_write_values matches the values sent by the TCP client.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -31,9 +32,9 @@ from modbus_helpers import (
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
-GATEWAY_HOST_PORT = 50502    # QEMU hostfwd: guest port 502 → host 50502
-UART1_TCP_PORT = 5561        # QEMU UART1 chardev TCP
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: guest port 502 → host 50502
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 FAKE_VALUE = 0x1234          # register / coil value returned by RTU slave
 
 

@@ -1,6 +1,7 @@
 """E2E tests for the cache Modbus TCP server: FC type separation, exception codes,
    bit packing, and cache-disabled guard. Tests CM-01 through CM-07."""
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -23,7 +24,7 @@ from packet_injector import (
 # ---------------------------------------------------------------------------
 
 # QEMU host-forwarded port for the cache Modbus TCP server (guest port 50504).
-QEMU_CACHE_MODBUS_PORT = 50504
+QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT
 
 # Timeout for opening TCP connections to the cache server.
 CONNECT_TIMEOUT = 5.0

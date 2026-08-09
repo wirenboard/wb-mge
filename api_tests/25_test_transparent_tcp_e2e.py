@@ -18,6 +18,7 @@ block-new (max_connections == 1) makes impossible — test #16 asserts the corre
 behaviour instead.
 """
 
+import qemu_ports
 import socket
 import threading
 import time
@@ -32,12 +33,12 @@ from conftest import (build_gateway_fixture, _connect_ready_bridge,
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
 # Transparent bridge uses port 50504 (QEMU hostfwd: guest 50504 -> host 50504).
 # Port 503 is avoided because it is the default bridge_port for RS485-2 (port 2)
 # and is already bound when the firmware starts, causing EADDRINUSE on port 1 bind.
-TRANSPARENT_HOST_PORT = 50504
-UART1_TCP_PORT = 5561        # QEMU UART1 chardev TCP
+TRANSPARENT_HOST_PORT = qemu_ports.TRANSPARENT_HOST_PORT
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 
 
 # ---------------------------------------------------------------------------

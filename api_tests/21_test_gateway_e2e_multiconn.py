@@ -11,6 +11,7 @@ Coverage:
    mode and still receives a valid response (no crash).
 """
 
+import qemu_ports
 import socket
 import struct
 import threading
@@ -42,11 +43,11 @@ def _baseline(api):
 # ---------------------------------------------------------------------------
 
 # QEMU host-forwarded port for the Modbus TCP gateway (guest port 502).
-GATEWAY_HOST = "127.0.0.1"
-GATEWAY_HOST_PORT = 50502
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT
 
 # QEMU UART1 chardev exposed as a TCP socket.
-UART1_TCP_PORT = 5561
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT
 
 # Register value returned by the RTU slave for any register read.
 FAKE_VALUE = 0x1234

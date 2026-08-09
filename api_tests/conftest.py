@@ -15,10 +15,19 @@ import requests
 
 from api_client import WBMGEAPI
 from rtu_slave_helpers import ModbusRtuSlaveThread
+import qemu_ports
 
 PROJECT_ROOT = Path(__file__).parent.parent
 QEMU_READY_TIMEOUT = 900
 QEMU_READY_INTERVAL = 2
+
+# QEMU stdout/monitor log path. Slot-suffixed so that if two runs are ever launched in
+# the SAME tree (not the supported mode — each parallel run needs its own working tree,
+# because build/qemu_flash.bin, build/qemu_efuse.bin and build/qemu_test_report.xml are
+# per-tree make outputs) they at least do not clobber each other's primary debug log.
+# Slot 0 keeps the historical plain name for back-compat with external tooling.
+QEMU_LOG_PATH = (PROJECT_ROOT / "build/qemu_test.log" if qemu_ports.SLOT == 0
+                 else PROJECT_ROOT / f"build/qemu_test.slot{qemu_ports.SLOT}.log")
 
 # Test files that reboot/restart the device (which resets the heap). They are
 # deferred to the very end of the run by pytest_collection_modifyitems so the rest
@@ -79,7 +88,8 @@ def pytest_collection_modifyitems(config, items):
 
 
 def pytest_addoption(parser):
-    parser.addoption("--ip", default="localhost:8080", help="IP address of WB-MGE device")
+    parser.addoption("--ip", default=f"localhost:{qemu_ports.HTTP_HOST_PORT}",
+                     help="IP address of WB-MGE device (default follows WB_MGE_PORT_SLOT)")
     parser.addoption("--qemu", action="store_true", default=False,
                      help="Launch QEMU before tests, kill after")
     parser.addoption("--qemu-skip-build", action="store_true", default=False,
@@ -120,7 +130,7 @@ def quick_connection_test(base_url):
     """Quick connection check before running tests"""
     parsed = __import__('urllib.parse', fromlist=['urlparse']).urlparse(base_url)
     host = parsed.hostname or "localhost"
-    port = parsed.port or 8080
+    port = parsed.port or qemu_ports.HTTP_HOST_PORT
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -151,29 +161,25 @@ def quick_connection_test(base_url):
         return False
 
 
-# Ports that QEMU reserves on the host (must match hostfwd arguments in qemu_process fixture).
-QEMU_HOST_PORTS = [8080, 8081, 50502, 50503, 50504, 5561, 5562]
+# Ports that THIS run's QEMU reserves on the host — derived from WB_MGE_PORT_SLOT so
+# that N parallel runs occupy disjoint port blocks (see qemu_ports.py). Must match the
+# hostfwd/-serial arguments the qemu_process fixture builds from qemu_ports.
+QEMU_HOST_PORTS = qemu_ports.MY_HOST_PORTS
 
 
 def _check_no_stale_qemu():
-    """Check for stale QEMU processes or occupied ports and abort if found.
+    """Abort only if THIS run's own host ports are occupied.
 
-    When --qemu is used, conftest always launches its own QEMU instance.
-    Any pre-existing qemu-system-xtensa process or occupied hostfwd port is a
-    hard error regardless of --qemu-skip-build (that flag only skips the
-    firmware build step, not the stale-process check).
+    When --qemu is used, conftest launches its own QEMU on the port block for this
+    run's WB_MGE_PORT_SLOT. The preflight must be scoped to THAT block: with parallel
+    runs on one host, sibling QEMUs (other slots) are legitimate, so a global
+    "any qemu-system-xtensa running" abort would make concurrent runs kill each other
+    on preflight. We therefore check only OUR ports; a pre-existing process holding one
+    of them is a real conflict (a stale run in the same slot, or an unrelated listener).
 
-    To run tests against an already-running QEMU, do NOT use --qemu; use --ip
-    pointing at the running instance instead.
+    To run tests against an already-running QEMU, do NOT use --qemu; use --ip pointing
+    at the running instance instead.
     """
-    # Check for running qemu-system-xtensa processes.
-    result = subprocess.run(
-        ["pgrep", "-f", "qemu-system-xtensa"],
-        capture_output=True, text=True
-    )
-    stale_pids = result.stdout.strip().splitlines()
-
-    # Check for occupied ports (QEMU hostfwd binds on localhost).
     occupied_ports = []
     for port in QEMU_HOST_PORTS:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -182,16 +188,18 @@ def _check_no_stale_qemu():
             occupied_ports.append(port)
         sock.close()
 
-    if not (stale_pids or occupied_ports):
-        return  # No conflict detected.
+    if not occupied_ports:
+        return  # Our port block is free.
 
-    lines = ["Stale QEMU detected — cannot start a new instance safely."]
-    if stale_pids:
-        lines.append(f"  Running QEMU PIDs: {', '.join(stale_pids)}")
-    if occupied_ports:
-        lines.append(f"  Occupied ports: {', '.join(str(p) for p in occupied_ports)}")
-    lines.append("  Kill it with:")
-    lines.append("    pkill -9 -f qemu-system-xtensa")
+    lines = [
+        f"Port conflict on slot {qemu_ports.SLOT} — cannot start QEMU safely.",
+        f"  Occupied ports (this run's block): "
+        f"{', '.join(str(p) for p in occupied_ports)}",
+        "  Another run in the same WB_MGE_PORT_SLOT, or an unrelated listener, holds "
+        "them.",
+        "  Use a different WB_MGE_PORT_SLOT, or kill the stale instance "
+        "(pkill -9 -f qemu-system-xtensa if it is a leaked QEMU).",
+    ]
     pytest.exit("\n".join(lines), returncode=1)
 
 
@@ -224,7 +232,7 @@ def _wait_for_qemu_ready(base_url, proc):
 
 def _dump_qemu_log(label):
     """Print QEMU log file contents with a header."""
-    log_file = PROJECT_ROOT / "build/qemu_test.log"
+    log_file = QEMU_LOG_PATH
     if not log_file.is_file():
         return
     print(f"\n{'=' * 60}")
@@ -726,7 +734,7 @@ def qemu_process(request):
     print(f"QEMU binary: {qemu_bin}")
 
     # --- Launch QEMU ---
-    log_file = PROJECT_ROOT / "build/qemu_test.log"
+    log_file = QEMU_LOG_PATH
     log_handle = open(log_file, "w")
 
     proc = subprocess.Popen(
@@ -737,17 +745,12 @@ def qemu_process(request):
             "-drive", f"file={efuse_bin},if=none,format=raw,id=efuse",
             "-global", "driver=nvram.esp32.efuse,property=drive,value=efuse",
             "-global", "driver=timer.esp32.timg,property=wdt_disable,value=true",
-            "-nic", ("user,model=open_eth,"
-                     "hostfwd=tcp:127.0.0.1:8080-:80,"
-                     "hostfwd=tcp:127.0.0.1:8081-:8081,"
-                     "hostfwd=tcp:127.0.0.1:50502-:502,"
-                     "hostfwd=tcp:127.0.0.1:50503-:503,"
-                     "hostfwd=tcp:127.0.0.1:50504-:50504,"
-                     "hostfwd=udp:127.0.0.1:5570-:5570"),  # IO state bus (UDP)
+            # hostfwd rules + UART chardev ports are derived from WB_MGE_PORT_SLOT
+            # (qemu_ports) so parallel runs use disjoint host ports; guest ports are fixed.
+            "-nic", qemu_ports.qemu_nic_arg(),
             "-nographic",
             "-serial", "mon:stdio",
-            "-serial", "tcp::5561,server,nowait",  # UART1 (RS485-1) exposed as TCP on port 5561
-            "-serial", "tcp::5562,server,nowait",  # UART2 (RS485-2) exposed as TCP on port 5562
+            *qemu_ports.qemu_serial_args(),  # UART1/UART2 (RS485-1/2) TCP chardevs
         ],
         stdout=log_handle, stderr=subprocess.STDOUT,
     )
@@ -1234,7 +1237,7 @@ def _uart_leak_guard(request, _uart_leak_state):
         # to 0 to turn the window off.
         del recent[:max(0, len(recent) - _UART_LEAK_GUARD_WINDOW)]
         unreachable = []
-        for port in (5561, 5562):
+        for port in (qemu_ports.UART1_TCP_PORT, qemu_ports.UART2_TCP_PORT):
             # socket() and settimeout() belong INSIDE this try. Under the descriptor leak
             # this guard exists to point at, socket() itself raises EMFILE; from outside
             # the try that escaped to the outer handler, so the second port was never

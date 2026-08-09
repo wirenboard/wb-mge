@@ -24,6 +24,7 @@ Requires QEMU with UART1 exposed as TCP 5561, gateway guest port 502 -> host 505
 and guest port 50504 -> host 50504 (transparent bridge / cache Modbus server).
 """
 
+import qemu_ports
 import socket
 import threading
 import time
@@ -38,10 +39,10 @@ from sniffer_helpers import _ws_connect, _collect_packets
 # ---------------------------------------------------------------------------
 # Constants (must match conftest.py qemu_process hostfwd mapping)
 # ---------------------------------------------------------------------------
-GATEWAY_HOST = "127.0.0.1"
-GATEWAY_HOST_PORT = 50502               # QEMU hostfwd: guest 502  -> host 50502 (Modbus gateway)
-CACHE_MODBUS_HOST_PORT = 50504          # cache Modbus TCP server (guest 50504 -> host 50504)
-UART1_TCP_PORT = 5561                   # QEMU UART1 (RS485-1) chardev
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: guest 502  -> host 50502 (Modbus gateway)
+CACHE_MODBUS_HOST_PORT = qemu_ports.CACHE_MODBUS_HOST_PORT  # cache Modbus TCP server (guest 50504 -> host 50504)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 (RS485-1) chardev
 SLAVE_FAKE_VALUE = 0x1234               # value the mock RTU slave returns for every register
 
 

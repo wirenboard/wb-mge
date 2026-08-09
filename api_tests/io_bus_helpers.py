@@ -49,6 +49,8 @@ Stdlib only — no external dependencies.
 import socket
 import time
 
+import qemu_ports
+
 # 5-byte ASCII record layout: T NN '/' L
 RECORD_LEN = 5
 SEP_INDEX = 3
@@ -76,8 +78,8 @@ class IoBus:
             normal operation.
     """
 
-    HOST = "127.0.0.1"
-    PORT = 5570
+    HOST = qemu_ports.HOST
+    PORT = qemu_ports.IO_BUS_UDP_PORT  # UDP IO-bus host port for this run's slot
 
     # Resend the subscribe datagram at least this often (seconds) to keep the
     # QEMU usermode-NAT UDP mapping warm so TX records keep flowing.

@@ -38,6 +38,7 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
   Any fc not in {0x03,0x04} on unit 0xFF -> exception 0x01.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -58,14 +59,14 @@ from modbus_helpers import make_mbap_request, send_and_receive
 SELF_UNIT_ID = 0xFF
 
 # Gateway port forwarded from QEMU guest port 502 to host port 50502.
-GATEWAY_HOST_PORT = 50502
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT
 # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait).
-UART1_TCP_PORT = 5561
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT
 # Fake register value returned by the RTU slave for any register read.
 FAKE_VALUE = 0x1234
 
 # QEMU host-forwarded port for the cache Modbus TCP server (guest port 50504).
-QEMU_CACHE_MODBUS_PORT = 50504
+QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT
 
 CONNECT_TIMEOUT = 5.0
 

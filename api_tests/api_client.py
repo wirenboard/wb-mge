@@ -4,6 +4,8 @@ import time
 
 import requests
 
+import qemu_ports
+
 
 class _DelayedSession(requests.Session):
     """A requests.Session that sleeps 100ms before every request."""
@@ -19,7 +21,11 @@ class WBMGEAPI:
     DEFAULT_LOGIN = "admin"
     DEFAULT_PASSWORD = "admin"
 
-    def __init__(self, base_url="http://localhost:8080"):
+    def __init__(self, base_url=None):
+        # Default follows WB_MGE_PORT_SLOT so a client built without an explicit URL still
+        # targets this run's HTTP host port. conftest's `api` fixture passes --ip explicitly.
+        if base_url is None:
+            base_url = f"http://{qemu_ports.HOST}:{qemu_ports.HTTP_HOST_PORT}"
         self.base_url = base_url
         self.session = _DelayedSession()
 

@@ -18,6 +18,7 @@ Run this test alone:
   pytest api_tests/37_test_cache_server_deinit_hang.py --qemu --qemu-skip-build -s
 """
 
+import qemu_ports
 import socket
 import struct
 import threading
@@ -29,7 +30,7 @@ import pytest
 from conftest import _poll_tcp_connect
 from modbus_helpers import make_mbap_request, recv_exactly
 
-CACHE_PORT = 50504
+CACHE_PORT = qemu_ports.CACHE_MODBUS_HOST_PORT
 
 
 @pytest.fixture(scope="module", autouse=True)
