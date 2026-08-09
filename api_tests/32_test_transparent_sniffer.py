@@ -50,8 +50,8 @@ from sniffer_helpers import _ws_connect, _collect_packets
 GATEWAY_HOST = qemu_ports.GATEWAY_HOST
 UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 UART2_TCP_PORT = qemu_ports.UART2_TCP_PORT  # QEMU UART2 chardev TCP
-TRANSPARENT_PORT2_HOST_PORT = qemu_ports.TRANSPARENT_PORT2_HOST_PORT  # QEMU hostfwd: guest 503  → host 50503
-TRANSPARENT_PORT1_HOST_PORT = qemu_ports.TRANSPARENT_PORT1_HOST_PORT  # QEMU hostfwd: guest 50504 → host 50504
+TRANSPARENT_PORT2_HOST_PORT = qemu_ports.TRANSPARENT_PORT2_HOST_PORT  # QEMU hostfwd: slot host port -> guest 503
+TRANSPARENT_PORT1_HOST_PORT = qemu_ports.TRANSPARENT_PORT1_HOST_PORT  # QEMU hostfwd: slot host port -> guest 50504
 TCP_CLIENT_RECONN_DELAY_MS = 1000      # Must match firmware tcp_client.c constant
 SNIFFER_RESP_TIMEOUT_MS = 200          # Must match firmware sniffer.c constant
 
@@ -118,9 +118,8 @@ def transparent_bridge_p2(api, is_qemu):
 # Port 1 transparent bridge fixture (server mode) — same config as test 25
 transparent_bridge_p1 = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=TRANSPARENT_PORT1_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=50504,
+    bridge_port=qemu_ports.TRANSPARENT_P1_GUEST_PORT,
     modbus=False,
 )
 
@@ -508,9 +507,9 @@ def test_transparent_port2_basic_roundtrip(transparent_bridge_p2, is_qemu):
     """Send 16 arbitrary bytes through the port 2 transparent bridge and receive echo.
 
     Setup:
-    - Port 2 configured as transparent bridge on bridge_port=503 (host 50503).
-    - _UartEchoThread connects to UART2 chardev (port 5562) and echoes bytes.
-    - TCP client connects to host port 50503, sends 16 bytes, expects echo back.
+    - Port 2 configured as transparent bridge on guest bridge_port=503.
+    - _UartEchoThread connects to the UART2 chardev and echoes bytes.
+    - TCP client connects to TRANSPARENT_PORT2_HOST_PORT, sends 16 bytes, expects echo back.
     """
     require_uart_chardev(UART2_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
@@ -873,7 +872,7 @@ def test_transparent_tx_disabled_port2(api, is_qemu):
     1. Save original settings, apply bridge_port=503 (server, non-modbus), tx_disabled=True.
     2. Activate tcp_bridge mode on port 2.
     3. Start _UartEchoThread on UART2 — will echo anything it receives.
-    4. TCP client connects to host port 50503, sends 8 bytes.
+    4. TCP client connects to TRANSPARENT_PORT2_HOST_PORT, sends 8 bytes.
     5. Assert recv raises socket.timeout (no bytes came back): because tx_disabled=True
        → firmware did not forward TCP→UART2 → echo thread received nothing.
     6. Teardown: close all sockets, restore settings and port mode.
@@ -1480,7 +1479,7 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api, is_qemu):
 
     Steps:
     1. Save original port 1 settings.
-    2. Apply bridge config (bridge_port=50504, mode=server, modbus=False).
+    2. Apply bridge config (guest bridge_port=50504, mode=server, modbus=False).
     3. Set port 1 to tcp_bridge; run the WS sniffer overlay and confirm ≥3 packets.
     4. Stop the WS sniffer overlay (transport unchanged).
     5. Start UART echo thread + TCP client; verify 8-byte round-trip.
@@ -1502,11 +1501,12 @@ def test_sniffer_to_tcp_bridge_data_path_restored(api, is_qemu):
         assert resp.status_code == 200, f"Failed to disable port 1: {resp.status_code}"
         time.sleep(0.3)
 
-        # Apply bridge config for transparent bridge on port 50504
+        # Apply bridge config for the transparent bridge on the GUEST port that the
+        # TRANSPARENT_PORT1_HOST_PORT hostfwd forwards to.
         port1_settings = dict(original_settings.get(rs485_key, {}))
         port1_settings["bridge"] = {
             "mode": "server",
-            "port": 50504,
+            "port": qemu_ports.TRANSPARENT_P1_GUEST_PORT,
             "ip": "0.0.0.0",
             "modbus": False,
         }
@@ -1631,11 +1631,12 @@ def test_tcp_bridge_sniffer_tcp_bridge_roundtrip(api, is_qemu):
         assert resp.status_code == 200, f"Failed to disable port 1: {resp.status_code}"
         time.sleep(0.3)
 
-        # Apply bridge config for transparent bridge on port 50504
+        # Apply bridge config for the transparent bridge on the GUEST port that the
+        # TRANSPARENT_PORT1_HOST_PORT hostfwd forwards to.
         port1_settings = dict(original_settings.get(rs485_key, {}))
         port1_settings["bridge"] = {
             "mode": "server",
-            "port": 50504,
+            "port": qemu_ports.TRANSPARENT_P1_GUEST_PORT,
             "ip": "0.0.0.0",
             "modbus": False,
         }

@@ -5,8 +5,8 @@ When tx_disabled=True for a port:
   - serial_send() returns immediately without transmitting any data
 
 The firmware exposes RS-485 port UART chardevs over TCP in QEMU:
-  - UART1 (RS-485 port 1): TCP port 5561
-  - UART2 (RS-485 port 2): TCP port 5562
+  - UART1 (RS-485 port 1): qemu_ports.UART1_TCP_PORT
+  - UART2 (RS-485 port 2): qemu_ports.UART2_TCP_PORT
 """
 
 import qemu_ports
@@ -31,8 +31,8 @@ def _baseline(api):
     # tx_disabled is set per-phase by the test itself: false → true
 
 
-GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT  # hostfwd 50502 -> QEMU:502 (tcp_bridge port 1)
-UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
+GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT  # hostfwd: slot gateway host port -> guest 502 (tcp_bridge port 1)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::<slot UART1 port>,server,nowait)
 
 
 def _build_modbus_tcp_request(txid, unit_id, fc, addr, count):
@@ -118,7 +118,7 @@ def test_tx_disabled_blocks_uart_transmission(api, is_qemu):
     """Verify that tx_disabled=True prevents UART1 from transmitting bytes.
 
     Steps:
-    1. Connect to the UART1 TCP chardev socket (port 5561).
+    1. Connect to the UART1 TCP chardev socket (UART1_TCP_PORT).
     2. Save original port mode and tx_disabled value so they can be restored.
     3. Switch port 1 to tcp_bridge mode (gateway forwards Modbus TCP -> UART1 RTU).
     4. Enable tx_disabled for rs485_1 and confirm NO bytes reach UART1.

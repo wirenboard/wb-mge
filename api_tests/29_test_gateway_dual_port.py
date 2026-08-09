@@ -1,15 +1,16 @@
 """Gateway E2E dual-port simultaneous test (GW-07).
 
-Requires QEMU with:
-- UART1 exposed as TCP port 5561 and guest port 502 forwarded to host 50502
-- UART2 exposed as TCP port 5562 and guest port 503 forwarded to host 50503
+Requires QEMU with (host ports follow WB_MGE_PORT_SLOT — api_tests/qemu_ports.py;
+guest ports are fixed):
+- the UART1 chardev on TCP, and guest port 502 forwarded to the gateway host port
+- the UART2 chardev on TCP, and guest port 503 forwarded to the port-2 bridge host port
 
 Two independent Modbus TCP gateways are configured simultaneously — one on
 RS485-1 and one on RS485-2.  Each gateway has its own RTU slave with a
 distinct fake_value so that responses can be distinguished.
 
 Coverage:
-GW-07. FC03 requests to port 50502 (RS485-1) and port 50503 (RS485-2) are
+GW-07. FC03 requests to the RS485-1 gateway host port and the RS485-2 bridge host port are
        independently served; each response contains the correct fake_value and
        does not bleed across ports.
 """
@@ -228,15 +229,15 @@ def dual_gateway_slave(api, is_qemu):
 def test_gateway_dual_port_simultaneous(dual_gateway_slave):
     """FC03 requests to both gateways are served independently with correct values.
 
-    Sends sequential FC03 reads to the RS485-1 gateway (port 50502) and the
-    RS485-2 gateway (port 50503).  Each response must contain the fake_value
+    Sends sequential FC03 reads to the RS485-1 gateway (guest 502) and the
+    RS485-2 gateway (guest 503), each on its slot host port.  Each response must contain the fake_value
     specific to that port's RTU slave, confirming that the two gateway instances
     do not share state or data paths.
     """
     slave1, slave2 = dual_gateway_slave
 
     # -------------------------------------------------------------------
-    # Request to RS485-1 gateway (port 50502) — expect FAKE_VALUE_RS485_1
+    # Request to RS485-1 gateway (guest 502) — expect FAKE_VALUE_RS485_1
     # -------------------------------------------------------------------
     txid1 = 0x0701
     unit_id = 1
@@ -272,7 +273,7 @@ def test_gateway_dual_port_simultaneous(dual_gateway_slave):
     )
 
     # -------------------------------------------------------------------
-    # Request to RS485-2 gateway (port 50503) — expect FAKE_VALUE_RS485_2
+    # Request to RS485-2 gateway (guest 503) — expect FAKE_VALUE_RS485_2
     # -------------------------------------------------------------------
     txid2 = 0x0702
     request2 = make_mbap_request(txid2, unit_id, fc, 0x0000, count)

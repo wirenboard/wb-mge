@@ -22,8 +22,11 @@ builds of the same branch.
 ### Design
 
 New `api_tests/qemu_ports.py` is the single source of truth. Every host port is derived from
-one integer **slot** (env `WB_MGE_PORT_SLOT`, default 0; falls back to the
-`PYTEST_XDIST_WORKER` id so the scheme also serves `pytest -n`).
+one integer **slot**: `WB_MGE_PORT_SLOT`, else `EXECUTOR_NUMBER` (Jenkins' per-executor index —
+the Jenkinsfile also sets `WB_MGE_PORT_SLOT` from it explicitly on both e2e stages), else the
+`PYTEST_XDIST_WORKER` id, else 0. The xdist fallback only keeps workers from aliasing each
+other's ports — it does **not** make `pytest -n` a supported way to run this suite, since
+xdist workers share one tree; `--qemu` together with xdist is refused outright.
 
 **Offset source — why env-var:** reproducible (unlike a pid), explicitly controllable (a
 launcher sets one env var per instance), and free of the bind(0) race (bind-then-close leaves
@@ -32,8 +35,10 @@ a window in which another process can grab the just-released port before QEMU bi
 **Layout — contiguous block, not per-port offset:** a slot maps to a contiguous 16-wide block
 (`base 21000 + slot*16`). The legacy ports sit only 1 apart (8080/8081, 50502/50503/50504,
 5561/5562), so *adding an offset to each* would alias one run's port onto another's; a block
-cannot. Slots 0..~2700 keep every port < 65536; the handful actually run land in 21000..21175,
-below the Linux ephemeral range (32768+), so the OS won't hand a client socket one of ours.
+cannot. The slot ceiling is the last block that fits entirely below the ephemeral floor (734 with the
+Linux default 32768, read from `/proc/sys/net/ipv4/ip_local_port_range` when available) — not
+merely the last block below 65536, which would have admitted slots landing inside the ephemeral
+range and contradicted the rationale.
 
 **Guest ports stay fixed.** Each slot is a separate QEMU with its own network stack, so guest
 ports never collide across slots. The hostfwd rule forwards `host:<dynamic> -> guest:<fixed>`.
@@ -43,12 +48,67 @@ port, while a firmware **setting** that names a port (`cache_modbus_port`, `brid
 
 ### Artifact-path decision (explicit)
 
-**Each parallel run requires its own working tree.** `build/qemu_flash.bin`,
-`build/qemu_efuse.bin` and `build/qemu_test_report.xml` are per-tree make outputs, and QEMU
-writes NVS back into `qemu_flash.bin` — so two runs in one tree would corrupt each other's
-flash. Ports being disjoint is necessary but not sufficient; the tree must be separate too.
+**Each parallel run requires its own working tree, and this is now ENFORCED.**
+`build/qemu_flash.bin`, `build/qemu_efuse.bin`, `build/qemu_test_report.xml` and
+`build/qemu_test.log` are per-tree make outputs, and QEMU writes NVS back into
+`qemu_flash.bin` — so two runs in one tree would corrupt each other's flash. Ports being
+disjoint is necessary but not sufficient; the tree must be separate too.
+
+The lock is an exclusive non-blocking `flock` on `.e2e-tree.lock` **in the repo root**,
+implemented once in `api_tests/tree_lock.py` and used from both sides:
+
+* `make qemu-test`, `make qemu-web` and `make qemu-run` wrap their whole recipe —
+  `qemu-create-flash-image` included — in `python3 api_tests/tree_lock.py -- ...`. This is
+  the load-bearing part: those targets rewrite `build/qemu_flash.bin` in their
+  PREREQUISITES, i.e. before any pytest could refuse anything, so a lock taken only
+  inside pytest arrived after the corruption. `python3` rather than `flock(1)`, which is
+  not installed on macOS.
+* `conftest.pytest_configure` takes the same lock, so a bare `pytest --qemu` is covered
+  too. When make already holds it, the wrapper passes `WB_MGE_E2E_TREE_LOCK` down and
+  conftest recognises its own ancestor instead of colliding with it (the marker is
+  validated — right lock path, live pid, and the lock file must still name that pid).
+
+NOT under `build/`: an `flock` lives on an INODE, and `build-idf-project-qemu` runs
+`idf.py fullclean` whenever it finds a hardware `CMakeCache.txt` — which wipes the whole
+build directory, dot-files included. A lock at `build/.e2e-tree.lock` therefore lost its
+inode inside the very build it was meant to bracket: the holder kept a lock on an orphan
+while a second process created the new file and acquired it. That is the normal CI path
+(Jenkins builds hardware firmware before the e2e stage). `TreeLock.verify_intact()` is the
+backstop: the wrapper calls it when the wrapped command exits, and `conftest`'s
+`qemu_process` calls it before launching QEMU, so a lock file that lost its inode — or an
+inherited lock whose holder died — is reported loudly instead of silently disarming the
+barrier. Both calls are after the fact: they name the damage, they do not abort mid-run.
+
+A second run in the same tree is refused with a message naming the holder (pid, slot,
+start time), **whatever slot it picked** — the lock is deliberately orthogonal to the
+slot, so runs in separate trees stay legal. It replaces the old "abort if ANY
+`qemu-system-xtensa` is running" check, which was the de-facto one-run-per-machine rule
+the slot work had to delete. A second, complementary check covers the case flock cannot
+see — an ORPHANED QEMU whose pytest died — by matching this tree's flash-image argument
+(`file=<path>,`) in `ps -Aww -o pid=,args=` output; a `ps` that cannot be run warns
+instead of passing silently.
+
+The lock is released in `pytest_unconfigure`, NOT in the `qemu_process` teardown:
+session-fixture teardown runs before the `--junitxml` report is written and before
+`pytest_sessionfinish` reads `build/qemu_test.log` to dump it, so an early release left a
+window where a second run could truncate that log and overwrite the report.
+
+Ctrl-C reopened that same window from the other side, and the wrapper now closes it.
+`subprocess.run()` kills its direct child and re-raises on `KeyboardInterrupt`, so the
+wrapper used to return 130 — and release the lock, and give the shell its prompt back —
+while `pytest` and `qemu-system-xtensa`, which got their own SIGINT from the terminal, were
+still writing those very two files. `tree_lock.run_child_holding_lock()` installs its own
+SIGINT handler (a Python handler, not `SIG_IGN`, which `exec()` would leak into `make`,
+`pytest` and QEMU and disable Ctrl-C for the whole run) and waits for the child to actually
+exit. The third Ctrl-C is an escape hatch: it kills the child, releases the lock and says
+plainly that the grandchildren may still be alive.
+
 The QEMU log stays at the fixed `build/qemu_test.log` (per-tree; a slot suffix broke a test —
-see the second bug).
+see the second bug). It is opened with `"w"`, so without the lock a sibling run in the same
+tree would blank it under a live QEMU: `33_test_auth_settings`'s reboot-marker scan would then
+find nothing and `16_test_uart_teardown_crash`'s crash-marker scan would read a truncated file
+— both failing silently rather than loudly. `16_` now FAILS instead of printing a warning when
+the log is missing under `--qemu`.
 
 ### Two bugs the parallel validation caught (both mine, both from Part 1)
 
@@ -215,14 +275,21 @@ takes the au05 firmware ticket.
 - `de3cd2f` — derive all host ports from `WB_MGE_PORT_SLOT` (qemu_ports.py + wiring).
 - `693a8a8` — split guest vs host port for firmware settings (fix cache subsystem).
 - `f21daa5` — keep QEMU log at fixed `build/qemu_test.log` (unbreak reboot detection).
+- follow-up — enforce one run per working tree (flock + targeted orphan-QEMU check), wire the
+  slot into Jenkins (`EXECUTOR_NUMBER`), derive `qemu.mk`'s own launcher ports from
+  `qemu_ports` so `make qemu-web` + `pytest --ip` works again, refuse `--qemu` with xdist,
+  probe the UDP preflight port by bind instead of a TCP connect, cap the slot at the ephemeral
+  floor, treat an empty `WB_MGE_PORT_SLOT` as unset.
 
 ## How to run parallel
 
-Each instance needs its own tree and a distinct slot, sharing the host netns:
+Each instance needs its own tree and a distinct slot, sharing the host netns (`make qemu-ports`
+prints the block a given environment resolves to; pytest prints it in its report header):
 ```
 WB_MGE_PORT_SLOT=0 make qemu-test    # tree A, ports 21000-21007
 WB_MGE_PORT_SLOT=1 make qemu-test    # tree B, ports 21016-21023
 ...
 ```
+Two instances in ONE tree are refused by the tree lock regardless of slot — that is the point.
 Harness used here: `e2e-parN.sh N tag [pytest-target]` (N docker `--network host` instances,
 one tree per slot).

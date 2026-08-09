@@ -85,7 +85,7 @@ def test_tcp_server_deinit_completes_with_open_client(api):
         time.sleep(0.3)
 
         # Step 3: configure port 1 as a transparent TCP server on the GUEST bridge port
-        # (fixed 50504 — what the hostfwd forwards to); the client below connects to the
+        # (fixed guest 50504 — what this slot's hostfwd forwards to); the client below connects to the
         # dynamic host port that reaches it.
         resp = api.update_settings({
             "rs485_1": {

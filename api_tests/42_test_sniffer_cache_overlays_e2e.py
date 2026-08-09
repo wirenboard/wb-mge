@@ -15,10 +15,10 @@ rewrite. The covered properties are:
   - Cache coherency when toggled mid-traffic on a Modbus-gateway tcp_bridge.
   - Cache broadcast guard: a broadcast read must never become a cached entry.
 
-Requires QEMU with UART1 exposed as TCP 5561, UART2 as TCP 5562, the Modbus
-gateway guest port 502 forwarded to host 50502, and the cache Modbus server /
-transparent bridge guest port 50504 forwarded to host 50504 (see conftest.py
-qemu_process hostfwd mapping).
+Requires QEMU with the UART1 and UART2 chardevs on TCP, the Modbus gateway guest port 502
+forwarded to a host port, and the cache Modbus server / transparent bridge guest port 50504
+forwarded to a host port. Every host port follows WB_MGE_PORT_SLOT (api_tests/qemu_ports.py);
+see conftest.qemu_process for the hostfwd mapping it builds from them.
 """
 
 import qemu_ports
@@ -50,11 +50,11 @@ from packet_injector import (
 # Constants (must match conftest.py qemu_process hostfwd / chardev mapping)
 # ===========================================================================
 GATEWAY_HOST = qemu_ports.GATEWAY_HOST
-GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: guest 502   -> host 50502 (Modbus gateway)
-GATEWAY_GUEST_PORT = 502         # the TCP port the gateway binds to inside the firmware
-CACHE_MODBUS_HOST_PORT = qemu_ports.CACHE_MODBUS_HOST_PORT  # QEMU hostfwd: guest 50504 -> host 50504 (cache Modbus server)
-TRANSPARENT_PORT1_HOST_PORT = qemu_ports.TRANSPARENT_PORT1_HOST_PORT  # QEMU hostfwd: guest 50504 -> host 50504 (transparent bridge)
-QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT  # cache Modbus TCP server: guest 50504 -> host 50504
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: slot host port -> guest 502 (Modbus gateway)
+GATEWAY_GUEST_PORT = qemu_ports.GATEWAY_GUEST_PORT  # guest 502: what the firmware binds to
+CACHE_MODBUS_HOST_PORT = qemu_ports.CACHE_MODBUS_HOST_PORT  # QEMU hostfwd: slot host port -> guest 50504 (cache Modbus server)
+TRANSPARENT_PORT1_HOST_PORT = qemu_ports.TRANSPARENT_PORT1_HOST_PORT  # QEMU hostfwd: slot host port -> guest 50504 (transparent bridge)
+QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT  # cache Modbus TCP server: slot host port -> guest 50504
 UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 (RS485-1) chardev
 CONNECT_TIMEOUT = 5.0
 
@@ -141,9 +141,8 @@ UNICAST_VALUE = 0xABCD           # distinctive value returned by the unicast res
 # tests (slave answers every register read with SLAVE_FAKE_VALUE).
 gateway_p1_modbus = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=GATEWAY_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=502,
+    bridge_port=qemu_ports.GATEWAY_GUEST_PORT,      # guest 502
     modbus=True,
     fake_value=SLAVE_FAKE_VALUE,
 )
@@ -154,9 +153,8 @@ gateway_p1_modbus = build_gateway_fixture(
 # because the factory's fake_value parameter differs.
 gateway_p1_modbus_toggle = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=GATEWAY_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=502,
+    bridge_port=qemu_ports.GATEWAY_GUEST_PORT,      # guest 502
     modbus=True,
     fake_value=VALUE1,
 )
@@ -164,9 +162,8 @@ gateway_p1_modbus_toggle = build_gateway_fixture(
 # A TRANSPARENT tcp_bridge on RS-485 port 1 (modbus disabled). Yields None.
 transparent_p1 = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=TRANSPARENT_PORT1_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=50504,
+    bridge_port=qemu_ports.TRANSPARENT_P1_GUEST_PORT,
     modbus=False,
 )
 

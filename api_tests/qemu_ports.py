@@ -2,19 +2,46 @@
 
 Every host port the test suite touches — the QEMU hostfwd targets, the two UART
 chardev TCP ports, and the UDP IO-bus port — is derived here from ONE integer
-"slot" so that N independent full runs can coexist on one host without fighting
-over the same device under test. Guest-side ports never change (they live inside
-each QEMU); only the host side moves.
+"slot", so that runs in DIFFERENT WORKING TREES can coexist on one host without
+fighting over the same host ports. Guest-side ports never change (they live
+inside each QEMU); only the host side moves.
 
-Offset source: the WB_MGE_PORT_SLOT environment variable (integer >= 0, default
-0). Rationale for env-var over the alternatives:
+DISJOINT PORTS ARE NECESSARY BUT NOT SUFFICIENT. A slot says nothing about the
+files a run writes: build/qemu_flash.bin (QEMU writes NVS back into it),
+build/qemu_efuse.bin, build/qemu_test.log and build/qemu_test_report.xml are all
+per-TREE. Two runs in ONE tree therefore corrupt each other whatever their slots
+are, and conftest._acquire_tree_lock() refuses the second one outright. "One run
+per tree, one slot per concurrent run" is the whole contract.
+
+Slot source, in priority order — the first one that carries a usable value wins,
+and the winner is published as SLOT_SOURCE so a CI log can show which fired:
+  1. WB_MGE_PORT_SLOT — the explicit request. A value that is present but not a
+     valid slot RAISES; refusing to guess is the point of an explicit knob. An
+     EMPTY value is treated as absent, because `WB_MGE_PORT_SLOT=$SLOT` with an
+     unset SLOT is a normal shell accident and must not turn into "ImportError
+     while loading conftest".
+  2. EXECUTOR_NUMBER — Jenkins sets this per executor on a node, so two DIFFERENT
+     jobs sharing one node land in different blocks. (Two builds of the SAME
+     branch are already serialised by disableConcurrentBuilds() in the
+     Jenkinsfile; what the slot buys is cross-JOB isolation.) Unusable values are
+     warned about and skipped rather than raised: this variable is not our knob,
+     and a machine that happens to export it must not become unable to run the
+     suite at all.
+  3. PYTEST_XDIST_WORKER (gw0 -> 0, gw1 -> 1, ...) — kept only so xdist workers
+     cannot alias each other's ports. It does NOT make `pytest -n` a supported
+     way to run this suite: xdist workers share one working tree by construction,
+     so each would bring up its own session-scoped QEMU against the same
+     qemu_flash.bin and qemu_test.log. conftest.pytest_configure() refuses
+     `--qemu` together with xdist for exactly that reason (and pytest-xdist is
+     not in api_tests/requirements.txt).
+  4. Default 0.
+
+Rationale for an env var over the alternatives:
   * Reproducible — the same slot always yields the same ports, unlike a pid.
   * Explicitly controllable — a parallel launcher sets one env var per instance.
   * No bind(0) race — allocating a free port with bind(0) then closing it leaves
     a window in which another process (or the sibling QEMU) can grab the just-
     released port before our QEMU binds it. A fixed slot has no such window.
-  * PYTEST_XDIST_WORKER is honored as a FALLBACK (gw0 -> 0, gw1 -> 1, ...) when
-    WB_MGE_PORT_SLOT is unset, so the same scheme also serves `pytest -n`.
 
 Layout: a slot maps to a CONTIGUOUS block of ports, NOT an offset added to each
 legacy base port. The legacy base ports sit only one apart (8080/8081,
@@ -26,39 +53,125 @@ cannot alias.
 
 _BLOCK_BASE is 21000 and _BLOCK_SIZE is 16 (> the 8 ports assigned per block), so
 the ports for the slots actually run (0..~10) land in 21000..21175 — comfortably
-below the Linux ephemeral range (default 32768+), so the OS will not hand a
-random client socket one of our reserved numbers. Slots up to ~2700 keep every
-port < 65536; _slot_from_env() rejects anything larger.
+below the ephemeral range, so the OS will not hand a random client socket one of
+our reserved numbers. _MAX_SLOT enforces that same property for EVERY accepted
+slot: it is the last block that fits entirely below the ephemeral floor (734 with
+the Linux default 32768), not merely the last one below 65536. The previous
+ceiling of 2782 admitted slots whose ports land inside the ephemeral range, which
+contradicts the rationale above. The one host where it enforces nothing is one
+whose ip_local_port_range starts BELOW 21000 (some container images ship
+`1024 65535`): there is no conforming slot there at all, so the ceiling falls back
+to the 32768 convention and says so in the range error — see _ephemeral_floor().
 """
 import os
+import warnings
 
 _BLOCK_BASE = 21000
 _BLOCK_SIZE = 16
 _PORTS_PER_SLOT = 8  # logical ports assigned per block (indices 0..7)
-_MAX_SLOT = (65535 - _BLOCK_BASE) // _BLOCK_SIZE - 1
+
+# Fallback when the running kernel does not tell us (macOS and any non-Linux have no
+# /proc; macOS's own default range starts at 49152, i.e. HIGHER, so this is the
+# conservative answer there too).
+_DEFAULT_EPHEMERAL_FLOOR = 32768
 
 
-def _slot_from_env() -> int:
-    """Resolve this run's slot from the environment (see module docstring)."""
-    raw = os.environ.get("WB_MGE_PORT_SLOT")
-    if raw is None:
-        worker = os.environ.get("PYTEST_XDIST_WORKER", "")
-        if worker.startswith("gw") and worker[2:].isdigit():
-            raw = worker[2:]
-        else:
-            raw = "0"
+def _ephemeral_floor():
+    """(floor the slot ceiling is derived from, floor this host actually reports or None).
+
+    Read from /proc/sys/net/ipv4/ip_local_port_range when available, so a host or
+    container that LOWERED the range gets a correspondingly lower slot ceiling instead
+    of a silent overlap between our reserved ports and the kernel's random client ports.
+
+    A range that starts at or below _BLOCK_BASE (some container images ship
+    `1024 65535`) is ignored rather than obeyed: obeying it would make _MAX_SLOT
+    negative and the suite unrunnable on that host, while the whole 21000 block is
+    inside the ephemeral range there no matter which slot is picked — so there is no
+    better slot to fail over to, and failing the import would be pure damage.
+
+    TWO values, not one, because that fallback makes them differ: on such a host the
+    ceiling is computed from 32768 while the real floor is 1024, and publishing only the
+    first made EPHEMERAL_FLOOR — and the range error below, which quotes it — state a
+    number this kernel never agreed to. The observed value is kept so the message can say
+    what is actually true there: the ceiling is a convention, not a guarantee.
+    The second element is None when the host does not publish a range at all (macOS and
+    everything else without /proc; macOS's own default starts at 49152, i.e. HIGHER, so the
+    32768 assumption is conservative there).
+    """
     try:
-        slot = int(raw)
-    except ValueError:
-        raise ValueError(f"WB_MGE_PORT_SLOT must be an integer, got {raw!r}")
+        with open("/proc/sys/net/ipv4/ip_local_port_range") as fh:
+            low = int(fh.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return _DEFAULT_EPHEMERAL_FLOOR, None
+    if low > _BLOCK_BASE + _BLOCK_SIZE:
+        return low, low
+    return _DEFAULT_EPHEMERAL_FLOOR, low
+
+
+EPHEMERAL_FLOOR, EPHEMERAL_FLOOR_OBSERVED = _ephemeral_floor()
+# The last block that fits ENTIRELY below the ephemeral floor. `- 1` because the block
+# is _BLOCK_SIZE wide: slot _MAX_SLOT + 1 would start at (floor - _BLOCK_SIZE) and its
+# block would run past the floor.
+_MAX_SLOT = (EPHEMERAL_FLOOR - _BLOCK_BASE) // _BLOCK_SIZE - 1
+
+
+def _ceiling_reason() -> str:
+    """Why _MAX_SLOT is where it is — worded so it is true on THIS host."""
+    if EPHEMERAL_FLOOR_OBSERVED is None:
+        return (f"the ceiling keeps every port of the block below {EPHEMERAL_FLOOR}, the "
+                f"assumed ephemeral floor — this host publishes no "
+                f"/proc/sys/net/ipv4/ip_local_port_range")
+    if EPHEMERAL_FLOOR_OBSERVED == EPHEMERAL_FLOOR:
+        return (f"the ceiling keeps every port of the block below this host's ephemeral "
+                f"floor {EPHEMERAL_FLOOR} (ip_local_port_range)")
+    return (f"the ceiling keeps every port of the block below {EPHEMERAL_FLOOR}, the assumed "
+            f"floor; this host's ip_local_port_range actually starts at "
+            f"{EPHEMERAL_FLOOR_OBSERVED}, i.e. below the whole {_BLOCK_BASE} block, so NO "
+            f"slot avoids the ephemeral range here and the ceiling is only a convention")
+
+
+def _parse_slot(raw: str) -> int:
+    """Parse and range-check one slot value. Raises ValueError with the reason."""
+    slot = int(raw)  # ValueError for non-integers, propagated to the caller
     if slot < 0 or slot > _MAX_SLOT:
         raise ValueError(
-            f"WB_MGE_PORT_SLOT out of range: {slot} (allowed 0..{_MAX_SLOT})"
+            f"out of range: {slot} (allowed 0..{_MAX_SLOT}; {_ceiling_reason()})"
         )
     return slot
 
 
-SLOT = _slot_from_env()
+def _slot_from_env():
+    """Resolve this run's slot -> (slot, source). See the module docstring for the order."""
+    raw = os.environ.get("WB_MGE_PORT_SLOT", "").strip()
+    if raw:
+        try:
+            return _parse_slot(raw), "WB_MGE_PORT_SLOT"
+        except ValueError as exc:
+            raise ValueError(f"WB_MGE_PORT_SLOT={raw!r} is not a usable slot: {exc}")
+
+    raw = os.environ.get("EXECUTOR_NUMBER", "").strip()
+    if raw:
+        try:
+            return _parse_slot(raw), "EXECUTOR_NUMBER"
+        except ValueError as exc:
+            # Not our variable: warn and fall through instead of taking the run down.
+            warnings.warn(
+                f"EXECUTOR_NUMBER={raw!r} is not a usable port slot ({exc}); ignoring it "
+                f"and falling back. Set WB_MGE_PORT_SLOT explicitly to choose a block.",
+                stacklevel=2,
+            )
+
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "")
+    if worker.startswith("gw") and worker[2:].isdigit():
+        try:
+            return _parse_slot(worker[2:]), "PYTEST_XDIST_WORKER"
+        except ValueError:
+            pass  # absurd worker index; the default block is still better than dying
+
+    return 0, "default"
+
+
+SLOT, SLOT_SOURCE = _slot_from_env()
 _BLOCK_START = _BLOCK_BASE + SLOT * _BLOCK_SIZE
 
 HOST = "127.0.0.1"
@@ -108,18 +221,26 @@ TRANSPARENT_P2_GUEST_PORT = _GUEST_TRANSPARENT_P2   # firmware bridge.port for t
 GATEWAY_GUEST_PORT = _GUEST_GATEWAY                 # firmware bridge.port for the Modbus gateway
 ALT_WEB_GUEST_PORT = _GUEST_ALT_WEB                 # firmware web_port setting (alt-port test)
 
-# The full set of host ports THIS run reserves. Used by the stale-port preflight
-# so it checks ONLY its own ports and never false-positives on a sibling run.
-MY_HOST_PORTS = [
+# The host ports THIS run reserves, split by TRANSPORT because the stale-port preflight
+# has to probe them differently: a TCP port answers connect(), a UDP port does not (it is
+# connectionless, so connect_ex() succeeds against a closed port and proves nothing — the
+# UDP entry in the old single list was checking exactly nothing). conftest probes the UDP
+# one by trying to bind() it instead. Scoped to this run's block so a sibling run in
+# another tree/slot never trips it.
+MY_TCP_HOST_PORTS = [
     HTTP_HOST_PORT,
     ALT_WEB_HOST_PORT,
     GATEWAY_HOST_PORT,
     TRANSPARENT_PORT2_HOST_PORT,
     CACHE_MODBUS_HOST_PORT,
-    IO_BUS_UDP_PORT,
     UART1_TCP_PORT,
     UART2_TCP_PORT,
 ]
+MY_UDP_HOST_PORTS = [IO_BUS_UDP_PORT]
+# There is deliberately NO combined MY_HOST_PORTS list. It existed "for reporting", nothing
+# reported from it (port_summary() below is what the header and `make qemu-ports` print),
+# and a list that erases the TCP/UDP distinction is exactly the shape that let the old
+# preflight probe a UDP port with connect() and check nothing.
 
 
 def qemu_nic_arg() -> str:
@@ -141,3 +262,37 @@ def qemu_serial_args() -> list:
         "-serial", f"tcp::{UART1_TCP_PORT},server,nowait",
         "-serial", f"tcp::{UART2_TCP_PORT},server,nowait",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Shell/Makefile entry points
+#
+# qemu.mk's `make qemu-web` used to hardcode the legacy hostfwd rules and
+# -serial ports, so an already-running QEMU started that way listened on 8080/50502-4/
+# 5561-2 while the test suite connected to this module's block — the documented
+# "test against an already-running QEMU" flow was broken end to end. The Makefile now
+# expands the two functions below instead, which makes this module the one source of
+# truth for BOTH launchers. They print a single line each, because that is what
+# $(shell ...) can consume.
+# ---------------------------------------------------------------------------
+
+def qemu_serial_args_str() -> str:
+    """qemu_serial_args() as one command-line string, for $(shell ...) in a Makefile."""
+    return " ".join(qemu_serial_args())
+
+
+def port_summary() -> str:
+    """One-line, human-readable summary of this slot's host ports (for make/CI logs)."""
+    return (
+        f"slot {SLOT} (from {SLOT_SOURCE}): "
+        f"web={HTTP_HOST_PORT}->80 altweb={ALT_WEB_HOST_PORT}->{_GUEST_ALT_WEB} "
+        f"gateway={GATEWAY_HOST_PORT}->{_GUEST_GATEWAY} "
+        f"bridge2={TRANSPARENT_PORT2_HOST_PORT}->{_GUEST_TRANSPARENT_P2} "
+        f"cache/bridge1={CACHE_MODBUS_HOST_PORT}->{_GUEST_CACHE_MODBUS} "
+        f"io-bus/udp={IO_BUS_UDP_PORT}->{_GUEST_IO_BUS} "
+        f"uart1={UART1_TCP_PORT} uart2={UART2_TCP_PORT}"
+    )
+
+
+if __name__ == "__main__":  # `python3 -m qemu_ports` / `python3 qemu_ports.py`
+    print(port_summary())

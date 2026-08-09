@@ -1,4 +1,5 @@
-"""Helper for the QEMU virtual IO state bus (UDP port 5570).
+"""Helper for the QEMU virtual IO state bus (guest UDP port 5570, forwarded to this
+slot's IO-bus host port — see qemu_ports.IO_BUS_UDP_PORT).
 
 The QEMU-only build exposes firmware GPIO/expander/button state over a tiny
 UDP protocol so host-side tests can observe and drive "hardware" pins that
@@ -58,7 +59,7 @@ LEVEL_INDEX = 4
 
 
 class IoBus:
-    """Client for the QEMU virtual IO state bus (UDP 5570).
+    """Client for the QEMU virtual IO state bus (guest UDP 5570).
 
     On construction it opens a fresh UDP socket, subscribes (which makes the
     guest treat it as a new peer and send a full dump), and absorbs that dump

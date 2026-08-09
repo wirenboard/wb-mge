@@ -21,9 +21,9 @@ def _baseline(api):
     resp = api.set_port_mode(1, "tcp_bridge")    # CRITICAL: TCP listener on port 502 only opens in tcp_bridge mode
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
 
-GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT  # hostfwd 50502 -> QEMU:502 (tcp_bridge port 1)
-UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
-UART2_TCP_PORT = qemu_ports.UART2_TCP_PORT  # UART2 chardev TCP socket (QEMU -serial tcp::5562,server,nowait)
+GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT  # hostfwd: slot gateway host port -> guest 502 (tcp_bridge port 1)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::<slot UART1 port>,server,nowait)
+UART2_TCP_PORT = qemu_ports.UART2_TCP_PORT  # UART2 chardev TCP socket (QEMU -serial tcp::<slot UART2 port>,server,nowait)
 
 
 def _build_modbus_tcp_request(txid, unit_id, fc, addr, count):
@@ -36,9 +36,9 @@ def _build_modbus_tcp_request(txid, unit_id, fc, addr, count):
 
 @pytest.mark.qemu
 def test_uart1_chardev_receives_bytes(api, is_qemu):
-    """Verify that UART1 TCP chardev (port 5561) receives bytes when tcp_bridge is active.
+    """Verify that the UART1 TCP chardev receives bytes when tcp_bridge is active.
 
-    This is a diagnostic test: it proves that QEMU -serial tcp::5561,server,nowait
+    This is a diagnostic test: it proves that QEMU -serial tcp::<UART1 port>,server,nowait
     correctly exposes UART1 TX data on the host TCP socket. If this test passes,
     the full gateway RTU-slave test (bug 07 fix for modbus_tcp.c) is feasible.
     If it fails, UART1 chardev is not functional in this QEMU build.

@@ -40,7 +40,7 @@ def _baseline(api):
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# QEMU host-forwarded port for the cache Modbus TCP server (guest port 50504).
+# Host port this slot forwards to the cache Modbus TCP server (guest port 50504).
 QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT
 
 # Timeout for opening TCP connections to the cache server.
@@ -89,7 +89,7 @@ def _recv_one_response(sock: socket.socket) -> tuple:
 
 @pytest.fixture(scope="module")
 def cache_tcp_server(api: WBMGEAPI):
-    """Set up the cache Modbus TCP server on port 50504 and populate the cache.
+    """Set up the cache Modbus TCP server on guest port 50504 and populate the cache.
 
     Steps:
       1. Save current rs485_1 port_mode and cache_modbus_port.
@@ -128,8 +128,9 @@ def cache_tcp_server(api: WBMGEAPI):
     inj = PacketInjector(port=1)
     try:
         # Switch the cache server to the QEMU-forwarded GUEST port (fixed 50504) — that is
-        # what the hostfwd rule forwards to; the host connects to QEMU_CACHE_MODBUS_PORT
-        # (the dynamic host side) which reaches this guest port through the forward.
+        # what this slot's hostfwd rule forwards to; the host connects to
+        # QEMU_CACHE_MODBUS_PORT (the slot-derived host side), which reaches this guest
+        # port through that forward.
         resp = api.update_settings({"cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT})
         assert resp.status_code == 200, \
             f"Failed to set cache_modbus_port={qemu_ports.CACHE_MODBUS_GUEST_PORT}: HTTP {resp.status_code}"

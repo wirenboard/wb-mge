@@ -1,6 +1,7 @@
 """web_port setting test — verifies that the HTTP server starts on the configured port after reboot.
 
-Requires QEMU with hostfwd 8081->8081 (see conftest.py).
+Requires QEMU with a hostfwd from this slot's alt-web host port to guest 8081
+(see conftest.py / api_tests/qemu_ports.py).
 Skip on real hardware: no hostfwd guarantee exists there.
 """
 
@@ -17,9 +18,9 @@ from api_client import WBMGEAPI
 
 # Port inside the firmware (NVS key web_port)
 ALT_PORT_GUEST = qemu_ports.ALT_PORT_GUEST
-# Corresponding host-side QEMU hostfwd port (127.0.0.1:8081 -> guest:8081)
+# Corresponding host-side QEMU hostfwd port (this slot's alt-web port -> guest 8081)
 ALT_PORT_HOST = qemu_ports.ALT_PORT_HOST
-# Default host-side port for the default web port mapping (127.0.0.1:8080 -> guest:80)
+# Host-side port for the default web port mapping (this slot's web port -> guest 80)
 DEFAULT_PORT_HOST = qemu_ports.DEFAULT_PORT_HOST
 # Firmware-side default web port, i.e. what the hostfwd above maps onto
 # (HTTP_SERVER_DEFAULT_PORT in main/http_server.h).
@@ -391,7 +392,7 @@ def _describe(write_errors):
 def test_web_port_change(api, is_qemu):
     """web_port setting: after changing port and rebooting, server must be reachable on the new port only."""
     if not is_qemu:
-        pytest.skip("Requires QEMU (hostfwd for alt port 8081)")
+        pytest.skip("Requires QEMU (hostfwd for the alt web port, guest 8081)")
 
     from urllib.parse import urlparse
     host = urlparse(api.base_url).hostname or "localhost"

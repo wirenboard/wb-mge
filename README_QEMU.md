@@ -11,8 +11,35 @@ Run the WB-MGE firmware in QEMU with web access:
 make qemu-web
 ```
 
-**Web Interface:** http://localhost:8080
+**Web Interface:** http://localhost:21000
 **Login / Password:** admin / admin
+
+> **Ports follow a slot.** Every host port below (web UI, Modbus gateway, UART chardevs,
+> IO bus) is derived from `WB_MGE_PORT_SLOT` by `api_tests/qemu_ports.py`, so several
+> checkouts can run QEMU on one machine without colliding. Slot 0 (the default) is the
+> `21000` block quoted throughout this file. `make qemu-ports` prints the block your
+> current environment resolves to — run it instead of trusting a number here:
+>
+> ```bash
+> make qemu-ports
+> # slot 0 (from default): web=21000->80 altweb=21001->8081 gateway=21002->502 ...
+> WB_MGE_PORT_SLOT=3 make qemu-ports
+> # slot 3 (from WB_MGE_PORT_SLOT): web=21048->80 ...
+> ```
+>
+> **One run per working tree.** The slot separates PORTS only. `build/qemu_flash.bin`
+> (QEMU writes NVS back into it), `build/qemu_efuse.bin`, `build/qemu_test.log` and
+> `build/qemu_test_report.xml` are per-tree, so a second run in the same checkout is
+> refused by an exclusive lock on `.e2e-tree.lock` (repo root) no matter which slot it
+> picks. `make qemu-test`, `make qemu-web` and `make qemu-run` hold that lock for their
+> whole run, **firmware build included** — they all rewrite `build/qemu_flash.bin`, so the
+> refusal has to come before the build, not after it. A `pytest --qemu` started directly
+> takes the same lock as its first action. To run two suites at once, use two checkouts
+> (or `git worktree`), each with its own slot.
+>
+> Not covered, deliberately: a bare `make qemu-build` / `make qemu-create-flash-image`
+> run by hand in a tree where a suite is already running. Those are plain build steps
+> (and the ones the locked targets call internally), so they are not wrapped.
 
 ## 📋 What It Does
 
@@ -22,14 +49,14 @@ The command automatically:
 1. Recompiles QEMU firmware if sources changed (incremental, does NOT rebuild frontend)
 2. Generates QEMU flash image
 3. Kills any existing QEMU processes
-4. Starts QEMU with port forwarding (localhost:8080 → ESP32:80)
+4. Starts QEMU with port forwarding (localhost:21000 → ESP32:80, for slot 0)
 
 ## 🔗 Make Dependency Graph
 
 ```mermaid
 graph TD
     B["🔨 Build firmware"] --> qemu-build
-    W["🌐 UI at :8080"] --> qemu-web
+    W["🌐 UI at :21000"] --> qemu-web
     T["🧪 Run API tests"] --> qemu-test
     R["⚡ QEMU without port"] --> qemu-run
     M["🔍 QEMU console"] --> qemu-monitor
@@ -38,12 +65,19 @@ graph TD
     qemu-build --> build-frontend
     qemu-build --> build-idf-project-qemu
 
-    qemu-web --> qemu-create-flash-image
-    qemu-web --> qemu-create-efuse-image
-    qemu-run --> qemu-create-flash-image
-    qemu-run --> qemu-create-efuse-image
-    qemu-test --> qemu-create-flash-image
-    qemu-test --> qemu-create-efuse-image
+    qemu-web --> L1["🔒 tree lock"]
+    qemu-run --> L1
+    qemu-test --> L1
+    L1 --> qemu-web-locked
+    L1 --> qemu-run-locked
+    L1 --> qemu-test-locked
+
+    qemu-web-locked --> qemu-create-flash-image
+    qemu-web-locked --> qemu-create-efuse-image
+    qemu-run-locked --> qemu-create-flash-image
+    qemu-run-locked --> qemu-create-efuse-image
+    qemu-test-locked --> qemu-create-flash-image
+    qemu-test-locked --> qemu-create-efuse-image
     qemu-create-flash-image --> build-idf-project-qemu
     build-idf-project-qemu --> qemu-apply-idf-patches
 ```
@@ -52,9 +86,14 @@ graph TD
 - `qemu-create-flash-image` — depends on `build-idf-project-qemu`: compiles QEMU firmware (incremental) then merges into a single .bin
 - `qemu-apply-idf-patches` — called automatically by `build-idf-project-qemu`: applies idempotent patches to IDF source files required for QEMU builds (UART teardown fix bug01, OpenEth ISR DRAM log fix bug04, LACT timer NULL ISR guard bug05) via patches/apply_idf_patch.py
 - `qemu-create-efuse-image` — no dependencies: creates the eFuse image once
-- `qemu-web`, `qemu-run`, `qemu-test` — always compile QEMU firmware (incremental, fast if nothing changed) before running
+- `qemu-web`, `qemu-run`, `qemu-test` — always compile QEMU firmware (incremental, fast if nothing changed) before running,
+  and hold the working-tree lock across that build and the run
 - `qemu-monitor` — no dependencies: connects to an already-running QEMU instance
 - `qemu-clean` — removes build/ and sdkconfig.qemu\_build
+- `*-locked` — internal targets. The public `qemu-web` / `qemu-run` / `qemu-test` do nothing
+  but take the working-tree lock and re-enter make on these; the image build is a
+  prerequisite of the `-locked` target so that it happens INSIDE the lock. Do not invoke
+  them directly — that bypasses the lock.
 
 ## 🔧 Key Implementation Details
 
@@ -77,14 +116,15 @@ CONFIG_ETH_USE_OPENETH=y                  # Enable OpenEth for QEMU
 - **Ethernet:** OpenEth driver provides network connectivity
 - **WiFi:** Mocked (no actual WiFi in QEMU)
 - **IP Address:** Assigned via DHCP (typically 10.0.2.15)
-- **Port Forwarding:** localhost:8080 forwards to ESP32 port 80
+- **Port Forwarding:** localhost:21000 forwards to ESP32 port 80 (slot 0; `make qemu-ports`)
 
-## IO state bus (UDP 5570)
+## IO state bus (UDP, guest 5570)
 
 In the QEMU build the real hardware-logic modules (indication / leds_control /
 rs485_control / mio_control / config_button) run against a virtual (RAM-backed)
 GPIO expander and virtual native GPIO. Pin-state changes are mirrored to the host
-over a UDP side-channel on **port 5570**, and the host can inject the config-button
+over a UDP side-channel on **guest port 5570** — reachable on the host at this slot's
+IO-bus port (`21005` for slot 0; `make qemu-ports`) — and the host can inject the config-button
 input. (Hardware builds are unaffected.)
 
 ### Message format
@@ -242,34 +282,60 @@ indicative only.
 ## 🌐 Web Interface Features
 
 Once running, access these endpoints:
-- **Main Interface:** http://localhost:8080
-- **System Info:** http://localhost:8080/info
-- **Settings:** http://localhost:8080/settings
-- **WiFi Scan Start:** http://localhost:8080/wifi_scan/start
-- **WiFi Scan Results:** http://localhost:8080/wifi_scan/results
-- **Firmware Update:** http://localhost:8080/update
+Below is slot 0; substitute the `web=` port from `make qemu-ports` for any other slot.
+
+- **Main Interface:** http://localhost:21000
+- **System Info:** http://localhost:21000/info
+- **Settings:** http://localhost:21000/settings
+- **WiFi Scan Start:** http://localhost:21000/wifi_scan/start
+- **WiFi Scan Results:** http://localhost:21000/wifi_scan/results
+- **Firmware Update:** http://localhost:21000/update
 
 ## 🔍 Troubleshooting
 
 ### No Web Access
-1. Check QEMU is running with port forwarding: `pgrep -af qemu-system-xtensa`
-2. Verify port forwarding: should include `hostfwd=tcp:127.0.0.1:8080-:80`
+1. Check QEMU is running: `ps -Aww -o pid=,args= | grep qemu-system-xtensa`
+2. Verify port forwarding matches your slot: compare that command line against
+   `make qemu-ports` — for slot 0 it should include `hostfwd=tcp:127.0.0.1:21000-:80`
 3. Check ESP32 got IP address in QEMU logs: `eth ip: 10.0.2.15`
 
 ### Stale QEMU Process (port already in use)
 If `make qemu-test` or `make qemu-web` fails with `Could not set up host forwarding rule`:
 ```bash
-pkill -9 -f qemu-system-xtensa
+# Scoped to THIS checkout — a bare `pkill -f qemu-system-xtensa` would also kill QEMUs
+# belonging to other checkouts running in parallel. The `file=` prefix and trailing
+# comma are how QEMU spells the argument; they stop the pattern from also matching a
+# checkout whose path merely ends with this one's.
+pkill -9 -f "file=$(pwd)/build/qemu_flash.bin,"
 ```
-Verify the process is gone: `pgrep -af qemu-system-xtensa` (must be empty)
+Verify it is gone: `ps -Aww -o pid=,args= | grep "file=$(pwd)/build/qemu_flash.bin,"` (must be empty).
+
+### "Another e2e run already owns this working tree"
+Two e2e runs in ONE checkout are refused, whatever their `WB_MGE_PORT_SLOT`: they
+share `build/qemu_flash.bin`, `build/qemu_efuse.bin`, `build/qemu_test.log` and
+`build/qemu_test_report.xml`. The message names the holder (pid, slot, start time) read
+from `.e2e-tree.lock` in the repo root, and it appears before anything is rebuilt.
+Either wait for that run, or start the second one from its own checkout / `git worktree`
+with a different slot. `make qemu-web` and `make qemu-run` take the same lock — a second
+one of those would otherwise rewrite the flash image (and `pkill` the QEMU) of the run
+already in progress.
 
 ### Running tests against an already-running QEMU
 The `--qemu` pytest flag means "launch and manage QEMU yourself". If QEMU is already running
 (e.g. started with `make qemu-web`), do **not** pass `--qemu` to pytest — it will detect
 the occupied ports and abort. Instead, use `--ip` directly:
 ```bash
-cd api_tests && .venv/bin/python -m pytest --ip localhost:8080
+# Both sides read api_tests/qemu_ports.py, so the default --ip already points at the web
+# port of the CURRENT slot: with the same WB_MGE_PORT_SLOT in both shells, no flag is needed.
+cd api_tests && .venv/bin/python -m pytest
+
+# Or spell it out (the port is the `web=` value from `make qemu-ports`):
+cd api_tests && .venv/bin/python -m pytest --ip localhost:21000
 ```
+Give both shells the same `WB_MGE_PORT_SLOT`. Pointing `--ip` at a slot other than the one
+`make qemu-web` used is the one way to break this flow: the web port would answer while the
+UART chardev / gateway / cache ports would not, and because a loopback `--ip` counts as
+"this QEMU is ours", the tests that need those ports FAIL rather than skip.
 
 ### QEMU Won't Start
 1. Verify `build/qemu_flash.bin` exists: run `make qemu-create-flash-image` first

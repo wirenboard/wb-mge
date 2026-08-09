@@ -1,7 +1,8 @@
 """E2E tests for the transparent TCP bridge — Wave 3.
 
-Requires QEMU with UART1 exposed as TCP port 5561 and guest port 503 forwarded
-to host port 50503.  The transparent bridge mode forwards raw bytes between the
+Requires QEMU with the UART1 chardev exposed on TCP and the transparent-bridge guest
+port forwarded to a host port; both host ports follow WB_MGE_PORT_SLOT
+(api_tests/qemu_ports.py). The transparent bridge mode forwards raw bytes between the
 TCP client and the serial interface without any Modbus framing.
 
 Coverage:
@@ -34,7 +35,7 @@ from conftest import (build_gateway_fixture, _connect_ready_bridge,
 # ---------------------------------------------------------------------------
 
 GATEWAY_HOST = qemu_ports.GATEWAY_HOST
-# Transparent bridge uses port 50504 (QEMU hostfwd: guest 50504 -> host 50504).
+# Transparent bridge uses guest port 50504 (this slot's cache/bridge1 host port forwards to it).
 # Port 503 is avoided because it is the default bridge_port for RS485-2 (port 2)
 # and is already bound when the firmware starts, causing EADDRINUSE on port 1 bind.
 TRANSPARENT_HOST_PORT = qemu_ports.TRANSPARENT_HOST_PORT
@@ -65,9 +66,9 @@ def _baseline(api):
 
 transparent_bridge = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=TRANSPARENT_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=50504,   # use port 50504 to avoid conflict with default port 2 bridge (503)
+    # Guest 50504, not the port-2 bridge default (guest 503): the two must not collide.
+    bridge_port=qemu_ports.TRANSPARENT_P1_GUEST_PORT,
     modbus=False,        # transparent mode — no RTU slave started
 )
 
@@ -296,9 +297,12 @@ def test_transparent_basic_roundtrip(transparent_bridge, is_qemu):
     """Send 16 arbitrary bytes through the transparent bridge and receive them back.
 
     Setup:
-    - Port 1 configured as transparent bridge on port 503 (host 50503).
-    - _UartEchoThread connects to UART1 chardev (port 5561) and echoes bytes.
-    - TCP client connects to port 50503, sends 16 bytes, expects echo back.
+    - Port 1 configured as transparent bridge on guest port 50504
+      (qemu_ports.TRANSPARENT_P1_GUEST_PORT — NOT guest 503, which is the port-2 default;
+      see the module header for why the two must not collide).
+    - _UartEchoThread connects to the UART1 chardev and echoes bytes.
+    - TCP client connects to this slot's host port for that bridge
+      (qemu_ports.TRANSPARENT_HOST_PORT), sends 16 bytes, expects echo back.
     """
     require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
@@ -424,7 +428,7 @@ def test_transparent_client_mode(api, is_qemu):
     - Start a Python TCP echo server on the host at a random free port.
     - Configure firmware: bridge.mode=client, bridge.ip=10.0.2.2, bridge.port=<echo_port>.
     - Activate tcp_bridge mode — firmware connects outbound to the echo server.
-    - Connect to UART1 chardev (port 5561), send bytes, expect echo back.
+    - Connect to the UART1 chardev, send bytes, expect echo back.
 
     Data flow:
       UART1_chardev → firmware_UART1 → firmware_tcp_client → echo_server
@@ -527,9 +531,9 @@ def test_transparent_client_mode(api, is_qemu):
 # Test #16: Single-client cap (C7) — a new client is rejected, the old one stays
 # ---------------------------------------------------------------------------
 #
-# NOTE: like every test in this module this needs QEMU (UART1 chardev on port
-# 5561 + the transparent-bridge hostfwd). It was NOT executed in the C7 change
-# environment — added and py_compile-checked only; run under the QEMU harness.
+# NOTE: like every test in this module this needs QEMU (the UART1 chardev + the
+# transparent-bridge hostfwd). It was NOT executed in the C7 change environment —
+# added and py_compile-checked only; run under the QEMU harness.
 
 @pytest.mark.qemu
 @pytest.mark.timeout(120)
@@ -617,9 +621,9 @@ def test_transparent_single_client_cap_block_new(transparent_bridge, is_qemu):
 # Test #17: B3 — server-sends-first: serial -> TCP to a client that never sent
 # ---------------------------------------------------------------------------
 #
-# NOTE: like every test in this module this needs QEMU (UART1 chardev on port
-# 5561 + the transparent-bridge hostfwd). It was NOT executed in the B3 change
-# environment — added and py_compile-checked only; run under the QEMU harness.
+# NOTE: like every test in this module this needs QEMU (the UART1 chardev + the
+# transparent-bridge hostfwd). It was NOT executed in the B3 change environment —
+# added and py_compile-checked only; run under the QEMU harness.
 # It needs no new fixture: it reuses `transparent_bridge` and writes into the
 # UART1 chardev directly (the same socket the echo thread uses), instead of
 # echoing, so that the serial side is the one that speaks first.

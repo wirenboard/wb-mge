@@ -1,7 +1,8 @@
 """End-to-end test for the Modbus TCP gateway (modbus_tcp.c / tcp_bridge mode with modbus=true).
 
-Requires QEMU launched with UART1 exposed as TCP port 5561 and port 502 forwarded to 50502.
-Uses a Python RTU slave (rtu_slave_helpers.ModbusRtuSlaveThread) connected to UART1.
+Requires QEMU with the UART1 chardev exposed on TCP and guest port 502 forwarded to a host
+port. Both host ports follow WB_MGE_PORT_SLOT (api_tests/qemu_ports.py); the guest ports do
+not move. Uses a Python RTU slave (rtu_slave_helpers.ModbusRtuSlaveThread) connected to UART1.
 """
 
 import qemu_ports
@@ -29,9 +30,9 @@ def _baseline(api):
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
     # bridge.* and port_mode are set by the `gateway_slave` fixture
 
-# Gateway port forwarded from QEMU guest port 502 to host port 50502
+# Host port this slot forwards to QEMU guest port 502 (the gateway)
 GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT
-# UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
+# UART1 chardev TCP socket (QEMU -serial tcp::<slot UART1 port>,server,nowait)
 UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT
 # Fake register value returned by the RTU slave for any register read
 FAKE_VALUE = 0x1234
@@ -40,9 +41,8 @@ FAKE_VALUE = 0x1234
 # Use shared gateway fixture from conftest (R5)
 gateway_slave = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=GATEWAY_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=502,
+    bridge_port=qemu_ports.GATEWAY_GUEST_PORT,      # guest 502
     modbus=True,
     fake_value=FAKE_VALUE,
 )

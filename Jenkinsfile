@@ -150,7 +150,34 @@ pipeline {
             // on a node where it is not competing for CPU. Three clean runs is what we have so
             // far, which is not enough to tell a fixed suite from a lucky one. When that holds,
             // flip it by deleting the catchError wrapper below and leaving the post block as is.
+
+            // Host-port isolation for the suite. Every host port it touches (QEMU hostfwd
+            // targets, the two UART chardevs, the UDP IO bus) is derived from this one
+            // integer by api_tests/qemu_ports.py, so two builds that land on the same node
+            // no longer fight over 8080/50502-4/5561-2.
             //
+            // EXECUTOR_NUMBER is Jenkins' per-executor index on the node, which is exactly
+            // the granularity wanted: one concurrent build per executor, so distinct
+            // concurrent builds get distinct blocks. This is CROSS-JOB isolation —
+            // disableConcurrentBuilds() in options already serialises this branch against
+            // ITSELF, and the residual exposure named in that comment is the other jobs
+            // sharing the node (wb-release-tests, wb-mqtt-zigbee, ...). It does not fix CPU
+            // contention, which is a separate and unsolved problem; it fixes the part where
+            // two suites also collided on ports.
+            //
+            // Set here rather than left to qemu_ports' own EXECUTOR_NUMBER fallback: this
+            // resolves EXECUTOR_NUMBER on the Jenkins side, where it is certainly defined,
+            // instead of assuming it survives into the container's shell environment. The
+            // fallback stays as a backstop for e2e runs started outside these stages.
+            // '?: 0' guards the null EXECUTOR_NUMBER; an empty value would resolve to slot 0
+            // too (qemu_ports treats an empty WB_MGE_PORT_SLOT as unset rather than raising).
+            //
+            // Ports are only half of it: the OTHER half is that each run needs its own
+            // WORKING TREE, which Jenkins gives us for free (one workspace per job) and
+            // which is now enforced with an flock on .e2e-tree.lock in the workspace root
+            // — taken by `make qemu-test` around its whole recipe (api_tests/tree_lock.py),
+            // so it covers the firmware build too, and re-checked inside pytest.
+            environment { WB_MGE_PORT_SLOT = "${env.EXECUTOR_NUMBER ?: 0}" }
             // '!= false' is load-bearing: on the first build after a parameter default changes,
             // the parameters block has not taken effect yet and params.RUN_E2E is null. This
             // parameter defaults to ON, so null must mean "enabled"; in Groovy 'null != false'
@@ -160,6 +187,8 @@ pipeline {
             steps {
                 // catchError keeps build UNSTABLE (yellow) on e2e failure — S3 Upload still runs
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    // The resolved slot and its port block are printed in the pytest report
+                    // header, so the build log answers "did this actually take effect?"
                     sh 'bash -c "source /opt/esp/idf/export.sh && make qemu-test"'
                 }
             }
@@ -206,6 +235,11 @@ pipeline {
             // Null-handling follows each parameter's own default: RUN_E2E defaults ON so null
             // means enabled ('!= false'), RUN_COVERAGE defaults OFF so null means disabled
             // ('== true'). The two idioms differ on purpose — do not unify them.
+            // Same port slot as the clean e2e stage above, for the same reason: this stage
+            // re-runs the whole suite, so it brings up its own QEMU and needs its own host
+            // port block. The two stages never overlap in time (they are sequential within
+            // one build), so sharing the executor's slot is correct, not a collision.
+            environment { WB_MGE_PORT_SLOT = "${env.EXECUTOR_NUMBER ?: 0}" }
             when { expression { params.RUN_COVERAGE == true && params.RUN_E2E != false } }
             steps {
                 // Re-runs the e2e suite on an instrumented firmware build with reboot/OTA tests

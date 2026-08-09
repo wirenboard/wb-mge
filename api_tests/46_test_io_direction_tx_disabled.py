@@ -32,8 +32,8 @@ from io_bus_helpers import IoBus
 pytestmark = pytest.mark.qemu
 
 
-GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT  # hostfwd 50502 -> QEMU:502 (tcp_bridge port 1)
-UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
+GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT  # hostfwd: slot gateway host port -> guest 502 (tcp_bridge port 1)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::<slot UART1 port>,server,nowait)
 
 
 def _build_modbus_tcp_request(txid, unit_id, fc, addr, count):

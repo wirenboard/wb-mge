@@ -16,18 +16,39 @@ import requests
 from api_client import WBMGEAPI
 from rtu_slave_helpers import ModbusRtuSlaveThread
 import qemu_ports
+import tree_lock
 
 PROJECT_ROOT = Path(__file__).parent.parent
 QEMU_READY_TIMEOUT = 900
 QEMU_READY_INTERVAL = 2
 
-# QEMU stdout/monitor log path. NOT slot-suffixed: each parallel run needs its own working
-# tree anyway (build/qemu_flash.bin, build/qemu_efuse.bin and build/qemu_test_report.xml are
-# per-tree make outputs, and QEMU writes NVS back into qemu_flash.bin), so a separate tree
-# already gives each run its own build/qemu_test.log with no clobber. Keeping the fixed name
-# also matches 33_test_auth_settings.py's _qemu_serial_log_path(), which stats this file to
-# detect a reboot — a slot suffix here silently broke that reboot-detection on non-zero slots.
+# QEMU stdout/monitor log path. NOT slot-suffixed, and that is safe only because the
+# working-tree lock ENFORCES one --qemu run per working tree: build/qemu_flash.bin,
+# build/qemu_efuse.bin and build/qemu_test_report.xml are per-tree make outputs and QEMU
+# writes NVS back into qemu_flash.bin, so a second run in the same tree is refused before
+# it can open this file — and, because `make qemu-test` takes that same lock around its
+# whole recipe, before it can regenerate the flash image either. (It is opened with "w"
+# below, i.e. truncated unconditionally —
+# without that lock a sibling run would blank this log under a live QEMU that keeps writing
+# at its old offset, which silently breaks 33_test_auth_settings.py's reboot-marker scan and
+# 16_test_uart_teardown_crash.py's crash-marker scan. Neither would report a lock problem;
+# one would just start passing for the wrong reason.)
+# Keeping the fixed name also matches 33_test_auth_settings.py's _qemu_serial_log_path(),
+# which stats this file to detect a reboot — a slot suffix here silently broke that
+# reboot-detection on non-zero slots.
 QEMU_LOG_PATH = PROJECT_ROOT / "build/qemu_test.log"
+
+# Flash image this tree's QEMU runs. Defined here (not only inside qemu_process) because the
+# preflight identifies "a QEMU belonging to THIS tree" by this exact path in its argv.
+QEMU_FLASH_PATH = PROJECT_ROOT / "build/qemu_flash.bin"
+QEMU_EFUSE_PATH = PROJECT_ROOT / "build/qemu_efuse.bin"
+
+# Advisory whole-session lock that makes "one --qemu run per working tree" a rule the code
+# enforces rather than a comment. Implemented in tree_lock.py, which is ALSO what qemu.mk
+# runs, so `make qemu-test` holds the very same lock across its build steps and the pytest
+# they feed — see that module for why the file sits in the repo root rather than under
+# build/, and why the lock is Python's fcntl.flock rather than flock(1).
+TREE_LOCK_PATH = tree_lock.LOCK_PATH
 
 # Test files that reboot/restart the device (which resets the heap). They are
 # deferred to the very end of the run by pytest_collection_modifyitems so the rest
@@ -114,16 +135,71 @@ def pytest_configure(config):
     global _PYTEST_CONFIG
     _PYTEST_CONFIG = config
 
+    # --qemu together with pytest-xdist is REFUSED, not merely discouraged. xdist workers
+    # share one working tree by construction, so each would set up its own session-scoped
+    # qemu_process against the same build/qemu_flash.bin and the same build/qemu_test.log —
+    # the exact same-tree collision _acquire_tree_lock() exists to stop, except guaranteed
+    # rather than accidental. (The lock would catch it, but the message below explains the
+    # actual mistake instead of leaving the reader to work out why their workers refuse each
+    # other.) Distinct per-worker port slots do NOT make this safe; see qemu_ports.py.
+    # pytest-xdist is not in api_tests/requirements.txt, so this normally never fires.
+    if config.getoption("--qemu", default=False):
+        xdist_procs = getattr(config.option, "numprocesses", None)
+        if xdist_procs or os.environ.get("PYTEST_XDIST_WORKER"):
+            pytest.exit(
+                "--qemu cannot be combined with pytest-xdist: every worker would launch "
+                "its own QEMU against the SAME build/qemu_flash.bin and build/qemu_test.log "
+                "in this one working tree. To run several suites at once, start one pytest "
+                "process per WORKING TREE with its own WB_MGE_PORT_SLOT.",
+                returncode=1,
+            )
+
+        # Taken HERE rather than in the qemu_process fixture, which runs after collection.
+        # Two reasons: the barrier should rise before this session does anything at all,
+        # and pytest_report_header (below) runs after this hook — so the header can state
+        # what the lock IS doing instead of promising something not yet done. Released by
+        # pytest_unconfigure, which pytest calls on every exit path including pytest.exit().
+        _acquire_tree_lock()
+
+
+def pytest_report_header(config):
+    """Show the resolved port slot, where it came from, and the block it maps to.
+
+    Printed for every run, including --ip ones. It is the only place a CI log answers
+    "did the slot wiring actually take effect here?" — the whole scheme is invisible
+    otherwise, and a silently-unset EXECUTOR_NUMBER would look identical to a working one.
+
+    The tree line reports the OBSERVED lock state, not an intention: pytest_configure has
+    already run by the time this hook is called, and _tree_lock_state() asks the kernel
+    rather than trusting the marker — so "locked" here means the flock really is held, by
+    this process or by the ancestor the line names.
+    """
+    header = f"qemu ports: {qemu_ports.port_summary()}"
+    if config.getoption("--qemu", default=False):
+        header += f"\nqemu tree : {PROJECT_ROOT} ({_tree_lock_state()})"
+    return header
+
 
 def pytest_unconfigure(config):
     """Drop the captured config so a finished session cannot answer for the next one.
 
     Matters when pytest runs more than once in a single process (pytester, an IDE
     runner): a stale Config would keep reporting the previous run's --ip/--qemu.
+
+    Also where the working-tree lock is released — and the ONLY place, deliberately. It is
+    tempting to drop it in qemu_process's teardown, "the QEMU is gone, nothing is written
+    any more", but that is false: session-fixture teardown runs BEFORE pytest writes the
+    --junitxml report and before pytest_sessionfinish, which is what reads and dumps
+    build/qemu_test.log. The observed order is `session fixture teardown` (no XML yet) ->
+    `sessionfinish` (XML written) -> `unconfigure`. Releasing early opens a window in which
+    a second run truncates the log we are about to dump and then overwrites the report.
+    This hook is also the one that runs on EVERY exit path, including the pytest.exit()s
+    inside qemu_process that skip fixture teardown entirely. Idempotent either way.
     """
     global _PYTEST_CONFIG
     if _PYTEST_CONFIG is config:
         _PYTEST_CONFIG = None
+    _release_tree_lock()
 
 
 def quick_connection_test(base_url):
@@ -162,43 +238,270 @@ def quick_connection_test(base_url):
 
 
 # Ports that THIS run's QEMU reserves on the host — derived from WB_MGE_PORT_SLOT so
-# that N parallel runs occupy disjoint port blocks (see qemu_ports.py). Must match the
-# hostfwd/-serial arguments the qemu_process fixture builds from qemu_ports.
-QEMU_HOST_PORTS = qemu_ports.MY_HOST_PORTS
+# that runs in separate trees occupy disjoint port blocks (see qemu_ports.py). Must match
+# the hostfwd/-serial arguments the qemu_process fixture builds from qemu_ports. Split by
+# transport: a UDP port cannot be probed with connect() (see _check_no_stale_qemu).
+QEMU_HOST_TCP_PORTS = qemu_ports.MY_TCP_HOST_PORTS
+QEMU_HOST_UDP_PORTS = qemu_ports.MY_UDP_HOST_PORTS
+
+
+# This session's TreeLock, or None before it is taken / after it is released. Module-level
+# rather than a fixture attribute so pytest_unconfigure can release it on EVERY exit path,
+# including the pytest.exit()s inside qemu_process that never reach a fixture teardown.
+_TREE_LOCK = None
+
+
+def _acquire_tree_lock():
+    """Take the exclusive per-WORKING-TREE lock, or abort naming the current holder.
+
+    THE SLOT IS NOT THIS BARRIER. WB_MGE_PORT_SLOT makes two runs' HOST PORTS disjoint
+    and says nothing about the FILES they share, which are per-tree and not per-slot:
+    build/qemu_flash.bin (QEMU writes NVS back into it), build/qemu_efuse.bin,
+    build/qemu_test_report.xml and build/qemu_test.log. Two runs in ONE tree with slots
+    0 and 1 both sail through the port preflight and then clobber each other — most
+    quietly through the log, which qemu_process opens with "w" (see QEMU_LOG_PATH).
+    This lock is deliberately ORTHOGONAL to the slot, so runs in SEPARATE trees stay
+    legal (that is the whole point of the slot) while two runs in ONE tree are refused.
+
+    flock rather than the "is a foreign qemu-system-xtensa running" pgrep it replaces:
+      * It covers the window BEFORE any QEMU exists — the build, the preflight, the
+        several seconds until Popen. A process-list check sees nothing there, so two
+        runs started together would both pass it.
+      * It is released by the KERNEL when the holder dies, however it dies. A pid file
+        or a marker file needs staleness heuristics; this needs none.
+      * It is scoped to a FILE, i.e. to a tree, which is exactly the resource being
+        protected — unlike the old global process check, which also refused legitimate
+        runs in other trees and is what the slot work had to delete.
+    The complementary case flock CANNOT see — an ORPHANED QEMU whose pytest died, so the
+    lock is long released while the process still writes into this tree's flash image —
+    is covered by _check_no_foreign_qemu_in_tree() below.
+
+    Called from pytest_configure, i.e. BEFORE collection and before anything this session
+    writes. `make qemu-test` normally holds the same lock already (qemu.mk wraps the whole
+    recipe, build steps included, in tree_lock.py); this call then recognises the inherited
+    lock instead of colliding with its own parent. For a bare `pytest --qemu` this IS the
+    acquisition, and it still precedes the `make qemu-create-flash-image` that qemu_process
+    runs. The mechanics, the file location and the flock caveats live in tree_lock.py.
+    """
+    global _TREE_LOCK
+    if _TREE_LOCK is not None:
+        return
+    try:
+        lock = tree_lock.TreeLock.acquire()
+    except tree_lock.TreeLockBusy as exc:
+        pytest.exit(
+            "\n".join(tree_lock.busy_lines(
+                exc,
+                this_run=(f"pid={os.getpid()} slot={qemu_ports.SLOT} "
+                          f"(from {qemu_ports.SLOT_SOURCE})"),
+            )),
+            returncode=1,
+        )
+    if not lock.enforced:
+        warnings.warn(tree_lock.UNENFORCED_WARNING, stacklevel=1)
+    _TREE_LOCK = lock
+
+
+def _tree_lock_state():
+    """One short phrase describing what the tree lock is doing, for the report header.
+
+    The inherited branch VERIFIES rather than reports: `inherited` only means "an env marker
+    said an ancestor holds it", and printing that as a fact is how the header ends up
+    promising a barrier a dead wrapper already dropped. tree_lock.verify_intact() re-runs the
+    marker checks and asks the kernel whether anyone still holds the flock.
+    """
+    if _TREE_LOCK is None:
+        return "not locked"
+    if _TREE_LOCK.inherited:
+        problem = _TREE_LOCK.verify_intact()
+        if problem:
+            return f"NOT locked — {problem}"
+        return f"locked by an ancestor process [{_TREE_LOCK.inherited_holder}]"
+    if not _TREE_LOCK.enforced:
+        return "NOT locked (no fcntl on this platform)"
+    return f"locked for the session via {TREE_LOCK_PATH.name}"
+
+
+def _verify_tree_lock_intact():
+    """Abort if this session is no longer the only run allowed in this tree.
+
+    Two failures, both of which the check used to pass over in silence:
+
+    * The lock file was deleted or replaced while WE held it. An flock lives on an INODE, so
+      anything that unlinks the path leaves the holder guarding an orphan while a second run
+      locks the new file and proceeds. Nothing in the pipeline should touch the repo root —
+      but the file is gitignored, and `git clean -xfd` deletes exactly that.
+    * The ANCESTOR holding it for us is gone. On `make qemu-test` this session never takes
+      the flock itself; it recognises the wrapper's. If the wrapper dies, the kernel frees
+      the lock at once and nothing else here would ever notice.
+
+    A loud abort, not a warning: continuing means writing build/qemu_flash.bin and
+    build/qemu_test.log with no barrier while still reporting one in the header.
+    """
+    if _TREE_LOCK is None:
+        return
+    problem = _TREE_LOCK.verify_intact()
+    if problem:
+        pytest.exit(f"Working-tree lock lost: {problem}", returncode=1)
+
+
+def _release_tree_lock():
+    """Drop the tree lock. Idempotent; safe to call when it was never taken."""
+    global _TREE_LOCK
+    lock, _TREE_LOCK = _TREE_LOCK, None
+    if lock is not None:
+        lock.release()
+
+
+def _qemu_processes_in_this_tree():
+    """(matching ps lines, lookup error) for QEMUs whose -drive names THIS tree's image.
+
+    The two failure modes are kept APART. An empty list with `error is None` means "the
+    process list was read and holds no such QEMU"; a non-None error means "the process list
+    could not be read", which is NOT evidence of anything and is reported as such by the
+    caller. Collapsing both into [] — as this used to — reproduces the defect class of
+    the `pgrep -af` it replaced: a check that passes silently on hosts where the tool is
+    missing or refuses to run (procps is absent from many container images).
+
+    `ps -Aww -o pid=,args=` rather than `pgrep -af`, which is not portable — on macOS
+    pgrep's -a means something else entirely and the command prints bare pids, so the
+    flash-path filter would match nothing and the check would silently pass on every
+    developer machine. The `ww` is load-bearing too: without it ps may clip argv to the
+    terminal width, and the flash path is not the first argument (it sits in `-drive
+    file=...`), so a clipped line is another way to miss a live orphan.
+    """
+    try:
+        res = subprocess.run(["ps", "-Aww", "-o", "pid=,args="],
+                             capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [], f"could not run `ps`: {exc!r}"
+    if res.returncode != 0:
+        return [], (f"`ps` exited with {res.returncode}: "
+                    f"{(res.stderr or '').strip() or '(no stderr)'}")
+    # Match the WHOLE argument as QEMU spells it — `file=<flash image>,` — not a bare
+    # substring of the path. A one-directional substring test also matches a FOREIGN tree
+    # whose path merely ends with ours (/w/mge inside /home/ci/w/mge), and aborting a
+    # legitimate run is as bad as missing an orphan. The trailing comma is what QEMU always
+    # emits (`file=...,if=mtd,format=raw` — see qemu_process below and qemu.mk), so it
+    # anchors the right-hand end; `file=` anchors the left.
+    # Both path spellings: our own Popen passes PROJECT_ROOT unresolved, while a QEMU
+    # started from a path with a symlinked component may show the resolved one.
+    candidates = {f"file={QEMU_FLASH_PATH},", f"file={QEMU_FLASH_PATH.resolve()},"}
+    return ([line.strip() for line in res.stdout.splitlines()
+             if "qemu-system-xtensa" in line and any(c in line for c in candidates)],
+            None)
+
+
+def _check_no_foreign_qemu_in_tree():
+    """Abort when a QEMU is already running against THIS tree's flash image.
+
+    Covers the one case the tree lock cannot: an ORPHANED QEMU. If a previous pytest died
+    (Ctrl-C at the wrong moment, an OOM kill) its flock went with it, but the QEMU it
+    spawned can outlive it and keep writing NVS into build/qemu_flash.bin. A fresh run
+    would then take the lock, regenerate that image under the orphan and, if the orphan
+    sits in another slot, sail through the port preflight too.
+
+    WHERE IT RUNS, exactly — because "covers" above would otherwise read as "prevents".
+    This lives inside pytest, so on `make qemu-test` it fires AFTER the wrapper's
+    prerequisites have already run `qemu-create-flash-image`, i.e. after esptool truncated
+    the image under the orphan. What it buys there is a loud abort naming the process
+    instead of a run that fails strangely later; only on a bare `pytest --qemu` (where the
+    build happens below, inside this fixture) does it run before the damage. Moving it into
+    tree_lock.main() would close that window for qemu-test — but the same wrapper also runs
+    `make qemu-web`, whose whole job is to CLEAN UP such a QEMU, so it would have to become
+    conditional; not worth it while the consequence is loud rather than silent.
+
+    Deliberately NOT the old "any qemu-system-xtensa anywhere" check: that one refused
+    legitimate sibling runs in other trees, which is exactly the capability the slot work
+    exists to provide. Scoping the match to this tree's flash path keeps the guard and
+    drops the false positives.
+
+    A process list we could not READ warns and continues rather than aborting: this is the
+    second line of defence behind the tree lock, so a machine without a usable `ps` must
+    still be able to run the suite — but it must not be able to do so while claiming a
+    guarantee it never checked.
+    """
+    mine, lookup_error = _qemu_processes_in_this_tree()
+    if lookup_error:
+        warnings.warn(
+            f"Could not check for an orphaned QEMU in this tree ({lookup_error}). The "
+            f"tree lock still stands, but nothing verified that a QEMU left behind by an "
+            f"interrupted run is not still writing into {QEMU_FLASH_PATH}.",
+            stacklevel=1,
+        )
+        return
+    if not mine:
+        return
+    pytest.exit(
+        "\n".join([
+            "A QEMU process is already running against this tree's flash image.",
+            f"  Flash image : {QEMU_FLASH_PATH}",
+            "  Process(es) :",
+            *(f"    {line}" for line in mine),
+            "  It is most likely an orphan left by an interrupted run (its pytest is gone,",
+            "  so the tree lock did not catch it). It still writes NVS into that image.",
+            "  Kill it, e.g. (the pattern is anchored the same way the match above is, so",
+            "  it cannot hit a QEMU in another tree whose path merely ends with ours):",
+            f"    pkill -f 'file={QEMU_FLASH_PATH},'",
+        ]),
+        returncode=1,
+    )
 
 
 def _check_no_stale_qemu():
     """Abort only if THIS run's own host ports are occupied.
 
     When --qemu is used, conftest launches its own QEMU on the port block for this
-    run's WB_MGE_PORT_SLOT. The preflight must be scoped to THAT block: with parallel
-    runs on one host, sibling QEMUs (other slots) are legitimate, so a global
+    run's WB_MGE_PORT_SLOT. The preflight must be scoped to THAT block: with runs in
+    several trees on one host, sibling QEMUs (other slots) are legitimate, so a global
     "any qemu-system-xtensa running" abort would make concurrent runs kill each other
     on preflight. We therefore check only OUR ports; a pre-existing process holding one
     of them is a real conflict (a stale run in the same slot, or an unrelated listener).
+
+    TCP and UDP are probed DIFFERENTLY, because connect() does not answer the question
+    for UDP: a datagram socket connect() only records a default peer, so connect_ex()
+    returns 0 against a port nobody is bound to. The IO-bus UDP entry used to sit in the
+    same connect_ex() loop as the TCP ports and therefore checked nothing at all. The
+    real question — "can our QEMU bind this?" — is answered by trying to bind it, which
+    is what QEMU's hostfwd does, without SO_REUSEADDR so an existing binder collides.
+
+    Both probes are point-in-time: they cannot reserve anything, and something could
+    still take a port between the probe and QEMU's own bind. That is a diagnosis-quality
+    guarantee on purpose — the ownership guarantee comes from the tree lock plus the
+    slot, and this check exists to turn "QEMU failed to set up host forwarding" into a
+    message that names the port.
 
     To run tests against an already-running QEMU, do NOT use --qemu; use --ip pointing
     at the running instance instead.
     """
     occupied_ports = []
-    for port in QEMU_HOST_PORTS:
+    for port in QEMU_HOST_TCP_PORTS:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
-        if sock.connect_ex(("127.0.0.1", port)) == 0:
+        if sock.connect_ex((qemu_ports.HOST, port)) == 0:
             occupied_ports.append(port)
         sock.close()
+    for port in QEMU_HOST_UDP_PORTS:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.bind((qemu_ports.HOST, port))
+        except OSError:
+            occupied_ports.append(port)
+        finally:
+            sock.close()
 
     if not occupied_ports:
         return  # Our port block is free.
 
     lines = [
-        f"Port conflict on slot {qemu_ports.SLOT} — cannot start QEMU safely.",
+        f"Port conflict on slot {qemu_ports.SLOT} (from {qemu_ports.SLOT_SOURCE}) — "
+        f"cannot start QEMU safely.",
         f"  Occupied ports (this run's block): "
-        f"{', '.join(str(p) for p in occupied_ports)}",
+        f"{', '.join(str(p) for p in sorted(occupied_ports))}",
         "  Another run in the same WB_MGE_PORT_SLOT, or an unrelated listener, holds "
         "them.",
         "  Use a different WB_MGE_PORT_SLOT, or kill the stale instance "
-        "(pkill -9 -f qemu-system-xtensa if it is a leaked QEMU).",
+        f"(pkill -f 'file={QEMU_FLASH_PATH},' if it is a leaked QEMU from this tree).",
     ]
     pytest.exit("\n".join(lines), returncode=1)
 
@@ -373,10 +676,13 @@ def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
 
 
 # Host QEMU binds the UART chardevs on (see the -serial arguments in qemu_process).
-# Only a DEFAULT: call sites that carry their own host variable pass it explicitly, and
-# the two chardevs live on different ports (5561 = UART1, 5562 = UART2), so neither the
-# host nor the port may be baked into the helpers below.
-UART_CHARDEV_HOST = "127.0.0.1"
+# Aliased from qemu_ports rather than spelled out again: that module is what builds the
+# -serial arguments, and a second literal here is a second source of truth that can drift
+# from the one the QEMU command line actually uses.
+# Only a DEFAULT: call sites that carry their own host variable pass it explicitly, and the
+# two chardevs live on different ports (qemu_ports.UART1_TCP_PORT / UART2_TCP_PORT), so
+# neither the host nor the port may be baked into the helpers below.
+UART_CHARDEV_HOST = qemu_ports.HOST
 
 # The one exact phrase _uart_leak_guard prints, kept as a constant because the hint
 # below tells the reader to grep for it: with two independently written strings, the
@@ -387,7 +693,7 @@ UART_CHARDEV_LEAK_MARKER = "QEMU UART chardev stopped accepting connections"
 
 
 def _endpoint_host(ip_option) -> str:
-    """Host part of an --ip value: 'localhost:8080', '10.0.0.5', '[::1]:8080', a URL.
+    """Host part of an --ip value: 'localhost:21000', '10.0.0.5', '[::1]:21000', a URL.
 
     Returns '' for anything unparseable — callers treat that as "not local", i.e. the
     conservative answer (skip rather than fail).
@@ -397,7 +703,7 @@ def _endpoint_host(ip_option) -> str:
         return ""
     # urlsplit only parses an authority when one is marked as such; '//' marks it. It
     # then does the two fiddly parts for us: dropping the :port and unwrapping the IPv6
-    # bracket form ('[::1]:8080' -> '::1', which a naive rsplit(':') would mangle).
+    # bracket form ('[::1]:21000' -> '::1', which a naive rsplit(':') would mangle).
     if "//" not in raw:
         raw = "//" + raw
     try:
@@ -423,7 +729,7 @@ def _is_local_host(host: str) -> bool:
 
 
 def _uart_chardev_is_ours(is_qemu: bool = False, config=None) -> bool:
-    """True when the UART chardevs on 5561/5562 belong to THIS run's device under test.
+    """True when this slot's two UART chardevs belong to THIS run's device under test.
 
     The rule is "the device is a QEMU on this machine", which is --qemu (conftest starts
     that QEMU itself) OR an --ip naming this machine (_is_local_host — the documented way
@@ -461,7 +767,8 @@ _UART_CHARDEV_LEAK_HINT = (
     "SAME port as this failure — the guard warns per port and prints the port numbers "
     "— because _uart_leak_guard emits it with the last few tests that ran, and the leak "
     "is in one of them. Deliberately not the earliest such warning: a healthy "
-    "run already contains one benign 5561 warning from 20_test_cache_tcp_framing.py, "
+    f"run already contains one benign UART1 (port {qemu_ports.UART1_TCP_PORT}) warning "
+    "from 20_test_cache_tcp_framing.py, "
     "whose module-scoped cache_tcp_server legitimately holds that chardev across all "
     "six of its tests, and that module starts 74 items into a 229-item run — so for "
     "anything that fails later, the earliest warning is reliably the wrong one. "
@@ -485,16 +792,24 @@ def uart_chardev_unreachable(uart_tcp_port: int, is_qemu: bool,
 
     "A QEMU on this machine" is `--qemu OR a loopback --ip` (_uart_chardev_is_ours), and
     the second half is not a corner case: the documented way to test an ALREADY-RUNNING
-    QEMU is exactly `pytest --ip localhost:8080` with NO --qemu, because --qemu means
+    QEMU is exactly `pytest --ip localhost:<web port>` with NO --qemu, because --qemu means
     "launch and manage QEMU yourself" and aborts on the ports it finds occupied
     (README_QEMU.md, "Running tests against an already-running QEMU";
-    api_tests/README_API_Tests.md). localhost:8080 is also the --ip DEFAULT, so a bare
+    api_tests/README_API_Tests.md). The --ip DEFAULT is loopback too — it is
+    localhost:qemu_ports.HTTP_HOST_PORT, i.e. it follows the port slot (see
+    pytest_addoption) — so a bare
     `pytest api_tests/` lands in the same mode. Keying the decision on --qemu alone left
     every such local run silently skipping — the exact cascade this helper exists to
     stop — and covered only the `make qemu-test` path.
 
+    Both halves of that argument survived the move to slot-derived ports because BOTH sides
+    move together: `make qemu-web` builds its hostfwd rules from qemu_ports too (see
+    qemu.mk), so the already-running QEMU listens on the same block the default --ip points
+    at, as long as both are run with the same WB_MGE_PORT_SLOT. Only the port NUMBERS
+    changed; the "loopback endpoint means the chardev is ours" rule did not.
+
     The one case this deliberately gets wrong is a REAL device reached through a local
-    port-forward (`ssh -L 8080:device:80` plus `--ip localhost:8080`): the endpoint is
+    port-forward (`ssh -L <local>:device:80` plus a loopback --ip): the endpoint is
     loopback but the chardev genuinely is not ours, so a test that needs UART TCP fails
     instead of skipping. Nothing in this repo documents that setup, and the failure is
     loud and self-explaining (the text below names the chardev port), which is the trade
@@ -561,21 +876,29 @@ def require_uart_chardev(uart_tcp_port: int, is_qemu: bool,
     return probe
 
 
-def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
-                           bridge_port: int, modbus: bool, fake_value: int = 0x1234):
+def build_gateway_fixture(port_num: int, uart_tcp_port: int,
+                          bridge_port: int, modbus: bool, fake_value: int = 0x1234):
     """Factory: returns a pytest fixture that configures a gateway on the given port.
 
     Args:
         port_num: RS-485 port number (1 or 2).
-        tcp_host_port: Host-side TCP port (QEMU hostfwd destination).
-        uart_tcp_port: QEMU UART chardev TCP port (e.g. 5561 for UART1).
-        bridge_port: TCP port the gateway listens on inside the firmware.
+        uart_tcp_port: QEMU UART chardev TCP port (qemu_ports.UART1_TCP_PORT for UART1).
+        bridge_port: GUEST-side TCP port the gateway listens on inside the firmware,
+            i.e. the '-:<N>' side of a hostfwd rule (qemu_ports.*_GUEST_PORT). The HOST
+            port that reaches it is the caller's business — see the note below.
         modbus: True for Modbus TCP gateway mode, False for transparent bridge.
         fake_value: Register value returned by the RTU slave for any register read.
 
     Returns:
         A pytest fixture function that yields a ModbusRtuSlaveThread (or None
         when modbus=False) and handles full setup/teardown.
+
+    There is deliberately NO host-port parameter. One used to be declared and documented
+    (`tcp_host_port`) while the body never read it: the readiness probe that once used it
+    was removed as a slirp no-op (see Step 5), and every test connects to the host port
+    through its own module constant. A parameter that eleven call sites pass and nothing
+    consumes is not documentation, it is a claim the reader has to disprove — so it is
+    gone rather than given a token use.
     """
     @pytest.fixture
     def gateway_fixture(api, is_qemu):
@@ -601,7 +924,7 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
             # Step 3.5: free the target TCP port if the cache Modbus server holds it.
             # A bridge gateway and the cache server cannot share a port (the firmware
             # rejects such a config). In a long no-reboot run an earlier test may have
-            # left the cache server on this very port (50504 is the shared forwarded
+            # left the cache server on this very port (guest 50504 is the shared forwarded
             # test port reused by both), so disable it before binding the bridge.
             # Without a reboot to reset it, set_port_mode(tcp_bridge) would otherwise
             # hit listen() EADDRINUSE / a rejected settings write.
@@ -666,7 +989,7 @@ def build_gateway_fixture(port_num: int, tcp_host_port: int, uart_tcp_port: int,
             # (best-effort, each in its own try) and must not MASK the test's real error
             # (print, never raise); (b) slave.stop() must ALWAYS run — it is a daemon
             # ModbusRtuSlaveThread holding a live TCP connection to the single-client QEMU
-            # chardev (5561/5562), so a leaked one wedges that chardev and cascades skips
+            # chardev (UART1/UART2), so a leaked one wedges that chardev and cascades skips
             # across every module using this factory. So slave.stop() lives in a finally
             # wrapped around the restore block.
             try:
@@ -709,7 +1032,17 @@ def qemu_process(request):
         yield None
         return
 
-    # --- Preflight: check for stale QEMU processes or occupied ports ---
+    # --- Preflight, in order of what each rules out ---
+    # 1. This tree: a second live run here is refused whatever its slot. Already taken in
+    #    pytest_configure — before collection, and before the build below, which rewrites
+    #    the very image a sibling run would be using. Repeated here as a no-op assertion of
+    #    the ordering: everything after this line assumes the tree is ours.
+    _acquire_tree_lock()
+    # 2. This tree, orphaned QEMU: a process still using our flash image with no live pytest.
+    #    Note the ordering this does NOT achieve on `make qemu-test`, where the flash image
+    #    was already rebuilt in the wrapper's prerequisites — see the docstring.
+    _check_no_foreign_qemu_in_tree()
+    # 3. This slot: our host port block must be free.
     _check_no_stale_qemu()
 
     # --- Build ---
@@ -717,13 +1050,28 @@ def qemu_process(request):
         print("Building QEMU flash image...")
         result = subprocess.run(
             ["make", "qemu-create-flash-image", "qemu-create-efuse-image"],
-            cwd=PROJECT_ROOT,
+            cwd=PROJECT_ROOT, check=False,
+            # Hand the child the "this tree is already locked by pid N" marker, so any make
+            # target it touches that takes the lock itself sees an ancestor holding it
+            # rather than colliding with us. Nothing under this call does today; passing it
+            # is what keeps that true if a build target is ever wrapped in run_locked.
+            env=_TREE_LOCK.child_env() if _TREE_LOCK is not None else None,
         )
         if result.returncode != 0:
             pytest.exit("make qemu-create-flash-image failed", returncode=1)
 
-    flash_bin = PROJECT_ROOT / "build/qemu_flash.bin"
-    efuse_bin = PROJECT_ROOT / "build/qemu_efuse.bin"
+    # Outside the branch above, deliberately. The build is the step most likely to cost a
+    # lock file its inode (a stale hardware CMakeCache makes it run `idf.py fullclean`) —
+    # but on `make qemu-test`, the CI and default developer path, that build ran in the
+    # wrapper's prerequisites and pytest is invoked with --qemu-skip-build, so a check
+    # nested in the branch never executed there at all. It is also the point where an
+    # INHERITED lock is worth re-checking: the wrapper could have died between
+    # pytest_configure and here, and everything below this line writes into the tree.
+    # tree_lock.main() runs the same check when the wrapped command exits.
+    _verify_tree_lock_intact()
+
+    flash_bin = QEMU_FLASH_PATH
+    efuse_bin = QEMU_EFUSE_PATH
     if not flash_bin.is_file() or not efuse_bin.is_file():
         pytest.exit("qemu_flash.bin or qemu_efuse.bin not found in build/", returncode=1)
 
@@ -793,6 +1141,10 @@ def qemu_process(request):
             proc.wait()
     log_handle.close()
     print(f"QEMU stopped (PID {proc.pid})")
+    # The tree lock is NOT released here, deliberately. Session-fixture teardown runs before
+    # the --junitxml report is written and before pytest_sessionfinish reads
+    # build/qemu_test.log to dump it — two of the artifacts this lock protects. It is
+    # released in pytest_unconfigure, which runs after both.
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -1133,15 +1485,15 @@ _UART_LEAK_GUARD_WINDOW = 3
 def _uart_leak_state():
     """Session state for _uart_leak_guard: the recent test ids, and the warned ports.
 
-    `warned` is a SET OF PORTS, not one boolean. 5561 and 5562 are two independent
-    single-client resources, and one shared flag broke in two ways: a leak on 5562 that
-    began while 5561 was legitimately held (20_test_cache_tcp_framing's module-scoped
-    cache_tcp_server holds 5561 across all six of its tests) was never reported, and —
+    `warned` is a SET OF PORTS, not one boolean. UART1 and UART2 are two independent
+    single-client resources, and one shared flag broke in two ways: a leak on UART2 that
+    began while UART1 was legitimately held (20_test_cache_tcp_framing's module-scoped
+    cache_tcp_server holds UART1 across all six of its tests) was never reported, and —
     worse — once one port stayed wedged, the "both ports accept again" re-arm condition
     could never hold again, so the flag stayed set and the guard went mute for the rest
     of the session: exactly the failure the per-episode re-arm was introduced to
     prevent, reached through the other port. Per port, each port's episode is
-    independent and a wedged 5562 cannot silence reporting on 5561.
+    independent and a wedged UART2 cannot silence reporting on UART1.
 
     A session-scoped fixture rather than an attribute stashed on request.config: this is
     state that belongs to one guard for the length of one session, pytest already owns
@@ -1155,7 +1507,8 @@ def _uart_leak_state():
 def _uart_leak_guard(request, _uart_leak_state):
     """Diagnostic-only: warn when a QEMU UART chardev stops accepting connections.
 
-    QEMU exposes each RS-485 UART as a SINGLE-CLIENT TCP chardev (5561/5562), so one
+    QEMU exposes each RS-485 UART as a SINGLE-CLIENT TCP chardev (this slot's UART1 and
+    UART2 ports, qemu_ports.UART1_TCP_PORT / UART2_TCP_PORT), so one
     leaked socket — typically a daemon helper thread whose stop() an exception skipped —
     keeps the single accept slot and every later test that needs that UART fails. Those
     downstream failures all name the wrong test, so this guard probes both ports after
@@ -1168,8 +1521,8 @@ def _uart_leak_guard(request, _uart_leak_state):
 
     1. It cannot tell a leak from a legitimate long-lived owner. The guard is
        function-scoped; the sockets it probes are not. 20_test_cache_tcp_framing's
-       module-scoped `cache_tcp_server` fixture holds a PacketInjector on 5561 across all
-       six tests of that module, so from the second test onward the probe finds 5561
+       module-scoped `cache_tcp_server` fixture holds a PacketInjector on UART1 across all
+       six tests of that module, so from the second test onward the probe finds UART1
        unreachable in a perfectly healthy run. (29_test_gateway_dual_port's module-scoped
        `dual_gateway_slave` holds both chardevs the same way, and escapes notice only
        because that module contains exactly one test.) A failing guard would therefore
@@ -1204,10 +1557,12 @@ def _uart_leak_guard(request, _uart_leak_state):
 
     Active whenever the chardev is this run's own — --qemu, or an --ip pointing at a QEMU
     on this machine (_uart_chardev_is_ours). The second half matters: `pytest --ip
-    localhost:8080` with no --qemu is the documented way to drive an already-running
-    QEMU, and it is the --ip default, so gating on --qemu alone left the guard mute in
+    localhost:<web port>` with no --qemu is the documented way to drive an already-running
+    QEMU, and a loopback endpoint is the --ip default (it follows the port slot), so gating
+    on --qemu alone left the guard mute in
     the ordinary local run. Against a REMOTE --ip there is no chardev on this host to
-    probe, and 5561/5562 here belong to whatever else happens to be listening, so the
+    probe, and this slot's two UART ports here belong to whatever else happens to be
+    listening, so the
     guard stays off.
     """
     yield
@@ -1273,9 +1628,9 @@ def _uart_leak_guard(request, _uart_leak_state):
         if not newly:
             return
         # Ports still wedged from an EARLIER warning. Named in the message even though
-        # they are not re-reported: without them, the "5562 wedged, then 5561 wedges too"
-        # state printed `port(s) [5561]` and the closing "the other port is unaffected"
-        # read as a claim that 5562 was fine. Computed before warned.update(newly).
+        # they are not re-reported: without them, the "UART2 wedged, then UART1 wedges too"
+        # state printed only UART1's port and the closing "the other port is unaffected"
+        # read as a claim that UART2 was fine. Computed before warned.update(newly).
         still = [port for port in unreachable if port in warned]
         still_note = (f" Port(s) {still} were already reported unreachable earlier and "
                       f"are STILL unreachable (not re-reported here)." if still else "")
@@ -1288,7 +1643,8 @@ def _uart_leak_guard(request, _uart_leak_state):
             f"that ran before it are: {window}. This is a hint, not a verdict: the probe "
             f"cannot distinguish a leak "
             f"from a chardev legitimately held by a live module-scoped fixture (e.g. "
-            f"cache_tcp_server in 20_test_cache_tcp_framing.py holds 5561 for its whole "
+            f"cache_tcp_server in 20_test_cache_tcp_framing.py holds UART1 "
+            f"({qemu_ports.UART1_TCP_PORT}) for its whole "
             f"module), and QEMU's listen backlog absorbs the first connect after a leak, "
             f"so this warning lags the leak by roughly one test. Ignore it when one of "
             f"the tests above is meant to be holding the chardev; otherwise look in them "

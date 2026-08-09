@@ -1,6 +1,7 @@
 """E2E tests for the transparent RS-485 repeater (Port 1 <-> Port 2 passthrough).
 
-Requires QEMU with UART1 exposed as TCP 5561 and UART2 as TCP 5562. The repeater
+Requires QEMU with the UART1 and UART2 chardevs exposed on TCP (ports follow
+WB_MGE_PORT_SLOT — api_tests/qemu_ports.py). The repeater
 forwards raw bytes between the two serial ports in both directions.
 
 Coverage:
@@ -79,7 +80,7 @@ def _read_repeater_stats(api) -> dict:
 
 
 def _require_uart_tcp(tcp_port: int, is_qemu: bool) -> None:
-    """Require the QEMU UART chardev on `tcp_port` (5561 = port 1, 5562 = port 2).
+    """Require the QEMU UART chardev on `tcp_port` (UART1 = RS-485 port 1, UART2 = port 2).
 
     Named _require_uart_TCP because it takes the chardev's TCP port, while the identically
     shaped `_require_uart` in 42_test_sniffer_cache_overlays_e2e.py takes an RS-485 port

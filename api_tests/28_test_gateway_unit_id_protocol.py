@@ -1,8 +1,9 @@
 """Gateway E2E tests for unit-ID pass-through and protocol-ID validation (GW-05, GW-06).
 
-Requires QEMU with UART1 exposed as TCP port 5561 and guest port 502 forwarded
-to host port 50502. Uses a Python RTU slave (ModbusRtuSlaveThread) connected to
-UART1 to respond to Modbus RTU requests.
+Requires QEMU with the UART1 chardev exposed on TCP and guest port 502 forwarded to a
+host port; both host ports follow WB_MGE_PORT_SLOT (api_tests/qemu_ports.py). Uses a
+Python RTU slave (ModbusRtuSlaveThread) connected to UART1 to respond to Modbus RTU
+requests.
 
 Coverage:
 GW-05. Non-zero unit IDs are passed through correctly on the same TCP session
@@ -27,7 +28,7 @@ from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 # ---------------------------------------------------------------------------
 
 GATEWAY_HOST = qemu_ports.GATEWAY_HOST
-GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: guest port 502 → host 50502
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: slot gateway host port -> guest 502
 UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 FAKE_VALUE = 0x1234          # register value returned by the RTU slave
 
@@ -58,9 +59,8 @@ def _baseline(api):
 
 gateway_slave = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=GATEWAY_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=502,
+    bridge_port=qemu_ports.GATEWAY_GUEST_PORT,      # guest 502
     modbus=True,
     fake_value=FAKE_VALUE,
 )

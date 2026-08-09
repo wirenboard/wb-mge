@@ -23,7 +23,7 @@ from packet_injector import (
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# QEMU host-forwarded port for the cache Modbus TCP server (guest port 50504).
+# Host port this slot forwards to the cache Modbus TCP server (guest port 50504).
 QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT
 
 # Timeout for opening TCP connections to the cache server.
@@ -83,17 +83,17 @@ def _baseline(api: WBMGEAPI):
 
 @pytest.fixture(scope="module")
 def cache_server_e2e(api: WBMGEAPI):
-    """Set up the cache Modbus TCP server on port 50504 and populate the cache.
+    """Set up the cache Modbus TCP server on guest port 50504 and populate the cache.
 
     Steps:
-      1. Skip guard: probe port 50504; skip if not reachable.
+      1. Skip guard: probe the cache host port; skip if not reachable.
       2. Save original rs485_1 port_mode and cache_modbus_port.
-      3. Enable cache server, set port to 50504, set timeout to 60 s.
+      3. Enable cache server, set its port to guest 50504, set timeout to 60 s.
       4. Sleep 1 s to let the server rebind.
       5. Set port 1 to passive transport and enable the cache overlay.
       6. Inject specific FC01/FC02/FC03/FC04 traffic via UART port 1.
       7. Poll up to 30 s for cache entries to appear.
-      8. Yield (host, 50504).
+      8. Yield (host, cache host port).
       9. Restore original settings in finally.
 
     Injected traffic (all via a single shared UART socket):
@@ -130,7 +130,7 @@ def cache_server_e2e(api: WBMGEAPI):
         # Configure cache server settings.
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            # GUEST port (fixed 50504) — what the hostfwd forwards to; the host connects to
+            # GUEST port (fixed 50504) — what this slot's hostfwd forwards to; the host connects to
             # the dynamic QEMU_CACHE_MODBUS_PORT which reaches it through the forward.
             "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
             "cache_value_timeout_s": 60,
@@ -514,11 +514,11 @@ def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
     cache overlay on port 1.  It does NOT depend on cache_server_e2e.
 
     Steps:
-      1. Verify port 50504 is reachable (skip if not).
-      2. Ensure cache_modbus_server_enabled=True and cache_modbus_port=50504.
+      1. Verify the cache host port is reachable (skip if not).
+      2. Ensure cache_modbus_server_enabled=True and cache_modbus_port=50504 (guest).
       3. Disable the cache overlay on port 1 → calls cache_multimaster_disable() → s_cache_enabled=false.
       4. Sleep 0.5 s for firmware to process the change.
-      5. Connect to port 50504 (server still running).
+      5. Connect to the cache host port (server still running).
       6. Send FC03: slave=1, addr=10, count=1 → assert exception 0x02.
       7. Finally: restore port 1 to the baseline transport.
     """
@@ -533,7 +533,7 @@ def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
     original_server_enabled = orig_settings.get("cache_modbus_server_enabled", True)
 
     # Ensure the cache server is enabled and on the correct port before the skip guard,
-    # so that a fresh run without prior tests can still reach port 50504.
+    # so that a fresh run without prior tests can still reach the cache server.
     resp = api.update_settings({
         "cache_modbus_server_enabled": True,
         "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,  # guest port (hostfwd target)

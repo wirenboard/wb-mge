@@ -35,7 +35,7 @@ CACHE_PORT = qemu_ports.CACHE_MODBUS_HOST_PORT
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
-    """Enable the cache Modbus server on port 50504 as the baseline for this module."""
+    """Enable the cache Modbus server on guest port 50504 as the baseline for this module."""
     resp = api.update_settings({
         "cache_modbus_server_enabled": True,
         "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
@@ -132,7 +132,7 @@ def test_cache_server_deinit_with_active_polling(api):
     poll_thread = None
 
     try:
-        # Step 2: enable the cache Modbus server on port 50504 and disable the
+        # Step 2: enable the cache Modbus server on guest port 50504 and disable the
         # value timeout so the cache always has entries to serve.
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,

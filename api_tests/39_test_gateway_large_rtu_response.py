@@ -39,7 +39,7 @@ from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: guest port 502 → host 50502
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: slot gateway host port -> guest 502
 UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 UART_FIFO_FULL_THRESHOLD = 120      # ESP32 UART RXFIFO_FULL threshold in bytes
 # FC03 response size = 1(slave_id) + 1(FC) + 1(byte_count) + count*2(data) + 2(CRC) = 5 + count*2

@@ -23,6 +23,13 @@ def _serial_log_offset():
 
     Captured just before a reboot so we only scan serial emitted by the
     boot that follows.
+
+    This is an OFFSET into a file only one run may be writing. conftest opens that log
+    with "w" (truncate) at QEMU launch and holds an exclusive lock on the working tree
+    for the whole session (conftest._acquire_tree_lock), so nothing can truncate it under
+    us mid-session. Were a second run in this tree ever allowed again, the baseline
+    captured here would exceed the file length and the marker scan below would find
+    nothing at all — reporting "unknown" rather than anything visibly wrong.
     """
     try:
         return os.path.getsize(_qemu_serial_log_path())
