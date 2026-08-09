@@ -911,7 +911,7 @@ def cache_server(api: WBMGEAPI):
     try:
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": QEMU_CACHE_MODBUS_PORT,
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
         })
         assert resp.status_code == 200 and resp.json().get("success") is True, \
             f"cache_server: failed to enable cache server: {resp.status_code} {resp.text}"

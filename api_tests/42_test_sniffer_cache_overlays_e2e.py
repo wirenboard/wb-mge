@@ -1142,7 +1142,7 @@ def test_port2_cache_feed_populates_pool(api, is_qemu):
         # still verify the feed via /cache/json.
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": QEMU_CACHE_MODBUS_PORT,
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
             "cache_value_timeout_s": 60,
         })
         assert resp.status_code == 200, f"configure cache server failed: {resp.status_code}"
@@ -1586,7 +1586,7 @@ def test_cache_toggle_mid_traffic_serves_fresh_value(api, gateway_p1_modbus_togg
         # would be a false negative, not the bug we are hunting).
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": CACHE_MODBUS_HOST_PORT,
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
             "cache_value_timeout_s": 60,
         })
         assert resp.status_code == 200, f"configure cache server failed: {resp.status_code}"

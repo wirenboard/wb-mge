@@ -130,7 +130,9 @@ def cache_server_e2e(api: WBMGEAPI):
         # Configure cache server settings.
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": QEMU_CACHE_MODBUS_PORT,
+            # GUEST port (fixed 50504) — what the hostfwd forwards to; the host connects to
+            # the dynamic QEMU_CACHE_MODBUS_PORT which reaches it through the forward.
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
             "cache_value_timeout_s": 60,
         })
         assert resp.status_code == 200, \
@@ -534,7 +536,7 @@ def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
     # so that a fresh run without prior tests can still reach port 50504.
     resp = api.update_settings({
         "cache_modbus_server_enabled": True,
-        "cache_modbus_port": QEMU_CACHE_MODBUS_PORT,
+        "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,  # guest port (hostfwd target)
     })
     assert resp.status_code == 200, \
         f"CM-06: Failed to configure cache server: HTTP {resp.status_code}"

@@ -38,7 +38,7 @@ def _baseline(api):
     """Enable the cache Modbus server on port 50504 as the baseline for this module."""
     resp = api.update_settings({
         "cache_modbus_server_enabled": True,
-        "cache_modbus_port": CACHE_PORT,
+        "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
         "cache_value_timeout_s": 0,
     })
     assert resp.status_code == 200, (
@@ -136,7 +136,7 @@ def test_cache_server_deinit_with_active_polling(api):
         # value timeout so the cache always has entries to serve.
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": CACHE_PORT,
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
             "cache_value_timeout_s": 0,
         })
         assert resp.status_code == 200, (

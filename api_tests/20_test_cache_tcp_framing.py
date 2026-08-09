@@ -127,10 +127,12 @@ def cache_tcp_server(api: WBMGEAPI):
 
     inj = PacketInjector(port=1)
     try:
-        # Switch the cache server to the QEMU-forwarded port.
-        resp = api.update_settings({"cache_modbus_port": QEMU_CACHE_MODBUS_PORT})
+        # Switch the cache server to the QEMU-forwarded GUEST port (fixed 50504) — that is
+        # what the hostfwd rule forwards to; the host connects to QEMU_CACHE_MODBUS_PORT
+        # (the dynamic host side) which reaches this guest port through the forward.
+        resp = api.update_settings({"cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT})
         assert resp.status_code == 200, \
-            f"Failed to set cache_modbus_port={QEMU_CACHE_MODBUS_PORT}: HTTP {resp.status_code}"
+            f"Failed to set cache_modbus_port={qemu_ports.CACHE_MODBUS_GUEST_PORT}: HTTP {resp.status_code}"
         # Give the server time to rebind on the new port.
         time.sleep(1)
 

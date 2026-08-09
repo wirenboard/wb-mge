@@ -6,6 +6,8 @@ import time
 import pytest
 from urllib.parse import urlparse
 
+import qemu_ports
+
 from modbus_helpers import (
     parse_csv, worker, check_simultaneous_connection, run_staleness_test
 )
@@ -299,7 +301,9 @@ def test_cache_multimaster(api):
     """Test cache Modbus TCP multi-master server"""
     original_port_mode = None
     original_modbus_port = None
-    QEMU_MODBUS_PORT = 50504
+    # Firmware cache_modbus_port SETTING = fixed guest port (what the hostfwd forwards to);
+    # the TCP clients below connect to the dynamic HOST port that forwards to it.
+    QEMU_MODBUS_PORT = qemu_ports.CACHE_MODBUS_GUEST_PORT
 
     try:
         info_response = api.get_info()
@@ -350,12 +354,17 @@ def test_cache_multimaster(api):
             assert info_response.status_code == 200, \
                 f"GET /info expected 200, got {info_response.status_code}"
             info_data = info_response.json()
-            modbus_port = info_data.get("cache_modbus_port", 504)
+            guest_modbus_port = info_data.get("cache_modbus_port", 504)
 
             parsed = urlparse(api.base_url)
             host = parsed.hostname
 
-            print(f"✓ Cache server enabled, Modbus TCP port: {modbus_port}, host: {host}")
+            # Connect to the dynamic HOST port that forwards to the firmware's guest
+            # cache_modbus_port; the guest value (just read back for display/verification)
+            # is only reachable from the host through this forward.
+            modbus_port = qemu_ports.CACHE_MODBUS_HOST_PORT
+            print(f"✓ Cache server enabled, firmware guest port: {guest_modbus_port}, "
+                  f"host connect port: {modbus_port}, host: {host}")
 
             response = api.get_cache_csv()
             assert response.status_code == 200, \

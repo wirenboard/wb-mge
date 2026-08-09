@@ -211,7 +211,7 @@ def test_bridge_cache_populates_and_reads_back(api, gateway_p1_modbus):
         # entries do not expire during the test.
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": CACHE_MODBUS_HOST_PORT,
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
             "cache_value_timeout_s": 60,
         })
         assert resp.status_code == 200, f"configure cache server failed: {resp.status_code}"

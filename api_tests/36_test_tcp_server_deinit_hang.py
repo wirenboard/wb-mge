@@ -21,6 +21,7 @@ import time
 import pytest
 
 from conftest import _connect_ready_bridge
+import qemu_ports
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -83,12 +84,14 @@ def test_tcp_server_deinit_completes_with_open_client(api):
         )
         time.sleep(0.3)
 
-        # Step 3: configure port 1 as a transparent TCP server on port 50504.
+        # Step 3: configure port 1 as a transparent TCP server on the GUEST bridge port
+        # (fixed 50504 — what the hostfwd forwards to); the client below connects to the
+        # dynamic host port that reaches it.
         resp = api.update_settings({
             "rs485_1": {
                 "bridge": {
                     "mode": "server",
-                    "port": 50504,
+                    "port": qemu_ports.TRANSPARENT_P1_GUEST_PORT,
                     "ip": "0.0.0.0",
                     "modbus": False,
                 }
@@ -125,7 +128,8 @@ def test_tcp_server_deinit_completes_with_open_client(api):
         # so we POSITIVELY confirm the firmware actually admitted exactly one client
         # before deinit — otherwise this test could pass vacuously (active_connections
         # == 0 -> instant deinit -> no regression exercised).
-        client_sock = _connect_ready_bridge("127.0.0.1", 50504, timeout=15.0)
+        client_sock = _connect_ready_bridge(
+            qemu_ports.GATEWAY_HOST, qemu_ports.TRANSPARENT_HOST_PORT, timeout=15.0)
         client_sock.settimeout(5.0)
 
         # Poll (not a bare assert): accept() can lag the TCP handshake under load, so

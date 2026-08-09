@@ -87,14 +87,26 @@ DEFAULT_PORT_HOST = HTTP_HOST_PORT
 ALT_PORT_HOST = ALT_WEB_HOST_PORT
 ALT_PORT_GUEST = 8081  # guest port unchanged
 
-# Fixed guest ports (the '-:<N>' side of each hostfwd). Kept here so the QEMU arg
-# builder and the port map live in one file.
+# Fixed guest ports — the '-:<N>' side of each hostfwd, i.e. the port the FIRMWARE
+# listens on INSIDE the guest. These do NOT move per slot: each slot is a separate QEMU
+# with its own network stack, so guest ports never collide across slots. A test that
+# WRITES a firmware port setting (cache_modbus_port, rs485_N.bridge.port, web_port) must
+# use the GUEST value, because that is what the hostfwd forwards to; the host/connect side
+# uses the dynamic *_HOST_PORT above. (The two coincided in the legacy fixed-port scheme —
+# host 50504 == guest 50504 — which is why one constant used to serve both.)
 _GUEST_HTTP = 80
 _GUEST_ALT_WEB = 8081
 _GUEST_GATEWAY = 502
 _GUEST_TRANSPARENT_P2 = 503
 _GUEST_CACHE_MODBUS = 50504
 _GUEST_IO_BUS = 5570
+
+# Public guest-port names for firmware settings writes.
+CACHE_MODBUS_GUEST_PORT = _GUEST_CACHE_MODBUS       # firmware cache_modbus_port setting
+TRANSPARENT_P1_GUEST_PORT = _GUEST_CACHE_MODBUS     # firmware bridge.port for transparent port 1
+TRANSPARENT_P2_GUEST_PORT = _GUEST_TRANSPARENT_P2   # firmware bridge.port for transparent port 2
+GATEWAY_GUEST_PORT = _GUEST_GATEWAY                 # firmware bridge.port for the Modbus gateway
+ALT_WEB_GUEST_PORT = _GUEST_ALT_WEB                 # firmware web_port setting (alt-port test)
 
 # The full set of host ports THIS run reserves. Used by the stale-port preflight
 # so it checks ONLY its own ports and never false-positives on a sibling run.
