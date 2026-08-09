@@ -21,13 +21,13 @@ PROJECT_ROOT = Path(__file__).parent.parent
 QEMU_READY_TIMEOUT = 900
 QEMU_READY_INTERVAL = 2
 
-# QEMU stdout/monitor log path. Slot-suffixed so that if two runs are ever launched in
-# the SAME tree (not the supported mode — each parallel run needs its own working tree,
-# because build/qemu_flash.bin, build/qemu_efuse.bin and build/qemu_test_report.xml are
-# per-tree make outputs) they at least do not clobber each other's primary debug log.
-# Slot 0 keeps the historical plain name for back-compat with external tooling.
-QEMU_LOG_PATH = (PROJECT_ROOT / "build/qemu_test.log" if qemu_ports.SLOT == 0
-                 else PROJECT_ROOT / f"build/qemu_test.slot{qemu_ports.SLOT}.log")
+# QEMU stdout/monitor log path. NOT slot-suffixed: each parallel run needs its own working
+# tree anyway (build/qemu_flash.bin, build/qemu_efuse.bin and build/qemu_test_report.xml are
+# per-tree make outputs, and QEMU writes NVS back into qemu_flash.bin), so a separate tree
+# already gives each run its own build/qemu_test.log with no clobber. Keeping the fixed name
+# also matches 33_test_auth_settings.py's _qemu_serial_log_path(), which stats this file to
+# detect a reboot — a slot suffix here silently broke that reboot-detection on non-zero slots.
+QEMU_LOG_PATH = PROJECT_ROOT / "build/qemu_test.log"
 
 # Test files that reboot/restart the device (which resets the heap). They are
 # deferred to the very end of the run by pytest_collection_modifyitems so the rest
