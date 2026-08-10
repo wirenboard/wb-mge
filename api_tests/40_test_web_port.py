@@ -117,9 +117,12 @@ _TEARDOWN_BUDGET_S = (_RESTORE_PORT_WAIT_S + _BASE_POLL_OVERRUN_S               
                       + _REWRITE_COST_S                                         #  86
                       + _READ_COST_S)                                           #  97 => 2089
 
-# Fixture setup + fixture teardown are charged to this item too. 45 s is the allowance every
-# @pytest.mark.timeout comment in this suite quotes; it is dominated by the module-scoped rs485
-# restore, whose ceiling conftest.py:566-568 computes as 41.2 s.
+# Fixture setup + fixture teardown are charged to this item too. 45 s is the allowance quoted
+# by these 15 items, this file among them:
+# 20/21/24/25/27/28/29/31/35/38/39/40/41/42/49. It is dominated by the module-scoped rs485
+# restore, whose ceiling conftest.py:1258-1261 computes as 41.2 s. Not a suite-wide rule:
+# 03_ decomposes its budget with no such allowance, and 36_/37_ use one undecomposed,
+# deliberately generous number instead.
 _FIXTURE_BUDGET_S = 45
 
 _TEST_TIMEOUT_S = _BODY_BUDGET_S + _TEARDOWN_BUDGET_S + _FIXTURE_BUDGET_S       # 2809

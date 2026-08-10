@@ -1234,7 +1234,7 @@ _RS485_RESTORE_KEYS = ("tx_disabled", "baudrate", "stopbits", "parity",
 _RS485_SAFE_DEFAULTS = {"tx_disabled": False}
 
 # Explicit HTTP timeout for this fixture pair's own requests, deliberately tighter than
-# WBMGEAPI's 30 s default (api_client.py:79/:83).
+# WBMGEAPI's 30 s default (api_client.py:85/:89).
 #
 # pytest-timeout charges setup + call + teardown of an item to ONE budget, and a
 # module-scoped fixture is torn down inside the LAST item of its module — so the restore
@@ -1244,7 +1244,7 @@ _RS485_SAFE_DEFAULTS = {"tx_disabled": False}
 # pointing at conftest.
 #
 # A (connect, read) TUPLE, not a scalar. In requests a scalar timeout applies to EACH phase
-# separately, and _DelayedSession sends Connection: close (api_client.py:31) so every call
+# separately, and _DelayedSession sends Connection: close (api_client.py:37, :59) so every call
 # opens a fresh connection — a scalar 20 would therefore mean 20 s connect + 20 s read =
 # 40 s worst case PER CALL, i.e. an ~80 s teardown, not the 40 s the markers quote. There
 # are no retries to multiply that by: requests' HTTPAdapter defaults to max_retries=0.
@@ -1255,9 +1255,16 @@ _RS485_SAFE_DEFAULTS = {"tx_disabled": False}
 # serialises ~50 NVS-backed fields under emulated-flash load (see the note in pytest.ini);
 # 15 s covers that without letting one stalled response eat a whole item budget.
 #
-# Resulting ceilings, which the @pytest.mark.timeout comments across the suite quote:
+# Resulting ceilings. The TEARDOWN figure is the one the 15 items listed at the end of
+# _restore_rs485_settings quote in their @pytest.mark.timeout comments:
 #   per call : 0.1 s (_DelayedSession.DELAY_S) + 5 s connect + 15 s read = 20.1 s
 #   teardown : 2 ports x 20.1 s + _RS485_RESTORE_SETTLE_S = 41.2 s  ("45 s allowance")
+# The PER-CALL figure is not bound to that enumeration — it is quoted more widely. Six of
+# those files cite it a second time, on its own, in the marker of their FIRST item, for the
+# once-per-session rs485 snapshot that is charged there when the file is run alone:
+# 28_:77, 29_:221, 31_:221, 38_:200, 39_:325, 49_:105. Nor does every listed file quote both:
+# 40_:120-123 quotes the 41.2 s teardown ceiling and never the per-call one. Changing either
+# number means re-checking both sets.
 _RS485_HTTP_TIMEOUT = (5, 15)
 
 # Settle window after the last restore POST — see the barrier note at the end of
@@ -1465,8 +1472,11 @@ def _restore_rs485_settings(_rs485_session_baseline, api, request):
         # polling help: neither field changes across a re-init, so there is nothing to
         # poll for. The only request that is a real barrier is another POST
         # /settings, and a third bounded call would push the teardown ceiling from 41.2 s
-        # to 61.3 s, past the 45 s allowance every @pytest.mark.timeout comment in the
-        # suite quotes. 1 s is the same settle window the suite already uses for a port
+        # to 61.3 s, past the 45 s allowance quoted by these 15 items:
+        # 20/21/24/25/27/28/29/31/35/38/39/40/41/42/49. It is not a suite-wide invariant and
+        # must not be stated as one — 03_ decomposes its budget without any such allowance
+        # (42 calls x 10 s + delays), and 36_/37_ use a single undecomposed, deliberately
+        # generous number instead. 1 s is the same settle window the suite already uses for a port
         # rebind (e.g. 20/31's cache fixtures) and comfortably covers the "few hundred
         # milliseconds" the release->acquire window is documented to take
         # (settings_update.c:231-244).
