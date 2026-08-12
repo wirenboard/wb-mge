@@ -18,14 +18,20 @@ WHY THE CLIENT'S SEND CADENCE IS PART OF THE DETECTOR, not an implementation det
 run_receiver() checks the exit flag in TWO places: after data
 (main/bridge/tcp_server.c:426-429 — the check the guarded regression deletes) and in the
 EAGAIN branch produced by the 100 ms SO_RCVTIMEO set at :227-228 (:388-396 — untouched by
-the regression). So a DEFECTIVE receiver still escapes, via EAGAIN, as soon as the client
-leaves a gap longer than 100 ms between bytes: it breaks out, active_connections drops to
+the regression). So a DEFECTIVE receiver still escapes, via EAGAIN, as soon as its recv()
+finds NOTHING BUFFERED for a full 100 ms: it breaks out, active_connections drops to
 zero, tcp_server_deinit() returns, the step 11 probe is answered 200 and — WITHOUT THE STEP 13
 GUARDS — the test PASSES ON DEFECTIVE FIRMWARE. With them such a run is red, but red as
 "THIS RUN PROVES NOTHING", which is the honest verdict: the guards make the disarmed run
 visible, they do not make the firmware healthy. The hang therefore only reproduces while the
-guest keeps receiving bytes at least every 100 ms, for the whole time the probe is
+guest's receive queue is never empty for 100 ms on end, for the whole time the probe is
 outstanding.
+
+"NEVER EMPTY FOR 100 MS" IS NOT "FED EVERY 100 MS", and the difference is what step 13's
+guard A is scoped by. recv() drains a queue, so a guest that is behind — still holding
+requests it has not answered — cannot time out however long this process pauses; only a guest
+that has caught up is exposed to a pause in sending. On a slow enough guest the client is
+never caught up and the send cadence stops mattering entirely.
 
 That is why the polling client sends on a HOST-DRIVEN cadence (_SEND_INTERVAL_S) with a
 separate drainer thread, instead of the obvious lockstep send-then-recv loop. In lockstep the
@@ -40,11 +46,15 @@ the response stream: the post-data check breaks out immediately after answering 
 while the EAGAIN branch breaks out only after a full timeout with nothing to answer. So step
 13's decisive measurement is the interval between the LAST RESPONSE and the teardown, and a
 run whose receiver left through EAGAIN is failed as inconclusive whatever the firmware. That
-distinction is not theoretical: with the regression reintroduced and the cache server's
-response path slowed by 300 ms, this item measured a flat 20 ms send cadence over 1621 sends
-in 32.4 s (31 ms worst gap) while the guest's emulated NIC dropped frames underneath it,
-starved, and took the EAGAIN exit 103 ms after its last response — a green run on defective
-firmware that a send-cadence check alone did not see.
+distinction is not theoretical: with the regression reintroduced and a 300 ms vTaskDelay at the
+head of the cache server's process_data_from_tcp(), this item measured a flat 20 ms send
+cadence over 1621 sends in 32.4 s (31 ms worst gap, no throttled ticks) while the guest's
+emulated NIC dropped frames underneath it, starved, and took the EAGAIN exit 103 ms after its
+last response — a green run on defective firmware that a send-cadence check alone did not see.
+(That delay costs 300 ms per recv() BATCH, not per request — process_data_from_tcp() is handed
+a whole recv() buffer and mbtcp_reasm_feed() then answers every frame in it — so the guest
+still returned 1170 responses inside that window and the backlog never reached
+_MAX_OUTSTANDING. See the fuller account at guard A in step 13.)
 
 HOW THE HANG IS OBSERVED HERE — and why it is NOT observed the way 36_ observes it.
 36_ triggers its deinit from POST /ports/1/mode, whose handler calls
@@ -117,9 +127,13 @@ _SETTINGS_HTTP_TIMEOUT = (5, 50)
 #
 # The host cannot measure that gap: nothing in this process observes the guest's recv().
 # Step 13 therefore approaches it from two sides, neither of which is the gap itself. Guard A
-# measures when bytes left THIS PROCESS, which is a LOWER BOUND on the gap the guest saw —
-# everything below this process (host socket buffer, slirp, the emulated NIC) can only add to
-# it. Guard B does not measure a gap at all: it decides AFTER THE FACT, from the response
+# measures when bytes left THIS PROCESS, and only across intervals in which the client had
+# NOTHING OUTSTANDING. A send gap bounds the gap between ARRIVALS at the guest, which is not
+# the gap recv() experiences: recv() DRAINS A QUEUE and EAGAIN fires only when it finds
+# nothing buffered for a full timeout, so while requests the guest has not yet answered are
+# still in the pipe it returns immediately and cannot starve however long this process pauses.
+# Only once every request sent has been answered does "we sent nothing" mean "the guest got
+# nothing". Guard B does not measure a gap at all: it decides AFTER THE FACT, from the response
 # stream, which of the two exits the receiver actually took — which is the question the gap
 # was only ever a proxy for.
 _GUEST_RECV_TIMEOUT_S = 0.100
@@ -157,7 +171,9 @@ _GUEST_RECV_TIMEOUT_S = 0.100
 # is not a well-formed interval at all. Rerunning that same slow-guest experiment for this
 # change, without touching the send cadence, produced a 103 ms gap — in line with the
 # construction above — while the host-side cadence looked perfect (1621 sends in 32.4 s, 31 ms
-# worst gap), which is the case guard A is blind to and guard B exists for.
+# worst gap, 1170 responses, no throttled ticks), which is the case guard A is blind to and
+# guard B exists for. Why a "300 ms" guest still answered 1170 requests in 32 s, and why the
+# outstanding cap therefore stayed out of it, is worked through at guard A in step 13.
 #
 # WHY NOT 100 ms, when every defective run measured came out above it. Because that
 # distribution is pinned to 100 ms FROM ABOVE and its spread is one-sided in the dangerous
@@ -181,53 +197,67 @@ _SEND_INTERVAL_S = 0.020
 # Cap on requests sent but not yet answered, so the sender has a hard stop of its own and does
 # not depend solely on the peer's flow control.
 #
-# SIZED AS A BACKSTOP, AND THAT SIZING IS LOAD-BEARING. Hitting this cap makes the sender skip
-# ticks, which means the guest goes hungry, which is precisely the coupling the whole two-
-# thread design exists to remove — so a cap that engages during normal operation silently
-# undoes the fix. And it engages on THROUGHPUT, not latency: the backlog grows whenever the
-# guest answers fewer than 1/_SEND_INTERVAL_S requests per second, without bound, however
-# large the cap. Measured against a local fake guest, a cap of 64 collapsed the achieved
-# cadence from a flat 20 ms to the guest's own 300 ms reply time within ~1.3 s — i.e. back to
-# lockstep. 1024 is ~12 KB of 12-byte requests in flight, more than an lwIP receive window
-# holds, so in practice the kernel's flow control (and with it the send-stall branch in
-# _send_loop) bites before this cap does.
+# SIZED AS A BACKSTOP. Hitting this cap makes the sender skip ticks, so the SUBMISSION cadence
+# stops being 20 ms — which is the coupling the whole two-thread design exists to remove, and a
+# cap that engaged at the first sign of slowness would quietly undo the fix. It engages on
+# THROUGHPUT, not latency: the backlog grows whenever the guest answers fewer than
+# 1/_SEND_INTERVAL_S requests per second, without bound, however large the cap. Measured
+# against a local fake guest, a cap of 64 collapsed the achieved cadence from a flat 20 ms to
+# the guest's own 300 ms reply time within ~1.3 s — i.e. back to lockstep. 1024 is ~12 KB of
+# 12-byte requests in flight, more than an lwIP receive window holds, which was the argument for
+# expecting the kernel's flow control (and with it the send-stall branch in _send_loop) to bite
+# before this cap ever did. THAT ARGUMENT IS WRONG, as the next paragraph measures: the cap is
+# what engages, and no send stall is recorded. It counts bytes not yet ANSWERED, while the
+# window fills only with bytes not yet READ — and a guest that reads promptly and answers
+# slowly keeps the window open while the backlog grows.
 #
-# HOW FAR AWAY IT IS, stated as arithmetic rather than as a guarantee. The backlog grows at
-# (1/_SEND_INTERVAL_S - guest rate): 50/s against a guest answering 10/s is 40/s, i.e. ~26 s
-# to fill 1024; against a guest answering 1/s it is ~21 s. The detector window is NOT bounded
-# below that — it runs from the trigger POST to the probe's answer, and _SETTINGS_HTTP_TIMEOUT
-# allows the probe a 50 s read leg, so a window long enough to reach the cap is reachable in
-# principle. Every window MEASURED so far is under 2 s with zero throttled ticks, which is the
-# honest claim; "shorter than any window this test produces" would not be.
+# IT DOES ENGAGE ON THE CI NODE, AND THERE THAT IS THE NORMAL CASE, NOT AN ANOMALY. That node
+# answers ~178 ms per response (build #21: 134 responses inside a 23.86 s detector window)
+# against ~19 ms on a free developer host — about 9x. A 20 ms sender against a 178 ms guest
+# builds a backlog BY CONSTRUCTION, fills 1024 in ~23 s (50 sends/s against ~5.6 answers/s is
+# ~44 outstanding added per second) and then throttles, which is exactly
+# what #21 measured: 1146 sends, 47 ticks skipped. Nothing here may be written on the
+# assumption that the cap is "far away" — in the regime this test ships into it is reached
+# routinely, and any earlier claim that every measured window had zero throttled ticks was a
+# statement about developer hardware only.
 #
-# WHAT HAPPENS IF IT DOES ENGAGE, in BOTH directions, because the effect is not one-sided.
-# Throttling starves the guest, and that starvation is what guard A reports as an over-limit
-# host-side gap.
-#   - When the guest was genuinely slow, that report is correct: the run could not have kept a
-#     defective receiver wedged, and calling it inconclusive is the right verdict.
-#   - When the guest was answering at 10-50/s — fast enough to stay wedged — but merely slower
-#     than the sender submits, the same throttling can produce an over-limit gap on a run that
-#     was never starved at all: a HEALTHY run reported red as inconclusive.
-# The second case is the price of having a cap; it is accepted because 1024 puts it far outside
-# anything measured, and because both cases name the SENDER in the failure text and neither is
-# ever reported as a pass. stats.throttled_ticks in that text is what tells the two apart.
+# WHAT HAPPENS WHEN IT ENGAGES: the sender waits for a response to free a slot, and NOTHING
+# ELSE. It does not starve the guest — throttling happens only while _MAX_OUTSTANDING requests
+# sit UNANSWERED, i.e. at the point furthest from "the guest has nothing left to read" — and no
+# guard fails on it. Guard A measures only intervals in which the client had NOTHING
+# outstanding (see step 13 and _longest_send_gap), so a throttled tick cannot produce a guard A
+# failure at all. That scoping is not a nicety: build #21 failed a perfectly valid run because
+# the previous guard A read those skipped ticks as a 140 ms host-side gap and called it a
+# starved guest, while ~1000 requests sat queued for that guest the whole time.
+# stats.throttled_ticks remains in the printed diagnostics as the explanation for a low
+# submission rate.
 _MAX_OUTSTANDING = 1024
 
-# Hard cap on the send-timestamp log step 13 measures over. At the cadence above this is 20
-# minutes of sending, i.e. unreachable inside this item's 600 s marker; it exists so the list
-# is bounded by construction rather than by an argument about how long the item runs.
+# Hard cap on BOTH timestamp logs step 13 measures over — the sender's and the drainer's. At
+# the cadence above this is 20 minutes of sending, i.e. unreachable inside this item's 600 s
+# marker; it exists so the lists are bounded by construction rather than by an argument about
+# how long the item runs.
+#
+# ONE FLAG COVERS BOTH LISTS. A response only ever follows the send it answers, so
+# len(response_times) can never reach this cap before len(send_times) has, and the sender
+# raises stats.send_log_truncated on ITS first dropped timestamp — in all but a few
+# instructions' worth of interleaving, earlier. (The exception is the same one the max(0, ...)
+# in _longest_send_gap covers: a sender preempted between its sendall() and the append. Both
+# lists would have to be at the cap for it to matter, which the arithmetic below rules out
+# anyway.) Step 13 skips guard A on that flag, which is what protects the response log too.
 #
 # OVERFLOW WOULD CORRUPT GUARD A, not merely truncate its input, which is why it is flagged
 # rather than ignored. _longest_send_gap's trailing term runs from the last RECORDED send to
 # the end of the window (see the note there — that term is what catches a receiver that left
 # during the gap that let it). Once the log freezes while sending continues, that term grows
 # without bound and guard A would report a gap spanning all time since the last record, i.e.
-# blame the sender for a schedule it actually kept. The sender therefore raises
-# stats.send_log_truncated on the first dropped timestamp and step 13 reports guard A as NOT
-# APPLICABLE instead of asserting on a number it knows to be wrong. Guard B is unaffected: it
-# reads the response stream, not this log. Unreachable at today's constants (600 s x 50/s =
-# 30 000 < 60 000), but 600 is a marker constant that can rise, and the failure it would cause
-# would look exactly like a real one.
+# blame the sender for a schedule it actually kept; a frozen RESPONSE log would corrupt the
+# reconstruction of `outstanding` in the other direction, leaving the client looking
+# permanently backlogged and guard A measuring nothing at all. Step 13 therefore reports guard
+# A as NOT APPLICABLE instead of asserting on numbers it knows to be wrong. Guard B is
+# unaffected: it reads two single timestamps, not these logs. Unreachable at today's constants
+# (600 s x 50/s = 30 000 < 60 000), but 600 is a marker constant that can rise, and the failure
+# it would cause would look exactly like a real one.
 _SEND_LOG_MAX = 60000
 
 # Bounded wait for the DRAINER to observe the connection being torn down, used by step 13.
@@ -271,7 +301,8 @@ class _PollStats:
 
     Two writers now, and they do not overlap.  The SENDER owns `sends`, `send_times`,
     `throttled_ticks` and `send_log_truncated`.  The DRAINER owns `responses`,
-    `first_response`, `last_response_at`, `drainer_ended_at` and `drainer_closed_by_peer`.
+    `response_times`, `first_response`, `last_response_at`, `drainer_ended_at` and
+    `drainer_closed_by_peer`.
     Either thread may set `error`, `closed_by_peer` and `connection_ended_at`.
 
     "FIRST WRITER WINS" APPLIES TO `error` AND `connection_ended_at` ONLY — those two are
@@ -337,6 +368,14 @@ class _PollStats:
         # monotonic() at which the LAST response was read. Owned by the drainer, and one half
         # of guard B's measurement.
         self.last_response_at = None
+        # monotonic() of EVERY response read, appended in order. Owned by the drainer and read
+        # only by step 13, which merges it with send_times to reconstruct how many requests
+        # were outstanding at each instant — the quantity that decides whether a host-side send
+        # gap could have starved the guest at all (see _longest_send_gap). A counter cannot
+        # substitute: the question is not how many responses arrived but WHEN the pipeline was
+        # empty. Same list-not-deque and same _SEND_LOG_MAX bound as send_times, and it cannot
+        # hit that bound first — see the note there.
+        self.response_times = []
         # ...the other half: monotonic() at which the DRAINER ITSELF observed the connection
         # end, and whether that observation was a peer close/reset (as opposed to a host-side
         # read error or an unparseable frame, which prove nothing about the firmware). Both
@@ -359,7 +398,8 @@ class _PollStats:
         # Raised by the sender the first time _SEND_LOG_MAX made it DROP a timestamp. Once
         # that happens send_times no longer describes the sending that actually took place
         # and guard A's gap is not merely imprecise but wrong in the accusing direction — see
-        # the note on _SEND_LOG_MAX. Step 13 skips guard A entirely when this is set.
+        # the note on _SEND_LOG_MAX. Step 13 skips guard A entirely when this is set, which
+        # also covers response_times: that list cannot overflow before this one does.
         self.send_log_truncated = False
         # Ticks the sender skipped because _MAX_OUTSTANDING requests were still unanswered.
         # Purely diagnostic: the starvation they cause shows up in step 13's gap measurement
@@ -440,35 +480,105 @@ def _recv_frame_bytes(sock: socket.socket, n: int, stop_event: threading.Event,
     return buf
 
 
-def _longest_send_gap(send_times, t0: float, t1: float):
-    """Longest interval inside (t0, t1] during which no request left this process.
+def _longest_send_gap(send_times, response_times, t0: float, t1: float):
+    """Longest interval inside (t0, t1] during which no request left this process — twice.
 
-    Returns (sends_in_window, longest_gap_s).  Caller must pass t1 > t0.
+    Returns (sends_in_window, longest_gap_s, longest_drained_gap_s).  Caller must pass
+    t1 > t0.
 
-    Two details that are the whole point of the function.
+    The two figures differ only in which gaps they are allowed to count, and that difference
+    is guard A's entire correctness argument.
 
-    ANCHOR. The last send at or before t0 anchors the first in-window gap, so a gap that
-    STARTED before the window but ENDED inside it is measured in full — the guest lived
-    through all of it while the window was open.  When there is no such send the gap is
-    measured from t0, which under-reports; that only happens when the client had not sent
-    anything at all before the window, which step 6 has already ruled out.
+    longest_gap_s counts EVERY gap.  It is a diagnostic and nothing asserts on it.  A pause in
+    submission is not a pause in ARRIVALS at the guest (TCP backpressure alone breaks that
+    link), and even a pause in arrivals is not a pause in what recv() sees: recv() DRAINS A
+    QUEUE, and the EAGAIN branch this test's detector depends on fires only when recv() finds
+    NOTHING buffered for a full SO_RCVTIMEO.  While requests the guest has not yet answered are
+    still in the pipe, recv() returns immediately every time and the guest cannot starve
+    however long this process pauses.  Asserting on this number is what failed build #21: 1146
+    sends against 134 responses — ~1000 requests queued for the whole window — reported as "the
+    polling client left the guest with no incoming bytes for 140 ms".
 
-    TRAILING TERM. The final gap runs from the last send to t1, with no closing send.  It
-    is not a rounding detail: when a defective receiver leaves via the EAGAIN branch it
-    closes DURING the gap that let it, so the gap that disarmed the detector never gets a
-    send to be measured against.  Without this term that exact case measures as zero.
+    longest_drained_gap_s counts only the gaps the client spent FULLY DRAINED: every request it
+    had sent already answered.  That is the one state in which "we sent nothing" really does
+    mean "the guest has nothing" — all our bytes have been consumed and replied to, so the
+    receiver is back in recv() with an empty queue and every further millisecond of host-side
+    silence is a millisecond of the timeout it is counting down.  Guard A asserts on this.
+
+    OUTSTANDING IS RECONSTRUCTED, NOT RECORDED: the two logs are merged in timestamp order and
+    a running counter is stepped +1 per send and -1 per response.  Modbus TCP over one
+    connection is answered in order and this client never abandons a request, so the k-th
+    response retires the k-th request and the counter is exact up to the two threads' own
+    timestamping lag.  The DOMINANT lag is bounded by one round trip and falls in the safe
+    direction: a request the guest has already answered but whose reply this process has not
+    yet read still counts as outstanding, so such intervals are dropped from the drained set
+    and guard A under-fires.
+
+    THAT IS NOT STRICTLY ONE-SIDED, though, and the max(0, ...) below marks where it stops
+    being so.  The clamp exists for the race in which the drainer stamps a response BEFORE the
+    sender stamps the send it answers — the sender is preempted between its sendall() and the
+    append on the next line — and in that ordering the counter reaches zero one event early, so
+    a drained interval OPENS at the response instead of at the send that followed it.  The
+    interval is then stretched backwards by the sender's own stamping lag: an interval is ADDED
+    to the drained set that the client did not fully spend drained, and guard A can over-fire.
+    It stays sound because the error is the gap between a syscall returning and the next
+    bytecode appending a timestamp — microseconds unless this process is descheduled, and a
+    sender descheduled long enough to matter here IS the host stall guard A exists to catch,
+    measured slightly early rather than invented — and because it pushes only toward
+    "inconclusive" (a red run on healthy firmware), never toward a false pass.
+
+    ONE VISIBLE CONSEQUENCE, so the printed "X of which Y" is not misread as broken.  The two
+    figures anchor differently at the left edge: the all-gaps figure starts from the last send
+    at or before t0 and CLAMPS to t0 when there is none, while a drained interval is measured
+    from the response that opened it even if that response is older than t0.  So when no send
+    is logged at or before t0, Y can come out LARGER than X.  Checked by brute force over
+    200 000 random event streams: that is the only way the inversion happens — every violation
+    had no send at or before t0, and none survived once one was present.  In the shipped flow
+    step 6 has already put both sends and responses before t0, so it takes the clamp race above
+    (a sendall() before t0 whose timestamp lands after it) to produce the case at all.  Both
+    figures still describe real intervals when it does.
+
+    ANCHOR and TRAILING TERM, inherited from the all-gaps version and applied to both figures.
+    A gap that STARTED before t0 and ENDED inside the window is measured in full: SO_RCVTIMEO
+    is counted from entry into recv(), so a straddling gap can be exactly the one that expires
+    once the exit flag is up.  And the final gap runs to t1 with no closing send, because a
+    defective receiver that leaves via EAGAIN closes DURING the gap that let it and that gap
+    never gets a send to be measured against — without the term, the one case that matters
+    measures as zero.  Before the client's first send both figures are zero by construction
+    (the counter starts at zero but no drained interval is open, and the all-gaps anchor is
+    t0); step 6 has already established that sends AND responses precede t0, so that state is
+    never live inside the window.
     """
-    prev = t0
+    events = [(ts, 1) for ts in send_times if ts <= t1]
+    events += [(ts, -1) for ts in response_times if ts <= t1]
+    # Sends before responses at an identical timestamp: that ordering can only ever leave the
+    # counter higher, i.e. fewer drained intervals, which is the safe direction.
+    events.sort(key=lambda ev: (ev[0], -ev[1]))
+
+    prev_send = t0        # anchor for the all-gaps figure; keeps a pre-window send
+    drained_since = None  # when the pipeline last emptied; None while anything is outstanding
+    outstanding = 0
     longest = 0.0
+    longest_drained = 0.0
     n = 0
-    for ts in send_times:
-        if ts > t1:
-            break
-        if ts > t0:
-            longest = max(longest, ts - prev)
-            n += 1
-        prev = ts  # keeps the pre-window anchor while ts <= t0
-    return n, max(longest, t1 - prev)
+    for ts, delta in events:
+        if delta > 0:
+            if ts > t0:
+                longest = max(longest, ts - prev_send)
+                if drained_since is not None:
+                    longest_drained = max(longest_drained, ts - drained_since)
+                n += 1
+            prev_send = ts
+            outstanding += 1
+            drained_since = None
+        else:
+            outstanding = max(0, outstanding - 1)
+            if outstanding == 0 and drained_since is None:
+                drained_since = ts
+    longest = max(longest, t1 - prev_send)
+    if drained_since is not None:
+        longest_drained = max(longest_drained, t1 - drained_since)
+    return n, longest, longest_drained
 
 
 class _PollingClient:
@@ -789,7 +899,13 @@ class _PollingClient:
             # proved is that the guest is serving this connection, not what it answers.
             # Counter first, event second: the test reads the counter only after the
             # event, so this order can never show it a zero count.
-            self._stats.last_response_at = time.monotonic()
+            now = time.monotonic()
+            self._stats.last_response_at = now
+            # One timestamp per response, for step 13's reconstruction of `outstanding`.
+            # Bounded by the same cap as the send log and unable to reach it first — see
+            # _SEND_LOG_MAX — so the sender's truncation flag speaks for this list too.
+            if len(self._stats.response_times) < _SEND_LOG_MAX:
+                self._stats.response_times.append(now)
             self._stats.responses += 1
             self._stats.first_response.set()
 
@@ -844,13 +960,22 @@ def test_cache_server_deinit_with_active_polling(api):
     response COUNTER to be moving before the trigger, and step 10 requires the
     client to have either survived the trigger POST or been closed BY THE
     FIRMWARE across it — the two outcomes that prove it was still connected when
-    the deinit ran.  Feed rate: step 13 checks that this process kept its send
-    schedule AND, decisively, that the firmware tore the connection down within
-    _CLOSE_GAP_MAX_S of the last response it sent — the signature of the
+    the deinit ran.  Feed rate: step 13 decides it from the RESPONSE STREAM
+    (guard B) — the firmware must have torn the connection down within
+    _CLOSE_GAP_MAX_S of the last response it sent, which is the signature of the
     post-data exit this test guards, as opposed to the EAGAIN exit that survives
-    the regression and answers the probe just the same.  Without all three the
-    test can be green while exercising nothing; see steps 6 and 13.  Step 12
-    sits between the probe and those guards for a reason: every guard assumes
+    the regression and answers the probe just the same.  That is the guard that
+    carries the run, and it is the only one of the three that reads the guest.
+    Guard A, alongside it, checks that this process kept its own send schedule
+    across the intervals in which the client had NOTHING OUTSTANDING — the only
+    intervals in which not sending can starve the guest.  It is NOT a necessary
+    condition on every host, and on the target one it is close to vacuous: where
+    the guest stays permanently backlogged, as on the CI node, the client is
+    essentially never drained and guard A passes having measured almost nothing.
+    It exists to catch this PROCESS stalling on a host fast enough for the client
+    to drain, not to make the run conclusive.  Without step 6, step 10 and guard
+    B the test can be green while exercising nothing; see steps 6 and 13.  Step
+    12 sits between the probe and those guards for a reason: every guard assumes
     the probe was ACCEPTED, and that is the assert which establishes it.
 
     No wall-clock budget is imposed on the MEASURED quantity: nothing asserts on
@@ -1085,7 +1210,13 @@ def test_cache_server_deinit_with_active_polling(api):
         # passing while detecting nothing at all.
         #
         # For the same reason the client must keep FEEDING the guest for the whole time this
-        # call is outstanding, not merely hold the socket: see step 13, which measures it.
+        # call is outstanding, not merely hold the socket. Step 13 is where that is decided —
+        # but by GUARD B, after the fact, from the response stream, which is the guest's own
+        # evidence about which exit its receiver took. Guard A does not stand in for it: it
+        # measures this process's send schedule only across the intervals in which the client
+        # had nothing outstanding, and on a guest slow enough to stay permanently backlogged
+        # (the CI node) there are almost none of those, so it can pass having measured
+        # essentially nothing. See the discussion at step 13.
         #
         # Do NOT wrap this in try/except. A ReadTimeout escaping here IS the test failing
         # on a real hang; swallowing it would restore the exact defect this replaced. The
@@ -1181,20 +1312,84 @@ def test_cache_server_deinit_with_active_polling(api):
         #
         # TWO GUARDS, BECAUSE THE OBVIOUS ONE IS NOT SUFFICIENT ON ITS OWN.
         #
-        # (A) The send cadence below is HOST-SIDE HYGIENE: it measures when bytes left THIS
-        # PROCESS, i.e. that the sender thread itself kept its schedule. It does NOT measure
-        # what the guest received, and it is not sound as a proxy for it in either direction.
-        # A sendall() returns as soon as the host kernel accepts the bytes, so it keeps
-        # returning on time while TCP backpressure holds everything in the host's send
-        # buffer and the guest gets nothing. This is not hypothetical, and it reproduces on
-        # demand: with the regression reintroduced AND a 300 ms delay added to the cache
-        # server's response path, this item measured 1621 sends in 32.4 s at a flat 20 ms mean
-        # with a 31 ms worst gap — a perfect host-side cadence — while the guest's emulated NIC
-        # dropped frames ("opencores.emac: RX frame dropped"), its receiver starved, took the
-        # EAGAIN exit at tcp_server.c:388-396, and the deinit completed. Guard B caught that
-        # run at 103 ms; guard A saw nothing wrong with it, and before guard B existed it was a
-        # silent pass on defective firmware. Keep guard A, because a sender that misses its own
-        # schedule is worth failing on, but do not mistake it for evidence about the guest.
+        # (A) The send cadence below is HOST-SIDE HYGIENE, and it is asserted on only across
+        # the intervals in which this client had NOTHING OUTSTANDING. It measures when bytes
+        # left THIS PROCESS, which is not what the guest received, and it is unsound as a proxy
+        # for it in BOTH directions.
+        #
+        # It can look perfect while the guest starves. A sendall() returns as soon as the host
+        # kernel accepts the bytes, so it keeps returning on time while TCP backpressure holds
+        # everything in the host's send buffer. This is not hypothetical and reproduces on
+        # demand: with the regression reintroduced AND a 300 ms vTaskDelay at the head of the
+        # cache server's process_data_from_tcp(), this item measured 1621 sends in 32.42 s at a
+        # flat 20 ms mean with a 31 ms worst gap — a perfect host-side cadence — while the
+        # guest's emulated NIC dropped frames ("opencores.emac: RX frame dropped"), its
+        # receiver starved, took the EAGAIN exit at tcp_server.c:388-396, and the deinit
+        # completed. Guard B caught that run at 103 ms; guard A saw nothing wrong with it, and
+        # before guard B existed it was a silent pass on defective firmware.
+        #
+        # THAT RUN'S FULL LINE, because the short version invites an arithmetic that does not
+        # work out: "1621 sends in 32.42s (mean 20 ms, LONGEST host-side send gap 31 ms),
+        # responses 3 -> 1173, throttled ticks 0". 32.42 s / 20 ms is 1621 ticks, so NOT ONE
+        # tick was skipped — which reads as impossible against a guest supposedly taking 300 ms
+        # per response, since 1024 outstanding would then fill in ~21 s and throttle the sender
+        # (the paragraph on _MAX_OUTSTANDING derives exactly that for the ~178 ms CI node).
+        # The resolution is that the delay was never per RESPONSE. process_data_from_tcp()
+        # (main/bridge/cache_modbus_server.c:372) is called once per recv() with whatever that
+        # recv() returned, and mbtcp_reasm_feed() then answers EVERY frame in the buffer, so a
+        # delay at the head of it costs 300 ms per BATCH — and at 50 requests/s a batch holds
+        # the ~15 requests that piled up during the previous one (rx_buffer is 1024 B,
+        # tcp_server.c:15/:385, i.e. room for ~85 of these 12-byte requests: the batch size is
+        # set by the arrival rate, not by the buffer). The guest therefore kept answering at
+        # ~36 responses/s (1170 inside the window), the backlog grew only by what the NIC
+        # dropped, and it ended around 1621 - 1170 = ~450 outstanding: below the 1024 cap,
+        # hence zero throttled ticks. The figure is consistent, it is what the run printed, and
+        # it is the intended calibration — a guest that answers almost everything on time and
+        # STILL starves its receiver, which is the only shape in which guard A can be perfect
+        # and the detector still disarmed. (The regime below, quoted as "~190 ms per response",
+        # is the OTHER placement: a delay per FRAME rather than per recv(). Both were run; they
+        # are different experiments and their numbers are not comparable.)
+        #
+        # And it can look terrible while the guest is perfectly fed, which is the correction
+        # build #21 forced. recv() DRAINS A QUEUE: EAGAIN fires only when it finds nothing
+        # buffered for a full 100 ms, so while requests the guest has not yet answered are
+        # still queued it returns immediately and cannot time out however long this process
+        # pauses. #21 was a valid run on the CI node — 1146 sends against 134 responses, i.e.
+        # ~1000 requests queued across the whole window, 47 ticks skipped by the outstanding
+        # cap — failed by a guard A that measured the sender's throttled cadence and announced
+        # "the polling client left the guest with no incoming bytes for 140 ms". The guest was
+        # never starved; the guard asserted a conclusion its evidence could not support.
+        #
+        # SO GUARD A NOW MEASURES ONLY THE DRAINED GAPS: intervals in which sends - responses
+        # was zero, reconstructed after the fact by merging the send and response logs (see
+        # _longest_send_gap). Only then does "this process sent nothing" imply "the guest had
+        # nothing to read".
+        #
+        # REPRODUCED AND MEASURED, not argued. #21's regime was recreated locally by slowing the
+        # cache server's response path to ~190 ms per response and stretching the detector
+        # window to the node's ~24 s (a delay in settings_update_task before the cache release,
+        # so the trigger POST costs what it costs on the node). Clean firmware, one run: 1172
+        # sends in 31.84 s, 170 responses, 420 ticks skipped by the outstanding cap, longest
+        # send gap of any kind 204 ms — which the OLD guard A failed on, exactly as in #21 —
+        # against 0 ms drained, guard B at 2 ms, and the item green. On the same firmware and
+        # the same regime with the post-data check deleted, the item still fails through the
+        # probe's ReadTimeout, so weakening guard A did not cost the detector its teeth.
+        #
+        # WHAT IT STILL CATCHES — including the case it was introduced for: this PROCESS
+        # stalling (a descheduled sender thread, GIL contention, a host that cannot keep a
+        # 20 ms timer) long enough to starve a guest that HAD drained the queue and was sitting
+        # in recv(). A guest keeping up is drained by definition between round trips, so such a
+        # stall is measured in full and fails the run as inconclusive — correctly, because a
+        # defective receiver would have escaped through EAGAIN during it.
+        # WHAT IT NO LONGER CATCHES, deliberately: any gap taken while the guest still owed
+        # answers, which could not have starved it. The corollary is worth stating plainly —
+        # on a guest slow enough to stay permanently backlogged (the CI node at ~178 ms per
+        # response) the client is essentially never drained, so guard A measures almost nothing
+        # and guard B carries the run on its own. That is the intended division of labour and
+        # not a hole: guard B reads the guest itself, and it is the guard that discriminates
+        # between the two exits.
+        # WHAT NEITHER CATCHES is the first paragraph above: bytes lost or delayed BELOW this
+        # process are invisible to guard A by construction, and are guard B's business.
         #
         # (B) The close gap is the guard that actually OBSERVES THE GUEST, and it discriminates
         # between the two exits directly rather than by proxy:
@@ -1281,7 +1476,9 @@ def test_cache_server_deinit_with_active_polling(api):
             f"deinit ran and the probe was never going to block"
         )
         window_s = t_feed_end - t0
-        window_sends, longest_gap = _longest_send_gap(stats.send_times[:], t0, t_feed_end)
+        # Both logs are snapshotted with a single `list[:]` each, as the field notes explain.
+        window_sends, longest_gap, longest_drained_gap = _longest_send_gap(
+            stats.send_times[:], stats.response_times[:], t0, t_feed_end)
         mean_interval_ms = (window_s / window_sends * 1000.0) if window_sends else float("inf")
         # Guard B's measurement: drainer-owned at BOTH ends. Never mixed with the sender's.
         close_gap = (
@@ -1309,12 +1506,30 @@ def test_cache_server_deinit_with_active_polling(api):
             ending = f"ended host-side ({stats.error})"
         else:
             ending = "still up"
-        gap_a = ("n/a (send log truncated)" if stats.send_log_truncated
-                 else f"{longest_gap * 1000:.0f} ms")
+        # Two host-side figures, and only the second is asserted on. `gap_all` is the longest
+        # gap in submission of any kind — informative, but a gap taken while the guest still
+        # owed answers cannot have starved it. The second, the "of which" one, is the longest
+        # the client spent with nothing outstanding, which is the only kind guard A can draw a
+        # conclusion from. Normally the second is a part of the first and the "of which" reads
+        # literally; in one corner it can print LARGER, because the two anchor differently at
+        # t0 — see the note at the end of _longest_send_gap, which also says why the verdict is
+        # unaffected.
+        #
+        # `gap_pair` renders BOTH as one phrase, so that a truncated send log says
+        # "n/a (send log truncated)" once instead of twice inside one sentence. `gap_all` alone
+        # is still used where only the first figure is quoted.
+        if stats.send_log_truncated:
+            gap_all = "n/a (send log truncated)"
+            gap_pair = gap_all
+        else:
+            gap_all = f"{longest_gap * 1000:.0f} ms"
+            gap_pair = (f"{gap_all}, of which {longest_drained_gap * 1000:.0f} ms "
+                        f"with nothing outstanding")
         print(
             f"detector window: {window_sends} sends in {window_s:.2f}s (mean "
-            f"{mean_interval_ms:.0f} ms, LONGEST host-side send gap {gap_a}, limit "
-            f"{_GUEST_RECV_TIMEOUT_S * 1000:.0f} ms), responses {n0} -> {n1}, throttled ticks "
+            f"{mean_interval_ms:.0f} ms, LONGEST host-side send gap {gap_pair}, limit "
+            f"{_GUEST_RECV_TIMEOUT_S * 1000:.0f} ms on the latter only), responses "
+            f"{n0} -> {n1}, throttled ticks "
             f"{stats.throttled_ticks}, connection {ending}, last response -> teardown "
             f"{'n/a' if close_gap is None else f'{close_gap * 1000:.0f} ms'} as seen by the "
             f"drainer / "
@@ -1352,7 +1567,7 @@ def test_cache_server_deinit_with_active_polling(api):
             f"does NOT touch — not of the post-data check at :426-429 that this test exists to "
             f"guard. A defective receiver leaves exactly this way and its deinit completes "
             f"too, so the probe answering says nothing here. Host side over the same window: "
-            f"{window_sends} sends in {window_s:.2f}s, longest send gap {gap_a}, "
+            f"{window_sends} sends in {window_s:.2f}s, longest send gap {gap_pair}, "
             f"{stats.throttled_ticks} ticks skipped by the {_MAX_OUTSTANDING}-request "
             f"outstanding cap — if those look healthy, the bytes were lost or delayed BELOW "
             f"this process (host socket buffer, slirp, the guest's own NIC) rather than not "
@@ -1360,37 +1575,50 @@ def test_cache_server_deinit_with_active_polling(api):
             f"NOT a firmware failure"
         )
 
-        # GUARD (A), host-side hygiene only — necessary, nowhere near sufficient.
+        # GUARD (A), host-side hygiene only — neither necessary nor sufficient, and asserted
+        # only over the DRAINED part of the window. It is not a necessary condition on every
+        # host, and on the target one it is close to vacuous: where the guest stays permanently
+        # backlogged, as on the CI node, the client is essentially never drained and this guard
+        # passes having measured almost nothing. That is by design — it catches this PROCESS
+        # stalling on a host fast enough for the client to drain, and does not make the run
+        # conclusive. DO NOT RE-TIGHTEN IT into a necessary condition: asserting on the
+        # unscoped send cadence is exactly what failed the valid build #21 run. See the
+        # docstring above for what the DRAINED scoping does and does not buy.
         #
-        # SKIPPED, not softened, when the send log overflowed: past _SEND_LOG_MAX the log
-        # stops recording while sending continues, and _longest_send_gap's trailing term then
-        # measures "time since the last RECORD", not "time since the last SEND". Asserting on
-        # that would accuse the sender of a stall it did not have. Unreachable at today's
+        # SKIPPED, not softened, when the send log overflowed: past _SEND_LOG_MAX the logs stop
+        # recording while the connection keeps working, and _longest_send_gap's trailing term
+        # then measures "time since the last RECORD", not "time since the last SEND", while the
+        # reconstructed `outstanding` drifts from the truth in the other direction. Asserting
+        # on either would be asserting on a number known to be wrong. Unreachable at today's
         # constants — see _SEND_LOG_MAX — so this branch exists to stay correct if the 600 s
         # marker grows, not because it has ever been taken.
         if stats.send_log_truncated:
             print(
                 f"guard A (host-side send cadence): NOT APPLICABLE — the send log hit its "
                 f"{_SEND_LOG_MAX}-entry cap, so the longest-gap figure would measure time "
-                f"since the last RECORDED send rather than since the last actual send. Guard "
-                f"B above is unaffected: it reads the response stream, not this log."
+                f"since the last RECORDED send rather than since the last actual send, and "
+                f"the outstanding-request reconstruction it is scoped by would be wrong too. "
+                f"Guard B above is unaffected: it reads two timestamps, not these logs."
             )
         else:
-            assert longest_gap < _GUEST_RECV_TIMEOUT_S, (
+            assert longest_drained_gap < _GUEST_RECV_TIMEOUT_S, (
                 f"THIS RUN PROVES NOTHING about cache_modbus_server_deinit(): the polling "
-                f"client left the guest with no incoming bytes for "
-                f"{longest_gap * 1000:.0f} ms during the detector window, over the "
-                f"{_GUEST_RECV_TIMEOUT_S * 1000:.0f} ms SO_RCVTIMEO set on every accepted "
+                f"client went {longest_drained_gap * 1000:.0f} ms without sending WHILE IT HAD "
+                f"NOTHING OUTSTANDING — every request it had sent was already answered, so the "
+                f"guest's receiver spent all of that back in recv() with an empty queue — over "
+                f"the {_GUEST_RECV_TIMEOUT_S * 1000:.0f} ms SO_RCVTIMEO set on every accepted "
                 f"socket (main/bridge/tcp_server.c:227-228). A gap that long lets even a "
                 f"DEFECTIVE receiver leave through the EAGAIN branch at "
                 f"tcp_server.c:388-396 — which the guarded regression does not touch — so "
                 f"the deinit completes and the probe is answered whether the fix is present "
-                f"or not. Window: {window_sends} sends in {window_s:.2f}s, "
+                f"or not. Window: {window_sends} sends in {window_s:.2f}s, longest gap of any "
+                f"kind {gap_all} (not asserted on, and deliberately: while the guest still owes "
+                f"answers recv() returns immediately and no host-side pause can starve it), "
                 f"{stats.throttled_ticks} ticks skipped by the {_MAX_OUTSTANDING}-request "
                 f"outstanding cap, last client error: {stats.error}. This is NOT a firmware "
                 f"failure and must not be read as one: this PROCESS missed its own send "
-                f"schedule, so it cannot claim to have kept the guest fed. On a machine that "
-                f"cannot sustain a sub-{_GUEST_RECV_TIMEOUT_S * 1000:.0f} ms send cadence "
+                f"schedule at the one moment the guest had nothing else queued. On a machine "
+                f"that cannot sustain a sub-{_GUEST_RECV_TIMEOUT_S * 1000:.0f} ms send cadence "
                 f"this test cannot detect its regression at all, and failing loudly here is "
                 f"the correct outcome"
             )
