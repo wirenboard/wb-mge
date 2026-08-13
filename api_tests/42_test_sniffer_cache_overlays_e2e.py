@@ -622,8 +622,10 @@ def test_cache_overlay_persists_across_reboot(api, is_qemu):
 
         # --- Reboot ------------------------------------------------------------
         uptime_before = _read_uptime_seconds(api)
-        # Settle briefly so the NVS write of the overlay flag has flushed.
-        time.sleep(1.0)
+        # No settle before the reboot: settings are committed to NVS SYNCHRONOUSLY before the
+        # write's HTTP 200 returns (nv_storage.c opens/sets/commits/closes inline; the /settings
+        # handler in port_manager.c returns 200 only after the commit, and a commit failure is
+        # even surfaced as HTTP 500). There is nothing to flush, so a sleep here would only mask.
         try:
             resp = api.execute_command("reboot")
             assert resp.status_code == 200, \
@@ -645,29 +647,56 @@ def test_cache_overlay_persists_across_reboot(api, is_qemu):
             "no reboot detected"
         )
 
-        # --- CORE ASSERTION: overlay flag survived the NVS round-trip ----------
-        info = api.get_info()
-        assert info.status_code == 200, f"GET /info after reboot failed: {info.status_code}"
-        rs485_1 = info.json().get("rs485_1", {})
-        assert rs485_1.get("cache_enabled") is True, (
-            "rs485_1.cache_enabled must STILL be true after reboot — the cache "
-            "overlay must persist across reboot via NVS, but /info reports "
-            f"cache_enabled={rs485_1.get('cache_enabled')!r}"
+        # --- PERSISTENCE via GET /settings (reads COMMITTED NVS) ---------------
+        # Assert persistence against /settings, NOT /info. /settings reads NVS
+        # (setting_items_read -> nvs_read_str), so it reflects what was committed. /info reports
+        # LIVE runtime state, which during boot shows zeroed BSS (PM_MODE_DISABLED == "disabled")
+        # in the window between httpd answering (main.c:219) and port_manager_init reading
+        # port_mode from NVS (main.c:261); wait_for_ready returns on the first httpd 200, i.e. at
+        # :219, so a single /info sample here would race that window — the earlier "async NVS
+        # write" story came from exactly this misread.
+        settings = api.get_settings()
+        assert settings.status_code == 200, \
+            f"GET /settings after reboot failed: {settings.status_code}"
+        s_rs485_1 = settings.json().get("rs485_1", {})
+        assert s_rs485_1.get("cache_en") is True, (
+            "rs485_1.cache_en must persist across reboot via NVS — GET /settings reports "
+            f"cache_en={s_rs485_1.get('cache_en')!r}"
         )
-        # The tcp_bridge transport must also have been restored from persisted config.
-        assert rs485_1.get("port_mode") == "tcp_bridge", (
-            "port 1 transport must be restored to tcp_bridge after reboot, got "
-            f"{rs485_1.get('port_mode')!r}"
+        assert s_rs485_1.get("port_mode") == "tcp_bridge", (
+            "rs485_1.port_mode must persist as tcp_bridge across reboot via NVS — GET /settings "
+            f"reports port_mode={s_rs485_1.get('port_mode')!r}"
         )
-        print("✓ rs485_1.cache_enabled STILL true after reboot (NVS round-trip)")
+        print("✓ cache_en + port_mode persisted across reboot (GET /settings, NVS)")
 
-        # --- Drive a known FC03 transaction and assert the cache repopulates ---
-        # The cache POOL is volatile, so after reboot it starts empty; the
-        # RESTORED overlay must observe new traffic and pair it into the map.
-        ready = _poll_tcp_connect(GATEWAY_HOST, GATEWAY_HOST_PORT, timeout=10.0)
+        # --- RUNTIME: wait for the gateway to actually come up, then poll /info -
+        # The gateway accepting a connection proves the boot reached port_manager_init
+        # (main.c:261) and applied port_mode to the live subsystem — not merely that httpd
+        # (main.c:219) is up. (Also needed below: the cache POOL is volatile, so it starts empty
+        # after reboot and the RESTORED overlay must observe new traffic.)
+        ready = _poll_tcp_connect(GATEWAY_HOST, GATEWAY_HOST_PORT, timeout=30.0)
         assert ready, (
             f"gateway tcp_bridge did not re-bind host port {GATEWAY_HOST_PORT} after reboot"
         )
+
+        # Now /info's runtime port_mode must reflect the applied config. Poll (bounded): if
+        # /settings persisted tcp_bridge but /info stays 'disabled' after the gateway is up, that
+        # is a REAL port_init_mode failure — a reportable bug, cleanly separated from the
+        # boot-window /info artifact above.
+        rt_mode = None
+        rt_deadline = time.monotonic() + 10.0
+        while time.monotonic() < rt_deadline:
+            info = api.get_info()
+            if info.status_code == 200:
+                rt_mode = info.json().get("rs485_1", {}).get("port_mode")
+                if rt_mode == "tcp_bridge":
+                    break
+            time.sleep(0.3)
+        assert rt_mode == "tcp_bridge", (
+            "runtime /info port_mode must be tcp_bridge after the gateway is up, got "
+            f"{rt_mode!r} — /settings persisted tcp_bridge, so this is a port_init_mode failure"
+        )
+        print("✓ runtime port_mode == tcp_bridge after reboot (/info, gateway up)")
 
         # Connect a fresh RTU slave to the UART chardev (the pre-reboot connection,
         # if any, was severed by the reset).
