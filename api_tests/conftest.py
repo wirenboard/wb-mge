@@ -18,6 +18,14 @@ from rtu_slave_helpers import ModbusRtuSlaveThread
 import qemu_ports
 import tree_lock
 
+# sniffer_helpers is a plain module, not a test file (pytest.ini's python_files matches only
+# "[0-9]*_test_*.py"), so pytest does not rewrite its asserts by default — and its asserts are
+# where the sniffer findings actually come from: _poll_sniffer_status() raises on behalf of
+# each of its call sites in 13_test_ports.py. Registering it here restores rewritten output.
+# This must run before anything imports the module; conftest is loaded ahead of every test
+# module, and nothing above imports it.
+pytest.register_assert_rewrite("sniffer_helpers")
+
 PROJECT_ROOT = Path(__file__).parent.parent
 QEMU_READY_TIMEOUT = 900
 QEMU_READY_INTERVAL = 2

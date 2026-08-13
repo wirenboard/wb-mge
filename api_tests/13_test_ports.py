@@ -7,8 +7,62 @@ import pytest
 import requests
 from urllib.parse import urlparse
 
-from sniffer_helpers import _ws_connect
+from api_client import SNIFFER_STATUS_TIMEOUT_S
+from sniffer_helpers import (
+    _assert_sniffer_precondition,
+    _poll_sniffer_status,
+    _ws_connect,
+)
 from io_bus_helpers import IoBus
+
+
+# Per-test budgets for the four tests that call _poll_sniffer_status(). pytest.ini's global
+# timeout is 180 s and its comment covers /settings and the WS handshake, not sniffer-status
+# polling; these carry their own marker instead, which is the convention here (21_, 25_, 27_
+# do the same). Write t_max for the most expensive single status read of the run; t_rtt, the
+# figure the helper measures, is a MINIMUM over reads and so is <= t_max. Per poll SITE:
+#
+#     poll   <= SNIFFER_STATUS_TIMEOUT_S + 2 x t_rtt      (the poll's own budget)
+#             + 2 x SNIFFER_STATUS_TIMEOUT_S              (the read already in flight when
+#                                                          that budget runs out plays out to
+#                                                          its own client timeout — the
+#                                                          property that makes a genuine hang
+#                                                          a named requests.ReadTimeout. TWO
+#                                                          of them, not one: requests applies
+#                                                          `timeout=` to the connect and to
+#                                                          each socket read separately, and
+#                                                          api_client sends `Connection:
+#                                                          close`, so every status read opens
+#                                                          a fresh connection and can spend
+#                                                          the whole timeout in either phase)
+#     window <= sniffer_helpers._SETTLE_CEILING_S         (the window's exit test is on a
+#             + 2 x t_max                                  read's START time, so it costs the
+#                                                          read that discovers the window is
+#                                                          over plus the one it queued behind)
+#
+# = 32 s + 4 x t_max per site. On top of that each of these tests opens exactly ONE WebSocket
+# before its first site, and that handshake is 60 + 2 + 60 = 122 s: _ws_connect() makes TWO
+# attempts, each with its OWN 60 s timeout, 2 s apart.
+#
+# t_max is the term that moves. At <= 1 s — ~10x the ~0.1 s a status read measures against
+# QEMU here — a site costs 36 s. The markers below are sized for t_max <= 8 s (64 s per
+# site): 8 s is the degenerate sample sniffer_helpers' CEILING paragraph names, and covering
+# it is the point, so that a node slow enough to produce one fails with this suite's own
+# diagnosis instead of "Failed: Timeout >Ns" — a firmware hang that never happened. Past 8 s
+# each further second of t_max costs 4 s per site.
+# Sizing for that regime costs little hang-detection: firmware that stops answering surfaces
+# as a named requests exception within ~20 s of the read that hangs, so these markers only
+# backstop what has no client timeout of its own — the 122 s handshake, ws.send(), and the
+# shape of the loops themselves.
+#
+# The numbers below are those two ceilings plus ~40 s for the /info, /sniffer/status and mode
+# POSTs around them, which this round did not touch. They deliberately do NOT stack the
+# pathological ceiling of every independent call (set_port_mode alone is 3 x 30 s + 2 x 0.5 s
+# of retry): that product exceeds any usable marker and describes a run that has already
+# failed for another reason.
+_SNIFFER_POLL_1_SITE_TIMEOUT_S = 240    # 122 + 1 x 64 + allowance
+_SNIFFER_POLL_2_SITE_TIMEOUT_S = 300    # 122 + 2 x 64 + allowance
+_SNIFFER_POLL_3_SITE_TIMEOUT_S = 420    # 122 + 3 x 64 + allowance
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -454,6 +508,7 @@ def test_clock_out_leaves_io_bus_alone(api):
                 print(f"✓ io_bus restored to {original_io_bus}")
 
 
+@pytest.mark.timeout(_SNIFFER_POLL_2_SITE_TIMEOUT_S)
 def test_sniffer_status(api):
     """Test GET /sniffer/status and verify it reflects the live WS sniffer overlay.
 
@@ -484,25 +539,21 @@ def test_sniffer_status(api):
         response = api.set_port_mode(1, "passive")
         assert response.status_code == 200, \
             f"POST /ports/1/mode passive expected 200, got {response.status_code}"
-        time.sleep(0.5)
 
+        # Same asynchrony as in test_sniffer_status_both_ports_independent below: the WS
+        # start/stop frame is published by the firmware's httpd thread whenever its select
+        # loop reaches that session, so the state is polled for, not slept for. See
+        # sniffer_helpers._poll_sniffer_status() for the mechanism and the budget. No
+        # invariants here — this test drives one port and asserts nothing about the other.
+        # The settle window still runs: it watches port_1 itself, so an overlay that starts
+        # and then falls off a few hundred milliseconds later fails here instead of passing.
         ws, stop_ping, _ = _ws_connect(api, 1)
-        time.sleep(0.5)
-        response = api.get_sniffer_status()
-        assert response.status_code == 200
-        status = response.json()
-        assert status["port_1"] == True, \
-            f"After starting the WS sniffer overlay, port_1 must be true, got {status['port_1']}"
+        _poll_sniffer_status(api, "port_1", True, "after the WS sniffer overlay start")
         print("✓ After WS sniffer start: port_1=true")
 
         # Stop the live sniffer overlay; the status must clear.
         ws.send(json.dumps({"cmd": "stop", "port": 1}))
-        time.sleep(0.5)
-        response = api.get_sniffer_status()
-        assert response.status_code == 200
-        status = response.json()
-        assert status["port_1"] == False, \
-            f"After stopping the WS sniffer overlay, port_1 must be false, got {status['port_1']}"
+        _poll_sniffer_status(api, "port_1", False, "after the WS sniffer overlay stop")
         print("✓ After WS sniffer stop: port_1=false")
 
     finally:
@@ -705,6 +756,7 @@ def test_sniffer_status_response_shape_and_content_type(api):
             assert r.status_code == 200, f"Failed to restore port 2 mode: {r.status_code}"
 
 
+@pytest.mark.timeout(_SNIFFER_POLL_1_SITE_TIMEOUT_S)
 def test_sniffer_status_reflects_start_command(api):
     """/sniffer/status must report port_1==True after WS start command for port 1."""
     original_port_mode = None
@@ -718,20 +770,28 @@ def test_sniffer_status_reflects_start_command(api):
 
         r = api.set_port_mode(1, "passive")
         assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
-        time.sleep(0.5)
+
+        # port_2==False is a PRECONDITION this test inherits, not one it creates: nothing
+        # here or in the helper puts port 2 down, and the firmware leaves the DISPLAY bit set
+        # when a WebSocket closes (only an explicit stop or a mode change clears it — see
+        # main/bridge/sniffer.c). Assert it before driving anything, so an overlay left up by
+        # an earlier test is reported as what it is instead of as "starting port 1 raised
+        # port 2" below.
+        _assert_sniffer_precondition(
+            api, {"port_2": False},
+            "precondition of test_sniffer_status_reflects_start_command (port 2 must be "
+            "down before port 1 is started; if it is not, an earlier test left its overlay "
+            "up rather than the start of port 1 raising it)")
 
         ws, stop_ping, _ = _ws_connect(api, 1)
-        time.sleep(0.5)
 
-        status_resp = api.get_sniffer_status()
-        assert status_resp.status_code == 200
-        body = status_resp.json()
-        assert body.get("port_1") is True, (
-            f"Expected port_1==True after start, got {body.get('port_1')}"
-        )
-        assert body.get("port_2") is False, (
-            f"Expected port_2==False, got {body.get('port_2')}"
-        )
+        # port_2 is an INVARIANT, not a second target: it was never started, so False is what
+        # must already hold before port_1 flips, when it flips, and afterwards. Passing it as
+        # an invariant gets it checked on every body the helper reads — the poll's included —
+        # so a firmware defect that raises port_2 early, at the flip, or late is caught rather
+        # than waited out.
+        _poll_sniffer_status(api, "port_1", True, "after the WS start of port 1",
+                             invariants={"port_2": False})
         print("✓ /sniffer/status reflects start command for port 1")
 
     finally:
@@ -751,6 +811,7 @@ def test_sniffer_status_reflects_start_command(api):
             assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
 
 
+@pytest.mark.timeout(_SNIFFER_POLL_2_SITE_TIMEOUT_S)
 def test_sniffer_status_reflects_stop_command(api):
     """/sniffer/status must report port_1==False after WS stop command."""
     original_port_mode = None
@@ -764,29 +825,15 @@ def test_sniffer_status_reflects_stop_command(api):
 
         r = api.set_port_mode(1, "passive")
         assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
-        time.sleep(0.5)
 
         ws, stop_ping, _ = _ws_connect(api, 1)
-        time.sleep(0.5)
 
-        # Verify it is True first
-        status_resp = api.get_sniffer_status()
-        assert status_resp.status_code == 200
-        body = status_resp.json()
-        assert body.get("port_1") is True, (
-            f"Precondition failed: expected port_1==True after start, got {body.get('port_1')}"
-        )
+        # Precondition: the start this test's stop has to undo must have landed first.
+        _poll_sniffer_status(api, "port_1", True, "precondition, after the WS start of port 1")
 
         # Stop the sniffer
         ws.send(json.dumps({"cmd": "stop", "port": 1}))
-        time.sleep(0.3)
-
-        status_resp = api.get_sniffer_status()
-        assert status_resp.status_code == 200
-        body = status_resp.json()
-        assert body.get("port_1") is False, (
-            f"Expected port_1==False after stop, got {body.get('port_1')}"
-        )
+        _poll_sniffer_status(api, "port_1", False, "after the WS stop of port 1")
         print("✓ /sniffer/status reflects stop command for port 1")
 
     finally:
@@ -811,9 +858,12 @@ def test_sniffer_status_unauthenticated(api):
     parsed = urlparse(api.base_url)
     base_url = f"http://{parsed.hostname}:{parsed.port or 80}"
 
-    # Use a fresh session with no cookies
+    # Use a fresh session with no cookies. Same endpoint as WBMGEAPI.get_sniffer_status(), so
+    # the same client timeout — a bare requests.Session has no reason to be more or less
+    # patient with /sniffer/status than the client under test.
     unauth_session = requests.Session()
-    response = unauth_session.get(f"{base_url}/sniffer/status", timeout=10)
+    response = unauth_session.get(f"{base_url}/sniffer/status",
+                                  timeout=SNIFFER_STATUS_TIMEOUT_S)
 
     assert response.status_code == 401, (
         f"Expected HTTP 401 for unauthenticated request, got {response.status_code}"
@@ -821,6 +871,7 @@ def test_sniffer_status_unauthenticated(api):
     print("✓ /sniffer/status returns 401 for unauthenticated requests")
 
 
+@pytest.mark.timeout(_SNIFFER_POLL_3_SITE_TIMEOUT_S)
 def test_sniffer_status_both_ports_independent(api):
     """Per-port sniffer state (port 1 vs port 2) must be independently controllable.
 
@@ -846,42 +897,63 @@ def test_sniffer_status_both_ports_independent(api):
         original_mode_2 = info_data.get("rs485_2", {}).get("port_mode", "tcp_bridge")
 
         # Set port 1 to sniffer and start it (the single socket sends {start,port:1}).
+        #
+        # No settle sleep after the mode POST, here or below. Not because the request leaves
+        # nothing at all in flight — api_client.set_port_mode()'s own docstring documents the
+        # opposite: lwIP releases the previous mode's listen socket asynchronously after the
+        # 200, which is exactly why that helper carries an ESP_FAIL retry. The claim needed
+        # here is narrower and does hold: the state this test READS is final before the
+        # response. POST /ports/N/mode applies the mode INSIDE its handler
+        # (port_set_mode_handler -> port_manager_set_mode -> port_deinit_mode/port_init_mode,
+        # main/bridge/port_manager.c) and only then sends the 200; port_deinit_mode() ->
+        # sniffer_detach() clears the port's reason bits along the way, and port_init_mode()
+        # re-arms only SNIFF_REASON_CACHE (port_manager.c:459-461) — while /sniffer/status
+        # deliberately reports only SNIFF_REASON_DISPLAY (sniffer_status_handler,
+        # main/bridge/sniffer.c). So no later, asynchronous step can move what is read below.
         r = api.set_port_mode(1, "passive")
         assert r.status_code == 200, f"Failed to set passive mode for port 1: {r.status_code}"
-        time.sleep(0.3)
+
+        # Same inherited precondition as in test_sniffer_status_reflects_start_command: the
+        # port_2==False invariant below is held by the session, not by this test, because the
+        # firmware clears DISPLAY only on an explicit stop or a mode change. Read it once so
+        # that residue from an earlier test cannot be reported as a failure of independence.
+        _assert_sniffer_precondition(
+            api, {"port_2": False},
+            "precondition of test_sniffer_status_both_ports_independent (port 2 must be down "
+            "before either port is started; if it is not, an earlier test left its overlay up "
+            "rather than the start of port 1 raising it)")
 
         ws, stop_ping, _ = _ws_connect(api, 1)
-        time.sleep(0.5)
 
-        body = api.get_sniffer_status().json()
-        assert body.get("port_1") is True, f"Expected port_1==True, got {body}"
-        assert body.get("port_2") is False, f"Expected port_2==False, got {body}"
+        # _ws_connect() ends with {"cmd":"start","port":1}; wait for the firmware to publish it.
+        # port_2 rides along as an invariant rather than as a second polled target: it has never
+        # been started, so False must hold on every body read while waiting, when port_1 flips,
+        # and across the settle window — which is what turns "a firmware bug raises port_2" from
+        # an invisible pass into a failure whenever in that sequence it happens.
+        _poll_sniffer_status(api, "port_1", True, "after the WS start of port 1",
+                             invariants={"port_2": False})
 
         # Start port 2 over the SAME socket (do not open a second one — it would
         # evict this session).
         r2 = api.set_port_mode(2, "passive")
         assert r2.status_code == 200, \
             f"set_port_mode(2, 'passive') expected 200, got {r2.status_code}"
-        time.sleep(0.3)
 
         ws.send(json.dumps({"cmd": "start", "port": 2}))
-        time.sleep(0.5)
-
-        body = api.get_sniffer_status().json()
-        assert body.get("port_1") is True, f"Expected port_1==True, got {body}"
-        assert body.get("port_2") is True, f"Expected port_2==True, got {body}"
+        # Poll for the TARGET state only; port_1 is the invariant across this step. Polling for
+        # the PAIR would accept a port_1 that dropped and came back — the very defect this test
+        # exists to catch. The invariant is instead checked on every body read while waiting
+        # for port_2, at the instant port_2 appears, and over the settle window that follows,
+        # so a start of port 2 that clears port 1 BEFORE, WITH or AFTER publishing its own bit
+        # is caught. (Only the last two used to be: the poll read the earlier bodies and threw
+        # them away, so a clear-and-restore that finished before port_2 appeared was invisible.)
+        _poll_sniffer_status(api, "port_2", True, "after the WS start of port 2",
+                             invariants={"port_1": True})
 
         # Stop only port 1 over the same socket; port 2 must stay up (independence).
         ws.send(json.dumps({"cmd": "stop", "port": 1}))
-        time.sleep(0.3)
-
-        body = api.get_sniffer_status().json()
-        assert body.get("port_1") is False, (
-            f"Expected port_1==False after stop, got {body}"
-        )
-        assert body.get("port_2") is True, (
-            f"Expected port_2==True (unaffected by stopping port 1), got {body}"
-        )
+        _poll_sniffer_status(api, "port_1", False, "after the WS stop of port 1",
+                             invariants={"port_2": True})
         print("✓ port 1 and port 2 sniffer states are independent over one socket")
 
     finally:

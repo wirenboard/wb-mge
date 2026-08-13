@@ -7,6 +7,15 @@ import requests
 import qemu_ports
 
 
+# Client timeout of GET /sniffer/status. Named rather than inlined so that everything which
+# talks to this endpoint reads the same number: get_sniffer_status() below, the poll budget in
+# sniffer_helpers._poll_sniffer_status(), and 13_test_ports' unauthenticated check, which uses
+# a bare requests.Session against the same URL and should not be more or less patient than the
+# client. It carries no other contract — in particular, the poll's budget is deliberately
+# LARGER than this timeout, and why that is safe is stated once, in that poll's docstring.
+SNIFFER_STATUS_TIMEOUT_S = 10
+
+
 class _DelayedSession(requests.Session):
     """A requests.Session that sleeps 100ms before every request."""
 
@@ -191,7 +200,8 @@ class WBMGEAPI:
 
     def get_sniffer_status(self):
         """Get sniffer status for all ports"""
-        return self.session.get(f"{self.base_url}/sniffer/status", timeout=10)
+        return self.session.get(f"{self.base_url}/sniffer/status",
+                                timeout=SNIFFER_STATUS_TIMEOUT_S)
 
     def wait_for_ready(self, timeout=1800, interval=1):
         """Poll the server until it responds, then reconnect and re-auth."""
