@@ -84,9 +84,17 @@ _SETTLE_ROUND_TRIPS = 4
 #     PACES its reads at window_s / _SETTLE_MAX_READS instead of leaning on whatever delay
 #     the client happens to have: the cap binds on the read scheduled at
 #     window_s x (1 - 1/_SETTLE_MAX_READS), which is still past the reference defect.
-#     No minimum-read constant belongs next to it: the first read starts at ~0 from the
-#     window's start and 0 >= window_s is false for every window_s >= the floor, so the
-#     start-time exit already makes two reads the least the loop can take.
+#     No minimum-read constant belongs next to it. The window's start and each read's start
+#     are two separate time.monotonic() calls, so the first read normally begins ~0 into the
+#     window, 0 >= window_s is false for every window_s >= the floor, and the start-time exit
+#     takes at least two reads. NORMALLY, not always: nothing pins the interpreter between
+#     those two calls, and on a node loaded enough to pause this thread for longer than
+#     window_s — the premise of this whole mechanism — the first read starts past the window
+#     and is the only one. That costs no guarantee, which is why no constant is needed to
+#     prevent it: what the window owes is one read that STARTS after the reference defect has
+#     had time to fire, and a read displaced by such a pause starts even later than the
+#     window's own length demands. A minimum-read constant would force extra reads in exactly
+#     the case where the single read has already delivered the guarantee.
 _SETTLE_FLOOR_S = 2 * _REFERENCE_DEFECT_S
 _SETTLE_CEILING_S = 2.0
 _SETTLE_MAX_READS = 16
@@ -248,33 +256,50 @@ def _poll_sniffer_status(api, key, expected, what, invariants=None):
     pre-frame state, which is exactly build #19's `{'port_1': True, 'port_2': False}`.
     Re-reading covers that case because a read cannot be answered without the guest running.
 
-    Budget = SNIFFER_STATUS_TIMEOUT_S + 2 x t_rtt, each term derived rather than picked:
+    Budget = SNIFFER_STATUS_TIMEOUT_S + 2 x t_rtt_budget, each term derived rather than
+    picked:
 
-      * t_rtt is the cost of ONE status read, measured by this poll's own reads — on this
-        machine, in this run, a moment before it is used. A constant cannot follow that: the
-        shared CI node is materially slower than free hardware, and the only figure this
-        suite has actually measured for it is suite WALL-CLOCK, ~124 min against ~35 min
-        across builds #17/#18/#19 (see 36_test_tcp_server_deinit_hang.py). That ~3.5x is a
-        suite-level ratio; no per-call ratio has been measured, and none is assumed here —
-        which is the point of measuring t_rtt instead of asserting a multiplier, and how the
-        fixed 0.5 s sleep this replaces came to fail.
-        It is the MINIMUM over the poll's reads, not the first one. Every sample is taken
-        while waiting for the very state change this mechanism exists for, so the scenario it
-        was built for — the guest not executing, the read blocked until it resumes — inflates
-        samples and can never deflate them: a read cannot be answered faster than the client,
-        the network and the device can actually do the work. The minimum is therefore the
-        least distorted estimate available. In the common case the poll ends on its first
-        read and the minimum IS that read, which is precisely why the window it feeds is
-        clamped rather than trusted (see _SETTLE_FLOOR_S / _SETTLE_CEILING_S).
-        The budget is recomputed whenever that minimum drops, so the equation the failure
-        message prints is the equation the poll actually applied. A budget frozen at the
-        first read's cost would be printed next to a t_rtt that has since fallen and read as
-        an arithmetic error here.
-      * 2 x t_rtt guarantees the budget has room for the no-defect case on an arbitrarily
-        slow machine: one status read that overtook the still-unread frame, plus the read
-        after it that sees the new state. Without the margin, a node where a single read
-        costs more than the ceiling would give up before it had asked twice. That one read
-        is the EMPIRICAL common case, not a bound: httpd_process_session() runs
+      * The cost of ONE status read is measured by this poll's own reads — on this machine,
+        in this run, a moment before it is used. A constant cannot follow that: the shared CI
+        node is materially slower than free hardware, and the only figure this suite has
+        actually measured for it is suite WALL-CLOCK, ~124 min against ~35 min across builds
+        #17/#18/#19 (see 36_test_tcp_server_deinit_hang.py). That ~3.5x is a suite-level
+        ratio; no per-call ratio has been measured, and none is assumed here — which is the
+        point of measuring the read cost instead of asserting a multiplier, and how the fixed
+        0.5 s sleep this replaces came to fail.
+        TWO statistics are kept over those same samples, because the budget and the settle
+        window want opposite things from them:
+          - t_rtt_budget, the MAXIMUM, feeds the budget here. What the budget is compared
+            against, `elapsed`, only ever grows, so a budget that tracked the minimum could
+            be cut below an `elapsed` that an earlier expensive read had already run up, and
+            would then give up in precisely the stalled-guest regime this whole mechanism
+            exists for. Replayed offline against this loop on a virtual clock: reads of
+            11.0 s then 0.15 s with the target visible on the 3rd read fail at 2 reads on a
+            minimum-driven budget, and 8.0 s then 0.15 s with the target on the 21st fail at
+            17. Following the maximum makes the budget monotonically non-decreasing, so
+            neither case fails — and no case is lost that a minimum-driven or first-read
+            budget would have survived, because the maximum is >= both of them at every step.
+          - t_rtt, the MINIMUM, sizes the settle window below and feeds nothing else. Every
+            sample is taken while waiting for the very state change this mechanism exists
+            for, so the scenario it was built for — the guest not executing, the read blocked
+            until it resumes — inflates samples and can never deflate them: a read cannot be
+            answered faster than the client, the network and the device can actually do the
+            work. The minimum is therefore the least distorted estimate of what a read
+            NORMALLY costs, which is the question the window asks; the budget asks the
+            opposite one, how bad a read has been seen to get. In the common case the poll
+            ends on its first read, both statistics ARE that read, and the window it feeds is
+            clamped rather than trusted (see _SETTLE_FLOOR_S / _SETTLE_CEILING_S).
+        The failure message prints both, labelled with which feeds what, and the budget it
+        prints is the one the poll actually applied when it gave up. Because that budget
+        never shrinks and is tested BEFORE each read, the `elapsed` it prints is always under
+        the printed budget plus one round trip — an equation the reader can check instead of
+        two numbers that do not reconcile.
+      * 2 x t_rtt_budget guarantees the budget has room for the no-defect case on an
+        arbitrarily slow machine: one status read that overtook the still-unread frame, plus
+        the read after it that sees the new state — two reads priced at the worst one seen so
+        far, which is the point of taking the maximum. Without the margin, a node where a
+        single read costs more than the ceiling would give up before it had asked twice. That
+        one read is the EMPIRICAL common case, not a bound: httpd_process_session() runs
         httpd_sess_process() at most once per session per select round (httpd_main.c), so N
         frames already queued ahead of the start frame need N rounds — and this module's own
         ping thread puts frames there, a PING every 0.5 s on the SAME socket (1-2 of them
@@ -383,17 +408,30 @@ def _poll_sniffer_status(api, key, expected, what, invariants=None):
     t_start = time.monotonic()
     body = _read_sniffer_status(api, what, "poll read 1")
     t_rtt = time.monotonic() - t_start
+    # Two statistics over the same samples, because the budget and the settle window want
+    # opposite things from them: the budget the WORST read seen, the window the least
+    # distorted one. See the docstring. On the first read they are the same number.
+    t_rtt_budget = t_rtt
     reads = 1
-    budget_s = SNIFFER_STATUS_TIMEOUT_S + 2 * t_rtt
+    budget_s = SNIFFER_STATUS_TIMEOUT_S + 2 * t_rtt_budget
 
-    # A typo in a key name would otherwise burn the whole budget and then blame the firmware
-    # ("port_3 never became True"), and an invariant typo would report a port that does not
-    # exist as having changed. One check against the first body turns both into the accurate
-    # answer, immediately.
+    # A key this body does not carry would otherwise burn the whole budget and then blame the
+    # firmware for the wrong thing ("port_3 never became True"), or report a port that does
+    # not exist as having changed. One check against the first body replaces that with an
+    # immediate, accurate statement of WHAT is missing — but not of WHY, and the message says
+    # so rather than guessing. The two candidates are a typo in the test and a firmware that
+    # stopped publishing the key, and nothing observable here separates them: this helper
+    # sees one body and cannot know which key set the endpoint is supposed to have. Nor is
+    # the second candidate excluded elsewhere — the only test of the key set,
+    # test_sniffer_status_response_shape_and_content_type, reads /sniffer/status with both
+    # overlays OFF, so a firmware that dropped a key only while an overlay is up would reach
+    # this assertion with that test still green.
     missing = [k for k in [key, *invariants] if k not in body]
     assert not missing, (
-        f"{what}: GET /sniffer/status has no {missing} in its body — this is a typo in the "
-        f"test, not a device state; body {body}"
+        f"{what}: GET /sniffer/status has no {missing} in its body — either the test asked "
+        f"for a key that does not exist, or the firmware stopped reporting one; this helper "
+        f"cannot tell those apart, and the shape test covers the key set only with both "
+        f"overlays off; body {body}"
     )
 
     _assert_state(body, invariants, what, f"on poll read 1, before {key}={expected} appeared")
@@ -404,19 +442,24 @@ def _poll_sniffer_status(api, key, expected, what, invariants=None):
             raise AssertionError(
                 f"{what}: {key} never became {expected} — polled GET /sniffer/status for "
                 f"{elapsed:.2f}s across {reads} reads (budget {budget_s:.2f}s = "
-                f"{SNIFFER_STATUS_TIMEOUT_S}s client timeout + 2 x {t_rtt:.3f}s measured "
-                f"round trip); last body {body}"
+                f"{SNIFFER_STATUS_TIMEOUT_S}s client timeout + 2 x {t_rtt_budget:.3f}s, the "
+                f"SLOWEST measured round trip, which is what the budget follows; the fastest "
+                f"was {t_rtt:.3f}s and sizes the settle window instead); last body {body}"
             )
         t_read = time.monotonic()
         body = _read_sniffer_status(api, what, f"poll read {reads + 1}")
-        t_rtt = min(t_rtt, time.monotonic() - t_read)
-        # Follow the minimum instead of keeping the budget the first read happened to buy.
-        # Both numbers are printed side by side in the message above, so a budget computed
-        # from a t_rtt that has since been superseded reads as an arithmetic error in this
-        # helper ("budget 16.00s = 10s + 2 x 0.100s") and sends the reader hunting for one.
-        # It can only shrink, and only towards SNIFFER_STATUS_TIMEOUT_S, which is both the
-        # floor of this expression and the ceiling term of the derivation in the docstring.
-        budget_s = SNIFFER_STATUS_TIMEOUT_S + 2 * t_rtt
+        t_read_s = time.monotonic() - t_read
+        # The budget follows the MAXIMUM and so never shrinks, while `elapsed` above only
+        # grows: a budget cut to fit a later cheap read can land under an `elapsed` that an
+        # earlier expensive read already ran up, and give up in exactly the stalled-guest
+        # regime this loop exists for. It also keeps the message's arithmetic checkable —
+        # the budget is tested before each read and can only have grown since, so `elapsed`
+        # is always under the printed budget plus one read.
+        # The settle window gets the MINIMUM, which is a different question: not "how bad can
+        # a read be here" but "what does a read normally cost".
+        t_rtt = min(t_rtt, t_read_s)
+        t_rtt_budget = max(t_rtt_budget, t_read_s)
+        budget_s = SNIFFER_STATUS_TIMEOUT_S + 2 * t_rtt_budget
         reads += 1
         _assert_state(body, invariants, what,
                       f"on poll read {reads}, while waiting for {key}={expected}")
@@ -436,7 +479,8 @@ def _poll_sniffer_status(api, key, expected, what, invariants=None):
     interval_s = window_s / _SETTLE_MAX_READS
     window_start = time.monotonic()
     when = (f"through the {window_s:.2f}s settle window after {key}={expected} was published "
-            f"(t_rtt {t_rtt:.3f}s)")
+            f"(sized from t_rtt {t_rtt:.3f}s, the FASTEST of the {reads} poll reads — the "
+            f"budget above follows the slowest instead)")
     settle_reads = 0
     while True:
         next_read_at = window_start + settle_reads * interval_s

@@ -19,10 +19,15 @@ from io_bus_helpers import IoBus
 # Per-test budgets for the four tests that call _poll_sniffer_status(). pytest.ini's global
 # timeout is 180 s and its comment covers /settings and the WS handshake, not sniffer-status
 # polling; these carry their own marker instead, which is the convention here (21_, 25_, 27_
-# do the same). Write t_max for the most expensive single status read of the run; t_rtt, the
-# figure the helper measures, is a MINIMUM over reads and so is <= t_max. Per poll SITE:
+# do the same). Write t_max for the most expensive single status read of the run. The helper
+# measures TWO figures over its reads — the slowest, which drives its budget, and the
+# fastest, which sizes its settle window — and both are <= t_max by construction. Per poll
+# SITE:
 #
-#     poll   <= SNIFFER_STATUS_TIMEOUT_S + 2 x t_rtt      (the poll's own budget)
+#     poll   <= SNIFFER_STATUS_TIMEOUT_S                  (the poll's own budget; the helper
+#             + 2 x t_rtt_budget                           drives it from the SLOWEST status
+#                                                          read it has taken so far, so this
+#                                                          term is <= 2 x t_max)
 #             + 2 x SNIFFER_STATUS_TIMEOUT_S              (the read already in flight when
 #                                                          that budget runs out plays out to
 #                                                          its own client timeout — the
@@ -34,15 +39,37 @@ from io_bus_helpers import IoBus
 #                                                          api_client sends `Connection:
 #                                                          close`, so every status read opens
 #                                                          a fresh connection and can spend
-#                                                          the whole timeout in either phase)
+#                                                          the whole timeout in either phase.
+#                                                          Kept even though the connect phase
+#                                                          cannot actually block here — see
+#                                                          the handshake note below — because
+#                                                          the doubling costs 10 s of marker
+#                                                          rather than 120 s)
 #     window <= sniffer_helpers._SETTLE_CEILING_S         (the window's exit test is on a
 #             + 2 x t_max                                  read's START time, so it costs the
 #                                                          read that discovers the window is
 #                                                          over plus the one it queued behind)
 #
 # = 32 s + 4 x t_max per site. On top of that each of these tests opens exactly ONE WebSocket
-# before its first site, and that handshake is 60 + 2 + 60 = 122 s: _ws_connect() makes TWO
-# attempts, each with its OWN 60 s timeout, 2 s apart.
+# before its first site, and the markers below are sized for a 122 s handshake: _ws_connect()
+# makes TWO attempts 2 s apart, each with its own ws.settimeout(60), and 60 + 2 + 60 = 122.
+#
+# That 122 s is a SIZING ASSUMPTION about this environment, phrased like the t_max one below,
+# not a ceiling — websocket-client puts no single deadline on a handshake at all.
+# ws.settimeout(60) lands in sock_opt.timeout (websocket/_core.py), _open_socket() applies it
+# to the socket BEFORE sock.connect() (websocket/_http.py), and the same 60 s then governs
+# each recv while read_headers() reads the response — one BYTE per recv, through
+# _socket.recv_line(), each with a fresh 60 s. So the formal ceiling is not 122 s, and it is
+# not the 242 s that "60 s connect + 60 s headers, twice" suggests either: it is unbounded,
+# and there is no number to raise these markers to. Sizing for the practical figure is
+# therefore the only option, and what makes 122 s the practical figure is the environment:
+# QEMU runs with user-mode networking (`-nic user,model=open_eth,hostfwd=...`,
+# qemu_ports.qemu_nic_arg()), and slirp accepts the host-side connection itself before it
+# even forwards the SYN to the guest — an established fact in this suite, not an assumption
+# made here: conftest._connect_ready_bridge() exists precisely because connect() against a
+# hostfwd port succeeds instantly regardless of firmware state. So the connect phase cannot
+# block on a stalled guest and only the header read can. The retry's own 60 s stays in the
+# number because a first attempt genuinely can burn it — that is what the retry is for.
 #
 # t_max is the term that moves. At <= 1 s — ~10x the ~0.1 s a status read measures against
 # QEMU here — a site costs 36 s. The markers below are sized for t_max <= 8 s (64 s per
@@ -55,14 +82,33 @@ from io_bus_helpers import IoBus
 # backstop what has no client timeout of its own — the 122 s handshake, ws.send(), and the
 # shape of the loops themselves.
 #
-# The numbers below are those two ceilings plus ~40 s for the /info, /sniffer/status and mode
-# POSTs around them, which this round did not touch. They deliberately do NOT stack the
-# pathological ceiling of every independent call (set_port_mode alone is 3 x 30 s + 2 x 0.5 s
-# of retry): that product exceeds any usable marker and describes a run that has already
-# failed for another reason.
-_SNIFFER_POLL_1_SITE_TIMEOUT_S = 240    # 122 + 1 x 64 + allowance
-_SNIFFER_POLL_2_SITE_TIMEOUT_S = 300    # 122 + 2 x 64 + allowance
-_SNIFFER_POLL_3_SITE_TIMEOUT_S = 420    # 122 + 3 x 64 + allowance
+# The numbers below are those two figures plus an allowance for the calls AROUND the sites,
+# which this round did not touch. That allowance is not one number for all three, because the
+# call sets are not the same:
+#
+#   1 site   240 = 122 + 1 x 64 +  54   one /info, at most one extra /sniffer/status read,
+#   2 sites  300 = 122 + 2 x 64 +  50   and TWO set_port_mode POSTs (the setup and the
+#                                       restore in `finally`) — all on ONE port
+#   3 sites  420 = 122 + 3 x 64 + 106   the same for a SECOND port as well: FOUR mode POSTs,
+#                                       two of them in `finally`
+#
+# Those calls cost seconds under QEMU here, not tens of them, so the slack is sized instead
+# for ONE mode POST PER PORT going pathological — 30 s, its client timeout — with the /info
+# and the status read inside what is left. That is the whole of the difference between ~50 s
+# on the one-port tests and ~106 s on the two-port one; the markers are then rounded up to
+# 240/300/420.
+#
+# They deliberately do NOT stack the pathological ceiling of every independent call.
+# set_port_mode alone is up to 3 x 60 s + 2 x 0.5 s = 181 s: it retries a transient ESP_FAIL
+# twice at 0.5 s, and every one of its three attempts goes through the same session with
+# `Connection: close` and timeout=30, so by the connect-and-read rule above each can spend
+# 30 s in either phase (api_client.py) — that 181 s is the FORMAL ceiling, the same kind of
+# number the handshake note above declines to size for. Stacking figures like that across
+# four such calls exceeds any usable marker and describes a run that has already failed for
+# another reason.
+_SNIFFER_POLL_1_SITE_TIMEOUT_S = 240
+_SNIFFER_POLL_2_SITE_TIMEOUT_S = 300
+_SNIFFER_POLL_3_SITE_TIMEOUT_S = 420
 
 
 @pytest.fixture(scope="module", autouse=True)
