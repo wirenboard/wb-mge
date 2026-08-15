@@ -1,301 +1,706 @@
+// CI node load generator - an experiment tool, not part of the product build.
+//
+// Why this branch exists: the QEMU e2e suite used to collapse under CPU contention
+// (data-path tests reading back zero bytes). It is green for 16 consecutive builds now,
+// but the shared node was idle for every one of those builds, so the regime that actually
+// produced the failures has never been re-tested. Green-on-an-idle-node is not evidence
+// that the contention bug is fixed. This job puts deliberate, measurable load on a chosen
+// node so the e2e suite can be re-run against a machine that is genuinely busy, and the
+// oversubscription factor can be dialled to the ~1.5x previously measured as enough to
+// reproduce the cascade.
+//
+// THE INVARIANT THIS FILE IS BUILT AROUND: a green build must never mean "load was
+// silently absent". The conclusion drawn from such a build ("e2e is green under load")
+// would be false, and nothing downstream could tell it from a real result.
+//
+// That invariant is enforced by ONE measured property, not by a list of failure shapes:
+// after the loop, the job knows how many SECONDS it actually spent loading the node, and
+// it fails unless that covers enough of the requested window (see the coverage check at
+// the end of the Load stage). This is deliberate. Earlier revisions enumerated specific
+// ways the loop could spin without loading anything - a fast-failure streak, an iteration
+// cap, an overrun trim - and every review round found another shape that was not on the
+// list (an infrastructure failure on iteration 1; exiting on the deadline with the
+// failure streak still below its threshold). Enumeration cannot be completed; measuring
+// the thing we actually care about can.
+//
+// So the division of labour is strict, and worth keeping strict:
+//   * COVERAGE is the ONLY check that decides whether a run counts. Nothing else sets
+//     `invalid`.
+//   * The streak counter, the iteration cap, the overrun trim and the deadline decide only
+//     WHEN TO STOP EARLY. They are optimisations: they end a doomed run in minutes instead
+//     of hours, and they must not condemn one. A run that loaded the node for 83% of its
+//     window and then hit three fast failures at the end has measured exactly what this
+//     experiment set out to measure - the suite degrading under load - and throwing that
+//     result away because of the shape of its tail would be wrong.
+//   * The disk floor is not a validity check at all. It protects the MEASURED run from an
+//     ENOSPC that would surface as a firmware failure, and it too only stops the loop.
+//
+// Why the load is the QEMU e2e suite and not a compile: the configuration that
+// historically failed was two QEMU suites co-resident on one node. A C compile competes
+// for CPU only, whereas a second emulator competes for the things QEMU is actually
+// sensitive to - scheduling latency, timer fidelity, and the slirp network path.
+//
+// Based on fix/vvzvlad-e2e-test-stabilization rather than main on purpose:
+// WB_MGE_PORT_SLOT and the per-tree flock barrier exist only on that branch
+// (`git grep -l WB_MGE_PORT_SLOT` finds nothing on main). Without them two QEMU runs on
+// one host fight over fixed host ports, and the experiment would measure a port collision
+// instead of CPU contention.
+//
+// PORT SLOT - the single most important correctness property of this job. The measured
+// e2e stage on the base branch sets `WB_MGE_PORT_SLOT = "${env.EXECUTOR_NUMBER ?: 0}"`,
+// i.e. its slot is its executor index. If this job took the same slot,
+// conftest._check_no_stale_qemu() would see our ports occupied and call
+// pytest.exit(returncode=1) on whichever run started second - the load generator would
+// abort the very run it exists to load, and it would look like a firmware regression.
+// So our slot is offset by a band base of 100.
+//
+// It is resolved on the JENKINS side, for the reason the base branch states for its own:
+// EXECUTOR_NUMBER is certainly defined there, and is NOT guaranteed to survive into the
+// container's shell. Relying on qemu_ports.py's own EXECUTOR_NUMBER fallback would be
+// unsafe precisely because that fallback is silent - _slot_from_env() ends in
+// `return 0, "default"`, so a variable that failed to reach the container yields slot 0,
+// which is also the measured build's slot when it sits on executor 0. Passing the value
+// through the `environment` directive is what makes it reach the container, and the
+// preflight below asserts that it actually arrived rather than assuming it.
+//
+// Deliberately absent: no archiveArtifacts, no junit, no S3 upload, no release steps, no
+// notifications, no copyArtifactPermission. This job is launched many times and thrown
+// away; anything it published would be noise in the artifact store and could be mistaken
+// for a real build result - the load suite's own pass/fail is meaningless here, since it
+// is a resource consumer, not a test.
+//
+// Also deliberately absent: disableConcurrentBuilds(). Running several instances at once
+// is how the oversubscription factor is dialled up, so concurrency is the feature here.
+// api_tests/qemu_ports.py's docstring assumes the product Jenkinsfile's
+// disableConcurrentBuilds() serialises same-branch builds; dropping it does not break the
+// "one run per tree, one slot per concurrent run" contract, because Jenkins gives each
+// concurrent build its own workspace (workspace@2, @3, ...) - the per-tree half - and its
+// own executor, which yields a distinct slot via the band above.
+//
+// WHAT THIS JOB LEAVES ON THE NODE, since it is not nothing:
+//   * a full ESP-IDF build tree (build/, release/, test artifacts) per workspace, and one
+//     workspace PER CONCURRENT BUILD (workspace@2, @3, ...) because concurrency is
+//     deliberate here. Disk is the one shared resource that can BREAK the measured run
+//     rather than merely slow it: ENOSPC inside its `make qemu-test` surfaces as a
+//     firmware failure. Hence both a df probe in the metrics and a free-space floor
+//     checked before each iteration, plus `deleteDir()` when the stage ends. Tradeoff,
+//     accepted knowingly: a clean workspace means the next build's first iteration pays a
+//     full firmware build - more load per iteration, fewer iterations, and a
+//     first-iteration duration not comparable with later ones.
+//   * a Docker image. The declarative `dockerfile` agent tags the image by a hash of the
+//     DOCKERFILE, not of the build context, so this job and the measured build share a tag
+//     whenever their Dockerfiles match - which they do. That is safe ONLY because the
+//     build context is also identical: `patches/` and `api_tests/requirements.txt` are
+//     byte-for-byte the same on both branches today (verified with git diff). If anyone
+//     edits those paths HERE, both jobs keep resolving to the one tag while their contexts
+//     differ, and the MEASURED run could be handed an image built from this branch - a
+//     firmware difference that would look like a regression in the suite under test.
+//     DO NOT modify Dockerfile, patches/ or api_tests/requirements.txt on this branch.
+//   * its console log, bounded by buildDiscarder below.
+
+// Shared by the `when` guard and the Load stage so the two cannot disagree about whether
+// there is work to do. Returns -1 for a value that is not a non-negative integer, which
+// the Plan stage rejects outright: '1.5' and '90m' silently becoming 0 would mean a green
+// build with no load, which is the one outcome this file must never produce. An EMPTY
+// value is a separate, legitimate case - the branch's first build, before the parameter
+// exists - and resolves to 0. `when` reads anything <= 0 as "no work".
+int resolvedMinutes() {
+    String raw = (params.MINUTES ?: '').toString().trim()
+    if (!raw) {
+        return 0  // first build of the branch: the parameter is not defined yet
+    }
+    if (!raw.isInteger()) {
+        return -1
+    }
+    int value = raw.toInteger()
+    return value < 0 ? -1 : value
+}
+
+// Used by BOTH the agent label and the banner, so the log can never claim a different
+// target than the one the label actually asked for. Whitespace is trimmed because ' ' is
+// truthy in Groovy: a copy-pasted trailing space would otherwise survive the elvis
+// fallback and become a label no node matches, whose failure mode is a silent queue wait
+// rather than an error message.
+String resolvedTargetNode() {
+    return ((params.TARGET_NODE ?: '').toString().trim() ?: 'build-node-1-vm')
+}
+
+// MUST stay in sync with the timeout in options{} below. Kept as a plain number there
+// because a method call in the options directive is a parse risk not worth taking; kept
+// here so Plan can reject a MINUTES that could only ever end in an ABORTED build.
+int pipelineTimeoutMinutes() {
+    return 360
+}
+
+// The band base. Anything below this is a slot the measured e2e build could also pick,
+// since its slot is its executor index.
+int slotBandBase() {
+    return 100
+}
+
+// Upper sanity bound, kept in ONE place. 734 is qemu_ports._MAX_SLOT only on a host with
+// the default ephemeral floor of 32768: the real ceiling is derived from that host's
+// ip_local_port_range, so a host configured `25000 65535` allows only 0..249. This check
+// is therefore a cheap early rejection of obvious nonsense (-1, 99999), not the authority
+// - qemu_ports._parse_slot re-checks against the real floor and raises with the exact
+// range for that host.
+boolean slotIsObviouslyOutOfRange(int slot) {
+    return slot < 0 || slot > 734
+}
+
+// Resolved Jenkins-side (see the header). Band base + executor index keeps us clear of
+// the measured build's slots as long as the node has at most 100 executors; beyond that
+// the bands would start to overlap and the base would need raising.
+int resolvedSlot() {
+    String explicit = (params.PORT_SLOT ?: '').toString().trim()
+    if (explicit) {
+        return explicit.toInteger()
+    }
+    String raw = (env.EXECUTOR_NUMBER ?: '').toString().trim()
+    return slotBandBase() + (raw.isInteger() ? raw.toInteger() : 0)
+}
+
 pipeline {
-    agent {
-        dockerfile {
-            reuseNode true
-            label 'devenv'
-            args '--entrypoint=""'
-        }
-    }
+    // `agent none` is load-bearing, not tidiness. With a pipeline-level agent, Jenkins
+    // allocates the executor, runs `checkout scm` and runs `docker build` BEFORE any
+    // stage's steps - so a MINUTES=0 build would still pull an image and occupy the node,
+    // possibly while the measured 2-hour run is in progress. The agent therefore lives in
+    // the Load stage, gated by `when { beforeAgent true }`.
+    agent none
+
     options {
-        copyArtifactPermission('/s3_uploader');
-        // Serialise builds of this branch. This is about the QEMU e2e suite, not tidiness:
-        // that suite is CPU-starvation sensitive, and under contention its data-path tests
-        // get exactly zero bytes back (sent=..., got='' — never a partial read, and the
-        // firmware does not crash). Two builds of the same branch running the e2e stage at
-        // the same time on the same node ARE that contention, self-inflicted. Observed live:
-        // builds #2 and #4 of this branch ran the QEMU stage simultaneously on
-        // build-node-1-vm. Measured elsewhere: ~1.5x CPU oversubscription is already enough
-        // to reproduce the cascade, while with no contention the same suite is green three
-        // runs in a row. Removing this to drain the queue faster brings the flakiness back.
-        //
-        // Residual limitation, deliberately not solved here: this only stops the branch from
-        // doubling up on ITSELF. The node is shared — wb-release-tests, wb-mqtt-zigbee,
-        // release-test-orchestrator (x2) and wb-office-bot were all co-resident during the
-        // runs above — and nothing in this file isolates the suite from them. The fixes for
-        // that (a dedicated executor, a lock() from the Lockable Resources plugin, or cpuset
-        // pinning) are owner-level CI decisions, and the installed plugin set could not be
-        // confirmed from here.
-        disableConcurrentBuilds();
+        // Bounds two unbounded waits. First, a typo in TARGET_NODE produces a label no
+        // node matches, and the build then waits in the queue FOREVER and silently - with
+        // no disableConcurrentBuilds() those would pile up invisibly. Second, a hung
+        // `make qemu-test` is bounded by nothing: pytest-timeout covers individual tests,
+        // not the firmware build or QEMU bring-up, so load could otherwise continue long
+        // past the end of the measured run and land on unrelated jobs.
+        // 6 HOURS - keep in sync with pipelineTimeoutMinutes() above.
+        timeout(time: 6, unit: 'HOURS')
+        // This job publishes no artifacts, so its logs are most of what it leaves behind.
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
+
     parameters {
-        booleanParam(name: 'UPLOAD_FROM_BRANCH', description: 'Upload results to S3 even if it is not master branch', defaultValue: false)
-        // TEMPORARY on this branch: coverage is off by default so a build runs the e2e suite
-        // once instead of twice — 'Coverage (QEMU e2e)' re-runs the whole suite on an
-        // instrumented build. Flip back to true once the suite is settled and gating.
-        booleanParam(name: 'RUN_COVERAGE', description: 'Run coverage (unit tests; the QEMU e2e and combined reports also need RUN_E2E). Temporarily off by default while the e2e suite is being stabilised', defaultValue: false)
-        booleanParam(name: 'RUN_E2E', description: 'Run the QEMU e2e API suite; on by default. The QEMU coverage stage additionally needs RUN_COVERAGE', defaultValue: true)
+        string(
+            name: 'TARGET_NODE',
+            defaultValue: 'build-node-1-vm',
+            description: 'Node label to load. Point this at the node the e2e suite is actually occupying - loading the other node generates no contention for it. Prefer a concrete node name over the shared "devenv" label, which could place this build on either node.'
+        )
+        string(
+            name: 'MINUTES',
+            defaultValue: '0',
+            description: 'Length of the load window in minutes; must be a non-negative integer, and 0 means do nothing and finish green. NOT a precise duration in either direction: the deadline is only checked between iterations, so the last one may overrun it, and an iteration that plainly cannot fit is not started, so real load can end early by up to the length of the longest iteration. Set it generously - the "COVERAGE" line at the end of the log reports how much of the window was actually under load.'
+        )
+        string(
+            name: 'PORT_SLOT',
+            defaultValue: '',
+            description: 'Escape hatch only: forces WB_MGE_PORT_SLOT. Leave EMPTY (the default) so the slot is 100 + EXECUTOR_NUMBER, which cannot collide with the measured build slot of EXECUTOR_NUMBER.'
+        )
     }
 
     stages {
-        stage('Cleanup workspace') {
+        // Runs without a node (inherits `agent none`): `echo` and `error` need no
+        // workspace, so the no-op and reject paths cost nothing at all - no executor, no
+        // checkout, no docker build.
+        stage('Plan') {
             steps {
                 script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make clean"'
-                    sh 'rm -rf result/'
-                }
-            }
-        }
-        stage('Lint frontend (ESLint)') {
-            steps {
-                // catchError keeps build UNSTABLE (yellow) on lint failure — subsequent stages still run
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh 'bash -c "make lint-frontend"'
-                }
-            }
-            post {
-                always {
-                    junit testResults: 'build/eslint_report.xml', allowEmptyResults: true
-                    archiveArtifacts artifacts: "build/eslint_report.xml", allowEmptyArchive: true
-                }
-            }
-        }
-        stage('Lint comments') {
-            steps {
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh 'make lint-comments'
-                }
-            }
-        }
-        stage('Unit tests (C)') {
-            steps {
-                script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make -j unittests"'
-                }
-            }
-            post {
-                always {
-                    // Aggregate Unity stdout logs into a JUnit XML; run even on test failure
-                    sh 'python3 scripts/unity_to_junit.py --output build/unittests_report.xml --logs unittests || true'
-                    junit testResults: 'build/unittests_report.xml', allowEmptyResults: true
-                    archiveArtifacts artifacts: "build/unittests_report.xml", allowEmptyArchive: true
-                }
-            }
-        }
-        stage('Unit tests (frontend)') {
-            steps {
-                script {
-                    sh 'make test-frontend'
-                }
-            }
-            post {
-                always {
-                    junit testResults: 'build/vitest_report.xml', allowEmptyResults: true
-                    archiveArtifacts artifacts: "build/vitest_report.xml", allowEmptyArchive: true
-                }
-            }
-        }
-        stage('Build frontend') {
-            steps {
-                script {
-                    sh 'make build-frontend'
-                }
-            }
-        }
-        stage('Build firmware') {
-            steps {
-                script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make build-idf-project"'
-                    // copy binaries to separate 'result' directory because s3_uploader job searches for files there
-                    sh 'mkdir -p result && cp release/*.bin result/'
-                }
-            }
-            post {
-                success {
-                    archiveArtifacts artifacts: "result/*.bin"
-                }
-            }
-        }
-        stage('Lint C (clang-tidy)') {
-            steps {
-                // catchError keeps build UNSTABLE (yellow) on lint findings — S3 Upload still runs
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make lint-c"'
-                }
-            }
-            post {
-                always {
-                    // wb_clang_tidy.py writes findings to /tmp/clang-tidy-out and logs to
-                    // /tmp/clang-tidy-log — copy into workspace so they survive as artifacts
-                    sh '''
-                        mkdir -p build/clang-tidy
-                        cp -r /tmp/clang-tidy-out /tmp/clang-tidy-log build/clang-tidy/ 2>/dev/null || true
-                    '''
-                    archiveArtifacts artifacts: "build/clang-tidy/**", allowEmptyArchive: true
-                }
-            }
-        }
-        stage('E2E tests (QEMU)') {
-            // This suite REPORTS, it does not gate. The catchError below downgrades a failure
-            // to UNSTABLE (yellow), so a red suite here never fails the build and never blocks
-            // a merge — read it as a signal to investigate, not as a verdict.
-            //
-            // Gating is the goal, and the deferral is deliberate rather than lazy. The suite is
-            // starvation-sensitive (see the disableConcurrentBuilds comment in options): on a
-            // busy node its data-path tests read back zero bytes and the run goes red without
-            // any regression having happened. A gate that fires mostly because the node was
-            // busy is one people learn to click past, and a gate nobody believes is worse than
-            // no gate — it also devalues the red builds that are real.
-            //
-            // Criterion for flipping this to gating: the suite green for 10 consecutive builds
-            // on a node where it is not competing for CPU. Three clean runs is what we have so
-            // far, which is not enough to tell a fixed suite from a lucky one. When that holds,
-            // flip it by deleting the catchError wrapper below and leaving the post block as is.
+                    int minutes = resolvedMinutes()
+                    String rawMinutes = (params.MINUTES ?: '').toString().trim()
 
-            // Host-port isolation for the suite. Every host port it touches (QEMU hostfwd
-            // targets, the two UART chardevs, the UDP IO bus) is derived from this one
-            // integer by api_tests/qemu_ports.py, so two builds that land on the same node
-            // no longer fight over 8080/50502-4/5561-2.
-            //
-            // EXECUTOR_NUMBER is Jenkins' per-executor index on the node, which is exactly
-            // the granularity wanted: one concurrent build per executor, so distinct
-            // concurrent builds get distinct blocks. This is CROSS-JOB isolation —
-            // disableConcurrentBuilds() in options already serialises this branch against
-            // ITSELF, and the residual exposure named in that comment is the other jobs
-            // sharing the node (wb-release-tests, wb-mqtt-zigbee, ...). It does not fix CPU
-            // contention, which is a separate and unsolved problem; it fixes the part where
-            // two suites also collided on ports.
-            //
-            // Set here rather than left to qemu_ports' own EXECUTOR_NUMBER fallback: this
-            // resolves EXECUTOR_NUMBER on the Jenkins side, where it is certainly defined,
-            // instead of assuming it survives into the container's shell environment. The
-            // fallback stays as a backstop for e2e runs started outside these stages.
-            // '?: 0' guards the null EXECUTOR_NUMBER; an empty value would resolve to slot 0
-            // too (qemu_ports treats an empty WB_MGE_PORT_SLOT as unset rather than raising).
-            //
-            // Ports are only half of it: the OTHER half is that each run needs its own
-            // WORKING TREE, which Jenkins gives us for free (one workspace per job) and
-            // which is now enforced with an flock on .e2e-tree.lock in the workspace root
-            // — taken by `make qemu-test` around its whole recipe (api_tests/tree_lock.py),
-            // so it covers the firmware build too, and re-checked inside pytest.
-            environment { WB_MGE_PORT_SLOT = "${env.EXECUTOR_NUMBER ?: 0}" }
-            // '!= false' is load-bearing: on the first build after a parameter default changes,
-            // the parameters block has not taken effect yet and params.RUN_E2E is null. This
-            // parameter defaults to ON, so null must mean "enabled"; in Groovy 'null != false'
-            // is true, so the stage still runs. RUN_COVERAGE below defaults OFF and uses the
-            // mirror-image '== true' for the same reason — the two idioms differ on purpose.
-            when { expression { params.RUN_E2E != false } }
-            steps {
-                // catchError keeps build UNSTABLE (yellow) on e2e failure — S3 Upload still runs
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    // The resolved slot and its port block are printed in the pytest report
-                    // header, so the build log answers "did this actually take effect?"
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make qemu-test"'
-                }
-            }
-            post {
-                always {
-                    // Publish JUnit results so failed tests appear in Jenkins "Tests" tab
-                    junit testResults: 'build/qemu_test_report.xml', allowEmptyResults: true
-                    // Archive QEMU log and JUnit XML for debugging regardless of test outcome
-                    archiveArtifacts artifacts: "build/qemu_test.log,build/qemu_test_report.xml", allowEmptyArchive: true
-                }
-            }
-        }
-        // Coverage stages run before the S3 upload; catchError keeps the build UNSTABLE
-        // (yellow) on coverage failure so the firmware upload still runs. Unit coverage needs
-        // only RUN_COVERAGE; the QEMU one additionally needs RUN_E2E, because it re-runs the
-        // e2e suite (see that stage). When it runs, it runs after the clean e2e stage.
-        // '== true' is deliberate, and it flipped together with the default: the parameters
-        // block only takes effect for the NEXT run, so on the first build after the default
-        // changed params.RUN_COVERAGE is null. The default is now OFF, so that null has to
-        // read as "disabled" — in Groovy 'null == true' is false, so the stage is skipped.
-        // (It was '!= false' while the default was ON, for the mirror-image reason.)
-        stage('Coverage (unit tests)') {
-            when { expression { params.RUN_COVERAGE == true } }
-            steps {
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make coverage"'
-                    // Reached only when 'make coverage' exits 0; on failure catchError aborts
-                    // the block and the flag stays unset — see 'Coverage (combined)' below
-                    script { env.UNIT_COVERAGE_OK = 'true' }
-                }
-            }
-            post {
-                always {
-                    // Also archive the per-test gcovr tracefiles under unittests/*/covr_report/ —
-                    // they are the input 'make coverage-combined' merges, not just a rendered report
-                    archiveArtifacts artifacts: "covr_report/**,unittests/**/covr_report/**", allowEmptyArchive: true
+                    if (minutes < 0) {
+                        error("MINUTES='${rawMinutes}' is not a non-negative integer. A value like '1.5' or '90m' " +
+                              "would otherwise resolve to 0 and finish green with no load generated, which is " +
+                              "indistinguishable from a successful experiment.")
+                    }
+
+                    // A window at or beyond the pipeline timeout can only ever end in an
+                    // ABORTED build, hours later. Reject it here instead.
+                    if (minutes >= pipelineTimeoutMinutes()) {
+                        error("MINUTES=${minutes} is at or beyond the ${pipelineTimeoutMinutes()}-minute pipeline " +
+                              "timeout, so the build would be aborted before finishing. Use a shorter window, or run " +
+                              "several builds back to back.")
+                    }
+                    if (minutes > pipelineTimeoutMinutes() - 60) {
+                        echo "WARNING: MINUTES=${minutes} leaves under an hour before the " +
+                             "${pipelineTimeoutMinutes()}-minute pipeline timeout. The image build plus a final " +
+                             "overrunning iteration may not fit, and the build would be aborted rather than " +
+                             "reporting its coverage."
+                    }
+
+                    // Validated here rather than in the Load stage so a bad value fails
+                    // before an executor is taken. Passing e.g. -1 or 99999 through would
+                    // raise at module import inside EVERY iteration.
+                    String explicitSlot = (params.PORT_SLOT ?: '').toString().trim()
+                    if (explicitSlot) {
+                        if (!explicitSlot.isInteger()) {
+                            error("PORT_SLOT='${explicitSlot}' is not an integer. Leave it empty to use ${slotBandBase()} + EXECUTOR_NUMBER.")
+                        }
+                        int slot = explicitSlot.toInteger()
+                        if (slotIsObviouslyOutOfRange(slot)) {
+                            error("PORT_SLOT=${slot} is not a plausible slot. Leave it empty to use ${slotBandBase()} + EXECUTOR_NUMBER.")
+                        }
+                        if (slot < slotBandBase()) {
+                            echo "WARNING: PORT_SLOT=${slot} is below the band base ${slotBandBase()}, so it is a slot the " +
+                                 "measured e2e build could also pick (its slot is its EXECUTOR_NUMBER). If both land on " +
+                                 "the same node and the same slot, whichever starts second aborts on the stale-QEMU " +
+                                 "port preflight - and it will look like a firmware failure."
+                        }
+                    }
+
+                    if (minutes == 0) {
+                        echo "MINUTES='${rawMinutes}' (empty means the parameter does not exist yet, on the branch's " +
+                             "first build) -> nothing to do, exiting green. No node allocated, no image built. " +
+                             "Use 'Build with Parameters' and set MINUTES > 0 to generate load."
+                    } else {
+                        echo "Will load '${resolvedTargetNode()}' for ${minutes} min."
+                    }
                 }
             }
         }
-        stage('Coverage (QEMU e2e)') {
-            // Gated on RUN_E2E as well: 'make qemu-coverage' re-runs the very same e2e suite on
-            // an instrumented build, so turning the gate off keeps that second, slower run out
-            // of the build — the plain 'E2E tests (QEMU)' stage above already published junit.
-            // Null-handling follows each parameter's own default: RUN_E2E defaults ON so null
-            // means enabled ('!= false'), RUN_COVERAGE defaults OFF so null means disabled
-            // ('== true'). The two idioms differ on purpose — do not unify them.
-            // Same port slot as the clean e2e stage above, for the same reason: this stage
-            // re-runs the whole suite, so it brings up its own QEMU and needs its own host
-            // port block. The two stages never overlap in time (they are sequential within
-            // one build), so sharing the executor's slot is correct, not a collision.
-            environment { WB_MGE_PORT_SLOT = "${env.EXECUTOR_NUMBER ?: 0}" }
-            when { expression { params.RUN_COVERAGE == true && params.RUN_E2E != false } }
+
+        stage('Load') {
+            // `beforeAgent true` is the load-bearing part: without it the condition is
+            // evaluated only after the node and the image have already been taken, which
+            // is exactly the cost this guard exists to avoid.
+            when {
+                beforeAgent true
+                expression { resolvedMinutes() > 0 }
+            }
+            agent {
+                // No `reuseNode` here: it only means "reuse the top-level agent's node and
+                // workspace", and with `agent none` above there is no such node, so it
+                // would be an inert directive that reads as if it did something.
+                dockerfile {
+                    label "${resolvedTargetNode()}"
+                    args '--entrypoint=""'
+                }
+            }
+            // Evaluated after the agent is allocated, so EXECUTOR_NUMBER is defined. The
+            // `environment` directive is also what guarantees the value reaches the
+            // container's shell - the assumption the base branch explicitly refuses to
+            // make about EXECUTOR_NUMBER itself.
+            environment {
+                WB_MGE_PORT_SLOT = "${resolvedSlot()}"
+            }
             steps {
-                // Re-runs the e2e suite on an instrumented firmware build with reboot/OTA tests
-                // deselected (--without-reboot: a reboot zeroes the in-RAM gcov counters).
-                // Both stages share the RUN_E2E gate, so whenever this stage runs the earlier
-                // 'E2E tests (QEMU)' stage on the clean build ran too and stays authoritative
-                // for test results — this stage deliberately publishes NO junit results.
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make qemu-coverage"'
-                    // Reached only when 'make qemu-coverage' exits 0 — see 'Coverage (combined)'
-                    script { env.QEMU_COVERAGE_OK = 'true' }
+                script {
+                    // An iteration shorter than this did not meaningfully load the node,
+                    // whatever its exit code.
+                    final int LOAD_FLOOR_SECONDS = 300
+                    final int NO_LOAD_LIMIT = 3
+                    // A bound on the flow graph, NOT a health signal: each iteration adds
+                    // several nodes to the pipeline flow graph, persisted in program.dat on
+                    // the shared controller. Reaching the cap does not condemn the run -
+                    // "one loaded iteration, one instant failure, repeat" gets here with
+                    // coverage above 100%, i.e. the node was busy for the whole window, and
+                    // the load suite's own failures say nothing (it is a resource consumer,
+                    // not a test). Like every other stop condition it only ends the loop;
+                    // coverage alone decides whether the run counts.
+                    final int MAX_ITERATIONS = 200
+                    // Fraction of the requested window that must actually have been under
+                    // load. Derived from the overrun trim's own worst case: with a single
+                    // iteration longer than half the window the trim legitimately stops
+                    // after one round (request 120 min, iteration 70 min -> 58%), so a
+                    // healthy run can sit just above 50%, while anything below it means
+                    // most of the window was idle. Coverage ABOVE 100% is normal and not an
+                    // error - the last iteration is never killed mid-flight, so it overruns.
+                    final int MIN_COVERAGE_PCT = 50
+                    // Free-space floor, in KiB, checked before each iteration. An ESP-IDF
+                    // build tree is a couple of GB and several may be co-resident; stopping
+                    // at 5 GiB leaves the measured run room rather than racing it to ENOSPC.
+                    final long DISK_FLOOR_KB = 5L * 1024L * 1024L
+
+                    int minutes = resolvedMinutes()
+                    String targetNode = resolvedTargetNode()
+                    int slot = resolvedSlot()
+
+                    // Belt and braces: the explicit param was checked in Plan, but the
+                    // computed band base + EXECUTOR_NUMBER could only be checked here,
+                    // once an executor exists.
+                    if (slotIsObviouslyOutOfRange(slot)) {
+                        error("Resolved port slot ${slot} is not plausible (EXECUTOR_NUMBER='${env.EXECUTOR_NUMBER}'). Set PORT_SLOT explicitly.")
+                    }
+
+                    // NODE_NAME, not TARGET_NODE: the parameter is a LABEL, so an operator
+                    // who passes 'devenv' (as the product Jenkinsfile uses) gets either
+                    // node while the banner would still read 'devenv'. Co-residency is the
+                    // claim this experiment rests on, and differing EXECUTOR_NUMBERs prove
+                    // nothing without a common node - while identical ones on different
+                    // nodes are normal rather than a collision. These come from Jenkins,
+                    // not the container's shell, for the same reason the slot does.
+                    String identity = "[LOADGEN-METRICS] where: NODE_NAME=${env.NODE_NAME} " +
+                                      "EXECUTOR_NUMBER=${env.EXECUTOR_NUMBER} WB_MGE_PORT_SLOT=${slot} " +
+                                      "JOB=${env.JOB_NAME}#${env.BUILD_NUMBER} WORKSPACE=${env.WORKSPACE}"
+
+                    echo """
+========================================================================
+CI NODE LOAD GENERATOR
+  requested label : ${targetNode}
+  actual node     : ${env.NODE_NAME}
+  window          : ${minutes} min (approximate - see MINUTES description)
+  load command    : make qemu-test (QEMU e2e suite, looped)
+  port slot       : ${slot} ${(params.PORT_SLOT ?: '').toString().trim() ? '(forced via PORT_SLOT)' : "(${slotBandBase()} + EXECUTOR_NUMBER)"}
+========================================================================
+"""
+                    echo identity
+
+                    // Machine metrics must come from INSIDE the container, unlike the
+                    // identity line above. Prefixed so the series can be lifted out of the
+                    // log with `grep LOADGEN-METRICS`. Measured on build-node-1-vm by
+                    // build #7: nproc=16, 32 GB RAM, ~105 GB free disk, and loadavg
+                    // 0.81/0.99/1.18 with one measured e2e build running - i.e. a single
+                    // e2e suite leaves the node almost entirely idle, which is why
+                    // several concurrent instances of this job are needed to reach the
+                    // ~1.5x oversubscription that reproduces the cascade. Each probe is
+                    // guarded because a missing tool must never abort a multi-hour run:
+                    // `free` ships in procps, which is not guaranteed in the devenv image.
+                    String metricsCmd = '''
+echo "[LOADGEN-METRICS] nproc=$(nproc 2>/dev/null || echo unknown)"
+echo "[LOADGEN-METRICS] loadavg=$(cat /proc/loadavg 2>/dev/null || echo unknown)"
+if command -v free >/dev/null 2>&1; then
+    free -m | sed 's/^/[LOADGEN-METRICS] free: /'
+else
+    echo "[LOADGEN-METRICS] free: procps not installed, falling back to /proc/meminfo"
+    head -3 /proc/meminfo | sed 's/^/[LOADGEN-METRICS] free: /'
+fi
+if DF_OUT="$(df -Pk . 2>&1)"; then
+    echo "$DF_OUT" | sed 's/^/[LOADGEN-METRICS] disk: /'
+else
+    echo "[LOADGEN-METRICS] disk: unavailable ($DF_OUT)"
+fi
+'''
+
+                    echo '[LOADGEN] baseline measurement before any load'
+                    sh metricsCmd
+
+                    // PREFLIGHT: assert the slot, do not merely observe it. `make
+                    // qemu-ports` exits 0 even when WB_MGE_PORT_SLOT never reached the
+                    // container - qemu_ports would then fall back to EXECUTOR_NUMBER (the
+                    // measured build's own slot: a direct collision) or to the silent
+                    // `return 0, "default"`. Both print a perfectly healthy-looking line.
+                    // So we match the NUMBER and the SOURCE, which is the last automatic
+                    // path to an undetected collision.
+                    //
+                    // Captured into a variable rather than piped into grep because `make`
+                    // must not sit on the LEFT of a pipe - the pipeline's exit status would
+                    // be grep's and a failing make would go unnoticed. The output is
+                    // captured with 2>&1 and echoed on BOTH paths because qemu.mk's own
+                    // failure guidance ("could not derive the QEMU ports... run this to see
+                    // the real error") is printed to STDOUT, so on the failure path it ends
+                    // up in the variable; without the explicit echo, the error() below
+                    // would tell the reader to consult output that never reached the log.
+                    // Format per api_tests/qemu_ports.py port_summary():
+                    //   "slot {SLOT} (from {SLOT_SOURCE}): web=... uart2=..."
+                    int slotRc = sh(
+                        returnStatus: true,
+                        script: """
+set -e
+if ! OUT="\$(make qemu-ports 2>&1)"; then
+    echo "\$OUT" | sed 's/^/[LOADGEN-METRICS] ports: /'
+    exit 1
+fi
+echo "\$OUT" | sed 's/^/[LOADGEN-METRICS] ports: /'
+echo "\$OUT" | grep -q "^slot ${slot} (from WB_MGE_PORT_SLOT)"
+"""
+                    )
+                    if (slotRc != 0) {
+                        error("Port-slot preflight failed (exit ${slotRc}): expected 'slot ${slot} (from WB_MGE_PORT_SLOT)'. " +
+                              "Either make qemu-ports failed (its output is above, prefixed 'ports:'), or " +
+                              "WB_MGE_PORT_SLOT did not reach the container and qemu_ports fell back to EXECUTOR_NUMBER " +
+                              "or the default slot 0 - both of which can be the measured build's slot. Refusing to " +
+                              "generate load: a run that collides with the suite it is meant to load would abort that " +
+                              "suite and look like a firmware regression.")
+                    }
+
+                    // PREFLIGHT: build the frontend once, before the load window opens.
+                    //
+                    // Why this exists even though `make qemu-test` builds its own firmware:
+                    // the firmware EMBEDS the built frontend from main/frontend/dist
+                    // (favicon.webp, index.{html,js,css}.gz, roboto-*.woff2), and cmake
+                    // fails at GENERATE time when those files are missing. The measured
+                    // branch creates them in its own stage('Build frontend'), which runs
+                    // before its firmware and e2e stages in the same workspace; this job
+                    // goes straight to qemu-test, so nothing had ever created dist/.
+                    //
+                    // DO NOT REMOVE THIS AS REDUNDANT. It was found by this job's own
+                    // no-load guard on its first real run (build #7): every iteration died
+                    // in ~25s with "Cannot find source file: .../frontend/dist/favicon.webp"
+                    // and the run was correctly reported as zero coverage. Deleting this
+                    // step restores that failure exactly.
+                    //
+                    // Once per BUILD is enough: nothing in the loop deletes dist/ - the loop
+                    // never runs `make clean` - and the frontend cannot change between
+                    // iterations. A new build re-creates it naturally, since the stage ends
+                    // with deleteDir().
+                    //
+                    // Fatal on failure, for the same reason the slot probe is: without dist/
+                    // no iteration can ever load the node, so continuing would burn the
+                    // whole window producing nothing.
+                    //
+                    // No `source /opt/esp/idf/export.sh` here: Makefile's build-frontend is
+                    // `cd main/frontend && npm install && npm run build`, pure npm with no
+                    // IDF tooling - which is why the measured branch also invokes it as a
+                    // bare `sh 'make build-frontend'`. Matching it keeps the two identical.
+                    //
+                    // Placed BEFORE startEpoch is taken, so the npm install counts toward
+                    // neither the deadline nor loadedSeconds: it is setup, not load.
+                    //
+                    // Output is captured rather than piped (same reason as make above: on
+                    // the left of a pipe its status is lost) and echoed in full on failure;
+                    // on success only the tail, because npm install is thousands of lines
+                    // and the interesting part is the build result. The postcondition is
+                    // asserted directly - dist/ present and non-empty - rather than trusting
+                    // the exit code, since that is the property the firmware build needs.
+                    int frontendRc = sh(
+                        returnStatus: true,
+                        script: '''
+set -e
+if ! OUT="$(make build-frontend 2>&1)"; then
+    echo "$OUT" | sed 's/^/[LOADGEN-METRICS] frontend: /'
+    exit 1
+fi
+echo "$OUT" | tail -20 | sed 's/^/[LOADGEN-METRICS] frontend: /'
+test -d main/frontend/dist
+ls main/frontend/dist | sed 's/^/[LOADGEN-METRICS] frontend: dist\\/: /'
+test -n "$(ls -A main/frontend/dist)"
+'''
+                    )
+                    if (frontendRc != 0) {
+                        error("Frontend preflight failed (exit ${frontendRc}): main/frontend/dist could not be built " +
+                              "(its output is above, prefixed 'frontend:'). The firmware embeds those files, so cmake " +
+                              "would fail at generate time on every single iteration - about 25s each - and the run " +
+                              "would load the node for exactly zero seconds. Refusing to start the window.")
+                    }
+
+                    // Wall clock via the shell so the pipeline needs no script approval for
+                    // JVM time APIs.
+                    long startEpoch = sh(returnStdout: true, script: 'date +%s').trim().toLong()
+                    long deadline = startEpoch + (minutes * 60L)
+                    int iteration = 0
+                    int noLoadStreak = 0
+                    // THE measured quantity: seconds actually spent loading the node, and
+                    // how many iterations contributed them. Accumulated only in the "this
+                    // iteration really loaded" branch, so no failure shape can inflate them.
+                    int loadedIterations = 0
+                    long loadedSeconds = 0L
+                    // High-water mark over iterations that ACTUALLY loaded the node. Using
+                    // the last iteration's duration instead would defeat the purpose: after
+                    // a 10s failure it predicts the next round takes 10s, so with 20s left
+                    // it starts a full suite that runs for tens of minutes - the case where
+                    // trimming matters most is exactly the case it would do nothing for.
+                    long maxLoadedDuration = 0L
+                    // Hoisted so the post-loop verdict can see how the loop ended and name
+                    // it in the failure reason. None of them decides validity - they only
+                    // record WHY the loop stopped.
+                    boolean stepFailed = false
+                    boolean diskLow = false
+                    boolean streakStop = false
+                    String stopReason = 'requested window elapsed'
+
+                    while (true) {
+                        long iterStart = 0L
+                        long iterDuration = 0L
+                        int rc = 0
+                        boolean stop = false
+
+                        // The whole iteration body is inside the try, not just the build:
+                        // `date`, the metrics probe and the df read are `sh` steps too, and
+                        // the failure this handler exists for (workspace gone, dropped
+                        // docker exec) would otherwise surface from one of them and go red
+                        // past it.
+                        try {
+                            long now = sh(returnStdout: true, script: 'date +%s').trim().toLong()
+
+                            if (now >= deadline) {
+                                stop = true
+                            } else if (iteration >= MAX_ITERATIONS) {
+                                // Bounds flow-graph growth in program.dat on the shared
+                                // controller. Stops only - reaching it is not by itself a
+                                // bad run: "one loaded iteration, one instant failure,
+                                // repeat" can hit the cap with the node loaded throughout,
+                                // and the suite's own failures are irrelevant to a job that
+                                // is a resource consumer rather than a test.
+                                stopReason = "hit the ${MAX_ITERATIONS}-iteration cap"
+                                echo "[LOADGEN] ${stopReason} - stopping"
+                                stop = true
+                            } else if (iteration > 0 && maxLoadedDuration > 0 && (now + maxLoadedDuration) > deadline) {
+                                // The deadline is only checked between iterations, so
+                                // without this the overrun would be a whole suite run.
+                                // The first iteration always runs, so MINUTES=1 still means
+                                // exactly one full suite rather than none - and we never
+                                // kill a suite mid-flight, which would leave stray QEMUs and
+                                // a half-written qemu_flash.bin to poison the next round.
+                                stopReason = "stopped early: ${deadline - now}s left but a loaded iteration takes up to ${maxLoadedDuration}s"
+                                echo "[LOADGEN] ${stopReason}"
+                                stop = true
+                            }
+
+                            if (!stop) {
+                                // Disk is the one shared resource whose exhaustion would
+                                // break the measured run rather than slow it: an ENOSPC
+                                // inside its `make qemu-test` surfaces as a firmware
+                                // failure. This is not a validity check - it only stops
+                                // the loop; coverage still decides whether the run counts.
+                                //
+                                // df is captured, not piped into awk, for the same reason
+                                // make is above: on the left of a pipe its exit status is
+                                // lost, awk returns 0 on empty input, and the floor would
+                                // then be silently unenforced for the whole run. If the
+                                // probe still yields nothing usable, say so in the log -
+                                // an unenforced guard must never be invisible.
+                                String freeRaw = sh(returnStdout: true, script: """
+set -e
+OUT="\$(df -Pk .)"
+echo "\$OUT" | awk 'NR==2 {print \$4}'
+""").trim()
+                                long freeKb = freeRaw.isLong() ? freeRaw.toLong() : -1L
+                                if (freeKb < 0L) {
+                                    echo "[LOADGEN] WARNING: free-space probe returned '${freeRaw}' - the " +
+                                         "${DISK_FLOOR_KB} KiB floor is NOT enforced this iteration"
+                                } else if (freeKb < DISK_FLOOR_KB) {
+                                    diskLow = true
+                                    stopReason = "free disk fell to ${freeKb} KiB, below the ${DISK_FLOOR_KB} KiB floor"
+                                    echo "[LOADGEN] WARNING: ${stopReason} - stopping so the measured run does not hit ENOSPC"
+                                    stop = true
+                                }
+                            }
+
+                            if (!stop) {
+                                iteration++
+                                iterStart = now
+                                echo "[LOADGEN] iteration ${iteration} starting - elapsed ${now - startEpoch}s of ${minutes * 60}s"
+                                echo identity
+                                sh metricsCmd
+
+                                // returnStatus keeps a failing suite from throwing. This
+                                // suite is a resource consumer, not a test: its verdict says
+                                // nothing about the product, and under the contention we are
+                                // creating on purpose it is expected to go red. Failing the
+                                // build here would read as a product regression that did not
+                                // happen.
+                                rc = sh(
+                                    returnStatus: true,
+                                    script: '''bash -c 'source /opt/esp/idf/export.sh && make qemu-test' '''
+                                )
+                                iterDuration = sh(returnStdout: true, script: 'date +%s').trim().toLong() - iterStart
+                            }
+                        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException interrupt) {
+                            // A manual abort or the pipeline timeout. Must propagate:
+                            // swallowing it would keep the node loaded after someone
+                            // explicitly asked the job to stop.
+                            throw interrupt
+                        } catch (hudson.AbortException abort) {
+                            // A step could not RUN (workspace gone, dropped docker exec).
+                            // A red suite never reaches here - it returns a status instead -
+                            // and no error() is raised inside this try, so this handler
+                            // cannot catch a deliberate failure of ours. Breaking here skips
+                            // classification, which is precisely why the coverage check
+                            // after the loop, not the streak counter, is the real guard.
+                            stepFailed = true
+                            stopReason = "a pipeline step could not run (${abort.message})"
+                            echo "[LOADGEN] iteration ${iteration} could not run (${abort.message}) - ending the loop"
+                        }
+
+                        if (stop || stepFailed) {
+                            break
+                        }
+
+                        // CLASSIFICATION - deliberately OUTSIDE the try, so nothing below
+                        // can be swallowed by the catch above.
+                        //
+                        // Duration first, exit code second. A suite that "passes" in two
+                        // seconds loaded the node exactly as little as one that fails in
+                        // two seconds, so resetting the streak on rc == 0 alone would let
+                        // an alternating fast-pass/fast-fail pattern spin forever.
+                        if (iterDuration < LOAD_FLOOR_SECONDS) {
+                            noLoadStreak++
+                            echo "[LOADGEN] iteration ${iteration} produced NO MEANINGFUL LOAD " +
+                                 "(exit ${rc} after ${iterDuration}s, floor is ${LOAD_FLOOR_SECONDS}s) " +
+                                 "- ${noLoadStreak}/${NO_LOAD_LIMIT} consecutive"
+                            if (noLoadStreak >= NO_LOAD_LIMIT) {
+                                // Stop early, but do NOT condemn the run: a window that was
+                                // loaded for most of its length and then degraded into fast
+                                // failures has measured exactly what this experiment exists
+                                // to observe. Only coverage decides.
+                                streakStop = true
+                                stopReason = "${noLoadStreak} consecutive iterations shorter than ${LOAD_FLOOR_SECONDS}s"
+                                echo "[LOADGEN] ${stopReason} - stopping early; the coverage line below decides " +
+                                     "whether this run counts"
+                                break
+                            }
+                        } else {
+                            noLoadStreak = 0
+                            loadedIterations++
+                            loadedSeconds += iterDuration
+                            if (iterDuration > maxLoadedDuration) {
+                                maxLoadedDuration = iterDuration
+                            }
+                            echo "[LOADGEN] iteration ${iteration} loaded the node for ${iterDuration}s (suite exit ${rc}, " +
+                                 "ignored on purpose)"
+                        }
+                    }
+
+                    long finished = sh(returnStdout: true, script: 'date +%s').trim().toLong()
+                    echo "[LOADGEN] finished after ${iteration} iteration(s), ${finished - startEpoch}s wall clock, " +
+                         "reason: ${stopReason}"
+
+                    // THE decision. Printed prominently first, because this line is what
+                    // makes the run interpretable: it says how much of the requested window
+                    // was genuinely under load. Over 100% is normal (the final iteration
+                    // overruns) and is not an error.
+                    long requested = minutes * 60L
+                    int pct = requested > 0 ? (int) (100L * loadedSeconds / requested) : 0
+                    echo "[LOADGEN] COVERAGE: loaded ${loadedIterations}/${iteration} iterations, " +
+                         "${loadedSeconds}s of ${requested}s requested (${pct}%)"
+
+                    echo identity
+                    echo '[LOADGEN] final measurement after load'
+                    sh metricsCmd
+
+                    String endedWith = "The loop ended because: ${stopReason}." +
+                        (stepFailed ? ' An infrastructure failure, not a suite failure - the node or workspace went away.' : '') +
+                        (diskLow ? ' Disk space on the node ran low; free it before re-running.' : '') +
+                        (streakStop ? ' The suite was failing fast by the end - read its output above; a check-idf-pins' +
+                                      ' mismatch, a port conflict, a conftest ImportError from a bad slot, or a compile' +
+                                      ' error are the usual causes.' : '')
+
+                    // THE verdict, and the only place `invalid` is ever set. Declared here
+                    // rather than before the loop so that it structurally cannot be reached
+                    // from inside it - error() throws hudson.AbortException, which the catch
+                    // in the loop would swallow, turning "this measurement is invalid" into
+                    // a green build with a misleading "could not run" line.
+                    boolean invalid = false
+                    String invalidReason = ''
+
+                    if (loadedSeconds == 0L) {
+                        invalid = true
+                        invalidReason = "no iteration ever reached the ${LOAD_FLOOR_SECONDS}s load floor, so this " +
+                            "build placed NO meaningful load on ${env.NODE_NAME}. Any e2e result measured against " +
+                            "it is INVALID - it was measured against an idle node. ${endedWith}"
+                    } else if (pct < MIN_COVERAGE_PCT) {
+                        invalid = true
+                        invalidReason = "only ${pct}% of the requested ${requested}s window was actually under load " +
+                            "(${loadedSeconds}s across ${loadedIterations} iteration(s)), below the " +
+                            "${MIN_COVERAGE_PCT}% minimum. The measured run spent most of the window against an " +
+                            "idle node, so treat its result as INVALID. ${endedWith}"
+                    }
+
+                    // Raised here, outside every try in this script, so it actually reaches
+                    // Jenkins and turns the build red.
+                    if (invalid) {
+                        error(invalidReason)
+                    }
                 }
             }
             post {
-                always {
-                    // Also archive the raw on-target coverage stream: 'make qemu-coverage-report'
-                    // can rebuild the report from it offline, without re-running QEMU
-                    archiveArtifacts artifacts: "build/qemu_coverage/**,build/coverage.stream", allowEmptyArchive: true
+                // Stage-level, because a pipeline-level post block cannot run under
+                // `agent none` - there would be no workspace to delete. `cleanup` runs
+                // whatever the stage result, including the invalid-measurement failure.
+                cleanup {
+                    deleteDir()
                 }
-            }
-        }
-        stage('Coverage (combined)') {
-            // Skipped unless BOTH producer stages completed successfully: 'make coverage-combined'
-            // needs both inputs — the unit-test tracefiles and the QEMU one. A missing input would
-            // hard-fail with a "run make ... first" error that masks the already reported real
-            // cause, and a partially produced unit-test tracefile set would be worse still: the
-            // merge would succeed and publish a silently incomplete report with understated
-            // coverage. Success flags are used rather than file-existence checks precisely because
-            // a partial unit-coverage run still leaves some tracefiles on disk. No RUN_E2E check
-            // is needed here: with e2e off the QEMU coverage stage never runs, so QEMU_COVERAGE_OK
-            // stays unset and this stage skips on its own.
-            // '== true' to match RUN_COVERAGE's OFF default, like the two producer stages. The
-            // success flags already make this stage skip on their own, so the parameter check is
-            // belt-and-braces here — but leaving it as '!= false' would read as if the default
-            // were still ON and would be copied into the next gate that is not flag-guarded.
-            when { expression { params.RUN_COVERAGE == true && env.UNIT_COVERAGE_OK == 'true' && env.QEMU_COVERAGE_OK == 'true' } }
-            steps {
-                // Merges the unit-test gcovr tracefiles with build/qemu_coverage/qemu_covr.json,
-                // hence this stage runs after both coverage stages above
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make coverage-combined"'
-                }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: "build/combined_coverage/**", allowEmptyArchive: true
-                }
-            }
-        }
-        stage('Upload to S3') {
-            steps {
-                build job: 's3_uploader', parameters: [
-                    string(name: 'UPSTREAM_JOB_NAME', value: env.JOB_NAME),
-                    string(name: 'BUILD', value: env.BUILD_NUMBER),
-                    booleanParam(name: 'UPLOAD_FROM_BRANCH', value: params.UPLOAD_FROM_BRANCH)
-                ]
             }
         }
     }
