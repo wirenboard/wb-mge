@@ -5,14 +5,17 @@ When tx_disabled=True for a port:
   - serial_send() returns immediately without transmitting any data
 
 The firmware exposes RS-485 port UART chardevs over TCP in QEMU:
-  - UART1 (RS-485 port 1): TCP port 5561
-  - UART2 (RS-485 port 2): TCP port 5562
+  - UART1 (RS-485 port 1): qemu_ports.UART1_TCP_PORT
+  - UART2 (RS-485 port 2): qemu_ports.UART2_TCP_PORT
 """
 
+import qemu_ports
 import socket
 import struct
 import time
 import pytest
+
+from conftest import require_uart_chardev
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -28,8 +31,8 @@ def _baseline(api):
     # tx_disabled is set per-phase by the test itself: false → true
 
 
-GATEWAY_PORT_1 = 50502   # hostfwd 50502 -> QEMU:502 (tcp_bridge port 1)
-UART1_TCP_PORT = 5561    # UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait)
+GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT  # hostfwd: slot gateway host port -> guest 502 (tcp_bridge port 1)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::<slot UART1 port>,server,nowait)
 
 
 def _build_modbus_tcp_request(txid, unit_id, fc, addr, count):
@@ -38,18 +41,6 @@ def _build_modbus_tcp_request(txid, unit_id, fc, addr, count):
     # MBAP length = unit_id(1) + FC(1) + PDU(4) = 6
     mbap = struct.pack('>HHH', txid, 0, 1 + 1 + len(pdu))
     return mbap + bytes([unit_id, fc]) + pdu
-
-
-def _try_connect_tcp(host, port, timeout=3.0):
-    """Try to connect to a TCP port. Returns socket or None."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect((host, port))
-        return sock
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        sock.close()
-        return None
 
 
 def test_tx_disabled_field_in_settings(api):
@@ -123,11 +114,11 @@ def test_tx_disabled_save_and_restore(api):
 
 
 @pytest.mark.qemu
-def test_tx_disabled_blocks_uart_transmission(api):
+def test_tx_disabled_blocks_uart_transmission(api, is_qemu):
     """Verify that tx_disabled=True prevents UART1 from transmitting bytes.
 
     Steps:
-    1. Connect to the UART1 TCP chardev socket (port 5561).
+    1. Connect to the UART1 TCP chardev socket (UART1_TCP_PORT).
     2. Save original port mode and tx_disabled value so they can be restored.
     3. Switch port 1 to tcp_bridge mode (gateway forwards Modbus TCP -> UART1 RTU).
     4. Enable tx_disabled for rs485_1 and confirm NO bytes reach UART1.
@@ -142,27 +133,35 @@ def test_tx_disabled_blocks_uart_transmission(api):
     out of its virtual-bus model.) That regression is covered by the unit test in
     unittests/serial/serial_test.c.
     """
-    # Connect to UART1 TCP chardev BEFORE switching port mode so QEMU can buffer bytes
-    uart1_sock = _try_connect_tcp("127.0.0.1", UART1_TCP_PORT, timeout=3.0)
-    if uart1_sock is None:
-        pytest.fail(
-            f"Cannot connect to UART1 chardev TCP port {UART1_TCP_PORT}. "
-            "QEMU must expose UART1 as TCP (check -serial tcp::5561,server,nowait argument)."
-        )
+    # Connect to UART1 TCP chardev BEFORE switching port mode so QEMU can buffer bytes.
+    # The returned socket IS the one this test reads from — no close/reconnect handoff.
+    # Unreachable fails under --qemu and skips against real hardware, decided in one
+    # place (conftest.require_uart_chardev) rather than per file.
+    uart1_sock = require_uart_chardev(UART1_TCP_PORT, is_qemu, timeout=3.0)
 
-    # Read original state so it can be restored after the test
-    info_resp = api.get_info()
-    assert info_resp.status_code == 200, f"GET /info returned {info_resp.status_code}"
-    original_mode = info_resp.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
-
-    settings_resp = api.get_settings()
-    assert settings_resp.status_code == 200, (
-        f"GET /settings returned {settings_resp.status_code}"
-    )
-    original_tx_disabled = settings_resp.json().get("rs485_1", {}).get("tx_disabled", False)
+    # Same fallbacks the reads below use when the key is absent. They exist because the
+    # reads now run INSIDE the try: a ReadTimeout on either of them used to escape before
+    # the try was entered and leak this socket — the chardev's ONLY accept slot — turning
+    # every later test that needs UART1 into a failure. Enter the try immediately after
+    # acquiring the socket (the shape 18_test_uart_chardev.py already uses); the price is
+    # that finally may restore these defaults if the reads never completed.
+    original_mode = "tcp_bridge"
+    original_tx_disabled = False
 
     try:
         uart1_sock.settimeout(2.0)
+
+        # Read original state so it can be restored after the test
+        info_resp = api.get_info()
+        assert info_resp.status_code == 200, f"GET /info returned {info_resp.status_code}"
+        original_mode = info_resp.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
+
+        settings_resp = api.get_settings()
+        assert settings_resp.status_code == 200, (
+            f"GET /settings returned {settings_resp.status_code}"
+        )
+        original_tx_disabled = settings_resp.json().get("rs485_1", {}).get(
+            "tx_disabled", False)
 
         # Force required pre-conditions regardless of what previous tests may have changed:
         # Step 1: set bridge to transparent mode (modbus=False) and clear tx_disabled.
