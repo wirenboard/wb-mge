@@ -31,13 +31,16 @@ import pytest
 import websocket
 from urllib.parse import urlparse
 
+import qemu_ports
+
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
     resp = api.update_settings({
         "rs485_1": {
             "tx_disabled": True,          # required for the sniffer toggle cycle in QEMU
-            "bridge": {"mode": "server", "port": 502, "ip": "0.0.0.0", "modbus": False},
+            "bridge": {"mode": "server", "port": qemu_ports.GATEWAY_GUEST_PORT,
+                       "ip": "0.0.0.0", "modbus": False},
         }
     })
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
@@ -74,7 +77,7 @@ def _pinger(ws, stop_evt):
 
 
 @pytest.mark.timeout(900)
-def test_uart_teardown_no_crash(api):
+def test_uart_teardown_no_crash(api, is_qemu):
     """
     Frequent port-mode switches (uart_driver_delete) under WS+PING load must not
     crash the firmware. Without the fixes the server hangs on Unhandled interrupt
@@ -136,14 +139,29 @@ def test_uart_teardown_no_crash(api):
         # Secondary check: QEMU log must not contain any crash markers.
         # Catches cache panic (bug 04), stack overflow (06), Unhandled interrupt (01),
         # NULL-ISR (05) even if the server managed to recover before we noticed.
+        #
+        # Under --qemu a MISSING log is a hard failure, not a printed warning. conftest
+        # creates this file before it starts QEMU and holds an exclusive lock on the
+        # working tree for the whole session (conftest._acquire_tree_lock), so under
+        # --qemu the file cannot legitimately be absent — if it is, this check silently
+        # covered nothing and the test would report PASS on the strength of the liveness
+        # loop alone. Without --qemu the device is whatever --ip points at and there is no
+        # local QEMU log to read, which is a genuine skip.
         qemu_log = Path(__file__).resolve().parent.parent / "build" / "qemu_test.log"
         if qemu_log.is_file():
             text = qemu_log.read_text(errors="replace")
             hits = sorted({m for m in CRASH_MARKERS if m in text})
             assert not hits, f"QEMU log contains crash markers: {hits}"
             print("OK: QEMU log is clean — no panics, crashes, or overflows")
+        elif is_qemu:
+            pytest.fail(
+                f"QEMU log not found ({qemu_log}) under --qemu: conftest opens it before "
+                "launching QEMU, so its absence means the crash-marker check ran against "
+                "nothing. Do not read this run's PASS as evidence of no firmware crash."
+            )
         else:
-            print(f"  [WARN] QEMU log not found ({qemu_log}), log check skipped")
+            print(f"  [WARN] QEMU log not found ({qemu_log}), log check skipped "
+                  "(no --qemu: the device under test is remote, so there is no local log)")
 
     finally:
         stop_evt.set()
