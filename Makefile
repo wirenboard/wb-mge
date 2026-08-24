@@ -529,6 +529,7 @@ coverage-combined:
 	        --exclude 'main/coverage_dump\.c' \
 	        --txt $(COMBINED_COVERAGE_DIR)/summary.txt \
 	        --html-details $(COMBINED_COVERAGE_DIR)/index.html \
+	        --xml $(COMBINED_COVERAGE_DIR)/coverage.xml \
 	        --print-summary
 	@echo ''
 	@echo '============== COMBINED COVERAGE (unit tests + QEMU e2e) =============='
