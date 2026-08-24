@@ -1,6 +1,29 @@
-# Dependencies for API testing
-requests>=2.28.0
-urllib3>=1.26.0
-websocket-client>=1.6.0
-pytest>=7.0.0
-pytest-timeout>=2.2.0
+# Dependencies for API testing.
+#
+# PINNED EXACTLY, on purpose. The Dockerfile installs this file into
+# /opt/api_tests_venv and the image is layer-cached, so with open ranges the
+# installed versions were whatever PyPI served on the day the layer was last
+# rebuilt — and they drifted silently between two consecutive CI builds.
+#
+# That is not hypothetical: pytest moved 9.0.3 -> 9.1.1 mid-run and took the
+# whole suite down. Fixture instantiation order changed, so the session-scoped
+# `api` client (which pytest.exit()s the run when the device does not answer)
+# was set up before `qemu_process` had started QEMU. Every test died in 2 s with
+# "Preliminary connection check failed", on a commit that had been green hours
+# earlier. The ordering bug was real and is fixed (api now requests qemu_process
+# explicitly), but the drift is what turned it from latent into a red build with
+# no code change to blame.
+#
+# Versions below are the ones the currently-green CI image actually has
+# (read from `pip freeze` inside wb-mge-devenv). pluggy is a pytest dependency,
+# pinned too so the resolver cannot vary the piece that decides fixture order.
+#
+# To upgrade: bump here deliberately, rebuild the image, and run the full e2e
+# suite on an uncontended node before merging — a contended node produces
+# timeout flakes that hide whether the new versions are actually green.
+requests==2.34.2
+urllib3==2.7.0
+websocket-client==1.9.0
+pytest==9.1.1
+pytest-timeout==2.4.0
+pluggy==1.6.0
