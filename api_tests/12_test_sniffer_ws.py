@@ -28,6 +28,14 @@ from packet_injector import PacketInjector
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
+    # This fixture sets tx_disabled=True, a PERSISTENT NVS setting. With no teardown
+    # it used to leak into every later test file — most visibly into
+    # 13_test_ports.py::test_clock_out_keeps_rs485_2_de_low, where bringing port 1 up
+    # calls serial_set_tx_disabled(true), drives GPIO4 LOW and stops the DE line from
+    # idling HIGH. The restore now lives in conftest.py::_restore_rs485_settings,
+    # which brackets every module in the suite, so no local snapshot/restore is needed
+    # here (and a local one is worse: a refused write returns HTTP 200 with
+    # success:false, not an exception, so a try/except around it hides nothing useful).
     resp = api.update_settings({
         "rs485_1": {
             "tx_disabled": True,    # required for QEMU sniffer mode (commit 9c8fd67)
@@ -40,6 +48,8 @@ def _baseline(api):
     assert resp.status_code == 200, f"_baseline: update_settings failed: {resp.status_code} {resp.text}"
     resp = api.set_port_mode(1, "tcp_bridge")    # start state; individual tests will switch to passive for the WS sniffer overlay
     assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
+
+    yield
 
 
 @pytest.mark.timeout(180)

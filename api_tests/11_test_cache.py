@@ -6,6 +6,8 @@ import time
 import pytest
 from urllib.parse import urlparse
 
+import qemu_ports
+
 from modbus_helpers import (
     parse_csv, worker, check_simultaneous_connection, run_staleness_test
 )
@@ -30,7 +32,8 @@ def _baseline(api):
         # Distinct from the RS-485 bridge gateway ports (502/503): the firmware now
         # rejects a cache_modbus_port that collides with a bridge port, and sharing one
         # leaves the cache server and the gateway fighting over the same TCP port across
-        # a long no-reboot run. 504 is the cache default; multimaster test changes it to 50504.
+        # a long no-reboot run. 504 is the cache default; the multimaster test changes it to
+        # the forwarded guest port (qemu_ports.CACHE_MODBUS_GUEST_PORT).
         "cache_modbus_port": 504,
         "cache_value_timeout_s": 60,           # large enough so that entries do not expire
     })
@@ -299,7 +302,9 @@ def test_cache_multimaster(api):
     """Test cache Modbus TCP multi-master server"""
     original_port_mode = None
     original_modbus_port = None
-    QEMU_MODBUS_PORT = 50504
+    # Firmware cache_modbus_port SETTING = fixed guest port (what the hostfwd forwards to);
+    # the TCP clients below connect to the dynamic HOST port that forwards to it.
+    QEMU_MODBUS_PORT = qemu_ports.CACHE_MODBUS_GUEST_PORT
 
     try:
         info_response = api.get_info()
@@ -350,12 +355,27 @@ def test_cache_multimaster(api):
             assert info_response.status_code == 200, \
                 f"GET /info expected 200, got {info_response.status_code}"
             info_data = info_response.json()
-            modbus_port = info_data.get("cache_modbus_port", 504)
+            guest_modbus_port = info_data.get("cache_modbus_port", 504)
+            # The read-back is a REAL check, not decoration: the connection below goes to
+            # the host end of the hostfwd, which reaches the guest port the rule was built
+            # for whether or not the firmware actually moved its server there. Without this
+            # assert, a settings write that was silently ignored would leave the test
+            # connecting to a stale-but-open server and passing.
+            assert guest_modbus_port == QEMU_MODBUS_PORT, (
+                f"firmware reports cache_modbus_port={guest_modbus_port}, but the "
+                f"hostfwd for {qemu_ports.CACHE_MODBUS_HOST_PORT} forwards to guest "
+                f"{QEMU_MODBUS_PORT} — the earlier settings write did not take effect"
+            )
 
             parsed = urlparse(api.base_url)
             host = parsed.hostname
 
-            print(f"✓ Cache server enabled, Modbus TCP port: {modbus_port}, host: {host}")
+            # Connect to the dynamic HOST port that forwards to the firmware's guest
+            # cache_modbus_port (asserted equal just above); the guest value is only
+            # reachable from the host through this forward.
+            modbus_port = qemu_ports.CACHE_MODBUS_HOST_PORT
+            print(f"✓ Cache server enabled, firmware guest port: {guest_modbus_port}, "
+                  f"host connect port: {modbus_port}, host: {host}")
 
             response = api.get_cache_csv()
             assert response.status_code == 200, \
