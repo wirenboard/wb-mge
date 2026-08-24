@@ -299,6 +299,17 @@ const login = async () => {
   color: #fff;
 }
 
+/* The dropdown list is painted by the browser, and Chromium lets an <option> inherit
+   `color` from its <select> — including the :hover colour, which is live the whole time
+   the list is open, because the pointer sits on the control. That painted every entry
+   white on the light native listbox and left only the highlighted row readable
+   (SOFT-7354). Pin both colours on the options so nothing is inherited: background-color
+   and color are among the few properties Chromium honours on an <option>. */
+.login-lang option {
+  background-color: var(--bg-surface);
+  color: var(--text-color);
+}
+
 .login-colophon {
   font-size: 11.8px; /* +0.8px for Roboto */
   color: var(--text-on-dark-dim);
