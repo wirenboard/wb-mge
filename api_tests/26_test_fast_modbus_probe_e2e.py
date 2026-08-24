@@ -1,12 +1,14 @@
 """End-to-end test for Fast Modbus probe (GW-08).
 
-Sends FC=0x47 (unit_id=0x00, payload='WB-FAST-MODBUS?') via Modbus TCP to port 50502
-(QEMU hostfwd for guest port 502) and verifies that the firmware intercepts the request
-and replies 'WB-FAST-MODBUS-OK' — without forwarding it to the RTU bus.
+Sends FC=0x47 (unit_id=0x00, payload='WB-FAST-MODBUS?') via Modbus TCP to this slot's
+gateway host port (QEMU hostfwd for guest port 502) and verifies that the firmware
+intercepts the request and replies 'WB-FAST-MODBUS-OK' — without forwarding it to the RTU bus.
 
-Requires QEMU launched with port 502 forwarded to host 50502.
+Requires QEMU launched with guest port 502 forwarded to the gateway host port of this
+WB_MGE_PORT_SLOT (api_tests/qemu_ports.py).
 """
 
+import qemu_ports
 import socket
 import struct
 
@@ -22,8 +24,8 @@ _PROBE_PAYLOAD = b'WB-FAST-MODBUS?'
 _PROBE_EXPECTED_RESPONSE = b'WB-FAST-MODBUS-OK'
 
 # Host-side port forwarded from QEMU guest port 502
-MODBUS_TCP_HOST_PORT = 50502
-GATEWAY_PORT_1 = 50502
+MODBUS_TCP_HOST_PORT = qemu_ports.MODBUS_TCP_HOST_PORT
+GATEWAY_PORT_1 = qemu_ports.GATEWAY_HOST_PORT
 
 _SOCKET_TIMEOUT = 5.0
 
@@ -90,7 +92,7 @@ def test_fast_modbus_probe_responds(api):
     """Firmware intercepts FC=0x47 unit_id=0 and replies 'WB-FAST-MODBUS-OK'.
 
     The api fixture is used only to ensure QEMU is ready before the test runs.
-    The actual probe is sent directly over a raw TCP socket to port 50502.
+    The actual probe is sent directly over a raw TCP socket to MODBUS_TCP_HOST_PORT.
     """
     request = _build_probe_request(_PROBE_TRANSACTION_ID)
 

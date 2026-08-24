@@ -1,8 +1,9 @@
 """Gateway E2E tests for various Modbus function codes (GW-01 through GW-04).
 
-Requires QEMU with UART1 exposed as TCP port 5561 and guest port 502 forwarded
-to host port 50502. Uses a Python RTU slave (ModbusRtuSlaveThread) connected to
-UART1 to respond to FC01/FC02/FC03/FC04/FC16 requests.
+Requires QEMU with the UART1 chardev exposed on TCP and guest port 502 forwarded to a
+host port; both host ports follow WB_MGE_PORT_SLOT (api_tests/qemu_ports.py). Uses a
+Python RTU slave (ModbusRtuSlaveThread) connected to UART1 to respond to
+FC01/FC02/FC03/FC04/FC16 requests.
 
 Coverage:
 GW-01. FC01 (Read Coils) forwarded through gateway; coil bits match fake_value.
@@ -12,6 +13,7 @@ GW-04. FC16 (Write Multiple Registers) forwarded without truncation; slave
        last_write_values matches the values sent by the TCP client.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -31,9 +33,9 @@ from modbus_helpers import (
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
-GATEWAY_HOST_PORT = 50502    # QEMU hostfwd: guest port 502 → host 50502
-UART1_TCP_PORT = 5561        # QEMU UART1 chardev TCP
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: slot gateway host port -> guest 502
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 FAKE_VALUE = 0x1234          # register / coil value returned by RTU slave
 
 
@@ -58,14 +60,15 @@ def _baseline(api):
 
 
 # ---------------------------------------------------------------------------
-# Gateway fixture (module-scoped via build_gateway_fixture factory)
+# Gateway fixture (FUNCTION-scoped, built by the build_gateway_fixture factory). Scope
+# matters for the timeout markers below: a function-scoped fixture tears down inside EVERY
+# item, so each marker must cover a full gateway teardown, not just the module's last item.
 # ---------------------------------------------------------------------------
 
 gateway_slave = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=GATEWAY_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=502,
+    bridge_port=qemu_ports.GATEWAY_GUEST_PORT,      # guest 502
     modbus=True,
     fake_value=FAKE_VALUE,
 )
@@ -239,7 +242,14 @@ def test_gateway_fc04_read_input_registers(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(120)
+# 165 s, not 120 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# This module's own _baseline (:44) is setup-only and gateway_slave is function-scoped
+# (built by conftest.build_gateway_fixture), so the conftest restore is the whole module
+# teardown. 120 s body + 45 s teardown allowance.
+@pytest.mark.timeout(165)
 def test_gateway_fc16_write_multiple_registers(gateway_slave):
     """FC16 (Write Multiple Registers) forwarded without truncation.
 

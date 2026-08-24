@@ -1,7 +1,8 @@
 """E2E tests for the transparent TCP bridge — Wave 3.
 
-Requires QEMU with UART1 exposed as TCP port 5561 and guest port 503 forwarded
-to host port 50503.  The transparent bridge mode forwards raw bytes between the
+Requires QEMU with the UART1 chardev exposed on TCP and the transparent-bridge guest
+port forwarded to a host port; both host ports follow WB_MGE_PORT_SLOT
+(api_tests/qemu_ports.py). The transparent bridge mode forwards raw bytes between the
 TCP client and the serial interface without any Modbus framing.
 
 Coverage:
@@ -18,25 +19,27 @@ block-new (max_connections == 1) makes impossible — test #16 asserts the corre
 behaviour instead.
 """
 
+import qemu_ports
 import socket
 import threading
 import time
 
 import pytest
 
-from conftest import build_gateway_fixture
+from conftest import (build_gateway_fixture, _connect_ready_bridge,
+                      require_uart_chardev)
 
 
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
-# Transparent bridge uses port 50504 (QEMU hostfwd: guest 50504 -> host 50504).
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+# Transparent bridge uses guest port 50504 (this slot's cache/bridge1 host port forwards to it).
 # Port 503 is avoided because it is the default bridge_port for RS485-2 (port 2)
 # and is already bound when the firmware starts, causing EADDRINUSE on port 1 bind.
-TRANSPARENT_HOST_PORT = 50504
-UART1_TCP_PORT = 5561        # QEMU UART1 chardev TCP
+TRANSPARENT_HOST_PORT = qemu_ports.TRANSPARENT_HOST_PORT
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 
 
 # ---------------------------------------------------------------------------
@@ -63,9 +66,9 @@ def _baseline(api):
 
 transparent_bridge = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=TRANSPARENT_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=50504,   # use port 50504 to avoid conflict with default port 2 bridge (503)
+    # Guest 50504, not the port-2 bridge default (guest 503): the two must not collide.
+    bridge_port=qemu_ports.TRANSPARENT_P1_GUEST_PORT,
     modbus=False,        # transparent mode — no RTU slave started
 )
 
@@ -73,18 +76,6 @@ transparent_bridge = build_gateway_fixture(
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
-
-def _try_connect_tcp(host: str, port: int, timeout: float = 3.0):
-    """Attempt TCP connection; return socket or None."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect((host, port))
-        return sock
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        sock.close()
-        return None
-
 
 class _UartEchoThread(threading.Thread):
     """Connects to QEMU UART1 chardev TCP port and echoes all received bytes back."""
@@ -269,15 +260,30 @@ def _setup_client_mode_bridge(api, port_num: int, bridge_ip: str, bridge_port: i
 
 def _teardown_client_mode_bridge(api, port_num: int, original_settings: dict,
                                   rs485_key: str) -> None:
-    """Restore firmware to original state after client mode test."""
-    api.set_port_mode(port_num, "disabled")
-    time.sleep(0.3)
-    restore_resp = api.update_settings(original_settings)
-    if restore_resp.status_code != 200:
-        print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
-    original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
-    api.set_port_mode(port_num, original_mode)
-    time.sleep(0.3)
+    """Restore firmware to original state after client mode test.
+
+    Best-effort: this runs from a test's finally, and each call is a 30 s-read-timeout
+    /settings request that can ReadTimeout under QEMU load. Each step is wrapped so one
+    failure neither skips the remaining restore steps nor RAISES out of the finally (which
+    would mask the test's real assertion failure with a teardown exception). Mirrors 36_.
+    """
+    try:
+        api.set_port_mode(port_num, "disabled")
+        time.sleep(0.3)
+    except Exception as exc:
+        print(f"✗ teardown set_port_mode(disabled) failed: {exc!r}")
+    try:
+        restore_resp = api.update_settings(original_settings)
+        if restore_resp.status_code != 200:
+            print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
+    except Exception as exc:
+        print(f"✗ teardown update_settings failed: {exc!r}")
+    try:
+        original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
+        api.set_port_mode(port_num, original_mode)
+        time.sleep(0.3)
+    except Exception as exc:
+        print(f"✗ teardown set_port_mode(restore) failed: {exc!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -287,18 +293,18 @@ def _teardown_client_mode_bridge(api, port_num: int, original_settings: dict,
 @pytest.mark.qemu
 # 120s: marker covers function-scoped setup+teardown whose retrying 30s HTTP calls are slow under QEMU load
 @pytest.mark.timeout(120)
-def test_transparent_basic_roundtrip(transparent_bridge):
+def test_transparent_basic_roundtrip(transparent_bridge, is_qemu):
     """Send 16 arbitrary bytes through the transparent bridge and receive them back.
 
     Setup:
-    - Port 1 configured as transparent bridge on port 503 (host 50503).
-    - _UartEchoThread connects to UART1 chardev (port 5561) and echoes bytes.
-    - TCP client connects to port 50503, sends 16 bytes, expects echo back.
+    - Port 1 configured as transparent bridge on guest port 50504
+      (qemu_ports.TRANSPARENT_P1_GUEST_PORT — NOT guest 503, which is the port-2 default;
+      see the module header for why the two must not collide).
+    - _UartEchoThread connects to the UART1 chardev and echoes bytes.
+    - TCP client connects to this slot's host port for that bridge
+      (qemu_ports.TRANSPARENT_HOST_PORT), sends 16 bytes, expects echo back.
     """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
     echo_thread.start()
@@ -306,10 +312,15 @@ def test_transparent_basic_roundtrip(transparent_bridge):
         "UART echo thread could not connect to UART1 chardev"
 
     test_data = bytes(range(16))   # 16 distinct bytes: 0x00..0x0F
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tcp_sock.settimeout(5.0)
+    # _connect_ready_bridge() can raise if the guest never admits a connection; it
+    # MUST be inside the try so the finally still stops the echo thread. A leaked
+    # daemon echo thread keeps the single-client UART chardev socket occupied and
+    # fails every later test that needs it (_uart_leak_guard warns, but it cannot say
+    # which test leaked — it only names the last few that ran).
+    tcp_sock = None
     try:
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
+        tcp_sock.settimeout(5.0)
         tcp_sock.sendall(test_data)
 
         received = b''
@@ -328,9 +339,16 @@ def test_transparent_basic_roundtrip(transparent_bridge):
         )
         print(f"✓ Transparent bridge round-trip: {len(test_data)} bytes echoed correctly")
     finally:
-        tcp_sock.close()
+        # Stop the echo thread FIRST — that is the invariant this whole rework
+        # protects (a leaked daemon thread wedges the single-client UART chardev).
+        # Only then close the socket, wrapped so a close error cannot skip the stop.
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+        if tcp_sock is not None:
+            try:
+                tcp_sock.close()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -339,26 +357,25 @@ def test_transparent_basic_roundtrip(transparent_bridge):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(120)
-def test_transparent_zero_bytes_edge_case(transparent_bridge):
+def test_transparent_zero_bytes_edge_case(transparent_bridge, is_qemu):
     """Client sends empty bytes (length 0), then real data — connection stays open.
 
     Sending 0 bytes to lwIP's send() can trigger unexpected behavior on some stacks.
     The test verifies the firmware handles it without closing the connection.
     """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
     echo_thread.start()
     assert echo_thread.wait_connected(timeout=5.0), "Echo thread failed to connect"
 
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tcp_sock.settimeout(5.0)
+    # _connect_ready_bridge() inside the try so a raise still stops the echo thread
+    # (see test_transparent_basic_roundtrip): a leaked echo thread wedges the UART
+    # chardev and cascades into failures downstream.
+    tcp_sock = None
     try:
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
-
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
+        tcp_sock.settimeout(5.0)
         # Send 0 bytes — Python's socket.send(b'') is a no-op and won't even call
         # the syscall, so we can't truly test this at TCP level. Instead, send a
         # 1-byte keepalive and verify connection stays open.
@@ -386,9 +403,16 @@ def test_transparent_zero_bytes_edge_case(transparent_bridge):
         )
         print(f"✓ Zero-byte edge case: connection stable, {len(received)} bytes echoed")
     finally:
-        tcp_sock.close()
+        # Stop the echo thread FIRST — that is the invariant this whole rework
+        # protects (a leaked daemon thread wedges the single-client UART chardev).
+        # Only then close the socket, wrapped so a close error cannot skip the stop.
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+        if tcp_sock is not None:
+            try:
+                tcp_sock.close()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -397,14 +421,14 @@ def test_transparent_zero_bytes_edge_case(transparent_bridge):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(120)
-def test_transparent_client_mode(api):
+def test_transparent_client_mode(api, is_qemu):
     """Transparent bridge client mode: firmware connects outbound to a TCP echo server.
 
     Setup:
     - Start a Python TCP echo server on the host at a random free port.
     - Configure firmware: bridge.mode=client, bridge.ip=10.0.2.2, bridge.port=<echo_port>.
     - Activate tcp_bridge mode — firmware connects outbound to the echo server.
-    - Connect to UART1 chardev (port 5561), send bytes, expect echo back.
+    - Connect to the UART1 chardev, send bytes, expect echo back.
 
     Data flow:
       UART1_chardev → firmware_UART1 → firmware_tcp_client → echo_server
@@ -413,10 +437,7 @@ def test_transparent_client_mode(api):
     10.0.2.2 is the QEMU user-network host IP (standard QEMU convention).
     """
     # Step 1: verify UART1 chardev is reachable
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     # Step 2: start echo server on host
     echo_server = _TcpEchoServer(host="0.0.0.0")
@@ -425,12 +446,21 @@ def test_transparent_client_mode(api):
     echo_port = echo_server.port
     print(f"Echo server listening on 0.0.0.0:{echo_port}")
 
-    original_settings = None
-    rs485_key = None
+    # Capture original settings BEFORE any firmware state change so teardown can always
+    # restore the port even if _setup_client_mode_bridge fails mid-way. Without this, a failure
+    # after its internal set_port_mode(1, "disabled") would leave original_settings unset, skip
+    # teardown, and strand port 1 in disabled/client mode for the whole no-reboot session (the
+    # module-scoped _restore_rs485_settings does not restore port_mode or bridge). Mirrors the
+    # same guard in 32_ test_transparent_client_mode_reconnect.
+    resp = api.get_settings()
+    assert resp.status_code == 200, f"GET /settings failed: {resp.status_code}"
+    original_settings = resp.json()
+    rs485_key = "rs485_1"
+
     uart_sock = None
     try:
         # Step 3: configure firmware for client mode
-        original_settings, rs485_key = _setup_client_mode_bridge(
+        _setup_client_mode_bridge(
             api, port_num=1,
             bridge_ip="10.0.2.2",   # QEMU host IP
             bridge_port=echo_port,
@@ -479,25 +509,35 @@ def test_transparent_client_mode(api):
         print(f"✓ Transparent bridge client mode: {len(test_data)} bytes echoed via 10.0.2.2:{echo_port}")
 
     finally:
-        if uart_sock:
-            uart_sock.close()
-        if original_settings is not None:
-            _teardown_client_mode_bridge(api, 1, original_settings, rs485_key)
-        echo_server.stop()
-        echo_server.join(timeout=3.0)
+        # Stopping echo_server MUST NOT depend on the earlier steps: a leaked daemon
+        # echo thread wedges the single-client chardev and fails every later test.
+        # uart_sock.close() and _teardown_client_mode_bridge (bare api.set_port_mode/
+        # update_settings, each a 30 s-read-timeout /settings request that can ReadTimeout
+        # under QEMU load) could otherwise throw and skip the stop(). Guard + nest.
+        if uart_sock is not None:
+            try:
+                uart_sock.close()
+            except OSError:
+                pass
+        try:
+            if original_settings is not None:
+                _teardown_client_mode_bridge(api, 1, original_settings, rs485_key)
+        finally:
+            echo_server.stop()
+            echo_server.join(timeout=3.0)
 
 
 # ---------------------------------------------------------------------------
 # Test #16: Single-client cap (C7) — a new client is rejected, the old one stays
 # ---------------------------------------------------------------------------
 #
-# NOTE: like every test in this module this needs QEMU (UART1 chardev on port
-# 5561 + the transparent-bridge hostfwd). It was NOT executed in the C7 change
-# environment — added and py_compile-checked only; run under the QEMU harness.
+# NOTE: like every test in this module this needs QEMU (the UART1 chardev + the
+# transparent-bridge hostfwd). It was NOT executed in the C7 change environment —
+# added and py_compile-checked only; run under the QEMU harness.
 
 @pytest.mark.qemu
 @pytest.mark.timeout(120)
-def test_transparent_single_client_cap_block_new(transparent_bridge):
+def test_transparent_single_client_cap_block_new(transparent_bridge, is_qemu):
     """A second client is rejected: transparent server keeps the client it already serves.
 
     C7 policy (block-new): the transparent bridge routes to a single socket, so the
@@ -509,22 +549,24 @@ def test_transparent_single_client_cap_block_new(transparent_bridge):
     3. B observes the rejection: recv() returns b'' (clean EOF) or ConnectionReset.
     4. A stays fully functional: its bytes round-trip TCP -> serial -> TCP via the echo.
     """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     echo_thread = _UartEchoThread(GATEWAY_HOST, UART1_TCP_PORT)
     echo_thread.start()
     assert echo_thread.wait_connected(timeout=5.0), "Echo thread failed to connect"
 
-    sock_a = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock_a.settimeout(5.0)
-    sock_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock_b.settimeout(5.0)
+    # _connect_ready_bridge() for A goes inside the try so a raise still stops the
+    # echo thread (a leaked echo thread wedges the single-client UART chardev). B
+    # stays a BARE socket — the test asserts the single-slot cap REJECTS it, so it
+    # must not be retried to admission.
+    sock_a = None
+    sock_b = None
     try:
+        sock_a = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
+        sock_a.settimeout(5.0)
+        sock_b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock_b.settimeout(5.0)
         # 1. Client A connects and becomes the served socket (on accept).
-        sock_a.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
         time.sleep(0.2)   # let the firmware accept A and spawn its receiver
 
         # 2. Client B connects — the firmware must reject B and keep A.
@@ -564,26 +606,38 @@ def test_transparent_single_client_cap_block_new(transparent_bridge):
         )
         print("✓ Single-client cap (C7): A retained and served, B rejected")
     finally:
-        sock_a.close()
-        sock_b.close()
+        # Stop the echo thread FIRST (the invariant), then close the sockets, wrapped.
         echo_thread.stop()
         echo_thread.join(timeout=3.0)
+        for _s in (sock_a, sock_b):
+            if _s is not None:
+                try:
+                    _s.close()
+                except OSError:
+                    pass
 
 
 # ---------------------------------------------------------------------------
 # Test #17: B3 — server-sends-first: serial -> TCP to a client that never sent
 # ---------------------------------------------------------------------------
 #
-# NOTE: like every test in this module this needs QEMU (UART1 chardev on port
-# 5561 + the transparent-bridge hostfwd). It was NOT executed in the B3 change
-# environment — added and py_compile-checked only; run under the QEMU harness.
+# NOTE: like every test in this module this needs QEMU (the UART1 chardev + the
+# transparent-bridge hostfwd). It was NOT executed in the B3 change environment —
+# added and py_compile-checked only; run under the QEMU harness.
 # It needs no new fixture: it reuses `transparent_bridge` and writes into the
 # UART1 chardev directly (the same socket the echo thread uses), instead of
 # echoing, so that the serial side is the one that speaks first.
 
 @pytest.mark.qemu
-@pytest.mark.timeout(120)
-def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
+# 165 s, not 120 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# This module's own _baseline (:46) is setup-only and transparent_bridge is function-scoped
+# (built by conftest.build_gateway_fixture), so the conftest restore is the whole module
+# teardown. 120 s body + 45 s teardown allowance.
+@pytest.mark.timeout(165)
+def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge, is_qemu):
     """Serial data reaches a client that connected but never transmitted (B3).
 
     Regression for the reported bug: with the bridge in server mode, bytes arriving
@@ -596,22 +650,22 @@ def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
     2. The host injects bytes into the UART1 chardev (the serial side speaks first).
     3. Those bytes must arrive on the silent client's TCP socket.
     """
-    probe = _try_connect_tcp(GATEWAY_HOST, UART1_TCP_PORT, timeout=3.0)
-    if probe is None:
-        pytest.skip(f"UART1 chardev TCP port {UART1_TCP_PORT} not reachable")
-    probe.close()
+    require_uart_chardev(UART1_TCP_PORT, is_qemu, host=GATEWAY_HOST).close()
 
     # Drive the UART chardev by hand: no echo thread, this test needs the serial
-    # side to originate traffic rather than reflect it.
-    uart_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    uart_sock.settimeout(5.0)
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    tcp_sock.settimeout(5.0)
+    # side to originate traffic rather than reflect it. Both sockets are created
+    # inside the try (and _connect_ready_bridge, which can raise, with them) so the
+    # finally always runs and never depends on statement order.
+    uart_sock = None
+    tcp_sock = None
     try:
+        tcp_sock = _connect_ready_bridge(GATEWAY_HOST, TRANSPARENT_HOST_PORT, timeout=15.0)
+        tcp_sock.settimeout(5.0)
+        uart_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        uart_sock.settimeout(5.0)
         uart_sock.connect((GATEWAY_HOST, UART1_TCP_PORT))
 
         # 1. Client connects and stays completely silent.
-        tcp_sock.connect((GATEWAY_HOST, TRANSPARENT_HOST_PORT))
         time.sleep(0.3)   # let the firmware accept it and spawn its receiver
 
         # 2. The serial side speaks first.
@@ -636,5 +690,9 @@ def test_transparent_serial_to_tcp_client_never_sent(transparent_bridge):
         )
         print(f"✓ B3: serial->TCP delivered {len(test_data)} bytes to a silent client")
     finally:
-        tcp_sock.close()
-        uart_sock.close()
+        for _s in (tcp_sock, uart_sock):
+            if _s is not None:
+                try:
+                    _s.close()
+                except OSError:
+                    pass

@@ -1,26 +1,28 @@
 """Gateway E2E dual-port simultaneous test (GW-07).
 
-Requires QEMU with:
-- UART1 exposed as TCP port 5561 and guest port 502 forwarded to host 50502
-- UART2 exposed as TCP port 5562 and guest port 503 forwarded to host 50503
+Requires QEMU with (host ports follow WB_MGE_PORT_SLOT — api_tests/qemu_ports.py;
+guest ports are fixed):
+- the UART1 chardev on TCP, and guest port 502 forwarded to the gateway host port
+- the UART2 chardev on TCP, and guest port 503 forwarded to the port-2 bridge host port
 
 Two independent Modbus TCP gateways are configured simultaneously — one on
 RS485-1 and one on RS485-2.  Each gateway has its own RTU slave with a
 distinct fake_value so that responses can be distinguished.
 
 Coverage:
-GW-07. FC03 requests to port 50502 (RS485-1) and port 50503 (RS485-2) are
+GW-07. FC03 requests to the RS485-1 gateway host port and the RS485-2 bridge host port are
        independently served; each response contains the correct fake_value and
        does not bleed across ports.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
 
 import pytest
 
-from conftest import _poll_tcp_connect
+from conftest import _poll_tcp_connect, require_uart_chardev
 from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 from rtu_slave_helpers import ModbusRtuSlaveThread
 
@@ -29,15 +31,15 @@ from rtu_slave_helpers import ModbusRtuSlaveThread
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
 
 # QEMU host-forwarded ports for both RS485 gateways
-RS485_1_HOST_PORT = 50502    # guest port 502
-RS485_2_HOST_PORT = 50503    # guest port 503
+RS485_1_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # guest port 502
+RS485_2_HOST_PORT = qemu_ports.TRANSPARENT_PORT2_HOST_PORT  # guest port 503
 
 # QEMU UART chardev TCP ports
-UART1_TCP_PORT = 5561        # UART1 (RS485-1)
-UART2_TCP_PORT = 5562        # UART2 (RS485-2)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 (RS485-1)
+UART2_TCP_PORT = qemu_ports.UART2_TCP_PORT  # UART2 (RS485-2)
 
 # Distinct fake values per port so responses can be verified independently
 FAKE_VALUE_RS485_1 = 0x1111
@@ -76,25 +78,16 @@ def _baseline(api):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def dual_gateway_slave(api):
+def dual_gateway_slave(api, is_qemu):
     """Configure both RS485 ports as Modbus TCP gateways and start RTU slaves.
 
     Yields (slave1, slave2) — ModbusRtuSlaveThread instances for RS485-1 and
     RS485-2 respectively.  Restores the original port configuration on teardown.
     """
-    # Verify both UART chardev TCP ports are reachable before proceeding
+    # Verify both UART chardev TCP ports are reachable before proceeding. Only a
+    # reachability question, so each probe socket is closed immediately.
     for uart_port in (UART1_TCP_PORT, UART2_TCP_PORT):
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.settimeout(3.0)
-        try:
-            probe.connect((GATEWAY_HOST, uart_port))
-            probe.close()
-        except (ConnectionRefusedError, OSError, socket.timeout):
-            probe.close()
-            pytest.skip(
-                f"Cannot connect to UART chardev TCP port {uart_port}. "
-                "QEMU may not expose this UART as TCP in this configuration."
-            )
+        require_uart_chardev(uart_port, is_qemu, host=GATEWAY_HOST).close()
 
     # Save original settings for full restore on teardown
     resp = api.get_settings()
@@ -219,19 +212,32 @@ def dual_gateway_slave(api):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(60)
+# 165 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and this
+# is the module's ONLY item — so it pays every module-scoped fixture's setup AND teardown on
+# top of its own body. That is the heaviest setup in the suite:
+#   - _baseline (:52): POST /settings for both ports;
+#   - dual_gateway_slave (:79): GET /settings, 4 x POST /ports/N/mode, 2 x POST /settings,
+#     two 5 s gateway-listen polls and two RTU slaves each with a 5 s connect wait;
+#   - conftest's once-per-session rs485 snapshot (one bounded GET /settings, 20.1 s, see
+#     _RS485_HTTP_TIMEOUT) when this file is run on its own; in a full-suite run it is
+#     charged to the very first item of the session instead.
+# Teardown is dual_gateway_slave's full restore (stop both slaves, disable both ports,
+# POST the whole original settings object back, restore both port modes) plus conftest's
+# _restore_rs485_settings — up to two bounded POST /settings and a settle window
+# (2 x 20.1 s + 1 s = 41.2 s). 60 s body + 60 s setup allowance + 45 s teardown allowance.
+@pytest.mark.timeout(165)
 def test_gateway_dual_port_simultaneous(dual_gateway_slave):
     """FC03 requests to both gateways are served independently with correct values.
 
-    Sends sequential FC03 reads to the RS485-1 gateway (port 50502) and the
-    RS485-2 gateway (port 50503).  Each response must contain the fake_value
+    Sends sequential FC03 reads to the RS485-1 gateway (guest 502) and the
+    RS485-2 gateway (guest 503), each on its slot host port.  Each response must contain the fake_value
     specific to that port's RTU slave, confirming that the two gateway instances
     do not share state or data paths.
     """
     slave1, slave2 = dual_gateway_slave
 
     # -------------------------------------------------------------------
-    # Request to RS485-1 gateway (port 50502) — expect FAKE_VALUE_RS485_1
+    # Request to RS485-1 gateway (guest 502) — expect FAKE_VALUE_RS485_1
     # -------------------------------------------------------------------
     txid1 = 0x0701
     unit_id = 1
@@ -267,7 +273,7 @@ def test_gateway_dual_port_simultaneous(dual_gateway_slave):
     )
 
     # -------------------------------------------------------------------
-    # Request to RS485-2 gateway (port 50503) — expect FAKE_VALUE_RS485_2
+    # Request to RS485-2 gateway (guest 503) — expect FAKE_VALUE_RS485_2
     # -------------------------------------------------------------------
     txid2 = 0x0702
     request2 = make_mbap_request(txid2, unit_id, fc, 0x0000, count)

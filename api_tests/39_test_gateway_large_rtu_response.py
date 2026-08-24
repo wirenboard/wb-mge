@@ -23,6 +23,7 @@ mode). Transparent bridge mode (wait_for_idle=false) still forwards immediately
 on every UART_DATA event.
 """
 
+import qemu_ports
 import socket
 import struct
 import threading
@@ -30,6 +31,7 @@ import time
 
 import pytest
 
+from conftest import require_uart_chardev
 from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 
 
@@ -37,8 +39,8 @@ from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST_PORT = 50502            # QEMU hostfwd: guest port 502 → host 50502
-UART1_TCP_PORT = 5561                # QEMU UART1 chardev TCP
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: slot gateway host port -> guest 502
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 UART_FIFO_FULL_THRESHOLD = 120      # ESP32 UART RXFIFO_FULL threshold in bytes
 # FC03 response size = 1(slave_id) + 1(FC) + 1(byte_count) + count*2(data) + 2(CRC) = 5 + count*2
 # For count=60: 5 + 120 = 125 bytes → exceeds FIFO threshold by 5 bytes
@@ -240,7 +242,7 @@ def _baseline(api):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def gateway_port(api):
+def gateway_port(api, is_qemu):
     """Set up Modbus TCP gateway on RS-485 port 1, without starting an RTU slave.
 
     Configures port 1 in tcp_bridge mode with modbus=True (Modbus TCP gateway),
@@ -249,18 +251,9 @@ def gateway_port(api):
 
     Teardown: disables port 1 and restores original settings.
     """
-    # Verify UART1 chardev is reachable before proceeding
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.settimeout(3.0)
-    try:
-        probe.connect(("127.0.0.1", UART1_TCP_PORT))
-        probe.close()
-    except (ConnectionRefusedError, OSError, socket.timeout):
-        probe.close()
-        pytest.skip(
-            f"Cannot connect to UART chardev TCP port {UART1_TCP_PORT}. "
-            "QEMU may not expose this UART as TCP in this configuration."
-        )
+    # Verify UART1 chardev is reachable before proceeding. Only a reachability
+    # question, so the probe socket is closed immediately.
+    require_uart_chardev(UART1_TCP_PORT, is_qemu).close()
 
     # Save original settings for teardown
     resp = api.get_settings()
@@ -326,7 +319,13 @@ def gateway_port(api):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# 120 s, not the 55 s this carried: one pytest-timeout budget covers setup + call +
+# TEARDOWN, and gateway_port below is FUNCTION-scoped, so its full teardown — three
+# retrying 30 s HTTP calls (set_port_mode, update_settings, set_port_mode) — lands on
+# EVERY item, not just the module's last. The 55 s was derived for setup + call only;
+# build #68 timed out here ON TEARDOWN under CI node contention. Same value and same
+# reasoning as the sibling gateway modules, which run comparable fixtures at 120 s.
+@pytest.mark.timeout(120)
 def test_gateway_small_response_baseline(gateway_port):
     """FC03 read 2 registers → 9-byte response: well below FIFO threshold.
 
@@ -401,7 +400,13 @@ def test_gateway_small_response_baseline(gateway_port):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# 165 s = 120 s body + 45 s teardown allowance. Like the first item this pays the
+# FUNCTION-scoped gateway_port teardown (three retrying 30 s HTTP calls); on top of that,
+# module-scoped fixtures are torn down inside the LAST item of the module and this is that
+# item, so it also pays conftest's _restore_rs485_settings — up to two bounded POST
+# /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# The allowance is the rule, not the 165: a module with a 90 s body budgets 135.
+@pytest.mark.timeout(165)
 def test_gateway_large_response_fifo_split(gateway_port):
     """Regression test for RTU fragmentation bug.
 
