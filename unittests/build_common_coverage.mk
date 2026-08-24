@@ -30,8 +30,11 @@ COVERAGE_FUNC_MERGE_MODE = --merge-mode-functions=separate
 # Coverage targets, $(UNITTESTS_DIRS) is provided by build_common.mk
 COVERAGE_TARGETS = $(addprefix COVERAGE_, $(UNITTESTS_DIRS))
 
-# Dependencies list for "coverage" target
-COVERAGE_DEPS = remove_report_dir $(COVERAGE_REPORT_DIR) $(COVERAGE_TARGETS)
+# Dependencies list for the "coverage_report" target.
+# remove_report_dir is not in here: it runs as a separate, sequential sub-make,
+# see the "coverage" target below. Neither is $(COVERAGE_REPORT_DIR): the recipes
+# that write into that directory create it themselves.
+COVERAGE_DEPS = $(COVERAGE_TARGETS)
 
 # Add trace files string for gcovr used in "coverage" target
 # JSON_LIST is assigned inside the "coverage" target
@@ -64,14 +67,42 @@ $(UNCOVERED_SRC_LIST_FILE): $(COVERAGE_TARGETS)
 
 # Generate an empty JSON trace data file to get "gcovr/format_version" value from it
 # EIM_ACTIVATE is sourced so that gcovr is on PATH (EIM/local installs do not export it globally).
+#
+# The search path is spelled out rather than left implicit. It is the same path
+# gcovr would pick on its own — it defaults search_paths to --root (see
+# gcovr/formats/gcov/read.py) — so this is documentation, not a behaviour change:
+# it keeps the scan visibly pinned to $(COVERAGE_REPORT_DIR), which holds no
+# coverage data, instead of relying on that default staying put. Only the
+# "gcovr/format_version" field of the output is ever used.
 $(GCOVR_FORMAT_VERSION_FILE):
-	@$(EIM_ACTIVATE) && gcovr -r $(COVERAGE_REPORT_DIR) --json-pretty -o $@
+	@mkdir -p $(COVERAGE_REPORT_DIR)
+	@$(EIM_ACTIVATE) && gcovr -r $(COVERAGE_REPORT_DIR) --json-pretty -o $@ $(COVERAGE_REPORT_DIR)
 
 endif #ifneq ($(COVERAGE_NO_ADD_UNCOVERED_FILES),1)
 
+# These targets are not files
+.PHONY: coverage coverage_report remove_report_dir
+
 # Generate summary coverage report for project (main target)
+#
+# The wipe of the report directory is a separate, sequential sub-make rather than
+# one more entry in COVERAGE_DEPS. make imposes no order between the prerequisites
+# of a target, so under `make -j` the `rm -rf $(COVERAGE_REPORT_DIR)` raced with
+# the recipes that fill that directory, and runs on a tree that already had a
+# report directory failed on a missing $(COVERAGE_DATA_LIST_FILE). An order-only
+# edge onto remove_report_dir does not help: make snapshots a target's mtime
+# before it walks its prerequisites (remake.c: this_mtime = file_mtime (file)) and
+# order-only prerequisites cannot set must_make again, so a file left over from
+# the previous run was declared up to date against a state the rm -rf was about to
+# destroy, and its recipe was skipped. Only a second make process re-stats
+# everything, which is what makes the order here reliable.
+coverage:
+	@$(MAKE) remove_report_dir
+	@$(MAKE) coverage_report
+
+# Everything the coverage target does after the report directory has been wiped.
 # List of dependencies COVERAGE_DEPS is assigned above
-coverage: $(COVERAGE_DEPS)
+coverage_report: $(COVERAGE_DEPS)
 	@echo "\n\n================= Generating summary coverage report for project =================\n"
 
 #	Print extra debug information about COVERAGE_EXTRA_FLAGS, COVERAGE_NO_ADD_UNCOVERED_FILES and COVERAGE_FAIL_UNDER variables
@@ -105,13 +136,13 @@ $(COVERAGE_TARGETS): $(COVERAGE_DATA_LIST_FILE)
 		$(EIM_ACTIVATE) && ./unittests/coverage_helper.sh --make-coverage $(COV_DIR) $(COVERAGE_DATA_LIST_FILE); \
 	fi
 
-# Create an empty file in which the list of coverage data files will be written
+# Create an empty file in which the list of coverage data files will be written.
+# The recipe creates the directory it writes into; $(COVERAGE_REPORT_DIR) is not a
+# target of its own, because a prerequisite edge — order-only or not — cannot
+# express "wipe first, then create". See the comment on the coverage target.
 $(COVERAGE_DATA_LIST_FILE):
+	@mkdir -p $(COVERAGE_REPORT_DIR)
 	@touch $@
-
-# Create directory for coverage report
-$(COVERAGE_REPORT_DIR):
-	mkdir -p $@
 
 # Remove coverage report directory
 remove_report_dir:
