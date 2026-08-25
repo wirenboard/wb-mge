@@ -1,3 +1,9 @@
+2026-08-25 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
+    * version:  1.3.1
+    * fix:      open the web interface in the browser's language — a region-qualified tag such as ru-RU, de-AT, it-CH or kk-KZ used to miss the match and fall back to English
+    * fix:      keep the login-page language dropdown readable in Chromium-based browsers (Edge, Chrome), where every entry except the highlighted one was drawn white on white
+    * fix:      load the web interface when the browser denies site storage — reading the saved language used to throw and abort the whole interface, not merely lose the choice
+
 2026-06-25 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
     * version:  1.3.0
     * added:    Modbus sniffer — live RS-485 capture over WebSocket with slave/function-code facet filters, CSV export, error stats, and Fast Modbus decode
