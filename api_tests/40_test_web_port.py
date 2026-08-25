@@ -120,9 +120,9 @@ _TEARDOWN_BUDGET_S = (_RESTORE_PORT_WAIT_S + _BASE_POLL_OVERRUN_S               
 # Fixture setup + fixture teardown are charged to this item too. 45 s is the allowance quoted
 # by these 15 items, this file among them:
 # 20/21/24/25/27/28/29/31/35/38/39/40/41/42/49. It is dominated by the module-scoped rs485
-# restore, whose ceiling conftest.py:1258-1261 computes as 41.2 s. Not a suite-wide rule:
-# 03_ decomposes its budget with no such allowance, and 36_/37_ use one undecomposed,
-# deliberately generous number instead.
+# restore, whose ceiling conftest.py's _RS485_HTTP_TIMEOUT computes as 41.2 s (its
+# "Resulting ceilings" block). Not a suite-wide rule: 03_ decomposes its budget with no
+# such allowance, and 36_/37_ use one undecomposed, deliberately generous number instead.
 _FIXTURE_BUDGET_S = 45
 
 _TEST_TIMEOUT_S = _BODY_BUDGET_S + _TEARDOWN_BUDGET_S + _FIXTURE_BUDGET_S       # 2809
@@ -210,7 +210,7 @@ def _reboot_via(base_url):
     Returns None when the reboot fired, otherwise a string describing why it did not.
 
     Authentication is the whole point of this helper. cmd_post_handler runs
-    auth_middleware_check before it looks at the command (main/cmd_handler.c:167), and that
+    auth_middleware_check before it looks at the command (main/cmd_handler.c:168), and that
     answers a bare 401 with no body when the request carries no valid session_id cookie
     (main/auth.c:245-267). A plain requests.Session therefore raises nothing, returns a
     perfectly ordinary response object, and reboots nothing at all — a silent no-op. The 401

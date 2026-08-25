@@ -120,11 +120,12 @@ CACHE_PORT = qemu_ports.CACHE_MODBUS_HOST_PORT
 # exists to remove. The read leg is therefore sized at >= 3 x 15.88 = 47.6 s, rounded to 50.
 #
 # WHY A TUPLE. In requests a scalar timeout bounds connect and read SEPARATELY
-# (conftest.py:1246-1250), and _DelayedSession sends Connection: close so every call opens
-# a fresh connection — a scalar 50 would mean 50 s connect + 50 s read = 100 s worst case,
-# so the ceiling the marker below quotes would not be a real bound at all. Connect is a
-# loopback handshake to a QEMU hostfwd port — immediate or never — so 5 s is already far
-# past generous. Resulting ceiling per call: 0.1 s (_DelayedSession.DELAY_S) + 5 + 50 = 55.1 s.
+# (conftest.py, the _RS485_HTTP_TIMEOUT comment), and _DelayedSession sends Connection: close
+# so every call opens a fresh connection — a scalar 50 would mean 50 s connect + 50 s read =
+# 100 s worst case, so the ceiling the marker below quotes would not be a real bound at all.
+# Connect is a loopback handshake to a QEMU hostfwd port — immediate or never — so 5 s is
+# already far past generous. Resulting ceiling per call: 0.1 s (_DelayedSession.DELAY_S) +
+# 5 + 50 = 55.1 s.
 _SETTINGS_HTTP_TIMEOUT = (5, 50)
 
 # THE FIRMWARE CONSTANT THE WHOLE DETECTOR RESTS ON. Every accepted client socket gets
@@ -327,9 +328,9 @@ def _skip_detector_disarmed(reason: str) -> typing.NoReturn:
       - the pytest CONSOLE output — the Jenkins build log — via the print below. qemu.mk:279
         runs pytest with no redirect, and -s means nothing captures this.
     NOT build/qemu_test.log, and getting this wrong is worse than saying nothing: that path is
-    QEMU_LOG_PATH (conftest.py:47), opened at conftest.py:1093-1094 and handed to the QEMU
-    Popen as stdout/stderr (conftest.py:1111), so it holds the GUEST's serial output and
-    nothing this process prints. _dump_qemu_log (conftest.py:544-552) copies that file INTO the
+    QEMU_LOG_PATH (conftest.py), opened as `log_handle` in conftest's qemu_process fixture and
+    handed to the QEMU Popen there as stdout/stderr, so it holds the GUEST's serial output and
+    nothing this process prints. _dump_qemu_log (conftest.py) copies that file INTO the
     console on failure — the opposite direction. An engineer grepping the archived
     qemu_test.log for this marker would find nothing and conclude no run was ever disarmed,
     which is precisely the mistake the marker exists to prevent.
@@ -399,7 +400,7 @@ class _PollStats:
         # Set on the FIRST fully parsed Modbus response.  A response is the only event
         # that proves the GUEST admitted this client: against the QEMU slirp hostfwd
         # port a bare connect() completes on the HOST before the SYN reaches the guest
-        # (see the note on _connect_ready_bridge, conftest.py:571-575), so neither
+        # (see the note on _connect_ready_bridge in conftest.py), so neither
         # connect() nor sendall() succeeding says anything about firmware state.
         self.first_response = threading.Event()
         self.responses = 0
@@ -685,9 +686,10 @@ class _PollingClient:
     socket timeout applies to the handshake too. Against the
     QEMU slirp hostfwd port connect() cannot usefully fail: the port is bound by QEMU for
     the life of the VM, and a guest that is NOT listening still gets a host-side connect()
-    success (conftest.py:571-575), surfacing later as an RST or an unanswered request. A
-    retry loop would only ever spin on a condition that does not arise, and the condition it
-    was imagined to cover is caught by the caller's step-6 response assert instead.
+    success (see _connect_ready_bridge in conftest.py), surfacing later as an RST or an
+    unanswered request. A retry loop would only ever spin on a condition that does not
+    arise, and the condition it was imagined to cover is caught by the caller's step-6
+    response assert instead.
     """
 
     def __init__(self, host: str, port: int, stop_event: threading.Event,
@@ -1116,8 +1118,9 @@ def test_cache_server_deinit_with_active_polling(api):
         #
         # No _poll_tcp_connect() readiness probe here, and this is not an omission.
         # CACHE_PORT is a QEMU slirp hostfwd port, and against slirp a bare connect()
-        # completes on the HOST before the SYN ever reaches the guest (conftest.py:571-575,
-        # and the same reasoning at conftest.py:958-965), so the probe returns True
+        # completes on the HOST before the SYN ever reaches the guest (_connect_ready_bridge
+        # in conftest.py, and the same reasoning in the "No bridge-readiness PROBE here" note
+        # in conftest's build_gateway_fixture), so the probe returns True
         # whether or not the cache server came up in the guest at all — an assert that
         # cannot fail. Readiness is established below, positively, by the only event that
         # actually reaches the guest: a Modbus response.
@@ -1355,8 +1358,9 @@ def test_cache_server_deinit_with_active_polling(api):
         # instead is that the probe was ANSWERED BUT NOT ACCEPTED. A rejected settings
         # write answers 200 with {"success": false} — every early return in
         # settings_manager.c returns ESP_OK so the HTTP layer can send the error JSON
-        # (conftest.py:1426-1428) — and such a request returns BEFORE reaching
-        # settings_update_with_status(), i.e. before the wait that is the whole detector.
+        # (the same note in conftest's _restore_rs485_settings) — and such a request returns
+        # BEFORE reaching settings_update_with_status(), i.e. before the wait that is the
+        # whole detector.
         # It is therefore not evidence of a healthy deinit either: this run simply proves
         # nothing, and must not be reported as a pass.
         probe_ok = (probe_resp.status_code == 200

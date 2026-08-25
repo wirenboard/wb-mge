@@ -127,11 +127,14 @@ pipeline {
         //                                       trigger above.
         // Setting both on runs the suite twice (~4 h) and is only worth it for a one-off.
         // These two describe only which of the COVERAGE and E2E stages run. The rest of the
-        // pipeline — lints, unit tests, frontend, firmware build, clang-tidy and 'Upload to S3' —
-        // runs on any build that is not a nightly the precheck decided to skip, which means a
-        // coverage-only nightly that DOES measure still re-invokes s3_uploader for the same
-        // revision the day's push build already handed to it. See that stage for what is and is
-        // not known about the consequences. A nightly the precheck skips runs none of them.
+        // pipeline — lints, unit tests, frontend, firmware build and clang-tidy — runs on any
+        // build that is not a nightly the precheck decided to skip. 'Upload to S3' is the one
+        // exception: it also refuses builds a TIMER started, so a coverage-only nightly that DOES
+        // measure still builds and tests everything but no longer re-invokes s3_uploader for the
+        // revision the day's push build already handed to it. That stage recognises the timer two
+        // independent ways — an env flag this file sets, and 'triggeredBy' conditions — because
+        // neither one covers every timer on its own; see it for which covers what, and for what is
+        // and is not known about the consequences. A nightly the precheck skips runs none of them.
         booleanParam(name: 'RUN_COVERAGE', description: 'Run the coverage stages: unit tests and QEMU e2e. The combined report additionally requires both of those to succeed. Independent of RUN_E2E. Off by default: coverage runs when it is explicitly requested here, or once a night on main via the parameterizedCron trigger in this Jenkinsfile. A nightly that finds a combined report already recorded for the very same commit skips every stage in the pipeline except that check itself; ticking this box by hand always runs them', defaultValue: false)
         booleanParam(name: 'RUN_E2E', description: 'Run the plain QEMU e2e API suite and publish its junit. On by default, and meant to stay on: the suite is expected to run on every build. Does not gate the coverage stages — with RUN_COVERAGE on, the QEMU coverage stage re-runs the suite regardless', defaultValue: true)
     }
@@ -219,6 +222,46 @@ pipeline {
                                 startedByTimer = true
                                 break
                             }
+                        }
+
+                        // Export the timer fact for 'Upload to S3'. NIGHTLY_COVERAGE_SKIP below
+                        // answers a NARROWER question — "this commit already has a combined
+                        // report" — and the nightly whose commit HAS changed leaves it unset, so a
+                        // stage guarded on it alone still hands s3_uploader a revision the daytime
+                        // push build already uploaded. This flag is the timer fact itself: set for
+                        // every timer-started build THAT REACHES THIS STAGE, whether coverage then
+                        // runs or is skipped, and set for nothing else — a human who ticks
+                        // RUN_COVERAGE by hand is not a timer cause and keeps the upload exactly as
+                        // before.
+                        //
+                        // "That reaches this stage" is the limit of what the flag can promise, and
+                        // it is a real limit, not a formality: this stage's own 'when' is
+                        // params.RUN_COVERAGE == true, so a timer that starts a build WITHOUT that
+                        // parameter — a second parameterizedCron line, or a plain 'Build
+                        // periodically' cron added in the job UI — never runs this code and leaves
+                        // the flag unset. That is precisely why 'Upload to S3' does not rely on
+                        // this flag alone; see the triggeredBy conditions in its 'when'.
+                        //
+                        // Named NIGHTLY_TIMER_BUILD and not NIGHTLY_BUILD on purpose. Assigning to
+                        // env.X makes this a real environment variable, and NIGHTLY_BUILD is a
+                        // common CI variable name: were it ever to arrive from Jenkins global
+                        // properties, a node's environment or a build wrapper, the S3 upload would
+                        // switch itself off for every build of this job with nothing in the log to
+                        // say why. The narrower name matches NIGHTLY_COVERAGE_SKIP beside it.
+                        //
+                        // Set LAST in the branch that decides it, for the same reason
+                        // NIGHTLY_COVERAGE_SKIP is: the loop above has already finished by here, so
+                        // no throw can leave the flag set on a half-read cause list. It gates no
+                        // coverage stage, so it cannot skip coverage that previously ran, and if
+                        // getBuildCauses() itself throws, the flag stays unset and the upload
+                        // happens as it does today — the same fail-open direction as the rest of
+                        // this stage.
+                        if (startedByTimer) {
+                            env.NIGHTLY_TIMER_BUILD = 'true'
+                            // Say it in the log. This is the one decision this stage makes that
+                            // changes what a LATER stage does, and without this line the only
+                            // trace of it is a stage that quietly is not there.
+                            echo 'Started by timer: Upload to S3 will be skipped for this build'
                         }
 
                         // Cheap checks first, then the walk. The two conditions below are a field
@@ -792,18 +835,65 @@ pipeline {
             }
         }
         stage('Upload to S3') {
-            // Gated on one thing only: not a skipped nightly. Otherwise this fires on every build
-            // of every branch, which is the intent — including a coverage-only nightly that
-            // actually measures (RUN_COVERAGE=true, RUN_E2E=false) started by the
-            // parameterizedCron trigger at the top of this file.
+            // Gated on the whole-file nightly guard plus TWO independent ways of recognising a
+            // timer-started build. Otherwise this fires on every build of every branch, which is
+            // the intent — and a human who ticks RUN_COVERAGE by hand still gets the upload exactly
+            // as before, because none of the conditions reads a parameter, only the build's cause.
             //
-            // The guard matters most HERE, and the reason is written into the paragraph below:
+            // What is being fixed: NIGHTLY_COVERAGE_SKIP answers a narrower question. It is set
+            // only when this commit already HAS a combined report; the other nightly shape — the
+            // one whose commit changed, so coverage actually measures (RUN_COVERAGE=true,
+            // RUN_E2E=false, from the parameterizedCron trigger at the top of this file) — leaves
+            // it unset and used to walk straight into this stage, re-invoking s3_uploader for the
+            // very revision the day's push build had already handed over. A publish nobody asked
+            // for, at 02:00, with nobody around to see it.
+            //
+            // Why TWO timer conditions and not one. Each covers exactly what the other misses:
+            //   * NIGHTLY_TIMER_BUILD is set by 'Coverage precheck', from a cause scan that matches
+            //     'TimerTriggerCause' as a SUBSTRING of the cause class and reads only each cause's
+            //     own top-level fields, never nested upstreamCauses. The substring match is what
+            //     makes it catch ParameterizedTimerTriggerCause, a SUBCLASS of
+            //     TimerTrigger.TimerTriggerCause, which is the cause this job's parameterizedCron
+            //     actually produces. Its weakness is that it needs that stage to have run at all,
+            //     and that stage's 'when' is params.RUN_COVERAGE == true.
+            //   * triggeredBy needs no earlier stage, so it still holds when a future timer bypasses
+            //     the precheck entirely. Its weakness is that it is NOT subclass-aware. Utils.
+            //     shouldRunBeAllowed() in pipeline-model-definition tests the cause's runtime class
+            //     SIMPLE NAME against an anchored, case-insensitive prefix regex, so — verified
+            //     against that source, not assumed — 'TimerTrigger' matches the simple name
+            //     'TimerTriggerCause' and does NOT match 'ParameterizedTimerTriggerCause', which
+            //     does not start with it. That is why the parameterized cause is named by a second
+            //     condition of its own instead of being left to the first.
+            // Together they cover a plain 'Build periodically' cron added in the job UI and a
+            // parameterizedCron line whose parameters never reach 'Coverage precheck' — the two
+            // ways a future timer could otherwise slip past the flag. This is coverage of every
+            // timer this job can be given today, NOT a guarantee: a cause class named like neither
+            // of these two, arriving on a build the precheck does not run, would still get through.
+            //
+            // 'triggeredBy' is resolved at PARSE time, exactly like the parameterizedCron trigger
+            // at the top of this file, and was verified the same way: the declarative linter at
+            // {JENKINS}/pipeline-model-converter/validate enumerates triggeredBy among the valid
+            // 'when' conditions and rejects a bogus one by printing that enumeration, and this
+            // file was linted whole with the block below in place. Were the condition ever
+            // unavailable, the failure would be loud rather than silent — every branch and every
+            // PR would break at once, not just this stage.
+            //
+            // The cost of the gate, stated plainly: "the day's push build already handed the
+            // revision over" holds only if that build REACHED this stage. 'Unit tests (C)', 'Unit
+            // tests (frontend)', 'Build frontend' and 'Build firmware' carry no catchError, so a
+            // transient failure in any of them — an OOM, a docker pull that died — fails the build
+            // before this stage. The nightly used to pick such a revision up; now nothing does
+            // until the next push. Accepted deliberately: a missed upload sits behind a red build
+            // somebody can see, whereas the repeated publish it replaces was invisible by
+            // construction.
+            //
+            // The guards matter most HERE, and the reason is written into the paragraph below:
             // what an upload of an already-uploaded revision does could NOT be established from
             // this repository, and the standing advice is to assume a nightly on the default
             // branch DOES re-upload. An effect nobody can characterise, repeated 365 times a year
             // for revisions the daytime build already handed over, is not something to leave
-            // running for want of a two-token 'when'. Uncertainty argues for not firing it, not
-            // for firing it anyway.
+            // running for want of the three conditions below. Uncertainty argues for not firing
+            // it, not for firing it anyway.
             //
             // What that upload actually does: s3_uploader is a freestyle job whose only build
             // step clones wirenboard/wbfw-s3-uploader and runs s3-upload.sh, so the branch logic
@@ -816,17 +906,33 @@ pipeline {
             // block, both long before the coverage stages rebuild with instrumentation, and what
             // s3_uploader works from is this build's ARCHIVED artifacts.
             //
-            // A second reason for the guard: a skipped nightly has no artifacts of its own. The
-            // uploader is a separate job that copies the archived artifacts of the build it is
-            // pointed at — hence copyArtifactPermission('/s3_uploader') in options at the top of
-            // this file, and hence the UPSTREAM_JOB_NAME/BUILD parameters passed below. It runs
+            // The NIGHTLY_COVERAGE_SKIP conjunct can no longer be the deciding one, and is kept as
+            // defence in depth rather than as a live reason. It is set only on a path that already
+            // required startedByTimer, and NIGHTLY_TIMER_BUILD is set earlier in that same stage on
+            // that same condition — so every build that sets the first has already set the second,
+            // and dropping it would change no verdict. It is written out anyway because every stage
+            // in this file bar 'Coverage precheck' carries the guard, and a gap in that list reads
+            // as an oversight rather than as a deduction; and because it keeps this stage right on
+            // its own terms should the timer flag ever be narrowed.
+            //
+            // What that conjunct is about, on the day it is the one doing the work: a skipped
+            // nightly has no artifacts of its own. The uploader is a separate job that copies the
+            // archived artifacts of the build it is pointed at — hence
+            // copyArtifactPermission('/s3_uploader') in options at the top of this file, and hence
+            // the UPSTREAM_JOB_NAME/BUILD parameters passed below. It runs
             // in its own workspace, possibly on another node, so this job's result/ directory is
             // not what it reads. On a skipped nightly 'Build firmware' never runs, so its
             // post { success } archiveArtifacts never runs either and the build ends with nothing
             // archived at all; the uploader pointed at that build number would find nothing to
             // copy and at best fail pointlessly. What it would NOT do is publish some earlier
             // build's binaries — the build it is given is this one.
-            when { expression { env.NIGHTLY_COVERAGE_SKIP != 'true' } }
+            when {
+                allOf {
+                    expression { env.NIGHTLY_COVERAGE_SKIP != 'true' && env.NIGHTLY_TIMER_BUILD != 'true' }
+                    not { triggeredBy 'TimerTrigger' }
+                    not { triggeredBy 'ParameterizedTimerTriggerCause' }
+                }
+            }
             steps {
                 build job: 's3_uploader', parameters: [
                     string(name: 'UPSTREAM_JOB_NAME', value: env.JOB_NAME),

@@ -186,7 +186,7 @@ _DISARMED_MARKER = "DETECTOR-DISARMED"
 
 
 def _qemu_serial_log_path():
-    """Path to the live QEMU serial capture (QEMU_LOG_PATH in conftest.py:47)."""
+    """Path to the live QEMU serial capture (QEMU_LOG_PATH in conftest.py)."""
     return os.path.join(os.path.dirname(__file__), "..", "build", "qemu_test.log")
 
 
@@ -264,8 +264,9 @@ def _guest_held_ms_after_press(markers, release_at_host):
 
     The first bullet's middle step is the substantive one: the guest's millisecond clock can
     LAG host wall-clock but never lead it. Its ticks come from an emulated timer that QEMU
-    drives off the host clock, and the QEMU invocation (conftest.py:1096-1110) passes no
-    -icount, so there is no virtual clock that can jump ahead while the guest idles.
+    drives off the host clock, and the QEMU invocation (the subprocess.Popen argv in
+    conftest.py's qemu_process fixture) passes no -icount, so there is no virtual clock that
+    can jump ahead while the guest idles.
     Contention makes the guest MISS ticks — precisely the failure mode this whole file is
     about — and every millisecond missed makes this bound smaller, i.e. more forgiving.
 
@@ -503,8 +504,8 @@ def test_wifi_led_present(api):
 # CALL PHASE. api_client.py:94/:98 pass a SCALAR timeout=30 to requests, which bounds
 # connect and read SEPARATELY, so the strict per-call ceiling is 60 s, not 30. The 30 s
 # below is the READ leg only, and taking it as the whole call is justified the same way
-# conftest.py:1260-1263 justifies its own asymmetric split: connect is a loopback TCP
-# handshake to a QEMU hostfwd port, "either immediate or never", so the connect leg cannot
+# conftest.py's _RS485_HTTP_TIMEOUT justifies its own asymmetric split: connect is a loopback
+# TCP handshake to a QEMU hostfwd port, "either immediate or never", so the connect leg cannot
 # quietly consume seconds. (Strictly scalar this item would need ~417 s: the six 30 s calls
 # below — three before the press, the poll's trailing GET, the re-read and the restore —
 # doubled to 60 s each, plus the 57 s of terms that are not HTTP calls. That regime needs a
@@ -521,13 +522,14 @@ def test_wifi_led_present(api):
 #     = 237 s
 #
 # TEARDOWN PHASE, which counts too: pytest_timeout bounds setup + call + teardown unless
-# func_only is set, and it is not. This item is the LAST of the run — pytest_collection_
-# modifyitems orders `baseline + body + final + reboot` (conftest.py:102-116) and this is
-# the last reboot file — so session and module teardowns land here:
-#       41.2 s   the module-scoped _restore_rs485_settings (conftest.py:1370), whose ceiling
-#                conftest.py:1266-1269 computes as 2 ports x 20.1 s + _RS485_RESTORE_SETTLE_S
-#          4 s   _uart_leak_guard probing both UART chardevs at 2.0 s each (conftest.py:1621)
-#          5 s   qemu_process's SIGTERM + proc.wait(timeout=5) (conftest.py:1144-1146)
+# func_only is set, and it is not. This item is the LAST of the run —
+# pytest_collection_modifyitems in conftest.py orders `baseline + body + final + reboot`
+# and this is the last reboot file — so session and module teardowns land here:
+#       41.2 s   the module-scoped _restore_rs485_settings (conftest.py), whose ceiling the
+#                "Resulting ceilings" block on conftest.py's _RS485_HTTP_TIMEOUT computes as
+#                2 ports x 20.1 s + _RS485_RESTORE_SETTLE_S
+#          4 s   _uart_leak_guard's probe.settimeout(2.0) on both UART chardevs (conftest.py)
+#          5 s   qemu_process's SIGTERM + proc.wait(timeout=5) in its teardown (conftest.py)
 #     = ~51 s
 #
 # 237 + 51 = ~288 s. 360 leaves ~72 s (25%) of headroom on top of a ceiling that already
@@ -800,8 +802,9 @@ def test_factory_reset_long_press(api):
         # verdicts and was harmless while every path out of the body was already an
         # assertion; it is the classification added above that makes it load-bearing, and in
         # particular _reread_term's "a network hiccup must not redden the item" only holds if
-        # the hiccup does not also reach this call. Same convention as conftest.py:1446,
-        # which wraps its own restore so teardown cannot mask a test failure.
+        # the hiccup does not also reach this call. Same convention as the
+        # _restore_rs485_settings teardown in conftest.py, which wraps its own restore so
+        # teardown cannot mask a test failure.
         #
         # Only the TRANSPORT error is swallowed. A device that is genuinely dead still goes
         # red, via the polling loop and the status-code asserts above, none of which catch.

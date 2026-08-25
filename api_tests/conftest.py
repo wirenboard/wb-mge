@@ -909,7 +909,7 @@ def build_gateway_fixture(port_num: int, uart_tcp_port: int,
     gone rather than given a token use.
     """
     @pytest.fixture
-    def gateway_fixture(api, is_qemu):
+    def gateway_fixture(api, is_qemu, request):
         # Step 1: verify UART chardev is reachable (fails when the QEMU is ours, skips
         # against a remote device — see require_uart_chardev). The probe is only a
         # reachability question here, so it is closed immediately, as before.
@@ -992,10 +992,15 @@ def build_gateway_fixture(port_num: int, uart_tcp_port: int,
 
         finally:
             # Step 8: restore settings, then Step 9: stop the RTU slave thread.
-            # Each restore call is a 30 s-read-timeout /settings request that can ReadTimeout
-            # under QEMU load. Two invariants: (a) one failing call must not skip the others
-            # (best-effort, each in its own try) and must not MASK the test's real error
-            # (print, never raise); (b) slave.stop() must ALWAYS run — it is a daemon
+            # Every call here can ReadTimeout under QEMU load. The two set_port_mode() calls
+            # keep the client's own scalar timeout=30 AND its ESP_FAIL retry loop
+            # (api_client.py:144, :161-171) — between them the dominant cost of this block,
+            # worked out in the arithmetic further down; the settings restore below
+            # deliberately takes neither — it goes through api.session with the bounded tuple
+            # _SETTINGS_BLOB_HTTP_TIMEOUT, for the reason spelled out there. Two invariants:
+            # (a) one failing call must not skip the others (best-effort, each in its own try)
+            # and must not MASK the test's real error (report, never raise); (b) slave.stop()
+            # must ALWAYS run — it is a daemon
             # ModbusRtuSlaveThread holding a live TCP connection to the single-client QEMU
             # chardev (UART1/UART2), so a leaked one wedges that chardev and cascades skips
             # across every module using this factory. So slave.stop() lives in a finally
@@ -1007,12 +1012,168 @@ def build_gateway_fixture(port_num: int, uart_tcp_port: int,
                 except Exception as exc:
                     print(f"✗ teardown set_port_mode(disabled) failed: {exc!r}")
 
+                # ONE attempt, deliberately, with the read budget sized for a single try (see
+                # _SETTINGS_BLOB_HTTP_TIMEOUT for both halves of that trade: a 30 s read leg,
+                # and nothing to multiply it by). Detecting the refusal still matters, because
+                # nothing downstream repairs it: this teardown is the ONLY thing that puts
+                # `bridge` and `port_mode` back, and the MODULE-scoped _restore_rs485_settings
+                # cannot rescue them — _RS485_RESTORE_KEYS carries the serial line parameters
+                # only (tx_disabled, baudrate, stopbits, parity, databits, term, fail_safe). A
+                # refused restore therefore leaves this port in its tcp_bridge config for the
+                # whole rest of the run, to surface in some later module as a failure with no
+                # visible cause.
+                #
+                # The other half of why repeating buys nothing is that a rejection here is
+                # normally DETERMINISTIC. A field that fails validate_rs485_settings()
+                # (main/settings_manager.c:565) answers identically every time. So does a
+                # collision, and this is the collision shape that can actually fire: the
+                # restore posts the WHOLE /settings blob, so it always carries web_port and —
+                # whenever the cache server is on — cache_modbus_port together with
+                # cache_modbus_server_enabled. validate_port_collisions()
+                # (main/settings_manager.c:428-509) marks each of those listeners "touched" on
+                # exactly those fields (:445-448 for web_port, :450-457 for the cache server).
+                # A collision merely INHERITED from the saved configuration is tolerated with
+                # a warning only while NEITHER side is touched (:485-500); touch one side and
+                # the entire request is rejected (:501-504). That is why the module-scoped
+                # _restore_rs485_settings stays clear of top-level keys — see the "Scope is
+                # deliberately narrow" paragraph of its docstring, which names web_port as a
+                # field that "always participates in collision validation"; this teardown
+                # cannot, because restoring the blob is its whole job.
+                #
+                # This port's own bridge listener is NOT that mechanism, despite the blob
+                # carrying bridge.port, bridge.mode and rs485_N.port_mode. The rs485 loop
+                # registers a listener at all only when the EFFECTIVE port_mode is tcp_bridge
+                # AND bridge.mode is server (:463-468, the two `continue`s); the restore posts
+                # the ORIGINAL port_mode, which at every call site is the pre-test value, so
+                # the port normally contributes no listener and cannot collide.
+                #
+                # The COST is bounded EXPLICITLY, and that is not decoration. This fixture is
+                # function-scoped, so this teardown runs on EVERY item that requests it, and
+                # pytest-timeout charges setup + call + teardown to ONE item budget — the same
+                # argument _RS485_HTTP_TIMEOUT makes further down this file. Going through
+                # api.update_settings() would inherit its SCALAR timeout=30 (api_client.py:98),
+                # and requests applies a scalar to the connect and the read phases SEPARATELY,
+                # with _DelayedSession sending Connection: close so every call opens a fresh
+                # connection: 0.1 s DELAY_S + 30 s connect + 30 s read = 60.1 s — two thirds
+                # of the 90 s budget of 41_test_bridge_overlay_e2e.py:121 and a third of the
+                # 180 s default in pytest.ini, spent before this item's own work is counted,
+                # and all of it in a connect phase that on loopback is either immediate or
+                # never. Hence the request is issued through api.session directly with a
+                # TUPLE, exactly as _restore_rs485_settings does and for exactly the same
+                # reason — its own tuple, because the payload is the whole blob rather than
+                # one port's whitelist:
+                #   this call : 0.1 s DELAY_S + 5 s connect + 30 s read = 35.1 s worst case
+                # (_SETTINGS_BLOB_HTTP_TIMEOUT is defined below this factory; the name is
+                # looked up when the fixture RUNS, long after import, so the order is not a
+                # problem.)
+                #
+                # 35.1 s is NOT the largest term in this teardown, and nothing here should be
+                # read as claiming it is. The two set_port_mode() calls bracketing this
+                # restore carry api_client's ESP_FAIL retry (api_client.py:144, :161-171:
+                # settle_retries=2, so up to 2 EXTRA POSTs, 30 s scalar each, 0.5 s apart),
+                # and a scalar bounds connect and read separately there too — so the worst
+                # case per call is 3 x (0.1 + 30 + 30) + 2 x 0.5 s = ~181 s, and there are two
+                # such calls, i.e. ~362 s against this POST's 35.1 s. Same treatment as
+                # limitation (b) in 36_test_tcp_server_deinit_hang.py's
+                # test_tcp_server_deinit_completes_with_open_client, including its escape
+                # clause: that ceiling is UNREACHABLE today, because port_set_mode_handler()
+                # answers a port_manager_set_mode() failure with 500, not 400
+                # (main/bridge/port_manager.c:1516-1529), and its only 400s ("Invalid JSON",
+                # "Missing or invalid 'mode' field", "Unknown mode value") never carry the
+                # string ESP_FAIL, so the loop returns on the first response and each call
+                # costs one 60.1 s POST at worst. Bounding THIS request is still worth doing —
+                # it is the term this fixture actually owns, and the only one it can size —
+                # but a budget derived from 35.1 s alone would be derived from the smaller
+                # half of the block.
+                #
+                # The whole block is wrapped and cannot raise — the call and the body check
+                # are inside the try, and the warnings.warn() that follows is guarded in turn
+                # (see the note on it). That is the invariant of this whole teardown block: it
+                # runs after the module's tests, so an exception escaping here would displace
+                # whatever real failure came before it.
+                restore_detail = None
                 try:
-                    restore_resp = api.update_settings(original_settings)
-                    if restore_resp.status_code != 200:
-                        print(f"✗ Failed to restore settings: HTTP {restore_resp.status_code}")
-                except Exception as exc:
-                    print(f"✗ teardown update_settings failed: {exc!r}")
+                    restore_resp = api.session.post(
+                        f"{api.base_url}/settings",
+                        json=original_settings,
+                        timeout=_SETTINGS_BLOB_HTTP_TIMEOUT,
+                    )
+                    # Body parsing kept OUT of the enclosing except, as in
+                    # _restore_rs485_settings: a non-JSON body means the request itself
+                    # SUCCEEDED and answered with something unexpected, which is a
+                    # different diagnosis from "request failed" and must not be reported
+                    # as one.
+                    try:
+                        restore_body = restore_resp.json()
+                    except ValueError:
+                        restore_body = None
+                    # A REJECTED settings write answers HTTP 200 with {"success": false,
+                    # ...} (settings_manager.c:849-855 returns ESP_OK so the HTTP layer
+                    # can send the error JSON), so the status code alone proves nothing —
+                    # the body must be checked. isinstance() before .get(): a JSON list
+                    # or scalar has no .get. `is True`, not `is not False`: a body with
+                    # no "success" key at all is not a settings response the firmware
+                    # produced on its happy path.
+                    if not (restore_resp.status_code == 200
+                            and isinstance(restore_body, dict)
+                            and restore_body.get("success") is True):
+                        restore_detail = (f"HTTP {restore_resp.status_code}, "
+                                          f"body={restore_body!r}")
+                except Exception as exc:  # noqa: BLE001 - teardown must never raise
+                    restore_detail = f"request failed: {exc!r}"
+                if restore_detail is not None:
+                    # Name the PORT, the TEST and the CONSEQUENCE, because the damage
+                    # surfaces later, in a different module — a bare "failed to restore
+                    # settings" cannot be acted on by whoever reads the log. The factory is
+                    # instantiated 12 times across 10 test files (19, 21, 24, 25, 27, 28, 32,
+                    # 41, 43 once each and 42 three times), and every one of those call sites
+                    # passes port_num=1: the parameter is real and the body honours it, but
+                    # nothing exercises port 2 today, so in practice rs485_key is always
+                    # rs485_1. Both are still interpolated rather than hardcoded, so the line
+                    # stays correct the day a port-2 call site appears.
+                    #
+                    # warnings.warn, not print, matching the _restore_rs485_settings teardown
+                    # below: it reports the same class of failure, and pytest collects it into
+                    # the end-of-run warnings summary instead of letting it scroll past inline
+                    # among hundreds of lines of test output.
+                    #
+                    # It does NOT reach CI's JUnit XML, and no argument here should rest on
+                    # the idea that it does. qemu.mk:280 writes that file and the Jenkinsfile
+                    # publishes it, but pytest implements pytest_warning_recorded only in its
+                    # terminal reporter (_pytest/terminal.py) — _pytest/junitxml.py implements
+                    # no warning hook at all, so warnings are simply absent from the XML.
+                    # (junit_logging, which decides what captured output IS copied there,
+                    # defaults to "no" and is not set in api_tests/pytest.ini either.) Nor is
+                    # stdout the losing side of the comparison: addopts carries -s, so a print
+                    # here would not be captured and would reach the log too. The reason to
+                    # prefer warn is the summary and symmetry with the fixture below, not
+                    # visibility in CI's XML. The other prints in this block are left as they
+                    # are — they are pre-existing and out of scope here.
+                    #
+                    # Guarded, the way _uart_leak_guard guards its own warn(): this call is
+                    # the ONE statement in this block that can raise. Under a
+                    # `filterwarnings = error` this suite may adopt later it would raise the
+                    # warning itself — nothing configures one today (no filterwarnings in
+                    # api_tests/pytest.ini, no -W or PYTHONWARNINGS in qemu.mk or the
+                    # Jenkinsfile), so this is a backstop, not a live bug. Letting it escape
+                    # would cost far more than the warning is worth: it would displace
+                    # whatever real failure the test reported, AND skip the
+                    # set_port_mode(original_mode) below, deepening the very leak it is
+                    # warning about. print in the handler, for the same reason, and -s means
+                    # it reaches the log.
+                    try:
+                        warnings.warn(
+                            f"gateway_fixture: failed to restore {rs485_key} settings on "
+                            f"port {port_num} after {request.node.name} "
+                            f"({restore_detail}); the port keeps its tcp_bridge config and "
+                            f"will leak into later test files.",
+                            stacklevel=1,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - teardown must never raise
+                        print(f"✗ gateway_fixture: could not report the failed {rs485_key} "
+                              f"restore on port {port_num} as a warning ({exc!r}). The "
+                              f"restore failed with: {restore_detail}; the port keeps its "
+                              f"tcp_bridge config and will leak into later test files.")
 
                 try:
                     original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
@@ -1242,7 +1403,13 @@ _RS485_RESTORE_KEYS = ("tx_disabled", "baudrate", "stopbits", "parity",
 _RS485_SAFE_DEFAULTS = {"tx_disabled": False}
 
 # Explicit HTTP timeout for this fixture pair's own requests, deliberately tighter than
-# WBMGEAPI's 30 s default (api_client.py:94/:98).
+# WBMGEAPI's 30 s default (api_client.py:94/:98). It covers ONLY this pair: the
+# once-per-session GET and the per-port whitelist POSTs, each at most the seven fields of
+# _RS485_RESTORE_KEYS. The settings restore in build_gateway_fixture's teardown is bounded
+# for the same reason but posts the WHOLE blob, so it has its own constant with its own
+# arithmetic — _SETTINGS_BLOB_HTTP_TIMEOUT, just below. That consumer adds nothing to the
+# ceilings computed here either way, because it belongs to a function-scoped fixture that no
+# module's rs485 budget covers.
 #
 # pytest-timeout charges setup + call + teardown of an item to ONE budget, and a
 # module-scoped fixture is torn down inside the LAST item of its module — so the restore
@@ -1267,15 +1434,44 @@ _RS485_SAFE_DEFAULTS = {"tx_disabled": False}
 # _restore_rs485_settings quote in their @pytest.mark.timeout comments:
 #   per call : 0.1 s (_DelayedSession.DELAY_S) + 5 s connect + 15 s read = 20.1 s
 #   teardown : 2 ports x 20.1 s + _RS485_RESTORE_SETTLE_S = 41.2 s  ("45 s allowance")
-# The PER-CALL figure is not bound to that enumeration — it is quoted more widely. Five of
+# The PER-CALL figure is not bound to that enumeration — it is quoted more widely. Four of
 # those files cite it a second time, on its own, in the marker of their FIRST item, for the
 # once-per-session rs485 snapshot that is charged there when the file is run alone:
-# 29_:221, 31_:221, 38_:200, 39_:325, 49_:105. (28_ used to be a sixth; its marker comment
-# was cut back to the function-scoped-teardown argument and no longer quotes this figure.)
+# 29_:221, 31_:221, 38_:200, 49_:105. (28_ used to be a fifth; its marker comment
+# was cut back to the function-scoped-teardown argument and no longer quotes this figure.
+# 39_ was listed here too and never belonged: its only mention of these numbers is the
+# TEARDOWN figure, in the @pytest.mark.timeout comment of its LAST item, not the per-call
+# one.)
 # Nor does every listed file quote both:
 # 40_:120-123 quotes the 41.2 s teardown ceiling and never the per-call one. Changing either
 # number means re-checking both sets.
 _RS485_HTTP_TIMEOUT = (5, 15)
+
+# HTTP timeout for the ONE whole-blob POST /settings in build_gateway_fixture's teardown.
+# Same (connect, read) shape and the same connect budget as _RS485_HTTP_TIMEOUT — connect is
+# a loopback handshake either way — but TWICE the read component, because the PAYLOAD is a
+# different animal. _RS485_HTTP_TIMEOUT covers one port's whitelist, at most the seven fields
+# of _RS485_RESTORE_KEYS; this covers the entire settings blob: ~50 fields, every one an NVS
+# write, followed by a port re-initialisation. api_client.py:91-94 documents even a plain GET
+# of /settings as "occasionally >10 s" and picks 30 s there specifically to keep spurious
+# ReadTimeouts out of the suite; a whole-blob POST is the heavier operation of the two, so it
+# gets no less than that GET does. Reusing _RS485_HTTP_TIMEOUT here was a budget borrowed
+# from the wrong consumer: 15 s under-bounds a request the firmware is very likely to have
+# applied, so the timeout reports a failure that did not happen.
+#
+# There is deliberately NO retry to multiply this by. settings_update() serialises on the
+# previous update task (main/settings_update.c:368-373 spins `while (update_task_handle !=
+# NULL) vTaskDelay(10)`), so a second attempt does not get a fresh, quiet device: it blocks
+# inside the handler behind the first attempt's still-running update task and burns its own
+# read budget waiting there. On the one shape a retry could plausibly cure — a slow first
+# write — it would turn a single false alarm into two, on a write that was very likely
+# applied.
+#
+# ONE attempt, one read leg, nothing to multiply by:
+#   this call : 0.1 s (_DelayedSession.DELAY_S) + 5 s connect + 30 s read = 35.1 s worst case
+# The teardown quotes the same arithmetic at its call site; nothing outside this file quotes
+# it.
+_SETTINGS_BLOB_HTTP_TIMEOUT = (5, 30)
 
 # Settle window after the last restore POST — see the barrier note at the end of
 # _restore_rs485_settings for why a bounded sleep and not another request.

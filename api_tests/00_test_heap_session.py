@@ -50,11 +50,12 @@ _SAMPLE_GAP_S = 0.25
 # WHY THE BASELINE WAITS FOR THE DEVICE TO FINISH BOOTING, AND IS NOT SIMPLY TAKEN WHEN THE
 # HTTP SERVER ANSWERS.
 #
-# conftest declares the device ready as soon as GET /favicon.webp succeeds (conftest.py:520-533)
-# — i.e. as soon as http_server_init() has returned (main/main.c:219). Boot is NOT over at that
-# point. virtual_io_init(), indication_init() and config_button_init() come after it, and so
-# does port_manager_init() (main.c:261), which main.c:239-268 reaches only after a loop that
-# samples the link state ONCE PER SECOND. Between them they start two UART drivers (rx/tx ring
+# conftest declares the device ready as soon as GET /favicon.webp succeeds
+# (_wait_for_qemu_ready in conftest.py) — i.e. as soon as http_server_init() has returned
+# (main/main.c:219). Boot is NOT over at that point. virtual_io_init(), indication_init() and
+# config_button_init() come after it, and so does port_manager_init() (main.c:261), which
+# main.c:239-268 reaches only after a loop that samples the link state ONCE PER SECOND.
+# Between them they start two UART drivers (rx/tx ring
 # buffers, event queue, per-port RX buffers), the two bridge TCP servers, the cache Modbus TCP
 # server (on by default, main/config.h:52) and four 3-4 KB task stacks.
 #
@@ -108,8 +109,9 @@ _SAMPLE_GAP_S = 0.25
 # comfortable — the tail is one allocation and the window is _BOOT_SETTLE_STABLE_S of quiet —
 # but "the port loop has finished" is the claim not being made. (The pool is not hypothetical
 # on a reused flash image: conftest does not restore cache_en_N either, for its own reasons —
-# _RS485_RESTORE_KEYS, conftest.py:1205-1212 — so an overlay left enabled by an earlier run
-# comes back with the image and brings that allocation with it.)
+# the cache_en paragraph of the _RS485_RESTORE_KEYS comment in conftest.py — so an overlay
+# left enabled by an earlier run comes back with the image and brings that allocation with
+# it.)
 #
 # WHAT MODE AGREEMENT CANNOT SEE: both ports configured `disabled`. Then wanted == active ==
 # ["disabled", "disabled"] from the FIRST sample — the comparison is identically true before
@@ -238,10 +240,10 @@ _SAMPLE_GAP_S = 0.25
 # experiment above, at device t=14.4 s, fourteen seconds before port_manager_init(). So the claim
 # is "non-zero proves port_manager_init() ran" only BEFORE the first POST /settings of the
 # session, and that is exactly where this wait runs: it is the call phase of the FIRST item, and
-# the only settings traffic conftest issues ahead of it is a GET (_rs485_session_baseline,
-# conftest.py:1306-1307; _restore_rs485_settings has no setup body by design, conftest.py:1388-
-# 1389). Anything that later adds a POST /settings to session setup breaks this premise and must
-# revisit this signal.
+# the only settings traffic conftest issues ahead of it is a GET (the GET /settings in
+# conftest.py's _rs485_session_baseline; _restore_rs485_settings has no setup body by design,
+# as its docstring in the same file says). Anything that later adds a POST /settings to
+# session setup breaks this premise and must revisit this signal.
 #
 # ONE CONFIGURATION IS LEFT WITH NO SIGNAL AT ALL: both ports `disabled` AND
 # cache_modbus_server_enabled false. Nothing observable over REST changes when
@@ -268,10 +270,12 @@ _SAMPLE_GAP_S = 0.25
 # one file, reuses the existing image instead, and the NVS the previous run wrote comes back with
 # it — including cache_en_N, which is what puts the overlay allocations above on the post-
 # readiness side of the baseline in the first place. Nothing restores port_mode or cache_en
-# centrally; conftest's per-module restore deliberately excludes both (conftest.py:1197-1203 and
-# :1205-1212), so whatever the last run left is what the next one boots into. A teardown of
-# 29_test_gateway_dual_port.py that ran to completion is USUALLY not how it happens: that file
-# does set both ports `disabled` (29_:194-195), but it then restores them twice over —
+# centrally; conftest's per-module restore deliberately excludes both (the two paragraphs on
+# _RS485_RESTORE_KEYS in conftest.py that begin "Deliberately excludes port_mode" and "Also
+# deliberately excludes cache_en"), so whatever the last run left is what the next one
+# boots into. A teardown of 29_test_gateway_dual_port.py that ran to completion is USUALLY not
+# how it happens: that file does set both ports `disabled` (29_:194-195), but it then restores
+# them twice over —
 # api.update_settings(original) at :198 writes rs485_N.port_mode back (the mapping is
 # settings_manager.c:90; the WRITE path is process_rs485_settings(), :726, whose base-mapping
 # loop at :744-757 calls save_setting_from_json() at :754 — NOT add_setting_to_json() in
@@ -282,8 +286,10 @@ _SAMPLE_GAP_S = 0.25
 # documents below, which drops a STRING setting from an otherwise healthy 200 — a fully
 # successful teardown writes `disabled` to BOTH ports. The likelier routes are still a teardown
 # that did not COMPLETE (a run interrupted between the disable and the restore) and one whose
-# restore was REFUSED and not checked: 29_:199-200 only prints a non-200, and 37_'s teardown
-# wraps every restore call in `except Exception: pass` (37_:1707-1728).
+# restore was REFUSED and not checked: 29_:199-200 only prints a non-200, and the `finally`
+# block of 37_'s test_cache_server_deinit_with_active_polling wraps each of its four restore
+# calls — set_port_cache, set_port_mode(disabled), update_settings, set_port_mode(original) —
+# in a bare `except Exception: pass`.
 #
 # It is a WAIT, not a budget: on a host where boot finished before the readiness probe (the
 # usual case locally) it costs _BOOT_SETTLE_STABLE_S once per session and changes no
@@ -562,15 +568,17 @@ def _free_heap_quiescent(api):
 # call + teardown to the item, and this one is the session's first, so all three are unusually
 # large here:
 #   setup    — the QEMU flash/efuse build, which qemu_process runs itself unless
-#              --qemu-skip-build is passed (conftest.py:1048-1061) and which pulls in the full
-#              IDF build through qemu-create-flash-image: build-idf-project-qemu (qemu.mk:148);
+#              --qemu-skip-build is passed (the "--- Build ---" block in conftest.py's
+#              qemu_process) and which pulls in the full IDF build through
+#              qemu-create-flash-image: build-idf-project-qemu (qemu.mk:148);
 #              then QEMU startup (up to conftest's QEMU_READY_TIMEOUT = 900 s) and the
 #              once-per-session GET /settings that _rs485_session_baseline takes (~15.9 s
 #              measured on the CI node);
 #   call     — another GET /settings and up to _BOOT_SETTLE_MAX_S of polling;
 #   teardown — _restore_rs485_settings, whose module-scoped teardown fires inside the LAST item
 #              of each module entry and so lands here, this file's first entry holding only
-#              test_heap_baseline: 41.2 s ceiling (conftest.py:1258-1266).
+#              test_heap_baseline: 41.2 s ceiling (the "Resulting ceilings" block on
+#              conftest.py's _RS485_HTTP_TIMEOUT).
 @pytest.mark.timeout(1200)
 def test_heap_baseline(api, request):
     """Record baseline free heap at the start of the continuous session.
@@ -635,8 +643,9 @@ def test_heap_baseline(api, request):
         f"deleting build/qemu_flash.bin: qemu-create-flash-image is phony and regenerates the "
         f"image unconditionally (qemu.mk:148-152, :373), while with --qemu-skip-build still on "
         f"the command line conftest does not rebuild anything and exits on the missing file "
-        f"instead (conftest.py:1073-1076), killing the run with an unrelated error. Enabling one "
-        f"port, or the cache Modbus server, over POST /settings and rebooting works too."
+        f"instead (the flash/efuse existence check in conftest's qemu_process fixture), "
+        f"killing the run with an unrelated error. Enabling one port, or the cache Modbus "
+        f"server, over POST /settings and rebooting works too."
     )
 
     why = {
