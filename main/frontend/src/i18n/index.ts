@@ -13,9 +13,8 @@ export const languages: Record<Locale, string> = {
   de: 'Deutsch',
 };
 
-// Reading localStorage throws, rather than returning null, where a site is denied
-// storage. This runs at module scope, so an unguarded throw would abort the import of
-// @/i18n and take the whole UI down — degrade to "no stored choice" instead.
+// Where a site is denied storage the localStorage access itself throws, and this is called
+// while the module loads — an unguarded throw would take the whole UI down with it.
 const storedLanguage = (): string | null => {
   try {
     return localStorage.getItem('lang');
@@ -44,8 +43,7 @@ export const changeLang = (lang: Locale) => {
   try {
     localStorage.setItem('lang', lang);
   } catch {
-    // Storage is denied: the switch still applies for this page load, it just will not
-    // survive a reload.
+    // Storage denied: the switch applies now, it just will not survive a reload.
   }
   document.documentElement.lang = lang;
 };

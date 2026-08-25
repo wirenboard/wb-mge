@@ -1,17 +1,3 @@
-/**
- * Unit tests for resolveLocale() and preferredTags() from src/i18n/resolveLocale.ts
- * (SOFT-7355).
- *
- * The UI used to compare the raw navigator language against the list of shipped
- * locales, so every region-qualified tag a browser reports ('ru-RU', 'de-AT', ...)
- * missed and the interface opened in English on a Russian browser. These tests pin
- * the normalisation (region suffixes, separators, case), the precedence between an
- * explicit stored choice and the browser list, and the fallback to 'en'.
- *
- * resolveLocale.ts deliberately touches no DOM global, so it runs under the 'unit'
- * vitest project (environment: 'node') where localStorage/navigator do not exist.
- */
-
 import { describe, expect, it } from 'vitest';
 import { preferredTags, resolveLocale } from '@/i18n/resolveLocale';
 
@@ -84,11 +70,9 @@ describe('resolveLocale', () => {
   });
 
   it('matches a language code exactly rather than by prefix', () => {
-    // Guards against replacing the primary-subtag lookup in normalizeTag() with
-    // SUPPORTED_LANGUAGES.find((l) => normalized.startsWith(l)): that reads naturally and
-    // keeps every other test green, but hands Russian to a 'rue' speaker, Italian to an
-    // 'ita-IT' one, and lets an unsupported stored 'english' outrank the real browser
-    // preference. Both lookups compare whole codes, not prefixes.
+    // Guards against rewriting normalizeTag()'s lookups as a startsWith() scan: that
+    // keeps every other test green, but hands Russian to a 'rue' speaker and lets a
+    // stored 'english' outrank the browser.
     expect(resolveLocale(null, ['rue'])).toBe('en');
     expect(resolveLocale(null, ['ita-IT'])).toBe('en');
     expect(resolveLocale('english', ['ru-RU'])).toBe('ru');

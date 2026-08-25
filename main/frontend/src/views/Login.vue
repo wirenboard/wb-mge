@@ -299,12 +299,8 @@ const login = async () => {
   color: #fff;
 }
 
-/* The dropdown list is painted by the browser, and Chromium lets an <option> inherit
-   `color` from its <select> — including the :hover colour, which is live the whole time
-   the list is open, because the pointer sits on the control. That painted every entry
-   white on the light native listbox and left only the highlighted row readable
-   (SOFT-7354). Pin both colours on the options so nothing is inherited: background-color
-   and color are among the few properties Chromium honours on an <option>. */
+/* Chromium lets an <option> inherit `color` from its <select>, and :hover stays live
+   while the popup is open — pin both colours or the list goes white on white (SOFT-7354). */
 .login-lang option {
   background-color: var(--bg-surface);
   color: var(--text-color);
