@@ -110,7 +110,11 @@ QEMU runs the firmware in an emulator and tests the HTTP API without physical ha
 > `Coverage (QEMU e2e)` is gated on `RUN_COVERAGE` (default **off**) *alone*, independently of
 > `RUN_E2E`: it re-runs the same suite on an instrumented build with the reboot tests deselected.
 > So `RUN_COVERAGE=true` + `RUN_E2E=false` is a coverage-only build that runs the suite once
-> (~2 h), while ticking both runs it twice (~4 h).
+> (~2 h), while ticking both runs it twice (~4 h). That combination is also what the
+> `parameterizedCron` trigger in the `Jenkinsfile` starts once a night — on `main` only, and its
+> `Coverage precheck` stage skips **every other stage in the pipeline** when the commit already
+> has a combined report, so an unchanged `main` neither re-measures nor rebuilds. Ticking `RUN_COVERAGE`
+> by hand always measures.
 > On a branch Jenkins has never built, the checkboxes are not there yet — a `parameters` block only
 > takes effect from the second build onwards, so build once, then rebuild with the parameters set.
 
