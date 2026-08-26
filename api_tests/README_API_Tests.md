@@ -57,28 +57,42 @@ pip install -r api_tests/requirements.txt
 ### 2. Run tests
 
 ```bash
-# All tests with explicit IP
-pytest api_tests/ --ip localhost:8080
-
-# Default (localhost:8080)
+# Default: --ip already points at this run's own web port, which is derived from
+# WB_MGE_PORT_SLOT (see api_tests/qemu_ports.py). `make qemu-ports` prints the block.
 pytest api_tests/
+
+# All tests with explicit IP (21000 is the slot-0 web port)
+pytest api_tests/ --ip localhost:21000
 ```
+
+> **Ports follow a slot.** Every host port the suite uses — web, Modbus gateway, transparent
+> bridge, cache Modbus server, both UART chardevs, the UDP IO bus — comes from one integer,
+> `WB_MGE_PORT_SLOT` (default 0 → the `21000` block; in Jenkins it defaults to the
+> executor number). `make qemu-ports` prints the resolved block, and pytest prints it in its
+> report header. The slot separates PORTS only: `make qemu-test` (and `make qemu-web` /
+> `make qemu-run`) takes an exclusive lock on its WORKING TREE (`.e2e-tree.lock` in the
+> repo root) for the whole run, **build included**, and a `--qemu` pytest started
+> directly takes the same lock in `pytest_configure`. The reason is that
+> `build/qemu_flash.bin`, `build/qemu_efuse.bin`, `build/qemu_test.log` and
+> `build/qemu_test_report.xml` are per-tree. Two suites at once = two checkouts, two slots.
 
 **Additional options:**
 
 ```bash
 # Stop on first failure
-pytest api_tests/ --ip localhost:8080 -x
+pytest api_tests/ -x
 
 # Run a specific file
-pytest api_tests/01_test_auth.py --ip localhost:8080
+pytest api_tests/01_test_auth.py
 
 # Run a specific test by name
-pytest api_tests/ --ip localhost:8080 -k test_cache_multimaster
+pytest api_tests/ -k test_cache_multimaster
 
 # Quiet output (no print)
-pytest api_tests/ --ip localhost:8080 --no-header -q
+pytest api_tests/ --no-header -q
 ```
+
+`--ip <host>:<port>` overrides the target; omit it to use this slot's own web port.
 
 ---
 
@@ -88,12 +102,21 @@ QEMU runs the firmware in an emulator and tests the HTTP API without physical ha
 
 - **WiFi**: scanning returns two fake networks (`QEMU-TestNetwork-1`, `QEMU-TestNetwork-2`)
 - **RS-485 / Modbus RTU**: a mock task injects synthetic packets into the sniffer to populate the cache
-- **Cache Modbus TCP server**: runs on port 50504 (QEMU forwards `localhost:50504 → ESP32:50504`)
+- **Cache Modbus TCP server**: listens on guest port 50504; QEMU forwards this slot's
+  `cache/bridge1` host port to it (`localhost:21004 → ESP32:50504` for slot 0)
 
-> **CI:** Jenkins does **not** run this suite by default. Tick the `RUN_E2E` build parameter to
-> enable the `E2E tests (QEMU)` stage; `Coverage (QEMU e2e)` needs `RUN_COVERAGE` as well.
-> On a branch Jenkins has never built, the checkbox is not there yet — a `parameters` block only
-> takes effect from the second build onwards, so build once, then rebuild with the parameter set.
+> **CI:** Jenkins **does** run this suite by default — the `RUN_E2E` build parameter defaults to
+> on, enabling the `E2E tests (QEMU)` stage. Untick it to skip that stage.
+> `Coverage (QEMU e2e)` is gated on `RUN_COVERAGE` (default **off**) *alone*, independently of
+> `RUN_E2E`: it re-runs the same suite on an instrumented build with the reboot tests deselected.
+> So `RUN_COVERAGE=true` + `RUN_E2E=false` is a coverage-only build that runs the suite once
+> (~2 h), while ticking both runs it twice (~4 h). That combination is also what the
+> `parameterizedCron` trigger in the `Jenkinsfile` starts once a night — on `main` only, and its
+> `Coverage precheck` stage skips **every other stage in the pipeline** when the commit already
+> has a combined report, so an unchanged `main` neither re-measures nor rebuilds. Ticking `RUN_COVERAGE`
+> by hand always measures.
+> On a branch Jenkins has never built, the checkboxes are not there yet — a `parameters` block only
+> takes effect from the second build onwards, so build once, then rebuild with the parameters set.
 
 ### 1. Build firmware
 
@@ -111,9 +134,11 @@ This boots QEMU, runs the full pytest suite, and stops QEMU automatically.
 
 > **Note:** The `--qemu` flag means "launch and manage QEMU yourself".
 > To run tests against an **already-running** QEMU instance (e.g. started with `make qemu-web`),
-> do **not** use `--qemu` — just point `--ip` at it:
+> do **not** use `--qemu`. Use the same `WB_MGE_PORT_SLOT` in both shells and the default
+> `--ip` already matches:
 > ```bash
-> cd api_tests && .venv/bin/python -m pytest --ip localhost:8080
+> cd api_tests && .venv/bin/python -m pytest            # --ip defaults to this slot's web port
+> cd api_tests && .venv/bin/python -m pytest --ip localhost:21000   # or spell out slot 0
 > ```
 
 Filter by test name:
@@ -131,8 +156,11 @@ make qemu-web
 Then in a separate terminal:
 
 ```bash
-cd api_tests && .venv/bin/python -m pytest --ip localhost:8080
+cd api_tests && .venv/bin/python -m pytest
 ```
+
+`make qemu-web` derives its port forwarding from the same `api_tests/qemu_ports.py`, so as
+long as both shells share `WB_MGE_PORT_SLOT` the default `--ip` reaches it.
 
 Wait for the QEMU console to print:
 
@@ -147,7 +175,7 @@ I (XXXX) http_server: HTTP server started on port: 80
 | Test | Behaviour in QEMU |
 | ---- | ----------------- |
 | `test_wifi_scanner` | Completes immediately with 2 fake networks |
-| `test_cache_multimaster` | Switches port 1 to `cache_bus`, waits for cache fill (~2 s), connects to `localhost:50504` |
+| `test_cache_multimaster` | Switches port 1 to `cache_bus`, waits for cache fill (~2 s), connects to this slot's cache host port (guest 50504) |
 | `test_reboot` | Reboots the QEMU emulator, waits for it to come back |
 
 ---

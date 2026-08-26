@@ -1,8 +1,9 @@
 """Gateway E2E tests for unit-ID pass-through and protocol-ID validation (GW-05, GW-06).
 
-Requires QEMU with UART1 exposed as TCP port 5561 and guest port 502 forwarded
-to host port 50502. Uses a Python RTU slave (ModbusRtuSlaveThread) connected to
-UART1 to respond to Modbus RTU requests.
+Requires QEMU with the UART1 chardev exposed on TCP and guest port 502 forwarded to a
+host port; both host ports follow WB_MGE_PORT_SLOT (api_tests/qemu_ports.py). Uses a
+Python RTU slave (ModbusRtuSlaveThread) connected to UART1 to respond to Modbus RTU
+requests.
 
 Coverage:
 GW-05. Non-zero unit IDs are passed through correctly on the same TCP session
@@ -11,6 +12,7 @@ GW-06. Frames with protocol_id != 0 are silently dropped (no response, no TCP
        close); the connection remains usable for subsequent valid frames.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -25,9 +27,9 @@ from modbus_helpers import make_mbap_request, recv_modbus_tcp_response
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-GATEWAY_HOST = "127.0.0.1"
-GATEWAY_HOST_PORT = 50502    # QEMU hostfwd: guest port 502 → host 50502
-UART1_TCP_PORT = 5561        # QEMU UART1 chardev TCP
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: slot gateway host port -> guest 502
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 chardev TCP
 FAKE_VALUE = 0x1234          # register value returned by the RTU slave
 
 
@@ -52,14 +54,13 @@ def _baseline(api):
 
 
 # ---------------------------------------------------------------------------
-# Gateway fixture (module-scoped via build_gateway_fixture factory)
+# Gateway fixture (function-scoped, from the build_gateway_fixture factory)
 # ---------------------------------------------------------------------------
 
 gateway_slave = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=GATEWAY_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=502,
+    bridge_port=qemu_ports.GATEWAY_GUEST_PORT,      # guest 502
     modbus=True,
     fake_value=FAKE_VALUE,
 )
@@ -70,7 +71,13 @@ gateway_slave = build_gateway_fixture(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# 120 s, not the 55 s this carried: one pytest-timeout budget covers setup + call +
+# TEARDOWN, and gateway_slave is FUNCTION-scoped (conftest.build_gateway_fixture), so a
+# full gateway teardown — three retrying 30 s HTTP calls plus the RTU slave join — lands
+# on EVERY item, not just the module's last. The 55 s was derived for setup + call only;
+# builds #50 and #51 both timed out here ON TEARDOWN under CI node contention, while
+# sibling modules ran the same fixture at 90-120 s on that same loaded node and passed.
+@pytest.mark.timeout(120)
 def test_gateway_nonzero_unit_id_passthrough(gateway_slave):
     """Non-zero unit IDs are echoed back correctly on the same TCP connection.
 
@@ -132,7 +139,11 @@ def test_gateway_nonzero_unit_id_passthrough(gateway_slave):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
+# 165 s = 120 s body + 45 s teardown allowance: conftest's module-scoped
+# _restore_rs485_settings is charged to the LAST item of the module, and this is it.
+# The allowance is the rule, not the 165 — a sibling with a 90 s body budgets 135.
+# Was 75 s, derived without the function-scoped gateway teardown the first item explains.
+@pytest.mark.timeout(165)
 def test_gateway_invalid_protocol_id_drops_frame(gateway_slave):
     """Frames with protocol_id != 0 are silently dropped; TCP connection stays open.
 

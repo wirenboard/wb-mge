@@ -10,7 +10,7 @@ so every sniffer- and cache-related pytest implicitly depended on packets
 no one in the test had asked for.
 
 The firmware mock is gone.  QEMU now exposes UART1 and UART2 as TCP
-chardev sockets (5561 / 5562 — see conftest.qemu_process), so pytest
+chardev sockets (qemu_ports.UART1_TCP_PORT / UART2_TCP_PORT — see conftest.qemu_process), so pytest
 generates exactly the bytes each test needs and writes them directly into
 the UART RX FIFO of the active RS-485 port.  This exercises the real
 serial RX path (UART event task → serial.c receive_handler →
@@ -30,15 +30,17 @@ import threading
 import time
 from typing import Optional
 
+import qemu_ports
+
 
 # ---------------------------------------------------------------------------
 # UART chardev port mapping (matches api_tests/conftest.py qemu_process)
 # ---------------------------------------------------------------------------
 
-# Port 1 → UART1 chardev → host TCP 5561
-# Port 2 → UART2 chardev → host TCP 5562
-UART_HOST = "127.0.0.1"
-UART_TCP_PORT = {1: 5561, 2: 5562}
+# Port 1 → UART1 chardev → host TCP (UART1_TCP_PORT for this run's slot)
+# Port 2 → UART2 chardev → host TCP (UART2_TCP_PORT for this run's slot)
+UART_HOST = qemu_ports.HOST
+UART_TCP_PORT = {1: qemu_ports.UART1_TCP_PORT, 2: qemu_ports.UART2_TCP_PORT}
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ Before the fix, cases 2 and 3 both failed because recv() was assumed to
 deliver exactly one complete Modbus TCP frame per call.
 """
 
+import qemu_ports
 import socket
 import struct
 import threading
@@ -39,8 +40,8 @@ def _baseline(api):
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# QEMU host-forwarded port for the cache Modbus TCP server (guest port 50504).
-QEMU_CACHE_MODBUS_PORT = 50504
+# Host port this slot forwards to the cache Modbus TCP server (guest port 50504).
+QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT
 
 # Timeout for opening TCP connections to the cache server.
 # 15s is generous enough to ride out a SYN drop in QEMU's OpenETH (Linux retransmits
@@ -88,7 +89,7 @@ def _recv_one_response(sock: socket.socket) -> tuple:
 
 @pytest.fixture(scope="module")
 def cache_tcp_server(api: WBMGEAPI):
-    """Set up the cache Modbus TCP server on port 50504 and populate the cache.
+    """Set up the cache Modbus TCP server on guest port 50504 and populate the cache.
 
     Steps:
       1. Save current rs485_1 port_mode and cache_modbus_port.
@@ -126,10 +127,13 @@ def cache_tcp_server(api: WBMGEAPI):
 
     inj = PacketInjector(port=1)
     try:
-        # Switch the cache server to the QEMU-forwarded port.
-        resp = api.update_settings({"cache_modbus_port": QEMU_CACHE_MODBUS_PORT})
+        # Switch the cache server to the QEMU-forwarded GUEST port (fixed 50504) — that is
+        # what this slot's hostfwd rule forwards to; the host connects to
+        # QEMU_CACHE_MODBUS_PORT (the slot-derived host side), which reaches this guest
+        # port through that forward.
+        resp = api.update_settings({"cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT})
         assert resp.status_code == 200, \
-            f"Failed to set cache_modbus_port={QEMU_CACHE_MODBUS_PORT}: HTTP {resp.status_code}"
+            f"Failed to set cache_modbus_port={qemu_ports.CACHE_MODBUS_GUEST_PORT}: HTTP {resp.status_code}"
         # Give the server time to rebind on the new port.
         time.sleep(1)
 
@@ -456,7 +460,14 @@ def test_cache_tcp_large_split(cache_tcp_server):
         sock.close()
 
 
-@pytest.mark.timeout(60)
+# 105 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT)
+# — on top of this module's own cache_tcp_server teardown (:89: stop the injector, restore
+# cache_modbus_port, disable the cache overlay, restore the port mode) and _baseline (:25).
+# 60 s body + 45 s teardown allowance.
+@pytest.mark.timeout(105)
 def test_cache_tcp_close_mid_frame(cache_tcp_server):
     """Connection closed mid-frame → reassembly slot freed; server handles next connection normally.
 

@@ -40,6 +40,11 @@ managed_components/
 **/covr_report/
 *.gcov
 
+# One-e2e-run-per-working-tree lock (api_tests/tree_lock.py). Lives in the repo root
+# rather than under build/ precisely because nothing here deletes it mid-run — see that
+# module for why a lock file that a build step can remove is not a lock at all.
+/.e2e-tree.lock
+
 # Python
 __pycache__
 .venv/

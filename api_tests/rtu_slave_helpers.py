@@ -3,12 +3,20 @@
 Connects to the given host:port, reads Modbus RTU requests from the firmware
 (sent by the Modbus TCP gateway when it receives TCP requests), and replies
 with synthesized register values.
+
+Host/port DEFAULTS come from qemu_ports, never from a literal. They used to be
+'127.0.0.1' and 5561 — the legacy fixed chardev port — which since the move to
+slot-derived ports is a number no QEMU listens on. A caller that relied on the
+default would have connected to nothing, and the failure would have surfaced
+somewhere else entirely (a timing-out RTU slave, not a wrong port).
 """
 
 import socket
 import struct
 import threading
 import time
+
+import qemu_ports
 
 
 def _crc16(data: bytes) -> int:
@@ -35,7 +43,8 @@ class ModbusRtuSlaveThread(threading.Thread):
     After stop(), call join() to wait for the thread to finish.
     """
 
-    def __init__(self, host: str = '127.0.0.1', port: int = 5561,
+    def __init__(self, host: str = qemu_ports.HOST,
+                 port: int = qemu_ports.UART1_TCP_PORT,
                  fake_value: int = 0x1234, connect_timeout: float = 5.0,
                  exception_fc: dict = None, drop_count: int = 0):
         super().__init__(daemon=True)
@@ -231,11 +240,12 @@ class _UartNoEchoThread(threading.Thread):
     the RTU slave does not respond within the configured timeout.
 
     Usage:
-        with _UartNoEchoThread(host="127.0.0.1", port=5561) as t:
+        with _UartNoEchoThread(port=qemu_ports.UART1_TCP_PORT) as t:
             t.wait_connected(timeout=5.0)
             # ... trigger a Modbus request that will time out ...
     """
-    def __init__(self, host: str = '127.0.0.1', port: int = 5561,
+    def __init__(self, host: str = qemu_ports.HOST,
+                 port: int = qemu_ports.UART1_TCP_PORT,
                  connect_timeout: float = 5.0):
         super().__init__(daemon=True)
         self.host = host

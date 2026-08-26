@@ -12,7 +12,18 @@ The module fixture clean_wifi_perm_disable resets the flag via QEMU-only path
 after all tests complete, leaving the flash image clean for subsequent test runs.
 """
 
+import warnings
+
 import pytest
+import requests
+
+
+def _read_uptime_seconds(api):
+    """Return the device uptime in whole seconds via GET /uptime."""
+    resp = api.get_uptime()
+    assert resp.status_code == 200, f"GET /uptime failed: {resp.status_code}"
+    d = resp.json()
+    return d["days"] * 86400 + d["hours"] * 3600 + d["minutes"] * 60 + d["seconds"]
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -119,14 +130,29 @@ def test_wifi_perm_disable_activation(api):
     print("✓ GET /settings: wifi_perm_disable=true, wifi group absent (pre-reboot)")
 
     # Step 3: reboot to apply the NVS change
+    # Uptime is sampled here because this test has no other way to tell that a reboot
+    # happened: every check after step 4 (wifi_perm_disable true, wifi group absent, /info
+    # perm_disabled) already holds in memory from step 1, so they all pass on a device that
+    # never rebooted. Tolerating a lost reply below without this would turn "device ignored
+    # the reboot" green.
+    uptime_before = _read_uptime_seconds(api)
+
+    # A lost reply is not evidence the reboot failed, and the bare `except ConnectionError`
+    # this replaces could not have caught it anyway — written out once, at the reboot in
+    # 14_test_reboot.py.
     try:
         response = api.execute_command("reboot")
         print(f"  Reboot command status: {response.status_code}")
         assert response.status_code == 200, (
             f"POST /cmd reboot expected 200, got {response.status_code}"
         )
-    except ConnectionError:
-        print("  Connection dropped (expected during reboot)")
+    except requests.exceptions.RequestException as exc:
+        warnings.warn(
+            f"wifi_perm_disable reboot: no reply to POST /cmd reboot "
+            f"({type(exc).__name__}: {exc}); treating the device as resetting — "
+            f"confirmed below by uptime.",
+            stacklevel=1,
+        )
 
     # Step 4: wait for device to come back online (includes reconnect + re-auth)
     print("  Waiting for device to reboot...")
@@ -135,6 +161,13 @@ def test_wifi_perm_disable_activation(api):
     except TimeoutError:
         pytest.fail("Device did not come back within 1800 seconds after reboot")
     print("✓ Device came back online")
+
+    uptime_after = _read_uptime_seconds(api)
+    assert uptime_after < uptime_before, (
+        f"uptime after reboot ({uptime_after}s) >= before ({uptime_before}s) — "
+        "no reboot detected; the settings checks below would pass on the live "
+        "in-memory flag alone, so they cannot substitute for this"
+    )
 
     # Step 5: re-auth is already done inside wait_for_ready; no extra call needed.
 

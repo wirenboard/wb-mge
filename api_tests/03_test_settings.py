@@ -439,7 +439,31 @@ def test_settings_document_round_trip(api):
         print("✓ Original settings restored")
 
 
-@pytest.mark.timeout(180)
+# 430 s, not 180 s: this is the most HTTP-heavy item in the suite, and CI build #16
+# reported it as "Failed: Timeout (>180.0s) from pytest-timeout". That was not a hang —
+# the log carried all 20 "✓ Rejected: ..." lines, so the loop had finished and the budget
+# ran out in the tail (last verification / finally restore / final assert). The item makes
+# 42 sequential /settings calls: 1 GET before the loop, 20 x (POST one invalid field +
+# GET read-back to prove it was not saved), and 1 restore POST in the finally.
+#
+# Each call carries a 30 s CLIENT-timeout ceiling (api_client.get_settings /
+# update_settings), so the theoretical worst case is 42 x 30 = 1260 s — past any sane
+# marker. That ceiling is theoretical: observed GET/POST /settings latencies under QEMU are
+# an order of magnitude smaller (sub-second on an idle node, which is why 180 s held until
+# a loaded one). Budget instead the bad-case figure api_client.get_settings documents for
+# itself, "occasionally >10 s" per call:
+#     42 calls x 10 s               = 420.0 s
+#     42 x _DelayedSession.DELAY_S  =   4.2 s   (the client sleeps 100 ms before every request)
+#     20 x sleep(0.1) between cases =   2.0 s
+#                                     -------
+#                                       426.2 s  -> 430 s
+# 430 is a defensible compromise, NOT a proven worst-case bound (42 x 30 would blow past
+# it) — if these calls genuinely pinned their 30 s ceiling, this test SHOULD fail as a real
+# firmware/infra problem. It deliberately exceeds pytest.ini's global 180 s: raising that
+# global instead would loosen every other test in the suite, including the ones whose tight
+# budget is the point. To cut this marker, cut the call count (see the per-case read-back
+# in the loop), not the number.
+@pytest.mark.timeout(430)
 def test_per_field_validation(api):
     """Validate each field independently so that each validator is exercised.
 
@@ -447,10 +471,8 @@ def test_per_field_validation(api):
     sending all invalid fields at once only exercises the first validator.
     Here each field is sent alone so we verify every validator fires.
 
-    Bumped to 180s (default is 60s) because this test issues 32 sequential
-    HTTP requests followed by a restore POST; on QEMU the per-request latency
-    occasionally spikes when a background settings_update task is doing a
-    full port deinit/init cycle.
+    The test's HTTP cost and the timeout derived from it are documented on the
+    marker above.
     """
     original_response = api.get_settings()
     assert original_response.status_code == 200
@@ -553,9 +575,13 @@ def test_per_field_validation(api):
             current = check.json()
             assert current == original_settings, \
                 f"[{description}] Invalid settings were saved! Current != original"
-            # Brief pause between cases: prevents the per-test 60s budget from
-            # being eaten when the firmware happens to be busy with a background
-            # settings_update task from an earlier write.
+            # Brief pause between cases: lets the firmware finish the background
+            # settings_update task kicked off by the previous write before the next
+            # POST lands, instead of queueing behind it. It COSTS budget rather than
+            # saving it — 20 x 0.1 s = 2 s, counted in the marker arithmetic above.
+            # (It never guarded a "60s budget": the commit that added this sleep added
+            # the local timeout marker too, so the then-global 60 s never applied here,
+            # and pytest.ini's global has since been raised to 180 s anyway.)
             time.sleep(0.1)
     finally:
         # Restore original settings in case any were accidentally saved

@@ -20,10 +20,12 @@ Coverage here:
          forwards bytes unchanged (round-trip), confirming the additive feed never
          alters the bridge data path.
 
-Requires QEMU with UART1 exposed as TCP 5561, gateway guest port 502 -> host 50502,
-and guest port 50504 -> host 50504 (transparent bridge / cache Modbus server).
+Requires QEMU with the UART1 chardev on TCP, gateway guest port 502 forwarded to a host
+port, and guest port 50504 forwarded to a host port (transparent bridge / cache Modbus
+server). Host ports follow WB_MGE_PORT_SLOT (api_tests/qemu_ports.py).
 """
 
+import qemu_ports
 import socket
 import threading
 import time
@@ -38,10 +40,10 @@ from sniffer_helpers import _ws_connect, _collect_packets
 # ---------------------------------------------------------------------------
 # Constants (must match conftest.py qemu_process hostfwd mapping)
 # ---------------------------------------------------------------------------
-GATEWAY_HOST = "127.0.0.1"
-GATEWAY_HOST_PORT = 50502               # QEMU hostfwd: guest 502  -> host 50502 (Modbus gateway)
-CACHE_MODBUS_HOST_PORT = 50504          # cache Modbus TCP server (guest 50504 -> host 50504)
-UART1_TCP_PORT = 5561                   # QEMU UART1 (RS485-1) chardev
+GATEWAY_HOST = qemu_ports.GATEWAY_HOST
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT  # QEMU hostfwd: slot host port -> guest 502 (Modbus gateway)
+CACHE_MODBUS_HOST_PORT = qemu_ports.CACHE_MODBUS_HOST_PORT  # cache Modbus TCP server (slot host port -> guest 50504)
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # QEMU UART1 (RS485-1) chardev
 SLAVE_FAKE_VALUE = 0x1234               # value the mock RTU slave returns for every register
 
 
@@ -49,9 +51,8 @@ SLAVE_FAKE_VALUE = 0x1234               # value the mock RTU slave returns for e
 # Yields the ModbusRtuSlaveThread.
 gateway_p1_modbus = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=GATEWAY_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=502,
+    bridge_port=qemu_ports.GATEWAY_GUEST_PORT,      # guest 502
     modbus=True,
     fake_value=SLAVE_FAKE_VALUE,
 )
@@ -174,7 +175,14 @@ def test_bridge_sniffer_observes_master_and_slave(api, gateway_p1_modbus):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(120)
+# 165 s, not 120 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# This module defines no module-scoped fixtures of its own and gateway_p1_modbus (:52) is
+# function-scoped (built by conftest.build_gateway_fixture), so the conftest restore is the
+# whole module teardown. 120 s body + 45 s teardown allowance.
+@pytest.mark.timeout(165)
 def test_bridge_cache_populates_and_reads_back(api, gateway_p1_modbus):
     """With the cache overlay enabled on a Modbus-gateway tcp_bridge port, an FC03
     request->response transaction driven through the gateway populates the cache.
@@ -203,7 +211,7 @@ def test_bridge_cache_populates_and_reads_back(api, gateway_p1_modbus):
         # entries do not expire during the test.
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": CACHE_MODBUS_HOST_PORT,
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
             "cache_value_timeout_s": 60,
         })
         assert resp.status_code == 200, f"configure cache server failed: {resp.status_code}"

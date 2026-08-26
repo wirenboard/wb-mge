@@ -1,6 +1,7 @@
 """E2E tests for the cache Modbus TCP server: FC type separation, exception codes,
    bit packing, and cache-disabled guard. Tests CM-01 through CM-07."""
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -22,8 +23,8 @@ from packet_injector import (
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# QEMU host-forwarded port for the cache Modbus TCP server (guest port 50504).
-QEMU_CACHE_MODBUS_PORT = 50504
+# Host port this slot forwards to the cache Modbus TCP server (guest port 50504).
+QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT
 
 # Timeout for opening TCP connections to the cache server.
 CONNECT_TIMEOUT = 5.0
@@ -82,17 +83,17 @@ def _baseline(api: WBMGEAPI):
 
 @pytest.fixture(scope="module")
 def cache_server_e2e(api: WBMGEAPI):
-    """Set up the cache Modbus TCP server on port 50504 and populate the cache.
+    """Set up the cache Modbus TCP server on guest port 50504 and populate the cache.
 
     Steps:
-      1. Skip guard: probe port 50504; skip if not reachable.
+      1. Skip guard: probe the cache host port; skip if not reachable.
       2. Save original rs485_1 port_mode and cache_modbus_port.
-      3. Enable cache server, set port to 50504, set timeout to 60 s.
+      3. Enable cache server, set its port to guest 50504, set timeout to 60 s.
       4. Sleep 1 s to let the server rebind.
       5. Set port 1 to passive transport and enable the cache overlay.
       6. Inject specific FC01/FC02/FC03/FC04 traffic via UART port 1.
       7. Poll up to 30 s for cache entries to appear.
-      8. Yield (host, 50504).
+      8. Yield (host, cache host port).
       9. Restore original settings in finally.
 
     Injected traffic (all via a single shared UART socket):
@@ -129,7 +130,9 @@ def cache_server_e2e(api: WBMGEAPI):
         # Configure cache server settings.
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": QEMU_CACHE_MODBUS_PORT,
+            # GUEST port (fixed 50504) — what this slot's hostfwd forwards to; the host connects to
+            # the dynamic QEMU_CACHE_MODBUS_PORT which reaches it through the forward.
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
             "cache_value_timeout_s": 60,
         })
         assert resp.status_code == 200, \
@@ -205,7 +208,22 @@ def cache_server_e2e(api: WBMGEAPI):
 # Tests
 # ---------------------------------------------------------------------------
 
-@pytest.mark.timeout(30)
+# 105 s, not 30 s: an item's pytest-timeout budget covers SETUP as well as the call, and
+# this is the FIRST item of the module, so it pays the setup of both module-scoped fixtures
+# before its own body starts. 30 s was structurally unfittable — smaller than the setup's
+# own documented ceiling — and that is what CI reported as
+# "failed on setup with Timeout (>30.0s)".
+#
+# Two contributors dominate:
+#   - cache_server_e2e (:83) polls for the cache to fill on a loop bounded at 30 s (:169-178)
+#     before it gives up with pytest.fail, plus a 1 s rebind sleep, three HTTP calls and the
+#     UART injection;
+#   - conftest's once-per-session rs485 snapshot (one bounded GET /settings, 20.1 s, see
+#     _RS485_HTTP_TIMEOUT), which lands here when this file is run on its own; in a
+#     full-suite run it is charged to the very first item of the session instead.
+# _baseline (:60) adds two more writes (POST /settings + POST /ports/1/mode).
+# 30 s body + 30 s cache-fill poll + 20.1 s snapshot + slack.
+@pytest.mark.timeout(105)
 def test_cm01_fc01_coil_response_lsb_bit_packing(cache_server_e2e):
     """FC01 response uses LSB-first bit packing: coil[addr] → bit 0 of byte 0.
 
@@ -482,7 +500,13 @@ def test_cm07_cache_miss_returns_illegal_address(cache_server_e2e):
         sock.close()
 
 
-@pytest.mark.timeout(60)
+# 105 s, not 60 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT)
+# — on top of this module's own module-scoped cache_server_e2e teardown. 60 s body + 45 s
+# teardown allowance.
+@pytest.mark.timeout(105)
 def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
     """When the cache overlay is disabled, FC03 → exception 0x02.
 
@@ -490,11 +514,11 @@ def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
     cache overlay on port 1.  It does NOT depend on cache_server_e2e.
 
     Steps:
-      1. Verify port 50504 is reachable (skip if not).
-      2. Ensure cache_modbus_server_enabled=True and cache_modbus_port=50504.
+      1. Verify the cache host port is reachable (skip if not).
+      2. Ensure cache_modbus_server_enabled=True and cache_modbus_port=50504 (guest).
       3. Disable the cache overlay on port 1 → calls cache_multimaster_disable() → s_cache_enabled=false.
       4. Sleep 0.5 s for firmware to process the change.
-      5. Connect to port 50504 (server still running).
+      5. Connect to the cache host port (server still running).
       6. Send FC03: slave=1, addr=10, count=1 → assert exception 0x02.
       7. Finally: restore port 1 to the baseline transport.
     """
@@ -509,10 +533,10 @@ def test_cm06_cache_disabled_returns_illegal_address(api: WBMGEAPI):
     original_server_enabled = orig_settings.get("cache_modbus_server_enabled", True)
 
     # Ensure the cache server is enabled and on the correct port before the skip guard,
-    # so that a fresh run without prior tests can still reach port 50504.
+    # so that a fresh run without prior tests can still reach the cache server.
     resp = api.update_settings({
         "cache_modbus_server_enabled": True,
-        "cache_modbus_port": QEMU_CACHE_MODBUS_PORT,
+        "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,  # guest port (hostfwd target)
     })
     assert resp.status_code == 200, \
         f"CM-06: Failed to configure cache server: HTTP {resp.status_code}"

@@ -20,7 +20,9 @@ import time
 
 import pytest
 
+from conftest import uart_chardev_unreachable
 from packet_injector import (
+    UART_TCP_PORT,
     build_fc03_request,
     build_fc03_response,
     inject_bytes,
@@ -72,13 +74,18 @@ def _baseline(api):
 # Shared helper: run a sniffer timing test with controlled request/response gap
 # ---------------------------------------------------------------------------
 
-def _run_sniffer_timing_test(api, delay_ms, collect_timeout_sec=5.0, min_count=1):
+def _run_sniffer_timing_test(api, is_qemu, delay_ms, collect_timeout_sec=5.0, min_count=1):
     """Set up sniffer on port 1, inject request + optional delayed response, collect packets.
 
     Parameters
     ----------
     api :
         pytest fixture — the API client.
+    is_qemu : bool
+        pytest fixture — value of the --qemu flag, forwarded verbatim to
+        conftest.uart_chardev_unreachable() when the UART chardev cannot be opened.
+        That helper, not this one, decides fail-vs-skip (it also consults --ip);
+        all three call sites pass it positionally.
     delay_ms : int | None
         Milliseconds to wait between injecting the request and injecting the
         response.  Pass None to skip injecting a response entirely (dead slave).
@@ -127,7 +134,7 @@ def _run_sniffer_timing_test(api, delay_ms, collect_timeout_sec=5.0, min_count=1
         try:
             uart_sock = open_uart_socket(port=1)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART_TCP_PORT[1], is_qemu, detail=exc)
 
         # Build Modbus frames
         req = build_fc03_request(slave=TEST_SLAVE_ID, start_addr=0x0000, reg_count=1)
@@ -187,8 +194,14 @@ def _run_sniffer_timing_test(api, delay_ms, collect_timeout_sec=5.0, min_count=1
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(20)
-def test_sniffer_fast_response_master_slave_pair(api):
+# 45 s, not 20 s: an item's pytest-timeout budget covers SETUP as well as the call, and
+# this is the first item of the module, so it pays the module-scoped _baseline above
+# (POST /settings + POST /ports/1/mode). When this file is run on its own it additionally
+# pays conftest's once-per-session rs485 snapshot (one bounded GET /settings, 20.1 s, see
+# _RS485_HTTP_TIMEOUT) — in a full-suite run that lands on the very first item of the
+# session instead. 20 s body + 20.1 s snapshot + slack.
+@pytest.mark.timeout(45)
+def test_sniffer_fast_response_master_slave_pair(api, is_qemu):
     """Fast slave response (10 ms) — sniffer emits MASTER+SLAVE pair, no timeout.
 
     Injects FC03 request for slave=0x15 then, after only 10 ms (well inside
@@ -205,7 +218,7 @@ def test_sniffer_fast_response_master_slave_pair(api):
     """
     # 10 ms delay — well before the 200 ms sniffer timeout
     # collect up to 3.0 s, stop as soon as 2 packets (master + slave) arrive
-    packets = _run_sniffer_timing_test(api, delay_ms=10, collect_timeout_sec=3.0, min_count=2)
+    packets = _run_sniffer_timing_test(api, is_qemu, delay_ms=10, collect_timeout_sec=3.0, min_count=2)
 
     # Filter for our slave ID
     our_pkts = [p for p in packets if p.get("slave_id") == TEST_SLAVE_ID]
@@ -248,7 +261,7 @@ def test_sniffer_fast_response_master_slave_pair(api):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(20)
-def test_sniffer_slow_response_timeout_then_orphan_slave(api):
+def test_sniffer_slow_response_timeout_then_orphan_slave(api, is_qemu):
     """Slow slave response (400 ms) — MASTER emitted immediately, then orphan SLAVE; no TIMEOUT.
 
     Injects FC03 request for slave=0x15 then waits 400 ms (2× SNIFFER_RESP_TIMEOUT_MS)
@@ -263,7 +276,7 @@ def test_sniffer_slow_response_timeout_then_orphan_slave(api):
     """
     # 400 ms delay — well past the 200 ms sniffer timeout
     # collect for 5.0 s to capture both events: MASTER + orphan SLAVE
-    packets = _run_sniffer_timing_test(api, delay_ms=400, collect_timeout_sec=5.0, min_count=2)
+    packets = _run_sniffer_timing_test(api, is_qemu, delay_ms=400, collect_timeout_sec=5.0, min_count=2)
 
     # Filter for our slave ID
     our_pkts = [p for p in packets if p.get("slave_id") == TEST_SLAVE_ID]
@@ -299,7 +312,7 @@ def test_sniffer_slow_response_timeout_then_orphan_slave(api):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(20)
-def test_sniffer_no_response_only_timeout(api):
+def test_sniffer_no_response_only_timeout(api, is_qemu):
     """No slave response (dead slave) — sniffer emits only MASTER; no TIMEOUT, no SLAVE.
 
     Injects an FC03 request for slave=0x15 and never sends a response.
@@ -315,7 +328,7 @@ def test_sniffer_no_response_only_timeout(api):
     """
     # Never inject a response; collect for (timeout + 1 s) to allow detection of any unwanted events
     collect_sec = (SNIFFER_RESP_TIMEOUT_MS / 1000.0) + 1.0
-    packets = _run_sniffer_timing_test(api, delay_ms=None, collect_timeout_sec=collect_sec, min_count=1)
+    packets = _run_sniffer_timing_test(api, is_qemu, delay_ms=None, collect_timeout_sec=collect_sec, min_count=1)
 
     # Filter for our slave ID
     our_pkts = [p for p in packets if p.get("slave_id") == TEST_SLAVE_ID]
@@ -360,7 +373,7 @@ def test_sniffer_no_response_only_timeout(api):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(20)
-def test_sniffer_master_emitted_immediately(api):
+def test_sniffer_master_emitted_immediately(api, is_qemu):
     """[DESIRED] Master request emitted immediately upon receipt, before any response.
 
     This test verifies the DESIRED (not yet implemented) behavior:
@@ -399,7 +412,7 @@ def test_sniffer_master_emitted_immediately(api):
         try:
             uart_sock = open_uart_socket(port=1)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART_TCP_PORT[1], is_qemu, detail=exc)
 
         # Build only the request — no response is ever injected
         req = build_fc03_request(slave=TEST_SLAVE_ID, start_addr=0x0000, reg_count=1)
@@ -456,7 +469,7 @@ def test_sniffer_master_emitted_immediately(api):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(30)
-def test_sniffer_no_response_master_then_timeout(api):
+def test_sniffer_no_response_master_then_timeout(api, is_qemu):
     """No slave response → sniffer emits only MASTER (no TIMEOUT over WebSocket).
 
     When no slave responds, the sniffer emits:
@@ -489,7 +502,7 @@ def test_sniffer_no_response_master_then_timeout(api):
         try:
             uart_sock = open_uart_socket(port=1)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART_TCP_PORT[1], is_qemu, detail=exc)
 
         # Inject only the request — no response ever follows
         req = build_fc03_request(slave=TEST_SLAVE_ID, start_addr=0x0000, reg_count=1)
@@ -561,7 +574,7 @@ def test_sniffer_no_response_master_then_timeout(api):
 
 @pytest.mark.qemu
 @pytest.mark.timeout(30)
-def test_sniffer_slow_response_three_events(api):
+def test_sniffer_slow_response_three_events(api, is_qemu):
     """Slow slave response (400 ms) → MASTER + orphan SLAVE; no TIMEOUT over WebSocket.
 
     Behavior:
@@ -594,7 +607,7 @@ def test_sniffer_slow_response_three_events(api):
         try:
             uart_sock = open_uart_socket(port=1)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART_TCP_PORT[1], is_qemu, detail=exc)
 
         # Build both frames
         req = build_fc03_request(slave=TEST_SLAVE_ID, start_addr=0x0000, reg_count=1)
@@ -671,8 +684,13 @@ def test_sniffer_slow_response_three_events(api):
 # ===========================================================================
 
 @pytest.mark.qemu
-@pytest.mark.timeout(30)
-def test_sniffer_dead_slave_polled_twice(api):
+# 75 s, not 30 s: an item's pytest-timeout budget covers setup + call + TEARDOWN, and
+# module-scoped fixtures are torn down inside the LAST item of the module. This is that
+# item, so it also pays conftest's _restore_rs485_settings teardown — up to two bounded
+# POST /settings plus a settle window (2 x 20.1 s + 1 s = 41.2 s, see _RS485_HTTP_TIMEOUT).
+# 30 s body + 45 s teardown allowance.
+@pytest.mark.timeout(75)
+def test_sniffer_dead_slave_polled_twice(api, is_qemu):
     """Dead slave polled twice — both requests appear as MASTER packets; no TIMEOUT, no SLAVE.
 
     Scenario (scenario 4 from scripts/slow_sniffer_demo.py):
@@ -718,7 +736,7 @@ def test_sniffer_dead_slave_polled_twice(api):
         try:
             uart_sock = open_uart_socket(port=1)
         except OSError as exc:
-            pytest.skip(f"UART1 chardev not reachable: {exc}")
+            uart_chardev_unreachable(UART_TCP_PORT[1], is_qemu, detail=exc)
 
         # Build the request frame — reused for both poll cycles
         req = build_fc03_request(slave=TEST_SLAVE_ID, start_addr=0x0000, reg_count=1)

@@ -1,4 +1,4 @@
-"""Integration tests for the QEMU virtual IO state bus (UDP port 5570).
+"""Integration tests for the QEMU virtual IO state bus (guest UDP port 5570).
 
 These are the first integration tests to cover the firmware "hardware" modules
 that were previously excluded from the QEMU build and had zero coverage:

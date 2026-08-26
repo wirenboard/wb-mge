@@ -1,4 +1,14 @@
 2026-08-25 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
+    * version:  1.3.2
+    * change:   test-suite and CI release — no firmware source changed in this release
+    * change:   the QEMU e2e suite runs on every CI build instead of only when explicitly requested — as before, a failure marks the build UNSTABLE and does not gate a merge
+    * improve:  every fixed host port of the QEMU harness derives from a slot number, so several suites can run on one machine without colliding
+    * fix:      unit-test build system — parallel make raced clean against compilation and could silently drop whole suites from a run while still exiting 0
+    * improve:  a shared fixture restores RS-485 settings between test modules, so NVS state stops leaking from one test file into the next
+    * improve:  test modules corrected across the suite where a fixed timeout or an assertion measured the host machine rather than the firmware
+    * change:   combined unit + e2e coverage is produced once a night on main and published to CI as a build figure — with the previous defaults it was never produced at all; unit coverage moves from every build to that same nightly
+
+2026-08-25 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
     * version:  1.3.1
     * fix:      open the web interface in the browser's language — a region-qualified tag such as ru-RU, de-AT, it-CH or kk-KZ used to miss the match and fall back to English
     * fix:      keep the login-page language dropdown readable in Chromium-based browsers (Edge, Chrome), where every entry except the highlighted one was drawn white on white

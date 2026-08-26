@@ -1,4 +1,5 @@
-"""Helper for the QEMU virtual IO state bus (UDP port 5570).
+"""Helper for the QEMU virtual IO state bus (guest UDP port 5570, forwarded to this
+slot's IO-bus host port — see qemu_ports.IO_BUS_UDP_PORT).
 
 The QEMU-only build exposes firmware GPIO/expander/button state over a tiny
 UDP protocol so host-side tests can observe and drive "hardware" pins that
@@ -49,6 +50,8 @@ Stdlib only — no external dependencies.
 import socket
 import time
 
+import qemu_ports
+
 # 5-byte ASCII record layout: T NN '/' L
 RECORD_LEN = 5
 SEP_INDEX = 3
@@ -56,7 +59,7 @@ LEVEL_INDEX = 4
 
 
 class IoBus:
-    """Client for the QEMU virtual IO state bus (UDP 5570).
+    """Client for the QEMU virtual IO state bus (guest UDP 5570).
 
     On construction it opens a fresh UDP socket, subscribes (which makes the
     guest treat it as a new peer and send a full dump), and absorbs that dump
@@ -76,8 +79,8 @@ class IoBus:
             normal operation.
     """
 
-    HOST = "127.0.0.1"
-    PORT = 5570
+    HOST = qemu_ports.HOST
+    PORT = qemu_ports.IO_BUS_UDP_PORT  # UDP IO-bus host port for this run's slot
 
     # Resend the subscribe datagram at least this often (seconds) to keep the
     # QEMU usermode-NAT UDP mapping warm so TX records keep flowing.
@@ -103,7 +106,7 @@ class IoBus:
         idle/default state, so it cannot accidentally trigger a button press.
         """
         self._sock.sendto(b"G34/1", (self.HOST, self.PORT))
-        self._last_subscribe = time.time()
+        self._last_subscribe = time.monotonic()
 
     @staticmethod
     def _parse(data):
@@ -140,6 +143,17 @@ class IoBus:
         return pin, value
 
     # --- public API -----------------------------------------------------------
+    #
+    # EVERY DEADLINE IN THIS CLASS IS time.monotonic(), INCLUDING _last_subscribe, and they
+    # were moved off time.time() together on purpose: a class with two clock bases is worse
+    # than one with either, because the mistakes it enables (subtracting one from the other)
+    # are silent. A CLOCK_REALTIME step — NTP correction, resume from suspend, container
+    # clock fixup — moves the wall clock in either direction, and each direction broke a
+    # different loop here. Forward: press_button's hold ended early, shortening a press whose
+    # entire job is to clear a 5 s firmware threshold, which then reads as a firmware fault
+    # (see 47_test_io_indication.py). Backward: pump() and wait_for() spun for the size of
+    # the step at one recv timeout per iteration, burning a caller's pytest-timeout budget on
+    # a clock event. monotonic() cannot step in either direction.
 
     def pump(self, duration):
         """Receive records for ``duration`` seconds, keeping the NAT warm.
@@ -149,9 +163,9 @@ class IoBus:
         ``state`` and is appended to ``events``. A ``V<NN>/<c>`` (violation)
         record is additionally appended to ``violations`` as ``(gpio_num, cause)``.
         """
-        deadline = time.time() + duration
-        while time.time() < deadline:
-            if time.time() - self._last_subscribe > self.SUBSCRIBE_INTERVAL_S:
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline:
+            if time.monotonic() - self._last_subscribe > self.SUBSCRIBE_INTERVAL_S:
                 self._subscribe()
             try:
                 data, _ = self._sock.recvfrom(64)
@@ -183,9 +197,9 @@ class IoBus:
         itself. Pumps the socket once before the first check so the decision
         reflects current state, not a leftover from a prior dump/event.
         """
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         self.pump(0.1)
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             if self.state.get(pin) == level:
                 return True
             self.pump(0.3)
@@ -210,6 +224,10 @@ class IoBus:
         firmware debounces the button over 50 ms and samples it every 10 ms, so
         the hold must comfortably exceed the debounce window; 0.4 s is safe.
 
+        Returns the ``time.monotonic()`` stamp at which the press stopped being
+        asserted, for callers that need to reason about how long the firmware
+        could have seen the button down. Callers that do not care may ignore it.
+
         Robustness over QEMU usermode-NAT UDP (which can drop datagrams):
           - Each level transition is sent as a small burst, not a single
             datagram, so a dropped packet does not lose the edge.
@@ -222,30 +240,53 @@ class IoBus:
             also a release) so we pump and re-send ``G34/1`` until the firmware
             reports ``G34 == 1`` or a short timeout elapses.
 
-        Keep ``hold_s`` well under 5 s: a >5 s hold triggers a destructive
-        factory-reset long-press.
+        Keep ``hold_s`` well under 5 s unless a factory reset is the POINT of the
+        call: the firmware fires its long-press callback once the hold it OBSERVES
+        reaches 5 s (main/main.c:39 CONFIG_BTN_FACTORY_RESET_HOLD_TIME_MS), which
+        wipes all settings to defaults. The default 0.4 s is nowhere near it.
+
+        One caller deliberately exceeds it — 47_test_io_indication.py::
+        test_factory_reset_long_press holds for 12 s to trigger that reset on
+        purpose, and needs the wide margin because the firmware measures the hold
+        from when its button task SAMPLES the press, not from when this datagram
+        was sent. So the rule above is "do not trip the reset by accident", not
+        "5 s is an upper bound on hold_s".
         """
         # Burst the press edge to beat UDP loss.
         for _ in range(3):
             self._sock.sendto(b"G34/0", (self.HOST, self.PORT))
             time.sleep(0.01)
-        # Hold LOW steadily without any interleaved release/re-subscribe.
-        deadline = time.time() + hold_s
-        while time.time() < deadline:
+        # Hold LOW steadily without any interleaved release/re-subscribe. Monotonic for the
+        # reason given at the top of the public API — this is the loop where a forward
+        # wall-clock step did the most damage, cutting the hold short and getting the
+        # resulting missed long press blamed on the firmware.
+        deadline = time.monotonic() + hold_s
+        while time.monotonic() < deadline:
             self._sock.sendto(b"G34/0", (self.HOST, self.PORT))
             time.sleep(0.02)
+        # EARLIEST instant at which the press stopped being asserted: the hold loop has
+        # stopped resending G34/0 and the release burst has not gone out yet. Returned so
+        # a caller reasoning about how long the firmware saw the button down uses the
+        # helper's own clock instead of reconstructing it as start + hold_s, which would
+        # miss the burst above, the loop's overshoot past the deadline, and any future
+        # change to the sequence. Earliest rather than latest on purpose: the firmware
+        # keeps seeing LOW until a G34/1 actually arrives, so the true release is at or
+        # after this stamp, and a caller subtracting from it errs toward a shorter
+        # observed hold.
+        release_at = time.monotonic()
         # Burst the release edge.
         for _ in range(3):
             self._sock.sendto(b"G34/1", (self.HOST, self.PORT))
             time.sleep(0.02)
         # Self-confirm the release so a lost G34/1 cannot leave the firmware
         # shadow stuck LOW. Pumping is safe now: re-subscribe also sends G34/1.
-        confirm_deadline = time.time() + 2.0
-        while time.time() < confirm_deadline:
+        confirm_deadline = time.monotonic() + 2.0
+        while time.monotonic() < confirm_deadline:
             self.pump(0.1)
             if self.state.get("G34") == 1:
                 break
             self._sock.sendto(b"G34/1", (self.HOST, self.PORT))
+        return release_at
 
     def send_raw(self, payload):
         """Send a raw datagram to the bus from THIS peer's socket.

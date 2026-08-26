@@ -14,9 +14,12 @@ rebuilds qemu_flash.bin per session, so the next run starts clean.
 Valid firmware fixture: build/qemu_mge.bin, produced by `make qemu-build`.
 """
 
+import os
+import re
 import socket
 import struct
 import time
+import warnings
 from pathlib import Path
 
 import pytest
@@ -39,17 +42,120 @@ SIGNATURE_OFFSET = WB_APP_DESC_OFFSET + 4
 SIGNATURE_LEN = 12
 MIN_VALID_HEAD_LEN = WB_APP_DESC_OFFSET + WB_APP_DESC_SIZE
 
-# Upper bound for the device to abort an upload whose client went silent and answer HTTP again.
-# Real recovery is ~35 s: six 5 s receive windows in the handler loop (OTA_RECV_STALL_TIMEOUT_MS /
-# HTTP_RECV_WAIT_TIMEOUT_S, see main/ota_handler.c) plus one more window while the IDF purges the
-# unsent body. The budget is generous on top of that because the emulator under host load stretches
-# every one of those windows — the test is here to prove the device recovers at all, not to time it.
-STALL_RECOVERY_BUDGET_S = 60
+# --- Stall limit, mirrored from main/ota_handler.c and main/http_server.h --------------------
+# Mirrored rather than read back from the device on purpose: catching a change to these IS the
+# point of the guest-clock check in test_ota_client_vanishes_without_closing_socket.
+OTA_RECV_STALL_TIMEOUT_MS = 30000
+HTTP_RECV_WAIT_TIMEOUT_S = 5
+OTA_RECV_MAX_STALL_TIMEOUTS = OTA_RECV_STALL_TIMEOUT_MS // (HTTP_RECV_WAIT_TIMEOUT_S * 1000)
+
+# Drift allowance on the guest-clock delta, and nothing more — the limit the handler prints in its
+# own log line is what pins the constants, so this band is not asked to tell one budget from
+# another. It must still be narrow enough that no OTHER integer receive window can hide inside it:
+# with the limit pinned the delta is (limit - 1) windows, so the smallest change a different whole
+# second of window can make is (limit - 1) * 1000 ms, and the band has to stay under that. Halving
+# BOTH terms keeps that true for any constants, not just today's — a band of half a window alone
+# would let W=4 pass against a mirrored W=5 at limit 3, quietly dropping real silence from 15 s to
+# 12 s. At the shipped constants the two terms are equal at 2500 ms and neither binds, because
+# limit - 1 (5) happens to equal the window in seconds (5).
+# Sized against the only measurement there is: 14 ms of drift across the five windows, in a solo
+# idle-host run of this file. Drift under the CI contention this check exists for has never been
+# measured — the expectation that it stays small is an argument, not data: the receive timeout and
+# the log timestamp both come off the FreeRTOS tick, so guest starvation moves them together.
+STALL_GUEST_TOLERANCE_MS = min(HTTP_RECV_WAIT_TIMEOUT_S * 1000 // 2,
+                               (OTA_RECV_MAX_STALL_TIMEOUTS - 1) * 1000 // 2)
+
+# Host-side environment guard — NOT a claim about the firmware. Recovery costs the guest
+# OTA_RECV_STALL_TIMEOUT_MS of silence plus one more receive window while the IDF purges the unsent
+# body (~35 s), but this is host wall clock and also carries the guest's own slowness and two HTTP
+# round trips: 62 s has been measured on an idle laptop, and a contended CI node stretches single
+# requests several times over. Four times the guest figure, so only a node that is broken rather
+# than merely loaded reaches it.
+STALL_RECOVERY_ENV_BUDGET_S = 4 * (OTA_RECV_STALL_TIMEOUT_MS // 1000 + HTTP_RECV_WAIT_TIMEOUT_S)
 
 # Lower bound: the device must NOT answer instantly. Without it the test passes on a firmware that
 # rejects the upload outright (no stall handling at all), which is the opposite of what it checks.
-# Well below the ~35 s the handler really takes, so a loaded emulator cannot trip it.
+# Host wall clock can only overstate the guest's ~35 s, so a loaded node cannot trip this one.
+# Under --qemu the "Network timeout 1/N" line proves the same thing precisely; this is what is
+# left when there is no serial to read.
 STALL_RECOVERY_MIN_S = 20
+
+# (connect, read), never a scalar. requests applies a scalar to EACH phase separately and
+# api_client sets Connection: close, so every call reconnects and a scalar here would double the
+# ceiling. Same reasoning and same connect budget as conftest's _RS485_HTTP_TIMEOUT: connect is a
+# loopback handshake to a QEMU hostfwd port, so it is immediate or never. Deliberately above
+# STALL_RECOVERY_ENV_BUDGET_S — a firmware that never aborts must reach this timeout and report a
+# transport failure, rather than come back with a large elapsed time for a bound to misread.
+STALL_INFO_TIMEOUT = (5, STALL_RECOVERY_ENV_BUDGET_S + 30)
+
+
+def _qemu_serial_log_path():
+    """Path to the live QEMU serial capture written by conftest (build/qemu_test.log)."""
+    return os.path.join(os.path.dirname(__file__), "..", "build", "qemu_test.log")
+
+
+def _serial_log_offset():
+    """Size of the QEMU serial log right now, or None if it cannot be read.
+
+    Callers must bind this to --qemu rather than to the file existing: conftest opens (and
+    truncates) the log only when it starts QEMU itself, so under `--ip` a leftover from an
+    earlier `make qemu-test` stats fine and never grows — an offset into it reads back as an
+    empty tail and would be scored as "the firmware logged nothing". Same trap as in
+    33_test_auth_settings.py.
+    """
+    try:
+        return os.path.getsize(_qemu_serial_log_path())
+    except OSError:
+        return None
+
+
+# ESP-IDF log lines carry (ms since boot) under CONFIG_LOG_TIMESTAMP_SOURCE_RTOS, which
+# sdkconfig.qemu.minimal sets. Anchored on the "ota_handler:" tag because json_utils logs a
+# "Network timeout during upload" line of its own for this same failure. The handler prints its
+# own limit as the denominator of "Network timeout 1/6", which is what lets the caller pin the
+# firmware constants instead of inferring them from elapsed time.
+_STALL_RETRY_RE = re.compile(r"\((\d+)\) ota_handler: Network timeout (\d+)/(\d+)")
+_STALL_GIVEUP_RE = re.compile(r"\((\d+)\) ota_handler: OTA upload stalled:")
+
+
+def _stall_serial_evidence(offset, read_timeout=10.0):
+    """Guest timestamps of the stall, from serial written since `offset`.
+
+    Returns (retries, giveup_ms), where `retries` is [(timestamp_ms, index, limit), ...] in log
+    order — empty, and giveup_ms None, when those lines never showed up. Every retry is kept,
+    not just the first: when the delta comes out wrong, the SPACING of these lines is what says
+    why. A changed receive window makes every interval land on the same wrong whole second;
+    emulator drift leaves them scattered around the configured window.
+
+    Returns None instead of a pair when the log could not be read or shrank under us — that
+    says nothing about the firmware and must not collapse into "the line is missing", which is
+    what the caller's assertions accuse it of.
+
+    Retried rather than read once, for the same reason 14_test_reboot.py retries: QEMU writes
+    this log from a separate process and the line can lag the device answering HTTP again.
+    """
+    deadline = time.monotonic() + read_timeout
+    readable = False
+    retries, giveup_ms = [], None
+    while True:
+        try:
+            if os.path.getsize(_qemu_serial_log_path()) < offset:
+                return None  # truncated under us — the offset no longer means anything
+            with open(_qemu_serial_log_path(), "r", errors="replace") as fh:
+                fh.seek(offset)
+                tail = fh.read()
+            readable = True
+            retries = [(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                       for m in _STALL_RETRY_RE.finditer(tail)]
+            giveup = _STALL_GIVEUP_RE.search(tail)
+            giveup_ms = int(giveup.group(1)) if giveup else None
+            if retries and giveup_ms is not None:
+                return retries, giveup_ms
+        except OSError:
+            pass
+        if time.monotonic() >= deadline:
+            return (retries, giveup_ms) if readable else None
+        time.sleep(0.5)
 
 
 @pytest.fixture(scope="module")
@@ -272,7 +378,18 @@ def test_ota_truncated_stream(api, firmware_bytes):
     )
 
 
-def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
+# 480 s, over the 180 s default in pytest.ini. The timeouts this item serialises, all of them
+# per-phase because api_client sends Connection: close (see STALL_INFO_TIMEOUT):
+#   30 s   socket.create_connection to start the stalled upload
+#   175 s  GET /info — STALL_INFO_TIMEOUT, 5 s connect + 170 s read
+#   10 s   the serial scan (_stall_serial_evidence's read_timeout)
+#   15 s   draining the stalled OTA socket
+#   20 s   the final api.get_info() — a SCALAR 10 in api_client, so 10 connect + 10 read
+#   = 250 s, plus ~4 s for conftest's function-scoped _uart_leak_guard teardown (2 ports x 2 s).
+# conftest's module-scoped rs485 restore is NOT in this budget — it tears down after the LAST item
+# of the file, test_ota_full_update.
+@pytest.mark.timeout(480)
+def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes, pytestconfig):
     """Client disappears mid-upload WITHOUT closing the socket → the device must
     give up on its own and keep serving HTTP.
 
@@ -283,9 +400,11 @@ def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
     since the IDF web server is single-threaded, every other endpoint dies with it
     until the device is power-cycled.
 
-    The defining assertion is the one on /info: the web interface must come back
-    on its own, and only after having actually waited out the stall — hence both a
-    lower and an upper bound on how long that request takes.
+    /info answering at all is what proves the web interface came back. HOW LONG the
+    firmware waited before giving up is asserted on the guest's own log timestamps, not
+    on host wall clock — the host figure carries emulator slowness and two HTTP round
+    trips, and a bound on it accuses the firmware for a loaded node. A device that never
+    recovers is caught by the /info request timeout, not by any bound here.
     """
     parsed = requests.utils.urlparse(api.base_url)
     host = parsed.hostname or "localhost"
@@ -303,6 +422,11 @@ def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
         f"\r\n"
     ).encode() + sent_chunk
 
+    # Snapshot before the POST so the scan below sees only serial from THIS stall; a scan from 0
+    # would match the markers of an earlier one and pass unconditionally. Bound to --qemu, not to
+    # the log being statable — see _serial_log_offset.
+    serial_offset = _serial_log_offset() if pytestconfig.getoption("--qemu") else None
+
     sock = socket.create_connection((host, port), timeout=30)
     try:
         sock.sendall(request)
@@ -311,20 +435,119 @@ def test_ota_client_vanishes_without_closing_socket(api, firmware_bytes):
 
         # A separate connection, because the stalled one is the one under test. The
         # request is queued behind the OTA handler and can only be served once that
-        # handler gives up, so its round-trip time measures the recovery.
-        # Above the budget on purpose: a request that timed out would fail the test with a transport
-        # error instead of the assertion below, which says what actually went wrong.
-        info_resp = api.session.get(f"{api.base_url}/info", timeout=STALL_RECOVERY_BUDGET_S + 30)
+        # handler gives up, so it returning at all is the recovery. A firmware that never gives
+        # up cannot answer and surfaces as the ReadTimeout in STALL_INFO_TIMEOUT, not as a bound.
+        info_resp = api.session.get(f"{api.base_url}/info", timeout=STALL_INFO_TIMEOUT)
         info_elapsed = time.monotonic() - stall_start
 
         assert info_resp.status_code == 200, (
             f"Server unresponsive while an OTA client is silent: "
             f"{info_resp.status_code} {info_resp.text!r}"
         )
-        assert info_elapsed < STALL_RECOVERY_BUDGET_S, (
-            f"GET /info took {info_elapsed:.1f}s while an OTA upload was stalled; "
-            f"expected the device to abort the upload within {STALL_RECOVERY_BUDGET_S}s"
+
+        # --- The product property, measured by the guest on the guest's clock ---------------
+        # What the handler enforces is exactly `limit` receive windows of silence; the configured
+        # OTA_RECV_STALL_TIMEOUT_MS enters only through that integer division, so a change to it
+        # that leaves the limit at OTA_RECV_MAX_STALL_TIMEOUTS (anything in 30000..34999 at the
+        # current window) changes no behaviour and is correctly not flagged. Pinning the two
+        # factors therefore pins the behaviour: the limit comes off the log line itself, and the
+        # window length from the delta between the first retry and the give-up.
+        guest_check_passed = False
+        evidence = _stall_serial_evidence(serial_offset) if serial_offset is not None else None
+        if evidence is None:
+            warnings.warn(
+                "test_ota_client_vanishes_without_closing_socket: no QEMU serial to read (no "
+                "--qemu, or build/qemu_test.log became unreadable), so the guest-time check on "
+                f"the {OTA_RECV_STALL_TIMEOUT_MS} ms stall budget was skipped. Only the host-side "
+                "bounds below ran, and those cannot tell a changed budget from a slow node.",
+                stacklevel=1,
+            )
+        else:
+            retries, giveup_ms = evidence
+            assert retries, (
+                f"/info came back after {info_elapsed:.1f}s but the guest never logged 'Network "
+                f"timeout 1/{OTA_RECV_MAX_STALL_TIMEOUTS}': ota_receive_and_write() never entered "
+                f"its retry loop, so the upload was refused outright instead of waited out and "
+                f"nothing here exercised the stall limit"
+            )
+            assert giveup_ms is not None, (
+                f"the guest retried the stalled receive but never logged 'OTA upload stalled', "
+                f"yet /info was served after {info_elapsed:.1f}s — the handler left its receive "
+                f"loop by some route other than the stall limit"
+            )
+            first_retry_ms, _, observed_limit = retries[0]
+            enforced_ms = giveup_ms - first_retry_ms
+            # The INTERVALS, not the absolute stamps: the intervals are the discriminator, and
+            # making the reader subtract hides it. One per gap, ending at the give-up line.
+            stamps = [ts for ts, _idx, _lim in retries] + [giveup_ms]
+            interval_dump = ", ".join(str(b - a) for a, b in zip(stamps, stamps[1:]))
+            # The window the guest actually used, so the message below can quote the silence the
+            # device now tolerates rather than only the limit — that is what separates a real
+            # change (W=4 rounds the budget down to 28 s) from a re-parameterisation that lands on
+            # the same 30 s. Guarded because the delta spans limit-1 windows.
+            observed_silence_s = (
+                observed_limit * enforced_ms / (observed_limit - 1) / 1000
+                if observed_limit > 1 else float("nan")
+            )
+
+            assert observed_limit == OTA_RECV_MAX_STALL_TIMEOUTS, (
+                f"the handler counted up to {observed_limit} consecutive timeouts, not "
+                f"{OTA_RECV_MAX_STALL_TIMEOUTS}: OTA_RECV_STALL_TIMEOUT_MS "
+                f"(main/ota_handler.c) or HTTP_RECV_WAIT_TIMEOUT_S (main/http_server.h) changed "
+                f"and the mirrors at the top of this file are stale. The device now tolerates "
+                f"{observed_limit} windows of silence, {observed_silence_s:.1f}s in total against "
+                f"the {OTA_RECV_STALL_TIMEOUT_MS / 1000:.1f}s mirrored here — update the mirrors "
+                f"if that was intended. Intervals between the guest's own log lines, first retry "
+                f"@{first_retry_ms}ms then one per gap to the give-up: {interval_dump} ms"
+            )
+            # From the OBSERVED limit — the assert above has already pinned it to the mirror, so
+            # this is the same number, written this way to keep the two claims separate: that one
+            # is about the limit, this one is about the windows really being that long.
+            expected_ms = (observed_limit - 1) * HTTP_RECV_WAIT_TIMEOUT_S * 1000
+            assert abs(enforced_ms - expected_ms) <= STALL_GUEST_TOLERANCE_MS, (
+                f"the guest spent {enforced_ms} ms between its first retry and giving up; "
+                f"expected {expected_ms} ± {STALL_GUEST_TOLERANCE_MS} ms, i.e. the "
+                f"{observed_limit - 1} windows of HTTP_RECV_WAIT_TIMEOUT_S="
+                f"{HTTP_RECV_WAIT_TIMEOUT_S}s (main/http_server.h) that separate those two lines "
+                f"at OTA_RECV_STALL_TIMEOUT_MS={OTA_RECV_STALL_TIMEOUT_MS} "
+                f"(main/ota_handler.c). Either the receive window changed or the emulator "
+                f"drifted — both accumulate over the windows, so the intervals are what separate "
+                f"them: a changed window puts every one of them on the same wrong whole second, "
+                f"drift scatters them around {HTTP_RECV_WAIT_TIMEOUT_S * 1000}. First retry "
+                f"@{first_retry_ms}ms, then one per gap to the give-up: {interval_dump} ms"
+            )
+            guest_check_passed = True
+            print(f"✓ Guest enforced {observed_limit} windows / {enforced_ms} ms of stall budget "
+                  f"(expected {expected_ms} ± {STALL_GUEST_TOLERANCE_MS} ms)")
+
+        # --- Host-side bounds: one on the environment, one on the device answering too fast ---
+        env_note = (
+            f"GET /info took {info_elapsed:.1f}s to come back after the OTA client went silent, "
+            f"over the {STALL_RECOVERY_ENV_BUDGET_S}s environment budget. This is host wall clock "
+            f"— it carries the emulator's own slowness and two HTTP round trips on top of the "
+            f"~35 s the guest needs — so it is a statement about this node, not about the "
+            f"firmware, which did abort the upload and answer. Check what else loaded the host"
         )
+        if guest_check_passed:
+            # Warn, do not fail: on host wall clock this bound cannot tell a slow node from a slow
+            # device, and accusing the firmware for the node is what this test was rewritten to
+            # stop doing. Note what that trade actually costs. The guest evidence closes the WAIT
+            # LOOP only — the limit and the window. It says nothing about the segment from
+            # "OTA upload stalled" to /info being served: leaving ota_receive_and_write(),
+            # esp_ota_abort(), answering the stalled connection, freeing the single-threaded
+            # server. That segment is exactly what info_elapsed covered beyond the guest budget,
+            # and it is now bounded only by STALL_INFO_TIMEOUT's read timeout — a regression that
+            # added 100 s there would warn, not fail. Deliberate, and the warning is the trail.
+            if info_elapsed >= STALL_RECOVERY_ENV_BUDGET_S:
+                warnings.warn(
+                    f"test_ota_client_vanishes_without_closing_socket: {env_note}",
+                    stacklevel=1,
+                )
+        else:
+            # No guest evidence: this bound is all that separates "recovered, slowly" from "this
+            # node is broken", so without it the only remaining check is that /info answered.
+            assert info_elapsed < STALL_RECOVERY_ENV_BUDGET_S, env_note
+
         assert info_elapsed >= STALL_RECOVERY_MIN_S, (
             f"GET /info was served after only {info_elapsed:.1f}s: the device did not sit through the "
             f"stall timeout at all, so this test proves nothing about the receive loop. Either the "

@@ -11,9 +11,10 @@ served in BOTH operating modes:
       cache-enabled guard.
 
 Requires QEMU launched with:
-  - UART1 exposed as TCP port 5561 (for the gateway RTU slave).
-  - guest port 502  forwarded to host port 50502 (gateway).
-  - guest port 50504 forwarded to host port 50504 (cache Modbus server).
+  (host ports follow WB_MGE_PORT_SLOT — api_tests/qemu_ports.py; guest ports are fixed)
+  - the UART1 chardev exposed on TCP (for the gateway RTU slave).
+  - guest port 502   forwarded to the gateway host port.
+  - guest port 50504 forwarded to the cache-Modbus host port.
 
 Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
   FC04 input:  104-105 uptime_s (u32 MSW-first); 121 supply mV;
@@ -38,6 +39,7 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
   Any fc not in {0x03,0x04} on unit 0xFF -> exception 0x01.
 """
 
+import qemu_ports
 import socket
 import struct
 import time
@@ -57,15 +59,15 @@ from modbus_helpers import make_mbap_request, send_and_receive
 # The gateway's own Modbus unit ID (MB_DEVICE_UNIT_ID).
 SELF_UNIT_ID = 0xFF
 
-# Gateway port forwarded from QEMU guest port 502 to host port 50502.
-GATEWAY_HOST_PORT = 50502
-# UART1 chardev TCP socket (QEMU -serial tcp::5561,server,nowait).
-UART1_TCP_PORT = 5561
+# Host port this slot forwards to QEMU guest port 502 (the gateway).
+GATEWAY_HOST_PORT = qemu_ports.GATEWAY_HOST_PORT
+# UART1 chardev TCP socket (QEMU -serial tcp::<slot UART1 port>,server,nowait).
+UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT
 # Fake register value returned by the RTU slave for any register read.
 FAKE_VALUE = 0x1234
 
-# QEMU host-forwarded port for the cache Modbus TCP server (guest port 50504).
-QEMU_CACHE_MODBUS_PORT = 50504
+# Host port this slot forwards to the cache Modbus TCP server (guest port 50504).
+QEMU_CACHE_MODBUS_PORT = qemu_ports.QEMU_CACHE_MODBUS_PORT
 
 CONNECT_TIMEOUT = 5.0
 
@@ -201,9 +203,8 @@ def _baseline(api):
 # Shared gateway fixture from conftest: tcp_bridge + modbus=true on port 1.
 gateway_slave = build_gateway_fixture(
     port_num=1,
-    tcp_host_port=GATEWAY_HOST_PORT,
     uart_tcp_port=UART1_TCP_PORT,
-    bridge_port=502,
+    bridge_port=qemu_ports.GATEWAY_GUEST_PORT,      # guest 502
     modbus=True,
     fake_value=FAKE_VALUE,
 )
@@ -523,16 +524,22 @@ def test_self_unit_ram_diagnostics_kb(api, gateway_slave):
     #     allocated pushes it down.
     #   * WHO can interfere: in practice only QEMU. The gateway_slave fixture
     #     (build_gateway_fixture in api_tests/conftest.py) skips unless
-    #     127.0.0.1:5561 — the QEMU UART1 chardev — accepts a connection, and the RAM
+    #     UART1_TCP_PORT — the QEMU UART1 chardev — accepts a connection, and the RAM
     #     reads here and in test_self_unit_ram_matches_info both go to
-    #     127.0.0.1:GATEWAY_HOST_PORT, the QEMU hostfwd port. (Not every register read
-    #     in this file does: the cache_server tests read from the --ip host.) HTTP is a
-    #     separate endpoint: api.get_info() talks to the --ip address, default
-    #     localhost:8080. Under --qemu that is the same guest, because conftest
-    #     forwards host 8080 to guest 80 and refuses to start if 8080 or 5561 is
-    #     already taken. It is NOT guaranteed to be the same machine in general:
+    #     GATEWAY_HOST, GATEWAY_HOST_PORT, the QEMU hostfwd port. (Not every register
+    #     read in this file does: the cache_server tests read from the --ip host.) HTTP
+    #     is a separate endpoint: api.get_info() talks to the --ip address. Under --qemu
+    #     that is the SAME guest, and the argument for it is now the port SLOT rather
+    #     than any fixed number: --ip defaults to localhost:qemu_ports.HTTP_HOST_PORT and
+    #     conftest builds the hostfwd for that same HTTP_HOST_PORT from the same
+    #     qemu_ports block, so the endpoint the HTTP client uses and the guest whose UART
+    #     chardev gates this test are one QEMU by construction, for every slot. (The
+    #     older argument — "conftest refuses to start if 8080 or 5561 is already taken" —
+    #     no longer holds: the preflight checks this slot's block, and neither of those
+    #     numbers is in it. The conclusion survives; the premise does not.)
+    #     It is NOT guaranteed to be the same machine in general:
     #     `pytest --ip=<real device>` with a separately started QEMU alongside passes
-    #     the 5561 gate, and then the registers come from QEMU while /info comes from
+    #     the chardev gate, and then the registers come from QEMU while /info comes from
     #     the hardware. (@pytest.mark.qemu itself is inert — no hook skips on it; the
     #     fixture is the real gate.)
     #   * The QEMU build is single-core (CONFIG_FREERTOS_UNICORE=y in
@@ -891,7 +898,7 @@ def test_self_unit_bad_fc_exception(api, gateway_slave):
 
 @pytest.fixture(scope="module")
 def cache_server(api: WBMGEAPI):
-    """Enable the cache Modbus TCP server on port 50504 and yield (host, port).
+    """Enable the cache Modbus TCP server on guest port 50504 and yield (host, port).
 
     The cache stays empty/disabled here on purpose: the self-unit (0xFF)
     interception in cache_modbus_server.c happens BEFORE the cache-enabled guard,
@@ -910,7 +917,7 @@ def cache_server(api: WBMGEAPI):
     try:
         resp = api.update_settings({
             "cache_modbus_server_enabled": True,
-            "cache_modbus_port": QEMU_CACHE_MODBUS_PORT,
+            "cache_modbus_port": qemu_ports.CACHE_MODBUS_GUEST_PORT,
         })
         assert resp.status_code == 200 and resp.json().get("success") is True, \
             f"cache_server: failed to enable cache server: {resp.status_code} {resp.text}"
