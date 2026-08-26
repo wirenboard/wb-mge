@@ -299,6 +299,13 @@ const login = async () => {
   color: #fff;
 }
 
+/* Chromium lets an <option> inherit `color` from its <select>, and :hover stays live
+   while the popup is open — pin both colours or the list goes white on white (SOFT-7354). */
+.login-lang option {
+  background-color: var(--bg-surface);
+  color: var(--text-color);
+}
+
 .login-colophon {
   font-size: 11.8px; /* +0.8px for Roboto */
   color: var(--text-on-dark-dim);
