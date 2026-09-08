@@ -134,9 +134,12 @@ qemu-apply-idf-patches: check-idf-pins
 # and it must verify the IDF pins just like the hardware build-idf-project does.
 build-idf-project-qemu: check-idf-pins qemu-apply-idf-patches
 	@echo "Building for QEMU with OpenEth ethernet driver"
-	@# Detect stale hardware build cache: if CMakeCache exists but was not a QEMU build,
-	@# run fullclean to force CMake reconfiguration with correct source file selection.
-	@# No need to rm sdkconfig — each build type uses its own sdkconfig file.
+	@# Detect a stale non-QEMU build cache in build/: if CMakeCache exists but was not a
+	@# QEMU build, run fullclean to force CMake reconfiguration with correct source file
+	@# selection. No need to rm sdkconfig — each build type uses its own sdkconfig file.
+	@# `make build-idf-project` no longer writes here — a hardware build goes to
+	@# build/<signature> (BUILD_DIR in the Makefile) — so what this still catches is a
+	@# manual `idf.py build` run in the project root, which does use the default dir.
 	@if [ -f "build/CMakeCache.txt" ]; then \
 	    if ! grep -q "qemu_mge" "build/CMakeCache.txt"; then \
 	        echo "Detected hardware build cache — running fullclean before QEMU build..."; \
@@ -351,7 +354,7 @@ qemu-help:
 	@echo "  qemu-coverage           - Build instrumented firmware, run tests (no reboot), pull /gcov, build coverage report"
 	@echo "  qemu-coverage-report    - Rebuild the coverage report from an existing build/coverage.stream (no QEMU run)"
 	@echo "  qemu-collect-only       - List collected API tests without building or running"
-	@echo "  qemu-clean              - Remove build/ and sdkconfig.qemu_build"
+	@echo "  qemu-clean              - Remove build/ entirely (hardware builds of every signature included) and sdkconfig.qemu_build"
 	@echo ""
 	@echo "qemu-run, qemu-web and qemu-test hold an exclusive lock on this working tree"
 	@echo "(.e2e-tree.lock) for their whole run, build included: they all rewrite"
@@ -365,8 +368,12 @@ qemu-help:
 	@echo "One test:    make qemu-test PYTEST_ARGS=\"-k test_auth\""
 	@echo "List tests:  make qemu-collect-only"
 
+# `rm -rf build` does the whole job, and the `idf.py fullclean` that used to run
+# before it is gone rather than reordered: with hardware builds living in
+# build/<signature>, a build/ that holds no CMakeCache.txt of its own is the
+# normal state, and fullclean refuses to touch such a directory — it exited
+# non-zero and killed the recipe before a single file was removed.
 qemu-clean:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
 	@rm -rf build
 	@rm -f sdkconfig.qemu_build sdkconfig.qemu_build.old
 

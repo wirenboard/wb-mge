@@ -29,6 +29,9 @@ DEPENDENCIES_LOCK := $(CURDIR)/dependencies.lock
 
 # Buildable device signatures. Each must match the eFuse signature and its
 # fw-releases.wirenboard.com/fw/by-signature/<sig> line.
+# Outside the Makefile and .gitignore the default TARGET is spelled out once
+# more, in .clangd (CompilationDatabase: build/<first entry>) — update it if the
+# head of this list changes.
 # This list is the only place a signature is spelled out in Makefile/.gitignore:
 # the default TARGET, the check below and the per-signature sdkconfig files
 # `clean` removes derive from it, and .gitignore matches the generated
@@ -36,8 +39,10 @@ DEPENDENCIES_LOCK := $(CURDIR)/dependencies.lock
 # sdkconfig.defaults.<sig> here, and on the firmware side main/boards/<sig>.h
 # wired into main/board_pins.h and a DEVICE_MODEL branch in main/config.h; both
 # chains end in #error, so a missing branch fails the build loudly.
-# Order matters: the first entry is the default TARGET, which is what the CI
-# release and QEMU e2e builds use, so append new signatures, never prepend.
+# Order matters: the first entry is the default TARGET — what the QEMU e2e
+# build, `lint-c`, `flash` and `monitor` use when no TARGET is given — so append
+# new signatures, never prepend. The CI release stage builds every entry of this
+# list, not just the first one (see 'Build firmware' in the Jenkinsfile).
 MODEL_LIST := mge_v3 mgu_v1
 # Default build target; override e.g. `make TARGET=<signature> build-idf-project`.
 TARGET ?= $(firstword $(MODEL_LIST))
@@ -85,7 +90,15 @@ SDKCONFIG_GENERATED := $(SDKCONFIG_BASES) $(addsuffix .old,$(SDKCONFIG_BASES))
 # Directories
 #######################################
 
-BUILD_DIR = build
+# Root of the generated artefact tree. The reports CI archives (eslint, vitest,
+# unit tests, clang-tidy, coverage) and the QEMU firmware build live directly in
+# it; a hardware build gets a subdirectory of its own per signature.
+BUILD_ROOT = build
+# Per-signature IDF build directory, passed to idf.py as -B. Keeping the
+# signatures apart is what lets one tree hold builds of several of them at once:
+# CI builds every entry of MODEL_LIST in a single run, and switching TARGET
+# locally no longer needs a clean to avoid a stale or mixed artifact.
+BUILD_DIR = $(BUILD_ROOT)/$(TARGET)
 RELEASE_DIR = release
 
 #######################################
@@ -155,7 +168,8 @@ DEFS += FIRMWARE_GIT_INFO=$(GIT_INFO)
 #
 # The value is passed to EVERY firmware build as an explicit CMake cache value
 # (-DCOVERAGE=0/1) on purpose: idf.py -D writes a CACHE variable that persists in
-# build/CMakeCache.txt, so always re-asserting the current value resets it. Without
+# the build dir's CMakeCache.txt, so always re-asserting the current value resets
+# it (a hardware build's cache lives in $(BUILD_DIR), the QEMU one in build). Without
 # this, a prior `COVERAGE=1` build would silently leak instrumentation (and the
 # test-only /gcov endpoint) into the next normal build until a fullclean.
 COVERAGE ?= 0
@@ -188,6 +202,12 @@ all: build-frontend build-idf-project
 
 test: unittests test-frontend
 
+# The buildable signatures, one line of bare names, for callers that have to
+# iterate over them: the CI 'Build firmware' stage loops over `make -s
+# print-models` so MODEL_LIST stays the only place a signature is spelled out.
+print-models:
+	@echo $(MODEL_LIST)
+
 unittests: $(UNITTESTS_TARGETS)
 
 $(UNITTESTS_TARGETS):
@@ -212,8 +232,9 @@ lint-frontend:
 		exit $$rc; \
 	}
 
-# C linter. Requires build/compile_commands.json from a prior idf.py build
-# (any build flavour — Lint reads what was actually compiled). The wrapper
+# C linter. Requires $(BUILD_DIR)/compile_commands.json from a prior
+# `make build-idf-project` for the same TARGET — Lint reads what was actually
+# compiled, and each signature now compiles into its own dir. The wrapper
 # script patches a couple of pyclang defaults that don't fit our toolchain.
 # Paths to esp-clang / pyclang are derived at runtime from IDF_PYTHON_ENV_PATH
 # and IDF_TOOLS_PATH so this works in both EIM (local) and the Docker image.
@@ -223,7 +244,7 @@ CLANG_TIDY_LOG := /tmp/clang-tidy-log
 
 lint-c:
 	@echo 'Running clang-tidy on main/'
-	@test -f build/compile_commands.json || { echo "ERROR: build/compile_commands.json missing. Run 'make build-idf-project' or equivalent first."; exit 1; }
+	@test -f $(BUILD_DIR)/compile_commands.json || { echo "ERROR: $(BUILD_DIR)/compile_commands.json missing. Run 'make TARGET=$(TARGET) build-idf-project' first."; exit 1; }
 	@mkdir -p $(CLANG_TIDY_OUT) $(CLANG_TIDY_LOG)
 	@$(EIM_ACTIVATE) && \
 	    PATH="$$IDF_PATH/tools:$$PATH" && \
@@ -232,7 +253,7 @@ lint-c:
 	    NEWLIB_INCLUDE=$$(ls -d $$TOOLS_PATH/xtensa-esp-elf/*/xtensa-esp-elf/xtensa-esp-elf/include $$TOOLS_PATH/tools/xtensa-esp-elf/*/xtensa-esp-elf/xtensa-esp-elf/include 2>/dev/null | head -n1) && \
 	    test -n "$$NEWLIB_INCLUDE" || { echo "ERROR: xtensa-esp-elf newlib include dir not found under $$TOOLS_PATH (tried with and without /tools prefix)"; exit 1; } && \
 	    "$$IDF_PYTHON_ENV_PATH/bin/python3" scripts/clang-tidy/wb_clang_tidy.py \
-	        --build-dir build \
+	        --build-dir $(BUILD_DIR) \
 	        --check-files-regex '$(CURDIR)/main/.*\.c' \
 	        --output-path $(CLANG_TIDY_OUT) \
 	        --log-path $(CLANG_TIDY_LOG) \
@@ -411,11 +432,11 @@ apply-idf-patches: check-idf-pins
 	@echo "Applying IDF patches..."
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
 
-# NOTE: the build/ dir is shared across signatures. When switching TARGET from
-# one signature to another run `make clean` first to avoid a stale/mixed artifact.
+# Every signature builds into its own $(BUILD_DIR) (-B below), so switching
+# TARGET needs no clean and one tree can hold a build of each signature.
 build-idf-project: check-idf-pins apply-idf-patches
-	@echo 'Building ESP-IDF project'
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" $(addprefix -D, $(DEFS)) build
+	@echo 'Building ESP-IDF project for $(TARGET)'
+	@$(EIM_ACTIVATE) && $(IDF_PY) -B $(BUILD_DIR) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
 
 prepare_release:
@@ -426,8 +447,8 @@ prepare_release:
 
 clean:
 	@echo 'Cleaning project'
-	@rm -rf $(BUILD_DIR)
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) fullclean
+	@rm -rf $(BUILD_ROOT)
+	@$(EIM_ACTIVATE) && $(IDF_PY) -B $(BUILD_DIR) -DSDKCONFIG=$(SDKCONFIG_FILE) fullclean
 	@rm -rf $(RELEASE_DIR)
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist
@@ -449,7 +470,7 @@ clean:
 # unverified set of pins. flash-all, monitor and ota-flash need no such guard —
 # they only push or read back artefacts that an earlier build produced.
 flash: check-idf-pins
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" flash
+	@$(EIM_ACTIVATE) && $(IDF_PY) -B $(BUILD_DIR) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" flash
 
 # Flash all partitions (bootloader + partition table + OTA data + app) via esptool directly.
 # Useful when idf.py flash cannot detect the port automatically.
@@ -457,13 +478,13 @@ flash-all:
 	@$(EIM_ACTIVATE) && python -m esptool --chip esp32 -b 460800 \
 		--before default_reset --after hard_reset write_flash \
 		--flash_mode dio --flash_size 4MB --flash_freq 40m \
-		0x1000  build/bootloader/bootloader.bin \
-		0x8000  build/partition_table/partition-table.bin \
-		0xd000  build/ota_data_initial.bin \
-		0x90000 build/$(TARGET).bin
+		0x1000  $(BUILD_DIR)/bootloader/bootloader.bin \
+		0x8000  $(BUILD_DIR)/partition_table/partition-table.bin \
+		0xd000  $(BUILD_DIR)/ota_data_initial.bin \
+		0x90000 $(BUILD_DIR)/$(TARGET).bin
 
 monitor:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" monitor
+	@$(EIM_ACTIVATE) && $(IDF_PY) -B $(BUILD_DIR) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" monitor
 
 #######################################
 # OTA flash
@@ -492,7 +513,7 @@ ota-flash:
 	@rm -f $(OTA_COOKIE_FILE)
 	@echo "OTA flash complete, device is rebooting"
 
-.PHONY: all test unittests lint-frontend lint-c lint-comments test-frontend build-frontend check-idf-pins apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash coverage-combined
+.PHONY: all test unittests print-models lint-frontend lint-c lint-comments test-frontend build-frontend check-idf-pins apply-idf-patches build-idf-project prepare_release clean flash flash-all monitor ota-flash coverage-combined
 
 # Include coverage definitions and targets
 -include unittests/build_common_coverage.mk
