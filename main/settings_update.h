@@ -32,3 +32,28 @@ esp_err_t settings_update_with_status(esp_err_t *cache_apply_err);
  * is all. Everything else behaves identically.
  */
 esp_err_t settings_update(void);
+
+/**
+ * @brief Reset every stored setting to its default, keeping the two Airzone counters.
+ *
+ * The one place a factory reset may be performed from, because getting it wrong is silent.
+ * setting_items_set_defaults(false) rewrites EVERY stored key, the two Airzone counters
+ * included — and those must not move. The Z-Wave board reads ANY difference from the value
+ * it last read as exactly one event, so a counter put back to 0 here would, after the next
+ * reboot, look like an inclusion request nobody made and send the node into inclusion mode
+ * on its own. They are captured before the reset and written back after it, leaving NVS and
+ * the RAM copies in step.
+ *
+ * The four Airzone SETTINGS are the opposite case: they really did return to their defaults,
+ * so the board has to be told. They are reloaded first and the settings counter moves once
+ * afterwards — the same values-then-counter order the POST /settings path keeps, because the
+ * board reads the four registers only in the instant the counter changes.
+ *
+ * Both reset paths — the config button (main.c) and POST /cmd set_default_settings — go
+ * through here so they cannot drift apart. Applying the new settings is left to the caller.
+ *
+ * @return ESP_OK, or the error setting_items_set_defaults() failed with. A counter that
+ *         could not be written back is logged and does not fail the reset: the settings are
+ *         already at their defaults by then, and reporting failure would say otherwise.
+ */
+esp_err_t settings_factory_reset(void);

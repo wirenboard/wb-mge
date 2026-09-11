@@ -6,6 +6,7 @@
 #include "port_manager.h"
 #include "network.h"
 #include "setting_items.h"
+#include "airzone_gw.h"
 #include "update_rs485_mio_gpio_states.h"
 #include "cache_modbus_server.h"
 
@@ -453,6 +454,32 @@ esp_err_t settings_update_with_status(esp_err_t *cache_apply_err)
 esp_err_t settings_update(void)
 {
     return settings_update_with_status(NULL);
+}
+
+esp_err_t settings_factory_reset(void)
+{
+    // Read before the reset: set_defaults(false) is about to overwrite both keys with "0".
+    int inclusion_count = setting_items_read_int(KEY_AIRZONE_INCL_CNT);
+    int settings_count = setting_items_read_int(KEY_AIRZONE_SET_CNT);
+
+    esp_err_t ret = setting_items_set_defaults(false);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    if (setting_items_save_int(KEY_AIRZONE_INCL_CNT, inclusion_count) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to preserve the Z-Wave inclusion counter across the reset");
+    }
+    if (setting_items_save_int(KEY_AIRZONE_SET_CNT, settings_count) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to preserve the Airzone settings counter across the reset");
+    }
+
+    // The four settings are back at their defaults, so republish them and then move the
+    // counter — never the other way round, or the board reads a half-restored block.
+    airzone_gw_reload_settings();
+    airzone_gw_inc_settings_counter();
+
+    return ESP_OK;
 }
 
 #ifdef __unittest_env__

@@ -496,7 +496,14 @@ esp_err_t setting_items_migrate_port2_line_format(void)
                      port2_line_format[i].key, port2_line_format[i].value, esp_err_to_name(save_ret));
             // Claim the key with an explicit false so the set_defaults() call that follows
             // cannot create it as "true" and declare this half-done rewrite finished.
-            (void)setting_items_save_bool(KEY_PORT2_MIGRATED, false);
+            esp_err_t mark_ret = setting_items_save_bool(KEY_PORT2_MIGRATED, false);
+            if (mark_ret != ESP_OK) {
+                // The retry still happens — set_defaults() is about to fail on this same
+                // storage and setting_items_init()'s caller panics on that — but a storage
+                // refusing two writes in a row is worth its own line in the log.
+                ESP_LOGE(TAG, "Migration: also failed to record %s as not migrated (%s)",
+                         KEY_PORT2_MIGRATED, esp_err_to_name(mark_ret));
+            }
             return save_ret;
         }
         ESP_LOGI(TAG, "Migration: set %s = %s for the WBE2 link to the Z-Wave board",

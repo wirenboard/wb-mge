@@ -48,7 +48,10 @@ static const char *TAG = "main";
 static void factory_reset(void)
 {
     ESP_LOGI(TAG, "Resetting all settings to factory defaults...");
-    ESP_ERROR_CHECK(setting_items_set_defaults(false));
+    // Through settings_factory_reset() and never setting_items_set_defaults() directly:
+    // the Airzone counters have to survive the reset, and the button means exactly what
+    // POST /cmd set_default_settings means.
+    ESP_ERROR_CHECK(settings_factory_reset());
 
     ESP_LOGI(TAG, "Factory reset completed! Settings will revert to defaults.");
     ESP_LOGI(TAG, "Device will continue running with default configuration.");

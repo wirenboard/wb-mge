@@ -8,6 +8,7 @@
 #include "http_server.h"
 #include "update_rs485_mio_gpio_states.h"
 #include "cache_modbus_server.h"
+#include "setting_items.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -18,10 +19,20 @@
 
 void settings_update_reset(void);
 
-// Symbols exported by the setting_items / cache_modbus_server mocks
+// Symbols exported by the setting_items / cache_modbus_server / airzone_gw mocks
 extern bool mock_setting_items_cache_server_enabled;
 extern int  mock_setting_items_cache_port;
+extern int         mock_setting_items_set_defaults_called;
+extern esp_err_t   mock_setting_items_set_defaults_result;
+extern const char *mock_setting_items_save_int_fail_key;    // key whose save_int() fails (NULL = none)
 void        mock_setting_items_reset(void);
+void        mock_setting_items_set_int(const char *key, int value);
+
+extern int mock_airzone_inclusion_counter;
+extern int mock_airzone_settings_counter;
+extern int mock_airzone_reload_called;
+extern int mock_airzone_reloads_at_settings_bump;
+void       mock_airzone_gw_reset(void);
 
 extern esp_err_t mock_cache_modbus_server_deinit_error;     // makes deinit() report a failure
 extern int       mock_cache_modbus_server_init_call_count;
@@ -45,6 +56,7 @@ void setUp(void)
     mock_freertos_task_reset();
     mock_setting_items_reset();
     mock_cache_modbus_server_reset();
+    mock_airzone_gw_reset();
     settings_update_reset();
 }
 
@@ -1076,6 +1088,135 @@ void test_settings_update_http_failed_deinit_offers_no_rollback_port(void)
         "the web UI must come back on the default port");
 }
 
+// ===================================================================
+// settings_factory_reset() and the Airzone counters
+// ===================================================================
+
+// setting_items_set_defaults() rewrites every key, so it puts both Airzone counters back to 0 on
+// its own. They must come out of the reset exactly as they went in — the Z-Wave board treats any
+// difference from the value it last read as one event, so a counter that came back as 0 would,
+// after the next reboot, read as an inclusion request nobody made — while every other setting is
+// exactly what the reset is for and must be back at its shipped default.
+void test_settings_factory_reset_preserves_the_counters_and_resets_the_rest(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test settings_factory_reset - both counters survive, everything else is back at its default");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_int(KEY_AIRZONE_INCL_CNT, 7);
+    mock_setting_items_set_int(KEY_AIRZONE_SET_CNT, 3);
+    mock_setting_items_cache_server_enabled = false;    // a device that has been configured...
+    mock_setting_items_cache_port = 9999;               // ... away from the shipped defaults
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_factory_reset(), "A factory reset should succeed");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_setting_items_set_defaults_called,
+        "the reset must put the stored settings back to their defaults exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(7, setting_items_read_int(KEY_AIRZONE_INCL_CNT),
+        "a factory reset must leave the stored inclusion counter where it was");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, setting_items_read_int(KEY_AIRZONE_SET_CNT),
+        "a factory reset must leave the stored settings counter where it was");
+
+    // DEFAULT_CACHE_MODBUS_SERVER_ENABLED / DEFAULT_CACHE_MODBUS_PORT in main/config.h.
+    TEST_ASSERT_TRUE_MESSAGE(setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED),
+        "every setting that is not a counter must be back at its default");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(504, setting_items_read_int(KEY_CACHE_MODBUS_PORT),
+        "every setting that is not a counter must be back at its default");
+}
+
+// The four Airzone settings really did change, so the board has to be told — once. The values are
+// reloaded into the register block's cache first and the counter moves after them, because the
+// board reads the four registers only in the instant the counter changes.
+void test_settings_factory_reset_bumps_the_settings_counter_after_the_values(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test settings_factory_reset - settings counter +1, bumped after the values are reloaded");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_factory_reset(), "A factory reset should succeed");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_settings_counter,
+        "a factory reset must move the settings counter exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_reload_called,
+        "a factory reset must refresh the cached Airzone settings exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_reloads_at_settings_bump,
+        "the defaults must already be in the cache when the counter moves");
+}
+
+// Nobody asked for inclusion, so the inclusion counter must not move — neither in NVS (covered
+// above) nor in the RAM copy the Z-Wave board reads.
+void test_settings_factory_reset_never_asks_for_inclusion(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test settings_factory_reset - the inclusion counter is never incremented");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_int(KEY_AIRZONE_INCL_CNT, 7);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_factory_reset(), "A factory reset should succeed");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_inclusion_counter,
+        "a factory reset must never ask the Z-Wave board to enter inclusion");
+}
+
+// A reset that failed changed nothing, so there is nothing to tell the board about — and the
+// counters must not be rewritten on the way out either.
+void test_settings_factory_reset_propagates_a_failed_set_defaults(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test settings_factory_reset - set_defaults fails -> the error is returned, no counter moves");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_int(KEY_AIRZONE_INCL_CNT, 7);
+    mock_setting_items_set_int(KEY_AIRZONE_SET_CNT, 3);
+    mock_setting_items_set_defaults_result = ESP_ERR_NO_MEM;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_ERR_NO_MEM, settings_factory_reset(),
+        "the error setting_items_set_defaults() failed with must reach the caller unchanged");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_settings_counter,
+        "a reset that changed nothing must not move the settings counter");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_reload_called,
+        "a reset that changed nothing has no new values to publish");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_inclusion_counter,
+        "a failed reset must not move the inclusion counter");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(7, setting_items_read_int(KEY_AIRZONE_INCL_CNT),
+        "a failed reset must leave the stored inclusion counter alone");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, setting_items_read_int(KEY_AIRZONE_SET_CNT),
+        "a failed reset must leave the stored settings counter alone");
+}
+
+// The settings ARE at their defaults by the time a counter is written back, so a write that fails
+// is logged and nothing more: returning a failure here would tell the caller the reset did not
+// happen, which is the one thing that is not true. The rest of the reset must still complete.
+void test_settings_factory_reset_survives_a_counter_that_cannot_be_written_back(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "Test settings_factory_reset - a counter that cannot be written back does not fail the reset");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_int(KEY_AIRZONE_INCL_CNT, 7);
+    mock_setting_items_set_int(KEY_AIRZONE_SET_CNT, 3);
+    mock_setting_items_save_int_fail_key = KEY_AIRZONE_INCL_CNT;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_factory_reset(),
+        "the settings are at their defaults, so the reset must not report failure");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, setting_items_read_int(KEY_AIRZONE_INCL_CNT),
+        "the counter that could not be written back is the one set_defaults() wiped");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, setting_items_read_int(KEY_AIRZONE_SET_CNT),
+        "one failed write must not stop the other counter from being restored");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_reload_called,
+        "the defaults still have to be published to the Z-Wave board");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_settings_counter,
+        "the settings counter still has to move, or the board never reads the defaults");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1124,6 +1265,13 @@ int main(void)
     RUN_TEST(test_settings_update_http_all_ports_dead_leaves_web_ui_down);
     RUN_TEST(test_settings_update_http_default_port_not_retried_after_failed_rollback);
     RUN_TEST(test_settings_update_http_failed_deinit_offers_no_rollback_port);
+
+    // Factory reset: the Airzone counters across it, and the values-then-counter order
+    RUN_TEST(test_settings_factory_reset_preserves_the_counters_and_resets_the_rest);
+    RUN_TEST(test_settings_factory_reset_bumps_the_settings_counter_after_the_values);
+    RUN_TEST(test_settings_factory_reset_never_asks_for_inclusion);
+    RUN_TEST(test_settings_factory_reset_propagates_a_failed_set_defaults);
+    RUN_TEST(test_settings_factory_reset_survives_a_counter_that_cannot_be_written_back);
 
     return UNITY_END();
 }

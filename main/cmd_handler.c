@@ -1,7 +1,6 @@
 #include "cmd_handler.h"
 #include "json_utils.h"
 #include "auth.h"
-#include "setting_items.h"
 #include "sys_info.h"
 #include "array_size.h"
 #include "settings_update.h"
@@ -119,34 +118,17 @@ static esp_err_t cmd_execute(int cmd_code)
         cmd_reboot_device();
         break;
 
-    /* setting_items_set_defaults() rewrites every stored key, the two Airzone counters
-     * included — and those must not move. The Z-Wave board reads ANY difference from the
-     * value it last read as exactly one event, so a counter put back to 0 here would, after
-     * the next reboot, look like an inclusion request nobody made. They are captured before
-     * the reset and written back after it, leaving NVS and the RAM copies in step.
-     *
-     * The four Airzone SETTINGS are the opposite case: they really did change, so the board
-     * has to be told. The values are reloaded first and the settings counter moves once
-     * afterwards — the same values-then-counter order the POST /settings path keeps, because
-     * the board reads the four registers only in the instant the counter changes. */
+    /* The reset itself lives in settings_factory_reset(), shared with the config button, so
+     * the two cannot drift apart: what has to be got right — keeping the two Airzone counters
+     * across the reset, then republishing the four settings before moving the settings
+     * counter — is spelled out there, and getting it wrong is silent. */
     case CMD_SET_DEFAULT_SETTINGS: {
         settings_save_timer_auto_init();
         settings_save_timer_wait();
 
-        int airzone_incl_cnt = setting_items_read_int(KEY_AIRZONE_INCL_CNT);
-        int airzone_set_cnt  = setting_items_read_int(KEY_AIRZONE_SET_CNT);
-
-        if (setting_items_set_defaults(false) != ESP_OK) {
+        if (settings_factory_reset() != ESP_OK) {
             result = ESP_FAIL;
         } else {
-            if (setting_items_save_int(KEY_AIRZONE_INCL_CNT, airzone_incl_cnt) != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to preserve the Z-Wave inclusion counter across the reset");
-            }
-            if (setting_items_save_int(KEY_AIRZONE_SET_CNT, airzone_set_cnt) != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to preserve the Airzone settings counter across the reset");
-            }
-            airzone_gw_reload_settings();
-            airzone_gw_inc_settings_counter();
             settings_update();
             ESP_LOGI(TAG, "All default settings applied successfully");
         }

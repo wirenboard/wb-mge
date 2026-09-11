@@ -4,7 +4,6 @@
 #include "cmd_handler.h"
 #include "cJSON.h"
 #include "task.h"
-#include "setting_items.h"
 
 #include <string.h>
 
@@ -18,18 +17,13 @@ extern int         mock_json_utils_send_error_called;
 extern const char *mock_json_utils_last_error;
 
 extern int mock_airzone_inclusion_counter;
-extern int mock_airzone_settings_counter;
-extern int mock_airzone_reload_called;
-extern int mock_airzone_reloads_at_settings_bump;
 void       mock_airzone_gw_reset(void);
 
-extern int       mock_setting_items_set_defaults_called;
-extern esp_err_t mock_setting_items_set_defaults_result;
-void             mock_setting_items_reset(void);
-void             mock_setting_items_set_int(const char *key, int value);
-
-extern int mock_settings_update_call_count;
-void       mock_settings_update_reset(void);
+extern int       mock_settings_update_call_count;
+extern int       mock_settings_factory_reset_call_count;
+extern esp_err_t mock_settings_factory_reset_result;
+extern int       mock_settings_factory_resets_at_update;
+void             mock_settings_update_reset(void);
 
 void mock_rs485_control_reset(void);
 void mock_esp_system_reset(void);
@@ -68,7 +62,6 @@ void setUp(void)
 {
     mock_json_utils_reset();
     mock_airzone_gw_reset();
-    mock_setting_items_reset();
     mock_settings_update_reset();
     mock_rs485_control_reset();
     mock_esp_system_reset();
@@ -142,8 +135,8 @@ void test_zwave_include_does_nothing_else(void)
     cJSON *resp = run_cmd("zwave_include");
     cJSON_Delete(resp);
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_setting_items_set_defaults_called,
-        "zwave_include must not touch the stored settings");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_settings_factory_reset_call_count,
+        "zwave_include must not reset the stored settings");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_settings_update_call_count,
         "zwave_include must not re-apply the settings");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xTaskCreate_data.called,
@@ -167,91 +160,69 @@ void test_unknown_command_is_refused_and_moves_no_counter(void)
         "an unknown command must not increment the inclusion counter");
 }
 
-// The command sits next to the ones that were already there; adding it must not have shadowed
-// set_default_settings, whose name shares no prefix but whose table slot moved.
+// ===================================================================
+// set_default_settings
+//
+// The reset itself lives in settings_factory_reset() and is tested against the real function in
+// the settings_update suite — keeping the Airzone counters across it, republishing the settings
+// before the counter moves. Here it is a recording stub, so these tests assert only what
+// cmd_execute() still decides: the reset runs once, the new settings are applied after it, and a
+// reset that failed is reported instead.
+// ===================================================================
+
+// The command sits next to the ones that were already there; adding zwave_include must not have
+// shadowed set_default_settings, whose name shares no prefix but whose table slot moved.
 void test_set_default_settings_still_dispatches(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "cmd: set_default_settings -> defaults applied, inclusion counter untouched");
+        "cmd: set_default_settings -> factory reset once, inclusion counter untouched");
     LOG_MESSAGE();
 
     cJSON *resp = run_cmd("set_default_settings");
 
     TEST_ASSERT_NOT_NULL_MESSAGE(resp, "set_default_settings must be answered with a response object");
     TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "set_default_settings must report success");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_setting_items_set_defaults_called,
-        "set_default_settings must reset the stored settings");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_settings_factory_reset_call_count,
+        "set_default_settings must perform the factory reset exactly once");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_inclusion_counter,
         "set_default_settings must not increment the inclusion counter");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xTaskCreate_data.called,
+        "set_default_settings must not reboot the device");
 
     cJSON_Delete(resp);
 }
 
-// ===================================================================
-// set_default_settings and the Airzone counters
-// ===================================================================
-
-// setting_items_set_defaults() rewrites every key, so it puts both Airzone counters back to 0 on
-// its own. They must come out of the reset exactly as they went in: the Z-Wave board treats any
-// difference from the value it last read as one event, so a counter that came back as 0 would,
-// after the next reboot, read as an inclusion request nobody made.
-void test_set_default_settings_preserves_airzone_counters(void)
+// The reset only rewrites NVS; the running system is still on the old settings until
+// settings_update() reconciles it — so the command has to call it, and after the reset, or it
+// would re-apply the values the reset is about to replace.
+void test_set_default_settings_applies_the_new_settings_after_the_reset(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "cmd: set_default_settings -> both Airzone counters keep their stored values");
-    LOG_MESSAGE();
-
-    mock_setting_items_set_int(KEY_AIRZONE_INCL_CNT, 7);
-    mock_setting_items_set_int(KEY_AIRZONE_SET_CNT, 3);
-
-    cJSON *resp = run_cmd("set_default_settings");
-    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "set_default_settings must be answered with a response object");
-    cJSON_Delete(resp);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(7, setting_items_read_int(KEY_AIRZONE_INCL_CNT),
-        "a factory reset must leave the stored inclusion counter where it was");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(3, setting_items_read_int(KEY_AIRZONE_SET_CNT),
-        "a factory reset must leave the stored settings counter where it was");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_inclusion_counter,
-        "a factory reset must never ask the Z-Wave board to enter inclusion");
-}
-
-// The four Airzone settings really did change, so the board has to be told — once. The values are
-// reloaded into the register block's cache first and the counter moves after them, because the
-// board reads the four registers only in the instant the counter changes.
-void test_set_default_settings_bumps_settings_counter_after_the_values(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "cmd: set_default_settings -> settings counter +1, bumped after the values are reloaded");
+        "cmd: set_default_settings -> settings_update() once, after the factory reset");
     LOG_MESSAGE();
 
     cJSON *resp = run_cmd("set_default_settings");
     TEST_ASSERT_NOT_NULL_MESSAGE(resp, "set_default_settings must be answered with a response object");
     cJSON_Delete(resp);
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_settings_counter,
-        "a factory reset must move the settings counter exactly once");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_reload_called,
-        "a factory reset must refresh the cached Airzone settings");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_reloads_at_settings_bump,
-        "the defaults must already be in the cache when the counter moves");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_settings_update_call_count,
+        "the defaults have to be applied to the running system exactly once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_settings_factory_resets_at_update,
+        "the reset must already have happened when the settings are applied");
 }
 
-// A reset that failed changed nothing, so there is nothing to tell the board about — and the
-// counters must not be rewritten on the way out either.
-void test_failed_set_default_settings_moves_no_counter(void)
+// A reset that failed left the stored settings as they were, so there is nothing to apply — and
+// the caller has to be told, or the UI reports a factory reset that never happened.
+void test_failed_set_default_settings_is_reported_and_applies_nothing(void)
 {
     LOG_MESSAGE();
     LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
-        "cmd: set_default_settings fails -> no counter moves, stored counters untouched");
+        "cmd: set_default_settings fails -> error answer, no settings update, no reboot");
     LOG_MESSAGE();
 
-    mock_setting_items_set_int(KEY_AIRZONE_INCL_CNT, 7);
-    mock_setting_items_set_int(KEY_AIRZONE_SET_CNT, 3);
-    mock_setting_items_set_defaults_result = ESP_FAIL;
+    mock_settings_factory_reset_result = ESP_FAIL;
 
     cJSON *resp = run_cmd("set_default_settings");
     if (resp != NULL) {
@@ -259,14 +230,16 @@ void test_failed_set_default_settings_moves_no_counter(void)
         cJSON_Delete(resp);
     }
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_settings_counter,
-        "a reset that changed nothing must not move the settings counter");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_json_utils_send_error_called,
+        "a failed reset must be answered with an error");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_settings_factory_reset_call_count,
+        "a failed reset must not be retried behind the user's back");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_settings_update_call_count,
+        "a reset that changed nothing must not re-apply the settings");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_inclusion_counter,
         "a failed reset must not move the inclusion counter");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(7, setting_items_read_int(KEY_AIRZONE_INCL_CNT),
-        "a failed reset must leave the stored inclusion counter alone");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(3, setting_items_read_int(KEY_AIRZONE_SET_CNT),
-        "a failed reset must leave the stored settings counter alone");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_xTaskCreate_data.called,
+        "a failed reset must not reboot the device");
 }
 
 // -------------------------------------------------------------------
@@ -282,9 +255,8 @@ int main(void)
     RUN_TEST(test_zwave_include_does_nothing_else);
     RUN_TEST(test_unknown_command_is_refused_and_moves_no_counter);
     RUN_TEST(test_set_default_settings_still_dispatches);
-    RUN_TEST(test_set_default_settings_preserves_airzone_counters);
-    RUN_TEST(test_set_default_settings_bumps_settings_counter_after_the_values);
-    RUN_TEST(test_failed_set_default_settings_moves_no_counter);
+    RUN_TEST(test_set_default_settings_applies_the_new_settings_after_the_reset);
+    RUN_TEST(test_failed_set_default_settings_is_reported_and_applies_nothing);
 
     return UNITY_END();
 }
