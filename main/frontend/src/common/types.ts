@@ -44,6 +44,26 @@ export interface RepeaterStats {
   dropped_2: number;
 }
 
+// What the Z-Wave board last wrote about itself (registers 541–551 of the unit-0xFF map).
+// Every field is a raw code straight from the board; the UI decodes them for display.
+export interface AirzoneGatewayState {
+  valid: boolean; // false until the board has written at least once — the other fields are then meaningless
+  age_s: number; // seconds since that write; the board refreshes every 10 s while it is alive
+  // The four settings the board is ACTUALLY running on: it validates each of them separately and
+  // refuses them one at a time, so these can disagree with the settings that were sent to it.
+  slave: number;
+  zone: number;
+  product: number;
+  baud_code: number;
+  link_state: number; // 0 init, 1 online, 2 degraded, 3 offline
+  errors: number; // consecutive Modbus errors
+  last_exception: number; // last Modbus exception code
+  scale: number; // 0 °C, 1 °F, 2 not read yet
+  dead_runs: number; // 16-bit bitmap of poll runs that are not answering
+  bus_load: number; // bus occupancy, percent; reads 0 for the first ten seconds after the board boots
+  setpoint_model: number; // 0 single, 1 double, 2 undetermined
+}
+
 export interface Info {
   device_name: string;
   signature?: string; // device signature, e.g. 'mge_v3' (WB-MGE) or 'mgu_v1' (WB-MGU)
@@ -80,6 +100,7 @@ export interface Info {
   rs485_1: RsStatus;
   rs485_2: RsStatus;
   repeater?: RepeaterStats; // optional: older firmware may omit it
+  airzone_gw?: AirzoneGatewayState; // optional: older firmware may omit it
   cache_modbus_port: number;
   cache_modbus_server_enabled: boolean;
   cache_value_timeout_s: number;
@@ -119,6 +140,20 @@ export interface RsSettings {
   };
 }
 
+// Product type of the Airzone unit: 0 Airzone, 1 Aidoo Pro DX/Fan coil,
+// 2 Aidoo Pro Air to Water, 3 Aidoo Pro Ventilation.
+export type AirzoneProduct = 0 | 1 | 2 | 3;
+
+// The four settings the gateway hands to the Z-Wave board.
+export interface AirzoneSettings {
+  slave: number; // Modbus address of the Airzone unit, 1…247
+  zone: number; // zone number, 1…32
+  // Line speed as a multiplier of 1200 baud (4…96). The wire carries the code, never the baud:
+  // that is the whole point of the encoding, so the UI converts for display and sends the code.
+  baud_code: number;
+  product: AirzoneProduct;
+}
+
 export interface Settings {
   hostname: string;
   login: string;
@@ -155,6 +190,7 @@ export interface Settings {
   };
   rs485_1: RsSettings;
   rs485_2: RsSettings;
+  airzone?: AirzoneSettings; // optional: older firmware may omit it
 }
 
 export interface WifiScanStartResponce {

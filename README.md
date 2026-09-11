@@ -68,35 +68,43 @@ The gateway itself answers Modbus polls on its own address **Unit ID 255 (0xFF)*
 Modbus Messaging Implementation Guide this address is reserved for the TCP gateway itself.
 It works in both **Modbus TCP** and **Cache TCP** modes, regardless of cache state (in Modbus
 TCP mode such a request is NOT forwarded to RS-485). Read functions **FC03** and **FC04** are
-supported.
+supported. Most of the map is read-only; the single exception is **541–551**, which also takes
+**FC16** — that is where the Z-Wave board writes its own state.
 
-### Registers (FC03/FC04, read-only)
+### Registers (FC03/FC04; FC16 on 541–551)
 
-| Address (dec) | Address (hex) | Regs | Type   | Description                                                         |
-|---------------|---------------|------|--------|---------------------------------------------------------------------|
-| 104–105       | 0x0068–0x0069 | 2    | u32    | Uptime since boot, seconds                                          |
-| 121           | 0x0079        | 1    | u16    | Current supply voltage, mV                                          |
-| 200–219       | 0x00C8–0x00DB | 20   | string | Device model                                                        |
-| 220–244       | 0x00DC–0x00F4 | 25   | string | Commit hash and branch the firmware was built from                  |
-| 250–265       | 0x00FA–0x0109 | 16   | string | Firmware version (string)                                           |
-| 266–267       | 0x010A–0x010B | 2    | u32    | Serial number generation scheme (4 = derived from the 48-bit MAC)   |
-| 268–271       | 0x010C–0x010F | 4    | u64    | Serial number, MSW-first (the 48-bit MAC in the low bits)           |
-| 290–301       | 0x0122–0x012D | 12   | string | Firmware signature                                                  |
-| 320           | 0x0140        | 1    | u16    | Firmware version: MAJOR                                             |
-| 321           | 0x0141        | 1    | u16    | Firmware version: MINOR                                             |
-| 322           | 0x0142        | 1    | u16    | Firmware version: PATCH                                             |
-| 323           | 0x0143        | 1    | s16    | Firmware version: SUFFIX (+N for `+wbN`, −N for `-rcN`, 0 if none)  |
-| 324–325       | 0x0144–0x0145 | 2    | u32    | Numeric firmware version (little-endian word order: 324 = low word) |
-| 326–327       | 0x0146–0x0147 | 2    | u32    | Numeric firmware version (big-endian word order: 326 = high word)   |
-| 528–529       | 0x0210–0x0211 | 2    | u32    | Packets processed (since last cache reset)                          |
-| 530–531       | 0x0212–0x0213 | 2    | u32    | Seconds since the last packet on the bus                            |
-| 532           | 0x0214        | 1    | u16    | Devices currently on the bus (unique slave_ids in cache)            |
-| 533           | 0x0215        | 1    | u16    | Average bus poll rate, polls/min                                    |
-| 534           | 0x0216        | 1    | u16    | Cache value timeout, seconds                                        |
-| 65505         | 0xFFE1        | 1    | u16    | Total RAM, KB                                                       |
-| 65506         | 0xFFE2        | 1    | u16    | Used RAM, KB                                                        |
-| 65507         | 0xFFE3        | 1    | u16    | Free RAM, KB                                                        |
-| 65508         | 0xFFE4        | 1    | u16    | Last MCU reboot reason                                              |
+| Address (dec) | Address (hex) | Regs | Type   | Access     | Description                                                          |
+|---------------|---------------|------|--------|------------|----------------------------------------------------------------------|
+| 104–105       | 0x0068–0x0069 | 2    | u32    | read       | Uptime since boot, seconds                                           |
+| 121           | 0x0079        | 1    | u16    | read       | Current supply voltage, mV                                           |
+| 200–219       | 0x00C8–0x00DB | 20   | string | read       | Device model                                                         |
+| 220–244       | 0x00DC–0x00F4 | 25   | string | read       | Commit hash and branch the firmware was built from                   |
+| 250–265       | 0x00FA–0x0109 | 16   | string | read       | Firmware version (string)                                            |
+| 266–267       | 0x010A–0x010B | 2    | u32    | read       | Serial number generation scheme (4 = derived from the 48-bit MAC)    |
+| 268–271       | 0x010C–0x010F | 4    | u64    | read       | Serial number, MSW-first (the 48-bit MAC in the low bits)            |
+| 290–301       | 0x0122–0x012D | 12   | string | read       | Firmware signature                                                   |
+| 320           | 0x0140        | 1    | u16    | read       | Firmware version: MAJOR                                              |
+| 321           | 0x0141        | 1    | u16    | read       | Firmware version: MINOR                                              |
+| 322           | 0x0142        | 1    | u16    | read       | Firmware version: PATCH                                              |
+| 323           | 0x0143        | 1    | s16    | read       | Firmware version: SUFFIX (+N for `+wbN`, −N for `-rcN`, 0 if none)   |
+| 324–325       | 0x0144–0x0145 | 2    | u32    | read       | Numeric firmware version (little-endian word order: 324 = low word)  |
+| 326–327       | 0x0146–0x0147 | 2    | u32    | read       | Numeric firmware version (big-endian word order: 326 = high word)    |
+| 528–529       | 0x0210–0x0211 | 2    | u32    | read       | Packets processed (since last cache reset)                           |
+| 530–531       | 0x0212–0x0213 | 2    | u32    | read       | Seconds since the last packet on the bus                             |
+| 532           | 0x0214        | 1    | u16    | read       | Devices currently on the bus (unique slave_ids in cache)             |
+| 533           | 0x0215        | 1    | u16    | read       | Average bus poll rate, polls/min                                     |
+| 534           | 0x0216        | 1    | u16    | read       | Cache value timeout, seconds                                         |
+| 535           | 0x0217        | 1    | u16    | read       | Z-Wave inclusion request counter, non-volatile, increment-only       |
+| 536           | 0x0218        | 1    | u16    | read       | Airzone settings change counter, non-volatile, increment-only        |
+| 537           | 0x0219        | 1    | u16    | read       | Airzone Modbus address, 1…247                                        |
+| 538           | 0x021A        | 1    | u16    | read       | Airzone zone, 1…32                                                   |
+| 539           | 0x021B        | 1    | u16    | read       | Airzone line speed, in units of 1200 baud, 4…96                      |
+| 540           | 0x021C        | 1    | u16    | read       | Airzone product type, 0…3                                            |
+| 541–551       | 0x021D–0x0227 | 11   | u16    | read/write | State the Z-Wave board reports about itself, written by it with FC16 |
+| 65505         | 0xFFE1        | 1    | u16    | read       | Total RAM, KB                                                        |
+| 65506         | 0xFFE2        | 1    | u16    | read       | Used RAM, KB                                                         |
+| 65507         | 0xFFE3        | 1    | u16    | read       | Free RAM, KB                                                         |
+| 65508         | 0xFFE4        | 1    | u16    | read       | Last MCU reboot reason                                               |
 
 ### Register map notes
 
@@ -127,8 +135,19 @@ supported.
   fields read as 0. The block sits at 528 to stay clear of the Wiren Board common register map —
   in particular of the bootloader-version field, which is **8 holding registers from 330**
   (330–337, `modbus_client -t0x03 -r330 -c8`) and is left undefined here.
+- **Airzone settings** (535–540) are what was entered *here*, in this firmware's web interface,
+  for the Z-Wave board to read and apply — not what the board ended up running on. The board
+  reads all six in one FC03, which is why they are contiguous; a range that reaches an address
+  this map does not define is refused whole, so keep a read inside the block.
+- **Board state** (541–551) is the only writable region of this map: the block accepts **FC16**
+  (write multiple registers) for the whole range, and the Z-Wave board writes it itself roughly
+  every 10 seconds. Its first four registers are what the board is **actually running on**,
+  which is not necessarily what 537–540 asked for: the board validates each of the four values
+  separately and refuses them one at a time, so three may apply while the fourth does not.
 - Reading a range where at least one address is undefined returns exception **0x02** (illegal
-  data address); a function other than FC03/FC04 returns exception **0x01** (illegal function).
+  data address); a function other than FC03/FC04/FC16 returns exception **0x01** (illegal
+  function). FC16 is accepted as a function wherever it is sent, but a write whose range is not
+  entirely inside 541–551 returns **0x02** and stores nothing.
 
 ## Manual UI Test Procedures
 

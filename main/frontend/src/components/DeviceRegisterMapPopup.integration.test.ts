@@ -72,7 +72,7 @@ describe('DRM-I-001: one register table covers both FC03 and FC04', () => {
   it('heads the table with both function codes and keeps no holding section', () => {
     const wrapper = mountPopup();
 
-    expect(sectionTitles()).toEqual(['Registers (FC03/FC04, read-only)', 'Notes']);
+    expect(sectionTitles()).toEqual(['Registers (FC03/FC04; FC16 on 541–551)', 'Notes']);
 
     wrapper.unmount();
   });
@@ -80,7 +80,7 @@ describe('DRM-I-001: one register table covers both FC03 and FC04', () => {
   it('heads the table with both function codes in Russian too', () => {
     const wrapper = mountPopup('ru');
 
-    expect(sectionTitles()).toEqual(['Регистры (FC03/FC04, только чтение)', 'Примечания']);
+    expect(sectionTitles()).toEqual(['Регистры (FC03/FC04; FC16 на 541–551)', 'Примечания']);
 
     wrapper.unmount();
   });

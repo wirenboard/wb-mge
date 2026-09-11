@@ -18,6 +18,7 @@ import ActivityIcon from '@/assets/activityIcon.svg?component';
 import PlugIcon from '@/assets/plugIcon.svg?component';
 import GridSidebarIcon from '@/assets/gridSidebarIcon.svg?component';
 import RepeatIcon from '@/assets/repeatIcon.svg?component';
+import GearIcon from '@/assets/gearIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
@@ -32,6 +33,7 @@ const MENU_ICONS: Record<string, Component> = {
   plug: PlugIcon,
   grid: GridSidebarIcon,
   repeat: RepeatIcon,
+  gear: GearIcon,
 };
 
 function getMenuIcon(key: unknown): Component | undefined {
@@ -50,8 +52,15 @@ const { hostname } = useHostname();
 const { info } = useInfo();
 const { initData: savedSettings } = useSettings();
 
+// A route may carry meta.menuSignature: it belongs to one board only and stays out of the menu
+// everywhere else — and while the device signature is still unknown, which is the safe default.
+function isForThisDevice(route: RouteRecordRaw): boolean {
+  const required = route.meta?.menuSignature;
+  return typeof required !== 'string' || required === info.value?.signature;
+}
+
 const menuGroups = computed(() => {
-  const routes = router.options.routes.filter(r => r.meta?.menuName) as RouteRecordRaw[];
+  const routes = (router.options.routes as RouteRecordRaw[]).filter(r => r.meta?.menuName && isForThisDevice(r));
   const groups: Record<string, RouteRecordRaw[]> = {};
   for (const r of routes) {
     const group = (r.meta?.menuGroup as string) || 'default';

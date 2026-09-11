@@ -3,6 +3,7 @@ import { useInfo } from '@/common/info';
 import { hasSession } from '@/common/session';
 import { useSettings } from '@/common/settings';
 import type { LogoutResponse } from '@/common/types';
+import Airzone from '@/views/Airzone.vue';
 import Dashboard from '@/views/Dashboard.vue';
 import Login from '@/views/Login.vue';
 import Network from '@/views/Network.vue';
@@ -107,6 +108,21 @@ const router = createRouter({
       name: 'register_map',
       component: RegisterMap,
       meta: { requiresAuth: true, menuName: 'register_map', menuGroup: 'modbus_tools', menuIcon: 'grid' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
+    },
+    {
+      path: '/airzone',
+      name: 'airzone',
+      component: Airzone,
+      // menuSignature keeps the item out of the menu on boards without the Z-Wave module.
+      meta: { requiresAuth: true, menuName: 'airzone', menuGroup: 'configuration', menuIcon: 'gear', menuSignature: 'mgu_v1' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();
