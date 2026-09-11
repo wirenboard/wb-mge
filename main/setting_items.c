@@ -498,9 +498,14 @@ esp_err_t setting_items_migrate_port2_line_format(void)
             // cannot create it as "true" and declare this half-done rewrite finished.
             esp_err_t mark_ret = setting_items_save_bool(KEY_PORT2_MIGRATED, false);
             if (mark_ret != ESP_OK) {
-                // The retry still happens — set_defaults() is about to fail on this same
-                // storage and setting_items_init()'s caller panics on that — but a storage
-                // refusing two writes in a row is worth its own line in the log.
+                // Now the retry is no longer ours to promise. The key is absent, so the
+                // set_defaults() below will try to create it as "true": if that write fails
+                // too — the likely case, since a storage that refuses one write rarely takes
+                // the next — setting_items_init() returns the error and its caller panics,
+                // so the next boot runs the migration again. If instead it succeeds, the
+                // marker reads "true" and port 2 keeps the old line format for good. That is
+                // the best a failed storage allows, and it is why two refusals in a row are
+                // worth their own line in the log.
                 ESP_LOGE(TAG, "Migration: also failed to record %s as not migrated (%s)",
                          KEY_PORT2_MIGRATED, esp_err_to_name(mark_ret));
             }
